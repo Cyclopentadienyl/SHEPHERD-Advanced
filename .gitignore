@@ -1,0 +1,135 @@
+# ============================================
+# SHEPHERD-Advanced .gitignore
+# ============================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# --- Virtual env ---
+.venv/
+env/
+venv/
+
+# --- Packaging / build ---
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# --- Logs and reports (keep directories) ---
+logs/*
+!logs/.gitkeep
+
+reports/*
+!reports/.gitkeep
+
+# --- Data (精確控制) ---
+# Raw data - 追蹤配置，忽略大型數據
+data/raw/**/*.obo
+data/raw/**/*.owl
+data/raw/**/*.json.gz
+data/raw/**/*.csv.gz
+
+# Processed data - 忽略生成文件，保留 metadata
+data/processed/**/*.pt
+data/processed/**/*.pkl
+data/processed/**/*.npy
+data/processed/embeddings/**/*
+data/processed/ontology_cache/**/*
+data/processed/nlp_extractions/**/*.db
+
+# 但保留關鍵配置文件
+!data/processed/knowledge_graph/metadata.json
+!data/processed/knowledge_graph/VERSION
+
+# External data - 完全忽略內容，但保留說明
+data/external/*
+!data/external/.gitignore
+!data/external/README.md
+
+# Cache (如果使用)
+data/cache/
+
+# --- Models ---
+models/checkpoints/**/*
+!models/checkpoints/.gitkeep
+
+models/experiments/**/*
+!models/experiments/.gitkeep
+
+# 但保留 production registry
+!models/production/registry.json
+
+# Pretrained models (太大)
+models/pretrained/**/*
+!models/pretrained/README.md
+
+# --- Temp files ---
+*.tmp
+*.log
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- Coverage / test ---
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- Environment files (敏感資訊) ---
+.env
+.env.local
+*.key
+*.pem
+
+
+# ============================================
+# Advanced: CI/CD, HPC, and Training
+# ============================================
+
+# --- CI/CD artifacts ---
+.github/workflows/*.log
+.github/workflows/__pycache__/
+
+# --- HPC / Cluster job logs ---
+slurm-*.out          # SLURM
+slurm-*.err
+*.o[0-9]*            # PBS/Torque output
+*.e[0-9]*            # PBS/Torque error
+*.pe[0-9]*           # Grid Engine
+*.po[0-9]*           # Grid Engine
+
+# --- Training artifacts (prevent accidental commits) ---
+wandb/               # Weights & Biases
+.neptune/            # Neptune.ai
+mlruns/              # MLflow
+tensorboard/         # TensorBoard logs
+lightning_logs/      # PyTorch Lightning
+
+# --- Profiling / debugging ---
+*.prof               # Python profiler
+*.nsys-rep           # NVIDIA Nsight
+*.nvvp               # NVIDIA Visual Profiler
+*.qdrep              # NVIDIA Nsight Compute
+*.ncu-rep            # NVIDIA Nsight Compute (new)
+
+# --- ARM-specific (DGX Spark) ---
+*.arm64.log
+*_arm_debug.txt
