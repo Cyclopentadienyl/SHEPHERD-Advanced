@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SHEPHERD-Advanced Deployment Config v3",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        3
+      ]
+    },
+    "platform": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "type": "string",
+          "enum": [
+            "windows",
+            "linux"
+          ]
+        },
+        "arch": {
+          "type": "string"
+        },
+        "machine_name": {
+          "type": "string"
+        },
+        "gpu_arch": {
+          "type": "string",
+          "enum": [
+            "blackwell"
+          ]
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "gpu_arch"
+      ]
+    },
+    "attention_backend": {
+      "type": "object",
+      "properties": {
+        "prefer": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_xformers": {
+          "type": "boolean"
+        },
+        "force_disable_env_var": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "prefer"
+      ]
+    },
+    "retrieval_backend": {
+      "type": "object",
+      "properties": {
+        "x86": {
+          "type": "string"
+        },
+        "arm": {
+          "type": "string"
+        },
+        "default": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "default"
+      ]
+    },
+    "cuda": {
+      "type": "object"
+    },
+    "torch": {
+      "type": "object"
+    },
+    "indexing": {
+      "type": "object"
+    },
+    "paths": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "version",
+    "platform",
+    "attention_backend",
+    "retrieval_backend"
+  ]
+}

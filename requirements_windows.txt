@@ -1,0 +1,14 @@
+# Windows x86 (Blackwell) — baseline; pin exact versions after local verification
+torch>=2.8
+torchvision>=0.19
+torchaudio>=2.8
+# Optional acceleration (wheel availability required)
+flash-attn>=2.6 ; platform_system == "Windows"
+xformers>=0.0.28
+numpy>=1.26
+scipy>=1.11
+pyyaml>=6.0
+pydantic>=2.5
+tqdm>=4.66
+faiss-gpu ; platform_system == "Windows" or platform_machine == "x86_64"
+hnswlib>=0.8

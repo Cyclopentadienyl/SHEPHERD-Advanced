@@ -1,0 +1,14 @@
+[Unit]
+Description=SHEPHERD-Advanced API Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/SHEPHERD-Advanced
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8264
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

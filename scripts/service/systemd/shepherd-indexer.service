@@ -1,0 +1,12 @@
+[Unit]
+Description=SHEPHERD-Advanced Index Builder
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/SHEPHERD-Advanced
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python scripts/build_index.py --config configs/deployment/linux_x86.yaml
+
+[Install]
+WantedBy=multi-user.target

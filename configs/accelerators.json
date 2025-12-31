@@ -1,0 +1,318 @@
+{
+  "_comment": "SHEPHERD-Advanced Accelerator Installation Specifications",
+  "_version": "1.0.0",
+  "_platforms": {
+    "os": [
+      "windows",
+      "linux"
+    ],
+    "arch": [
+      "x86_64",
+      "amd64",
+      "aarch64",
+      "arm64"
+    ],
+    "python": [
+      "3.10",
+      "3.11",
+      "3.12"
+    ]
+  },
+  "flash_attn": {
+    "_description": "FlashAttention-2 for NVIDIA GPUs (x86 only, NOT compatible with ARM)",
+    "_compatibility": {
+      "os": [
+        "windows",
+        "linux"
+      ],
+      "arch": [
+        "x86_64",
+        "amd64"
+      ],
+      "cuda": [
+        "11.8",
+        "12.1",
+        "12.4",
+        "12.8"
+      ],
+      "pytorch": [
+        "2.0+"
+      ]
+    },
+    "windows": {
+      "x86_64": {
+        "3.10": {
+          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "*": "flash-attn --no-build-isolation"
+        },
+        "3.11": {
+          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "*": "flash-attn --no-build-isolation"
+        },
+        "3.12": {
+          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "*": "flash-attn --no-build-isolation"
+        }
+      }
+    },
+    "linux": {
+      "x86_64": {
+        "3.10": {
+          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "*": "flash-attn --no-build-isolation"
+        },
+        "3.11": {
+          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "*": "flash-attn --no-build-isolation"
+        },
+        "3.12": {
+          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "*": "flash-attn --no-build-isolation"
+        }
+      },
+      "aarch64": {
+        "_comment": "FlashAttention-2 is NOT compatible with ARM architecture",
+        "_skip": true
+      }
+    },
+    "default": null
+  },
+  "xformers": {
+    "_description": "Memory-efficient attention from Meta (cross-platform)",
+    "_compatibility": {
+      "os": [
+        "windows",
+        "linux"
+      ],
+      "arch": [
+        "x86_64",
+        "amd64",
+        "aarch64",
+        "arm64"
+      ],
+      "cuda": [
+        "11.8",
+        "12.1",
+        "12.4",
+        "12.8"
+      ],
+      "pytorch": [
+        "2.0+"
+      ]
+    },
+    "windows": {
+      "x86_64": {
+        "3.10": {
+          "*": "xformers"
+        },
+        "3.11": {
+          "*": "xformers"
+        },
+        "3.12": {
+          "*": "xformers"
+        }
+      }
+    },
+    "linux": {
+      "x86_64": {
+        "3.10": {
+          "*": "xformers"
+        },
+        "3.11": {
+          "*": "xformers"
+        },
+        "3.12": {
+          "*": "xformers"
+        }
+      },
+      "aarch64": {
+        "_comment": "xFormers on ARM may require building from source",
+        "3.10": {
+          "*": "xformers"
+        },
+        "3.11": {
+          "*": "xformers"
+        },
+        "3.12": {
+          "*": "xformers"
+        }
+      }
+    },
+    "default": "xformers"
+  },
+  "sage_attn": {
+    "_description": "SageAttention community plugin (experimental)",
+    "_compatibility": {
+      "os": [
+        "windows",
+        "linux"
+      ],
+      "arch": [
+        "x86_64",
+        "amd64",
+        "aarch64",
+        "arm64"
+      ],
+      "cuda": [
+        "12.1+"
+      ],
+      "pytorch": [
+        "2.0+"
+      ]
+    },
+    "windows": {
+      "x86_64": {
+        "3.10": {
+          "*": "sageattention"
+        },
+        "3.11": {
+          "*": "sageattention"
+        },
+        "3.12": {
+          "*": "sageattention"
+        }
+      }
+    },
+    "linux": {
+      "x86_64": {
+        "3.10": {
+          "*": "sageattention"
+        },
+        "3.11": {
+          "*": "sageattention"
+        },
+        "3.12": {
+          "*": "sageattention"
+        }
+      },
+      "aarch64": {
+        "3.10": {
+          "*": "sageattention"
+        },
+        "3.11": {
+          "*": "sageattention"
+        },
+        "3.12": {
+          "*": "sageattention"
+        }
+      }
+    },
+    "default": "sageattention"
+  },
+  "cudnn_sdpa": {
+    "_description": "cuDNN 9.x SDPA backend (recommended for ARM Blackwell, works on x86 too)",
+    "_compatibility": {
+      "os": [
+        "windows",
+        "linux"
+      ],
+      "arch": [
+        "x86_64",
+        "amd64",
+        "aarch64",
+        "arm64"
+      ],
+      "cuda": [
+        "12.8+"
+      ],
+      "cudnn": [
+        "9.0+"
+      ],
+      "pytorch": [
+        "2.8+"
+      ]
+    },
+    "_install": "Built into PyTorch 2.8+, no separate installation needed",
+    "_activation": "Set environment variable TORCH_CUDNN_SDPA_ENABLED=1",
+    "default": "auto"
+  },
+  "torch_sdpa": {
+    "_description": "Vanilla PyTorch scaled_dot_product_attention (universal fallback)",
+    "_compatibility": {
+      "os": [
+        "windows",
+        "linux",
+        "darwin"
+      ],
+      "arch": [
+        "x86_64",
+        "amd64",
+        "aarch64",
+        "arm64"
+      ],
+      "cuda": [
+        "any"
+      ],
+      "pytorch": [
+        "2.0+"
+      ]
+    },
+    "_install": "Built into PyTorch 2.0+, no separate installation needed",
+    "default": "auto"
+  },
+  "naive": {
+    "_description": "Manual matmul-based attention (last resort, slowest)",
+    "_compatibility": {
+      "os": [
+        "any"
+      ],
+      "arch": [
+        "any"
+      ],
+      "cuda": [
+        "any"
+      ],
+      "pytorch": [
+        "1.0+"
+      ]
+    },
+    "_install": "No installation needed, pure PyTorch implementation",
+    "default": "auto"
+  },
+  "_platform_recommendations": {
+    "windows_x86_blackwell": {
+      "primary": "flash_attn",
+      "fallback": [
+        "cudnn_sdpa",
+        "torch_sdpa",
+        "naive"
+      ],
+      "notes": "FlashAttention-2 is optimal for x86 Blackwell GPUs"
+    },
+    "linux_arm_blackwell": {
+      "primary": "cudnn_sdpa",
+      "fallback": [
+        "torch_sdpa",
+        "naive"
+      ],
+      "notes": "cuDNN 9.x SDPA is optimized for ARM Blackwell architecture with unified memory"
+    },
+    "dgx_spark": {
+      "primary": "cudnn_sdpa",
+      "fallback": [
+        "torch_sdpa",
+        "naive"
+      ],
+      "notes": "DGX Spark uses ARM CPU + Blackwell GPU with 128GB unified memory"
+    }
+  },
+  "_installation_notes": {
+    "flash_attn": [
+      "Requires CUDA development toolkit",
+      "Windows needs Visual Studio 2022 Build Tools with C++ support",
+      "Use --no-build-isolation flag to avoid build issues",
+      "Skip entirely on ARM platforms"
+    ],
+    "xformers": [
+      "Pre-built wheels available for most platforms",
+      "ARM builds may require compilation from source",
+      "Falls back gracefully if installation fails"
+    ],
+    "cudnn_sdpa": [
+      "Automatically available in PyTorch 2.8+ with CUDA 12.8+",
+      "Requires cuDNN 9.0+ to be installed",
+      "Enable via environment variable: TORCH_CUDNN_SDPA_ENABLED=1",
+      "Best performance on Blackwell architecture"
+    ]
+  }
+}

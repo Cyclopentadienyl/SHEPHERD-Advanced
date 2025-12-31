@@ -1,0 +1,37 @@
+# SHEPHERD-Advanced — v3 deployment config (Windows x86, Blackwell GPU)
+# Single Source of Truth (SSOT) for platform-specific toggles.
+version: 3
+platform:
+  os: windows
+  arch: x86_64
+  gpu_arch: blackwell
+attention_backend:
+  # order of preference, resolved at runtime by src/models/attention/adaptive_backend.py
+  prefer: [flash_attn, torch_sdpa, naive]
+  allow_xformers: true
+  force_disable_env_var: FLASHATTN_FORCE_DISABLE
+retrieval_backend:
+  x86: faiss_gpu
+  arm: hnswlib
+  default: faiss_gpu
+cuda:
+  min_version: "12.4"
+  recommended: "12.8"
+  cudnn: "9"
+torch:
+  min_version: "2.8.0"
+  recommended: "2.9.0"
+indexing:
+  dim: 768
+  metric: "ip"   # or "l2"
+  faiss_gpu:
+    nlist: 4096
+    nprobe: 32
+  hnswlib:
+    ef_construction: 200
+    M: 32
+    ef_search: 64
+paths:
+  data_root: "data/"
+  models_root: "models/"
+  logs_root: "logs/"

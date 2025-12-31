@@ -1,0 +1,143 @@
+[project]
+name = "shepherd-advanced"
+version = "0.2.0"
+description = "Medical Knowledge Graph diagnostic engine with dual-platform support (Windows x86 + DGX Spark ARM)"
+requires-python = ">=3.10"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+
+# Core dependencies - Pure Python packages with cross-platform compatibility
+# CRITICAL: Do NOT include torch, torch-geometric, flash-attn, xformers, or CUDA-dependent packages
+# These will be installed via platform-specific scripts to ensure CUDA 12.8+ compatibility
+dependencies = [
+    # Ontology processing
+    "pronto>=2.7",
+    "networkx>=3.2",
+    
+    # Data processing & scientific computing
+    "pandas>=2.2",
+    "numpy>=1.26",  # No upper limit - PyTorch 2.8 supports NumPy 2.x
+    "scipy>=1.13",
+    
+    # Configuration & serialization
+    "pyyaml>=6.0",
+    "jsonschema>=4.21",
+    "toml>=0.10",
+    
+    # Data validation & schemas
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    
+    # API framework
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "gradio>=4.0",
+    
+    # Vector retrieval (cross-platform, replaces FAISS)
+    "hnswlib>=0.8",
+    
+    # Utilities
+    "tqdm>=4.66",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Development tools
+dev = [
+    "pre-commit>=3.7",
+    "ruff>=0.5",
+    "black>=24.8",
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-xdist>=3.5",
+    "pytest-asyncio>=0.23",
+    "pip-tools>=7.4",
+]
+
+# NLP modules (optional)
+nlp = [
+    "transformers>=4.40",
+    "tokenizers>=0.19",
+    "sentence-transformers>=3.0",
+    "spacy>=3.7",
+]
+
+# Medical standards (optional)
+medical = [
+    "fhir.resources>=7.1",
+    "python-hl7>=0.4.6",
+]
+
+# Benchmarking tools
+benchmark = [
+    "torch-tb-profiler>=0.4",
+    "memory-profiler>=0.61",
+    "py-spy>=0.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/shepherd-advanced"
+Repository = "https://github.com/yourusername/shepherd-advanced"
+Documentation = "https://shepherd-advanced.readthedocs.io"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ============================================
+# Tool Configurations
+# ============================================
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312', 'py313']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**/*.py" = ["N802", "N803"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pronto.*", "hnswlib.*", "torch.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-v", "--strict-markers", "--tb=short", "--cov=src"]
+markers = [
+    "slow: slow tests",
+    "x86_64: x86 platform only",
+    "arm64: ARM platform only",
+    "cuda: requires CUDA",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

@@ -1,0 +1,12 @@
+# Linux ARM (DGX Spark, aarch64) — prefer SDPA + hnswlib
+torch>=2.8
+torchvision>=0.19
+torchaudio>=2.8
+xformers>=0.0.28
+numpy>=1.26
+scipy>=1.11
+pyyaml>=6.0
+pydantic>=2.5
+tqdm>=4.66
+hnswlib>=0.8
+# faiss-cpu/faiss-gpu on ARM are optional/experimental; add only after validation
