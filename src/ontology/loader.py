@@ -1,7 +1,12 @@
 """
 SHEPHERD-Advanced Ontology Loader
 =================================
-本體載入器，支援 OBO 和 OWL 格式
+本體載入器，使用 pronto 作為後端
+
+pronto 是專為生物醫學本體設計的 Python 庫，支援:
+- OBO 1.4 格式
+- OWL 格式
+- OBO Graphs (JSON)
 
 支援的本體:
 - HPO (Human Phenotype Ontology)
@@ -9,18 +14,17 @@ SHEPHERD-Advanced Ontology Loader
 - GO (Gene Ontology)
 - MP (Mammalian Phenotype Ontology) - 用於同源基因
 
-版本: 1.0.0
+版本: 1.1.0
 """
 from __future__ import annotations
 
-import gzip
 import logging
-import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Optional
 from urllib.request import urlretrieve
 from urllib.error import URLError
+
+import pronto
 
 from src.core.types import DataSource
 
@@ -28,255 +32,13 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# OBO Term Data Structure
-# =============================================================================
-@dataclass
-class OBOTerm:
-    """
-    OBO 格式的術語結構
-    """
-    id: str
-    name: str
-    namespace: Optional[str] = None
-    definition: Optional[str] = None
-
-    # Relationships
-    is_a: List[str] = field(default_factory=list)  # Parent terms
-    part_of: List[str] = field(default_factory=list)
-
-    # Alternative identifiers
-    alt_ids: List[str] = field(default_factory=list)
-
-    # Synonyms
-    synonyms: List[Tuple[str, str]] = field(default_factory=list)  # (text, type)
-
-    # Cross-references
-    xrefs: List[str] = field(default_factory=list)
-
-    # Status
-    is_obsolete: bool = False
-    replaced_by: Optional[str] = None
-    consider: List[str] = field(default_factory=list)
-
-    # Additional properties
-    properties: Dict[str, List[str]] = field(default_factory=dict)
-
-
-@dataclass
-class OBOHeader:
-    """
-    OBO 檔案 header 資訊
-    """
-    format_version: Optional[str] = None
-    data_version: Optional[str] = None
-    ontology: Optional[str] = None
-    date: Optional[str] = None
-    saved_by: Optional[str] = None
-    subsetdef: List[str] = field(default_factory=list)
-    default_namespace: Optional[str] = None
-    remark: Optional[str] = None
-
-    # Additional properties
-    properties: Dict[str, str] = field(default_factory=dict)
-
-
-# =============================================================================
-# OBO Parser
-# =============================================================================
-class OBOParser:
-    """
-    OBO 格式解析器
-
-    支援 OBO 1.2 和 1.4 格式
-    """
-
-    # Regex patterns
-    TAG_VALUE_PATTERN = re.compile(r'^(\S+):\s*(.*)$')
-    XREF_PATTERN = re.compile(r'\[([^\]]+)\]')
-    SYNONYM_PATTERN = re.compile(r'"([^"]+)"\s+(\w+)')
-    DEF_PATTERN = re.compile(r'"([^"]+)"')
-
-    def __init__(self):
-        self.header: Optional[OBOHeader] = None
-        self.terms: Dict[str, OBOTerm] = {}
-        self.typedefs: Dict[str, Dict[str, Any]] = {}
-
-    def parse_file(self, file_path: Path) -> Tuple[OBOHeader, Dict[str, OBOTerm]]:
-        """
-        解析 OBO 檔案
-
-        Args:
-            file_path: OBO 檔案路徑 (支援 .obo 和 .obo.gz)
-
-        Returns:
-            (header, terms_dict)
-        """
-        logger.info(f"Parsing OBO file: {file_path}")
-
-        self.header = OBOHeader()
-        self.terms = {}
-        self.typedefs = {}
-
-        # Handle gzipped files
-        if str(file_path).endswith('.gz'):
-            open_func = lambda p: gzip.open(p, 'rt', encoding='utf-8')
-        else:
-            open_func = lambda p: open(p, 'r', encoding='utf-8')
-
-        with open_func(file_path) as f:
-            current_stanza = None
-            current_data: Dict[str, Any] = {}
-
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-
-                # Skip empty lines and comments
-                if not line or line.startswith('!'):
-                    continue
-
-                # Check for stanza start
-                if line.startswith('[') and line.endswith(']'):
-                    # Save previous stanza
-                    if current_stanza:
-                        self._save_stanza(current_stanza, current_data)
-
-                    # Start new stanza
-                    current_stanza = line[1:-1]
-                    current_data = {}
-                    continue
-
-                # Parse tag-value pair
-                match = self.TAG_VALUE_PATTERN.match(line)
-                if match:
-                    tag, value = match.groups()
-                    value = value.strip()
-
-                    # Remove trailing comments
-                    if ' !' in value:
-                        value = value.split(' !')[0].strip()
-
-                    if current_stanza is None:
-                        # Header
-                        self._parse_header_tag(tag, value)
-                    else:
-                        # Stanza content
-                        if tag not in current_data:
-                            current_data[tag] = []
-                        current_data[tag].append(value)
-
-            # Save last stanza
-            if current_stanza:
-                self._save_stanza(current_stanza, current_data)
-
-        logger.info(f"Parsed {len(self.terms)} terms from {file_path.name}")
-        return self.header, self.terms
-
-    def _parse_header_tag(self, tag: str, value: str) -> None:
-        """解析 header tag"""
-        if tag == 'format-version':
-            self.header.format_version = value
-        elif tag == 'data-version':
-            self.header.data_version = value
-        elif tag == 'ontology':
-            self.header.ontology = value
-        elif tag == 'date':
-            self.header.date = value
-        elif tag == 'saved-by':
-            self.header.saved_by = value
-        elif tag == 'default-namespace':
-            self.header.default_namespace = value
-        elif tag == 'subsetdef':
-            self.header.subsetdef.append(value)
-        elif tag == 'remark':
-            self.header.remark = value
-        else:
-            self.header.properties[tag] = value
-
-    def _save_stanza(self, stanza_type: str, data: Dict[str, List[str]]) -> None:
-        """保存解析的 stanza"""
-        if stanza_type == 'Term':
-            term = self._parse_term(data)
-            if term and term.id:
-                self.terms[term.id] = term
-                # Also index by alt_ids
-                for alt_id in term.alt_ids:
-                    if alt_id not in self.terms:
-                        self.terms[alt_id] = term
-        elif stanza_type == 'Typedef':
-            typedef_id = data.get('id', [''])[0]
-            if typedef_id:
-                self.typedefs[typedef_id] = data
-
-    def _parse_term(self, data: Dict[str, List[str]]) -> Optional[OBOTerm]:
-        """解析 Term stanza"""
-        term_id = data.get('id', [''])[0]
-        if not term_id:
-            return None
-
-        term = OBOTerm(
-            id=term_id,
-            name=data.get('name', [''])[0],
-            namespace=data.get('namespace', [self.header.default_namespace])[0],
-        )
-
-        # Definition
-        if 'def' in data:
-            def_match = self.DEF_PATTERN.search(data['def'][0])
-            if def_match:
-                term.definition = def_match.group(1)
-
-        # IS_A relationships
-        for is_a in data.get('is_a', []):
-            # Format: HP:0000001 ! Term name
-            parent_id = is_a.split()[0]
-            term.is_a.append(parent_id)
-
-        # Part_of relationships (from relationship tag)
-        for rel in data.get('relationship', []):
-            parts = rel.split()
-            if len(parts) >= 2:
-                rel_type, target = parts[0], parts[1]
-                if rel_type == 'part_of':
-                    term.part_of.append(target)
-                # Store other relationships in properties
-                if rel_type not in term.properties:
-                    term.properties[rel_type] = []
-                term.properties[rel_type].append(target)
-
-        # Alternative IDs
-        term.alt_ids = data.get('alt_id', [])
-
-        # Synonyms
-        for syn in data.get('synonym', []):
-            syn_match = self.SYNONYM_PATTERN.search(syn)
-            if syn_match:
-                term.synonyms.append((syn_match.group(1), syn_match.group(2)))
-
-        # Cross-references
-        term.xrefs = data.get('xref', [])
-
-        # Obsolete status
-        if 'is_obsolete' in data and data['is_obsolete'][0].lower() == 'true':
-            term.is_obsolete = True
-
-        # Replaced by
-        if 'replaced_by' in data:
-            term.replaced_by = data['replaced_by'][0]
-
-        # Consider
-        term.consider = data.get('consider', [])
-
-        return term
-
-
-# =============================================================================
-# Ontology Loader
+# Ontology Loader using Pronto
 # =============================================================================
 class OntologyLoader:
     """
-    本體載入器
+    本體載入器 (使用 pronto 後端)
 
-    支援從檔案或 URL 載入本體
+    pronto 是專為生物醫學本體設計的庫，比手寫解析器更可靠
     """
 
     # Known ontology URLs
@@ -287,6 +49,12 @@ class OntologyLoader:
         'mp': 'http://purl.obolibrary.org/obo/mp.obo',
     }
 
+    # Alternative OWL URLs (if OBO fails)
+    ONTOLOGY_OWL_URLS = {
+        'hpo': 'https://raw.githubusercontent.com/obophenotype/human-phenotype-ontology/master/hp.owl',
+        'mondo': 'https://raw.githubusercontent.com/monarch-initiative/mondo/master/mondo.owl',
+    }
+
     def __init__(self, cache_dir: Optional[Path] = None):
         """
         Args:
@@ -295,7 +63,6 @@ class OntologyLoader:
         self.cache_dir = cache_dir or Path.home() / '.shepherd' / 'ontologies'
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self.parser = OBOParser()
         self._loaded_ontologies: Dict[str, 'Ontology'] = {}
 
     def load(self, path: Path) -> 'Ontology':
@@ -311,14 +78,16 @@ class OntologyLoader:
         if not path.exists():
             raise FileNotFoundError(f"Ontology file not found: {path}")
 
-        if str(path).endswith('.obo') or str(path).endswith('.obo.gz'):
-            header, terms = self.parser.parse_file(path)
-            ontology = Ontology(header, terms)
-            return ontology
-        elif str(path).endswith('.owl') or str(path).endswith('.owl.gz'):
-            raise NotImplementedError("OWL format not yet supported. Please use OBO format.")
-        else:
-            raise ValueError(f"Unsupported ontology format: {path.suffix}")
+        logger.info(f"Loading ontology from {path}")
+
+        # pronto 自動偵測格式 (OBO, OWL, JSON)
+        pronto_ont = pronto.Ontology(str(path))
+
+        # 包裝成我們的 Ontology 類
+        ontology = Ontology(pronto_ont, source_path=path)
+
+        logger.info(f"Loaded {ontology.num_terms} terms from {path.name}")
+        return ontology
 
     def load_hpo(self, version: str = "latest", force_download: bool = False) -> 'Ontology':
         """
@@ -356,40 +125,236 @@ class OntologyLoader:
             logger.info(f"Using cached {ontology_name} ontology")
             return self._loaded_ontologies[cache_key]
 
-        # Check file cache
-        cache_file = self.cache_dir / f"{ontology_name}.obo"
+        # Check file cache (try OBO first, then OWL)
+        cache_file_obo = self.cache_dir / f"{ontology_name}.obo"
+        cache_file_owl = self.cache_dir / f"{ontology_name}.owl"
 
-        if not cache_file.exists() or force_download:
+        cache_file = None
+        if cache_file_obo.exists() and not force_download:
+            cache_file = cache_file_obo
+        elif cache_file_owl.exists() and not force_download:
+            cache_file = cache_file_owl
+
+        if cache_file is None or force_download:
             # Download
-            url = self.ONTOLOGY_URLS.get(ontology_name)
-            if not url:
-                raise ValueError(f"Unknown ontology: {ontology_name}")
-
-            logger.info(f"Downloading {ontology_name} ontology from {url}")
-            try:
-                urlretrieve(url, cache_file)
-                logger.info(f"Downloaded {ontology_name} to {cache_file}")
-            except URLError as e:
-                if cache_file.exists():
-                    logger.warning(f"Download failed, using cached file: {e}")
-                else:
-                    raise RuntimeError(f"Failed to download {ontology_name}: {e}")
+            cache_file = self._download_ontology(ontology_name, force_download)
 
         # Load from file
         ontology = self.load(cache_file)
+
+        # Set source info
         ontology._source = DataSource[ontology_name.upper()] if ontology_name.upper() in DataSource.__members__ else None
+        ontology._ontology_name = ontology_name
 
         # Cache in memory
         self._loaded_ontologies[cache_key] = ontology
 
         return ontology
 
+    def _download_ontology(self, ontology_name: str, force_download: bool) -> Path:
+        """下載本體檔案"""
+        # Try OBO first
+        url = self.ONTOLOGY_URLS.get(ontology_name)
+        cache_file = self.cache_dir / f"{ontology_name}.obo"
+
+        if url:
+            logger.info(f"Downloading {ontology_name} ontology from {url}")
+            try:
+                urlretrieve(url, cache_file)
+                logger.info(f"Downloaded {ontology_name} to {cache_file}")
+                return cache_file
+            except URLError as e:
+                logger.warning(f"Failed to download OBO: {e}")
+
+        # Try OWL as fallback
+        owl_url = self.ONTOLOGY_OWL_URLS.get(ontology_name)
+        cache_file_owl = self.cache_dir / f"{ontology_name}.owl"
+
+        if owl_url:
+            logger.info(f"Trying OWL format from {owl_url}")
+            try:
+                urlretrieve(owl_url, cache_file_owl)
+                logger.info(f"Downloaded {ontology_name} OWL to {cache_file_owl}")
+                return cache_file_owl
+            except URLError as e:
+                logger.error(f"Failed to download OWL: {e}")
+
+        # Check if we have a cached version
+        if cache_file.exists():
+            logger.warning(f"Download failed, using existing cache: {cache_file}")
+            return cache_file
+        if cache_file_owl.exists():
+            logger.warning(f"Download failed, using existing cache: {cache_file_owl}")
+            return cache_file_owl
+
+        raise RuntimeError(f"Failed to download {ontology_name} ontology")
+
 
 # =============================================================================
-# Ontology Class (imported from hierarchy.py)
+# Ontology Class (wraps pronto.Ontology)
 # =============================================================================
-# Forward declaration - actual implementation in hierarchy.py
 from src.ontology.hierarchy import Ontology
+
+
+# =============================================================================
+# Legacy OBO Parser (kept for compatibility with test fixtures)
+# =============================================================================
+from dataclasses import dataclass, field
+from typing import Any, List, Tuple
+import re
+
+
+@dataclass
+class OBOTerm:
+    """OBO 格式的術語結構 (legacy, for test fixtures)"""
+    id: str
+    name: str
+    namespace: Optional[str] = None
+    definition: Optional[str] = None
+    is_a: List[str] = field(default_factory=list)
+    part_of: List[str] = field(default_factory=list)
+    alt_ids: List[str] = field(default_factory=list)
+    synonyms: List[Tuple[str, str]] = field(default_factory=list)
+    xrefs: List[str] = field(default_factory=list)
+    is_obsolete: bool = False
+    replaced_by: Optional[str] = None
+    consider: List[str] = field(default_factory=list)
+    properties: Dict[str, List[str]] = field(default_factory=dict)
+
+
+@dataclass
+class OBOHeader:
+    """OBO 檔案 header 資訊 (legacy, for test fixtures)"""
+    format_version: Optional[str] = None
+    data_version: Optional[str] = None
+    ontology: Optional[str] = None
+    date: Optional[str] = None
+    saved_by: Optional[str] = None
+    subsetdef: List[str] = field(default_factory=list)
+    default_namespace: Optional[str] = None
+    remark: Optional[str] = None
+    properties: Dict[str, str] = field(default_factory=dict)
+
+
+class OBOParser:
+    """
+    OBO 格式解析器 (legacy, for test fixtures)
+
+    Note: 對於生產環境，建議使用 OntologyLoader (基於 pronto)
+    這個解析器主要用於測試 fixtures
+    """
+
+    TAG_VALUE_PATTERN = re.compile(r'^(\S+):\s*(.*)$')
+    SYNONYM_PATTERN = re.compile(r'"([^"]+)"\s+(\w+)')
+    DEF_PATTERN = re.compile(r'"([^"]+)"')
+
+    def __init__(self):
+        self.header: Optional[OBOHeader] = None
+        self.terms: Dict[str, OBOTerm] = {}
+
+    def parse_file(self, file_path: Path) -> Tuple[OBOHeader, Dict[str, OBOTerm]]:
+        """解析 OBO 檔案"""
+        import gzip
+
+        logger.info(f"Parsing OBO file (legacy parser): {file_path}")
+
+        self.header = OBOHeader()
+        self.terms = {}
+
+        if str(file_path).endswith('.gz'):
+            open_func = lambda p: gzip.open(p, 'rt', encoding='utf-8')
+        else:
+            open_func = lambda p: open(p, 'r', encoding='utf-8')
+
+        with open_func(file_path) as f:
+            current_stanza = None
+            current_data: Dict[str, Any] = {}
+
+            for line in f:
+                line = line.strip()
+
+                if not line or line.startswith('!'):
+                    continue
+
+                if line.startswith('[') and line.endswith(']'):
+                    if current_stanza:
+                        self._save_stanza(current_stanza, current_data)
+                    current_stanza = line[1:-1]
+                    current_data = {}
+                    continue
+
+                match = self.TAG_VALUE_PATTERN.match(line)
+                if match:
+                    tag, value = match.groups()
+                    value = value.strip()
+                    if ' !' in value:
+                        value = value.split(' !')[0].strip()
+
+                    if current_stanza is None:
+                        self._parse_header_tag(tag, value)
+                    else:
+                        if tag not in current_data:
+                            current_data[tag] = []
+                        current_data[tag].append(value)
+
+            if current_stanza:
+                self._save_stanza(current_stanza, current_data)
+
+        logger.info(f"Parsed {len(self.terms)} terms")
+        return self.header, self.terms
+
+    def _parse_header_tag(self, tag: str, value: str) -> None:
+        if tag == 'format-version':
+            self.header.format_version = value
+        elif tag == 'data-version':
+            self.header.data_version = value
+        elif tag == 'ontology':
+            self.header.ontology = value
+        elif tag == 'default-namespace':
+            self.header.default_namespace = value
+        else:
+            self.header.properties[tag] = value
+
+    def _save_stanza(self, stanza_type: str, data: Dict[str, List[str]]) -> None:
+        if stanza_type == 'Term':
+            term = self._parse_term(data)
+            if term and term.id:
+                self.terms[term.id] = term
+
+    def _parse_term(self, data: Dict[str, List[str]]) -> Optional[OBOTerm]:
+        term_id = data.get('id', [''])[0]
+        if not term_id:
+            return None
+
+        term = OBOTerm(
+            id=term_id,
+            name=data.get('name', [''])[0],
+            namespace=data.get('namespace', [self.header.default_namespace])[0] if self.header else None,
+        )
+
+        if 'def' in data:
+            def_match = self.DEF_PATTERN.search(data['def'][0])
+            if def_match:
+                term.definition = def_match.group(1)
+
+        for is_a in data.get('is_a', []):
+            parent_id = is_a.split()[0]
+            term.is_a.append(parent_id)
+
+        for syn in data.get('synonym', []):
+            syn_match = self.SYNONYM_PATTERN.search(syn)
+            if syn_match:
+                term.synonyms.append((syn_match.group(1), syn_match.group(2)))
+
+        term.xrefs = data.get('xref', [])
+
+        if 'is_obsolete' in data and data['is_obsolete'][0].lower() == 'true':
+            term.is_obsolete = True
+
+        if 'replaced_by' in data:
+            term.replaced_by = data['replaced_by'][0]
+
+        return term
 
 
 # =============================================================================
