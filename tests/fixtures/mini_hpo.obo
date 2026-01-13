@@ -1,0 +1,75 @@
+format-version: 1.4
+data-version: hp/releases/2024-01-01
+ontology: hp
+default-namespace: human_phenotype
+
+[Term]
+id: HP:0000001
+name: All
+def: "Root of all terms in the Human Phenotype Ontology." []
+
+[Term]
+id: HP:0000118
+name: Phenotypic abnormality
+def: "A phenotypic abnormality." []
+is_a: HP:0000001 ! All
+
+[Term]
+id: HP:0000707
+name: Abnormality of the nervous system
+def: "An abnormality of the nervous system." []
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0012638
+name: Abnormal nervous system physiology
+def: "A functional anomaly of the nervous system." []
+is_a: HP:0000707 ! Abnormality of the nervous system
+
+[Term]
+id: HP:0001250
+name: Seizure
+def: "A seizure is an episode of abnormal electrical activity in the brain." []
+synonym: "Epileptic seizure" EXACT []
+synonym: "Convulsion" RELATED []
+xref: UMLS:C0036572
+is_a: HP:0012638 ! Abnormal nervous system physiology
+
+[Term]
+id: HP:0002311
+name: Incoordination
+def: "Lack of coordination of movement." []
+is_a: HP:0012638 ! Abnormal nervous system physiology
+
+[Term]
+id: HP:0001251
+name: Ataxia
+def: "Ataxia is a lack of coordination while performing voluntary movements." []
+synonym: "Cerebellar ataxia" NARROW []
+is_a: HP:0002311 ! Incoordination
+
+[Term]
+id: HP:0001252
+name: Hypotonia
+def: "Hypotonia is a state of low muscle tone." []
+synonym: "Muscular hypotonia" EXACT []
+is_a: HP:0012638 ! Abnormal nervous system physiology
+
+[Term]
+id: HP:0000234
+name: Abnormality of the head
+def: "An abnormality of the head." []
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0000152
+name: Abnormality of head or neck
+def: "An abnormality of the head or neck." []
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:9999999
+name: Obsolete term
+def: "This term is obsolete." []
+is_obsolete: true
+replaced_by: HP:0001250
