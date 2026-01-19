@@ -1,6 +1,6 @@
 """
 # ==============================================================================
-# Module: src/models/heads.py
+# Module: src/models/decoders/heads.py
 # ==============================================================================
 # Purpose: Prediction heads for various downstream tasks
 #
@@ -8,21 +8,16 @@
 #   - External: torch (>=2.9)
 #   - Internal: None
 #
-# Input:
-#   - Node embeddings from ShepherdGNN
-#
-# Output:
-#   - Task-specific predictions (disease ranking, link prediction, etc.)
+# Exports:
+#   - DiagnosisHead: Disease ranking for patient phenotypes
+#   - LinkPredictionHead: Missing edge prediction
+#   - NodeClassificationHead: Node property prediction
+#   - ExplanationHead: Generate interpretable explanations
 #
 # Design Notes:
 #   - All heads are torch.compile() compatible
-#   - Support both training (with labels) and inference modes
+#   - Support both training and inference modes
 #   - Include uncertainty estimation where applicable
-#
-# Tasks Supported:
-#   1. DiagnosisHead: Rank diseases for patient phenotypes
-#   2. LinkPredictionHead: Predict missing edges
-#   3. NodeClassificationHead: Classify node types/attributes
 # ==============================================================================
 """
 from __future__ import annotations
@@ -36,9 +31,6 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-# ==============================================================================
-# Diagnosis Prediction Head
-# ==============================================================================
 class DiagnosisHead(nn.Module):
     """
     Prediction head for rare disease diagnosis.
@@ -278,9 +270,6 @@ class DiagnosisHead(nn.Module):
         return mean_scores, uncertainty
 
 
-# ==============================================================================
-# Link Prediction Head
-# ==============================================================================
 class LinkPredictionHead(nn.Module):
     """
     Head for link prediction in the knowledge graph.
@@ -391,9 +380,6 @@ class LinkPredictionHead(nn.Module):
         return loss
 
 
-# ==============================================================================
-# Node Classification Head
-# ==============================================================================
 class NodeClassificationHead(nn.Module):
     """
     Head for node classification tasks.
@@ -473,9 +459,6 @@ class NodeClassificationHead(nn.Module):
             return F.cross_entropy(logits, targets, weight=class_weights)
 
 
-# ==============================================================================
-# Explanation Head (for interpretability)
-# ==============================================================================
 class ExplanationHead(nn.Module):
     """
     Generates explanations for disease predictions.

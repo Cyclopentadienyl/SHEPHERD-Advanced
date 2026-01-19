@@ -33,18 +33,20 @@ from src.models.encoders import (
     PositionalEncoder,
     HeteroFeatureEncoder,
 )
-from src.models.layers import (
-    HeteroGNNLayer,
-    OrthologGate,
-    FlexHeteroAttention,
-)
 from src.models.gnn import (
     ShepherdGNN,
     ShepherdGNNConfig,
     PhenotypeDiseaseMatcher,
     create_model,
 )
-from src.models.heads import (
+from src.models.gnn.layers import (
+    HeteroGNNLayer,
+    OrthologGate,
+)
+from src.models.attention import (
+    FlexHeteroAttention,
+)
+from src.models.decoders import (
     DiagnosisHead,
     LinkPredictionHead,
     NodeClassificationHead,

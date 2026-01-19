@@ -8,6 +8,23 @@
 #   - External: torch (>=2.9), torch_geometric (>=2.7), pyg-lib
 #   - Internal: src.core.types, src.core.schema
 #
+# Structure:
+#   src/models/
+#   ├── __init__.py          # This file - unified exports
+#   ├── encoders/            # Feature and type encoders
+#   │   ├── type_encoder.py
+#   │   ├── position_encoder.py
+#   │   └── feature_encoder.py
+#   ├── gnn/                 # GNN layers and main model
+#   │   ├── layers.py
+#   │   └── shepherd_gnn.py
+#   ├── attention/           # Attention mechanisms
+#   │   ├── adaptive_backend.py
+#   │   └── flex_attention.py
+#   ├── decoders/            # Prediction heads
+#   │   └── heads.py
+#   └── tasks/               # Task-specific modules (placeholder)
+#
 # Exports:
 #   - ShepherdGNN: Main heterogeneous GNN model
 #   - NodeTypeEncoder: Node type embedding module
@@ -42,23 +59,31 @@
 def __getattr__(name):
     """Lazy import to avoid ImportError when torch is not installed"""
     _public_api = {
-        # Main model
+        # === GNN (Main model) ===
         "ShepherdGNN": ("src.models.gnn", "ShepherdGNN"),
+        "ShepherdGNNConfig": ("src.models.gnn", "ShepherdGNNConfig"),
+        "PhenotypeDiseaseMatcher": ("src.models.gnn", "PhenotypeDiseaseMatcher"),
         "create_model": ("src.models.gnn", "create_model"),
-        # Encoders
+        # === GNN Layers ===
+        "HeteroGNNLayer": ("src.models.gnn.layers", "HeteroGNNLayer"),
+        "OrthologGate": ("src.models.gnn.layers", "OrthologGate"),
+        # === Encoders ===
         "NodeTypeEncoder": ("src.models.encoders", "NodeTypeEncoder"),
         "EdgeTypeEncoder": ("src.models.encoders", "EdgeTypeEncoder"),
         "PositionalEncoder": ("src.models.encoders", "PositionalEncoder"),
         "LaplacianPE": ("src.models.encoders", "LaplacianPE"),
         "RandomWalkSE": ("src.models.encoders", "RandomWalkSE"),
-        # Layers
-        "HeteroGNNLayer": ("src.models.layers", "HeteroGNNLayer"),
-        "OrthologGate": ("src.models.layers", "OrthologGate"),
-        "FlexHeteroAttention": ("src.models.layers", "FlexHeteroAttention"),
-        # Heads
-        "DiagnosisHead": ("src.models.heads", "DiagnosisHead"),
-        "LinkPredictionHead": ("src.models.heads", "LinkPredictionHead"),
-        "NodeClassificationHead": ("src.models.heads", "NodeClassificationHead"),
+        "HeteroFeatureEncoder": ("src.models.encoders", "HeteroFeatureEncoder"),
+        # === Attention ===
+        "AdaptiveAttentionBackend": ("src.models.attention", "AdaptiveAttentionBackend"),
+        "FlexHeteroAttention": ("src.models.attention", "FlexHeteroAttention"),
+        "create_ontology_score_mod": ("src.models.attention", "create_ontology_score_mod"),
+        "create_species_score_mod": ("src.models.attention", "create_species_score_mod"),
+        # === Decoders/Heads ===
+        "DiagnosisHead": ("src.models.decoders", "DiagnosisHead"),
+        "LinkPredictionHead": ("src.models.decoders", "LinkPredictionHead"),
+        "NodeClassificationHead": ("src.models.decoders", "NodeClassificationHead"),
+        "ExplanationHead": ("src.models.decoders", "ExplanationHead"),
     }
 
     if name in _public_api:
@@ -75,22 +100,31 @@ def __getattr__(name):
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 __all__ = [
-    # Main model
+    # === Main model ===
     "ShepherdGNN",
+    "ShepherdGNNConfig",
+    "PhenotypeDiseaseMatcher",
     "create_model",
-    # Encoders
+    # === GNN Layers ===
+    "HeteroGNNLayer",
+    "OrthologGate",
+    # === Encoders ===
     "NodeTypeEncoder",
     "EdgeTypeEncoder",
     "PositionalEncoder",
     "LaplacianPE",
     "RandomWalkSE",
-    # Layers
-    "HeteroGNNLayer",
-    "OrthologGate",
+    "HeteroFeatureEncoder",
+    # === Attention ===
+    "AdaptiveAttentionBackend",
     "FlexHeteroAttention",
-    # Heads
+    "create_ontology_score_mod",
+    "create_species_score_mod",
+    # === Decoders/Heads ===
     "DiagnosisHead",
     "LinkPredictionHead",
     "NodeClassificationHead",
+    "ExplanationHead",
 ]

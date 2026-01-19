@@ -1,36 +1,29 @@
 """
 # ==============================================================================
-# Module: src/models/encoders.py
+# Module: src/models/encoders/position_encoder.py
 # ==============================================================================
-# Purpose: Feature encoders for heterogeneous graph nodes and edges
+# Purpose: Positional and structural encodings for graph nodes
 #
 # Dependencies:
-#   - External: torch (>=2.9), torch_geometric (>=2.7), scipy
+#   - External: torch (>=2.9), scipy
 #   - Internal: None
 #
-# Input:
-#   - Node features: Raw features or one-hot type indices
-#   - Graph structure: edge_index for positional encoding computation
-#
-# Output:
-#   - Encoded node representations: (num_nodes, hidden_dim)
-#   - Type embeddings: (num_nodes, hidden_dim)
-#   - Positional encodings: (num_nodes, pe_dim)
-#
-# Design Notes:
-#   - All encoders are torch.compile() compatible
-#   - Positional encodings computed once, cached for reuse
-#   - Supports both dense and sparse computation modes
+# Exports:
+#   - LaplacianPE: Laplacian Positional Encoding
+#   - RandomWalkSE: Random Walk Structural Encoding
+#   - PositionalEncoder: Combined positional encoder
 #
 # References:
 #   - GraphGPS (NeurIPS'22): Laplacian PE, Random Walk SE
-#   - HGT (WWW'20): Type-specific projection
+#
+# Design Notes:
+#   - torch.compile() compatible (PE computed in preprocessing)
+#   - Supports sign invariance for Laplacian PE
 # ==============================================================================
 """
 from __future__ import annotations
 
-import math
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -38,129 +31,6 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-# ==============================================================================
-# Node/Edge Type Encoders
-# ==============================================================================
-class NodeTypeEncoder(nn.Module):
-    """
-    Encodes node types into learnable embeddings.
-
-    Supports both:
-    1. Type-only encoding (no input features)
-    2. Type + feature fusion (concatenate or add)
-
-    torch.compile() compatible.
-    """
-
-    def __init__(
-        self,
-        num_types: int,
-        hidden_dim: int,
-        fusion_mode: str = "add",  # "add", "concat", "gate"
-    ):
-        """
-        Args:
-            num_types: Number of distinct node types
-            hidden_dim: Output embedding dimension
-            fusion_mode: How to combine type embedding with features
-        """
-        super().__init__()
-        self.num_types = num_types
-        self.hidden_dim = hidden_dim
-        self.fusion_mode = fusion_mode
-
-        # Learnable type embeddings
-        self.type_embedding = nn.Embedding(num_types, hidden_dim)
-
-        # For gated fusion
-        if fusion_mode == "gate":
-            self.gate = nn.Sequential(
-                nn.Linear(hidden_dim * 2, hidden_dim),
-                nn.Sigmoid(),
-            )
-
-        self._init_weights()
-
-    def _init_weights(self):
-        """Initialize embeddings with small values"""
-        nn.init.normal_(self.type_embedding.weight, std=0.02)
-
-    def forward(
-        self,
-        type_indices: Tensor,
-        features: Optional[Tensor] = None,
-    ) -> Tensor:
-        """
-        Args:
-            type_indices: (num_nodes,) node type indices
-            features: Optional (num_nodes, hidden_dim) input features
-
-        Returns:
-            (num_nodes, hidden_dim) encoded representations
-        """
-        type_emb = self.type_embedding(type_indices)
-
-        if features is None:
-            return type_emb
-
-        if self.fusion_mode == "add":
-            return features + type_emb
-        elif self.fusion_mode == "concat":
-            # Caller should handle dimension change
-            return torch.cat([features, type_emb], dim=-1)
-        elif self.fusion_mode == "gate":
-            combined = torch.cat([features, type_emb], dim=-1)
-            gate_value = self.gate(combined)
-            return gate_value * features + (1 - gate_value) * type_emb
-        else:
-            raise ValueError(f"Unknown fusion mode: {self.fusion_mode}")
-
-
-class EdgeTypeEncoder(nn.Module):
-    """
-    Encodes edge types into learnable embeddings.
-
-    Used for:
-    1. Edge-type-specific message passing weights
-    2. Attention score modification based on relation type
-
-    torch.compile() compatible.
-    """
-
-    def __init__(
-        self,
-        num_types: int,
-        hidden_dim: int,
-    ):
-        """
-        Args:
-            num_types: Number of distinct edge/relation types
-            hidden_dim: Output embedding dimension
-        """
-        super().__init__()
-        self.num_types = num_types
-        self.hidden_dim = hidden_dim
-
-        self.type_embedding = nn.Embedding(num_types, hidden_dim)
-        self._init_weights()
-
-    def _init_weights(self):
-        nn.init.normal_(self.type_embedding.weight, std=0.02)
-
-    def forward(self, type_indices: Tensor) -> Tensor:
-        """
-        Args:
-            type_indices: (num_edges,) edge type indices
-
-        Returns:
-            (num_edges, hidden_dim) edge type embeddings
-        """
-        return self.type_embedding(type_indices)
-
-
-# ==============================================================================
-# Positional Encoders (GraphGPS-style)
-# ==============================================================================
 class LaplacianPE(nn.Module):
     """
     Laplacian Positional Encoding (LapPE).
@@ -382,9 +252,6 @@ class RandomWalkSE(nn.Module):
         return rwse
 
 
-# ==============================================================================
-# Combined Positional Encoder
-# ==============================================================================
 class PositionalEncoder(nn.Module):
     """
     Combined positional/structural encoder.
@@ -477,67 +344,3 @@ class PositionalEncoder(nn.Module):
             return sum(encodings)
         else:  # concat
             return self.projection(torch.cat(encodings, dim=-1))
-
-
-# ==============================================================================
-# Feature Projection for Heterogeneous Nodes
-# ==============================================================================
-class HeteroFeatureEncoder(nn.Module):
-    """
-    Projects heterogeneous node features to unified hidden space.
-
-    Each node type can have different input feature dimensions,
-    but all are projected to the same hidden_dim for message passing.
-
-    torch.compile() compatible via dict-based operations.
-    """
-
-    def __init__(
-        self,
-        in_channels_dict: Dict[str, int],
-        hidden_dim: int,
-        use_type_embedding: bool = True,
-    ):
-        """
-        Args:
-            in_channels_dict: {node_type: input_dim} for each type
-            hidden_dim: Unified output dimension
-            use_type_embedding: Whether to add type embedding
-        """
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.use_type_embedding = use_type_embedding
-
-        # Type-specific projections
-        self.projections = nn.ModuleDict({
-            node_type: nn.Linear(in_dim, hidden_dim)
-            for node_type, in_dim in in_channels_dict.items()
-        })
-
-        # Type embeddings
-        if use_type_embedding:
-            self.type_embeddings = nn.ParameterDict({
-                node_type: nn.Parameter(torch.randn(hidden_dim) * 0.02)
-                for node_type in in_channels_dict.keys()
-            })
-
-    def forward(self, x_dict: Dict[str, Tensor]) -> Dict[str, Tensor]:
-        """
-        Args:
-            x_dict: {node_type: (num_nodes, in_dim)} input features
-
-        Returns:
-            {node_type: (num_nodes, hidden_dim)} projected features
-        """
-        out_dict = {}
-
-        for node_type, x in x_dict.items():
-            if node_type in self.projections:
-                h = self.projections[node_type](x)
-
-                if self.use_type_embedding and node_type in self.type_embeddings:
-                    h = h + self.type_embeddings[node_type]
-
-                out_dict[node_type] = h
-
-        return out_dict

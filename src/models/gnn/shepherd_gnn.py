@@ -1,46 +1,30 @@
 """
 # ==============================================================================
-# Module: src/models/gnn.py
+# Module: src/models/gnn/shepherd_gnn.py
 # ==============================================================================
 # Purpose: ShepherdGNN - Main heterogeneous GNN model for rare disease diagnosis
 #
 # Dependencies:
 #   - External: torch (>=2.9), torch_geometric (>=2.7)
-#   - Internal: src.models.encoders, src.models.layers
+#   - Internal: src.models.encoders, src.models.gnn.layers
 #
-# Input:
-#   - HeteroData with node features and edge indices
-#   - Patient phenotypes (HPO terms)
-#
-# Output:
-#   - Disease ranking scores
-#   - Node embeddings for downstream tasks
-#   - Interpretability information (attention weights, ortholog contribution)
+# Exports:
+#   - ShepherdGNNConfig: Model configuration dataclass
+#   - ShepherdGNN: Main heterogeneous GNN model
+#   - PhenotypeDiseaseMatcher: Phenotype to disease matching
+#   - create_model: Factory function
 #
 # Design Principles:
 #   - Flexible input: works with/without ortholog data
 #   - torch.compile() compatible (dynamic=True for variable graphs)
 #   - Mixed precision (bfloat16) ready
 #   - Interpretable: attention weights and gate values accessible
-#
-# Architecture:
-#   1. HeteroFeatureEncoder: Project heterogeneous features to unified space
-#   2. PositionalEncoder: Add structural/positional information
-#   3. HeteroGNNLayer stack: Message passing across heterogeneous graph
-#   4. OrthologGate: Gated cross-species information integration
-#   5. DiagnosisHead: Final disease ranking
-#
-# Usage:
-#   model = ShepherdGNN(metadata, hidden_dim=256)
-#   model = torch.compile(model, dynamic=True)
-#   out = model(data.x_dict, data.edge_index_dict)
 # ==============================================================================
 """
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -52,11 +36,7 @@ from src.models.encoders import (
     NodeTypeEncoder,
     PositionalEncoder,
 )
-from src.models.layers import (
-    HeteroGNNLayer,
-    OrthologGate,
-    FlexHeteroAttention,
-)
+from src.models.gnn.layers import HeteroGNNLayer, OrthologGate
 
 # Type aliases
 NodeType = str
@@ -64,9 +44,6 @@ EdgeType = Tuple[str, str, str]
 Metadata = Tuple[List[NodeType], List[EdgeType]]
 
 
-# ==============================================================================
-# Model Configuration
-# ==============================================================================
 @dataclass
 class ShepherdGNNConfig:
     """Configuration for ShepherdGNN model."""
@@ -99,9 +76,6 @@ class ShepherdGNNConfig:
     pooling: str = "mean"  # "mean", "max", "attention"
 
 
-# ==============================================================================
-# ShepherdGNN Model
-# ==============================================================================
 class ShepherdGNN(nn.Module):
     """
     Heterogeneous Graph Neural Network for rare disease diagnosis.
@@ -337,9 +311,6 @@ class ShepherdGNN(nn.Module):
         return self._layer_outputs
 
 
-# ==============================================================================
-# Phenotype-to-Disease Matcher
-# ==============================================================================
 class PhenotypeDiseaseMatcher(nn.Module):
     """
     Matches patient phenotypes to candidate diseases.
@@ -493,9 +464,6 @@ class PhenotypeDiseaseMatcher(nn.Module):
             return self.match_mlp(combined).squeeze(-1)
 
 
-# ==============================================================================
-# Factory Function
-# ==============================================================================
 def create_model(
     metadata: Metadata,
     hidden_dim: int = 256,
