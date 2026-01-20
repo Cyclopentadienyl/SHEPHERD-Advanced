@@ -488,6 +488,73 @@ class KnowledgeGraph:
             for e in self._edges
         ]
 
+    def metadata(self) -> Tuple[List[str], List[Tuple[str, str, str]]]:
+        """
+        Get graph metadata for PyG models.
+
+        Returns:
+            (node_types, edge_types) where:
+            - node_types: List of node type strings
+            - edge_types: List of (src_type, rel_type, dst_type) tuples
+
+        Usage:
+            metadata = kg.metadata()
+            model = ShepherdGNN(metadata=metadata, ...)
+        """
+        # Collect node types that have nodes
+        node_types = [nt.value for nt in self._nodes_by_type.keys() if self._nodes_by_type[nt]]
+
+        # Collect edge types that have edges
+        edge_types = []
+        seen_edge_types = set()
+
+        for edge in self._edges:
+            source_node = self._nodes.get(str(edge.source_id))
+            target_node = self._nodes.get(str(edge.target_id))
+
+            if source_node is None or target_node is None:
+                continue
+
+            key = (
+                source_node.node_type.value,
+                edge.edge_type.value,
+                target_node.node_type.value,
+            )
+
+            if key not in seen_edge_types:
+                seen_edge_types.add(key)
+                edge_types.append(key)
+
+        return node_types, edge_types
+
+    def get_node_id_mapping(self) -> Dict[str, Dict[str, int]]:
+        """
+        Get node ID to index mapping for each node type.
+
+        Returns:
+            {node_type: {node_id_str: int_idx}}
+
+        Useful for:
+        - Looking up node indices in PyG HeteroData
+        - Mapping inference results back to original IDs
+        """
+        return {
+            nt.value: dict(mapping)
+            for nt, mapping in self._node_id_to_idx.items()
+        }
+
+    def get_reverse_node_mapping(self) -> Dict[str, Dict[int, str]]:
+        """
+        Get index to node ID mapping for each node type.
+
+        Returns:
+            {node_type: {int_idx: node_id_str}}
+        """
+        return {
+            nt.value: {idx: nid for nid, idx in mapping.items()}
+            for nt, mapping in self._node_id_to_idx.items()
+        }
+
     # ==========================================================================
     # Statistics
     # ==========================================================================
