@@ -21,7 +21,12 @@ from src.reasoning import (
     ReasoningPath,
     DirectPathFinder,
     create_path_reasoner,
+    ExplanationGenerator,
+    EvidenceSummary,
+    EvidenceItem,
+    create_explanation_generator,
 )
+from src.core.types import DiagnosisCandidate, PatientPhenotypes
 
 
 # =============================================================================
@@ -354,3 +359,170 @@ class TestFactoryFunction:
         config = PathReasoningConfig(max_path_length=5)
         reasoner = create_path_reasoner(config=config)
         assert reasoner.config.max_path_length == 5
+
+
+# =============================================================================
+# Test ExplanationGenerator
+# =============================================================================
+class TestExplanationGenerator:
+    """Test ExplanationGenerator"""
+
+    @pytest.fixture
+    def patient_phenos(self):
+        """Create PatientPhenotypes for testing"""
+        return PatientPhenotypes(
+            patient_id="test_patient_001",
+            phenotypes=["HP:0001", "HP:0002"],
+        )
+
+    @pytest.fixture
+    def diagnosis_candidate(self):
+        """Create a DiagnosisCandidate for testing"""
+        return DiagnosisCandidate(
+            rank=1,
+            disease_id=make_node_id(DataSource.MONDO, "MONDO:001"),
+            disease_name="Disease A",
+            confidence_score=0.85,
+            gnn_score=0.8,
+            reasoning_score=0.9,
+        )
+
+    def test_create_generator(self):
+        """Test creating explanation generator"""
+        generator = ExplanationGenerator()
+        assert generator is not None
+        assert generator.include_ortholog_evidence is True
+
+    def test_create_generator_no_ortholog(self):
+        """Test creating generator without ortholog evidence"""
+        generator = ExplanationGenerator(include_ortholog_evidence=False)
+        assert generator.include_ortholog_evidence is False
+
+    def test_generate_explanation(
+        self, simple_kg, diagnosis_candidate, patient_phenos
+    ):
+        """Test generating explanation"""
+        generator = ExplanationGenerator()
+
+        # Convert string HPO IDs to NodeIDs for path finding
+        source_ids = [
+            make_node_id(DataSource.HPO, hpo_id)
+            for hpo_id in patient_phenos.phenotypes
+        ]
+
+        # Get paths for explanation
+        reasoner = PathReasoner()
+        paths = reasoner.find_paths(
+            source_ids=source_ids,
+            target_type=NodeType.DISEASE,
+            kg=simple_kg,
+        )
+        scored_paths = reasoner.score_paths(paths, simple_kg)
+
+        # Filter paths to this disease
+        disease_paths = [
+            p for p in scored_paths
+            if str(p.target) == str(diagnosis_candidate.disease_id)
+        ]
+
+        explanation = generator.generate_explanation(
+            candidate=diagnosis_candidate,
+            phenotypes=patient_phenos,
+            kg=simple_kg,
+            paths=disease_paths,
+        )
+
+        # Should produce explanation text
+        assert isinstance(explanation, str)
+        assert len(explanation) > 0
+        assert "Disease A" in explanation or "MONDO:001" in explanation
+
+    def test_generate_evidence_summary(
+        self, simple_kg, diagnosis_candidate, patient_phenos
+    ):
+        """Test generating evidence summary"""
+        generator = ExplanationGenerator()
+
+        # Convert string HPO IDs to NodeIDs for path finding
+        source_ids = [
+            make_node_id(DataSource.HPO, hpo_id)
+            for hpo_id in patient_phenos.phenotypes
+        ]
+
+        # Get paths
+        reasoner = PathReasoner()
+        paths = reasoner.find_paths(
+            source_ids=source_ids,
+            target_type=NodeType.DISEASE,
+            kg=simple_kg,
+        )
+        scored_paths = reasoner.score_paths(paths, simple_kg)
+
+        disease_paths = [
+            p for p in scored_paths
+            if str(p.target) == str(diagnosis_candidate.disease_id)
+        ]
+
+        summary = generator.generate_evidence_summary(
+            candidate=diagnosis_candidate,
+            kg=simple_kg,
+            paths=disease_paths,
+            phenotypes=patient_phenos,
+        )
+
+        # Check summary structure
+        assert isinstance(summary, EvidenceSummary)
+        assert summary.disease_name is not None
+        assert summary.total_score == diagnosis_candidate.confidence_score
+        assert summary.confidence_level in ["high", "medium", "low"]
+
+    def test_evidence_summary_to_dict(
+        self, simple_kg, diagnosis_candidate, patient_phenos
+    ):
+        """Test evidence summary serialization"""
+        generator = ExplanationGenerator()
+
+        summary = generator.generate_evidence_summary(
+            candidate=diagnosis_candidate,
+            kg=simple_kg,
+            phenotypes=patient_phenos,
+        )
+
+        summary_dict = summary.to_dict()
+
+        assert "disease_id" in summary_dict
+        assert "disease_name" in summary_dict
+        assert "total_score" in summary_dict
+        assert "evidence" in summary_dict
+
+    def test_confidence_levels(self):
+        """Test confidence level determination"""
+        generator = ExplanationGenerator()
+
+        # High confidence
+        assert generator._get_confidence_level(0.8) == "high"
+        # Medium confidence
+        assert generator._get_confidence_level(0.5) == "medium"
+        # Low confidence
+        assert generator._get_confidence_level(0.2) == "low"
+
+
+# =============================================================================
+# Test Explanation Factory Function
+# =============================================================================
+class TestExplanationFactoryFunction:
+    """Test explanation generator factory"""
+
+    def test_create_explanation_generator(self):
+        """Test factory function"""
+        generator = create_explanation_generator()
+        assert isinstance(generator, ExplanationGenerator)
+
+    def test_create_with_options(self):
+        """Test factory with options"""
+        generator = create_explanation_generator(
+            include_ortholog_evidence=False,
+            include_literature_evidence=False,
+        )
+        assert generator.include_ortholog_evidence is False
+        assert generator.include_literature_evidence is False
