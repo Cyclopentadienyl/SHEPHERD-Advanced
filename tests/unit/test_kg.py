@@ -466,3 +466,128 @@ class TestBuilderOntologyIntegration:
         # No IS_A edges should be added
         is_a_edges = builder.graph.get_edges(edge_type=EdgeType.IS_A)
         assert len(is_a_edges) == 0
+
+
+# =============================================================================
+# Test KnowledgeGraph Metadata
+# =============================================================================
+class TestKnowledgeGraphMetadata:
+    """Test metadata methods for PyG integration"""
+
+    def test_metadata_basic(self, graph):
+        """Test basic metadata extraction"""
+        node_types, edge_types = graph.metadata()
+
+        # Should have node types
+        assert len(node_types) > 0
+        assert "phenotype" in node_types
+        assert "disease" in node_types
+        assert "gene" in node_types
+
+        # Should have edge types as tuples
+        assert len(edge_types) > 0
+        assert all(isinstance(et, tuple) and len(et) == 3 for et in edge_types)
+
+    def test_metadata_edge_type_format(self, graph):
+        """Test edge type format is correct for PyG"""
+        _, edge_types = graph.metadata()
+
+        # Each edge type should be (src_type, rel_type, dst_type)
+        for src, rel, dst in edge_types:
+            assert isinstance(src, str)
+            assert isinstance(rel, str)
+            assert isinstance(dst, str)
+
+    def test_get_node_id_mapping(self, graph):
+        """Test node ID to index mapping"""
+        mapping = graph.get_node_id_mapping()
+
+        assert "phenotype" in mapping
+        assert "disease" in mapping
+        assert "gene" in mapping
+
+        # Indices should start from 0 and be continuous
+        for node_type, type_mapping in mapping.items():
+            indices = list(type_mapping.values())
+            if indices:
+                assert min(indices) == 0
+                assert max(indices) == len(indices) - 1
+
+    def test_get_reverse_node_mapping(self, graph):
+        """Test index to node ID mapping"""
+        forward = graph.get_node_id_mapping()
+        reverse = graph.get_reverse_node_mapping()
+
+        # Should be inverse of each other
+        for node_type in forward:
+            for node_id, idx in forward[node_type].items():
+                assert reverse[node_type][idx] == node_id
+
+
+# =============================================================================
+# Test Preprocessing Functions
+# =============================================================================
+class TestPreprocessing:
+    """Test preprocessing functions for GNN input"""
+
+    def test_compute_laplacian_pe(self):
+        """Test Laplacian positional encoding computation"""
+        import numpy as np
+        from src.kg.preprocessing import compute_laplacian_pe
+
+        # Simple graph: 0-1-2-3 (path)
+        edge_index = np.array([
+            [0, 1, 1, 2, 2, 3],
+            [1, 0, 2, 1, 3, 2]
+        ])
+        num_nodes = 4
+        pe_dim = 2
+
+        pe = compute_laplacian_pe(edge_index, num_nodes, pe_dim)
+
+        assert pe.shape == (4, 2)
+        assert pe.dtype == np.float32
+
+    def test_compute_laplacian_pe_empty(self):
+        """Test Laplacian PE with empty graph"""
+        import numpy as np
+        from src.kg.preprocessing import compute_laplacian_pe
+
+        pe = compute_laplacian_pe(np.zeros((2, 0), dtype=np.int64), 0, 16)
+        assert pe.shape == (0, 16)
+
+    def test_compute_rwse(self):
+        """Test random walk structural encoding"""
+        import numpy as np
+        from src.kg.preprocessing import compute_rwse
+
+        # Simple graph
+        edge_index = np.array([
+            [0, 1, 1, 2],
+            [1, 0, 2, 1]
+        ])
+        num_nodes = 3
+        walk_length = 5
+
+        rwse = compute_rwse(edge_index, num_nodes, walk_length)
+
+        assert rwse.shape == (3, 5)
+        assert rwse.dtype == np.float32
+
+    def test_compute_degree_features(self):
+        """Test degree feature computation"""
+        import numpy as np
+        from src.kg.preprocessing import compute_degree_features
+
+        # Graph with varying degrees
+        edge_index = np.array([
+            [0, 0, 0, 1, 2],
+            [1, 2, 3, 0, 0]
+        ])
+        num_nodes = 4
+
+        degree = compute_degree_features(edge_index, num_nodes)
+
+        assert degree.shape == (4,)
+        # Node 0 has degree 4 (connected to 1, 2, 3 and back from 1, 2)
+        assert degree[0] >= 3
