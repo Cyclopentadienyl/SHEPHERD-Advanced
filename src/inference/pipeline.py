@@ -36,7 +36,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from src.core.types import (
     DataSource,
@@ -64,6 +64,21 @@ logger = logging.getLogger(__name__)
 
 
 # ==============================================================================
+# Type Aliases for Callbacks
+# ==============================================================================
+# Callback for custom scoring: (candidate, paths, kg) -> modified_score
+ScoringCallback = Callable[
+    ["DiagnosisCandidate", List[ReasoningPath], "KnowledgeGraph"],
+    float
+]
+# Callback for post-processing candidates
+PostProcessCallback = Callable[
+    [List["DiagnosisCandidate"], PatientPhenotypes],
+    List["DiagnosisCandidate"]
+]
+
+
+# ==============================================================================
 # Configuration
 # ==============================================================================
 @dataclass
@@ -78,6 +93,7 @@ class PipelineConfig:
     # Scoring weights
     reasoning_weight: float = 0.5
     gnn_weight: float = 0.5
+    ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
 
     # Output control
     include_explanations: bool = True
@@ -92,6 +108,17 @@ class PipelineConfig:
 
     # Performance
     use_direct_path_optimization: bool = True
+
+    # P1 Ortholog Configuration
+    ortholog_species: List[str] = field(
+        default_factory=lambda: ["mouse", "zebrafish", "rat"]
+    )
+    min_ortholog_confidence: float = 0.5
+
+    # Extensibility: Custom scoring callbacks (P1-ready)
+    # These will be called during scoring phase
+    custom_scorers: List[ScoringCallback] = field(default_factory=list)
+    post_process_callbacks: List[PostProcessCallback] = field(default_factory=list)
 
 
 # ==============================================================================
