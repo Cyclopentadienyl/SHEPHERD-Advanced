@@ -1,15 +1,58 @@
 """
 SHEPHERD-Advanced Training Callbacks
 =====================================
-訓練回調函數，用於監控和控制訓練過程
+Callback system for training monitoring, checkpointing, and control flow.
 
-包含:
-- EarlyStopping: 早停機制
-- ModelCheckpoint: 模型檢查點
-- LearningRateScheduler: 學習率調度
-- MetricsLogger: 指標記錄
+Module: src/training/callbacks.py
+Absolute Path: /home/user/SHEPHERD-Advanced/src/training/callbacks.py
 
-版本: 1.0.0
+Purpose:
+    Provide extensible callback hooks for the training loop, enabling:
+    - Early stopping based on validation metrics
+    - Model checkpoint saving with top-k retention
+    - Learning rate monitoring and logging
+    - Training metrics logging to file and console
+    - Gradient norm tracking
+
+Components:
+    - Callback: Abstract base class defining hook interface
+    - CallbackList: Manager for multiple callbacks
+    - EarlyStopping: Stop training when metric plateaus
+    - ModelCheckpoint: Save best/last model weights
+    - LearningRateMonitor: Track LR changes across epochs
+    - MetricsLogger: Log metrics to JSON and console
+    - ProgressBar: tqdm-based progress display
+    - GradientClipping: Monitor gradient norms
+
+Dependencies:
+    - torch: Model state_dict, tensor operations
+    - torch.nn: Module type hints
+    - json: Metrics file serialization
+    - logging: Console output
+    - pathlib: Checkpoint path handling
+    - datetime: Timestamp generation
+    - abc: Abstract base class
+    - tqdm (optional): Progress bar display
+
+Input (Callback hooks):
+    - trainer: Trainer instance with model, optimizer, scheduler attributes
+    - epoch: Current epoch number
+    - batch_idx: Current batch index
+    - logs: Dict[str, float] - Current metrics
+
+Output:
+    - Side effects: File I/O (checkpoints, logs), training state modification
+    - CallbackList.should_stop() -> bool: Early stopping signal
+
+Called by:
+    - src/training/trainer.py (training loop hooks)
+
+Note:
+    Callbacks use forward references ("Trainer") for type hints since the
+    Trainer class imports this module. At runtime, any object with model,
+    optimizer, scheduler, and config attributes will work.
+
+Version: 1.0.0
 """
 from __future__ import annotations
 

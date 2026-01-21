@@ -1,15 +1,56 @@
 """
 SHEPHERD-Advanced Knowledge Graph Data Loader
 =============================================
-資料載入器，支援子圖採樣以處理 VRAM 限制
+Mini-batch data loading with subgraph sampling for GNN training under VRAM constraints.
 
-包含:
-- SubgraphSampler: 子圖採樣器
-- DiagnosisDataset: 診斷任務資料集
-- DiagnosisDataLoader: 批次載入器
-- NegativeSampler: 負樣本採樣
+Module: src/kg/data_loader.py
+Absolute Path: /home/user/SHEPHERD-Advanced/src/kg/data_loader.py
 
-版本: 1.0.0
+Purpose:
+    Provide efficient data loading for heterogeneous GNN training on large-scale
+    knowledge graphs. Implements subgraph sampling to enable training within
+    16GB VRAM limit (Windows constraint).
+
+Components:
+    - DataLoaderConfig: Configuration for batch size, sampling, workers
+    - SubgraphSampler: Mini-batch subgraph extraction (neighbor/random_walk/khop)
+    - NegativeSampler: Negative sample generation for contrastive learning
+    - DiagnosisSample: Single patient-disease training sample
+    - DiagnosisDataset: PyTorch Dataset for diagnosis task
+    - DiagnosisDataLoader: Iterator yielding batches with subgraphs
+
+Dependencies:
+    - torch: Tensor operations and DataLoader
+    - torch.nn.functional: Padding operations
+    - numpy: Frequency-based sampling
+    - random: Uniform sampling
+    - collections.defaultdict: Adjacency list construction
+
+Input:
+    - samples: List[DiagnosisSample] - Training samples (patient phenotypes -> disease)
+    - graph_data: Dict containing:
+        - x_dict: {node_type: Tensor} - Node features
+        - edge_index_dict: {(src, rel, dst): Tensor} - Edge indices
+        - num_nodes_dict: {node_type: int} - Node counts
+    - config: DataLoaderConfig - Sampling and batching parameters
+
+Output:
+    - Iterator[Dict] yielding per batch:
+        - batch: Collated sample data (phenotype_ids, disease_ids, masks)
+        - subgraph_x_dict: Subgraph node features
+        - subgraph_edge_index_dict: Subgraph edges (remapped indices)
+        - node_mapping: Original -> subgraph index mapping
+
+Called by:
+    - src/training/trainer.py (training loop)
+    - scripts/train_model.py (data pipeline setup)
+
+Note:
+    This module handles TRAINING-TIME mini-batch sampling. For INFERENCE-TIME
+    subgraph extraction, see src/retrieval/subgraph_sampler.py which implements
+    the SubgraphSamplerProtocol from src/core/protocols.py.
+
+Version: 1.0.0
 """
 from __future__ import annotations
 

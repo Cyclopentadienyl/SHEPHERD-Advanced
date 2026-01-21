@@ -1,15 +1,51 @@
 """
 SHEPHERD-Advanced Loss Functions
 ================================
-多任務損失函數用於診斷模型訓練
+Multi-task loss functions for diagnosis model training.
 
-包含:
-- DiagnosisLoss: 疾病診斷排序損失
-- LinkPredictionLoss: 知識圖譜連結預測損失
-- ContrastiveLoss: 對比學習損失
-- MultiTaskLoss: 多任務損失組合
+Module: src/training/loss_functions.py
+Absolute Path: /home/user/SHEPHERD-Advanced/src/training/loss_functions.py
 
-版本: 1.0.0
+Purpose:
+    Define loss functions for the multi-task learning objective:
+    1. Disease diagnosis ranking (primary task)
+    2. Knowledge graph link prediction (auxiliary task)
+    3. Contrastive learning for discriminative embeddings
+    4. Ortholog consistency for cross-species knowledge transfer (P1 feature)
+
+Components:
+    - LossConfig: Hyperparameters for loss weights and margins
+    - DiagnosisLoss: Cross-entropy + margin ranking for disease prediction
+    - LinkPredictionLoss: DistMult-based KG embedding loss
+    - ContrastiveLoss: InfoNCE loss for phenotype-disease matching
+    - OrthologConsistencyLoss: Embedding alignment for ortholog gene pairs
+    - MultiTaskLoss: Weighted combination with uncertainty weighting option
+
+Dependencies:
+    - torch: Tensor operations
+    - torch.nn: Module base class, ParameterDict
+    - torch.nn.functional: Activation functions, cross_entropy, relu
+
+Input (MultiTaskLoss.forward):
+    - batch: Dict containing task-specific tensors:
+        - diagnosis_scores: (B, num_diseases) prediction logits
+        - diagnosis_targets: (B,) ground truth indices
+        - positive_triples: (B, 3) KG positive edges
+        - negative_triples: (B, num_neg, 3) KG negative edges
+        - patient_embeddings: (B, dim) aggregated phenotype embeddings
+        - disease_embeddings: (B, dim) disease node embeddings
+        - ortholog_pairs: (num_pairs, 2) human-mouse gene index pairs
+    - model_outputs: Dict containing:
+        - node_embeddings: {node_type: Tensor}
+        - relation_embeddings: (num_relations, dim)
+
+Output:
+    - Tuple[Tensor, Dict[str, float]]: (total_loss, {loss_name: value})
+
+Called by:
+    - src/training/trainer.py (training step)
+
+Version: 1.0.0
 """
 from __future__ import annotations
 

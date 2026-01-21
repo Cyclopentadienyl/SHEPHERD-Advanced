@@ -1,16 +1,43 @@
 """
 SHEPHERD-Advanced Evaluation Metrics
 ====================================
-用於疾病診斷模型的評估指標
+Evaluation metrics for disease diagnosis ranking and knowledge graph quality.
 
-包含:
-- Hits@k: 前 k 個候選中的命中率
-- MRR: Mean Reciprocal Rank
-- NDCG: Normalized Discounted Cumulative Gain
-- 本體約束違反率
-- 證據覆蓋率
+Module: src/utils/metrics.py
+Absolute Path: /home/user/SHEPHERD-Advanced/src/utils/metrics.py
 
-版本: 1.0.0
+Purpose:
+    Compute evaluation metrics for the diagnosis ranking task, including
+    standard IR metrics, medical-specific ontology constraints, and
+    evidence coverage assessment.
+
+Components:
+    - RankingMetrics: Hits@k, MRR, NDCG for candidate ranking
+    - OntologyViolationMetrics: Phenotype consistency, disease-gene consistency
+    - EvidenceCoverageMetrics: Path coverage and confidence statistics
+    - TrainingMetrics: Training history tracking and early stopping support
+    - LinkPredictionMetrics: KG embedding evaluation (MR, MRR, Hits@k)
+    - DiagnosisMetrics: Unified calculator combining all metrics
+
+Dependencies:
+    - numpy: Array operations and statistical computations
+    - typing: Type hints
+
+Input:
+    - predictions: Sequence[Sequence[str]] - Ranked candidate lists per sample
+    - ground_truths: Sequence[str] - Correct answers per sample
+    - ontology_ancestors: Dict[str, set] - Ontology hierarchy (optional)
+    - disease_gene_map: Dict[str, set] - Disease-gene associations (optional)
+
+Output:
+    - Dict[str, float]: Metric name to value mapping
+
+Called by:
+    - src/training/trainer.py (evaluation loop)
+    - scripts/train_model.py (validation metrics)
+    - src/inference/pipeline.py (result quality assessment)
+
+Version: 1.0.0
 """
 from __future__ import annotations
 
