@@ -702,6 +702,114 @@ class Trainer:
         return outputs
 
     # =========================================================================
+    # Evaluation (TrainerProtocol compliant)
+    # =========================================================================
+    def evaluate(
+        self,
+        test_dataloader: Optional[Iterator[Dict[str, Any]]] = None,
+    ) -> Dict[str, float]:
+        """
+        獨立評估方法，符合 TrainerProtocol
+
+        此方法可用於：
+        - 訓練後的最終評估
+        - 外部腳本調用進行模型評估
+        - API 層查詢模型性能
+
+        Args:
+            test_dataloader: 測試資料載入器。若為 None，使用 val_dataloader
+
+        Returns:
+            Dict[str, float]: 評估指標
+                - mrr: Mean Reciprocal Rank
+                - hits@1, hits@5, hits@10: Hits at K
+                - loss: 平均損失
+        """
+        dataloader = test_dataloader or self.val_dataloader
+
+        if dataloader is None:
+            logger.warning("No dataloader provided for evaluation")
+            return {}
+
+        self.model.eval()
+
+        all_predictions = []
+        all_ground_truths = []
+        total_loss = 0.0
+        num_batches = 0
+
+        with torch.no_grad():
+            for batch_data in dataloader:
+                # Move data to device
+                batch = self._move_to_device(batch_data["batch"])
+                subgraph_x = self._move_to_device(batch_data["subgraph_x_dict"])
+                subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
+
+                # Forward pass
+                with autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                    node_embeddings = self.model(subgraph_x, subgraph_edges)
+                    model_outputs = self._compute_model_outputs(
+                        node_embeddings, batch, subgraph_x, subgraph_edges
+                    )
+
+                    # Compute loss
+                    loss, _ = self.loss_fn(batch, model_outputs)
+
+                total_loss += loss.item()
+                num_batches += 1
+
+                # Collect predictions for metrics
+                if "diagnosis_scores" in model_outputs:
+                    scores = model_outputs["diagnosis_scores"]
+                    targets = batch.get("diagnosis_targets", batch.get("disease_ids"))
+
+                    # Get ranked predictions
+                    _, indices = scores.sort(dim=-1, descending=True)
+
+                    for i in range(scores.size(0)):
+                        pred_indices = indices[i].tolist()
+                        all_predictions.append([str(idx) for idx in pred_indices[:20]])
+                        all_ground_truths.append(str(targets[i].item()))
+
+        # Compute metrics
+        metrics = {"loss": total_loss / max(num_batches, 1)}
+
+        if all_predictions:
+            ranking_metrics = RankingMetrics().compute_all(
+                all_predictions, all_ground_truths
+            )
+            metrics.update(ranking_metrics)
+
+        logger.info(f"Evaluation metrics: {metrics}")
+        return metrics
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """
+        獲取模型資訊，供 API 層使用
+
+        Returns:
+            Dict with model version, training state, and metrics
+        """
+        return {
+            "model_class": self.model.__class__.__name__,
+            "num_parameters": sum(p.numel() for p in self.model.parameters()),
+            "trainable_parameters": sum(
+                p.numel() for p in self.model.parameters() if p.requires_grad
+            ),
+            "training_state": {
+                "epoch": self.state.epoch,
+                "global_step": self.state.global_step,
+                "best_metric": self.state.best_metric,
+                "best_epoch": self.state.best_epoch,
+            },
+            "config": {
+                "learning_rate": self.config.learning_rate,
+                "num_epochs": self.config.num_epochs,
+                "device": self.config.device,
+            },
+        }
+
+    # =========================================================================
     # Checkpoint Operations
     # =========================================================================
     def save_checkpoint(self, filepath: Union[str, Path]) -> None:
