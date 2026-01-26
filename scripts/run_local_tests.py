@@ -250,7 +250,7 @@ def test_input_validator() -> bool:
         "patient_id": "test",
         "phenotypes": ["HP:0001250", "HP:0002311"],
     })
-    assert result.is_valid, f"Valid input rejected: {result.errors}"
+    assert result.success, f"Valid input rejected: {result.error}"
 
     # Invalid HPO format
     result = validator.validate_patient_input_dict({
