@@ -14,11 +14,12 @@ Usage:
     python scripts/install_pytorch_pyg.py --check      # Check current installation
 
 Supported Platforms:
-    - Windows x86_64 (CUDA 12.1, 12.4)
-    - Linux x86_64 (CUDA 12.1, 12.4, 12.8)
-    - Linux ARM64 / DGX Spark (CUDA 13.0)
+    - Windows x86_64 (CUDA 11.8, 12.1, 12.4, 12.6, 12.8, 12.9)
+    - Linux x86_64 (CUDA 11.8, 12.1, 12.4, 12.6, 12.8, 12.9)
+    - Linux ARM64 / DGX Spark (CUDA 13.0 - pending official support)
 
-Version: 1.0.0
+Based on: https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+Version: 1.1.0
 """
 from __future__ import annotations
 
@@ -52,14 +53,20 @@ class InstallConfig:
     pyg_wheel_url: str
 
 
-# Known compatible versions
+# Known compatible versions (as of PyG official docs 2026-01)
+# Reference: https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
 TORCH_CUDA_MAP = {
     # CUDA version -> (torch_version, torch_cuda_suffix, pyg_wheel_suffix)
-    "12.1": ("2.5.1", "cu121", "cu121"),
-    "12.4": ("2.5.1", "cu124", "cu124"),
-    "12.8": ("2.5.1", "cu124", "cu124"),  # Use 12.4 wheels (forward compatible)
-    "13.0": ("2.5.1", "cu124", "cu124"),  # DGX Spark: Use 12.4 wheels
-    "cpu": ("2.5.1", "cpu", "cpu"),
+    "11.8": ("2.8.0", "cu118", "cu118"),
+    "12.1": ("2.8.0", "cu121", "cu121"),
+    "12.4": ("2.8.0", "cu124", "cu124"),
+    "12.6": ("2.8.0", "cu126", "cu126"),
+    "12.8": ("2.8.0", "cu128", "cu128"),
+    "12.9": ("2.8.0", "cu129", "cu129"),
+    # DGX Spark CUDA 13.0: Not yet officially supported by PyG
+    # Fallback to 12.9 wheels (may require source build for full compatibility)
+    "13.0": ("2.8.0", "cu129", "cu129"),
+    "cpu": ("2.8.0", "cpu", "cpu"),
 }
 
 # PyG wheel base URL
@@ -166,9 +173,11 @@ def get_install_config(cuda_version: Optional[str], force_cpu: bool = False) -> 
                     major_minor = k
                     break
             else:
-                # Fall back to latest
-                major_minor = "12.4"
+                # Fall back to latest supported
+                major_minor = "12.9"
                 print(f"Warning: CUDA {cuda_version} not explicitly supported, using {major_minor} wheels")
+                if cuda_version.startswith("13"):
+                    print("Note: CUDA 13.x is not yet officially supported by PyG. Using 12.9 wheels.")
         key = major_minor
 
     torch_ver, cuda_suffix, pyg_suffix = TORCH_CUDA_MAP[key]
@@ -211,7 +220,7 @@ def check_installation() -> Dict[str, Optional[str]]:
         result["torch_geometric"] = None
 
     # Check PyG extensions
-    for ext in ["torch_scatter", "torch_sparse", "torch_cluster"]:
+    for ext in ["pyg_lib", "torch_scatter", "torch_sparse", "torch_cluster"]:
         try:
             mod = __import__(ext)
             result[ext] = getattr(mod, "__version__", "installed")
@@ -236,11 +245,11 @@ def build_install_commands(config: InstallConfig, upgrade: bool = True) -> List[
     ]
     commands.append(torch_cmd)
 
-    # Install PyG extensions
+    # Install PyG extensions (pyg_lib is the new unified library)
     pyg_ext_cmd = [
         sys.executable, "-m", "pip", "install",
         *upgrade_flag,
-        "torch-scatter", "torch-sparse", "torch-cluster", "torch-spline-conv",
+        "pyg_lib", "torch_scatter", "torch_sparse", "torch_cluster", "torch_spline_conv",
         "-f", config.pyg_wheel_url,
     ]
     commands.append(pyg_ext_cmd)
@@ -307,7 +316,7 @@ def main():
     parser.add_argument(
         "--cuda",
         type=str,
-        help="CUDA version to target (e.g., 12.1, 12.4)",
+        help="CUDA version to target (e.g., 12.4, 12.8, 12.9)",
     )
     parser.add_argument(
         "--cpu",
