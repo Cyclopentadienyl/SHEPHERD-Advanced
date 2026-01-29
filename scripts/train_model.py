@@ -638,10 +638,20 @@ def generate_synthetic_data(
         dst = torch.randint(0, n_dst, (n_edges,))
         return torch.stack([src, dst])
 
+    # Forward edges
+    phenotype_gene_edges = random_edges(num_phenotypes, num_genes, 20000)
+    gene_disease_edges = random_edges(num_genes, num_diseases, 15000)
+    phenotype_disease_edges = random_edges(num_phenotypes, num_diseases, 10000)
+
     edge_index_dict = {
-        ("phenotype", "associated_with", "gene"): random_edges(num_phenotypes, num_genes, 20000),
-        ("gene", "causes", "disease"): random_edges(num_genes, num_diseases, 15000),
-        ("phenotype", "observed_in", "disease"): random_edges(num_phenotypes, num_diseases, 10000),
+        # Forward edges
+        ("phenotype", "associated_with", "gene"): phenotype_gene_edges,
+        ("gene", "causes", "disease"): gene_disease_edges,
+        ("phenotype", "observed_in", "disease"): phenotype_disease_edges,
+        # Reverse edges (for bidirectional message passing)
+        ("gene", "rev_associated_with", "phenotype"): phenotype_gene_edges.flip(0),
+        ("disease", "rev_causes", "gene"): gene_disease_edges.flip(0),
+        ("disease", "rev_observed_in", "phenotype"): phenotype_disease_edges.flip(0),
     }
     torch.save(edge_index_dict, data_dir / "edge_indices.pt")
 
