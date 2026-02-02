@@ -103,11 +103,12 @@ echo -e "${GREEN}[OK] Pip upgraded${NC}"
 echo -e "\n${CYAN}[STAGE 2/5] PyTorch Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
-echo -e "[INFO] Installing PyTorch stack (torch 2.9.x + cu130)"
+echo -e "[INFO] Installing PyTorch stack (torch==2.9.0 + cu130)"
 echo -e "[INFO] Index URL: $TORCH_INDEX_URL"
 
-# Install Torch
-"$PIP" install --index-url "$TORCH_INDEX_URL" "torch>=2.9,<2.10" "torchvision>=0.20,<0.21" "torchaudio>=2.9,<2.10" || {
+# Install Torch (exact versions to ensure pyg-lib compatibility)
+# NOTE: torch 2.9.1 breaks pyg-lib, so pin to 2.9.0
+"$PIP" install --index-url "$TORCH_INDEX_URL" "torch==2.9.0" "torchvision==0.24.0" "torchaudio==2.9.0" || {
     echo -e "${RED}[ERROR] Failed to install PyTorch stack${NC}"
     echo -e "${YELLOW}[HINT] If on DGX Spark, ensure you have internet access or use the local NVIDIA mirror.${NC}"
     exit 2

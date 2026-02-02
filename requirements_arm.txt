@@ -1,11 +1,13 @@
 # Linux ARM (DGX Spark, aarch64) — prefer cuDNN SDPA + hnswlib
 # PyTorch 2.9.0 + cu130 unified across all platforms for ecosystem stability
-torch>=2.9,<2.10
-torchvision>=0.20,<0.21
-torchaudio>=2.9,<2.10
+# NOTE: Use exact torch==2.9.0 to avoid 2.9.1 which breaks pyg-lib compatibility
+torch==2.9.0
+torchvision==0.24.0
+torchaudio==2.9.0
 
-# Core scientific computing (NumPy 2.4+ for latest features)
-numpy>=2.4
+# Core scientific computing
+# NumPy 2.3+ requires Python 3.11+, so use 2.2.x for Python 3.10 compatibility
+numpy>=2.0,<2.3
 scipy>=1.14
 
 # Configuration and utilities

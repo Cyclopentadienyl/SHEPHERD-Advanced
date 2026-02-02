@@ -19,7 +19,7 @@ dependencies = [
     
     # Data processing & scientific computing
     "pandas>=2.2",
-    "numpy>=2.4",  # NumPy 2.4+ for latest features, compatible with PyTorch 2.9+
+    "numpy>=2.0,<2.3",  # NumPy 2.3+ requires Python 3.11+; use 2.2.x for Py3.10 compat
     "scipy>=1.14",
     
     # Configuration & serialization
