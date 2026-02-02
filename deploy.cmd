@@ -17,7 +17,7 @@ rem   deploy.cmd                           (standard deployment)
 rem   deploy.cmd requirements_arm.txt      (custom requirements file)
 rem 
 rem Environment Variables:
-rem   PYTHON_EXE        - Python launcher (default: py -3.10)
+rem   PYTHON_EXE        - Python launcher (default: py -3.12)
 rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu130)
 rem   REQUIREMENTS_FILE - Custom requirements file
 rem   INSTALL_XFORMERS  - Set to 1 to install xformers
@@ -33,7 +33,7 @@ echo ===========================================================================
 echo.
 
 rem === Configuration ===
-if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.10"
+if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.12"
 if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130"
 
 set "REQ_FILE=%~1"
@@ -54,7 +54,7 @@ echo ---------------------------------------------------------------------------
 
 echo [INFO] Python launcher: %PYTHON_EXE%
 %PYTHON_EXE% --version || (
-  echo [ERROR] Python not found. Please install Python 3.10+ from python.org
+  echo [ERROR] Python not found. Please install Python 3.12+ from python.org
   exit /b 1
 )
 

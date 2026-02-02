@@ -2,7 +2,7 @@
 name = "shepherd-advanced"
 version = "0.2.0"
 description = "Medical Knowledge Graph diagnostic engine with dual-platform support (Windows x86 + DGX Spark ARM)"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     {name = "Your Name", email = "your.email@example.com"}
 ]
@@ -19,7 +19,7 @@ dependencies = [
     
     # Data processing & scientific computing
     "pandas>=2.2",
-    "numpy>=2.0,<2.3",  # NumPy 2.3+ requires Python 3.11+; use 2.2.x for Py3.10 compat
+    "numpy>=2.0",  # Python 3.12 supports NumPy 2.3+
     "scipy>=1.14",
     
     # Configuration & serialization
@@ -36,8 +36,8 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "gradio>=4.0",
     
-    # Vector retrieval (cross-platform, replaces FAISS)
-    "hnswlib>=0.8",
+    # Vector retrieval (cross-platform CPU backend)
+    "voyager>=2.0",  # Spotify's HNSW library, replaces hnswlib
     
     # Utilities
     "tqdm>=4.66",
@@ -115,7 +115,7 @@ strict = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pronto.*", "hnswlib.*", "torch.*"]
+module = ["pronto.*", "voyager.*", "cuvs.*", "torch.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
