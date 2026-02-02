@@ -34,10 +34,9 @@ echo -e "${CYAN}================================================================
 
 # === Configuration ===
 PYTHON_EXE="${PYTHON_EXE:-python3}"
-# [NOTE] Using cu128 as requested. Ensure this URL is reachable.
-# For ARM (aarch64), usually standard pip wheels are available for server-class chips (Grace),
-# but sometimes require specific indices.
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
+# [NOTE] Using cu130 (CUDA 13.0) unified across all platforms.
+# PyTorch 2.9.0 + cu130 for best ecosystem compatibility and latest hardware support.
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 
 REQ_FILE="${1:-requirements.txt}"
 if [ ! -f "$REQ_FILE" ]; then
@@ -104,11 +103,11 @@ echo -e "${GREEN}[OK] Pip upgraded${NC}"
 echo -e "\n${CYAN}[STAGE 2/5] PyTorch Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
-echo -e "[INFO] Installing PyTorch stack (torch >= 2.10, cu128)"
+echo -e "[INFO] Installing PyTorch stack (torch 2.9.x + cu130)"
 echo -e "[INFO] Index URL: $TORCH_INDEX_URL"
 
 # Install Torch
-"$PIP" install --index-url "$TORCH_INDEX_URL" "torch>=2.10" "torchvision>=0.20" "torchaudio>=2.10" || {
+"$PIP" install --index-url "$TORCH_INDEX_URL" "torch>=2.9,<2.10" "torchvision>=0.20,<0.21" "torchaudio>=2.9,<2.10" || {
     echo -e "${RED}[ERROR] Failed to install PyTorch stack${NC}"
     echo -e "${YELLOW}[HINT] If on DGX Spark, ensure you have internet access or use the local NVIDIA mirror.${NC}"
     exit 2

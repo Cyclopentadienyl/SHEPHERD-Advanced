@@ -13,13 +13,13 @@ Usage:
     python scripts/install_pytorch_pyg.py --cpu        # CPU-only mode
     python scripts/install_pytorch_pyg.py --check      # Check current installation
 
-Supported Platforms:
-    - Windows x86_64 (CUDA 12.6, 12.8, 13.0)
-    - Linux x86_64 (CUDA 12.6, 12.8, 13.0)
-    - Linux ARM64 / DGX Spark (CUDA 13.0)
+Supported Platforms (all using PyTorch 2.9.0 + cu130):
+    - Windows x86_64 (CUDA 12.8 → cu130, CUDA 13.0)
+    - Linux x86_64 (CUDA 12.8 → cu130, CUDA 13.0)
+    - Linux ARM64 / DGX Spark (CUDA 13.0 native)
 
 Based on: https://github.com/pyg-team/pyg-lib (pyg-lib compatibility matrix)
-Version: 2.0.0
+Version: 2.1.0
 """
 from __future__ import annotations
 
@@ -56,9 +56,10 @@ class InstallConfig:
 # Known compatible versions (as of pyg-lib compatibility matrix 2026-01)
 # Reference: https://github.com/pyg-team/pyg-lib
 #
-# PyTorch 2.10 Support Matrix:
-#   Linux:   cpu ✓, cu126 ✓, cu128 ✓, cu130 ✓
-#   Windows: cpu ✓, cu126 ✓, cu128 ✓, cu130 ✓
+# Strategy: Use PyTorch 2.9.0 + cu130 for ALL platforms
+# - Unified version across Windows x86, Linux x86, DGX Spark ARM
+# - Better ecosystem compatibility than bleeding-edge 2.10
+# - CUDA 13.0 native support for latest hardware features
 #
 # PyTorch 2.9 Support Matrix:
 #   Linux:   cpu ✓, cu126 ✓, cu128 ✓, cu129 ✓, cu130 ✓
@@ -66,14 +67,11 @@ class InstallConfig:
 #
 TORCH_CUDA_MAP = {
     # CUDA version -> (torch_version, torch_cuda_suffix, pyg_wheel_suffix)
-    # Primary target: PyTorch 2.10 (best pyg-lib support across platforms)
-    "12.6": ("2.10.0", "cu126", "cu126"),
-    "12.8": ("2.10.0", "cu128", "cu128"),
-    "13.0": ("2.10.0", "cu130", "cu130"),  # DGX Spark native support!
-    "cpu": ("2.10.0", "cpu", "cpu"),
-    # Legacy fallback (if user needs older PyTorch)
-    "12.4": ("2.9.0", "cu126", "cu126"),   # cu124 not available, use cu126
-    "12.1": ("2.9.0", "cu126", "cu126"),   # cu121 not available, use cu126
+    # Primary target: PyTorch 2.9.0 + cu130 (unified across all platforms)
+    "13.0": ("2.9.0", "cu130", "cu130"),  # Primary: All platforms use cu130
+    "12.8": ("2.9.0", "cu130", "cu130"),  # Map 12.8 to cu130 for forward compat
+    "12.6": ("2.9.0", "cu126", "cu126"),  # Fallback for older CUDA
+    "cpu": ("2.9.0", "cpu", "cpu"),
 }
 
 # PyG wheel base URL

@@ -34,7 +34,7 @@ echo.
 
 rem === Configuration ===
 if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.10"
-if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128"
+if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130"
 
 set "REQ_FILE=%~1"
 if "%REQ_FILE%"=="" (
@@ -98,9 +98,9 @@ echo.
 echo [STAGE 2/5] PyTorch Installation
 echo ----------------------------------------------------------------------------
 
-echo [INFO] Installing PyTorch stack (torch/torchvision/torchaudio)
+echo [INFO] Installing PyTorch stack (torch 2.9.x + cu130)
 echo [INFO] Index URL: %TORCH_INDEX_URL%
-"%PIP%" install --index-url %TORCH_INDEX_URL% "torch>=2.10" "torchvision>=0.20" "torchaudio>=2.10" || (
+"%PIP%" install --index-url %TORCH_INDEX_URL% "torch>=2.9,<2.10" "torchvision>=0.20,<0.21" "torchaudio>=2.9,<2.10" || (
   echo [ERROR] Failed to install PyTorch stack
   echo [HINT] Check CUDA version and index URL from https://pytorch.org/get-started/locally/
   exit /b 2

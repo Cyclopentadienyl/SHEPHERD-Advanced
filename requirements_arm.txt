@@ -1,13 +1,21 @@
-# Linux ARM (DGX Spark, aarch64) — prefer SDPA + hnswlib
-# PyTorch 2.10 required for pyg-lib compatibility with cu130 (CUDA 13.0)
-torch>=2.10
-torchvision>=0.20
-torchaudio>=2.10
-xformers>=0.0.28
-numpy>=1.26
-scipy>=1.11
+# Linux ARM (DGX Spark, aarch64) — prefer cuDNN SDPA + hnswlib
+# PyTorch 2.9.0 + cu130 unified across all platforms for ecosystem stability
+torch>=2.9,<2.10
+torchvision>=0.20,<0.21
+torchaudio>=2.9,<2.10
+
+# Core scientific computing (NumPy 2.4+ for latest features)
+numpy>=2.4
+scipy>=1.14
+
+# Configuration and utilities
 pyyaml>=6.0
-pydantic>=2.5
+pydantic>=2.7
 tqdm>=4.66
+
+# Vector retrieval (hnswlib for ARM compatibility)
 hnswlib>=0.8
-# faiss-cpu/faiss-gpu on ARM are optional/experimental; add only after validation
+
+# NOTE: On ARM/DGX Spark, use cuDNN 9.x SDPA (built into PyTorch 2.9+)
+# FlashAttention-2 is NOT compatible with ARM architecture
+# xformers is optional: python scripts/launch/shep_launch.py --install-accelerators

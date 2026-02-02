@@ -19,8 +19,8 @@ dependencies = [
     
     # Data processing & scientific computing
     "pandas>=2.2",
-    "numpy>=1.26",  # No upper limit - PyTorch 2.8 supports NumPy 2.x
-    "scipy>=1.13",
+    "numpy>=2.4",  # NumPy 2.4+ for latest features, compatible with PyTorch 2.9+
+    "scipy>=1.14",
     
     # Configuration & serialization
     "pyyaml>=6.0",

@@ -1,15 +1,21 @@
 # Windows x86 (Blackwell) — baseline; pin exact versions after local verification
-# PyTorch 2.10 required for pyg-lib compatibility on Windows with cu128/cu130
-torch>=2.10
-torchvision>=0.20
-torchaudio>=2.10
-# Optional acceleration (wheel availability required)
-flash-attn>=2.6 ; platform_system == "Windows"
-xformers>=0.0.28
-numpy>=1.26
-scipy>=1.11
+# PyTorch 2.9.0 + cu130 unified across all platforms for ecosystem stability
+torch>=2.9,<2.10
+torchvision>=0.20,<0.21
+torchaudio>=2.9,<2.10
+
+# Core scientific computing (NumPy 2.4+ for latest features)
+numpy>=2.4
+scipy>=1.14
+
+# Configuration and utilities
 pyyaml>=6.0
-pydantic>=2.5
+pydantic>=2.7
 tqdm>=4.66
-faiss-gpu ; platform_system == "Windows" or platform_machine == "x86_64"
+
+# Vector retrieval (hnswlib preferred over FAISS for cross-platform)
 hnswlib>=0.8
+
+# NOTE: Acceleration libraries (flash-attn, xformers, sageattention) are OPTIONAL
+# Install via: python scripts/launch/shep_launch.py --install-accelerators
+# This avoids compatibility issues with third-party libs that may lag behind PyTorch releases
