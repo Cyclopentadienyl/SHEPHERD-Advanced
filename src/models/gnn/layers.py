@@ -156,6 +156,12 @@ class HeteroGNNLayer(nn.Module):
         # HeteroConv automatically skips missing edge types
         out_dict = self.conv(x_dict, edge_index_dict)
 
+        # Preserve features for node types that didn't receive messages
+        # (they won't appear in out_dict from HeteroConv)
+        for node_type in x_dict:
+            if node_type not in out_dict:
+                out_dict[node_type] = x_dict[node_type]
+
         # Post-processing per node type
         for node_type in out_dict:
             h = out_dict[node_type]

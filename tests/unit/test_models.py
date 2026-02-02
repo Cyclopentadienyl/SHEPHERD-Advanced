@@ -640,12 +640,23 @@ class TestExplanationHead:
 # ==============================================================================
 # Test torch.compile Compatibility
 # ==============================================================================
+import sys
+import shutil
+
+# Check if C++ compiler is available (required for torch.compile on CPU)
+_HAS_CPP_COMPILER = shutil.which("cl") is not None or shutil.which("g++") is not None
+
+
 class TestTorchCompile:
     """Tests for torch.compile compatibility"""
 
     @pytest.mark.skipif(
         not hasattr(torch, "compile"),
         reason="torch.compile not available"
+    )
+    @pytest.mark.skipif(
+        sys.platform == "win32" and not _HAS_CPP_COMPILER,
+        reason="torch.compile requires MSVC (cl.exe) on Windows"
     )
     def test_compile_encoder(self, hidden_dim):
         encoder = NodeTypeEncoder(num_types=5, hidden_dim=hidden_dim)
@@ -659,6 +670,10 @@ class TestTorchCompile:
     @pytest.mark.skipif(
         not hasattr(torch, "compile"),
         reason="torch.compile not available"
+    )
+    @pytest.mark.skipif(
+        sys.platform == "win32" and not _HAS_CPP_COMPILER,
+        reason="torch.compile requires MSVC (cl.exe) on Windows"
     )
     def test_compile_diagnosis_head(self, hidden_dim):
         head = DiagnosisHead(hidden_dim=hidden_dim)
