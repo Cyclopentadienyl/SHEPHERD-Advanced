@@ -22,7 +22,6 @@ rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu130)
 rem   REQUIREMENTS_FILE - Custom requirements file
 rem   INSTALL_XFORMERS  - Set to 1 to install xformers
 rem   FLASHATTN_WHEEL   - Path to prebuilt flash-attn wheel
-rem   USE_FAISS         - Set to "gpu-cu12" for GPU FAISS
 rem 
 rem ============================================================================
 
@@ -127,9 +126,9 @@ if not exist "%REQ_FILE%" (
   goto :skip_requirements
 )
 
-rem Filter out problematic packages (flash-attn, faiss, xformers)
+rem Filter out problematic packages (flash-attn, xformers - installed separately)
 if not exist ".tmp" mkdir .tmp
-echo [INFO] Filtering requirements (removing flash-attn, faiss, xformers)
+echo [INFO] Filtering requirements (removing flash-attn, xformers)
 
 rem [Bulletproof Fix] Construct regex using ASCII codes to bypass CMD syntax errors entirely
 rem 94 = ^ (Caret), 124 = | (Pipe). We do not type these chars in the echo command.
@@ -142,7 +141,7 @@ echo         lines = f.read().splitlines() >> ".tmp\filter_reqs.py"
 echo     # Construct regex safely using chr() >> ".tmp\filter_reqs.py"
 echo     caret = chr(94) >> ".tmp\filter_reqs.py"
 echo     pipe = chr(124) >> ".tmp\filter_reqs.py"
-echo     keywords = ["flash[-_]?attn", "faiss[-_]?gpu", "faiss\s*$", "faiss-cpu", "xformers"] >> ".tmp\filter_reqs.py"
+echo     keywords = ["flash[-_]?attn", "xformers"] >> ".tmp\filter_reqs.py"
 echo     pattern_str = caret + r"\s*(" + pipe.join(keywords) + r")\b" >> ".tmp\filter_reqs.py"
 echo     pat = re.compile(pattern_str, re.I) >> ".tmp\filter_reqs.py"
 echo     filtered = [l for l in lines if not pat.match(l)] >> ".tmp\filter_reqs.py"
@@ -168,31 +167,16 @@ echo [OK] Core dependencies installed
 
 :skip_requirements
 
-rem Install FAISS or hnswlib (for vector indexing)
-echo [INFO] Installing vector index backend
-if /I "%USE_FAISS%"=="gpu-cu12" (
-  echo [INFO] Attempting to install faiss-gpu-cu12 (community build)
-  "%PIP%" install faiss-gpu-cu12 && (
-    echo [OK] faiss-gpu-cu12 installed
-  ) || (
-    echo [WARN] faiss-gpu-cu12 failed, falling back to faiss-cpu
-    "%PIP%" install "faiss-cpu>=1.9.0" || (
-      echo [WARN] faiss-cpu failed, installing hnswlib
-      "%PIP%" install hnswlib || echo [WARN] hnswlib failed
-    )
-  )
-) else (
-  echo [INFO] Installing faiss-cpu (Windows wheel)
-  "%PIP%" install "faiss-cpu>=1.9.0" && (
-    echo [OK] faiss-cpu installed
-  ) || (
-    echo [WARN] faiss-cpu failed, installing hnswlib instead
-    "%PIP%" install hnswlib && (
-      echo [OK] hnswlib installed
-    ) || (
-      echo [WARN] hnswlib failed; consider using chroma-hnswlib as fallback
-    )
-  )
+rem Install Vector Index Backend (Voyager)
+rem Strategy (v3.2): Windows uses Voyager (CPU) - cuVS not supported on Windows
+echo [INFO] Installing vector index backend (Voyager)
+echo [INFO] Note: cuVS is Linux-only; Windows uses Voyager (Spotify HNSW)
+"%PIP%" install "voyager>=2.0" && (
+  echo [OK] Voyager installed
+) || (
+  echo [ERROR] Voyager installation failed
+  echo [HINT] Try manually: pip install voyager
+  exit /b 3
 )
 
 rem ============================================================================
