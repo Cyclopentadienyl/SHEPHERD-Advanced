@@ -4,25 +4,26 @@ setlocal EnableExtensions DisableDelayedExpansion
 rem ============================================================================
 rem SHEPHERD-Advanced | Windows Deployment Script (Unified)
 rem ============================================================================
-rem 
+rem
 rem This script handles the complete deployment process:
 rem   1. Environment setup (virtual environment + PyTorch)
 rem   2. Core dependencies installation (with smart filtering)
-rem   3. Optional accelerators (xformers, flash-attn)
-rem   4. Installation validation
-rem   5. Knowledge graph construction
-rem 
+rem   3. Installation validation & platform configuration
+rem   4. Knowledge graph construction (optional)
+rem
 rem Usage:
 rem   deploy.cmd                           (standard deployment)
 rem   deploy.cmd requirements_arm.txt      (custom requirements file)
-rem 
+rem
 rem Environment Variables:
 rem   PYTHON_EXE        - Python launcher (default: py -3.12)
 rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu130)
 rem   REQUIREMENTS_FILE - Custom requirements file
-rem   INSTALL_XFORMERS  - Set to 1 to install xformers
-rem   FLASHATTN_WHEEL   - Path to prebuilt flash-attn wheel
-rem 
+rem
+rem Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
+rem   These are NOT installed during deployment. They are auto-installed
+rem   at launch time via command-line arguments. See launch_shepherd.cmd.
+rem
 rem ============================================================================
 
 echo.
@@ -48,7 +49,7 @@ rem ============================================================================
 rem STAGE 1: ENVIRONMENT SETUP
 rem ============================================================================
 echo.
-echo [STAGE 1/5] Environment Setup
+echo [STAGE 1/4] Environment Setup
 echo ----------------------------------------------------------------------------
 
 echo [INFO] Python launcher: %PYTHON_EXE%
@@ -94,7 +95,7 @@ rem ============================================================================
 rem STAGE 2: PYTORCH INSTALLATION
 rem ============================================================================
 echo.
-echo [STAGE 2/5] PyTorch Installation
+echo [STAGE 2/4] PyTorch Installation
 echo ----------------------------------------------------------------------------
 
 echo [INFO] Installing PyTorch stack (torch 2.9.0 + cu130)
@@ -117,7 +118,7 @@ rem ============================================================================
 rem STAGE 3: CORE DEPENDENCIES
 rem ============================================================================
 echo.
-echo [STAGE 3/5] Core Dependencies Installation
+echo [STAGE 3/4] Core Dependencies Installation
 echo ----------------------------------------------------------------------------
 
 if not exist "%REQ_FILE%" (
@@ -126,9 +127,9 @@ if not exist "%REQ_FILE%" (
   goto :skip_requirements
 )
 
-rem Filter out problematic packages (flash-attn, xformers - installed separately)
+rem Filter out problematic packages (flash-attn, xformers - handled at launch time)
 if not exist ".tmp" mkdir .tmp
-echo [INFO] Filtering requirements (removing flash-attn, xformers)
+echo [INFO] Filtering requirements (removing flash-attn, xformers - installed at launch)
 
 rem [Bulletproof Fix] Construct regex using ASCII codes to bypass CMD syntax errors entirely
 rem 94 = ^ (Caret), 124 = | (Pipe). We do not type these chars in the echo command.
@@ -141,7 +142,7 @@ echo         lines = f.read().splitlines() >> ".tmp\filter_reqs.py"
 echo     # Construct regex safely using chr() >> ".tmp\filter_reqs.py"
 echo     caret = chr(94) >> ".tmp\filter_reqs.py"
 echo     pipe = chr(124) >> ".tmp\filter_reqs.py"
-echo     keywords = ["flash[-_]?attn", "xformers"] >> ".tmp\filter_reqs.py"
+echo     keywords = ["flash[-_]?attn", "xformers", "sage[-_]?attention"] >> ".tmp\filter_reqs.py"
 echo     pattern_str = caret + r"\s*(" + pipe.join(keywords) + r")\b" >> ".tmp\filter_reqs.py"
 echo     pat = re.compile(pattern_str, re.I) >> ".tmp\filter_reqs.py"
 echo     filtered = [l for l in lines if not pat.match(l)] >> ".tmp\filter_reqs.py"
@@ -180,68 +181,10 @@ echo [INFO] Note: cuVS is Linux-only; Windows uses Voyager (Spotify HNSW)
 )
 
 rem ============================================================================
-rem STAGE 4: OPTIONAL ACCELERATORS
+rem STAGE 4: VALIDATION & FINALIZATION
 rem ============================================================================
 echo.
-echo [STAGE 4/5] Optional Accelerators
-echo ----------------------------------------------------------------------------
-
-rem ============================================================================
-rem STAGE 4: OPTIONAL ACCELERATORS (Safe Mode)
-rem ============================================================================
-echo.
-echo [STAGE 4/5] Optional Accelerators
-echo ----------------------------------------------------------------------------
-
-rem xFormers (Safe Installation)
-if /I "%INSTALL_XFORMERS%"=="1" (
-  echo [INFO] Attempting to install xformers strict mode...
-  
-  rem [SAFETY] Use --no-deps to prevent torch downgrade
-  "%PIP%" install --no-deps --index-url https://download.pytorch.org/whl/cu130 xformers && (
-    echo [OK] xformers installed successfully.
-  ) || (
-    echo [WARN] Could not find a compatible xformers wheel for this Torch version.
-    echo [INFO] Installation skipped to protect the environment.
-    rem [FIX] Removed parentheses to avoid CMD syntax error
-    echo [INFO] System will fallback to native PyTorch SDPA - highly optimized.
-  )
-) else (
-  echo [INFO] INSTALL_XFORMERS not set. Using native PyTorch SDPA.
-)
-
-rem FlashAttention-2 (Safe Installation)
-if not "%FLASHATTN_WHEEL%"=="" (
-  if exist "%FLASHATTN_WHEEL%" (
-    echo [INFO] Installing flash-attn from wheel: %FLASHATTN_WHEEL%
-    
-    rem [SAFETY] Try to install wheel, but don't crash if it fails
-    "%PIP%" install --no-deps "%FLASHATTN_WHEEL%" && (
-      echo [OK] flash-attn installed.
-    ) || (
-      echo [WARN] flash-attn wheel installation failed.
-      echo [INFO] Falling back to native PyTorch SDPA.
-    )
-  ) else (
-    echo [WARN] FLASHATTN_WHEEL file not found: %FLASHATTN_WHEEL%
-  )
-) else (
-  echo [INFO] FLASHATTN_WHEEL not provided. Skipping.
-)
-
-rem Summary of Acceleration
-echo.
-echo [INFO] Acceleration Strategy:
-echo        1. CUDA Graphs - if supported
-echo        2. FlashAttention-2 - if installed
-echo        3. xFormers - if installed
-echo        4. PyTorch SDPA - Default/Fallback Guaranteed
-
-rem ============================================================================
-rem STAGE 5: VALIDATION & FINALIZATION
-rem ============================================================================
-echo.
-echo [STAGE 5/5] Validation ^& Finalization
+echo [STAGE 4/4] Validation ^& Finalization
 echo ----------------------------------------------------------------------------
 
 rem Run validation script (if exists)
@@ -288,9 +231,7 @@ echo   1. Test the installation:
 echo      .venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available())"
 echo.
 echo   2. Launch the system:
-echo      launch_shepherd.cmd                     (default, cuDNN SDPA)
-echo      launch_shepherd.cmd --flash-attn        (enable FlashAttention-2)
-echo      launch_shepherd.cmd --xformers          (enable xFormers)
+echo      launch_shepherd.cmd                     (default, PyTorch SDPA)
 echo.
 echo   3. Download data (if needed):
 echo      .venv\Scripts\python.exe scripts\data_preparation\download_ontologies.py
@@ -298,7 +239,13 @@ echo.
 echo   4. Run tests:
 echo      .venv\Scripts\python.exe -m pytest tests\unit\
 echo.
-echo [TIP] For dynamic attention backend selection, use launch_shepherd.cmd
+echo [TIP] Optional accelerators (FlashAttention, xFormers, SageAttention):
+echo       These are auto-installed at launch time via arguments:
+echo         launch_shepherd.cmd --flash-attn    (FlashAttention-2)
+echo         launch_shepherd.cmd --xformers      (xFormers)
+echo         launch_shepherd.cmd --sage-attn     (SageAttention)
+echo       Compatibility not guaranteed; fallback to PyTorch SDPA is always available.
+echo.
 echo [TIP] See docs/deployment-guide.md for troubleshooting
 echo.
 

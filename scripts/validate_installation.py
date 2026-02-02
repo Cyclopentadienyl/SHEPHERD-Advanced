@@ -4,7 +4,6 @@ SHEPHERD-Advanced Installation Validator
 Functionality:
   - Validate PyTorch and CUDA installation
   - Check vector index backends (Voyager, cuVS)
-  - Verify optional accelerators (xformers, flash-attn)
   - Generate JSON report of installation status
 
 Path:
@@ -16,12 +15,16 @@ Input:
 
 Output:
   - JSON report to stdout with errors, warnings, and info
+
+Note:
+  Optional accelerators (xFormers, FlashAttention, SageAttention) are NOT
+  checked here. They are auto-installed at launch time via launch_shepherd.cmd
+  arguments. See scripts/launch/shep_launch.py for details.
 """
 from __future__ import annotations
 
 import importlib
 import json
-import os
 import platform
 import sys
 from pathlib import Path
@@ -80,32 +83,14 @@ def check_vector_backends() -> None:
 
     # cuVS is optional (Linux GPU only)
     if sys.platform != "win32":
-        cuvs_ok = check_pkg("cuvs", required=False)
-        if cuvs_ok:
+        try:
+            importlib.import_module("cuvs")
             add("info", "cuVS: GPU-accelerated vector search available")
-        else:
+        except ImportError:
+            # cuVS is optional, just note it's not installed (not a warning)
             add("info", "cuVS: not installed (optional, Linux GPU only)")
-            add("info", "For GPU acceleration: pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12")
     else:
         add("info", "cuVS: skipped (not supported on Windows)")
-
-
-def check_flash_attn() -> None:
-    """Check FlashAttention installation."""
-    if os.environ.get("FLASHATTN_FORCE_DISABLE"):
-        add("info", "FLASHATTN_FORCE_DISABLE set; skipping flash-attn check")
-        return
-
-    # Skip on ARM (not supported)
-    if platform.machine().lower() in {"aarch64", "arm64"}:
-        add("info", "flash-attn: skipped (not supported on ARM)")
-        return
-
-    try:
-        flash_attn = importlib.import_module("flash_attn")
-        add("info", f"flash-attn: OK (v{flash_attn.__version__})")
-    except Exception as e:
-        add("warnings", f"flash-attn: not available ({e})")
 
 
 def main() -> int:
@@ -118,9 +103,8 @@ def main() -> int:
     # Vector index backends
     check_vector_backends()
 
-    # Optional accelerators
-    check_pkg("xformers", required=False)
-    check_flash_attn()
+    # Note: Optional accelerators (xformers, flash-attn, sage-attn) are NOT
+    # checked here. They are handled at launch time by shep_launch.py.
 
     # Print report
     print(json.dumps(REPORT, indent=2))

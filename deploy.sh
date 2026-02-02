@@ -16,8 +16,10 @@ set -u
 # Environment Variables:
 #   PYTHON_EXE        - Python executable (default: python3)
 #   TORCH_INDEX_URL   - PyTorch index URL (default: cu130 for all platforms)
-#   INSTALL_XFORMERS  - Set to 1 to install xformers
-#   FLASHATTN_WHEEL   - Path to prebuilt flash-attn wheel (Recommended for ARM)
+#
+# Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
+#   These are NOT installed during deployment. They are auto-installed
+#   at launch time via command-line arguments. See launch_shepherd.sh.
 #
 # ============================================================================
 
@@ -50,13 +52,12 @@ ARCH=$(uname -m)
 echo -e "${CYAN}[INFO] Detected Architecture: ${ARCH}${NC}"
 if [ "$ARCH" == "aarch64" ]; then
     echo -e "${YELLOW}[INFO] Running on ARM64 (Likely DGX Spark / Grace Hopper)${NC}"
-    echo -e "${YELLOW}[INFO] Note: Some pre-compiled wheels (like flash-attn) might be rare for aarch64.${NC}"
 fi
 
 # ============================================================================
 # STAGE 1: ENVIRONMENT SETUP
 # ============================================================================
-echo -e "\n${CYAN}[STAGE 1/5] Environment Setup${NC}"
+echo -e "\n${CYAN}[STAGE 1/4] Environment Setup${NC}"
 echo "----------------------------------------------------------------------------"
 
 # Check Python
@@ -100,7 +101,7 @@ echo -e "${GREEN}[OK] Pip upgraded${NC}"
 # ============================================================================
 # STAGE 2: PYTORCH INSTALLATION
 # ============================================================================
-echo -e "\n${CYAN}[STAGE 2/5] PyTorch Installation${NC}"
+echo -e "\n${CYAN}[STAGE 2/4] PyTorch Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
 echo -e "[INFO] Installing PyTorch stack (torch==2.9.0 + cu130)"
@@ -123,7 +124,7 @@ echo -e "${GREEN}[OK] PyTorch stack installed${NC}"
 # ============================================================================
 # STAGE 3: CORE DEPENDENCIES
 # ============================================================================
-echo -e "\n${CYAN}[STAGE 3/5] Core Dependencies Installation${NC}"
+echo -e "\n${CYAN}[STAGE 3/4] Core Dependencies Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
 if [ ! -f "$REQ_FILE" ]; then
@@ -131,7 +132,7 @@ if [ ! -f "$REQ_FILE" ]; then
     echo -e "[INFO] Skipping core dependencies"
 else
     mkdir -p .tmp
-    echo -e "[INFO] Filtering requirements (removing flash-attn, xformers)..."
+    echo -e "[INFO] Filtering requirements (removing flash-attn, xformers, sage-attn - installed at launch)..."
 
     # Generate Python script to filter requirements safely
     # Note: voyager and cuvs are handled separately, not filtered
@@ -142,8 +143,8 @@ output_file = ".tmp/req_filtered.txt"
 try:
     with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
         lines = f.read().splitlines()
-    # Filter out flash-attn and xformers (installed separately with special handling)
-    pat = re.compile(r'^\s*(flash[-_]?attn|xformers)\b', re.I)
+    # Filter out flash-attn, xformers, sage-attn (installed at launch time with special handling)
+    pat = re.compile(r'^\s*(flash[-_]?attn|xformers|sage[-_]?attention)\b', re.I)
     filtered = [l for l in lines if not pat.match(l)]
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(filtered) + '\n')
@@ -188,35 +189,9 @@ if [ "$ARCH" == "aarch64" ] || [ "$ARCH" == "x86_64" ]; then
 fi
 
 # ============================================================================
-# STAGE 4: OPTIONAL ACCELERATORS
+# STAGE 4: VALIDATION & FINALIZATION
 # ============================================================================
-echo -e "\n${CYAN}[STAGE 4/5] Optional Accelerators${NC}"
-echo "----------------------------------------------------------------------------"
-
-# xFormers
-if [ "${INSTALL_XFORMERS:-0}" == "1" ]; then
-    echo -e "[INFO] Installing xformers..."
-    # Note: On ARM, installing xformers via pip might trigger a long build process if wheels aren't found.
-    if "$PIP" install --only-binary=:all: --index-url "$TORCH_INDEX_URL" xformers; then
-        echo -e "${GREEN}[OK] xformers installed${NC}"
-    else
-        echo -e "${YELLOW}[WARN] xformers install failed (or no binary wheel found)${NC}"
-    fi
-fi
-
-# FlashAttention-2
-if [ -n "${FLASHATTN_WHEEL:-}" ] && [ -f "$FLASHATTN_WHEEL" ]; then
-    echo -e "[INFO] Installing flash-attn from wheel: $FLASHATTN_WHEEL"
-    "$PIP" install "$FLASHATTN_WHEEL" || echo -e "${YELLOW}[WARN] Wheel install failed${NC}"
-else
-    echo -e "[INFO] FLASHATTN_WHEEL not set. Use 'pip install flash-attn' manually if needed."
-    echo -e "${YELLOW}[HINT] On DGX Spark (ARM), compiling flash-attn takes time. Pre-built wheels are recommended.${NC}"
-fi
-
-# ============================================================================
-# STAGE 5: VALIDATION & FINALIZATION
-# ============================================================================
-echo -e "\n${CYAN}[STAGE 5/5] Validation & Finalization${NC}"
+echo -e "\n${CYAN}[STAGE 4/4] Validation & Finalization${NC}"
 echo "----------------------------------------------------------------------------"
 
 # Validation
@@ -226,18 +201,23 @@ if [ -f "scripts/validate_installation.py" ]; then
 fi
 
 # Config Generation
-mkdir -p configs
-if [ ! -f "configs/platform.yaml" ]; then
-    echo -e "[INFO] Generating platform.yaml..."
-    cat <<EOF > configs/platform.yaml
-platform: linux_${ARCH}_blackwell
+if [ -f "scripts/generate_config.py" ]; then
+    echo -e "[INFO] Generating platform configuration..."
+    "$PY" scripts/generate_config.py || echo -e "${YELLOW}[WARN] Config generation failed${NC}"
+else
+    mkdir -p configs
+    if [ ! -f "configs/platform.yaml" ]; then
+        echo -e "[INFO] Generating default platform.yaml..."
+        cat <<EOF > configs/platform.yaml
+platform: linux_${ARCH}
 cuda_version: auto
 model_config:
   attention_backend: auto
 vector_index:
   backend: auto
 EOF
-    echo -e "${GREEN}[OK] Config generated${NC}"
+        echo -e "${GREEN}[OK] Config generated${NC}"
+    fi
 fi
 
 # Knowledge Graph
@@ -255,6 +235,14 @@ echo -e "\nNext steps:"
 echo -e "   1. Activate environment:"
 echo -e "      ${YELLOW}source .venv/bin/activate${NC}"
 echo -e "   2. Launch system:"
-echo -e "      ${YELLOW}./launch_shepherd.sh${NC}"
-echo -e "\n[TIP] If using DGX Spark, ensure 'nvcc --version' matches your torch CUDA version."
+echo -e "      ${YELLOW}./launch_shepherd.sh${NC}                     (default, PyTorch SDPA)"
+echo -e ""
+echo -e "[TIP] Optional accelerators (FlashAttention, xFormers, SageAttention):"
+echo -e "      These are auto-installed at launch time via arguments:"
+echo -e "        ${YELLOW}./launch_shepherd.sh --flash-attn${NC}    (FlashAttention-2)"
+echo -e "        ${YELLOW}./launch_shepherd.sh --xformers${NC}      (xFormers)"
+echo -e "        ${YELLOW}./launch_shepherd.sh --sage-attn${NC}     (SageAttention)"
+echo -e "      Compatibility not guaranteed; fallback to PyTorch SDPA is always available."
+echo -e ""
+echo -e "[TIP] If using DGX Spark, ensure 'nvcc --version' matches your torch CUDA version."
 echo ""
