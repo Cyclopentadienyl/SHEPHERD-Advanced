@@ -205,18 +205,6 @@ echo [INFO] Generating platform configuration...
     echo [WARN] Failed to generate platform config automatically
 )
 
-rem Build knowledge graph (if script exists)
-if exist "scripts\build_knowledge_graph.py" (
-  echo [INFO] Building knowledge graph
-  "%PY%" scripts\build_knowledge_graph.py && (
-    echo [OK] Knowledge graph built
-  ) || (
-    echo [WARN] KG build returned non-zero
-  )
-) else (
-  echo [INFO] scripts\build_knowledge_graph.py not found, skipping KG build
-)
-
 echo.
 echo ============================================================================
 echo   Deployment Complete!
@@ -230,13 +218,14 @@ echo Next steps:
 echo   1. Test the installation:
 echo      .venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available())"
 echo.
-echo   2. Launch the system:
-echo      launch_shepherd.cmd                     (default, PyTorch SDPA)
-echo.
-echo   3. Download data (if needed):
+echo   2. Prepare data (first time only):
 echo      .venv\Scripts\python.exe scripts\data_preparation\download_ontologies.py
+echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py
 echo.
-echo   4. Run tests:
+echo   3. Launch the system:
+echo      launch_shepherd.cmd
+echo.
+echo   4. Run tests (optional):
 echo      .venv\Scripts\python.exe -m pytest tests\unit\
 echo.
 echo [TIP] Optional accelerators (FlashAttention, xFormers, SageAttention):
