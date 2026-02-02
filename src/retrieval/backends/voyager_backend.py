@@ -106,7 +106,7 @@ class VoyagerIndex(VectorIndexBase):
         self._validate_voyager()
 
     def _validate_voyager(self) -> None:
-        """檢查 Voyager 是否可用"""
+        """檢查 Voyager 是否可用並設定參數"""
         try:
             import voyager
             self._voyager = voyager
@@ -120,9 +120,19 @@ class VoyagerIndex(VectorIndexBase):
                 )
             self._space = getattr(voyager.Space, space_name)
 
+            # Get StorageDataType enum
+            # Mapping: "float32" -> Float32, "float8" -> Float8, "e4m3" -> E4M3
+            storage_type_map = {
+                "float32": "Float32",
+                "float8": "Float8",
+                "e4m3": "E4M3",
+            }
+            storage_name = storage_type_map.get(self.storage_type.lower(), "Float32")
+            self._storage_data_type = getattr(voyager.StorageDataType, storage_name)
+
             # Get version safely (voyager may not have __version__)
             version = getattr(voyager, "__version__", "unknown")
-            logger.debug(f"Voyager {version} loaded, space={space_name}")
+            logger.debug(f"Voyager {version} loaded, space={space_name}, storage={storage_name}")
 
         except ImportError as e:
             raise ImportError(
@@ -137,16 +147,18 @@ class VoyagerIndex(VectorIndexBase):
     def _build_index_impl(self, vectors: NDArray[np.float32]) -> None:
         """建立 Voyager HNSW 索引"""
         # Create index with specified parameters
+        # Reference: https://spotify.github.io/voyager/python/reference.html
         self._index = self._voyager.Index(
             space=self._space,
             num_dimensions=self.dim,
             M=self.M,
             ef_construction=self.ef_construction,
+            storage_data_type=self._storage_data_type,
         )
 
-        # Add vectors in batch
+        # Add vectors in batch (num_threads=-1 means auto)
         logger.debug(f"Adding {len(vectors)} vectors to Voyager index...")
-        self._index.add_items(vectors)
+        self._index.add_items(vectors, num_threads=self.num_threads)
 
         logger.debug(f"Voyager index built: {len(vectors)} vectors, M={self.M}")
 
@@ -199,12 +211,9 @@ class VoyagerIndex(VectorIndexBase):
         if not index_path.exists():
             raise FileNotFoundError(f"Voyager index file not found: {index_path}")
 
-        # Voyager Index.load() requires space and num_dimensions
-        self._index = self._voyager.Index.load(
-            str(index_path),
-            space=self._space,
-            num_dimensions=self.dim,
-        )
+        # Use simple load() - Voyager reads metadata from the file automatically
+        # Reference: https://spotify.github.io/voyager/python/reference.html
+        self._index = self._voyager.Index.load(str(index_path))
         logger.debug(f"Voyager index loaded from {index_path}")
 
     def get_vector(self, entity_id: str) -> NDArray[np.float32] | None:
