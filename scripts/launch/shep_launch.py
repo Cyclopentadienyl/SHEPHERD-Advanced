@@ -9,6 +9,7 @@ import shlex
 REPO_ROOT = Path(__file__).resolve().parents[2]  # scripts/launch -> scripts -> REPO_ROOT
 CONFIG_DIR = REPO_ROOT / "configs"  # aligned with v3 structure
 ACCEL_TABLE = CONFIG_DIR / "accelerators.json"
+DEPLOYMENT_CONFIG = CONFIG_DIR / "deployment.yaml"
 DEFAULT_ENTRY = "shepherd.entry"  # TODO: replace with your actual entry module under src/ if different
 
 def log(msg: str) -> None:
@@ -23,6 +24,54 @@ def read_json(path: Path) -> Dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
     return {}
+
+def read_yaml(path: Path) -> Dict[str, Any]:
+    """Read YAML config file."""
+    if path.exists():
+        try:
+            import yaml
+            with path.open("r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except ImportError:
+            log("WARNING: PyYAML not installed, cannot read deployment.yaml")
+    return {}
+
+def get_platform_key() -> str:
+    """Get platform key for deployment config lookup (e.g., linux_x86_64)."""
+    os_name = "windows" if sys.platform.startswith("win") else "linux"
+    arch = platform.machine().lower()
+    # Normalize arch names
+    if arch in {"amd64", "x86_64"}:
+        arch = "x86_64"
+    elif arch in {"aarch64", "arm64"}:
+        arch = "aarch64"
+    return f"{os_name}_{arch}"
+
+def get_deployment_config() -> Dict[str, Any]:
+    """Load deployment config with platform-specific overrides applied."""
+    config = read_yaml(DEPLOYMENT_CONFIG)
+    if not config:
+        return {}
+
+    defaults = config.get("defaults", {})
+    platform_key = get_platform_key()
+    platform_overrides = config.get("platforms", {}).get(platform_key, {})
+
+    # Deep merge: platform overrides take precedence
+    def deep_merge(base: Dict, override: Dict) -> Dict:
+        result = base.copy()
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    merged = deep_merge(defaults, platform_overrides)
+    merged["_platform"] = platform_key
+    merged["_indexing"] = config.get("indexing", {})
+    merged["_paths"] = config.get("paths", {})
+    return merged
 
 def pep440_python() -> str:
     v = sys.version_info
@@ -120,22 +169,42 @@ def main() -> int:
     py_v = pep440_python()
     torch_v, cuda_v = detect_torch()
     log(f"OS={os_name} arch={arch} py={py_v} torch={torch_v} cuda={cuda_v}")
+
+    # Load deployment config for platform-specific defaults
+    deploy_cfg = get_deployment_config()
+    platform_key = deploy_cfg.get("_platform", get_platform_key())
+    log(f"Platform config: {platform_key}")
+
+    # Get platform-preferred attention backends from deployment.yaml
+    attn_cfg = deploy_cfg.get("attention_backend", {})
+    platform_prefer = attn_cfg.get("prefer", ["torch_sdpa", "naive"])
+
     table = read_json(ACCEL_TABLE)
     requested: List[str] = []
     if args.flash_attn: requested.append("flash_attn")
     if args.xformers: requested.append("xformers")
     if args.sage_attn: requested.append("sage_attn")
     if args.torch_sdpa: requested.append("torch_sdpa")
-    if args.cudnn_sdpa or not requested: requested.insert(0, "cudnn_sdpa")
+    if args.cudnn_sdpa: requested.append("cudnn_sdpa")
     if args.naive_attn: requested.append("naive")
+
     if args.attention_order:
+        # Explicit order from CLI takes highest priority
         order = [s.strip() for s in args.attention_order.split(",") if s.strip()]
-    else:
+    elif requested:
+        # User requested specific accelerators via flags
         seen, order = set(), []
-        for k in requested + ["cudnn_sdpa", "torch_sdpa", "naive"]:
+        for k in requested + ["torch_sdpa", "naive"]:
             if k not in seen:
                 seen.add(k)
                 order.append(k)
+    else:
+        # Use platform-specific preferences from deployment.yaml
+        order = list(platform_prefer)
+        # Ensure fallbacks are included
+        for fallback in ["torch_sdpa", "naive"]:
+            if fallback not in order:
+                order.append(fallback)
     resolved: List[str] = []
     def try_enable(mod_key: str, import_name: str, reinstall_flag: bool, display: str, allow_on_arm: bool = True, no_deps: bool = False) -> bool:
         if is_arm() and not allow_on_arm:
@@ -173,9 +242,17 @@ def main() -> int:
         except Exception:
             log(f"WARNING: plugin not importable: {args.plugin}")
     os.environ["ATTENTION_ORDER"] = ",".join(order)
+
+    # Export retrieval backend preference if available
+    retrieval_cfg = deploy_cfg.get("retrieval_backend", {})
+    if retrieval_cfg:
+        os.environ["SHEPHERD_RETRIEVAL_BACKEND"] = retrieval_cfg.get("default", "auto")
+
     plan = textwrap.dedent(f"""
     === PLAN ===
+    Platform              : {platform_key}
     Final attention order : {order}
+    Retrieval backend     : {retrieval_cfg.get('default', 'auto')}
     Plugin                : {os.environ.get('ATTENTION_PLUGIN','')}
     FLASHATTN_FORCE_DISAB : {os.environ.get('FLASHATTN_FORCE_DISABLE','')}
     Entry module          : {args.entry}

@@ -1,0 +1,141 @@
+# SHEPHERD-Advanced — Unified Deployment Configuration
+# Version: 3.1.0
+# Consolidates platform-specific configs into single source of truth
+#
+# Structure:
+#   - defaults: shared settings across all platforms
+#   - platforms: platform-specific overrides
+#   - indexing: vector index configuration
+#   - paths: directory structure
+#
+# Platform detection: OS + arch (e.g., linux_x86_64, linux_aarch64, windows_x86_64)
+# Environment variables can override any setting via SHEPHERD_<UPPERCASE_KEY>
+
+version: "3.1"
+
+# =============================================================================
+# Default Settings (inherited by all platforms)
+# =============================================================================
+defaults:
+  gpu_arch: blackwell
+
+  cuda:
+    min_version: "12.6"
+    recommended: "13.0"
+    cudnn: "9"
+
+  torch:
+    version: "2.9.0"
+    index_url: "https://download.pytorch.org/whl/cu130"
+
+  attention_backend:
+    # Order of preference (first available wins)
+    prefer: [torch_sdpa, naive]
+    allow_xformers: true
+    # Environment variable to force-disable flash attention
+    force_disable_env_var: FLASHATTN_FORCE_DISABLE
+
+  retrieval_backend:
+    # Automatic selection based on platform
+    default: auto
+    # Fallback chain when 'auto' is used
+    fallback_chain: [hnswlib]
+
+# =============================================================================
+# Platform-Specific Overrides
+# =============================================================================
+platforms:
+  # ---------------------------------------------------------------------------
+  # Linux x86_64 (Workstation / Server)
+  # ---------------------------------------------------------------------------
+  linux_x86_64:
+    attention_backend:
+      # flash_attn works well on x86
+      prefer: [flash_attn, torch_sdpa, naive]
+    retrieval_backend:
+      default: faiss_gpu
+      fallback_chain: [faiss_gpu, faiss_cpu, hnswlib]
+    indexing:
+      faiss_gpu:
+        nlist: 4096
+        nprobe: 32
+
+  # ---------------------------------------------------------------------------
+  # Linux aarch64 / ARM64 (DGX Spark, Grace Hopper)
+  # ---------------------------------------------------------------------------
+  linux_aarch64:
+    machine_name: dgx_spark
+    cuda:
+      min_version: "13.0"
+    attention_backend:
+      # flash_attn NOT supported on ARM; use cuDNN SDPA or torch SDPA
+      prefer: [cudnn_sdpa, torch_sdpa, naive]
+    retrieval_backend:
+      # FAISS GPU doesn't support Blackwell (CC 10.0); use hnswlib
+      default: hnswlib
+      fallback_chain: [hnswlib]
+    indexing:
+      hnswlib:
+        # Higher values for DGX Spark's larger memory
+        ef_construction: 400
+        M: 48
+        ef_search: 128
+
+  # ---------------------------------------------------------------------------
+  # Windows x86_64
+  # ---------------------------------------------------------------------------
+  windows_x86_64:
+    attention_backend:
+      prefer: [flash_attn, torch_sdpa, naive]
+    retrieval_backend:
+      default: faiss_gpu
+      fallback_chain: [faiss_gpu, faiss_cpu, hnswlib]
+    indexing:
+      faiss_gpu:
+        nlist: 4096
+        nprobe: 32
+
+# =============================================================================
+# Vector Index Configuration
+# =============================================================================
+indexing:
+  # Embedding dimension (matches sentence-transformers model)
+  dim: 768
+  # Similarity metric: "ip" (inner product) or "l2" (euclidean)
+  metric: ip
+
+  # FAISS GPU settings (for x86 platforms)
+  faiss_gpu:
+    nlist: 4096
+    nprobe: 32
+
+  # FAISS CPU settings (fallback)
+  faiss_cpu:
+    nlist: 2048
+    nprobe: 16
+
+  # HNSWlib settings (primary for ARM, fallback for x86)
+  hnswlib:
+    ef_construction: 200
+    M: 32
+    ef_search: 64
+
+# =============================================================================
+# Directory Paths
+# =============================================================================
+paths:
+  data_root: data/
+  models_root: models/
+  logs_root: logs/
+  cache_root: .cache/
+
+# =============================================================================
+# Feature Flags
+# =============================================================================
+features:
+  # Enable experimental cross-species inference
+  ortholog_inference: false
+  # Enable PubMed literature integration
+  pubmed_integration: false
+  # Enable FHIR data import
+  fhir_import: true

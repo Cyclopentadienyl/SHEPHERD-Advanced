@@ -98,9 +98,10 @@ echo.
 echo [STAGE 2/5] PyTorch Installation
 echo ----------------------------------------------------------------------------
 
-echo [INFO] Installing PyTorch stack (torch 2.9.x + cu130)
+echo [INFO] Installing PyTorch stack (torch 2.9.0 + cu130)
 echo [INFO] Index URL: %TORCH_INDEX_URL%
-"%PIP%" install --index-url %TORCH_INDEX_URL% "torch>=2.9,<2.10" "torchvision>=0.20,<0.21" "torchaudio>=2.9,<2.10" || (
+rem CRITICAL: Use exact torch==2.9.0 to ensure pyg-lib compatibility (torch 2.9.1+ breaks pyg-lib)
+"%PIP%" install --index-url %TORCH_INDEX_URL% "torch==2.9.0" "torchvision==0.24.0" "torchaudio==2.9.0" || (
   echo [ERROR] Failed to install PyTorch stack
   echo [HINT] Check CUDA version and index URL from https://pytorch.org/get-started/locally/
   exit /b 2
