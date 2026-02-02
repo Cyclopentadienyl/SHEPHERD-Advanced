@@ -131,9 +131,10 @@ if [ ! -f "$REQ_FILE" ]; then
     echo -e "[INFO] Skipping core dependencies"
 else
     mkdir -p .tmp
-    echo -e "[INFO] Filtering requirements (removing flash-attn, faiss)..."
-    
+    echo -e "[INFO] Filtering requirements (removing flash-attn, xformers)..."
+
     # Generate Python script to filter requirements safely
+    # Note: voyager and cuvs are handled separately, not filtered
     cat <<EOF > .tmp/filter_reqs.py
 import re, sys
 input_file = "$REQ_FILE"
@@ -141,8 +142,8 @@ output_file = ".tmp/req_filtered.txt"
 try:
     with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
         lines = f.read().splitlines()
-    # Filter out flash-attn and faiss
-    pat = re.compile(r'^\s*(flash[-_]?attn|faiss[-_]?gpu|faiss\s*$|faiss-cpu)\b', re.I)
+    # Filter out flash-attn and xformers (installed separately with special handling)
+    pat = re.compile(r'^\s*(flash[-_]?attn|xformers)\b', re.I)
     filtered = [l for l in lines if not pat.match(l)]
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(filtered) + '\n')
@@ -158,33 +159,32 @@ EOF
     echo -e "${GREEN}[OK] Core dependencies installed${NC}"
 fi
 
-# Install FAISS
+# Install Vector Index Backends (Voyager + cuVS)
 echo -e "[INFO] Installing vector index backend..."
-# Strategy: Try faiss-gpu -> faiss-cpu -> hnswlib
-# On ARM, faiss-gpu via pip is often missing.
-FAISS_INSTALLED=0
+# Strategy (v3.2):
+#   - Linux: cuVS (GPU) -> Voyager (CPU fallback)
+#   - Voyager is always installed as cross-platform fallback
 
-if [ "$ARCH" == "aarch64" ]; then
-    echo -e "${YELLOW}[INFO] ARM64 detected: Skipping direct faiss-gpu pip install (often unavailable).${NC}"
-    echo -e "[INFO] Trying faiss-cpu..."
-    if "$PIP" install "faiss-cpu>=1.9.0"; then
-        echo -e "${GREEN}[OK] faiss-cpu installed${NC}"
-        FAISS_INSTALLED=1
-    fi
+# Always install Voyager (cross-platform CPU backend)
+echo -e "[INFO] Installing Voyager (Spotify HNSW)..."
+if "$PIP" install "voyager>=2.0"; then
+    echo -e "${GREEN}[OK] Voyager installed${NC}"
 else
-    # x86_64 Logic
-    if "$PIP" install "faiss-gpu-cu12"; then
-        echo -e "${GREEN}[OK] faiss-gpu-cu12 installed${NC}"
-        FAISS_INSTALLED=1
-    elif "$PIP" install "faiss-cpu>=1.9.0"; then
-        echo -e "${GREEN}[OK] faiss-cpu installed${NC}"
-        FAISS_INSTALLED=1
-    fi
+    echo -e "${RED}[ERROR] Voyager installation failed${NC}"
+    exit 3
 fi
 
-if [ $FAISS_INSTALLED -eq 0 ]; then
-    echo -e "${YELLOW}[WARN] FAISS failed, installing hnswlib as fallback${NC}"
-    "$PIP" install hnswlib || echo -e "${YELLOW}[WARN] hnswlib failed too${NC}"
+# Try cuVS on Linux (GPU-accelerated)
+if [ "$ARCH" == "aarch64" ] || [ "$ARCH" == "x86_64" ]; then
+    echo -e "[INFO] Attempting to install cuVS (NVIDIA RAPIDS)..."
+    # cuVS requires CUDA 12+ and is only available via NVIDIA PyPI
+    if "$PIP" install --extra-index-url https://pypi.nvidia.com "cuvs-cu12>=24.12" 2>/dev/null; then
+        echo -e "${GREEN}[OK] cuVS installed (GPU backend available)${NC}"
+    else
+        echo -e "${YELLOW}[INFO] cuVS not available; using Voyager as primary backend${NC}"
+        echo -e "${YELLOW}[HINT] For GPU acceleration, install cuVS manually:${NC}"
+        echo -e "${YELLOW}       pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12${NC}"
+    fi
 fi
 
 # ============================================================================

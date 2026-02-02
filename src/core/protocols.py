@@ -907,7 +907,7 @@ class VectorIndexProtocol(Protocol):
 
     @property
     def backend_name(self) -> str:
-        """索引後端名稱 (faiss/hnswlib)"""
+        """Index backend name (cuvs/voyager)"""
         ...
 
 
