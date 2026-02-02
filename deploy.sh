@@ -220,22 +220,24 @@ EOF
     fi
 fi
 
-# Knowledge Graph
-if [ -f "scripts/build_knowledge_graph.py" ]; then
-    echo -e "[INFO] Building knowledge graph..."
-    "$PY" scripts/build_knowledge_graph.py
-fi
-
 echo -e "\n${GREEN}============================================================================${NC}"
 echo -e "${GREEN}   Deployment Complete!${NC}"
 echo -e "${GREEN}============================================================================${NC}"
 echo -e "[INFO] Virtual environment: .venv"
 echo -e "[INFO] Python Interpreter:  $PY"
 echo -e "\nNext steps:"
-echo -e "   1. Activate environment:"
-echo -e "      ${YELLOW}source .venv/bin/activate${NC}"
-echo -e "   2. Launch system:"
-echo -e "      ${YELLOW}./launch_shepherd.sh${NC}                     (default, PyTorch SDPA)"
+echo -e "   1. Test the installation:"
+echo -e "      ${YELLOW}$PY -c \"import torch; print(torch.cuda.is_available())\"${NC}"
+echo -e ""
+echo -e "   2. Prepare data (first time only):"
+echo -e "      ${YELLOW}$PY scripts/data_preparation/download_ontologies.py${NC}"
+echo -e "      ${YELLOW}$PY scripts/build_knowledge_graph.py${NC}"
+echo -e ""
+echo -e "   3. Launch the system:"
+echo -e "      ${YELLOW}./launch_shepherd.sh${NC}"
+echo -e ""
+echo -e "   4. Run tests (optional):"
+echo -e "      ${YELLOW}$PY -m pytest tests/unit/${NC}"
 echo -e ""
 echo -e "[TIP] Optional accelerators (FlashAttention, xFormers, SageAttention):"
 echo -e "      These are auto-installed at launch time via arguments:"
