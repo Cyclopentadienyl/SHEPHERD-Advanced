@@ -30,7 +30,7 @@
 - **本體約束推理**: 防止不合理預測
 
 #### 檢索與生成
-- **向量索引**: FAISS (x86) / hnswlib (ARM)
+- **向量索引**: cuVS (Linux GPU) / Voyager (跨平台 CPU)
 - **GraphRAG**: 知識圖譜增強檢索生成
 - **LLM整合**: GPT-4/Claude (可選) 用於證據解釋
 
@@ -231,10 +231,11 @@ class HybridKGStorage:
             uri="bolt://localhost:7687"
         )
         
-        # 3. 檢索用：向量索引
-        self.vector_index = AdaptiveVectorIndex(
-            dimension=512,
-            backend='faiss' if is_x86() else 'hnswlib'
+        # 3. 檢索用：向量索引 (auto-select: cuVS/Voyager)
+        from src.retrieval import create_index
+        self.vector_index = create_index(
+            backend='auto',
+            dim=512
         )
     
     def query_subgraph(self, patient_phenotypes, k_hop=2):
@@ -729,12 +730,12 @@ class AdaptiveDeployment:
 
 | 套件 | Windows x86 安裝 | DGX Spark ARM 安裝 | 備註 |
 |------|------------------|---------------------|------|
-| PyTorch 2.8 | `pip install torch==2.8.0 --index-url .../cu128` | 同左 | ✅ 官方支持 |
+| PyTorch 2.9 | `pip install torch==2.9.0 --index-url .../cu130` | 同左 | ✅ 官方支持 |
 | PyG 2.6 | `pip install torch-geometric pyg-lib ...` | 同左或從源碼 | ⚠️ 需測試 |
 | FlashAttn-2 | `pip install flash-attn --no-build-isolation` | ❌ 跳過 | 使用備案 |
 | xformers | `pip install xformers` | 嘗試安裝 | ARM支持有限 |
-| FAISS | `pip install faiss-gpu` | ❌ | 用hnswlib替代 |
-| hnswlib | `pip install hnswlib` | ✅ | 跨平台 |
+| Voyager | `pip install voyager>=2.0` | ✅ | 跨平台 CPU |
+| cuVS | ❌ (Linux only) | `pip install cuvs-cu12` | Linux GPU 加速 |
 
 ### 自適應注意力實現
 

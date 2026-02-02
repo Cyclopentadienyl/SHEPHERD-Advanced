@@ -270,7 +270,7 @@ core/
 - `kg/` (知識圖譜)
 
 **提供**:
-- FAISS/hnswlib 向量索引
+- cuVS/Voyager 向量索引 (auto-select)
 - 子圖採樣
 
 ---

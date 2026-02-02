@@ -49,8 +49,8 @@ Any setting can be overridden via environment variables:
 # Override attention backend order
 export ATTENTION_ORDER=torch_sdpa,naive
 
-# Override retrieval backend
-export SHEPHERD_RETRIEVAL_BACKEND=hnswlib
+# Override retrieval backend (cuvs, voyager, or auto)
+export SHEPHERD_RETRIEVAL_BACKEND=voyager
 ```
 
 ## Accelerator Installation

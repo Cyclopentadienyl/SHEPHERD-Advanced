@@ -486,8 +486,8 @@ data = load_graph()  # 直接在統一記憶體
 | FlashAttention-2 | ✅ | ❌ | ARM不支持 |
 | xformers | ✅ | ⚠️ | 需從源碼編譯 |
 | **向量檢索** |
-| FAISS (GPU) | ✅ | ⚠️ | ARM支持有限 |
-| hnswlib | ✅ | ✅ | 跨平台 |
+| Voyager | ✅ | ✅ | 跨平台 CPU (Spotify HNSW) |
+| cuVS | ✅ | ✅ | Linux GPU (NVIDIA RAPIDS) |
 | **數據處理** |
 | Pandas/NumPy | ✅ | ✅ | 完全支持 |
 | RAPIDS | ✅ | ✅ | DGX OS預裝 |
@@ -590,33 +590,29 @@ PyTorch SDPA:        相對速度 0.5x ✅
 手動實現:             相對速度 0.3x (不推薦)
 ```
 
-#### **問題 3：FAISS on ARM** 🟡
+#### **問題 3：向量檢索後端 (v3.2 已解決)** 🟢
 
-**現狀：**
-FAISS GPU版本在ARM上支持有限
+**舊狀況：**
+FAISS GPU版本在ARM上支持有限，hnswlib 維護停滯
 
-**解決方案：**
+**新方案 (v3.2)：**
+- **Voyager**: Spotify 開源，跨平台 CPU (Windows/Linux/ARM)
+- **cuVS**: NVIDIA RAPIDS，Linux GPU 加速
+
 ```python
-class CrossPlatformVectorIndex:
-    def __init__(self, dimension, use_gpu=True):
-        self.dimension = dimension
-        
-        if platform.machine() == 'x86_64' and use_gpu:
-            # x86: 使用FAISS GPU
-            import faiss
-            self.index = faiss.IndexFlatL2(dimension)
-            if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-        else:
-            # ARM: 使用hnswlib
-            import hnswlib
-            self.index = hnswlib.Index(space='l2', dim=dimension)
-            self.index.init_index(
-                max_elements=1000000,
-                ef_construction=200,
-                M=16
-            )
+# 新架構：自動選擇最佳後端
+from src.retrieval import create_index
+
+# 自動選擇: Linux -> cuVS (GPU) -> Voyager (fallback)
+#          Windows -> Voyager (CPU)
+index = create_index(backend="auto", dim=768, metric="ip")
+
+# 建立索引
+embeddings = {"entity_1": vec1, "entity_2": vec2}
+index.build_index(embeddings)
+
+# 搜尋
+results = index.search(query_vector, top_k=10)
 ```
 
 ### 3.4 完整的環境設置腳本
@@ -701,7 +697,8 @@ pip install flash-attn --no-build-isolation || {
 pip install xformers || echo "⚠️ xformers也不可用，將使用PyTorch SDPA"
 
 # 安裝跨平台依賴
-pip install hnswlib  # 替代FAISS
+pip install voyager>=2.0  # Spotify HNSW
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12 || echo "cuVS not available, using Voyager"
 pip install -r requirements_arm.txt
 
 # 最終驗證
