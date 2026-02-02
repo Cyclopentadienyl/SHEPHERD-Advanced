@@ -69,33 +69,45 @@ def num_heads():
 
 @pytest.fixture
 def simple_metadata():
-    """Simple metadata for testing"""
+    """Simple metadata for testing (with reverse edges for bidirectional message passing)"""
     node_types = ["phenotype", "gene", "disease"]
     edge_types = [
+        # Forward edges
         ("phenotype", "associated_with", "gene"),
         ("gene", "causes", "disease"),
         ("phenotype", "of", "disease"),
+        # Reverse edges (for bidirectional message passing)
+        ("gene", "rev_associated_with", "phenotype"),
+        ("disease", "rev_causes", "gene"),
+        ("disease", "rev_of", "phenotype"),
     ]
     return (node_types, edge_types)
 
 
 @pytest.fixture
 def metadata_with_ortholog():
-    """Metadata including ortholog types"""
+    """Metadata including ortholog types (with reverse edges)"""
     node_types = ["phenotype", "gene", "disease", "mouse_gene", "mouse_phenotype"]
     edge_types = [
+        # Forward edges
         ("phenotype", "associated_with", "gene"),
         ("gene", "causes", "disease"),
         ("phenotype", "of", "disease"),
         ("gene", "ortholog_of", "mouse_gene"),
         ("mouse_gene", "has_phenotype", "mouse_phenotype"),
+        # Reverse edges
+        ("gene", "rev_associated_with", "phenotype"),
+        ("disease", "rev_causes", "gene"),
+        ("disease", "rev_of", "phenotype"),
+        ("mouse_gene", "rev_ortholog_of", "gene"),
+        ("mouse_phenotype", "rev_has_phenotype", "mouse_gene"),
     ]
     return (node_types, edge_types)
 
 
 @pytest.fixture
 def sample_hetero_data(simple_metadata, hidden_dim):
-    """Create sample heterogeneous graph data"""
+    """Create sample heterogeneous graph data (with reverse edges)"""
     node_types, edge_types = simple_metadata
 
     x_dict = {
@@ -104,19 +116,29 @@ def sample_hetero_data(simple_metadata, hidden_dim):
         "disease": torch.randn(5, hidden_dim),
     }
 
+    # Forward edges
+    phenotype_gene_edges = torch.stack([
+        torch.randint(0, 10, (30,)),
+        torch.randint(0, 20, (30,)),
+    ])
+    gene_disease_edges = torch.stack([
+        torch.randint(0, 20, (15,)),
+        torch.randint(0, 5, (15,)),
+    ])
+    phenotype_disease_edges = torch.stack([
+        torch.randint(0, 10, (20,)),
+        torch.randint(0, 5, (20,)),
+    ])
+
     edge_index_dict = {
-        ("phenotype", "associated_with", "gene"): torch.stack([
-            torch.randint(0, 10, (30,)),
-            torch.randint(0, 20, (30,)),
-        ]),
-        ("gene", "causes", "disease"): torch.stack([
-            torch.randint(0, 20, (15,)),
-            torch.randint(0, 5, (15,)),
-        ]),
-        ("phenotype", "of", "disease"): torch.stack([
-            torch.randint(0, 10, (20,)),
-            torch.randint(0, 5, (20,)),
-        ]),
+        # Forward edges
+        ("phenotype", "associated_with", "gene"): phenotype_gene_edges,
+        ("gene", "causes", "disease"): gene_disease_edges,
+        ("phenotype", "of", "disease"): phenotype_disease_edges,
+        # Reverse edges (for bidirectional message passing)
+        ("gene", "rev_associated_with", "phenotype"): phenotype_gene_edges.flip(0),
+        ("disease", "rev_causes", "gene"): gene_disease_edges.flip(0),
+        ("disease", "rev_of", "phenotype"): phenotype_disease_edges.flip(0),
     }
 
     return x_dict, edge_index_dict
@@ -124,7 +146,7 @@ def sample_hetero_data(simple_metadata, hidden_dim):
 
 @pytest.fixture
 def sample_hetero_data_with_ortholog(metadata_with_ortholog, hidden_dim):
-    """Create sample data including ortholog nodes/edges"""
+    """Create sample data including ortholog nodes/edges (with reverse edges)"""
     node_types, edge_types = metadata_with_ortholog
 
     x_dict = {
@@ -135,27 +157,41 @@ def sample_hetero_data_with_ortholog(metadata_with_ortholog, hidden_dim):
         "mouse_phenotype": torch.randn(8, hidden_dim),
     }
 
+    # Forward edges
+    phenotype_gene_edges = torch.stack([
+        torch.randint(0, 10, (30,)),
+        torch.randint(0, 20, (30,)),
+    ])
+    gene_disease_edges = torch.stack([
+        torch.randint(0, 20, (15,)),
+        torch.randint(0, 5, (15,)),
+    ])
+    phenotype_disease_edges = torch.stack([
+        torch.randint(0, 10, (20,)),
+        torch.randint(0, 5, (20,)),
+    ])
+    gene_mouse_gene_edges = torch.stack([
+        torch.randint(0, 20, (25,)),
+        torch.randint(0, 15, (25,)),
+    ])
+    mouse_gene_phenotype_edges = torch.stack([
+        torch.randint(0, 15, (20,)),
+        torch.randint(0, 8, (20,)),
+    ])
+
     edge_index_dict = {
-        ("phenotype", "associated_with", "gene"): torch.stack([
-            torch.randint(0, 10, (30,)),
-            torch.randint(0, 20, (30,)),
-        ]),
-        ("gene", "causes", "disease"): torch.stack([
-            torch.randint(0, 20, (15,)),
-            torch.randint(0, 5, (15,)),
-        ]),
-        ("phenotype", "of", "disease"): torch.stack([
-            torch.randint(0, 10, (20,)),
-            torch.randint(0, 5, (20,)),
-        ]),
-        ("gene", "ortholog_of", "mouse_gene"): torch.stack([
-            torch.randint(0, 20, (25,)),
-            torch.randint(0, 15, (25,)),
-        ]),
-        ("mouse_gene", "has_phenotype", "mouse_phenotype"): torch.stack([
-            torch.randint(0, 15, (20,)),
-            torch.randint(0, 8, (20,)),
-        ]),
+        # Forward edges
+        ("phenotype", "associated_with", "gene"): phenotype_gene_edges,
+        ("gene", "causes", "disease"): gene_disease_edges,
+        ("phenotype", "of", "disease"): phenotype_disease_edges,
+        ("gene", "ortholog_of", "mouse_gene"): gene_mouse_gene_edges,
+        ("mouse_gene", "has_phenotype", "mouse_phenotype"): mouse_gene_phenotype_edges,
+        # Reverse edges
+        ("gene", "rev_associated_with", "phenotype"): phenotype_gene_edges.flip(0),
+        ("disease", "rev_causes", "gene"): gene_disease_edges.flip(0),
+        ("disease", "rev_of", "phenotype"): phenotype_disease_edges.flip(0),
+        ("mouse_gene", "rev_ortholog_of", "gene"): gene_mouse_gene_edges.flip(0),
+        ("mouse_phenotype", "rev_has_phenotype", "mouse_gene"): mouse_gene_phenotype_edges.flip(0),
     }
 
     return x_dict, edge_index_dict
