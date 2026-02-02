@@ -119,7 +119,9 @@ class VoyagerIndex(VectorIndexBase):
                 )
             self._space = getattr(voyager.Space, space_name)
 
-            logger.debug(f"Voyager {voyager.__version__} loaded, space={space_name}")
+            # Get version safely (voyager may not have __version__)
+            version = getattr(voyager, "__version__", "unknown")
+            logger.debug(f"Voyager {version} loaded, space={space_name}")
 
         except ImportError as e:
             raise ImportError(

@@ -146,6 +146,14 @@ def resolve_backend(
             requested = "cuvs"
         else:
             requested = "voyager"
+    else:
+        # Explicit backend requested - validate it exists
+        valid_backends = set(_BACKEND_REGISTRY.keys()) | {"auto"}
+        if requested not in valid_backends:
+            raise ValueError(
+                f"Backend '{requested}' not available. "
+                f"Valid options: {sorted(valid_backends)}"
+            )
 
     # Check if requested backend is available
     if requested in _BACKEND_REGISTRY:
