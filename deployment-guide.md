@@ -75,8 +75,10 @@
 | **torch-sparse** | 最新 | ✅ | ⚠️ | 中等 | 同上 |
 | **FlashAttention-2** | 2.8+ | ✅ | ❌ | 困難 | **ARM不支持** |
 | **xformers** | 0.0.27+ | ✅ | ⚠️ | 困難 | ARM需從源碼編譯 |
-| **FAISS (GPU)** | 1.8+ | ✅ | ❌ | 中等 | **ARM不支持GPU版** |
-| **hnswlib** | 0.8+ | ✅ | ✅ | 簡單 | 跨平台 |
+| **FAISS (GPU)** | 1.8+ | ✅ | ❌ | 中等 | **已棄用，改用cuVS** |
+| **hnswlib** | 0.8+ | ✅ | ✅ | 簡單 | **已棄用，改用Voyager** |
+| **Voyager** | 2.0+ | ✅ | ✅ | 簡單 | Spotify HNSW，跨平台 |
+| **cuVS** | 24.12+ | ✅ | ✅ | 中等 | NVIDIA RAPIDS，Linux GPU |
 | **transformers** | 4.40+ | ✅ | ✅ | 簡單 | 完全支持 |
 | **owlready2** | 0.46+ | ✅ | ✅ | 簡單 | 純Python |
 | **neo4j** | 5.0+ | ✅ | ✅ | 簡單 | 純Python驅動 |
@@ -330,111 +332,51 @@ print(f"Avg time: {(end - start) / 100 * 1000:.2f} ms")
 - PyTorch SDPA (ARM): **0.45-0.55x**
 - Manual (ARM): **0.25-0.35x** (不推薦)
 
-### 🔴 **FAISS vs hnswlib**
+### 🟢 **Vector Index: Voyager + cuVS (v3.2)**
 
-**FAISS GPU on ARM**:
-- ❌ FAISS的GPU版本在ARM上支持極差
-- CPU版本可用，但慢很多
+> **Note**: FAISS 和 hnswlib 已棄用。新架構使用 Voyager (跨平台) + cuVS (Linux GPU)。
 
-**解決方案: hnswlib**
+**後端選擇策略**:
+- Linux (x86/ARM): cuVS (GPU) → Voyager (CPU fallback)
+- Windows: Voyager only (cuVS 不支持 Windows)
+
+**解決方案: Voyager + cuVS**
 
 ```python
-# src/retrieval/vector_index.py
+# src/retrieval/vector_index.py (v3.2)
+from src.retrieval import create_index, resolve_backend
 
-import platform
-import numpy as np
+# 自動選擇最佳後端
+index = create_index(backend="auto", dim=768, metric="ip")
 
-class CrossPlatformVectorIndex:
-    """
-    跨平台向量索引
-    x86: FAISS GPU
-    ARM: hnswlib (CPU優化)
-    """
-    
-    def __init__(self, dimension: int, max_elements: int = 1000000):
-        self.dimension = dimension
-        self.max_elements = max_elements
-        
-        arch = platform.machine()
-        is_arm = arch in ['aarch64', 'arm64']
-        
-        if is_arm or not self._check_faiss_gpu():
-            # ARM 或 FAISS不可用: 使用hnswlib
-            self.backend = 'hnswlib'
-            self._init_hnswlib()
-        else:
-            # x86 + CUDA: 使用FAISS GPU
-            self.backend = 'faiss_gpu'
-            self._init_faiss_gpu()
-        
-        print(f"[VectorIndex] Using backend: {self.backend}")
-    
-    def _check_faiss_gpu(self) -> bool:
-        try:
-            import faiss
-            return faiss.get_num_gpus() > 0
-        except:
-            return False
-    
-    def _init_hnswlib(self):
-        """hnswlib: HNSW算法，快速近似搜索"""
-        import hnswlib
-        
-        self.index = hnswlib.Index(space='l2', dim=self.dimension)
-        self.index.init_index(
-            max_elements=self.max_elements,
-            ef_construction=200,  # 構建時的搜索深度
-            M=16  # 每個節點的連接數
-        )
-        self.index.set_ef(50)  # 查詢時的搜索深度
-        self.current_count = 0
-    
-    def _init_faiss_gpu(self):
-        """FAISS GPU: 精確搜索，極快"""
-        import faiss
-        
-        # CPU索引
-        cpu_index = faiss.IndexFlatL2(self.dimension)
-        
-        # 轉移到GPU
-        res = faiss.StandardGpuResources()
-        self.index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
-        self.current_count = 0
-    
-    def add(self, vectors: np.ndarray):
-        """添加向量"""
-        if self.backend == 'hnswlib':
-            ids = np.arange(self.current_count, self.current_count + len(vectors))
-            self.index.add_items(vectors, ids)
-        else:  # faiss_gpu
-            self.index.add(vectors)
-        
-        self.current_count += len(vectors)
-    
-    def search(self, queries: np.ndarray, k: int = 10):
-        """搜索最近鄰"""
-        if self.backend == 'hnswlib':
-            labels, distances = self.index.knn_query(queries, k=k)
-            return labels, distances
-        else:  # faiss_gpu
-            distances, labels = self.index.search(queries, k)
-            return labels, distances
+# 或明確指定後端
+voyager_index = create_index(backend="voyager", dim=768)
+cuvs_index = create_index(backend="cuvs", dim=768)  # Linux only
 
 # 使用範例
-index = CrossPlatformVectorIndex(dimension=512)
-vectors = np.random.randn(10000, 512).astype('float32')
-index.add(vectors)
+embeddings = {"entity_1": vec1, "entity_2": vec2, ...}
+index.build_index(embeddings)
 
-queries = np.random.randn(10, 512).astype('float32')
-labels, distances = index.search(queries, k=10)
+results = index.search(query_vector, top_k=10)
+# Returns: [("entity_id", score), ...]
+```
+
+**安裝方式**:
+```bash
+# Voyager (必裝，跨平台)
+pip install voyager>=2.0
+
+# cuVS (選裝，Linux GPU)
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12
 ```
 
 **效能對比**:
-| 操作 | FAISS GPU (x86) | hnswlib (ARM) | 比率 |
-|------|-----------------|---------------|------|
-| 構建索引 (100萬向量) | 5s | 45s | 9x |
-| 查詢 (batch=100, k=10) | 2ms | 15ms | 7.5x |
-| 記憶體使用 | 低（GPU） | 中（CPU） | - |
+| 操作 | cuVS GPU (Linux) | Voyager CPU | 備註 |
+|------|------------------|-------------|------|
+| 構建索引 (100萬向量) | 3s | 30s | cuVS 使用 IVF-PQ |
+| 查詢 (batch=100, k=10) | 1ms | 8ms | Voyager 使用 HNSW |
+| 記憶體使用 | 低（GPU VRAM） | 中（CPU RAM） | - |
+| 平台支持 | Linux only | 跨平台 | Windows 僅 Voyager |
 
 ---
 
@@ -532,12 +474,11 @@ pip install flash-attn --no-build-isolation
 pip install `
     transformers>=4.40.0 `
     owlready2>=0.46 `
-    faiss-gpu>=1.8.0 `
-    hnswlib>=0.8.0 `
+    voyager>=2.0 `
     fastapi>=0.110.0 `
     uvicorn>=0.29.0 `
     pandas>=2.2.0 `
-    numpy>=1.26.0 `
+    numpy>=2.0 `
     tqdm>=4.66.0 `
     pyyaml>=6.0 `
     tensorboard>=2.16.0
@@ -552,7 +493,7 @@ python -c @"
 import torch
 import torch_geometric as pyg
 import flash_attn
-import faiss
+import voyager
 
 print(f'✅ PyTorch: {torch.__version__}')
 print(f'✅ PyG: {pyg.__version__}')
@@ -560,7 +501,7 @@ print(f'✅ CUDA可用: {torch.cuda.is_available()}')
 print(f'✅ CUDA設備: {torch.cuda.get_device_name(0)}')
 print(f'✅ CUDA記憶體: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
 print(f'✅ FlashAttention: 已安裝')
-print(f'✅ FAISS GPU數量: {faiss.get_num_gpus()}')
+print(f'✅ Voyager: 已安裝 (v{voyager.__version__})')
 "@
 
 Write-Host ""
@@ -738,14 +679,19 @@ echo -e "${CYAN}  安裝其他依賴...${NC}"
 pip install \
     transformers>=4.40.0 \
     owlready2>=0.46 \
-    hnswlib>=0.8.0 \
+    voyager>=2.0 \
     fastapi>=0.110.0 \
     uvicorn>=0.29.0 \
     pandas>=2.2.0 \
-    numpy>=1.26.0 \
+    numpy>=2.0 \
     tqdm>=4.66.0 \
     pyyaml>=6.0 \
     tensorboard>=2.16.0
+
+# cuVS for GPU acceleration (optional)
+echo -e "${CYAN}  嘗試安裝 cuVS (GPU 加速)...${NC}"
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12 || \
+    echo -e "${YELLOW}  cuVS 安裝失敗，將使用 Voyager (CPU)${NC}"
 
 # 11. 環境驗證
 echo ""
@@ -794,7 +740,7 @@ model_config:
   batch_size: 64  # 利用大記憶體優勢
 
 vector_index:
-  backend: hnswlib  # ARM上不用FAISS
+  backend: auto  # cuVS (GPU) -> Voyager (CPU fallback)
 EOF
 
 echo -e "${GREEN}✅ 配置文件已生成: config/platform.yaml${NC}"
@@ -811,7 +757,7 @@ echo -e "  3. 訓練模型: python scripts/train_model.py --config config/platfo
 echo ""
 echo -e "${YELLOW}注意事項：${NC}"
 echo -e "  - FlashAttention-2 在 ARM 上不可用，已自動降級"
-echo -e "  - 使用 hnswlib 替代 FAISS"
+echo -e "  - Vector Index 使用 cuVS (GPU) 或 Voyager (CPU fallback)"
 echo -e "  - 已針對128GB記憶體優化配置"
 ```
 
@@ -1014,22 +960,22 @@ nvidia-smi  # GPU利用率應該>80%
 ### Windows x86 + Blackwell
 
 - [ ] ✅ Python 3.12 安裝
-- [ ] ✅ CUDA 12.8 安裝
-- [ ] ✅ PyTorch 2.8.0 + CUDA 正常
+- [ ] ✅ CUDA 13.0 安裝
+- [ ] ✅ PyTorch 2.9.0 + CUDA 正常
 - [ ] ✅ PyTorch Geometric 正常
 - [ ] ✅ FlashAttention-2 安裝成功
-- [ ] ✅ FAISS GPU 可用
+- [ ] ✅ Voyager 可用 (CPU vector search)
 - [ ] ✅ 所有單元測試通過
 - [ ] ✅ 模型可訓練（檢查VRAM使用）
 
 ### ARM + Blackwell (DGX Spark)
 
 - [ ] ✅ 架構確認為 aarch64
-- [ ] ✅ CUDA 12.8 可用
-- [ ] ✅ PyTorch 2.8.0 ARM build 正常
+- [ ] ✅ CUDA 13.0 可用
+- [ ] ✅ PyTorch 2.9.0 ARM build 正常
 - [ ] ✅ PyTorch Geometric 可用（wheel或編譯）
 - [ ] ⚠️ 注意力後端已降級（xformers或SDPA）
-- [ ] ✅ hnswlib 替代 FAISS
+- [ ] ✅ Vector Index: cuVS (GPU) 或 Voyager (CPU fallback)
 - [ ] ✅ 統一記憶體正確識別
 - [ ] ✅ 模型可訓練（檢查128GB優勢）
 
@@ -1037,5 +983,5 @@ nvidia-smi  # GPU利用率應該>80%
 
 **下一步**: 參考 TODO 清單開始開發！
 
-**版本**: v2.0  
+**版本**: v3.2
 **維護**: 隨著套件更新持續更新本指南

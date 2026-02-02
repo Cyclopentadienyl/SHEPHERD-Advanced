@@ -113,11 +113,12 @@ class AdaptiveAttentionBackend:
 
 | 實現 | Stars | x86 GPU | ARM | 選擇 |
 |------|-------|---------|-----|------|
-| **FAISS** | 31k+ | ✅ | ❌ | ✅ x86用 |
-| **hnswlib** | 4k+ | ✅ | ✅ | ✅ ARM用 |
-| **Milvus** | 30k+ | ✅ | ✅ | ⚠️ 過重 |
+| **Voyager** | 2k+ | ✅ (CPU) | ✅ | ✅ 跨平台 |
+| **cuVS** | RAPIDS | ✅ (GPU) | ✅ | ✅ Linux GPU |
+| ~~FAISS~~ | 31k+ | ✅ | ❌ | ❌ 已棄用 |
+| ~~hnswlib~~ | 4k+ | ✅ | ✅ | ❌ 已棄用 |
 
-**策略：FAISS (x86) + hnswlib (ARM)**
+**策略 (v3.2)：cuVS (Linux GPU) + Voyager (跨平台 fallback)**
 
 ---
 
@@ -203,7 +204,7 @@ src/
 │
 ├── retrieval/                  # 檢索模組
 │   ├── __init__.py
-│   ├── vector_index.py         # 向量索引（自適應FAISS/hnswlib）
+│   ├── vector_index.py         # 向量索引（cuVS/Voyager auto-select）
 │   ├── path_retriever.py       # 路徑檢索器
 │   ├── path_scorer.py          # 路徑評分
 │   └── subgraph_sampler.py     # 子圖採樣
@@ -621,7 +622,7 @@ allow_external_api: false  # 🔴 禁止外部API
 | **圖學習備用** | DGL | 13k+ | 🟢 | 備用方案 |
 | **注意力** | 自適應三層 | - | 🟢 | 跨平台兼容 |
 | **本體** | owlready2 | 300+ | 🟢 | 醫療標準 |
-| **向量檢索** | FAISS/hnswlib | 31k+/4k+ | 🟢 | 跨平台 |
+| **向量檢索** | cuVS/Voyager | RAPIDS/2k+ | 🟢 | GPU加速+跨平台 |
 | **本地LLM** | vLLM + Llama 3.1 | 28k+/26k+ | 🟢 | 離線推理 |
 | **推理加速** | vLLM/llama.cpp | 28k+/67k+ | 🟢 | 高效 |
 

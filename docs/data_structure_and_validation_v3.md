@@ -1231,7 +1231,7 @@ class HPOMatcher:
         self.hpo_index = None
     
     def build_index(self):
-        """建立 HPO 搜尋索引 (使用 FAISS 或 hnswlib)"""
+        """建立 HPO 搜尋索引 (使用 cuVS 或 Voyager)"""
         # TODO: Phase 2 實現
         pass
     
