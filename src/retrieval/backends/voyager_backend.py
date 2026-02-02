@@ -96,7 +96,8 @@ class VoyagerIndex(VectorIndexBase):
         self.M = M
         self.ef_search = ef_search
         self.storage_type = storage_type
-        self.num_threads = num_threads if num_threads > 0 else None
+        # Voyager requires int for num_threads, -1 means auto
+        self.num_threads = num_threads if num_threads > 0 else -1
 
         self._index = None
         self._space = None
@@ -198,7 +199,12 @@ class VoyagerIndex(VectorIndexBase):
         if not index_path.exists():
             raise FileNotFoundError(f"Voyager index file not found: {index_path}")
 
-        self._index = self._voyager.Index.load(str(index_path))
+        # Voyager Index.load() requires space and num_dimensions
+        self._index = self._voyager.Index.load(
+            str(index_path),
+            space=self._space,
+            num_dimensions=self.dim,
+        )
         logger.debug(f"Voyager index loaded from {index_path}")
 
     def get_vector(self, entity_id: str) -> NDArray[np.float32] | None:
