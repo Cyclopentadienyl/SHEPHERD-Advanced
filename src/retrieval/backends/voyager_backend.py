@@ -211,9 +211,15 @@ class VoyagerIndex(VectorIndexBase):
         if not index_path.exists():
             raise FileNotFoundError(f"Voyager index file not found: {index_path}")
 
-        # Use simple load() - Voyager reads metadata from the file automatically
+        # Load with full parameters for compatibility
         # Reference: https://spotify.github.io/voyager/python/reference.html
-        self._index = self._voyager.Index.load(str(index_path))
+        # Note: Using explicit parameters instead of auto-detection for reliability
+        self._index = self._voyager.Index.load(
+            str(index_path),
+            space=self._space,
+            num_dimensions=self.dim,
+            storage_data_type=self._storage_data_type,
+        )
         logger.debug(f"Voyager index loaded from {index_path}")
 
     def get_vector(self, entity_id: str) -> NDArray[np.float32] | None:
