@@ -235,6 +235,9 @@ echo         launch_shepherd.cmd --xformers      (xFormers)
 echo         launch_shepherd.cmd --sage-attn     (SageAttention)
 echo       Compatibility not guaranteed; fallback to PyTorch SDPA is always available.
 echo.
+echo [TIP] For development (pytest, linting, etc.):
+echo       .venv\Scripts\pip.exe install -e ".[dev]"
+echo.
 echo [TIP] See docs/deployment-guide.md for troubleshooting
 echo.
 
