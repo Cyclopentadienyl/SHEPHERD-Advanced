@@ -11,7 +11,7 @@ license = {text = "MIT"}
 
 # Core dependencies - Pure Python packages with cross-platform compatibility
 # CRITICAL: Do NOT include torch, torch-geometric, flash-attn, xformers, or CUDA-dependent packages
-# These will be installed via platform-specific scripts to ensure CUDA 12.8+ compatibility
+# These will be installed via platform-specific scripts to ensure CUDA 13.0 compatibility
 dependencies = [
     # Ontology processing
     "pronto>=2.7",

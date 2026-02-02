@@ -18,7 +18,7 @@ rem   deploy.cmd requirements_arm.txt      (custom requirements file)
 rem 
 rem Environment Variables:
 rem   PYTHON_EXE        - Python launcher (default: py -3.10)
-rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu128)
+rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu130)
 rem   REQUIREMENTS_FILE - Custom requirements file
 rem   INSTALL_XFORMERS  - Set to 1 to install xformers
 rem   FLASHATTN_WHEEL   - Path to prebuilt flash-attn wheel
@@ -213,7 +213,7 @@ if /I "%INSTALL_XFORMERS%"=="1" (
   echo [INFO] Attempting to install xformers strict mode...
   
   rem [SAFETY] Use --no-deps to prevent torch downgrade
-  "%PIP%" install --no-deps --index-url https://download.pytorch.org/whl/cu128 xformers && (
+  "%PIP%" install --no-deps --index-url https://download.pytorch.org/whl/cu130 xformers && (
     echo [OK] xformers installed successfully.
   ) || (
     echo [WARN] Could not find a compatible xformers wheel for this Torch version.

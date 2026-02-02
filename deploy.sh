@@ -15,7 +15,7 @@ set -u
 #
 # Environment Variables:
 #   PYTHON_EXE        - Python executable (default: python3)
-#   TORCH_INDEX_URL   - PyTorch index URL (default: cu128 for Linux)
+#   TORCH_INDEX_URL   - PyTorch index URL (default: cu130 for all platforms)
 #   INSTALL_XFORMERS  - Set to 1 to install xformers
 #   FLASHATTN_WHEEL   - Path to prebuilt flash-attn wheel (Recommended for ARM)
 #

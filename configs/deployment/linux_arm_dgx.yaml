@@ -15,11 +15,11 @@ retrieval_backend:
   arm: hnswlib
   default: hnswlib
 cuda:
-  min_version: "12.4"
-  recommended: "12.8"
+  min_version: "13.0"
+  recommended: "13.0"
   cudnn: "9"
 torch:
-  min_version: "2.8.0"
+  min_version: "2.9.0"
   recommended: "2.9.0"
 indexing:
   dim: 768
