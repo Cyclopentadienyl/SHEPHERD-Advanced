@@ -239,11 +239,14 @@ def build_install_commands(config: InstallConfig, upgrade: bool = True) -> List[
 
     upgrade_flag = ["--upgrade"] if upgrade else []
 
-    # Install PyTorch
+    # Install PyTorch stack (torch, torchvision, torchaudio)
+    # Version mapping: torch 2.9.0 -> torchvision 0.24.0, torchaudio 2.9.0
     torch_cmd = [
         sys.executable, "-m", "pip", "install",
         *upgrade_flag,
         f"torch=={config.torch_version}",
+        "torchvision==0.24.0",
+        "torchaudio==2.9.0",
         "--index-url", config.extra_index_url,
     ]
     commands.append(torch_cmd)
