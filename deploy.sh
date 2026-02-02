@@ -62,7 +62,7 @@ echo "--------------------------------------------------------------------------
 # Check Python
 echo -e "[INFO] Python executable: $PYTHON_EXE"
 if ! $PYTHON_EXE --version > /dev/null 2>&1; then
-    echo -e "${RED}[ERROR] Python not found. Please install Python 3.10+${NC}"
+    echo -e "${RED}[ERROR] Python not found. Please install Python 3.12+${NC}"
     exit 1
 fi
 

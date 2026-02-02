@@ -5,9 +5,8 @@ torch==2.9.0
 torchvision==0.24.0
 torchaudio==2.9.0
 
-# Core scientific computing
-# NumPy 2.3+ requires Python 3.11+, so use 2.2.x for Python 3.10 compatibility
-numpy>=2.0,<2.3
+# Core scientific computing (Python 3.12+)
+numpy>=2.0
 scipy>=1.14
 
 # Configuration and utilities
@@ -15,8 +14,8 @@ pyyaml>=6.0
 pydantic>=2.7
 tqdm>=4.66
 
-# Vector retrieval (hnswlib preferred over FAISS for cross-platform)
-hnswlib>=0.8
+# Vector retrieval (Voyager: Spotify's actively maintained HNSW library)
+voyager>=2.0
 
 # NOTE: Acceleration libraries (flash-attn, xformers, sageattention) are OPTIONAL
 # Install via: python scripts/launch/shep_launch.py --install-accelerators
