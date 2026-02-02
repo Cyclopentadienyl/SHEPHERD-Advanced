@@ -104,11 +104,11 @@ echo -e "${GREEN}[OK] Pip upgraded${NC}"
 echo -e "\n${CYAN}[STAGE 2/5] PyTorch Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
-echo -e "[INFO] Installing PyTorch stack (torch >= 2.8, cu128)"
+echo -e "[INFO] Installing PyTorch stack (torch >= 2.10, cu128)"
 echo -e "[INFO] Index URL: $TORCH_INDEX_URL"
 
 # Install Torch
-"$PIP" install --index-url "$TORCH_INDEX_URL" "torch>=2.8" "torchvision>=0.19" "torchaudio>=2.8" || {
+"$PIP" install --index-url "$TORCH_INDEX_URL" "torch>=2.10" "torchvision>=0.20" "torchaudio>=2.10" || {
     echo -e "${RED}[ERROR] Failed to install PyTorch stack${NC}"
     echo -e "${YELLOW}[HINT] If on DGX Spark, ensure you have internet access or use the local NVIDIA mirror.${NC}"
     exit 2

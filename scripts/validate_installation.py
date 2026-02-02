@@ -6,7 +6,7 @@ REPORT = {"errors": [], "warnings": [], "info": []}
 def add(level, msg):
     REPORT[level].append(msg)
 
-def check_torch(min_ver="2.8.0"):
+def check_torch(min_ver="2.10.0"):
     try:
         import torch
         from packaging import version

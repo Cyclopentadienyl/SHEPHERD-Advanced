@@ -1,7 +1,8 @@
 # Linux ARM (DGX Spark, aarch64) — prefer SDPA + hnswlib
-torch>=2.8
-torchvision>=0.19
-torchaudio>=2.8
+# PyTorch 2.10 required for pyg-lib compatibility with cu130 (CUDA 13.0)
+torch>=2.10
+torchvision>=0.20
+torchaudio>=2.10
 xformers>=0.0.28
 numpy>=1.26
 scipy>=1.11

@@ -1,6 +1,6 @@
 {
   "_comment": "SHEPHERD-Advanced Accelerator Installation Specifications",
-  "_version": "1.0.0",
+  "_version": "2.0.0",
   "_platforms": {
     "os": [
       "windows",
@@ -30,27 +30,26 @@
         "amd64"
       ],
       "cuda": [
-        "11.8",
-        "12.1",
-        "12.4",
-        "12.8"
+        "12.6",
+        "12.8",
+        "13.0"
       ],
       "pytorch": [
-        "2.0+"
+        "2.10+"
       ]
     },
     "windows": {
       "x86_64": {
         "3.10": {
-          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "2.10.0+cu128": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.11": {
-          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "2.10.0+cu128": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.12": {
-          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "2.10.0+cu128": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         }
       }
@@ -58,15 +57,15 @@
     "linux": {
       "x86_64": {
         "3.10": {
-          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "2.10.0+cu128": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.11": {
-          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "2.10.0+cu128": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.12": {
-          "2.8.0+cu128": "flash-attn --no-build-isolation",
+          "2.10.0+cu128": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         }
       },
@@ -91,13 +90,12 @@
         "arm64"
       ],
       "cuda": [
-        "11.8",
-        "12.1",
-        "12.4",
-        "12.8"
+        "12.6",
+        "12.8",
+        "13.0"
       ],
       "pytorch": [
-        "2.0+"
+        "2.10+"
       ]
     },
     "windows": {

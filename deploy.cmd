@@ -100,7 +100,7 @@ echo ---------------------------------------------------------------------------
 
 echo [INFO] Installing PyTorch stack (torch/torchvision/torchaudio)
 echo [INFO] Index URL: %TORCH_INDEX_URL%
-"%PIP%" install --index-url %TORCH_INDEX_URL% "torch>=2.8" "torchvision>=0.19" "torchaudio>=2.8" || (
+"%PIP%" install --index-url %TORCH_INDEX_URL% "torch>=2.10" "torchvision>=0.20" "torchaudio>=2.10" || (
   echo [ERROR] Failed to install PyTorch stack
   echo [HINT] Check CUDA version and index URL from https://pytorch.org/get-started/locally/
   exit /b 2
