@@ -183,6 +183,8 @@ class TestRetrievalIntegration:
         - API responses
         - Caching
         - Logging
+
+        Note: JSON doesn't have tuples, so tuples become lists after round-trip.
         """
         from src.retrieval import create_index
 
@@ -196,7 +198,11 @@ class TestRetrievalIntegration:
         json_str = json.dumps(results)
         parsed = json.loads(json_str)
 
-        assert parsed == results
+        # JSON converts tuples to lists, so compare values not types
+        assert len(parsed) == len(results)
+        for i, (entity_id, score) in enumerate(results):
+            assert parsed[i][0] == entity_id
+            assert parsed[i][1] == score
 
     def test_entity_id_preservation(self, voyager_available, realistic_embeddings, tmp_path):
         """
