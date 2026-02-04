@@ -65,7 +65,7 @@ from torch.optim.lr_scheduler import (
     LinearLR,
     SequentialLR,
 )
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from src.training.loss_functions import LossConfig, MultiTaskLoss
 from src.training.callbacks import (
@@ -328,7 +328,7 @@ class Trainer:
                 self.scaler = None  # BF16 doesn't need scaling
             else:
                 self.amp_dtype = torch.float16
-                self.scaler = GradScaler()
+                self.scaler = GradScaler('cuda')
         else:
             self.amp_dtype = torch.float32
             self.scaler = None
@@ -463,7 +463,7 @@ class Trainer:
             subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
 
             # Forward pass with mixed precision
-            with autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+            with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
                 # Forward through GNN
                 node_embeddings = self.model(subgraph_x, subgraph_edges)
 
@@ -564,7 +564,7 @@ class Trainer:
                 subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
 
                 # Forward pass
-                with autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
                     node_embeddings = self.model(subgraph_x, subgraph_edges)
                     model_outputs = self._compute_model_outputs(
                         node_embeddings, batch, subgraph_x, subgraph_edges
@@ -746,7 +746,7 @@ class Trainer:
                 subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
 
                 # Forward pass
-                with autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
                     node_embeddings = self.model(subgraph_x, subgraph_edges)
                     model_outputs = self._compute_model_outputs(
                         node_embeddings, batch, subgraph_x, subgraph_edges
