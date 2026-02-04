@@ -488,7 +488,24 @@ class MultiTaskLoss(nn.Module):
             (total_loss, loss_dict) 總損失和各項損失
         """
         loss_dict = {}
-        total_loss = torch.tensor(0.0, device=next(iter(model_outputs.values())).device)
+
+        # Get device from model_outputs (handle nested dict for node_embeddings)
+        device = None
+        for v in model_outputs.values():
+            if isinstance(v, torch.Tensor):
+                device = v.device
+                break
+            elif isinstance(v, dict):
+                for vv in v.values():
+                    if isinstance(vv, torch.Tensor):
+                        device = vv.device
+                        break
+                if device is not None:
+                    break
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        total_loss = torch.tensor(0.0, device=device)
 
         # 1. 診斷損失
         if "diagnosis_scores" in batch and "diagnosis_targets" in batch:
