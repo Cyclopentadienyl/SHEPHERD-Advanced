@@ -5,8 +5,8 @@
 # Purpose: End-to-end inference pipeline for rare disease diagnosis
 #
 # Dependencies:
-#   - External: None (pure Python, torch optional for GNN)
-#   - Internal: src.core.types, src.kg, src.reasoning
+#   - External: torch (optional, for GNN inference)
+#   - Internal: src.core.types, src.kg, src.reasoning, src.models.gnn
 #
 # Input:
 #   - PatientPhenotypes: Patient's phenotype data (HPO IDs)
@@ -18,25 +18,36 @@
 #
 # Design Notes:
 #   - Core functionality (P0): Phenotype -> Gene -> Disease reasoning
+#   - GNN scoring (P0): Neural phenotype-disease similarity via trained GNN
 #   - Ortholog support (P1): Cross-species evidence (interfaces preserved)
-#   - Two-stage scoring: Path reasoning + optional GNN scoring
+#   - Two-stage scoring: Path reasoning + GNN scoring (when model available)
 #   - Interpretable: Full evidence paths and human-readable explanations
 #   - Production-ready: Input validation, error handling, logging
 #
 # Usage:
 #   from src.inference import DiagnosisPipeline
 #
+#   # Path-only reasoning (no GNN)
 #   pipeline = DiagnosisPipeline(kg=knowledge_graph)
+#
+#   # With GNN scoring from checkpoint
+#   pipeline = DiagnosisPipeline(
+#       kg=knowledge_graph,
+#       checkpoint_path="checkpoints/last.pt",
+#       data_dir="data/processed",
+#   )
 #   result = pipeline.run(patient_phenotypes, top_k=10)
 # ==============================================================================
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 from src.core.types import (
     DataSource,
@@ -57,8 +68,18 @@ from src.reasoning import (
     create_explanation_generator,
 )
 
+# Optional torch dependency for GNN inference
+try:
+    import torch
+    import torch.nn.functional as F
+    from torch import Tensor
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
 if TYPE_CHECKING:
     from src.kg import KnowledgeGraph
+    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +180,11 @@ class DiagnosisPipeline:
         self,
         kg: "KnowledgeGraph",
         config: Optional[PipelineConfig] = None,
-        model: Optional[Any] = None,  # Optional GNN model
+        model: Optional[Any] = None,  # Optional pre-loaded GNN model
+        checkpoint_path: Optional[str] = None,
+        graph_data: Optional[Dict[str, Any]] = None,
+        data_dir: Optional[str] = None,
+        device: Optional[str] = None,
     ):
         """
         Initialize the diagnosis pipeline.
@@ -167,21 +192,46 @@ class DiagnosisPipeline:
         Args:
             kg: Knowledge graph for reasoning
             config: Pipeline configuration
-            model: Optional pre-trained GNN model for enhanced scoring
+            model: Optional pre-loaded GNN model instance
+            checkpoint_path: Path to trained model checkpoint (.pt file).
+                            If provided and model is None, the model will be
+                            loaded from this checkpoint automatically.
+            graph_data: Pre-loaded graph data dict with keys:
+                       "x_dict", "edge_index_dict", "num_nodes_dict".
+                       Required for GNN inference if data_dir is not set.
+            data_dir: Path to processed data directory containing
+                     node_features.pt, edge_indices.pt, num_nodes.json.
+                     Alternative to graph_data for GNN inference.
+            device: Device for GNN inference ("cpu", "cuda", or None for auto).
         """
         self.kg = kg
         self.config = config or PipelineConfig()
         self.model = model
 
-        # Initialize components
+        # GNN inference state (populated by _init_gnn_inference)
+        self._node_embeddings: Optional[Dict[str, Any]] = None
+        self._node_id_to_idx: Optional[Dict[str, Dict[str, int]]] = None
+        self._graph_data: Optional[Dict[str, Any]] = graph_data
+        self._gnn_ready = False
+
+        # Initialize reasoning components
         self._init_reasoning_components()
         self._init_explanation_generator()
+
+        # Initialize GNN inference if resources are available
+        self._init_gnn_inference(
+            checkpoint_path=checkpoint_path,
+            graph_data=graph_data,
+            data_dir=data_dir,
+            device=device,
+        )
 
         logger.info(
             f"DiagnosisPipeline initialized: "
             f"version={self.VERSION}, "
             f"kg_nodes={len(kg._nodes)}, "
-            f"has_model={model is not None}"
+            f"has_model={self.model is not None}, "
+            f"gnn_ready={self._gnn_ready}"
         )
 
     def _init_reasoning_components(self) -> None:
@@ -204,6 +254,256 @@ class DiagnosisPipeline:
             include_ortholog_evidence=self.config.include_ortholog_evidence,
             include_literature_evidence=self.config.include_literature_evidence,
         )
+
+    # ==========================================================================
+    # GNN Inference Initialization
+    # ==========================================================================
+    def _init_gnn_inference(
+        self,
+        checkpoint_path: Optional[str],
+        graph_data: Optional[Dict[str, Any]],
+        data_dir: Optional[str],
+        device: Optional[str],
+    ) -> None:
+        """
+        Initialize GNN model and precompute node embeddings for inference.
+
+        This method handles the full setup chain:
+        1. Load graph data (from graph_data dict or data_dir files)
+        2. Load model from checkpoint (if no pre-loaded model)
+        3. Run GNN forward pass to cache all node embeddings
+        4. Build NodeID -> index mapping for score lookup
+        """
+        if not HAS_TORCH:
+            if checkpoint_path is not None or self.model is not None:
+                logger.warning(
+                    "PyTorch not available. GNN inference disabled. "
+                    "Install torch to enable GNN scoring."
+                )
+            return
+
+        # Nothing to do if no model source is available
+        if self.model is None and checkpoint_path is None:
+            return
+
+        # Step 1: Load graph data
+        if self._graph_data is None and data_dir is not None:
+            self._graph_data = self._load_graph_data(data_dir)
+
+        if self._graph_data is None:
+            logger.warning(
+                "No graph data available for GNN inference. "
+                "Provide graph_data or data_dir to enable GNN scoring."
+            )
+            return
+
+        # Step 2: Load model from checkpoint if needed
+        if self.model is None and checkpoint_path is not None:
+            self.model = self._load_model_from_checkpoint(
+                checkpoint_path, device
+            )
+            if self.model is None:
+                return
+
+        # Step 3: Precompute node embeddings
+        self._precompute_node_embeddings(device)
+
+        # Step 4: Build NodeID -> index mapping from KG
+        self._node_id_to_idx = self.kg.get_node_id_mapping()
+
+        self._gnn_ready = True
+        logger.info("GNN inference initialized successfully")
+
+    def _load_graph_data(self, data_dir: str) -> Optional[Dict[str, Any]]:
+        """Load graph data files from a processed data directory."""
+        data_path = Path(data_dir)
+        graph_data: Dict[str, Any] = {
+            "x_dict": {},
+            "edge_index_dict": {},
+            "num_nodes_dict": {},
+        }
+
+        # Load node features
+        node_features_path = data_path / "node_features.pt"
+        if node_features_path.exists():
+            graph_data["x_dict"] = torch.load(
+                node_features_path, map_location="cpu", weights_only=True
+            )
+            logger.info(
+                f"Loaded node features: {list(graph_data['x_dict'].keys())}"
+            )
+        else:
+            logger.warning(f"Node features not found: {node_features_path}")
+            return None
+
+        # Load edge indices
+        edge_indices_path = data_path / "edge_indices.pt"
+        if edge_indices_path.exists():
+            graph_data["edge_index_dict"] = torch.load(
+                edge_indices_path, map_location="cpu", weights_only=True
+            )
+            logger.info(
+                f"Loaded edge indices: "
+                f"{len(graph_data['edge_index_dict'])} edge types"
+            )
+        else:
+            logger.warning(f"Edge indices not found: {edge_indices_path}")
+            return None
+
+        # Load node counts
+        num_nodes_path = data_path / "num_nodes.json"
+        if num_nodes_path.exists():
+            with open(num_nodes_path) as f:
+                graph_data["num_nodes_dict"] = json.load(f)
+        else:
+            # Infer from feature tensors
+            for node_type, features in graph_data["x_dict"].items():
+                graph_data["num_nodes_dict"][node_type] = features.size(0)
+
+        return graph_data
+
+    def _load_model_from_checkpoint(
+        self,
+        checkpoint_path: str,
+        device: Optional[str],
+    ) -> Optional[Any]:
+        """
+        Load ShepherdGNN model from a training checkpoint.
+
+        Handles both checkpoint formats:
+        - Trainer format: key "model_state_dict"
+        - ModelCheckpoint callback format: key "state_dict"
+        """
+        from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
+
+        ckpt_path = Path(checkpoint_path)
+        if not ckpt_path.exists():
+            logger.error(f"Checkpoint not found: {ckpt_path}")
+            return None
+
+        logger.info(f"Loading GNN model from checkpoint: {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+        # Extract state dict (handle both formats)
+        if "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        elif "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        else:
+            logger.error(
+                f"Checkpoint has no recognized state dict key. "
+                f"Available keys: {list(checkpoint.keys())}"
+            )
+            return None
+
+        # Extract model config from checkpoint
+        ckpt_config = checkpoint.get("config", {})
+
+        # Reconstruct model architecture
+        # Get metadata from KG
+        kg_metadata = self.kg.metadata()
+
+        # Get in_channels_dict from graph data features
+        in_channels_dict = {}
+        for node_type, features in self._graph_data["x_dict"].items():
+            if features.dim() >= 2:
+                in_channels_dict[node_type] = features.size(-1)
+
+        # Build model config from checkpoint config or defaults.
+        # Infer boolean flags from state dict keys when not in config,
+        # so we don't create layers that weren't in the trained model.
+        hidden_dim = ckpt_config.get("hidden_dim", 256)
+        state_keys = set(state_dict.keys())
+
+        has_pos_encoder = any(k.startswith("pos_encoder.") for k in state_keys)
+        has_ortholog_gate = any(
+            k.startswith("ortholog_gate.") for k in state_keys
+        )
+
+        model_config = ShepherdGNNConfig(
+            hidden_dim=hidden_dim,
+            num_layers=ckpt_config.get("num_layers", 4),
+            num_heads=ckpt_config.get("num_heads", 8),
+            conv_type=ckpt_config.get("conv_type", "gat"),
+            dropout=0.0,  # No dropout at inference time
+            use_positional_encoding=ckpt_config.get(
+                "use_positional_encoding", has_pos_encoder
+            ),
+            use_ortholog_gate=ckpt_config.get(
+                "use_ortholog_gate", has_ortholog_gate
+            ),
+        )
+
+        # Provide default in_channels if not inferred from data
+        if not in_channels_dict:
+            for node_type in kg_metadata[0]:
+                in_channels_dict[node_type] = hidden_dim
+
+        model = ShepherdGNN(
+            metadata=kg_metadata,
+            in_channels_dict=in_channels_dict,
+            config=model_config,
+        )
+
+        # Load trained weights
+        try:
+            model.load_state_dict(state_dict)
+        except RuntimeError as e:
+            logger.error(f"Failed to load state dict: {e}")
+            return None
+
+        model.eval()
+
+        # Move to device
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = model.to(device)
+
+        num_params = sum(p.numel() for p in model.parameters())
+        logger.info(
+            f"GNN model loaded: {num_params:,} parameters, device={device}"
+        )
+        return model
+
+    def _precompute_node_embeddings(
+        self,
+        device: Optional[str] = None,
+    ) -> None:
+        """
+        Run GNN forward pass on the full graph and cache all node embeddings.
+
+        Embeddings are moved to CPU after computation for memory efficiency.
+        """
+        if self.model is None or self._graph_data is None:
+            return
+
+        if device is None:
+            device = next(self.model.parameters()).device
+        else:
+            device = torch.device(device)
+
+        logger.info("Precomputing node embeddings via GNN forward pass...")
+
+        # Move graph data to model device
+        x_dict = {
+            k: v.to(device) for k, v in self._graph_data["x_dict"].items()
+        }
+        edge_index_dict = {
+            k: v.to(device)
+            for k, v in self._graph_data["edge_index_dict"].items()
+        }
+
+        # Forward pass (no gradient needed for inference)
+        with torch.no_grad():
+            embeddings = self.model(x_dict, edge_index_dict)
+
+        # Move embeddings to CPU for memory efficiency
+        self._node_embeddings = {
+            k: v.cpu() for k, v in embeddings.items()
+        }
+
+        emb_info = {k: v.shape for k, v in self._node_embeddings.items()}
+        logger.info(f"Node embeddings cached: {emb_info}")
 
     def run(
         self,
@@ -491,13 +791,13 @@ class DiagnosisPipeline:
 
             # Calculate GNN score if model available
             gnn_score = 0.0
-            if self.model is not None:
+            if self._gnn_ready:
                 gnn_score = self._calculate_gnn_score(
                     source_ids, disease_id, patient_input
                 )
 
             # Combined confidence score
-            if self.model is not None:
+            if self._gnn_ready:
                 confidence_score = (
                     self.config.reasoning_weight * reasoning_score
                     + self.config.gnn_weight * gnn_score
@@ -568,15 +868,70 @@ class DiagnosisPipeline:
         """
         Calculate GNN-based score for a disease candidate.
 
-        This is a placeholder for future GNN integration.
-        Currently returns 0.0 if model is not available.
+        Uses precomputed node embeddings from the GNN forward pass to compute
+        cosine similarity between the aggregated patient phenotype profile
+        and the candidate disease embedding. This matches the scoring approach
+        used during training (see Trainer._compute_model_outputs).
+
+        The cosine similarity [-1, 1] is normalized to [0, 1] via
+        (sim + 1) / 2 to match the reasoning_score scale.
+
+        Returns 0.0 if GNN inference is not available.
         """
-        # TODO: Implement actual GNN scoring when model is integrated
-        # This would involve:
-        # 1. Convert patient phenotypes to node embeddings
-        # 2. Run GNN message passing
-        # 3. Compute phenotype-disease similarity
-        return 0.0
+        if not self._gnn_ready or self._node_embeddings is None:
+            return 0.0
+
+        node_mapping = self._node_id_to_idx
+        phenotype_type = NodeType.PHENOTYPE.value  # "phenotype"
+
+        # 1. Map phenotype NodeIDs to integer indices
+        phenotype_indices = []
+        phenotype_mapping = node_mapping.get(phenotype_type, {})
+        for nid in source_ids:
+            nid_str = str(nid)
+            idx = phenotype_mapping.get(nid_str)
+            if idx is not None:
+                phenotype_indices.append(idx)
+
+        if not phenotype_indices:
+            return 0.0
+
+        # 2. Get phenotype embeddings and aggregate (mean pooling)
+        phenotype_emb = self._node_embeddings.get(phenotype_type)
+        if phenotype_emb is None:
+            return 0.0
+
+        indices_tensor = torch.tensor(phenotype_indices, dtype=torch.long)
+        # Clamp indices to valid range
+        indices_tensor = indices_tensor.clamp(
+            min=0, max=phenotype_emb.size(0) - 1
+        )
+        selected_emb = phenotype_emb[indices_tensor]  # (N, hidden_dim)
+        patient_embedding = selected_emb.mean(dim=0, keepdim=True)  # (1, H)
+
+        # 3. Map disease NodeID to integer index
+        disease_type = NodeType.DISEASE.value  # "disease"
+        disease_str = str(disease_id)
+        disease_idx = node_mapping.get(disease_type, {}).get(disease_str)
+        if disease_idx is None:
+            return 0.0
+
+        disease_emb = self._node_embeddings.get(disease_type)
+        if disease_emb is None:
+            return 0.0
+
+        disease_idx = min(disease_idx, disease_emb.size(0) - 1)
+        disease_embedding = disease_emb[disease_idx].unsqueeze(0)  # (1, H)
+
+        # 4. Cosine similarity (matches training: Trainer._compute_model_outputs)
+        patient_norm = F.normalize(patient_embedding, dim=-1)
+        disease_norm = F.normalize(disease_embedding, dim=-1)
+        cosine_sim = torch.mm(patient_norm, disease_norm.t()).item()
+
+        # 5. Normalize from [-1, 1] to [0, 1]
+        score = (cosine_sim + 1.0) / 2.0
+
+        return score
 
     def _extract_supporting_genes(
         self, paths: List[ReasoningPath]
@@ -703,6 +1058,7 @@ class DiagnosisPipeline:
             "include_ortholog_evidence": self.config.include_ortholog_evidence,
             "include_literature_evidence": self.config.include_literature_evidence,
             "has_model": self.model is not None,
+            "gnn_ready": self._gnn_ready,
         }
 
 
@@ -713,6 +1069,10 @@ def create_diagnosis_pipeline(
     kg: "KnowledgeGraph",
     config: Optional[PipelineConfig] = None,
     model: Optional[Any] = None,
+    checkpoint_path: Optional[str] = None,
+    graph_data: Optional[Dict[str, Any]] = None,
+    data_dir: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
     Factory function to create a diagnosis pipeline.
@@ -720,9 +1080,21 @@ def create_diagnosis_pipeline(
     Args:
         kg: Knowledge graph
         config: Pipeline configuration
-        model: Optional GNN model
+        model: Optional pre-loaded GNN model
+        checkpoint_path: Path to trained model checkpoint
+        graph_data: Pre-loaded graph data dict
+        data_dir: Path to processed data directory
+        device: Device for GNN inference
 
     Returns:
         Configured DiagnosisPipeline instance
     """
-    return DiagnosisPipeline(kg=kg, config=config, model=model)
+    return DiagnosisPipeline(
+        kg=kg,
+        config=config,
+        model=model,
+        checkpoint_path=checkpoint_path,
+        graph_data=graph_data,
+        data_dir=data_dir,
+        device=device,
+    )
