@@ -391,7 +391,7 @@ class OrthologConsistencyLoss(nn.Module):
             損失值
         """
         if ortholog_pairs.shape[0] == 0:
-            return torch.tensor(0.0, device=human_gene_embeddings.device)
+            return torch.tensor(0.0, device=human_gene_embeddings.device, requires_grad=True)
 
         # 獲取同源對的嵌入
         human_emb = human_gene_embeddings[ortholog_pairs[:, 0]]
@@ -505,7 +505,7 @@ class MultiTaskLoss(nn.Module):
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        total_loss = torch.tensor(0.0, device=device)
+        total_loss = torch.tensor(0.0, device=device, requires_grad=True)
 
         # 1. 診斷損失
         if "diagnosis_scores" in batch and "diagnosis_targets" in batch:
