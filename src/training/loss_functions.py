@@ -391,7 +391,7 @@ class OrthologConsistencyLoss(nn.Module):
             損失值
         """
         if ortholog_pairs.shape[0] == 0:
-            return torch.tensor(0.0, device=human_gene_embeddings.device)
+            return torch.tensor(0.0, device=human_gene_embeddings.device, requires_grad=True)
 
         # 獲取同源對的嵌入
         human_emb = human_gene_embeddings[ortholog_pairs[:, 0]]
@@ -471,30 +471,49 @@ class MultiTaskLoss(nn.Module):
         計算多任務損失
 
         Args:
-            batch: 批次數據，包含:
-                - diagnosis_scores: (batch, num_diseases)
-                - diagnosis_targets: (batch,)
-                - positive_triples: (batch, 3)
-                - negative_triples: (batch, num_neg, 3)
-                - patient_embeddings: (batch, dim)
-                - disease_embeddings: (batch, dim)
-                - ortholog_pairs: (num_pairs, 2)
-            model_outputs: 模型輸出，包含:
+            batch: 原始批次數據，包含:
+                - positive_triples: (batch, 3) - 用於連結預測
+                - negative_triples: (batch, num_neg, 3) - 負樣本
+                - ortholog_pairs: (num_pairs, 2) - 同源基因對
+                - ortholog_confidences: (num_pairs,) - 同源置信度
+            model_outputs: 模型計算輸出，包含:
                 - node_embeddings: {node_type: (num_nodes, dim)}
                 - relation_embeddings: (num_relations, dim)
+                - diagnosis_scores: (batch, num_diseases) - 診斷分數
+                - diagnosis_targets: (batch,) - 診斷目標
+                - patient_embeddings: (batch, dim) - 患者嵌入
+                - disease_embeddings: (batch, dim) - 疾病嵌入
             use_uncertainty_weighting: 是否使用不確定性加權
 
         Returns:
             (total_loss, loss_dict) 總損失和各項損失
         """
         loss_dict = {}
-        total_loss = torch.tensor(0.0, device=next(iter(model_outputs.values())).device)
+
+        # Get device from model_outputs (handle nested dict for node_embeddings)
+        device = None
+        for v in model_outputs.values():
+            if isinstance(v, torch.Tensor):
+                device = v.device
+                break
+            elif isinstance(v, dict):
+                for vv in v.values():
+                    if isinstance(vv, torch.Tensor):
+                        device = vv.device
+                        break
+                if device is not None:
+                    break
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        total_loss = torch.tensor(0.0, device=device, requires_grad=True)
 
         # 1. 診斷損失
-        if "diagnosis_scores" in batch and "diagnosis_targets" in batch:
+        # diagnosis_scores 和 diagnosis_targets 由 model 計算，存放在 model_outputs 中
+        if "diagnosis_scores" in model_outputs and "diagnosis_targets" in model_outputs:
             diag_loss = self.diagnosis_loss(
-                batch["diagnosis_scores"],
-                batch["diagnosis_targets"],
+                model_outputs["diagnosis_scores"],
+                model_outputs["diagnosis_targets"],
             )
             loss_dict["diagnosis"] = diag_loss.item()
 
@@ -529,11 +548,12 @@ class MultiTaskLoss(nn.Module):
                 total_loss = total_loss + weighted_loss
 
         # 3. 對比學習損失
-        if "patient_embeddings" in batch and "disease_embeddings" in batch:
+        # patient_embeddings 和 disease_embeddings 由 model 計算，存放在 model_outputs 中
+        if "patient_embeddings" in model_outputs and "disease_embeddings" in model_outputs:
             contrastive_loss = self.contrastive_loss(
-                anchor_embeddings=batch["patient_embeddings"],
-                positive_embeddings=batch["disease_embeddings"],
-                negative_embeddings=batch.get("negative_disease_embeddings"),
+                anchor_embeddings=model_outputs["patient_embeddings"],
+                positive_embeddings=model_outputs["disease_embeddings"],
+                negative_embeddings=model_outputs.get("negative_disease_embeddings"),
             )
             loss_dict["contrastive"] = contrastive_loss.item()
 
