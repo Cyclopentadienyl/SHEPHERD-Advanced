@@ -260,11 +260,21 @@ class Trainer:
         # Estimate total steps
         total_steps = self._estimate_total_steps()
 
-        # Warmup steps
+        # Warmup steps (capped to avoid exceeding total steps)
+        original_warmup = self.config.warmup_steps
         if self.config.warmup_steps > 0:
-            warmup_steps = self.config.warmup_steps
+            warmup_steps = min(self.config.warmup_steps, total_steps // 2)
         else:
             warmup_steps = int(total_steps * self.config.warmup_ratio)
+
+        # Ensure at least 1 step for main scheduler phase
+        warmup_steps = min(warmup_steps, max(0, total_steps - 1))
+
+        if original_warmup > 0 and warmup_steps < original_warmup:
+            logger.warning(
+                f"warmup_steps reduced from {original_warmup} to {warmup_steps} "
+                f"(total_steps={total_steps}). Consider increasing epochs or reducing warmup."
+            )
 
         if self.config.scheduler_type == "cosine":
             # Warmup + Cosine decay
@@ -272,11 +282,11 @@ class Trainer:
                 self.optimizer,
                 start_factor=0.01,
                 end_factor=1.0,
-                total_iters=warmup_steps,
+                total_iters=max(1, warmup_steps),
             )
             cosine = CosineAnnealingLR(
                 self.optimizer,
-                T_max=total_steps - warmup_steps,
+                T_max=max(1, total_steps - warmup_steps),
                 eta_min=self.config.learning_rate * self.config.min_lr_ratio,
             )
             return SequentialLR(
@@ -289,7 +299,7 @@ class Trainer:
             return OneCycleLR(
                 self.optimizer,
                 max_lr=self.config.learning_rate,
-                total_steps=total_steps,
+                total_steps=max(1, total_steps),
                 pct_start=self.config.warmup_ratio,
                 div_factor=25,
                 final_div_factor=1 / self.config.min_lr_ratio,
@@ -300,7 +310,7 @@ class Trainer:
                 self.optimizer,
                 start_factor=1.0,
                 end_factor=self.config.min_lr_ratio,
-                total_iters=total_steps,
+                total_iters=max(1, total_steps),
             )
 
         return None
