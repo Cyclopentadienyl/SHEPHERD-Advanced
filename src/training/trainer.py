@@ -579,7 +579,7 @@ class Trainer:
                 # Collect predictions for metrics
                 if "diagnosis_scores" in model_outputs:
                     scores = model_outputs["diagnosis_scores"]
-                    targets = batch.get("diagnosis_targets", batch.get("disease_ids"))
+                    targets = model_outputs.get("diagnosis_targets", batch.get("disease_ids"))
 
                     # Get ranked predictions
                     _, indices = scores.sort(dim=-1, descending=True)
@@ -761,7 +761,7 @@ class Trainer:
                 # Collect predictions for metrics
                 if "diagnosis_scores" in model_outputs:
                     scores = model_outputs["diagnosis_scores"]
-                    targets = batch.get("diagnosis_targets", batch.get("disease_ids"))
+                    targets = model_outputs.get("diagnosis_targets", batch.get("disease_ids"))
 
                     # Get ranked predictions
                     _, indices = scores.sort(dim=-1, descending=True)
