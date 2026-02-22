@@ -20,8 +20,10 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, TYPE_CHECKING
 
 import networkx as nx
@@ -566,6 +568,132 @@ class KnowledgeGraph:
             "nodes_by_type": {nt.value: cnt for nt, cnt in self.num_nodes.items()},
             "edges_by_type": {et.value: cnt for et, cnt in self.num_edges.items()},
         }
+
+    # ==========================================================================
+    # Serialization
+    # ==========================================================================
+    def save_json(self, filepath: str) -> None:
+        """
+        Save knowledge graph to JSON file.
+
+        Format:
+            {
+                "nodes": [{"id": "hpo:HP:0001250", "node_type": "phenotype", "name": "...", ...}],
+                "edges": [{"source": "...", "target": "...", "edge_type": "...", "weight": 1.0}]
+            }
+
+        Args:
+            filepath: Output file path (.json)
+        """
+        nodes_data = []
+        for node in self._nodes.values():
+            node_dict = {
+                "id": str(node.id),
+                "source": node.id.source.value,
+                "local_id": node.id.local_id,
+                "node_type": node.node_type.value,
+                "name": node.name,
+            }
+            if node.description:
+                node_dict["description"] = node.description
+            if node.aliases:
+                node_dict["aliases"] = node.aliases
+            if node.species:
+                node_dict["species"] = node.species.value
+            nodes_data.append(node_dict)
+
+        edges_data = []
+        for edge in self._edges:
+            edge_dict = {
+                "source": str(edge.source_id),
+                "target": str(edge.target_id),
+                "source_ds": edge.source_id.source.value,
+                "source_lid": edge.source_id.local_id,
+                "target_ds": edge.target_id.source.value,
+                "target_lid": edge.target_id.local_id,
+                "edge_type": edge.edge_type.value,
+                "weight": edge.weight,
+                "confidence": edge.confidence,
+            }
+            edges_data.append(edge_dict)
+
+        data = {
+            "format_version": "1.0",
+            "nodes": nodes_data,
+            "edges": edges_data,
+        }
+
+        out_path = Path(filepath)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(
+            f"KG saved to {filepath}: "
+            f"{len(nodes_data)} nodes, {len(edges_data)} edges"
+        )
+
+    @classmethod
+    def load_json(cls, filepath: str) -> "KnowledgeGraph":
+        """
+        Load knowledge graph from JSON file.
+
+        Args:
+            filepath: Input file path (.json)
+
+        Returns:
+            Reconstructed KnowledgeGraph instance
+        """
+        from src.core.types import Species
+
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        kg = cls()
+
+        # Load nodes
+        for node_dict in data.get("nodes", []):
+            node_id = NodeID(
+                source=DataSource(node_dict["source"]),
+                local_id=node_dict["local_id"],
+            )
+            species = None
+            if "species" in node_dict:
+                species = Species(node_dict["species"])
+            node = Node(
+                id=node_id,
+                node_type=NodeType(node_dict["node_type"]),
+                name=node_dict["name"],
+                description=node_dict.get("description"),
+                aliases=node_dict.get("aliases", []),
+                species=species,
+            )
+            kg.add_node(node)
+
+        # Load edges
+        for edge_dict in data.get("edges", []):
+            source_id = NodeID(
+                source=DataSource(edge_dict["source_ds"]),
+                local_id=edge_dict["source_lid"],
+            )
+            target_id = NodeID(
+                source=DataSource(edge_dict["target_ds"]),
+                local_id=edge_dict["target_lid"],
+            )
+            edge = Edge(
+                source_id=source_id,
+                target_id=target_id,
+                edge_type=EdgeType(edge_dict["edge_type"]),
+                weight=edge_dict.get("weight", 1.0),
+                confidence=edge_dict.get("confidence", 1.0),
+            )
+            kg.add_edge(edge)
+
+        logger.info(
+            f"KG loaded from {filepath}: "
+            f"{kg.total_nodes} nodes, {kg.total_edges} edges"
+        )
+        return kg
 
     def __repr__(self) -> str:
         return f"KnowledgeGraph(nodes={self.total_nodes}, edges={self.total_edges})"
