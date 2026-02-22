@@ -20,7 +20,8 @@
 #   - Core functionality (P0): Phenotype -> Gene -> Disease reasoning
 #   - GNN scoring (P0): Neural phenotype-disease similarity via trained GNN
 #   - Ortholog support (P1): Cross-species evidence (interfaces preserved)
-#   - Two-stage scoring: Path reasoning + GNN scoring (when model available)
+#   - Scoring: GNN-primary when available, path reasoning as fallback
+#   - PathReasoner: Explanation-only role (evidence paths, not scoring)
 #   - Interpretable: Full evidence paths and human-readable explanations
 #   - Production-ready: Input validation, error handling, logging
 #
@@ -111,7 +112,10 @@ class PipelineConfig:
     path_length_penalty: float = 0.9
     aggregation_method: str = "weighted_sum"
 
-    # Scoring weights
+    # Scoring: GNN is the primary scoring source when available.
+    # PathReasoner provides explanation paths only (not blended into score).
+    # When GNN is unavailable, reasoning_score is used as fallback.
+    # Legacy weight fields kept for backward compatibility / future tuning.
     reasoning_weight: float = 0.5
     gnn_weight: float = 0.5
     ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
@@ -162,11 +166,21 @@ class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
 
+    Scoring architecture:
+    - GNN-primary: When a trained GNN model is available, the confidence
+      score equals the GNN cosine similarity score (normalized to [0,1]).
+    - Path-reasoning fallback: When no GNN is available, path reasoning
+      scores are used as the confidence score.
+
+    PathReasoner role (explanation-only):
+    - Always runs to find evidence paths (Phenotype → Gene → Disease)
+    - Provides human-readable reasoning chains for clinician review
+    - Does NOT contribute to the confidence score when GNN is active
+
     Combines:
-    - Knowledge graph path reasoning (P0 core)
-    - Optional GNN scoring (P0 enhancement)
-    - Ortholog evidence integration (P1 feature)
-    - Human-readable explanations
+    - Knowledge graph path reasoning for explainability (P0 core)
+    - GNN scoring for primary confidence (P0 core)
+    - Ortholog evidence integration (P1 feature, optional)
 
     Usage:
         pipeline = DiagnosisPipeline(kg=knowledge_graph)
@@ -786,7 +800,8 @@ class DiagnosisPipeline:
             disease_node = self.kg.get_node(disease_id)
             disease_name = disease_node.name if disease_node else str(disease_id)
 
-            # Calculate reasoning score from paths
+            # Calculate reasoning score from paths (used for explanation
+            # quality ranking and as fallback when GNN is unavailable)
             reasoning_score = self._calculate_reasoning_score(paths)
 
             # Calculate GNN score if model available
@@ -796,12 +811,10 @@ class DiagnosisPipeline:
                     source_ids, disease_id, patient_input
                 )
 
-            # Combined confidence score
+            # Confidence score: GNN-primary when available, path-reasoning
+            # as fallback. PathReasoner's role is explanation, not scoring.
             if self._gnn_ready:
-                confidence_score = (
-                    self.config.reasoning_weight * reasoning_score
-                    + self.config.gnn_weight * gnn_score
-                )
+                confidence_score = gnn_score
             else:
                 confidence_score = reasoning_score
 
@@ -1052,8 +1065,8 @@ class DiagnosisPipeline:
             "max_path_length": self.config.max_path_length,
             "path_length_penalty": self.config.path_length_penalty,
             "aggregation_method": self.config.aggregation_method,
-            "reasoning_weight": self.config.reasoning_weight,
-            "gnn_weight": self.config.gnn_weight,
+            "scoring_mode": "gnn_primary" if self._gnn_ready else "path_reasoning_fallback",
+            "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,
             "include_literature_evidence": self.config.include_literature_evidence,

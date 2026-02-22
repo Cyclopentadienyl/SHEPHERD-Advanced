@@ -45,9 +45,11 @@ Version: 1.0.0
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -96,7 +98,15 @@ async def lifespan(app: FastAPI):
     app_state.start_time = datetime.now()
 
     try:
-        # Lazy initialization - components loaded on first request if not pre-loaded
+        # Attempt eager initialization if KG path is configured
+        if os.environ.get("SHEPHERD_KG_PATH"):
+            initialize_pipeline()
+        else:
+            logger.info(
+                "No SHEPHERD_KG_PATH set. Pipeline will initialize "
+                "lazily on first request if configured later."
+            )
+
         app_state.is_ready = True
         logger.info("API service ready")
     except Exception as e:
@@ -260,22 +270,79 @@ def get_app_state() -> AppState:
     return app_state
 
 
-def initialize_pipeline():
+def initialize_pipeline(
+    kg_path: Optional[str] = None,
+    checkpoint_path: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    device: Optional[str] = None,
+):
     """
-    Initialize diagnosis pipeline
+    Initialize diagnosis pipeline.
 
-    Called lazily on first diagnosis request or explicitly at startup.
+    Loads the knowledge graph and creates the DiagnosisPipeline with optional
+    GNN model. Called lazily on first diagnosis request or explicitly at startup.
+
+    Configuration is read from environment variables if not passed directly:
+        SHEPHERD_KG_PATH: Path to KG JSON file
+        SHEPHERD_CHECKPOINT_PATH: Path to model checkpoint
+        SHEPHERD_DATA_DIR: Path to processed graph data directory
+        SHEPHERD_DEVICE: Inference device (cpu/cuda)
+
+    Args:
+        kg_path: Path to KG JSON file (overrides env var)
+        checkpoint_path: Path to trained model checkpoint (overrides env var)
+        data_dir: Path to processed data directory (overrides env var)
+        device: Inference device (overrides env var)
     """
     if app_state.pipeline is not None:
         return
 
     logger.info("Initializing diagnosis pipeline...")
+
+    # Resolve paths from args or environment
+    kg_path = kg_path or os.environ.get("SHEPHERD_KG_PATH")
+    checkpoint_path = checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH")
+    data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR")
+    device = device or os.environ.get("SHEPHERD_DEVICE")
+
+    if not kg_path:
+        logger.warning(
+            "No KG path configured. Set SHEPHERD_KG_PATH or pass kg_path. "
+            "Pipeline will not be available."
+        )
+        return
+
     try:
+        from src.kg.graph import KnowledgeGraph
         from src.inference.pipeline import create_diagnosis_pipeline
 
-        # TODO: Load actual KG and configure pipeline
-        # app_state.pipeline = create_diagnosis_pipeline(kg=app_state.kg)
-        logger.info("Pipeline initialization placeholder - awaiting KG data")
+        # Step 1: Load knowledge graph
+        kg_file = Path(kg_path)
+        if not kg_file.exists():
+            logger.error(f"KG file not found: {kg_file}")
+            return
+
+        logger.info(f"Loading knowledge graph from {kg_file}...")
+        kg = KnowledgeGraph.load_json(str(kg_file))
+        app_state.kg = kg
+        logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
+
+        # Step 2: Create pipeline (with optional GNN)
+        pipeline = create_diagnosis_pipeline(
+            kg=kg,
+            checkpoint_path=checkpoint_path,
+            data_dir=data_dir,
+            device=device,
+        )
+        app_state.pipeline = pipeline
+
+        config = pipeline.get_pipeline_config()
+        app_state.model_version = config.get("version", "unknown")
+        logger.info(
+            f"Pipeline initialized: scoring_mode={config.get('scoring_mode')}, "
+            f"gnn_ready={config.get('gnn_ready')}"
+        )
+
     except Exception as e:
         logger.error(f"Failed to initialize pipeline: {e}")
         raise

@@ -182,9 +182,15 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         # Get application state
         from src.api.main import app_state, initialize_pipeline
 
-        # Ensure pipeline is initialized
+        # Attempt lazy pipeline initialization if not yet loaded
         if app_state.pipeline is None:
-            # For now, return mock response until pipeline is fully integrated
+            try:
+                initialize_pipeline()
+            except Exception as e:
+                logger.warning(f"Lazy pipeline init failed: {e}")
+
+        if app_state.pipeline is None:
+            # Fallback to mock response when pipeline is unavailable
             logger.warning("Pipeline not initialized - returning mock response")
             warnings.append("Pipeline not fully initialized - using mock data")
 
@@ -194,7 +200,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                 request.include_explanations,
             )
         else:
-            # Run actual diagnosis
+            # Run actual diagnosis through the pipeline
             from src.core.types import PatientPhenotypes
 
             patient_input = PatientPhenotypes(
@@ -213,14 +219,17 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             candidates = [
                 DiagnosisCandidate(
                     rank=c.rank,
-                    disease_id=c.disease_id,
+                    disease_id=str(c.disease_id),
                     disease_name=c.disease_name,
                     confidence_score=c.confidence_score,
                     gnn_score=c.gnn_score,
                     reasoning_score=c.reasoning_score,
                     supporting_genes=c.supporting_genes,
                     explanation=c.explanation if request.include_explanations else None,
-                    reasoning_paths=c.reasoning_paths if request.include_paths else None,
+                    reasoning_paths=(
+                        [[str(n) for n in path] for path in c.reasoning_paths]
+                        if request.include_paths and c.reasoning_paths else None
+                    ),
                 )
                 for c in result.candidates
             ]
