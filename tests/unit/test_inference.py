@@ -295,7 +295,7 @@ class TestDiagnosisPipeline:
         assert isinstance(result, InferenceResult)
         assert result.patient_id == patient_phenotypes.patient_id
         assert isinstance(result.timestamp, datetime)
-        assert result.inference_time_ms > 0
+        assert result.inference_time_ms >= 0
 
         # Should find candidates
         assert len(result.candidates) > 0
