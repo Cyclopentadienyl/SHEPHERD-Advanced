@@ -123,24 +123,44 @@ def _collect_config(
     return config
 
 
-def _on_start(*args) -> str:
+def _on_start(*args):
     """Handle Start Training button click."""
     config = _collect_config(*args)
     result = training_manager.start_training(config)
     if result.get("success"):
-        return f"Training started (PID: {result.get('pid')})"
-    return f"Failed: {result.get('error', 'Unknown error')}"
+        return (
+            f"Training started (PID: {result.get('pid')})",
+            gr.update(interactive=False),   # disable start
+            gr.update(interactive=True),    # enable stop
+            gr.update(interactive=False),   # disable resume
+        )
+    return (
+        f"Failed: {result.get('error', 'Unknown error')}",
+        gr.update(interactive=True),    # keep start enabled
+        gr.update(interactive=False),   # keep stop disabled
+        gr.update(interactive=True),    # keep resume enabled
+    )
 
 
-def _on_stop() -> str:
+def _on_stop():
     """Handle Stop Training button click."""
     result = training_manager.stop_training()
     if result.get("success"):
-        return "Training stopped"
-    return f"Failed: {result.get('error', 'Unknown error')}"
+        return (
+            "Training stopped",
+            gr.update(interactive=True),    # re-enable start
+            gr.update(interactive=False),   # disable stop
+            gr.update(interactive=True),    # re-enable resume
+        )
+    return (
+        f"Failed: {result.get('error', 'Unknown error')}",
+        gr.update(interactive=False),   # keep start disabled while running
+        gr.update(interactive=True),    # keep stop enabled
+        gr.update(interactive=False),   # keep resume disabled while running
+    )
 
 
-def _on_resume(*args) -> str:
+def _on_resume(*args):
     """Handle Resume Training button click (same as start with resume path)."""
     config = _collect_config(*args)
     # For resume, try to find the last checkpoint if no path specified
@@ -155,20 +175,36 @@ def _on_resume(*args) -> str:
             if "resume_from" not in config:
                 config["resume_from"] = checkpoints[0]["filepath"]
         else:
-            return "No checkpoints found to resume from"
+            return (
+                "No checkpoints found to resume from",
+                gr.update(interactive=True),
+                gr.update(interactive=False),
+                gr.update(interactive=True),
+            )
 
     result = training_manager.start_training(config)
     if result.get("success"):
-        return f"Training resumed (PID: {result.get('pid')})"
-    return f"Failed: {result.get('error', 'Unknown error')}"
+        return (
+            f"Training resumed (PID: {result.get('pid')})",
+            gr.update(interactive=False),   # disable start
+            gr.update(interactive=True),    # enable stop
+            gr.update(interactive=False),   # disable resume
+        )
+    return (
+        f"Failed: {result.get('error', 'Unknown error')}",
+        gr.update(interactive=True),
+        gr.update(interactive=False),
+        gr.update(interactive=True),
+    )
 
 
-def _poll_status() -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
+def _poll_status():
     """
     Poll training status and metrics. Called by gr.Timer every 2 seconds.
 
     Returns:
-        (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text)
+        (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
+         start_btn_update, stop_btn_update, resume_btn_update)
     """
     status_info = training_manager.get_status()
     metrics_history = training_manager.get_metrics_history()
@@ -184,12 +220,27 @@ def _poll_status() -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Da
     loss_df = _build_loss_df(train_data, val_data)
     mrr_df = _build_metric_df(val_data, "val_mrr", "MRR")
     hits_df = _build_hits_df(val_data)
-    lr_df = _build_metric_df(train_data, "lr_group_0", "Learning Rate")
+    lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
+
+    # Gradio 5.20+ renders None as broken icon — use gr.update() for no-op
+    loss_out = loss_df if loss_df is not None else gr.update()
+    mrr_out = mrr_df if mrr_df is not None else gr.update()
+    hits_out = hits_df if hits_df is not None else gr.update()
+    lr_out = lr_df if lr_df is not None else gr.update()
 
     # Resource text
     resource_text = _format_resources(resources)
 
-    return status_text, loss_df, mrr_df, hits_df, lr_df, resource_text
+    # Button state based on training status
+    is_running = status_info.get("status") in ("running", "stopping")
+    start_update = gr.update(interactive=not is_running)
+    stop_update = gr.update(interactive=is_running)
+    resume_update = gr.update(interactive=not is_running)
+
+    return (
+        status_text, loss_out, mrr_out, hits_out, lr_out, resource_text,
+        start_update, stop_update, resume_update,
+    )
 
 
 def _format_status(status_info: Dict[str, Any]) -> str:
@@ -658,7 +709,7 @@ def create_training_tab() -> None:
             gr.Markdown("### Control")
             with gr.Row():
                 start_btn = gr.Button("Start Training", variant="primary")
-                stop_btn = gr.Button("Stop Training", variant="stop")
+                stop_btn = gr.Button("Stop Training", variant="stop", interactive=False)
                 resume_btn = gr.Button("Resume Training")
 
             status_display = gr.Markdown(
@@ -754,17 +805,17 @@ def create_training_tab() -> None:
     start_btn.click(
         fn=_on_start,
         inputs=all_params,
-        outputs=status_display,
+        outputs=[status_display, start_btn, stop_btn, resume_btn],
     )
     stop_btn.click(
         fn=_on_stop,
         inputs=[],
-        outputs=status_display,
+        outputs=[status_display, start_btn, stop_btn, resume_btn],
     )
     resume_btn.click(
         fn=_on_resume,
         inputs=all_params,
-        outputs=status_display,
+        outputs=[status_display, start_btn, stop_btn, resume_btn],
     )
 
     # =========================================================================
@@ -781,6 +832,9 @@ def create_training_tab() -> None:
             hits_plot,
             lr_plot,
             resource_display,
+            start_btn,
+            stop_btn,
+            resume_btn,
         ],
     )
 

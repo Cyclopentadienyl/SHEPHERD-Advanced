@@ -494,6 +494,7 @@ class MetricsLogger(Callback):
         self, trainer: "Trainer", logs: Dict[str, float], **kwargs
     ) -> None:
         record = {
+            "epoch": trainer.state.epoch,
             "timestamp": datetime.now().isoformat(),
             **logs,
         }
