@@ -235,4 +235,104 @@ FastAPI: >=0.110
 
 ---
 
+---
+
+## 九、套件相容性分析 (2026-02-23)
+
+### 9.1 背景
+
+`pyproject.toml` 中宣告 `gradio>=5.20,<5.30`，但本環境實際安裝的是 5.50.0。
+執行降版安裝時，pip 會連帶變動多個依賴套件。本節記錄完整的影響分析。
+
+### 9.2 Gradio 5.29.1 降版影響 (pip dry-run 驗證)
+
+| 套件 | 當前版本 | 降版至 | 影響程度 |
+|------|---------|--------|---------|
+| gradio | 5.50.0 | **5.29.1** | 目標版本 |
+| gradio-client | 1.14.0 | **1.10.1** | Gradio 内部依賴，低風險 |
+| pydantic | 2.12.3 | **2.11.10** | 見 9.3 分析 |
+| pydantic-core | 2.41.4 | **2.33.2** | 跟隨 pydantic |
+| websockets | 15.0.1 | 不變 | `<16,>=10` 約束，15.0.1 在範圍内 |
+| pandas | 2.3.3 | 不變 | `<3,>=1` 約束 |
+| pillow | 11.3.0 | 不變 | `<12,>=8` 約束 |
+
+**不受影響的套件**: websockets, pandas, pillow, numpy, fastapi, starlette, uvicorn, httpx, anyio 等全部保持不變。
+
+### 9.3 pydantic 降版分析
+
+**原因**: Gradio 5.23.2 ~ 5.49.x 全部要求 `pydantic<2.12,>=2.0`。
+僅 5.50.0 放寬至 `<=2.12.3`。
+
+**pydantic `<2.12` 上限時間線** (經 PyPI JSON 原始數據驗證):
+
+| Gradio 版本 | pydantic 約束 |
+|-------------|-------------|
+| 5.20.0 ~ 5.23.1 | `>=2.0` (無上限) |
+| **5.23.2** ~ 5.49.x | `<2.12,>=2.0` |
+| 5.50.0 | `<=2.12.3,>=2.0` |
+
+**程式碼掃描結果**: 本專案使用的 pydantic 功能全部在 2.0~2.7 範圍内：
+- `BaseModel` 子類 + `Field()` (4 個 API route 檔案)
+- `field_validator` 裝飾器 (標準用法，無 2.12 新參數)
+- `model_config = {"json_schema_extra": ...}`
+- `model_dump(exclude_none=True)`
+
+**未使用的 2.12+ 功能**: `defer_build`, `JsonValue`, `FailFast`, `with_config`, `experimental_allow_partial` — 全部未使用。
+
+**結論**: pydantic 2.12.3 → 2.11.10 **安全**，不會造成功能破壞。
+
+### 9.4 pandas 版本分析
+
+**現狀**: pandas 3.0.0/3.0.1 已發布於 PyPI，但**所有 Gradio 5.x 均要求 `pandas<3.0`**。
+安裝任何 Gradio 5.x 都會阻止使用 pandas 3.0。
+
+**程式碼掃描結果**: 本專案僅在 1 個檔案中使用 pandas：
+- `src/webui/components/training_console.py` — 僅用 `pd.DataFrame()` 建構
+- 無 `append()`, `swaplevel()`, `inplace=True` 等 3.0 移除的 API
+- 無 Copy-on-Write 敏感操作
+
+**結論**: pandas 2.3.3 完全滿足需求。未來若需 pandas 3.0，須等 Gradio 放寬約束。
+
+### 9.5 pyproject.toml 依賴完整性
+
+| 套件 | 版本約束 | 已安裝版本 | 狀態 |
+|------|---------|-----------|------|
+| pronto | >=2.7 | — | 未安裝 (本地部署需安裝) |
+| networkx | >=3.2 | — | 未安裝 |
+| pandas | >=2.2 | 2.3.3 | ✅ |
+| numpy | >=2.0 | 2.4.2 | ✅ |
+| scipy | >=1.14 | — | 未安裝 |
+| pyyaml | >=6.0 | 6.0.1 | ✅ |
+| jsonschema | >=4.21 | — | 未安裝 |
+| toml | >=0.10 | 0.10.2 | ✅ |
+| pydantic | >=2.7 | 2.12.3 (→2.11.10) | ✅ |
+| pydantic-settings | >=2.2 | — | 未安裝 |
+| fastapi | >=0.110 | 0.131.0 | ✅ |
+| uvicorn | >=0.29 | 0.41.0 | ✅ |
+| gradio | >=5.20,<5.30 | 5.50.0 (→5.29.1) | ✅ |
+| voyager | >=2.0 | — | 未安裝 |
+| tqdm | >=4.66 | 4.67.3 | ✅ |
+| requests | >=2.31 | 2.32.5 | ✅ |
+| python-dotenv | >=1.0 | — | 未安裝 |
+
+**Dry-run 驗證**: 所有 7 個未安裝套件 + `pydantic<2.12` 約束可同時安裝，零衝突。
+
+### 9.6 檢查指令備忘
+
+```bash
+# 快速檢查依賴衝突
+pip check
+
+# 完整依賴樹 (含版本約束比對)
+pipdeptree -w fail
+
+# Dry-run 模擬安裝 (不實際改動)
+pip install "gradio>=5.20,<5.30" --dry-run
+
+# 比對 pyproject.toml vs 實際安裝
+pip install -e ".[dev]" --dry-run
+```
+
+---
+
 *本文件由 Claude 4.6 Opus 自動生成，用於跨 Session 專案交接*
