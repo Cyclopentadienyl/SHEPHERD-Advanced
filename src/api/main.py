@@ -282,6 +282,15 @@ async def manifest() -> JSONResponse:
 
 
 # =============================================================================
+# Chrome DevTools config (silences 404 when F12 is open)
+# =============================================================================
+@app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)
+async def chrome_devtools_config() -> JSONResponse:
+    """Empty config to silence Chrome DevTools 404."""
+    return JSONResponse({})
+
+
+# =============================================================================
 # Root Endpoint
 # =============================================================================
 @app.get("/", tags=["Root"])

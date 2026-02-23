@@ -41,6 +41,33 @@ def create_gradio_app() -> gr.Blocks:
     with gr.Blocks(
         title="SHEPHERD-Advanced Dashboard",
         theme=gr.themes.Soft(),
+        css="""
+            /* Suppress Gradio's opacity/loading flash on resource dashboard updates */
+            #resource_display,
+            #resource_display *,
+            #resource_display .prose,
+            #resource_display > div,
+            #component-resource_display,
+            div:has(> #resource_display) {
+                animation: none !important;
+                transition: none !important;
+                opacity: 1 !important;
+            }
+            /* Gradio wraps components and adds these classes during updates */
+            #resource_display.pending,
+            #resource_display.generating,
+            #resource_display.updating,
+            div:has(> #resource_display).pending,
+            div:has(> #resource_display).generating {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
+            /* Hide the ETA loading bar on resource display */
+            #resource_display .eta-bar,
+            div:has(> #resource_display) .eta-bar {
+                display: none !important;
+            }
+        """,
     ) as app:
         gr.Markdown(
             "# SHEPHERD-Advanced Dashboard\n"
