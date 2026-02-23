@@ -646,6 +646,7 @@ def create_training_tab() -> None:
             status_display = gr.Markdown(
                 value="**Status**: IDLE",
                 label="Status",
+                elem_id="status_display",
             )
 
         # =====================================================================
