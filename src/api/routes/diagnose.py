@@ -298,6 +298,11 @@ def _generate_mock_candidates(
     candidates = []
     for i, (disease_id, disease_name, genes) in enumerate(mock_diseases[:top_k]):
         score = 0.95 - (i * 0.08)  # Decreasing scores
+        # Build mock reasoning paths: phenotype → gene → disease
+        mock_paths = [
+            [p, genes[0], disease_id]
+            for p in phenotypes[:min(2, len(phenotypes))]
+        ] if genes else []
         candidates.append(DiagnosisCandidate(
             rank=i + 1,
             disease_id=disease_id,
@@ -310,6 +315,7 @@ def _generate_mock_candidates(
             explanation=f"Candidate diagnosis based on {len(phenotypes)} phenotypes. "
                         f"Key supporting genes: {', '.join(genes)}."
                         if include_explanations else None,
+            reasoning_paths=mock_paths if mock_paths else None,
         ))
 
     return candidates
