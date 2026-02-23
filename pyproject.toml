@@ -58,6 +58,7 @@ dev = [
     "pytest-xdist>=3.5",
     "pytest-asyncio>=0.23",
     "pip-tools>=7.4",
+    "pipdeptree>=2.23",
 ]
 
 # NLP modules (optional)
