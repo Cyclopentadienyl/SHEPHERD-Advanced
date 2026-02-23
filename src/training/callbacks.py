@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -373,18 +374,54 @@ class MetricsLogger(Callback):
         self.val_history: List[Dict[str, Any]] = []
         self.batch_count: int = 0
         self.epoch_metrics: Dict[str, List[float]] = {}
+        self._progress_file: Optional[Path] = None
+        self._last_progress_write: float = 0.0
+
+    def _write_progress(self, data: Dict[str, Any]) -> None:
+        """Write lightweight progress file for WebUI polling."""
+        if self._progress_file is None:
+            return
+        try:
+            tmp_path = self._progress_file.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(data, f)
+            tmp_path.replace(self._progress_file)
+        except OSError:
+            pass
 
     def on_train_begin(self, trainer: "Trainer", **kwargs) -> None:
         if self.config.log_to_file:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             self.log_file = self.log_dir / f"train_{datetime.now():%Y%m%d_%H%M%S}.json"
+            self._progress_file = self.log_dir / "train_progress.json"
 
         self.train_history = []
         self.val_history = []
 
+        self._write_progress({
+            "phase": "initializing",
+            "total_epochs": trainer.config.num_epochs,
+            "timestamp": datetime.now().isoformat(),
+        })
+
     def on_epoch_begin(self, trainer: "Trainer", epoch: int, **kwargs) -> None:
         self.batch_count = 0
         self.epoch_metrics = {}
+        self._last_progress_write = 0.0
+
+        try:
+            total_batches = len(trainer.train_dataloader)
+        except TypeError:
+            total_batches = None
+
+        self._write_progress({
+            "phase": "training",
+            "epoch": epoch,
+            "total_epochs": trainer.config.num_epochs,
+            "batch": 0,
+            "total_batches": total_batches,
+            "timestamp": datetime.now().isoformat(),
+        })
 
     def on_batch_end(
         self, trainer: "Trainer", batch_idx: int, logs: Dict[str, float], **kwargs
@@ -406,6 +443,26 @@ class MetricsLogger(Callback):
                 f"{k}: {v:.4f}" for k, v in logs.items()
             )
             logger.info(f"Batch {batch_idx}: {metrics_str}")
+
+        # Throttled progress file update (every 5 seconds)
+        now = time.time()
+        if now - self._last_progress_write >= 5.0:
+            self._last_progress_write = now
+
+            try:
+                total_batches = len(trainer.train_dataloader)
+            except TypeError:
+                total_batches = None
+
+            self._write_progress({
+                "phase": "training",
+                "epoch": trainer.state.epoch,
+                "total_epochs": trainer.config.num_epochs,
+                "batch": batch_idx + 1,
+                "total_batches": total_batches,
+                "batch_loss": logs.get("batch_loss"),
+                "timestamp": datetime.now().isoformat(),
+            })
 
     def on_epoch_end(
         self, trainer: "Trainer", epoch: int, logs: Dict[str, float], **kwargs
@@ -447,6 +504,14 @@ class MetricsLogger(Callback):
                 f"{k}: {v:.4f}" for k, v in logs.items() if isinstance(v, (int, float))
             )
             logger.info(f"Validation: {metrics_str}")
+
+    def on_train_end(self, trainer: "Trainer", **kwargs) -> None:
+        self._write_progress({
+            "phase": "completed",
+            "epoch": trainer.state.epoch,
+            "total_epochs": trainer.config.num_epochs,
+            "timestamp": datetime.now().isoformat(),
+        })
 
     def _save_history(self) -> None:
         data = {

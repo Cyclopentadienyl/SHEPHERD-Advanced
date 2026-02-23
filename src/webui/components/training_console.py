@@ -200,11 +200,25 @@ def _format_status(status_info: Dict[str, Any]) -> str:
     if status_info.get("pid"):
         lines.append(f"**PID**: {status_info['pid']}")
 
+    # Show phase if available (initializing, training, completed)
+    phase = status_info.get("phase")
+    if phase and phase == "initializing":
+        lines.append("**Phase**: Initializing (loading data & model)...")
+
     epoch = status_info.get("current_epoch")
     total = status_info.get("total_epochs")
     if epoch is not None and total is not None:
         pct = (epoch / total * 100) if total > 0 else 0
         lines.append(f"**Epoch**: {epoch} / {total} ({pct:.0f}%)")
+
+    # Show batch progress within current epoch
+    batch = status_info.get("batch")
+    total_batches = status_info.get("total_batches")
+    if batch is not None and total_batches is not None and total_batches > 0:
+        batch_pct = (batch / total_batches * 100)
+        lines.append(f"**Batch**: {batch} / {total_batches} ({batch_pct:.0f}%)")
+    elif batch is not None:
+        lines.append(f"**Batch**: {batch}")
 
     elapsed = status_info.get("elapsed_seconds")
     if elapsed is not None:
@@ -221,7 +235,6 @@ def _format_status(status_info: Dict[str, Any]) -> str:
     if status_info.get("error_message"):
         err = status_info["error_message"]
         if "\n" in err:
-            # Multi-line error: render in a code block for readability
             lines.append(f"**Error**:\n```\n{err}\n```")
         else:
             lines.append(f"**Error**: {err}")
