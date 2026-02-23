@@ -290,38 +290,110 @@ def _build_hits_df(val_data: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
     return pd.DataFrame(rows)
 
 
+def _bar_color(pct: float) -> str:
+    """Return a CSS color based on utilization percentage."""
+    if pct < 50:
+        return "#22c55e"   # green
+    if pct < 80:
+        return "#eab308"   # yellow
+    return "#ef4444"       # red
+
+
+def _temp_color(temp_c: float) -> str:
+    """Return a CSS color based on GPU temperature."""
+    if temp_c < 60:
+        return "#22c55e"
+    if temp_c < 80:
+        return "#eab308"
+    return "#ef4444"
+
+
+def _make_bar(label: str, value_text: str, pct: float, color: str) -> str:
+    """Generate HTML for a single progress bar gauge."""
+    pct_clamped = max(0, min(100, pct))
+    return (
+        f'<div style="margin-bottom:8px">'
+        f'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px">'
+        f'<span>{label}</span><span>{value_text}</span></div>'
+        f'<div style="background:#e5e7eb;border-radius:4px;height:14px;overflow:hidden">'
+        f'<div style="width:{pct_clamped:.1f}%;height:100%;background:{color};'
+        f'border-radius:4px;transition:width 0.5s ease"></div></div></div>'
+    )
+
+
 def _format_resources(resources: Dict[str, Any]) -> str:
-    """Format system resources as a readable string."""
-    lines = []
+    """Format system resources as HTML dashboard with progress bar gauges."""
+    bars: List[str] = []
 
     gpu = resources.get("gpu", {})
     if gpu.get("available"):
         for dev in gpu.get("devices", []):
-            mem_pct = (
-                (dev["memory_used_mb"] / dev["memory_total_mb"] * 100)
-                if dev.get("memory_total_mb", 0) > 0
-                else 0
-            )
-            lines.append(
-                f"**GPU {dev['index']}** ({dev['name']}): "
-                f"{dev['utilization_percent']:.0f}% util | "
-                f"{dev['memory_used_mb']:.0f}/{dev['memory_total_mb']:.0f} MB "
-                f"({mem_pct:.0f}%) | "
-                f"{dev['temperature_c']:.0f}\u00b0C"
+            name = dev.get("name", "GPU")
+            idx = dev.get("index", 0)
+
+            # GPU Utilization bar
+            util_pct = dev.get("utilization_percent", 0)
+            bars.append(_make_bar(
+                f"GPU {idx} Util",
+                f"{util_pct:.0f}%",
+                util_pct,
+                _bar_color(util_pct),
+            ))
+
+            # GPU Memory bar
+            mem_used = dev.get("memory_used_mb", 0)
+            mem_total = dev.get("memory_total_mb", 1)
+            mem_pct = (mem_used / mem_total * 100) if mem_total > 0 else 0
+            bars.append(_make_bar(
+                f"GPU {idx} VRAM",
+                f"{mem_used:.0f} / {mem_total:.0f} MB",
+                mem_pct,
+                _bar_color(mem_pct),
+            ))
+
+            # Temperature bar (scale: 0-100 °C)
+            temp = dev.get("temperature_c", 0)
+            bars.append(_make_bar(
+                f"GPU {idx} Temp",
+                f"{temp:.0f}\u00b0C",
+                temp,
+                _temp_color(temp),
+            ))
+
+            # Add device name as a subtle label
+            bars.append(
+                f'<div style="font-size:11px;color:#6b7280;margin-bottom:10px">'
+                f'{name}</div>'
             )
     else:
-        lines.append("**GPU**: Not available")
+        bars.append(
+            '<div style="font-size:13px;color:#6b7280;margin-bottom:8px">'
+            'GPU: Not available</div>'
+        )
 
+    # RAM bar
     ram = resources.get("ram", {})
     if "error" not in ram:
-        lines.append(
-            f"**RAM**: {ram.get('used_gb', '?')}/{ram.get('total_gb', '?')} GB "
-            f"({ram.get('percent', '?')}%)"
-        )
+        used = ram.get("used_gb", 0)
+        total = ram.get("total_gb", 1)
+        pct = ram.get("percent", 0)
+        bars.append(_make_bar(
+            "RAM",
+            f"{used:.1f} / {total:.1f} GB",
+            pct,
+            _bar_color(pct),
+        ))
     else:
-        lines.append(f"**RAM**: {ram.get('error', 'Unknown')}")
+        bars.append(
+            f'<div style="font-size:13px;color:#ef4444;margin-bottom:8px">'
+            f'RAM: {ram.get("error", "Unknown")}</div>'
+        )
 
-    return "\n".join(lines)
+    return (
+        '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
+        + "\n".join(bars)
+        + "</div>"
+    )
 
 
 # =============================================================================
@@ -635,9 +707,9 @@ def create_training_tab() -> None:
                 )
 
             gr.Markdown("### System Resources")
-            resource_display = gr.Markdown(
-                value="*Waiting for data...*",
-                label="Resources",
+            resource_display = gr.HTML(
+                value='<div style="font-size:13px;color:#6b7280">Waiting for data...</div>',
+                elem_id="resource_display",
             )
 
     # =========================================================================

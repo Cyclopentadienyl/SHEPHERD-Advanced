@@ -266,6 +266,22 @@ except Exception as e:
 
 
 # =============================================================================
+# PWA Manifest (silences browser 404 for /manifest.json)
+# =============================================================================
+@app.get("/manifest.json", include_in_schema=False)
+async def manifest() -> JSONResponse:
+    """Minimal PWA manifest for the Gradio dashboard."""
+    return JSONResponse({
+        "name": "SHEPHERD-Advanced Dashboard",
+        "short_name": "SHEPHERD",
+        "start_url": "/ui",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#2563eb",
+    })
+
+
+# =============================================================================
 # Root Endpoint
 # =============================================================================
 @app.get("/", tags=["Root"])

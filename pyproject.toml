@@ -39,6 +39,9 @@ dependencies = [
     # Vector retrieval (cross-platform CPU backend)
     "voyager>=2.0",  # Spotify's HNSW library, replaces hnswlib
     
+    # System monitoring
+    "psutil>=5.9",
+
     # Utilities
     "packaging>=23.0",
     "tqdm>=4.66",
