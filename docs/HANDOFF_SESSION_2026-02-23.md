@@ -317,13 +317,52 @@ FastAPI: >=0.110
 
 **Dry-run 驗證**: 所有 7 個未安裝套件 + `pydantic<2.12` 約束可同時安裝，零衝突。
 
-### 9.6 檢查指令備忘
+### 9.6 本地環境驗證 (Windows, pipdeptree -w fail)
+
+**驗證日期**: 2026-02-23
+**結果**: `pipdeptree -w fail` 零失敗，所有依賴約束一致。
+
+**核心依賴鏈交叉驗證**:
+```
+gradio 5.29.1     → pydantic >=2.0,<2.12  → 2.11.10 ✅
+fastapi 0.128.0   → pydantic >=2.7.0      → 2.11.10 ✅
+pydantic-settings  → pydantic >=2.7.0      → 2.11.10 ✅
+gradio 5.29.1     → pandas >=1.0,<3.0     → 2.3.3   ✅
+```
+三條鏈的 pydantic 約束交集 = `>=2.7,<2.12`，2.11.10 完美落在範圍内。
+
+**本地實際版本快照** (Windows 11, Python 3.12, CUDA 13.0):
+
+| 套件 | 版本 | 備註 |
+|------|------|------|
+| torch | 2.9.0+cu130 | |
+| torch-geometric | 2.7.0 | |
+| gradio | 5.29.1 | 目標版本 |
+| gradio-client | 1.10.1 | |
+| fastapi | 0.128.0 | starlette `<0.51` |
+| starlette | 0.50.0 | |
+| pydantic | 2.11.10 | |
+| pydantic-core | 2.33.2 | |
+| pydantic-settings | 2.12.0 | |
+| pandas | 2.3.3 | |
+| numpy | 2.3.5 | |
+| scipy | 1.17.0 | |
+| pillow | 11.3.0 | |
+| websockets | 15.0.1 | |
+
+**注意事項**:
+- 本地 `pyproject.toml` 中 pipdeptree 顯示 `gradio [required: >=4.0]`，
+  與最新 pyproject.toml 的 `>=5.20,<5.30` 不同步，建議重新 `pip install -e .` 同步。
+- 本地 FastAPI 0.128.0 鎖定 `starlette<0.51.0`；sandbox 的 0.131.0 允許到 `<0.53.0`，
+  兩者均相容但更新需留意上限。
+
+### 9.7 檢查指令備忘
 
 ```bash
 # 快速檢查依賴衝突
 pip check
 
-# 完整依賴樹 (含版本約束比對)
+# 完整依賴樹 (含版本約束比對，有衝突時回傳非零 exit code)
 pipdeptree -w fail
 
 # Dry-run 模擬安裝 (不實際改動)
