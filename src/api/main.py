@@ -304,6 +304,7 @@ def initialize_pipeline(
     checkpoint_path = checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH")
     data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR")
     device = device or os.environ.get("SHEPHERD_DEVICE")
+    vector_index_path = os.environ.get("SHEPHERD_VECTOR_INDEX_PATH")
 
     if not kg_path:
         logger.warning(
@@ -327,12 +328,13 @@ def initialize_pipeline(
         app_state.kg = kg
         logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
-        # Step 2: Create pipeline (with optional GNN)
+        # Step 2: Create pipeline (with optional GNN and vector index)
         pipeline = create_diagnosis_pipeline(
             kg=kg,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
+            vector_index_path=vector_index_path,
         )
         app_state.pipeline = pipeline
 
@@ -340,7 +342,8 @@ def initialize_pipeline(
         app_state.model_version = config.get("version", "unknown")
         logger.info(
             f"Pipeline initialized: scoring_mode={config.get('scoring_mode')}, "
-            f"gnn_ready={config.get('gnn_ready')}"
+            f"gnn_ready={config.get('gnn_ready')}, "
+            f"vector_index_ready={config.get('vector_index_ready')}"
         )
 
     except Exception as e:

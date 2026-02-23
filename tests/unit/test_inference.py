@@ -453,3 +453,252 @@ class TestPipelineConfig:
         assert config.gnn_weight == 0.3
         assert config.include_explanations is False
         assert config.include_ortholog_evidence is False
+
+
+# =============================================================================
+# Test GNN Inference Integration
+# =============================================================================
+torch = pytest.importorskip("torch")
+pytest.importorskip("torch_geometric")
+
+
+def _build_gnn_test_fixtures(simple_kg):
+    """
+    Build a small GNN model + graph data that matches simple_kg's topology.
+
+    Returns (model, graph_data, node_id_to_idx) for pipeline initialization.
+    The model is untrained but structurally valid — enough to verify that
+    GNN scoring is actually wired through (score != 0.0).
+    """
+    from src.models.gnn import ShepherdGNN, ShepherdGNNConfig
+
+    hidden_dim = 32
+
+    # Node ID → index mappings (must match x_dict dimensions)
+    node_mapping = simple_kg.get_node_id_mapping()
+    # e.g. {"phenotype": {"hpo:HP:0001234": 0, "hpo:HP:0002345": 1}, ...}
+
+    num_phenotypes = len(node_mapping.get("phenotype", {}))
+    num_genes = len(node_mapping.get("gene", {}))
+    num_diseases = len(node_mapping.get("disease", {}))
+
+    # Build x_dict with random features
+    torch.manual_seed(42)
+    x_dict = {
+        "phenotype": torch.randn(num_phenotypes, hidden_dim),
+        "gene": torch.randn(num_genes, hidden_dim),
+        "disease": torch.randn(num_diseases, hidden_dim),
+    }
+
+    # Build edge_index_dict from KG edges
+    # simple_kg has edges: Gene→Phenotype, Gene→Disease
+    # We need bidirectional edges for message passing
+    pheno_map = node_mapping["phenotype"]
+    gene_map = node_mapping["gene"]
+    disease_map = node_mapping["disease"]
+
+    # gene -> phenotype (and reverse)
+    gp_src, gp_dst = [], []
+    # gene -> disease (and reverse)
+    gd_src, gd_dst = [], []
+
+    for edge in simple_kg._edges:
+        src_str = str(edge.source_id)
+        tgt_str = str(edge.target_id)
+
+        if src_str in gene_map and tgt_str in pheno_map:
+            gp_src.append(gene_map[src_str])
+            gp_dst.append(pheno_map[tgt_str])
+        elif src_str in gene_map and tgt_str in disease_map:
+            gd_src.append(gene_map[src_str])
+            gd_dst.append(disease_map[tgt_str])
+
+    edge_index_dict = {}
+
+    if gp_src:
+        gp_edges = torch.tensor([gp_src, gp_dst], dtype=torch.long)
+        edge_index_dict[("gene", "has_phenotype", "phenotype")] = gp_edges
+        edge_index_dict[("phenotype", "rev_has_phenotype", "gene")] = gp_edges.flip(0)
+
+    if gd_src:
+        gd_edges = torch.tensor([gd_src, gd_dst], dtype=torch.long)
+        edge_index_dict[("gene", "associated_with", "disease")] = gd_edges
+        edge_index_dict[("disease", "rev_associated_with", "gene")] = gd_edges.flip(0)
+
+    graph_data = {
+        "x_dict": x_dict,
+        "edge_index_dict": edge_index_dict,
+        "num_nodes_dict": {
+            "phenotype": num_phenotypes,
+            "gene": num_genes,
+            "disease": num_diseases,
+        },
+    }
+
+    # Build metadata for GNN
+    node_types = sorted(x_dict.keys())
+    edge_types = list(edge_index_dict.keys())
+    metadata = (node_types, edge_types)
+
+    in_channels_dict = {k: v.shape[1] for k, v in x_dict.items()}
+
+    config = ShepherdGNNConfig(
+        hidden_dim=hidden_dim,
+        num_layers=2,
+        num_heads=4,
+        conv_type="gat",
+        dropout=0.0,
+    )
+
+    model = ShepherdGNN(
+        metadata=metadata,
+        in_channels_dict=in_channels_dict,
+        config=config,
+    )
+    model.eval()
+
+    return model, graph_data
+
+
+class TestGNNInference:
+    """Test that GNN scoring is properly wired into the inference pipeline."""
+
+    @pytest.fixture
+    def gnn_pipeline(self, simple_kg):
+        """Create a pipeline with a real (untrained) GNN model."""
+        model, graph_data = _build_gnn_test_fixtures(simple_kg)
+        pipeline = DiagnosisPipeline(
+            kg=simple_kg,
+            model=model,
+            graph_data=graph_data,
+        )
+        return pipeline
+
+    def test_gnn_ready(self, gnn_pipeline):
+        """GNN should be marked as ready when model + graph_data are provided."""
+        assert gnn_pipeline._gnn_ready is True
+
+    def test_node_embeddings_precomputed(self, gnn_pipeline):
+        """Node embeddings should be populated after init."""
+        emb = gnn_pipeline._node_embeddings
+        assert emb is not None
+        assert "phenotype" in emb
+        assert "disease" in emb
+        # Embeddings should be on CPU
+        assert emb["disease"].device.type == "cpu"
+
+    def test_gnn_score_not_zero(self, gnn_pipeline, patient_phenotypes):
+        """GNN score should NOT be 0.0 (the old stub behavior)."""
+        result = gnn_pipeline.run(
+            patient_input=patient_phenotypes,
+            top_k=5,
+            include_explanations=False,
+        )
+        assert len(result.candidates) > 0
+        for c in result.candidates:
+            # With a real model, gnn_score should be non-zero
+            assert c.gnn_score != 0.0, (
+                f"{c.disease_name}: gnn_score is 0.0 — GNN not wired correctly"
+            )
+
+    def test_confidence_uses_gnn_score(self, gnn_pipeline, patient_phenotypes):
+        """When GNN is active, confidence_score should equal gnn_score."""
+        result = gnn_pipeline.run(
+            patient_input=patient_phenotypes,
+            top_k=5,
+            include_explanations=False,
+        )
+        for c in result.candidates:
+            assert c.confidence_score == c.gnn_score, (
+                f"{c.disease_name}: confidence={c.confidence_score} != "
+                f"gnn={c.gnn_score}"
+            )
+
+    def test_gnn_score_in_valid_range(self, gnn_pipeline, patient_phenotypes):
+        """GNN score should be normalized to [0, 1]."""
+        result = gnn_pipeline.run(
+            patient_input=patient_phenotypes,
+            top_k=5,
+            include_explanations=False,
+        )
+        for c in result.candidates:
+            assert 0.0 <= c.gnn_score <= 1.0, (
+                f"{c.disease_name}: gnn_score={c.gnn_score} out of [0,1]"
+            )
+
+    def test_pipeline_config_reports_gnn(self, gnn_pipeline):
+        """get_pipeline_config should report GNN status."""
+        config = gnn_pipeline.get_pipeline_config()
+        assert config["gnn_ready"] is True
+        assert config["has_model"] is True
+        assert config["scoring_mode"] == "gnn_primary"
+
+    def test_path_reasoner_still_runs(self, gnn_pipeline, patient_phenotypes):
+        """Path reasoning should still provide explanation paths alongside GNN."""
+        result = gnn_pipeline.run(
+            patient_input=patient_phenotypes,
+            top_k=5,
+            include_explanations=False,
+        )
+        # At least some candidates should have reasoning paths
+        candidates_with_paths = [
+            c for c in result.candidates if len(c.reasoning_paths) > 0
+        ]
+        assert len(candidates_with_paths) > 0
+
+    def test_without_gnn_uses_reasoning_fallback(self, simple_kg, patient_phenotypes):
+        """Without GNN, confidence should fall back to reasoning score."""
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+        assert pipeline._gnn_ready is False
+
+        result = pipeline.run(
+            patient_input=patient_phenotypes,
+            top_k=5,
+            include_explanations=False,
+        )
+        for c in result.candidates:
+            assert c.gnn_score == 0.0
+            assert c.confidence_score == c.reasoning_score
+
+
+# =============================================================================
+# Test Vector Index Config
+# =============================================================================
+class TestVectorIndexConfig:
+    """Test vector index configuration fields in PipelineConfig."""
+
+    def test_default_vector_index_config(self):
+        """Default config should have vector index disabled."""
+        config = PipelineConfig()
+        assert config.vector_index_path is None
+        assert config.ann_top_k == 50
+        assert config.ann_score_threshold == 0.3
+
+    def test_custom_vector_index_config(self):
+        """Custom vector index config should be accepted."""
+        config = PipelineConfig(
+            vector_index_path="/some/path/index",
+            ann_top_k=100,
+            ann_score_threshold=0.5,
+        )
+        assert config.vector_index_path == "/some/path/index"
+        assert config.ann_top_k == 100
+        assert config.ann_score_threshold == 0.5
+
+    def test_pipeline_config_reports_vector_index(self, simple_kg):
+        """Pipeline config dict should include vector index status."""
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+        config = pipeline.get_pipeline_config()
+        assert "vector_index_ready" in config
+        assert config["vector_index_ready"] is False
+        assert config["vector_index_size"] == 0
+
+    def test_factory_with_vector_index_path(self, simple_kg):
+        """Factory function should set vector_index_path on config."""
+        pipeline = create_diagnosis_pipeline(
+            kg=simple_kg,
+            vector_index_path="/nonexistent/path",
+        )
+        assert pipeline.config.vector_index_path == "/nonexistent/path"
+        # Index won't load (path doesn't exist), but config should be set
+        assert pipeline._vector_index_ready is False
