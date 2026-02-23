@@ -32,7 +32,7 @@ dependencies = [
     "pydantic-settings>=2.2",
     
     # API framework
-    "fastapi>=0.110",
+    "fastapi>=0.115",
     "uvicorn[standard]>=0.29",
     "gradio>=5.20,<5.30",
     

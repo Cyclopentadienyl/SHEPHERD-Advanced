@@ -6,19 +6,17 @@ rem SHEPHERD-Advanced | Windows Deployment Script (Unified)
 rem ============================================================================
 rem
 rem This script handles the complete deployment process:
-rem   1. Environment setup (virtual environment + PyTorch)
-rem   2. Core dependencies installation (with smart filtering)
-rem   3. Installation validation & platform configuration
-rem   4. Knowledge graph construction (optional)
+rem   1. Environment setup (virtual environment)
+rem   2. PyTorch installation (CUDA-specific, via --index-url)
+rem   3. Core dependencies (from pyproject.toml via pip install .)
+rem   4. Installation validation & platform configuration
 rem
 rem Usage:
-rem   deploy.cmd                           (standard deployment)
-rem   deploy.cmd requirements_arm.txt      (custom requirements file)
+rem   deploy.cmd
 rem
 rem Environment Variables:
 rem   PYTHON_EXE        - Python launcher (default: py -3.12)
 rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu130)
-rem   REQUIREMENTS_FILE - Custom requirements file
 rem
 rem Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
 rem   These are NOT installed during deployment. They are auto-installed
@@ -36,14 +34,10 @@ rem === Configuration ===
 if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.12"
 if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130"
 
-set "REQ_FILE=%~1"
-if "%REQ_FILE%"=="" (
-  if not "%REQUIREMENTS_FILE%"=="" (
-    set "REQ_FILE=%REQUIREMENTS_FILE%"
-  ) else (
-    set "REQ_FILE=requirements_windows.txt"
-  )
-)
+rem Dependencies are now managed via pyproject.toml (single source of truth).
+rem Platform-specific CUDA packages (torch, torchvision, torchaudio) are
+rem installed in Stage 2 with --index-url. All other deps come from
+rem pip install . in Stage 3.
 
 rem ============================================================================
 rem STAGE 1: ENVIRONMENT SETUP
@@ -121,64 +115,18 @@ echo.
 echo [STAGE 3/4] Core Dependencies Installation
 echo ----------------------------------------------------------------------------
 
-if not exist "%REQ_FILE%" (
-  echo [WARN] Requirements file not found: %REQ_FILE%
-  echo [INFO] Skipping core dependencies installation
-  goto :skip_requirements
-)
-
-rem Filter out problematic packages (flash-attn, xformers - handled at launch time)
-if not exist ".tmp" mkdir .tmp
-echo [INFO] Filtering requirements (removing flash-attn, xformers - installed at launch)
-
-rem [Bulletproof Fix] Construct regex using ASCII codes to bypass CMD syntax errors entirely
-rem 94 = ^ (Caret), 124 = | (Pipe). We do not type these chars in the echo command.
-echo import re, sys > ".tmp\filter_reqs.py"
-echo input_file = r"%REQ_FILE%" >> ".tmp\filter_reqs.py"
-echo output_file = r".tmp\req_filtered.txt" >> ".tmp\filter_reqs.py"
-echo try: >> ".tmp\filter_reqs.py"
-echo     with open(input_file, 'r', encoding='utf-8', errors='ignore') as f: >> ".tmp\filter_reqs.py"
-echo         lines = f.read().splitlines() >> ".tmp\filter_reqs.py"
-echo     # Construct regex safely using chr() >> ".tmp\filter_reqs.py"
-echo     caret = chr(94) >> ".tmp\filter_reqs.py"
-echo     pipe = chr(124) >> ".tmp\filter_reqs.py"
-echo     keywords = ["flash[-_]?attn", "xformers", "sage[-_]?attention"] >> ".tmp\filter_reqs.py"
-echo     pattern_str = caret + r"\s*(" + pipe.join(keywords) + r")\b" >> ".tmp\filter_reqs.py"
-echo     pat = re.compile(pattern_str, re.I) >> ".tmp\filter_reqs.py"
-echo     filtered = [l for l in lines if not pat.match(l)] >> ".tmp\filter_reqs.py"
-echo     with open(output_file, 'w', encoding='utf-8') as f: >> ".tmp\filter_reqs.py"
-echo         f.write('# -*- coding: utf-8 -*-\n' + '\n'.join(filtered) + '\n') >> ".tmp\filter_reqs.py"
-echo     print("Filtered requirements written.") >> ".tmp\filter_reqs.py"
-echo except Exception as e: >> ".tmp\filter_reqs.py"
-echo     print(f"Error: {e}") >> ".tmp\filter_reqs.py"
-echo     sys.exit(1) >> ".tmp\filter_reqs.py"
-
-echo [INFO] Running filter script...
-"%PY%" ".tmp\filter_reqs.py" || (
-  echo [ERROR] Failed to filter requirements
-  exit /b 3
-)
-
-echo [INFO] Installing core dependencies from filtered requirements
-"%PIP%" install -r ".tmp\req_filtered.txt" || (
+rem Install all pure-Python dependencies from pyproject.toml (single source of truth).
+rem This includes: pronto, networkx, pandas, numpy, scipy, pydantic, fastapi,
+rem uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.
+rem
+rem NOTE: torch/CUDA packages are NOT in pyproject.toml (installed in Stage 2).
+rem       pip install . will NOT modify the existing torch installation.
+echo [INFO] Installing project dependencies from pyproject.toml
+"%PIP%" install . || (
   echo [ERROR] Failed to install core dependencies
   exit /b 3
 )
 echo [OK] Core dependencies installed
-
-:skip_requirements
-
-rem Install Vector Index Backend (Voyager)
-rem Strategy (v3.2): Windows uses Voyager (CPU) - cuVS not supported on Windows
-echo [INFO] Installing vector index backend (Voyager)
-echo [INFO] Note: cuVS is Linux-only; Windows uses Voyager (Spotify HNSW)
-"%PIP%" install "voyager>=2.0" && (
-  echo [OK] Voyager installed
-) || (
-  echo [ERROR] Voyager installation failed
-  echo [HINT] Try manually: pip install voyager
-  exit /b 3
-)
 
 rem ============================================================================
 rem STAGE 4: VALIDATION & FINALIZATION

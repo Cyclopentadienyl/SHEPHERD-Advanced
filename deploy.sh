@@ -10,8 +10,7 @@ set -u
 #   2. Linux aarch64 (NVIDIA DGX Spark / Grace Hopper / Jetson Orin)
 #
 # Usage:
-#   ./deploy.sh                     (Standard deployment)
-#   ./deploy.sh requirements.txt    (Custom requirements file)
+#   ./deploy.sh
 #
 # Environment Variables:
 #   PYTHON_EXE        - Python executable (default: python3)
@@ -40,12 +39,10 @@ PYTHON_EXE="${PYTHON_EXE:-python3}"
 # PyTorch 2.9.0 + cu130 for best ecosystem compatibility and latest hardware support.
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 
-REQ_FILE="${1:-requirements.txt}"
-if [ ! -f "$REQ_FILE" ]; then
-    REQ_FILE="requirements_linux.txt"
-    # Fallback to generic if linux specific doesn't exist
-    if [ ! -f "$REQ_FILE" ]; then REQ_FILE="requirements.txt"; fi
-fi
+# Dependencies are now managed via pyproject.toml (single source of truth).
+# Platform-specific CUDA packages (torch, torchvision, torchaudio) are
+# installed in Stage 2 with --index-url. All other deps come from
+# pip install . in Stage 3.
 
 # Detect Architecture
 ARCH=$(uname -m)
@@ -127,55 +124,19 @@ echo -e "${GREEN}[OK] PyTorch stack installed${NC}"
 echo -e "\n${CYAN}[STAGE 3/4] Core Dependencies Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
-if [ ! -f "$REQ_FILE" ]; then
-    echo -e "${YELLOW}[WARN] Requirements file not found: $REQ_FILE${NC}"
-    echo -e "[INFO] Skipping core dependencies"
-else
-    mkdir -p .tmp
-    echo -e "[INFO] Filtering requirements (removing flash-attn, xformers, sage-attn - installed at launch)..."
+# Install all pure-Python dependencies from pyproject.toml (single source of truth).
+# This includes: pronto, networkx, pandas, numpy, scipy, pydantic, fastapi,
+# uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.
+#
+# NOTE: torch/CUDA packages are NOT in pyproject.toml (installed in Stage 2).
+#       pip install . will NOT modify the existing torch installation.
+echo -e "[INFO] Installing project dependencies from pyproject.toml..."
+"$PIP" install . || { echo -e "${RED}[ERROR] Failed to install dependencies${NC}"; exit 3; }
+echo -e "${GREEN}[OK] Core dependencies installed${NC}"
 
-    # Generate Python script to filter requirements safely
-    # Note: voyager and cuvs are handled separately, not filtered
-    cat <<EOF > .tmp/filter_reqs.py
-import re, sys
-input_file = "$REQ_FILE"
-output_file = ".tmp/req_filtered.txt"
-try:
-    with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
-        lines = f.read().splitlines()
-    # Filter out flash-attn, xformers, sage-attn (installed at launch time with special handling)
-    pat = re.compile(r'^\s*(flash[-_]?attn|xformers|sage[-_]?attention)\b', re.I)
-    filtered = [l for l in lines if not pat.match(l)]
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(filtered) + '\n')
-except Exception as e:
-    print(f"Error: {e}")
-    sys.exit(1)
-EOF
-
-    "$PY" .tmp/filter_reqs.py || { echo -e "${RED}[ERROR] Filtering failed${NC}"; exit 3; }
-
-    echo -e "[INFO] Installing core dependencies..."
-    "$PIP" install -r .tmp/req_filtered.txt || { echo -e "${RED}[ERROR] Pip install failed${NC}"; exit 3; }
-    echo -e "${GREEN}[OK] Core dependencies installed${NC}"
-fi
-
-# Install Vector Index Backends (Voyager + cuVS)
-echo -e "[INFO] Installing vector index backend..."
-# Strategy (v3.2):
-#   - Linux: cuVS (GPU) -> Voyager (CPU fallback)
-#   - Voyager is always installed as cross-platform fallback
-
-# Always install Voyager (cross-platform CPU backend)
-echo -e "[INFO] Installing Voyager (Spotify HNSW)..."
-if "$PIP" install "voyager>=2.0"; then
-    echo -e "${GREEN}[OK] Voyager installed${NC}"
-else
-    echo -e "${RED}[ERROR] Voyager installation failed${NC}"
-    exit 3
-fi
-
-# Try cuVS on Linux (GPU-accelerated)
+# Install cuVS (Linux GPU-accelerated vector backend, optional)
+# Voyager is already installed via pyproject.toml above.
+# cuVS requires special --extra-index-url from NVIDIA PyPI.
 if [ "$ARCH" == "aarch64" ] || [ "$ARCH" == "x86_64" ]; then
     echo -e "[INFO] Attempting to install cuVS (NVIDIA RAPIDS)..."
     # cuVS requires CUDA 12+ and is only available via NVIDIA PyPI
