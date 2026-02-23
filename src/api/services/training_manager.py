@@ -297,8 +297,8 @@ class TrainingManager:
     # =========================================================================
 
     def _read_progress_file(self) -> Optional[Dict[str, Any]]:
-        """Read the lightweight train_progress.json file."""
-        progress_file = self.log_dir / "train_progress.json"
+        """Read the lightweight progress.json file."""
+        progress_file = self.log_dir / "progress.json"
         if not progress_file.exists():
             return None
         try:

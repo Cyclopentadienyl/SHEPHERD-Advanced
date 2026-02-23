@@ -393,7 +393,7 @@ class MetricsLogger(Callback):
         if self.config.log_to_file:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             self.log_file = self.log_dir / f"train_{datetime.now():%Y%m%d_%H%M%S}.json"
-            self._progress_file = self.log_dir / "train_progress.json"
+            self._progress_file = self.log_dir / "progress.json"
 
         self.train_history = []
         self.val_history = []

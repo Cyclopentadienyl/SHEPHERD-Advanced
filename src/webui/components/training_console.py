@@ -198,6 +198,13 @@ def _on_resume(*args):
     )
 
 
+_IDLE_RESOURCE_HTML = (
+    '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
+    '<div style="font-size:13px;color:#6b7280">Start training to monitor resources</div>'
+    '</div>'
+)
+
+
 def _poll_status():
     """
     Poll training status and metrics. Called by gr.Timer every 2 seconds.
@@ -207,13 +214,29 @@ def _poll_status():
          start_btn_update, stop_btn_update, resume_btn_update)
     """
     status_info = training_manager.get_status()
+    s = status_info.get("status", "idle")
+
+    # Button state
+    is_running = s in ("running", "stopping")
+    start_update = gr.update(interactive=not is_running)
+    stop_update = gr.update(interactive=is_running)
+    resume_update = gr.update(interactive=not is_running)
+
+    if s == "idle":
+        # No training ever started — skip file reads and subprocess calls
+        return (
+            _format_status(status_info),
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            _IDLE_RESOURCE_HTML,
+            start_update, stop_update, resume_update,
+        )
+
+    # Training is or was active — do full poll
     metrics_history = training_manager.get_metrics_history()
     resources = training_manager.get_system_resources()
 
-    # Status text
     status_text = _format_status(status_info)
 
-    # Build DataFrames for plots
     train_data = metrics_history.get("train", [])
     val_data = metrics_history.get("validation", [])
 
@@ -222,23 +245,10 @@ def _poll_status():
     hits_df = _build_hits_df(val_data)
     lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
 
-    # Gradio 5.20+ renders None as broken icon — use gr.update() for no-op
-    loss_out = loss_df if loss_df is not None else gr.update()
-    mrr_out = mrr_df if mrr_df is not None else gr.update()
-    hits_out = hits_df if hits_df is not None else gr.update()
-    lr_out = lr_df if lr_df is not None else gr.update()
-
-    # Resource text
     resource_text = _format_resources(resources)
 
-    # Button state based on training status
-    is_running = status_info.get("status") in ("running", "stopping")
-    start_update = gr.update(interactive=not is_running)
-    stop_update = gr.update(interactive=is_running)
-    resume_update = gr.update(interactive=not is_running)
-
     return (
-        status_text, loss_out, mrr_out, hits_out, lr_out, resource_text,
+        status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
         start_update, stop_update, resume_update,
     )
 
@@ -301,9 +311,20 @@ def _is_finite(v: Any) -> bool:
         return False
 
 
+# Empty DataFrames with correct column structure for Gradio LinePlot.
+# Gradio 5.20+ renders value=None as a broken icon, so we always
+# return a DataFrame — empty when there is no data.
+_EMPTY_LOSS_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
+                               "loss": pd.Series(dtype="float"),
+                               "split": pd.Series(dtype="str")})
+_EMPTY_METRIC_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
+                                 "value": pd.Series(dtype="float"),
+                                 "metric": pd.Series(dtype="str")})
+
+
 def _build_loss_df(
     train_data: List[Dict[str, Any]], val_data: List[Dict[str, Any]]
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame:
     """Build a DataFrame for the loss plot (train + val)."""
     rows = []
 
@@ -321,13 +342,13 @@ def _build_loss_df(
             rows.append({"epoch": epoch, "loss": loss, "split": "val"})
 
     if not rows:
-        return None
+        return _EMPTY_LOSS_DF
     return pd.DataFrame(rows)
 
 
 def _build_metric_df(
     data: List[Dict[str, Any]], key: str, label: str
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame:
     """Build a single-series DataFrame for a metric."""
     rows = []
     for entry in data:
@@ -337,11 +358,11 @@ def _build_metric_df(
             rows.append({"epoch": epoch, "value": value, "metric": label})
 
     if not rows:
-        return None
+        return _EMPTY_METRIC_DF
     return pd.DataFrame(rows)
 
 
-def _build_hits_df(val_data: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
+def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
     """Build a DataFrame for Hits@1 and Hits@10."""
     rows = []
     for entry in val_data:
@@ -355,7 +376,7 @@ def _build_hits_df(val_data: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
                 rows.append({"epoch": epoch, "value": h10, "metric": "Hits@10"})
 
     if not rows:
-        return None
+        return _EMPTY_METRIC_DF
     return pd.DataFrame(rows)
 
 
@@ -726,7 +747,7 @@ def create_training_tab() -> None:
 
             with gr.Row():
                 loss_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_LOSS_DF,
                     x="epoch",
                     y="loss",
                     color="split",
@@ -738,7 +759,7 @@ def create_training_tab() -> None:
                     elem_id="loss_plot",
                 )
                 mrr_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_METRIC_DF,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -752,7 +773,7 @@ def create_training_tab() -> None:
 
             with gr.Row():
                 hits_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_METRIC_DF,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -764,7 +785,7 @@ def create_training_tab() -> None:
                     elem_id="hits_plot",
                 )
                 lr_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_METRIC_DF,
                     x="epoch",
                     y="value",
                     color="metric",
