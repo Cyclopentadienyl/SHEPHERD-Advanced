@@ -1,10 +1,12 @@
 # scripts/launch/shep_launch.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import argparse, json, os, platform, subprocess, sys, textwrap
+import argparse, json, os, platform, subprocess, sys, textwrap, threading, time, webbrowser
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import shlex
+from urllib.request import urlopen
+from urllib.error import URLError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # scripts/launch -> scripts -> REPO_ROOT
 CONFIG_DIR = REPO_ROOT / "configs"  # aligned with v3 structure
@@ -20,6 +22,21 @@ def log(msg: str) -> None:
 def run(cmd: List[str], check: bool = False) -> subprocess.CompletedProcess:
     log("$ " + " ".join(cmd))
     return subprocess.run(cmd, check=check)
+
+def _open_browser_when_ready(url: str, health_url: str, timeout: float = 60.0) -> None:
+    """Poll health endpoint, then open browser. Runs in a daemon thread."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            resp = urlopen(health_url, timeout=3)
+            if resp.status == 200:
+                log(f"Server ready — opening browser: {url}")
+                webbrowser.open(url)
+                return
+        except (URLError, OSError):
+            pass
+        time.sleep(1.0)
+    log("WARNING: Server did not become ready within timeout; skipping browser open")
 
 def read_json(path: Path) -> Dict[str, Any]:
     if path.exists():
@@ -269,6 +286,9 @@ def main() -> int:
     Passthrough args      : {passthrough}
     """)
     print(plan)
+    log("Access points (bookmark these):")
+    log("  Swagger UI (API docs) : http://127.0.0.1:8000/docs")
+    log("  Gradio Dashboard      : http://127.0.0.1:8000/ui")
     if args.print_plan or args.dry_run or args.skip_launch:
         return 0
 
@@ -277,6 +297,14 @@ def main() -> int:
         cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + passthrough
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
+    # Auto-open browser in background once server is ready
+    opener = threading.Thread(
+        target=_open_browser_when_ready,
+        args=("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health"),
+        daemon=True,
+    )
+    opener.start()
+
     res = run(cmd)
     return res.returncode
 
