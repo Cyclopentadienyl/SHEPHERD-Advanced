@@ -146,19 +146,28 @@ app.add_middleware(
 # =============================================================================
 # Request/Response Logging Middleware
 # =============================================================================
+# Paths that generate high-frequency polling noise — suppress from logs
+_QUIET_PREFIXES = (
+    "/ui/gradio_api/queue/",
+    "/ui/gradio_api/heartbeat/",
+)
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log all requests with timing"""
+    """Log all requests with timing (except Gradio internal polling)"""
     start_time = time.time()
 
     response = await call_next(request)
 
     process_time = time.time() - start_time
-    logger.info(
-        f"{request.method} {request.url.path} "
-        f"- {response.status_code} "
-        f"- {process_time:.3f}s"
-    )
+
+    if not request.url.path.startswith(_QUIET_PREFIXES):
+        logger.info(
+            f"{request.method} {request.url.path} "
+            f"- {response.status_code} "
+            f"- {process_time:.3f}s"
+        )
 
     response.headers["X-Process-Time"] = str(process_time)
     return response
@@ -425,6 +434,7 @@ def main():
         port=8000,
         reload=True,
         log_level="info",
+        access_log=False,
     )
 
 
