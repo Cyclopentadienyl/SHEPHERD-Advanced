@@ -34,7 +34,7 @@ dependencies = [
     # API framework
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
-    "gradio>=4.0",
+    "gradio>=5.50,<6.0",
     
     # Vector retrieval (cross-platform CPU backend)
     "voyager>=2.0",  # Spotify's HNSW library, replaces hnswlib
