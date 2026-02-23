@@ -44,8 +44,10 @@ Version: 1.0.0
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -96,6 +98,28 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting SHEPHERD-Advanced API...")
     app_state.start_time = datetime.now()
+
+    # Suppress harmless ProactorEventLoop pipe cleanup errors on Windows.
+    # These ConnectionResetError exceptions come from Gradio WebSocket/SSE
+    # connections closing and are non-critical noise.
+    if sys.platform == "win32":
+        loop = asyncio.get_running_loop()
+        _default_handler = loop.get_exception_handler()
+
+        def _quiet_connection_reset(loop, context):
+            exception = context.get("exception")
+            if isinstance(exception, ConnectionResetError):
+                logger.debug(
+                    "Suppressed ConnectionResetError: %s",
+                    context.get("message", ""),
+                )
+                return
+            if _default_handler:
+                _default_handler(loop, context)
+            else:
+                loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_quiet_connection_reset)
 
     try:
         # Attempt eager initialization if KG path is configured

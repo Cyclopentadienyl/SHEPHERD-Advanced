@@ -166,19 +166,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-dir",
         type=str,
-        default="data/processed",
+        default=None,
         help="Directory containing processed data",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="outputs",
+        default=None,
         help="Directory for training outputs",
     )
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="checkpoints",
+        default=None,
         help="Directory for model checkpoints",
     )
 
@@ -186,20 +186,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hidden-dim",
         type=int,
-        default=256,
+        default=None,
         help="Hidden dimension size",
     )
     parser.add_argument(
         "--num-layers",
         type=int,
-        default=4,
+        default=None,
         help="Number of GNN layers",
     )
     parser.add_argument(
         "--conv-type",
         type=str,
         choices=["gat", "hgt", "sage"],
-        default="gat",
+        default=None,
         help="GNN convolution type",
     )
 
@@ -207,25 +207,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--epochs",
         type=int,
-        default=100,
+        default=None,
         help="Number of training epochs",
     )
     parser.add_argument(
         "--lr", "--learning-rate",
         type=float,
-        default=1e-4,
+        default=None,
         help="Learning rate",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=32,
+        default=None,
         help="Batch size",
     )
     parser.add_argument(
         "--grad-accum",
         type=int,
-        default=1,
+        default=None,
         help="Gradient accumulation steps",
     )
 
@@ -233,7 +233,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="auto",
+        default=None,
         choices=["auto", "cuda", "cpu"],
         help="Device to use for training",
     )
@@ -254,7 +254,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--seed",
         type=int,
-        default=42,
+        default=None,
         help="Random seed",
     )
     parser.add_argument(
@@ -278,34 +278,34 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
             if hasattr(config, key):
                 setattr(config, key, value)
 
-    # Override with command-line arguments
-    if args.data_dir:
+    # Override with command-line arguments (only if explicitly provided)
+    if args.data_dir is not None:
         config.data_dir = args.data_dir
-    if args.output_dir:
+    if args.output_dir is not None:
         config.output_dir = args.output_dir
-    if args.checkpoint_dir:
+    if args.checkpoint_dir is not None:
         config.checkpoint_dir = args.checkpoint_dir
-    if args.hidden_dim:
+    if args.hidden_dim is not None:
         config.hidden_dim = args.hidden_dim
-    if args.num_layers:
+    if args.num_layers is not None:
         config.num_layers = args.num_layers
-    if args.conv_type:
+    if args.conv_type is not None:
         config.conv_type = args.conv_type
-    if args.epochs:
+    if args.epochs is not None:
         config.num_epochs = args.epochs
-    if args.lr:
+    if args.lr is not None:
         config.learning_rate = args.lr
-    if args.batch_size:
+    if args.batch_size is not None:
         config.batch_size = args.batch_size
-    if args.grad_accum:
+    if args.grad_accum is not None:
         config.gradient_accumulation_steps = args.grad_accum
-    if args.device:
+    if args.device is not None:
         config.device = args.device
     if args.no_amp:
         config.use_amp = False
     if args.resume:
         config.resume_from = args.resume
-    if args.seed:
+    if args.seed is not None:
         config.seed = args.seed
 
     return config

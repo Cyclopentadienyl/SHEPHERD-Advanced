@@ -159,6 +159,7 @@ class TrainingManager:
                 self._process = subprocess.Popen(
                     cmd,
                     cwd=str(PROJECT_ROOT),
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -295,6 +296,17 @@ class TrainingManager:
     # Status & Metrics
     # =========================================================================
 
+    def _read_progress_file(self) -> Optional[Dict[str, Any]]:
+        """Read the lightweight progress.json file."""
+        progress_file = self.log_dir / "progress.json"
+        if not progress_file.exists():
+            return None
+        try:
+            with open(progress_file) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
     def get_status(self) -> Dict[str, Any]:
         """Get current training status snapshot."""
         with self._lock:
@@ -311,14 +323,30 @@ class TrainingManager:
                 "config": self._config,
             }
 
+        # Read progress file for real-time batch-level progress
+        progress = self._read_progress_file()
+        if progress:
+            result["phase"] = progress.get("phase")
+            result["batch"] = progress.get("batch")
+            result["total_batches"] = progress.get("total_batches")
+
         # Augment with latest metrics from log files
         metrics = self._read_latest_metrics()
         if metrics:
-            result["current_epoch"] = metrics.get("epoch")
+            # Convert 0-indexed epoch to 1-indexed for display
+            raw_epoch = metrics.get("epoch")
+            result["current_epoch"] = (raw_epoch + 1) if raw_epoch is not None else None
             result["total_epochs"] = (
                 self._config.get("num_epochs") if self._config else None
             )
             result["latest_metrics"] = metrics
+        elif progress:
+            # No epoch-level metrics yet; use progress file for epoch info
+            raw_epoch = progress.get("epoch")
+            result["current_epoch"] = (raw_epoch + 1) if raw_epoch is not None else None
+            result["total_epochs"] = progress.get("total_epochs") or (
+                self._config.get("num_epochs") if self._config else None
+            )
 
         return result
 

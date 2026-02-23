@@ -123,24 +123,44 @@ def _collect_config(
     return config
 
 
-def _on_start(*args) -> str:
+def _on_start(*args):
     """Handle Start Training button click."""
     config = _collect_config(*args)
     result = training_manager.start_training(config)
     if result.get("success"):
-        return f"Training started (PID: {result.get('pid')})"
-    return f"Failed: {result.get('error', 'Unknown error')}"
+        return (
+            f"Training started (PID: {result.get('pid')})",
+            gr.update(interactive=False),   # disable start
+            gr.update(interactive=True),    # enable stop
+            gr.update(interactive=False),   # disable resume
+        )
+    return (
+        f"Failed: {result.get('error', 'Unknown error')}",
+        gr.update(interactive=True),    # keep start enabled
+        gr.update(interactive=False),   # keep stop disabled
+        gr.update(interactive=True),    # keep resume enabled
+    )
 
 
-def _on_stop() -> str:
+def _on_stop():
     """Handle Stop Training button click."""
     result = training_manager.stop_training()
     if result.get("success"):
-        return "Training stopped"
-    return f"Failed: {result.get('error', 'Unknown error')}"
+        return (
+            "Training stopped",
+            gr.update(interactive=True),    # re-enable start
+            gr.update(interactive=False),   # disable stop
+            gr.update(interactive=True),    # re-enable resume
+        )
+    return (
+        f"Failed: {result.get('error', 'Unknown error')}",
+        gr.update(interactive=False),   # keep start disabled while running
+        gr.update(interactive=True),    # keep stop enabled
+        gr.update(interactive=False),   # keep resume disabled while running
+    )
 
 
-def _on_resume(*args) -> str:
+def _on_resume(*args):
     """Handle Resume Training button click (same as start with resume path)."""
     config = _collect_config(*args)
     # For resume, try to find the last checkpoint if no path specified
@@ -155,41 +175,82 @@ def _on_resume(*args) -> str:
             if "resume_from" not in config:
                 config["resume_from"] = checkpoints[0]["filepath"]
         else:
-            return "No checkpoints found to resume from"
+            return (
+                "No checkpoints found to resume from",
+                gr.update(interactive=True),
+                gr.update(interactive=False),
+                gr.update(interactive=True),
+            )
 
     result = training_manager.start_training(config)
     if result.get("success"):
-        return f"Training resumed (PID: {result.get('pid')})"
-    return f"Failed: {result.get('error', 'Unknown error')}"
+        return (
+            f"Training resumed (PID: {result.get('pid')})",
+            gr.update(interactive=False),   # disable start
+            gr.update(interactive=True),    # enable stop
+            gr.update(interactive=False),   # disable resume
+        )
+    return (
+        f"Failed: {result.get('error', 'Unknown error')}",
+        gr.update(interactive=True),
+        gr.update(interactive=False),
+        gr.update(interactive=True),
+    )
 
 
-def _poll_status() -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
+_IDLE_RESOURCE_HTML = (
+    '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
+    '<div style="font-size:13px;color:#6b7280">Start training to monitor resources</div>'
+    '</div>'
+)
+
+
+def _poll_status():
     """
     Poll training status and metrics. Called by gr.Timer every 2 seconds.
 
     Returns:
-        (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text)
+        (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
+         start_btn_update, stop_btn_update, resume_btn_update)
     """
     status_info = training_manager.get_status()
+    s = status_info.get("status", "idle")
+
+    # Button state
+    is_running = s in ("running", "stopping")
+    start_update = gr.update(interactive=not is_running)
+    stop_update = gr.update(interactive=is_running)
+    resume_update = gr.update(interactive=not is_running)
+
+    if s == "idle":
+        # No training ever started — skip file reads and subprocess calls
+        return (
+            _format_status(status_info),
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            _IDLE_RESOURCE_HTML,
+            start_update, stop_update, resume_update,
+        )
+
+    # Training is or was active — do full poll
     metrics_history = training_manager.get_metrics_history()
     resources = training_manager.get_system_resources()
 
-    # Status text
     status_text = _format_status(status_info)
 
-    # Build DataFrames for plots
     train_data = metrics_history.get("train", [])
     val_data = metrics_history.get("validation", [])
 
     loss_df = _build_loss_df(train_data, val_data)
     mrr_df = _build_metric_df(val_data, "val_mrr", "MRR")
     hits_df = _build_hits_df(val_data)
-    lr_df = _build_metric_df(train_data, "lr_group_0", "Learning Rate")
+    lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
 
-    # Resource text
     resource_text = _format_resources(resources)
 
-    return status_text, loss_df, mrr_df, hits_df, lr_df, resource_text
+    return (
+        status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
+        start_update, stop_update, resume_update,
+    )
 
 
 def _format_status(status_info: Dict[str, Any]) -> str:
@@ -200,11 +261,25 @@ def _format_status(status_info: Dict[str, Any]) -> str:
     if status_info.get("pid"):
         lines.append(f"**PID**: {status_info['pid']}")
 
+    # Show phase if available (initializing, training, completed)
+    phase = status_info.get("phase")
+    if phase and phase == "initializing":
+        lines.append("**Phase**: Initializing (loading data & model)...")
+
     epoch = status_info.get("current_epoch")
     total = status_info.get("total_epochs")
     if epoch is not None and total is not None:
         pct = (epoch / total * 100) if total > 0 else 0
         lines.append(f"**Epoch**: {epoch} / {total} ({pct:.0f}%)")
+
+    # Show batch progress within current epoch
+    batch = status_info.get("batch")
+    total_batches = status_info.get("total_batches")
+    if batch is not None and total_batches is not None and total_batches > 0:
+        batch_pct = (batch / total_batches * 100)
+        lines.append(f"**Batch**: {batch} / {total_batches} ({batch_pct:.0f}%)")
+    elif batch is not None:
+        lines.append(f"**Batch**: {batch}")
 
     elapsed = status_info.get("elapsed_seconds")
     if elapsed is not None:
@@ -221,7 +296,6 @@ def _format_status(status_info: Dict[str, Any]) -> str:
     if status_info.get("error_message"):
         err = status_info["error_message"]
         if "\n" in err:
-            # Multi-line error: render in a code block for readability
             lines.append(f"**Error**:\n```\n{err}\n```")
         else:
             lines.append(f"**Error**: {err}")
@@ -237,9 +311,20 @@ def _is_finite(v: Any) -> bool:
         return False
 
 
+# Empty DataFrames with correct column structure for Gradio LinePlot.
+# Gradio 5.20+ renders value=None as a broken icon, so we always
+# return a DataFrame — empty when there is no data.
+_EMPTY_LOSS_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
+                               "loss": pd.Series(dtype="float"),
+                               "split": pd.Series(dtype="str")})
+_EMPTY_METRIC_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
+                                 "value": pd.Series(dtype="float"),
+                                 "metric": pd.Series(dtype="str")})
+
+
 def _build_loss_df(
     train_data: List[Dict[str, Any]], val_data: List[Dict[str, Any]]
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame:
     """Build a DataFrame for the loss plot (train + val)."""
     rows = []
 
@@ -257,13 +342,13 @@ def _build_loss_df(
             rows.append({"epoch": epoch, "loss": loss, "split": "val"})
 
     if not rows:
-        return None
+        return _EMPTY_LOSS_DF
     return pd.DataFrame(rows)
 
 
 def _build_metric_df(
     data: List[Dict[str, Any]], key: str, label: str
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame:
     """Build a single-series DataFrame for a metric."""
     rows = []
     for entry in data:
@@ -273,11 +358,11 @@ def _build_metric_df(
             rows.append({"epoch": epoch, "value": value, "metric": label})
 
     if not rows:
-        return None
+        return _EMPTY_METRIC_DF
     return pd.DataFrame(rows)
 
 
-def _build_hits_df(val_data: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
+def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
     """Build a DataFrame for Hits@1 and Hits@10."""
     rows = []
     for entry in val_data:
@@ -291,7 +376,7 @@ def _build_hits_df(val_data: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
                 rows.append({"epoch": epoch, "value": h10, "metric": "Hits@10"})
 
     if not rows:
-        return None
+        return _EMPTY_METRIC_DF
     return pd.DataFrame(rows)
 
 
@@ -645,7 +730,7 @@ def create_training_tab() -> None:
             gr.Markdown("### Control")
             with gr.Row():
                 start_btn = gr.Button("Start Training", variant="primary")
-                stop_btn = gr.Button("Stop Training", variant="stop")
+                stop_btn = gr.Button("Stop Training", variant="stop", interactive=False)
                 resume_btn = gr.Button("Resume Training")
 
             status_display = gr.Markdown(
@@ -662,7 +747,7 @@ def create_training_tab() -> None:
 
             with gr.Row():
                 loss_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_LOSS_DF,
                     x="epoch",
                     y="loss",
                     color="split",
@@ -674,7 +759,7 @@ def create_training_tab() -> None:
                     elem_id="loss_plot",
                 )
                 mrr_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_METRIC_DF,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -688,7 +773,7 @@ def create_training_tab() -> None:
 
             with gr.Row():
                 hits_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_METRIC_DF,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -700,7 +785,7 @@ def create_training_tab() -> None:
                     elem_id="hits_plot",
                 )
                 lr_plot = gr.LinePlot(
-                    value=None,
+                    value=_EMPTY_METRIC_DF,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -741,17 +826,17 @@ def create_training_tab() -> None:
     start_btn.click(
         fn=_on_start,
         inputs=all_params,
-        outputs=status_display,
+        outputs=[status_display, start_btn, stop_btn, resume_btn],
     )
     stop_btn.click(
         fn=_on_stop,
         inputs=[],
-        outputs=status_display,
+        outputs=[status_display, start_btn, stop_btn, resume_btn],
     )
     resume_btn.click(
         fn=_on_resume,
         inputs=all_params,
-        outputs=status_display,
+        outputs=[status_display, start_btn, stop_btn, resume_btn],
     )
 
     # =========================================================================
@@ -768,6 +853,9 @@ def create_training_tab() -> None:
             hits_plot,
             lr_plot,
             resource_display,
+            start_btn,
+            stop_btn,
+            resume_btn,
         ],
     )
 
