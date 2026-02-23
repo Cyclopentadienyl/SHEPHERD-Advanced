@@ -177,7 +177,7 @@ class TestImportRuleCompliance:
         violations = []
 
         for py_file in webui_dir.rglob("*.py"):
-            with open(py_file) as f:
+            with open(py_file, encoding="utf-8") as f:
                 try:
                     tree = ast.parse(f.read())
                 except SyntaxError:
