@@ -219,7 +219,12 @@ def _format_status(status_info: Dict[str, Any]) -> str:
             lines.append("**Metrics**: " + " | ".join(metric_strs[:6]))
 
     if status_info.get("error_message"):
-        lines.append(f"**Error**: {status_info['error_message']}")
+        err = status_info["error_message"]
+        if "\n" in err:
+            # Multi-line error: render in a code block for readability
+            lines.append(f"**Error**:\n```\n{err}\n```")
+        else:
+            lines.append(f"**Error**: {err}")
 
     return "\n".join(lines)
 
