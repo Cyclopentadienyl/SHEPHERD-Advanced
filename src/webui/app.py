@@ -16,7 +16,7 @@ Tabs:
     3. Model Management — (placeholder, Phase 3)
 
 Dependencies:
-    - gradio>=5.50,<6.0
+    - gradio>=5.20,<5.30
     - src.webui.components.training_console: create_training_tab
 
 Called by:
