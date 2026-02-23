@@ -51,13 +51,13 @@ echo -e "${CYAN}SHEPHERD-Advanced Launcher${NC}"
 echo ""
 
 # Check if virtual environment exists
-if [[ ! -f "venv/bin/activate" ]]; then
-    error "Virtual environment not found! Please run setup_arm.sh first"
+if [[ ! -f ".venv/bin/activate" ]]; then
+    error "Virtual environment not found! Please run deploy.sh first"
 fi
 
 # Activate virtual environment
 log "Activating virtual environment..."
-source venv/bin/activate
+source .venv/bin/activate
 success "Virtual environment activated"
 echo ""
 

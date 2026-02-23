@@ -1,22 +1,33 @@
-# Linux ARM (DGX Spark, aarch64) — prefer cuDNN SDPA + Voyager/cuVS
-# PyTorch 2.9.0 + cu130 unified across all platforms for ecosystem stability
+# =============================================================================
+# SHEPHERD-Advanced — Linux ARM (DGX Spark, aarch64) CUDA Packages (Reference)
+# =============================================================================
+#
+# IMPORTANT: This file is kept as a REFERENCE for CUDA-dependent packages.
+# deploy.sh now installs these directly (Stage 2) and uses pyproject.toml
+# for all other dependencies (Stage 3: pip install .).
+#
+# Do NOT use: pip install -r requirements_arm.txt
+# Instead run: ./deploy.sh
+#
+# Manual equivalent:
+#   pip install --index-url https://download.pytorch.org/whl/cu130 \
+#       torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0
+#   pip install .
+# =============================================================================
+
+# PyTorch 2.9.0 + cu130 (unified across all platforms)
 # NOTE: Use exact torch==2.9.0 to avoid 2.9.1 which breaks pyg-lib compatibility
+--index-url https://download.pytorch.org/whl/cu130
 torch==2.9.0
 torchvision==0.24.0
 torchaudio==2.9.0
 
-# Core scientific computing (Python 3.12+)
-numpy>=2.0
-scipy>=1.14
+# All other dependencies (pronto, networkx, pandas, numpy, scipy, pydantic,
+# fastapi, uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.)
+# are declared in pyproject.toml and installed via: pip install .
 
-# Configuration and utilities
-pyyaml>=6.0
-pydantic>=2.7
-tqdm>=4.66
-
-# Vector retrieval (Voyager: Spotify's actively maintained HNSW library, ARM64 supported)
-voyager>=2.0
-
-# NOTE: On ARM/DGX Spark, use cuDNN 9.x SDPA (built into PyTorch 2.9+)
-# FlashAttention-2 is NOT compatible with ARM architecture
-# xformers is optional: python scripts/launch/shep_launch.py --install-accelerators
+# On ARM/DGX Spark:
+#   - cuDNN 9.x SDPA is built into PyTorch 2.9+ (recommended attention backend)
+#   - FlashAttention-2 is NOT compatible with ARM architecture
+#   - xformers is optional: ./launch_shepherd.sh --xformers
+#   - cuVS (GPU vector backend) is auto-installed by deploy.sh if available

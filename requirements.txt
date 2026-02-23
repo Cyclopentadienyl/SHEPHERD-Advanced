@@ -1,0 +1,28 @@
+# =============================================================================
+# SHEPHERD-Advanced Dependencies
+# =============================================================================
+#
+# This file is intentionally minimal. Dependencies are managed via TWO sources:
+#
+#   1. pyproject.toml          — All pure-Python packages (single source of truth)
+#                                 Install with: pip install .
+#                                 For development: pip install -e ".[dev]"
+#
+#   2. deploy.cmd / deploy.sh  — CUDA-dependent packages (torch, torchvision,
+#                                 torchaudio) that require --index-url for GPU
+#                                 support. These are installed in Stage 2 of
+#                                 the deployment script.
+#
+# For a full deployment, run:
+#   Windows:  deploy.cmd
+#   Linux:    ./deploy.sh
+#
+# For manual installation:
+#   pip install --index-url https://download.pytorch.org/whl/cu130 \
+#       torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0
+#   pip install .
+#
+# See also:
+#   requirements_windows.txt   — Windows CUDA reference
+#   requirements_arm.txt       — Linux ARM (DGX Spark) CUDA reference
+# =============================================================================

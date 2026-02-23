@@ -1,22 +1,30 @@
-# Windows x86 (Blackwell) — baseline; pin exact versions after local verification
-# PyTorch 2.9.0 + cu130 unified across all platforms for ecosystem stability
+# =============================================================================
+# SHEPHERD-Advanced — Windows x86 CUDA Packages (Reference Only)
+# =============================================================================
+#
+# IMPORTANT: This file is kept as a REFERENCE for CUDA-dependent packages.
+# deploy.cmd now installs these directly (Stage 2) and uses pyproject.toml
+# for all other dependencies (Stage 3: pip install .).
+#
+# Do NOT use: pip install -r requirements_windows.txt
+# Instead run: deploy.cmd
+#
+# Manual equivalent:
+#   pip install --index-url https://download.pytorch.org/whl/cu130 ^
+#       torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0
+#   pip install .
+# =============================================================================
+
+# PyTorch 2.9.0 + cu130 (unified across all platforms)
 # NOTE: Use exact torch==2.9.0 to avoid 2.9.1 which breaks pyg-lib compatibility
+--index-url https://download.pytorch.org/whl/cu130
 torch==2.9.0
 torchvision==0.24.0
 torchaudio==2.9.0
 
-# Core scientific computing (Python 3.12+)
-numpy>=2.0
-scipy>=1.14
+# All other dependencies (pronto, networkx, pandas, numpy, scipy, pydantic,
+# fastapi, uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.)
+# are declared in pyproject.toml and installed via: pip install .
 
-# Configuration and utilities
-pyyaml>=6.0
-pydantic>=2.7
-tqdm>=4.66
-
-# Vector retrieval (Voyager: Spotify's actively maintained HNSW library)
-voyager>=2.0
-
-# NOTE: Acceleration libraries (flash-attn, xformers, sageattention) are OPTIONAL
-# Install via: python scripts/launch/shep_launch.py --install-accelerators
-# This avoids compatibility issues with third-party libs that may lag behind PyTorch releases
+# Optional accelerators (flash-attn, xformers, sageattention) are installed
+# at launch time via: launch_shepherd.cmd --flash-attn / --xformers
