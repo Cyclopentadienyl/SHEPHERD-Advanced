@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]  # scripts/launch -> scripts -> 
 CONFIG_DIR = REPO_ROOT / "configs"  # aligned with v3 structure
 ACCEL_TABLE = CONFIG_DIR / "accelerators.json"
 DEPLOYMENT_CONFIG = CONFIG_DIR / "deployment.yaml"
-DEFAULT_ENTRY = "shepherd.entry"  # TODO: replace with your actual entry module under src/ if different
+DEFAULT_ENTRY = "uvicorn"
+UVICORN_APP = "src.api.main:app"
+UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
 
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
@@ -150,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--dry-run", action="store_true", help="Simulate actions without installing or launching")
     d.add_argument("--skip-launch", action="store_true", help="Do not start main app after setup")
     m = p.add_argument_group("Main app")
-    m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: shepherd.entry)")
+    m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: uvicorn)")
     m.add_argument("--", dest="passthrough", nargs=argparse.REMAINDER, help="Arguments passed to the main app after --")
     return p
     
@@ -248,6 +250,13 @@ def main() -> int:
     if retrieval_cfg:
         os.environ["SHEPHERD_RETRIEVAL_BACKEND"] = retrieval_cfg.get("default", "auto")
 
+    # Collect passthrough args
+    passthrough: List[str] = []
+    if args.passthrough:
+        passthrough = list(args.passthrough)
+        if passthrough and passthrough[0] == "--":
+            passthrough = passthrough[1:]
+
     plan = textwrap.dedent(f"""
     === PLAN ===
     Platform              : {platform_key}
@@ -256,17 +265,18 @@ def main() -> int:
     Plugin                : {os.environ.get('ATTENTION_PLUGIN','')}
     FLASHATTN_FORCE_DISAB : {os.environ.get('FLASHATTN_FORCE_DISABLE','')}
     Entry module          : {args.entry}
-    Passthrough args      : {args.passthrough or []}
+    App                   : {UVICORN_APP if args.entry == 'uvicorn' else 'N/A'}
+    Passthrough args      : {passthrough}
     """)
     print(plan)
     if args.print_plan or args.dry_run or args.skip_launch:
         return 0
-    cmd = [sys.executable, "-m", args.entry]
-    if args.passthrough:
-        pas = args.passthrough
-        if pas and pas[0] == "--":
-            pas = pas[1:]
-        cmd.extend(pas)
+
+    # Build launch command
+    if args.entry == "uvicorn":
+        cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + passthrough
+    else:
+        cmd = [sys.executable, "-m", args.entry] + passthrough
     res = run(cmd)
     return res.returncode
 
