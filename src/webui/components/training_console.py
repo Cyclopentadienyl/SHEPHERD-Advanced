@@ -1,0 +1,655 @@
+"""
+SHEPHERD-Advanced Training Console Component
+==============================================
+Gradio UI component for training control and monitoring (Tab 1).
+
+Module: src/webui/components/training_console.py
+Absolute Path: /home/user/SHEPHERD-Advanced/src/webui/components/training_console.py
+
+Purpose:
+    Provide the Training Console tab with:
+    - 3-tier hierarchical parameter panel (Basic / Advanced / Expert)
+    - Start / Stop / Resume control buttons
+    - Real-time loss and metrics curves (LinePlot)
+    - GPU/RAM resource monitoring
+    - Status display with polling via gr.Timer
+
+Architecture Note:
+    This component imports TrainingManager from src.api.services (allowed path).
+    It does NOT import from src.training (forbidden by import-linter).
+    All training operations go through the TrainingManager which launches
+    subprocess calls to scripts/train_model.py.
+
+Dependencies:
+    - gradio: UI components
+    - pandas: DataFrame for chart data
+    - src.api.services.training_manager: training_manager singleton
+
+Version: 1.0.0
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+import gradio as gr
+import pandas as pd
+
+from src.api.services.training_manager import training_manager
+
+logger = logging.getLogger(__name__)
+
+
+def _collect_config(
+    # Tier 1 — Basic
+    num_epochs: int,
+    learning_rate: float,
+    batch_size: str,
+    conv_type: str,
+    device: str,
+    resume_from: str,
+    seed: int,
+    # Tier 2 — Advanced
+    hidden_dim: str,
+    num_layers: int,
+    dropout: float,
+    weight_decay: float,
+    scheduler_type: str,
+    warmup_steps: int,
+    early_stopping_patience: int,
+    diagnosis_weight: float,
+    link_prediction_weight: float,
+    contrastive_weight: float,
+    ortholog_weight: float,
+    # Tier 3 — Expert
+    gradient_accumulation_steps: int,
+    max_grad_norm: float,
+    num_heads: str,
+    use_ortholog_gate: bool,
+    use_amp: bool,
+    amp_dtype: str,
+    temperature: float,
+    label_smoothing: float,
+    margin: float,
+    num_neighbors_str: str,
+    max_subgraph_nodes: int,
+) -> Dict[str, Any]:
+    """Collect all parameter widgets into a config dict."""
+    # Parse comma-separated neighbors
+    try:
+        num_neighbors = [int(x.strip()) for x in num_neighbors_str.split(",")]
+    except (ValueError, AttributeError):
+        num_neighbors = [15, 10, 5]
+
+    config: Dict[str, Any] = {
+        # Tier 1
+        "num_epochs": int(num_epochs),
+        "learning_rate": float(learning_rate),
+        "batch_size": int(batch_size),
+        "conv_type": conv_type,
+        "device": device,
+        "seed": int(seed),
+        # Tier 2
+        "hidden_dim": int(hidden_dim),
+        "num_layers": int(num_layers),
+        "dropout": float(dropout),
+        "weight_decay": float(weight_decay),
+        "scheduler_type": scheduler_type,
+        "warmup_steps": int(warmup_steps),
+        "early_stopping_patience": int(early_stopping_patience),
+        "diagnosis_weight": float(diagnosis_weight),
+        "link_prediction_weight": float(link_prediction_weight),
+        "contrastive_weight": float(contrastive_weight),
+        "ortholog_weight": float(ortholog_weight),
+        # Tier 3
+        "gradient_accumulation_steps": int(gradient_accumulation_steps),
+        "max_grad_norm": float(max_grad_norm),
+        "num_heads": int(num_heads),
+        "use_ortholog_gate": use_ortholog_gate,
+        "use_amp": use_amp,
+        "amp_dtype": amp_dtype,
+        "temperature": float(temperature),
+        "label_smoothing": float(label_smoothing),
+        "margin": float(margin),
+        "num_neighbors": num_neighbors,
+        "max_subgraph_nodes": int(max_subgraph_nodes),
+    }
+
+    # Only include resume_from if non-empty
+    if resume_from and resume_from.strip():
+        config["resume_from"] = resume_from.strip()
+
+    return config
+
+
+def _on_start(*args) -> str:
+    """Handle Start Training button click."""
+    config = _collect_config(*args)
+    result = training_manager.start_training(config)
+    if result.get("success"):
+        return f"Training started (PID: {result.get('pid')})"
+    return f"Failed: {result.get('error', 'Unknown error')}"
+
+
+def _on_stop() -> str:
+    """Handle Stop Training button click."""
+    result = training_manager.stop_training()
+    if result.get("success"):
+        return "Training stopped"
+    return f"Failed: {result.get('error', 'Unknown error')}"
+
+
+def _on_resume(*args) -> str:
+    """Handle Resume Training button click (same as start with resume path)."""
+    config = _collect_config(*args)
+    # For resume, try to find the last checkpoint if no path specified
+    if "resume_from" not in config:
+        checkpoints = training_manager.get_checkpoints()
+        if checkpoints:
+            # Use the last.pt if it exists
+            for ckpt in checkpoints:
+                if ckpt["filename"] == "last.pt":
+                    config["resume_from"] = ckpt["filepath"]
+                    break
+            if "resume_from" not in config:
+                config["resume_from"] = checkpoints[0]["filepath"]
+        else:
+            return "No checkpoints found to resume from"
+
+    result = training_manager.start_training(config)
+    if result.get("success"):
+        return f"Training resumed (PID: {result.get('pid')})"
+    return f"Failed: {result.get('error', 'Unknown error')}"
+
+
+def _poll_status() -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
+    """
+    Poll training status and metrics. Called by gr.Timer every 3 seconds.
+
+    Returns:
+        (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text)
+    """
+    status_info = training_manager.get_status()
+    metrics_history = training_manager.get_metrics_history()
+    resources = training_manager.get_system_resources()
+
+    # Status text
+    status_text = _format_status(status_info)
+
+    # Build DataFrames for plots
+    train_data = metrics_history.get("train", [])
+    val_data = metrics_history.get("validation", [])
+
+    loss_df = _build_loss_df(train_data, val_data)
+    mrr_df = _build_metric_df(val_data, "val_mrr", "MRR")
+    hits_df = _build_hits_df(val_data)
+    lr_df = _build_metric_df(train_data, "lr_group_0", "Learning Rate")
+
+    # Resource text
+    resource_text = _format_resources(resources)
+
+    return status_text, loss_df, mrr_df, hits_df, lr_df, resource_text
+
+
+def _format_status(status_info: Dict[str, Any]) -> str:
+    """Format training status as a readable string."""
+    s = status_info.get("status", "idle")
+    lines = [f"**Status**: {s.upper()}"]
+
+    if status_info.get("pid"):
+        lines.append(f"**PID**: {status_info['pid']}")
+
+    epoch = status_info.get("current_epoch")
+    total = status_info.get("total_epochs")
+    if epoch is not None and total is not None:
+        pct = (epoch / total * 100) if total > 0 else 0
+        lines.append(f"**Epoch**: {epoch} / {total} ({pct:.0f}%)")
+
+    elapsed = status_info.get("elapsed_seconds")
+    if elapsed is not None:
+        m, sec = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        lines.append(f"**Elapsed**: {h:02d}:{m:02d}:{sec:02d}")
+
+    metrics = status_info.get("latest_metrics", {})
+    if metrics:
+        metric_strs = [f"{k}: {v:.4f}" for k, v in metrics.items() if isinstance(v, (int, float))]
+        if metric_strs:
+            lines.append("**Metrics**: " + " | ".join(metric_strs[:6]))
+
+    if status_info.get("error_message"):
+        lines.append(f"**Error**: {status_info['error_message']}")
+
+    return "\n".join(lines)
+
+
+def _build_loss_df(
+    train_data: List[Dict[str, Any]], val_data: List[Dict[str, Any]]
+) -> pd.DataFrame:
+    """Build a DataFrame for the loss plot (train + val)."""
+    rows = []
+
+    for entry in train_data:
+        epoch = entry.get("epoch")
+        # Train loss can be 'total' or 'train_loss'
+        loss = entry.get("total") or entry.get("train_loss")
+        if epoch is not None and loss is not None:
+            rows.append({"epoch": epoch, "loss": loss, "split": "train"})
+
+    for entry in val_data:
+        epoch = entry.get("epoch")
+        loss = entry.get("val_loss")
+        if epoch is not None and loss is not None:
+            rows.append({"epoch": epoch, "loss": loss, "split": "val"})
+
+    if not rows:
+        return pd.DataFrame({"epoch": [], "loss": [], "split": []})
+    return pd.DataFrame(rows)
+
+
+def _build_metric_df(
+    data: List[Dict[str, Any]], key: str, label: str
+) -> pd.DataFrame:
+    """Build a single-series DataFrame for a metric."""
+    rows = []
+    for entry in data:
+        epoch = entry.get("epoch")
+        value = entry.get(key)
+        if epoch is not None and value is not None:
+            rows.append({"epoch": epoch, "value": value, "metric": label})
+
+    if not rows:
+        return pd.DataFrame({"epoch": [], "value": [], "metric": []})
+    return pd.DataFrame(rows)
+
+
+def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Build a DataFrame for Hits@1 and Hits@10."""
+    rows = []
+    for entry in val_data:
+        epoch = entry.get("epoch")
+        h1 = entry.get("val_hits@1")
+        h10 = entry.get("val_hits@10")
+        if epoch is not None:
+            if h1 is not None:
+                rows.append({"epoch": epoch, "value": h1, "metric": "Hits@1"})
+            if h10 is not None:
+                rows.append({"epoch": epoch, "value": h10, "metric": "Hits@10"})
+
+    if not rows:
+        return pd.DataFrame({"epoch": [], "value": [], "metric": []})
+    return pd.DataFrame(rows)
+
+
+def _format_resources(resources: Dict[str, Any]) -> str:
+    """Format system resources as a readable string."""
+    lines = []
+
+    gpu = resources.get("gpu", {})
+    if gpu.get("available"):
+        for dev in gpu.get("devices", []):
+            mem_pct = (
+                (dev["memory_used_mb"] / dev["memory_total_mb"] * 100)
+                if dev.get("memory_total_mb", 0) > 0
+                else 0
+            )
+            lines.append(
+                f"**GPU {dev['index']}** ({dev['name']}): "
+                f"{dev['utilization_percent']:.0f}% util | "
+                f"{dev['memory_used_mb']:.0f}/{dev['memory_total_mb']:.0f} MB "
+                f"({mem_pct:.0f}%) | "
+                f"{dev['temperature_c']:.0f}\u00b0C"
+            )
+    else:
+        lines.append("**GPU**: Not available")
+
+    ram = resources.get("ram", {})
+    if "error" not in ram:
+        lines.append(
+            f"**RAM**: {ram.get('used_gb', '?')}/{ram.get('total_gb', '?')} GB "
+            f"({ram.get('percent', '?')}%)"
+        )
+    else:
+        lines.append(f"**RAM**: {ram.get('error', 'Unknown')}")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Tab Builder
+# =============================================================================
+def create_training_tab() -> None:
+    """
+    Build the Training Console tab content inside a gr.Blocks context.
+
+    Must be called inside a `with gr.Tab(...)` or `with gr.Blocks()` context.
+    """
+
+    with gr.Row():
+        # =====================================================================
+        # Left Column: Parameters & Controls
+        # =====================================================================
+        with gr.Column(scale=1):
+            gr.Markdown("### Training Parameters")
+
+            # -----------------------------------------------------------------
+            # Tier 1 — Basic Parameters (always visible)
+            # -----------------------------------------------------------------
+            gr.Markdown("#### Basic")
+            with gr.Group():
+                num_epochs = gr.Number(
+                    label="Epochs",
+                    value=100,
+                    minimum=1,
+                    maximum=10000,
+                    precision=0,
+                )
+                learning_rate = gr.Slider(
+                    label="Learning Rate",
+                    minimum=1e-6,
+                    maximum=1e-1,
+                    value=1e-4,
+                    step=1e-6,
+                )
+                batch_size = gr.Dropdown(
+                    label="Batch Size",
+                    choices=["8", "16", "32", "64"],
+                    value="32",
+                )
+                conv_type = gr.Radio(
+                    label="GNN Conv Type",
+                    choices=["gat", "hgt", "sage"],
+                    value="gat",
+                )
+                device = gr.Radio(
+                    label="Device",
+                    choices=["auto", "cuda", "cpu"],
+                    value="auto",
+                )
+                resume_from = gr.Textbox(
+                    label="Resume From",
+                    placeholder="checkpoint path (optional)",
+                    value="",
+                )
+                seed = gr.Number(
+                    label="Seed",
+                    value=42,
+                    minimum=0,
+                    precision=0,
+                )
+
+            # -----------------------------------------------------------------
+            # Tier 2 — Advanced Parameters (collapsible)
+            # -----------------------------------------------------------------
+            with gr.Accordion("Advanced Parameters", open=False):
+                with gr.Group():
+                    hidden_dim = gr.Dropdown(
+                        label="Hidden Dim",
+                        choices=["128", "256", "512"],
+                        value="256",
+                    )
+                    num_layers = gr.Slider(
+                        label="Num Layers",
+                        minimum=2,
+                        maximum=8,
+                        value=4,
+                        step=1,
+                    )
+                    dropout = gr.Slider(
+                        label="Dropout",
+                        minimum=0.0,
+                        maximum=0.5,
+                        value=0.1,
+                        step=0.01,
+                    )
+                    weight_decay = gr.Slider(
+                        label="Weight Decay",
+                        minimum=1e-5,
+                        maximum=0.1,
+                        value=0.01,
+                        step=1e-5,
+                    )
+                    scheduler_type = gr.Dropdown(
+                        label="Scheduler",
+                        choices=["cosine", "onecycle", "linear", "none"],
+                        value="cosine",
+                    )
+                    warmup_steps = gr.Number(
+                        label="Warmup Steps",
+                        value=500,
+                        minimum=0,
+                        precision=0,
+                    )
+                    early_stopping_patience = gr.Number(
+                        label="Early Stopping Patience",
+                        value=10,
+                        minimum=1,
+                        precision=0,
+                    )
+
+                gr.Markdown("##### Loss Weights")
+                with gr.Group():
+                    diagnosis_weight = gr.Slider(
+                        label="Diagnosis Weight",
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=1.0,
+                        step=0.1,
+                    )
+                    link_prediction_weight = gr.Slider(
+                        label="Link Prediction Weight",
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=0.5,
+                        step=0.1,
+                    )
+                    contrastive_weight = gr.Slider(
+                        label="Contrastive Weight",
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=0.3,
+                        step=0.1,
+                    )
+                    ortholog_weight = gr.Slider(
+                        label="Ortholog Weight",
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=0.2,
+                        step=0.1,
+                    )
+
+            # -----------------------------------------------------------------
+            # Tier 3 — Expert Parameters (collapsible, default closed)
+            # -----------------------------------------------------------------
+            with gr.Accordion("Expert Parameters", open=False):
+                with gr.Group():
+                    gradient_accumulation_steps = gr.Number(
+                        label="Gradient Accumulation Steps",
+                        value=1,
+                        minimum=1,
+                        precision=0,
+                    )
+                    max_grad_norm = gr.Number(
+                        label="Max Grad Norm",
+                        value=1.0,
+                        minimum=0.01,
+                    )
+                    num_heads = gr.Dropdown(
+                        label="Attention Heads",
+                        choices=["4", "8", "16"],
+                        value="8",
+                    )
+                    use_ortholog_gate = gr.Checkbox(
+                        label="Use Ortholog Gate",
+                        value=True,
+                    )
+                    use_amp = gr.Checkbox(
+                        label="Automatic Mixed Precision",
+                        value=True,
+                    )
+                    amp_dtype = gr.Radio(
+                        label="AMP Dtype",
+                        choices=["float16", "bfloat16"],
+                        value="float16",
+                    )
+                    temperature = gr.Slider(
+                        label="Contrastive Temperature",
+                        minimum=0.01,
+                        maximum=1.0,
+                        value=0.07,
+                        step=0.01,
+                    )
+                    label_smoothing = gr.Slider(
+                        label="Label Smoothing",
+                        minimum=0.0,
+                        maximum=0.3,
+                        value=0.1,
+                        step=0.01,
+                    )
+                    margin = gr.Slider(
+                        label="Margin",
+                        minimum=0.1,
+                        maximum=3.0,
+                        value=1.0,
+                        step=0.1,
+                    )
+                    num_neighbors_str = gr.Textbox(
+                        label="Num Neighbors (comma-separated)",
+                        value="15, 10, 5",
+                    )
+                    max_subgraph_nodes = gr.Number(
+                        label="Max Subgraph Nodes",
+                        value=5000,
+                        minimum=100,
+                        precision=0,
+                    )
+
+            # -----------------------------------------------------------------
+            # Control Buttons
+            # -----------------------------------------------------------------
+            gr.Markdown("### Control")
+            with gr.Row():
+                start_btn = gr.Button("Start Training", variant="primary")
+                stop_btn = gr.Button("Stop Training", variant="stop")
+                resume_btn = gr.Button("Resume Training")
+
+            status_display = gr.Markdown(
+                value="**Status**: IDLE",
+                label="Status",
+            )
+
+        # =====================================================================
+        # Right Column: Metrics & Resources
+        # =====================================================================
+        with gr.Column(scale=2):
+            gr.Markdown("### Training Metrics")
+
+            with gr.Row():
+                loss_plot = gr.LinePlot(
+                    value=pd.DataFrame({"epoch": [], "loss": [], "split": []}),
+                    x="epoch",
+                    y="loss",
+                    color="split",
+                    title="Loss Curves",
+                    x_title="Epoch",
+                    y_title="Loss",
+                    width=450,
+                    height=280,
+                )
+                mrr_plot = gr.LinePlot(
+                    value=pd.DataFrame({"epoch": [], "value": [], "metric": []}),
+                    x="epoch",
+                    y="value",
+                    color="metric",
+                    title="Mean Reciprocal Rank",
+                    x_title="Epoch",
+                    y_title="MRR",
+                    width=450,
+                    height=280,
+                )
+
+            with gr.Row():
+                hits_plot = gr.LinePlot(
+                    value=pd.DataFrame({"epoch": [], "value": [], "metric": []}),
+                    x="epoch",
+                    y="value",
+                    color="metric",
+                    title="Hits@K",
+                    x_title="Epoch",
+                    y_title="Hits",
+                    width=450,
+                    height=280,
+                )
+                lr_plot = gr.LinePlot(
+                    value=pd.DataFrame({"epoch": [], "value": [], "metric": []}),
+                    x="epoch",
+                    y="value",
+                    color="metric",
+                    title="Learning Rate",
+                    x_title="Epoch",
+                    y_title="LR",
+                    width=450,
+                    height=280,
+                )
+
+            gr.Markdown("### System Resources")
+            resource_display = gr.Markdown(
+                value="*Waiting for data...*",
+                label="Resources",
+            )
+
+    # =========================================================================
+    # Collect all parameter inputs in order matching _collect_config signature
+    # =========================================================================
+    all_params = [
+        # Tier 1
+        num_epochs, learning_rate, batch_size, conv_type, device,
+        resume_from, seed,
+        # Tier 2
+        hidden_dim, num_layers, dropout, weight_decay, scheduler_type,
+        warmup_steps, early_stopping_patience,
+        diagnosis_weight, link_prediction_weight, contrastive_weight, ortholog_weight,
+        # Tier 3
+        gradient_accumulation_steps, max_grad_norm, num_heads,
+        use_ortholog_gate, use_amp, amp_dtype,
+        temperature, label_smoothing, margin, num_neighbors_str, max_subgraph_nodes,
+    ]
+
+    # =========================================================================
+    # Event Handlers
+    # =========================================================================
+    start_btn.click(
+        fn=_on_start,
+        inputs=all_params,
+        outputs=status_display,
+    )
+    stop_btn.click(
+        fn=_on_stop,
+        inputs=[],
+        outputs=status_display,
+    )
+    resume_btn.click(
+        fn=_on_resume,
+        inputs=all_params,
+        outputs=status_display,
+    )
+
+    # =========================================================================
+    # Polling Timer (3 second interval)
+    # =========================================================================
+    timer = gr.Timer(value=3)
+    timer.tick(
+        fn=_poll_status,
+        inputs=[],
+        outputs=[
+            status_display,
+            loss_plot,
+            mrr_plot,
+            hits_plot,
+            lr_plot,
+            resource_display,
+        ],
+    )
+
+
+__all__ = ["create_training_tab"]
