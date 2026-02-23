@@ -40,6 +40,7 @@ dependencies = [
     "voyager>=2.0",  # Spotify's HNSW library, replaces hnswlib
     
     # Utilities
+    "packaging>=23.0",
     "tqdm>=4.66",
     "requests>=2.31",
     "python-dotenv>=1.0",
