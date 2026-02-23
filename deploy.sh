@@ -118,6 +118,23 @@ echo -e "${GREEN}[OK] PyTorch stack installed${NC}"
     echo -e "${YELLOW}[WARN] PyTorch validation returned non-zero${NC}"
 }
 
+# --- PyTorch Geometric (PyG) ---
+# PyG is required for heterogeneous GNN message passing (HeteroGNNLayer).
+# The companion native libraries must match the exact torch + CUDA version.
+echo -e "\n[INFO] Installing PyTorch Geometric (PyG)..."
+"$PIP" install torch_geometric || {
+    echo -e "${RED}[ERROR] Failed to install torch_geometric${NC}"; exit 2;
+}
+echo -e "[INFO] Installing PyG native extensions (pyg-lib, torch-sparse, torch-scatter, torch-cluster)..."
+if "$PIP" install pyg-lib torch-sparse torch-scatter torch-cluster \
+    -f "https://data.pyg.org/whl/torch-2.9.0+cu130.html"; then
+    echo -e "${GREEN}[OK] PyTorch Geometric installed${NC}"
+else
+    echo -e "${YELLOW}[WARN] Some PyG native extensions failed to install.${NC}"
+    echo -e "${YELLOW}[HINT] The model will still work but may be slower without native sparse ops.${NC}"
+    echo -e "${YELLOW}[HINT] Check compatibility at https://data.pyg.org/whl/${NC}"
+fi
+
 # ============================================================================
 # STAGE 3: CORE DEPENDENCIES
 # ============================================================================

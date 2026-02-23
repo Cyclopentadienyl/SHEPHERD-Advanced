@@ -250,14 +250,20 @@ class TrainingManager:
             return
 
         # Read stdout in background (prevents pipe buffer from filling up)
+        # Keep a rolling buffer of recent lines for error reporting
+        recent_lines: list[str] = []
+        max_recent = 50
         try:
             while True:
                 line = self._process.stdout.readline()
                 if not line and self._process.poll() is not None:
                     break
                 if line:
-                    # Log training output at DEBUG level
-                    logger.debug(f"[train] {line.rstrip()}")
+                    stripped = line.rstrip()
+                    logger.debug(f"[train] {stripped}")
+                    recent_lines.append(stripped)
+                    if len(recent_lines) > max_recent:
+                        recent_lines.pop(0)
         except Exception:
             pass
 
@@ -269,7 +275,12 @@ class TrainingManager:
                 self._status = "completed"
             else:
                 self._status = "failed"
-                self._error_message = f"Process exited with code {returncode}"
+                # Include the last few lines of output for diagnosis
+                tail = "\n".join(recent_lines[-20:]) if recent_lines else ""
+                self._error_message = (
+                    f"Process exited with code {returncode}"
+                    + (f"\n\n--- Last output ---\n{tail}" if tail else "")
+                )
 
         # Clean up temp config
         if self._temp_config_path and self._temp_config_path.exists():

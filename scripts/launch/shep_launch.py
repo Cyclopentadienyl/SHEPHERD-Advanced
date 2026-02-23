@@ -294,7 +294,7 @@ def main() -> int:
 
     # Build launch command
     if args.entry == "uvicorn":
-        cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + passthrough
+        cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + ["--no-access-log"] + passthrough
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
     # Auto-open browser in background once server is ready
