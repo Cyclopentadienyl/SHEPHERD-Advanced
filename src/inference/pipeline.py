@@ -997,7 +997,7 @@ class DiagnosisPipeline:
                 disease_id = None
                 for node_id_str, node in self.kg._nodes.items():
                     if node_id_str == disease_id_str:
-                        disease_id = node.node_id
+                        disease_id = node.id
                         disease_node = node
                         break
 
