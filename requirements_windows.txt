@@ -12,6 +12,9 @@
 # Manual equivalent:
 #   pip install --index-url https://download.pytorch.org/whl/cu130 ^
 #       torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0
+#   pip install torch_geometric
+#   pip install pyg-lib torch-sparse torch-scatter torch-cluster ^
+#       -f https://data.pyg.org/whl/torch-2.9.0+cu130.html
 #   pip install .
 # =============================================================================
 
@@ -21,6 +24,12 @@
 torch==2.9.0
 torchvision==0.24.0
 torchaudio==2.9.0
+
+# PyTorch Geometric (required for heterogeneous GNN message passing)
+# Native extensions need matching torch+CUDA wheels:
+#   pip install pyg-lib torch-sparse torch-scatter torch-cluster ^
+#       -f https://data.pyg.org/whl/torch-2.9.0+cu130.html
+torch_geometric
 
 # All other dependencies (pronto, networkx, pandas, numpy, scipy, pydantic,
 # fastapi, uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.)
