@@ -484,7 +484,7 @@ class TrainingManager:
                 "percent": mem.percent,
             }
         except ImportError:
-            # Fallback: read /proc/meminfo on Linux
+            # Fallback 1: read /proc/meminfo on Linux
             try:
                 meminfo: Dict[str, float] = {}
                 with open("/proc/meminfo") as f:
@@ -504,7 +504,38 @@ class TrainingManager:
                     "percent": round((total - available) / total * 100, 1) if total > 0 else 0,
                 }
             except OSError:
-                ram_info = {"error": "Unable to read memory info"}
+                # Fallback 2: Windows via ctypes kernel32
+                try:
+                    import ctypes
+
+                    class MEMORYSTATUSEX(ctypes.Structure):
+                        _fields_ = [
+                            ("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                        ]
+
+                    mem_status = MEMORYSTATUSEX()
+                    mem_status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem_status))  # type: ignore[attr-defined]
+
+                    total_gb = mem_status.ullTotalPhys / (1024**3)
+                    avail_gb = mem_status.ullAvailPhys / (1024**3)
+                    used_gb = total_gb - avail_gb
+                    ram_info = {
+                        "total_gb": round(total_gb, 2),
+                        "used_gb": round(used_gb, 2),
+                        "available_gb": round(avail_gb, 2),
+                        "percent": round(used_gb / total_gb * 100, 1) if total_gb > 0 else 0,
+                    }
+                except (OSError, AttributeError, ValueError):
+                    ram_info = {"error": "Unable to read memory info"}
 
         return ram_info
 

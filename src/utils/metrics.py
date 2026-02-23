@@ -589,7 +589,7 @@ class LinkPredictionMetrics:
             平均排名
         """
         if not ranks:
-            return float("inf")
+            return float(1e9)  # Large finite value instead of inf (avoids chart rendering issues)
         return float(np.mean(ranks))
 
     def mean_reciprocal_rank(

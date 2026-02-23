@@ -41,6 +41,36 @@ def create_gradio_app() -> gr.Blocks:
     with gr.Blocks(
         title="SHEPHERD-Advanced Dashboard",
         theme=gr.themes.Soft(),
+        css="""
+            /* Suppress Gradio's opacity/loading flash on polled components */
+            #resource_display,
+            #resource_display *,
+            #status_display,
+            #status_display *,
+            div:has(> #resource_display),
+            div:has(> #status_display) {
+                animation: none !important;
+                transition: none !important;
+                opacity: 1 !important;
+            }
+            #resource_display.pending,
+            #resource_display.generating,
+            #status_display.pending,
+            #status_display.generating,
+            div:has(> #resource_display).pending,
+            div:has(> #resource_display).generating,
+            div:has(> #status_display).pending,
+            div:has(> #status_display).generating {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
+            #resource_display .eta-bar,
+            #status_display .eta-bar,
+            div:has(> #resource_display) .eta-bar,
+            div:has(> #status_display) .eta-bar {
+                display: none !important;
+            }
+        """,
     ) as app:
         gr.Markdown(
             "# SHEPHERD-Advanced Dashboard\n"

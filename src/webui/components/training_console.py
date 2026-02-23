@@ -30,6 +30,7 @@ Version: 1.0.0
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -223,9 +224,17 @@ def _format_status(status_info: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _is_finite(v: Any) -> bool:
+    """Check whether a value is a finite number (rejects inf, -inf, nan)."""
+    try:
+        return isinstance(v, (int, float)) and math.isfinite(v)
+    except (TypeError, OverflowError):
+        return False
+
+
 def _build_loss_df(
     train_data: List[Dict[str, Any]], val_data: List[Dict[str, Any]]
-) -> pd.DataFrame:
+) -> Optional[pd.DataFrame]:
     """Build a DataFrame for the loss plot (train + val)."""
     rows = []
 
@@ -233,37 +242,37 @@ def _build_loss_df(
         epoch = entry.get("epoch")
         # Train loss can be 'total' or 'train_loss'
         loss = entry.get("total") or entry.get("train_loss")
-        if epoch is not None and loss is not None:
+        if epoch is not None and loss is not None and _is_finite(loss):
             rows.append({"epoch": epoch, "loss": loss, "split": "train"})
 
     for entry in val_data:
         epoch = entry.get("epoch")
         loss = entry.get("val_loss")
-        if epoch is not None and loss is not None:
+        if epoch is not None and loss is not None and _is_finite(loss):
             rows.append({"epoch": epoch, "loss": loss, "split": "val"})
 
     if not rows:
-        return pd.DataFrame({"epoch": [], "loss": [], "split": []})
+        return None
     return pd.DataFrame(rows)
 
 
 def _build_metric_df(
     data: List[Dict[str, Any]], key: str, label: str
-) -> pd.DataFrame:
+) -> Optional[pd.DataFrame]:
     """Build a single-series DataFrame for a metric."""
     rows = []
     for entry in data:
         epoch = entry.get("epoch")
         value = entry.get(key)
-        if epoch is not None and value is not None:
+        if epoch is not None and value is not None and _is_finite(value):
             rows.append({"epoch": epoch, "value": value, "metric": label})
 
     if not rows:
-        return pd.DataFrame({"epoch": [], "value": [], "metric": []})
+        return None
     return pd.DataFrame(rows)
 
 
-def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
+def _build_hits_df(val_data: List[Dict[str, Any]]) -> Optional[pd.DataFrame]:
     """Build a DataFrame for Hits@1 and Hits@10."""
     rows = []
     for entry in val_data:
@@ -271,48 +280,120 @@ def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
         h1 = entry.get("val_hits@1")
         h10 = entry.get("val_hits@10")
         if epoch is not None:
-            if h1 is not None:
+            if h1 is not None and _is_finite(h1):
                 rows.append({"epoch": epoch, "value": h1, "metric": "Hits@1"})
-            if h10 is not None:
+            if h10 is not None and _is_finite(h10):
                 rows.append({"epoch": epoch, "value": h10, "metric": "Hits@10"})
 
     if not rows:
-        return pd.DataFrame({"epoch": [], "value": [], "metric": []})
+        return None
     return pd.DataFrame(rows)
 
 
+def _bar_color(pct: float) -> str:
+    """Return a CSS color based on utilization percentage."""
+    if pct < 50:
+        return "#22c55e"   # green
+    if pct < 80:
+        return "#eab308"   # yellow
+    return "#ef4444"       # red
+
+
+def _temp_color(temp_c: float) -> str:
+    """Return a CSS color based on GPU temperature."""
+    if temp_c < 60:
+        return "#22c55e"
+    if temp_c < 80:
+        return "#eab308"
+    return "#ef4444"
+
+
+def _make_bar(label: str, value_text: str, pct: float, color: str) -> str:
+    """Generate HTML for a single progress bar gauge."""
+    pct_clamped = max(0, min(100, pct))
+    return (
+        f'<div style="margin-bottom:8px">'
+        f'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px">'
+        f'<span>{label}</span><span>{value_text}</span></div>'
+        f'<div style="background:#e5e7eb;border-radius:4px;height:14px;overflow:hidden">'
+        f'<div style="width:{pct_clamped:.1f}%;height:100%;background:{color};'
+        f'border-radius:4px;transition:width 0.5s ease"></div></div></div>'
+    )
+
+
 def _format_resources(resources: Dict[str, Any]) -> str:
-    """Format system resources as a readable string."""
-    lines = []
+    """Format system resources as HTML dashboard with progress bar gauges."""
+    bars: List[str] = []
 
     gpu = resources.get("gpu", {})
     if gpu.get("available"):
         for dev in gpu.get("devices", []):
-            mem_pct = (
-                (dev["memory_used_mb"] / dev["memory_total_mb"] * 100)
-                if dev.get("memory_total_mb", 0) > 0
-                else 0
-            )
-            lines.append(
-                f"**GPU {dev['index']}** ({dev['name']}): "
-                f"{dev['utilization_percent']:.0f}% util | "
-                f"{dev['memory_used_mb']:.0f}/{dev['memory_total_mb']:.0f} MB "
-                f"({mem_pct:.0f}%) | "
-                f"{dev['temperature_c']:.0f}\u00b0C"
+            name = dev.get("name", "GPU")
+            idx = dev.get("index", 0)
+
+            # GPU Utilization bar
+            util_pct = dev.get("utilization_percent", 0)
+            bars.append(_make_bar(
+                f"GPU {idx} Util",
+                f"{util_pct:.0f}%",
+                util_pct,
+                _bar_color(util_pct),
+            ))
+
+            # GPU Memory bar
+            mem_used = dev.get("memory_used_mb", 0)
+            mem_total = dev.get("memory_total_mb", 1)
+            mem_pct = (mem_used / mem_total * 100) if mem_total > 0 else 0
+            bars.append(_make_bar(
+                f"GPU {idx} VRAM",
+                f"{mem_used:.0f} / {mem_total:.0f} MB",
+                mem_pct,
+                _bar_color(mem_pct),
+            ))
+
+            # Temperature bar (scale: 0-100 °C)
+            temp = dev.get("temperature_c", 0)
+            bars.append(_make_bar(
+                f"GPU {idx} Temp",
+                f"{temp:.0f}\u00b0C",
+                temp,
+                _temp_color(temp),
+            ))
+
+            # Add device name as a subtle label
+            bars.append(
+                f'<div style="font-size:11px;color:#6b7280;margin-bottom:10px">'
+                f'{name}</div>'
             )
     else:
-        lines.append("**GPU**: Not available")
+        bars.append(
+            '<div style="font-size:13px;color:#6b7280;margin-bottom:8px">'
+            'GPU: Not available</div>'
+        )
 
+    # RAM bar
     ram = resources.get("ram", {})
     if "error" not in ram:
-        lines.append(
-            f"**RAM**: {ram.get('used_gb', '?')}/{ram.get('total_gb', '?')} GB "
-            f"({ram.get('percent', '?')}%)"
-        )
+        used = ram.get("used_gb", 0)
+        total = ram.get("total_gb", 1)
+        pct = ram.get("percent", 0)
+        bars.append(_make_bar(
+            "RAM",
+            f"{used:.1f} / {total:.1f} GB",
+            pct,
+            _bar_color(pct),
+        ))
     else:
-        lines.append(f"**RAM**: {ram.get('error', 'Unknown')}")
+        bars.append(
+            f'<div style="font-size:13px;color:#ef4444;margin-bottom:8px">'
+            f'RAM: {ram.get("error", "Unknown")}</div>'
+        )
 
-    return "\n".join(lines)
+    return (
+        '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
+        + "\n".join(bars)
+        + "</div>"
+    )
 
 
 # =============================================================================
@@ -343,6 +424,7 @@ def create_training_tab() -> None:
                     minimum=1,
                     maximum=10000,
                     precision=0,
+                    elem_id="num_epochs",
                 )
                 learning_rate = gr.Slider(
                     label="Learning Rate",
@@ -350,32 +432,38 @@ def create_training_tab() -> None:
                     maximum=1e-1,
                     value=1e-4,
                     step=1e-6,
+                    elem_id="learning_rate",
                 )
                 batch_size = gr.Dropdown(
                     label="Batch Size",
                     choices=["8", "16", "32", "64"],
                     value="32",
+                    elem_id="batch_size",
                 )
                 conv_type = gr.Radio(
                     label="GNN Conv Type",
                     choices=["gat", "hgt", "sage"],
                     value="gat",
+                    elem_id="conv_type",
                 )
                 device = gr.Radio(
                     label="Device",
                     choices=["auto", "cuda", "cpu"],
                     value="auto",
+                    elem_id="device",
                 )
                 resume_from = gr.Textbox(
                     label="Resume From",
                     placeholder="checkpoint path (optional)",
                     value="",
+                    elem_id="resume_from",
                 )
                 seed = gr.Number(
                     label="Seed",
                     value=42,
                     minimum=0,
                     precision=0,
+                    elem_id="seed",
                 )
 
             # -----------------------------------------------------------------
@@ -387,6 +475,7 @@ def create_training_tab() -> None:
                         label="Hidden Dim",
                         choices=["128", "256", "512"],
                         value="256",
+                        elem_id="hidden_dim",
                     )
                     num_layers = gr.Slider(
                         label="Num Layers",
@@ -394,6 +483,7 @@ def create_training_tab() -> None:
                         maximum=8,
                         value=4,
                         step=1,
+                        elem_id="num_layers",
                     )
                     dropout = gr.Slider(
                         label="Dropout",
@@ -401,6 +491,7 @@ def create_training_tab() -> None:
                         maximum=0.5,
                         value=0.1,
                         step=0.01,
+                        elem_id="dropout",
                     )
                     weight_decay = gr.Slider(
                         label="Weight Decay",
@@ -408,23 +499,27 @@ def create_training_tab() -> None:
                         maximum=0.1,
                         value=0.01,
                         step=1e-5,
+                        elem_id="weight_decay",
                     )
                     scheduler_type = gr.Dropdown(
                         label="Scheduler",
                         choices=["cosine", "onecycle", "linear", "none"],
                         value="cosine",
+                        elem_id="scheduler_type",
                     )
                     warmup_steps = gr.Number(
                         label="Warmup Steps",
                         value=500,
                         minimum=0,
                         precision=0,
+                        elem_id="warmup_steps",
                     )
                     early_stopping_patience = gr.Number(
                         label="Early Stopping Patience",
                         value=10,
                         minimum=1,
                         precision=0,
+                        elem_id="early_stopping_patience",
                     )
 
                 gr.Markdown("##### Loss Weights")
@@ -435,6 +530,7 @@ def create_training_tab() -> None:
                         maximum=2.0,
                         value=1.0,
                         step=0.1,
+                        elem_id="diagnosis_weight",
                     )
                     link_prediction_weight = gr.Slider(
                         label="Link Prediction Weight",
@@ -442,6 +538,7 @@ def create_training_tab() -> None:
                         maximum=2.0,
                         value=0.5,
                         step=0.1,
+                        elem_id="link_prediction_weight",
                     )
                     contrastive_weight = gr.Slider(
                         label="Contrastive Weight",
@@ -449,6 +546,7 @@ def create_training_tab() -> None:
                         maximum=2.0,
                         value=0.3,
                         step=0.1,
+                        elem_id="contrastive_weight",
                     )
                     ortholog_weight = gr.Slider(
                         label="Ortholog Weight",
@@ -456,6 +554,7 @@ def create_training_tab() -> None:
                         maximum=2.0,
                         value=0.2,
                         step=0.1,
+                        elem_id="ortholog_weight",
                     )
 
             # -----------------------------------------------------------------
@@ -468,29 +567,35 @@ def create_training_tab() -> None:
                         value=1,
                         minimum=1,
                         precision=0,
+                        elem_id="gradient_accumulation_steps",
                     )
                     max_grad_norm = gr.Number(
                         label="Max Grad Norm",
                         value=1.0,
                         minimum=0.01,
+                        elem_id="max_grad_norm",
                     )
                     num_heads = gr.Dropdown(
                         label="Attention Heads",
                         choices=["4", "8", "16"],
                         value="8",
+                        elem_id="num_heads",
                     )
                     use_ortholog_gate = gr.Checkbox(
                         label="Use Ortholog Gate",
                         value=True,
+                        elem_id="use_ortholog_gate",
                     )
                     use_amp = gr.Checkbox(
                         label="Automatic Mixed Precision",
                         value=True,
+                        elem_id="use_amp",
                     )
                     amp_dtype = gr.Radio(
                         label="AMP Dtype",
                         choices=["float16", "bfloat16"],
                         value="float16",
+                        elem_id="amp_dtype",
                     )
                     temperature = gr.Slider(
                         label="Contrastive Temperature",
@@ -498,6 +603,7 @@ def create_training_tab() -> None:
                         maximum=1.0,
                         value=0.07,
                         step=0.01,
+                        elem_id="temperature",
                     )
                     label_smoothing = gr.Slider(
                         label="Label Smoothing",
@@ -505,6 +611,7 @@ def create_training_tab() -> None:
                         maximum=0.3,
                         value=0.1,
                         step=0.01,
+                        elem_id="label_smoothing",
                     )
                     margin = gr.Slider(
                         label="Margin",
@@ -512,16 +619,19 @@ def create_training_tab() -> None:
                         maximum=3.0,
                         value=1.0,
                         step=0.1,
+                        elem_id="margin",
                     )
                     num_neighbors_str = gr.Textbox(
                         label="Num Neighbors (comma-separated)",
                         value="15, 10, 5",
+                        elem_id="num_neighbors_str",
                     )
                     max_subgraph_nodes = gr.Number(
                         label="Max Subgraph Nodes",
                         value=5000,
                         minimum=100,
                         precision=0,
+                        elem_id="max_subgraph_nodes",
                     )
 
             # -----------------------------------------------------------------
@@ -536,6 +646,7 @@ def create_training_tab() -> None:
             status_display = gr.Markdown(
                 value="**Status**: IDLE",
                 label="Status",
+                elem_id="status_display",
             )
 
         # =====================================================================
@@ -546,7 +657,7 @@ def create_training_tab() -> None:
 
             with gr.Row():
                 loss_plot = gr.LinePlot(
-                    value=pd.DataFrame({"epoch": [], "loss": [], "split": []}),
+                    value=None,
                     x="epoch",
                     y="loss",
                     color="split",
@@ -555,9 +666,10 @@ def create_training_tab() -> None:
                     y_title="Loss",
                     width=450,
                     height=280,
+                    elem_id="loss_plot",
                 )
                 mrr_plot = gr.LinePlot(
-                    value=pd.DataFrame({"epoch": [], "value": [], "metric": []}),
+                    value=None,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -566,11 +678,12 @@ def create_training_tab() -> None:
                     y_title="MRR",
                     width=450,
                     height=280,
+                    elem_id="mrr_plot",
                 )
 
             with gr.Row():
                 hits_plot = gr.LinePlot(
-                    value=pd.DataFrame({"epoch": [], "value": [], "metric": []}),
+                    value=None,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -579,9 +692,10 @@ def create_training_tab() -> None:
                     y_title="Hits",
                     width=450,
                     height=280,
+                    elem_id="hits_plot",
                 )
                 lr_plot = gr.LinePlot(
-                    value=pd.DataFrame({"epoch": [], "value": [], "metric": []}),
+                    value=None,
                     x="epoch",
                     y="value",
                     color="metric",
@@ -590,12 +704,13 @@ def create_training_tab() -> None:
                     y_title="LR",
                     width=450,
                     height=280,
+                    elem_id="lr_plot",
                 )
 
             gr.Markdown("### System Resources")
-            resource_display = gr.Markdown(
-                value="*Waiting for data...*",
-                label="Resources",
+            resource_display = gr.HTML(
+                value='<div style="font-size:13px;color:#6b7280">Waiting for data...</div>',
+                elem_id="resource_display",
             )
 
     # =========================================================================
