@@ -292,6 +292,38 @@ def main() -> int:
     if args.print_plan or args.dry_run or args.skip_launch:
         return 0
 
+    # Determine host/port for URL display
+    host = "127.0.0.1"
+    port = "8000"
+    uvi_args = UVICORN_DEFAULT_ARGS + passthrough
+    for i, a in enumerate(uvi_args):
+        if a == "--port" and i + 1 < len(uvi_args):
+            port = uvi_args[i + 1]
+        elif a == "--host" and i + 1 < len(uvi_args):
+            h = uvi_args[i + 1]
+            if h != "0.0.0.0":
+                host = h
+
+    base_url = f"http://{host}:{port}"
+
+    # Print web interface endpoints
+    print(textwrap.dedent(f"""\
+    ===  Web Interfaces  ===
+      Swagger UI (API docs) : {base_url}/docs
+      Gradio Dashboard      : {base_url}/ui
+    ========================
+    """))
+
+    # Auto-open Gradio UI in default browser after a short delay
+    def _open_browser() -> None:
+        time.sleep(3)  # wait for uvicorn to start
+        try:
+            webbrowser.open(f"{base_url}/ui")
+        except Exception:
+            pass  # non-critical; ignore if no browser available
+
+    threading.Thread(target=_open_browser, daemon=True).start()
+
     # Build launch command
     if args.entry == "uvicorn":
         cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + ["--no-access-log"] + passthrough
