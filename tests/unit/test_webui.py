@@ -122,6 +122,8 @@ class TestTrainingConsoleHelpers:
         df = _build_loss_df(train_data, val_data)
         assert len(df) == 4
         assert set(df["split"].unique()) == {"train", "val"}
+        # Epochs should be 1-indexed for display (0-indexed log + 1)
+        assert list(sorted(df["epoch"].unique())) == [1, 2]
 
     def test_build_hits_df(self):
         from src.webui.components.training_console import _build_hits_df
@@ -133,11 +135,16 @@ class TestTrainingConsoleHelpers:
         df = _build_hits_df(val_data)
         assert len(df) == 4
         assert set(df["metric"].unique()) == {"Hits@1", "Hits@10"}
+        # Epochs should be 1-indexed for display
+        assert list(sorted(df["epoch"].unique())) == [1, 2]
 
     def test_collect_config(self):
         from src.webui.components.training_console import _collect_config
 
         config = _collect_config(
+            # Paths
+            data_dir="data/processed", output_dir="outputs",
+            checkpoint_dir="checkpoints",
             # Tier 1
             num_epochs=50, learning_rate=0.001, batch_size="32",
             conv_type="gat", device="auto", resume_from="", seed=42,
@@ -159,6 +166,9 @@ class TestTrainingConsoleHelpers:
         assert config["batch_size"] == 32
         assert config["hidden_dim"] == 256
         assert config["num_neighbors"] == [15, 10, 5]
+        assert config["data_dir"] == "data/processed"
+        assert config["output_dir"] == "outputs"
+        assert config["checkpoint_dir"] == "checkpoints"
         assert "resume_from" not in config  # empty string should be excluded
 
 

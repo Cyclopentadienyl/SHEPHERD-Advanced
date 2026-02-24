@@ -334,13 +334,13 @@ def load_graph_data(data_dir: Path) -> Dict[str, Any]:
     # Load node features
     node_features_path = data_dir / "node_features.pt"
     if node_features_path.exists():
-        graph_data["x_dict"] = torch.load(node_features_path)
+        graph_data["x_dict"] = torch.load(node_features_path, weights_only=True)
         logger.info(f"Loaded node features: {list(graph_data['x_dict'].keys())}")
 
     # Load edge indices
     edge_indices_path = data_dir / "edge_indices.pt"
     if edge_indices_path.exists():
-        graph_data["edge_index_dict"] = torch.load(edge_indices_path)
+        graph_data["edge_index_dict"] = torch.load(edge_indices_path, weights_only=True)
         logger.info(f"Loaded edge indices: {len(graph_data['edge_index_dict'])} edge types")
 
     # Load node counts

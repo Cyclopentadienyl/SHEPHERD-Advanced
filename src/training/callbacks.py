@@ -301,7 +301,11 @@ class ModelCheckpoint(Callback):
                 "state_dict": trainer.model.state_dict(),
                 "optimizer_state_dict": trainer.optimizer.state_dict(),
                 "logs": logs,
-                "config": trainer.config.__dict__ if hasattr(trainer, "config") else {},
+                "config": (
+                    trainer._serialize_config()
+                    if hasattr(trainer, "_serialize_config")
+                    else (trainer.config.__dict__ if hasattr(trainer, "config") else {})
+                ),
             }
 
             if trainer.scheduler is not None:
@@ -394,6 +398,13 @@ class MetricsLogger(Callback):
             self.log_dir.mkdir(parents=True, exist_ok=True)
             self.log_file = self.log_dir / f"train_{datetime.now():%Y%m%d_%H%M%S}.json"
             self._progress_file = self.log_dir / "progress.json"
+            # Write initial empty structure so WebUI polling picks up the new
+            # file immediately instead of showing stale data from a prior run.
+            try:
+                with open(self.log_file, "w") as f:
+                    json.dump({"train": [], "validation": []}, f)
+            except OSError:
+                pass
 
         self.train_history = []
         self.val_history = []

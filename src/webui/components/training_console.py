@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -42,6 +44,10 @@ logger = logging.getLogger(__name__)
 
 
 def _collect_config(
+    # Paths
+    data_dir: str,
+    output_dir: str,
+    checkpoint_dir: str,
     # Tier 1 — Basic
     num_epochs: int,
     learning_rate: float,
@@ -83,6 +89,10 @@ def _collect_config(
         num_neighbors = [15, 10, 5]
 
     config: Dict[str, Any] = {
+        # Paths
+        "data_dir": data_dir.strip() or "data/processed",
+        "output_dir": output_dir.strip() or "outputs",
+        "checkpoint_dir": checkpoint_dir.strip() or "checkpoints",
         # Tier 1
         "num_epochs": int(num_epochs),
         "learning_rate": float(learning_rate),
@@ -124,18 +134,24 @@ def _collect_config(
 
 
 def _on_start(*args):
-    """Handle Start Training button click."""
+    """Handle Start Training button click.
+
+    Returns status text, 4 empty plot DataFrames (to clear stale charts),
+    and 3 button updates.
+    """
     config = _collect_config(*args)
     result = training_manager.start_training(config)
     if result.get("success"):
         return (
-            f"Training started (PID: {result.get('pid')})",
+            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Starting...",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
             gr.update(interactive=False),   # disable resume
         )
     return (
         f"Failed: {result.get('error', 'Unknown error')}",
+        _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
         gr.update(interactive=True),    # keep start enabled
         gr.update(interactive=False),   # keep stop disabled
         gr.update(interactive=True),    # keep resume enabled
@@ -143,17 +159,23 @@ def _on_start(*args):
 
 
 def _on_stop():
-    """Handle Stop Training button click."""
+    """Handle Stop Training button click.
+
+    Returns status text, gr.update() for 4 plots (no change), and 3 button updates.
+    """
     result = training_manager.stop_training()
+    no_change = gr.update()
     if result.get("success"):
         return (
-            "Training stopped",
+            "**Status**: COMPLETED\nTraining stopped by user.",
+            no_change, no_change, no_change, no_change,
             gr.update(interactive=True),    # re-enable start
             gr.update(interactive=False),   # disable stop
             gr.update(interactive=True),    # re-enable resume
         )
     return (
         f"Failed: {result.get('error', 'Unknown error')}",
+        no_change, no_change, no_change, no_change,
         gr.update(interactive=False),   # keep start disabled while running
         gr.update(interactive=True),    # keep stop enabled
         gr.update(interactive=False),   # keep resume disabled while running
@@ -161,8 +183,22 @@ def _on_stop():
 
 
 def _on_resume(*args):
-    """Handle Resume Training button click (same as start with resume path)."""
-    config = _collect_config(*args)
+    """Handle Resume Training button click (same as start with resume path).
+
+    The last argument is the checkpoint dropdown selection (may be None).
+    All preceding arguments are passed to _collect_config.
+
+    Returns status text, 4 empty plot DataFrames (to clear stale charts),
+    and 3 button updates.
+    """
+    # Last arg is checkpoint dropdown; rest go to _collect_config
+    checkpoint_selection = args[-1] if args else None
+    config = _collect_config(*args[:-1])
+
+    # Dropdown selection overrides resume_from textbox
+    if checkpoint_selection and str(checkpoint_selection).strip():
+        config["resume_from"] = str(checkpoint_selection).strip()
+
     # For resume, try to find the last checkpoint if no path specified
     if "resume_from" not in config:
         checkpoints = training_manager.get_checkpoints()
@@ -177,6 +213,7 @@ def _on_resume(*args):
         else:
             return (
                 "No checkpoints found to resume from",
+                _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
                 gr.update(interactive=True),
                 gr.update(interactive=False),
                 gr.update(interactive=True),
@@ -184,23 +221,88 @@ def _on_resume(*args):
 
     result = training_manager.start_training(config)
     if result.get("success"):
+        ckpt_name = Path(config["resume_from"]).name
         return (
-            f"Training resumed (PID: {result.get('pid')})",
+            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Resuming from {ckpt_name}...",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
             gr.update(interactive=False),   # disable resume
         )
     return (
         f"Failed: {result.get('error', 'Unknown error')}",
+        _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
         gr.update(interactive=True),
         gr.update(interactive=False),
         gr.update(interactive=True),
     )
 
 
+def _export_metrics_csv() -> Optional[str]:
+    """Export training metrics history as a CSV file.
+
+    Returns the path to the generated CSV, or None if no data.
+    """
+    import csv
+    import tempfile
+
+    metrics = training_manager.get_metrics_history()
+    train_data = metrics.get("train", [])
+    val_data = metrics.get("validation", [])
+
+    if not train_data and not val_data:
+        return None
+
+    # Collect all unique keys across train and val entries
+    all_keys: set = set()
+    for entry in train_data:
+        all_keys.update(entry.keys())
+    for entry in val_data:
+        all_keys.update(entry.keys())
+
+    # Sort keys for consistent column order, with 'epoch' first
+    sorted_keys = sorted(all_keys - {"epoch"})
+    fieldnames = ["epoch", "split"] + sorted_keys
+
+    fd, path = tempfile.mkstemp(suffix=".csv", prefix="training_metrics_")
+    with os.fdopen(fd, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for entry in train_data:
+            row = {k: entry.get(k, "") for k in fieldnames}
+            row["split"] = "train"
+            if "epoch" in entry:
+                row["epoch"] = entry["epoch"] + 1  # 1-indexed
+            writer.writerow(row)
+        for entry in val_data:
+            row = {k: entry.get(k, "") for k in fieldnames}
+            row["split"] = "validation"
+            if "epoch" in entry:
+                row["epoch"] = entry["epoch"] + 1
+            writer.writerow(row)
+
+    return path
+
+
+def _refresh_checkpoints():
+    """Refresh checkpoint dropdown choices."""
+    checkpoints = training_manager.get_checkpoints()
+    choices = []
+    for ckpt in checkpoints:
+        name = ckpt["filename"]
+        size = ckpt.get("size_mb", 0)
+        epoch = ckpt.get("epoch")
+        label = f"{name} ({size:.1f} MB"
+        if epoch is not None:
+            label += f", epoch {epoch}"
+        label += ")"
+        choices.append((label, ckpt["filepath"]))
+    return gr.update(choices=choices, value=choices[0][1] if choices else None)
+
+
 _IDLE_RESOURCE_HTML = (
     '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
-    '<div style="font-size:13px;color:#6b7280">Start training to monitor resources</div>'
+    '<div style="font-size:13px;color:#6b7280">Loading resource info...</div>'
     '</div>'
 )
 
@@ -222,18 +324,21 @@ def _poll_status():
     stop_update = gr.update(interactive=is_running)
     resume_update = gr.update(interactive=not is_running)
 
+    # System resources are always polled so users can check load before training
+    resources = training_manager.get_system_resources()
+    resource_text = _format_resources(resources)
+
     if s == "idle":
-        # No training ever started — skip file reads and subprocess calls
+        # No training ever started — skip metrics file reads
         return (
             _format_status(status_info),
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-            _IDLE_RESOURCE_HTML,
+            resource_text,
             start_update, stop_update, resume_update,
         )
 
     # Training is or was active — do full poll
     metrics_history = training_manager.get_metrics_history()
-    resources = training_manager.get_system_resources()
 
     status_text = _format_status(status_info)
 
@@ -244,8 +349,6 @@ def _poll_status():
     mrr_df = _build_metric_df(val_data, "val_mrr", "MRR")
     hits_df = _build_hits_df(val_data)
     lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
-
-    resource_text = _format_resources(resources)
 
     return (
         status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
@@ -325,7 +428,11 @@ _EMPTY_METRIC_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
 def _build_loss_df(
     train_data: List[Dict[str, Any]], val_data: List[Dict[str, Any]]
 ) -> pd.DataFrame:
-    """Build a DataFrame for the loss plot (train + val)."""
+    """Build a DataFrame for the loss plot (train + val).
+
+    Epochs are converted from 0-indexed (as stored in log files) to
+    1-indexed to match the status display shown to the user.
+    """
     rows = []
 
     for entry in train_data:
@@ -333,13 +440,13 @@ def _build_loss_df(
         # Train loss can be 'total' or 'train_loss'
         loss = entry.get("total") or entry.get("train_loss")
         if epoch is not None and loss is not None and _is_finite(loss):
-            rows.append({"epoch": epoch, "loss": loss, "split": "train"})
+            rows.append({"epoch": epoch + 1, "loss": loss, "split": "train"})
 
     for entry in val_data:
         epoch = entry.get("epoch")
         loss = entry.get("val_loss")
         if epoch is not None and loss is not None and _is_finite(loss):
-            rows.append({"epoch": epoch, "loss": loss, "split": "val"})
+            rows.append({"epoch": epoch + 1, "loss": loss, "split": "val"})
 
     if not rows:
         return _EMPTY_LOSS_DF
@@ -349,13 +456,16 @@ def _build_loss_df(
 def _build_metric_df(
     data: List[Dict[str, Any]], key: str, label: str
 ) -> pd.DataFrame:
-    """Build a single-series DataFrame for a metric."""
+    """Build a single-series DataFrame for a metric.
+
+    Epochs are converted from 0-indexed to 1-indexed.
+    """
     rows = []
     for entry in data:
         epoch = entry.get("epoch")
         value = entry.get(key)
         if epoch is not None and value is not None and _is_finite(value):
-            rows.append({"epoch": epoch, "value": value, "metric": label})
+            rows.append({"epoch": epoch + 1, "value": value, "metric": label})
 
     if not rows:
         return _EMPTY_METRIC_DF
@@ -363,7 +473,10 @@ def _build_metric_df(
 
 
 def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
-    """Build a DataFrame for Hits@1 and Hits@10."""
+    """Build a DataFrame for Hits@1 and Hits@10.
+
+    Epochs are converted from 0-indexed to 1-indexed.
+    """
     rows = []
     for entry in val_data:
         epoch = entry.get("epoch")
@@ -371,9 +484,9 @@ def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
         h10 = entry.get("val_hits@10")
         if epoch is not None:
             if h1 is not None and _is_finite(h1):
-                rows.append({"epoch": epoch, "value": h1, "metric": "Hits@1"})
+                rows.append({"epoch": epoch + 1, "value": h1, "metric": "Hits@1"})
             if h10 is not None and _is_finite(h10):
-                rows.append({"epoch": epoch, "value": h10, "metric": "Hits@10"})
+                rows.append({"epoch": epoch + 1, "value": h10, "metric": "Hits@10"})
 
     if not rows:
         return _EMPTY_METRIC_DF
@@ -504,12 +617,37 @@ def create_training_tab() -> None:
             gr.Markdown("### Training Parameters")
 
             # -----------------------------------------------------------------
+            # Data Paths
+            # -----------------------------------------------------------------
+            with gr.Accordion("Data Paths", open=False):
+                with gr.Group():
+                    data_dir = gr.Textbox(
+                        label="Data Directory",
+                        info="Processed data with node_features.pt, edge_indices.pt, etc.",
+                        value="data/processed",
+                        elem_id="data_dir",
+                    )
+                    output_dir = gr.Textbox(
+                        label="Output Directory",
+                        info="Where final metrics and results are saved.",
+                        value="outputs",
+                        elem_id="output_dir",
+                    )
+                    checkpoint_dir = gr.Textbox(
+                        label="Checkpoint Directory",
+                        info="Where model checkpoints (.pt files) are saved.",
+                        value="checkpoints",
+                        elem_id="checkpoint_dir",
+                    )
+
+            # -----------------------------------------------------------------
             # Tier 1 — Basic Parameters (always visible)
             # -----------------------------------------------------------------
             gr.Markdown("#### Basic")
             with gr.Group():
                 num_epochs = gr.Number(
                     label="Epochs",
+                    info="Smoke test: 2-5 | Quick: 10-50 | Full: 100-500",
                     value=100,
                     minimum=1,
                     maximum=10000,
@@ -518,6 +656,7 @@ def create_training_tab() -> None:
                 )
                 learning_rate = gr.Slider(
                     label="Learning Rate",
+                    info="Initial LR. Recommended: 1e-4 (GAT) | 5e-5 (HGT). Use with scheduler.",
                     minimum=1e-6,
                     maximum=1e-1,
                     value=1e-4,
@@ -526,30 +665,35 @@ def create_training_tab() -> None:
                 )
                 batch_size = gr.Dropdown(
                     label="Batch Size",
+                    info="Samples per step. Larger = faster but more VRAM. 32 is a safe default.",
                     choices=["8", "16", "32", "64"],
                     value="32",
                     elem_id="batch_size",
                 )
                 conv_type = gr.Radio(
                     label="GNN Conv Type",
+                    info="GAT: attention-based (default) | HGT: heterogeneous transformer | SAGE: mean aggregation",
                     choices=["gat", "hgt", "sage"],
                     value="gat",
                     elem_id="conv_type",
                 )
                 device = gr.Radio(
                     label="Device",
+                    info="auto: use GPU if available, otherwise CPU",
                     choices=["auto", "cuda", "cpu"],
                     value="auto",
                     elem_id="device",
                 )
                 resume_from = gr.Textbox(
                     label="Resume From",
+                    info="Path to a checkpoint .pt file. Leave empty to start fresh.",
                     placeholder="checkpoint path (optional)",
                     value="",
                     elem_id="resume_from",
                 )
                 seed = gr.Number(
                     label="Seed",
+                    info="Random seed for reproducibility. Change to try different initializations.",
                     value=42,
                     minimum=0,
                     precision=0,
@@ -563,12 +707,14 @@ def create_training_tab() -> None:
                 with gr.Group():
                     hidden_dim = gr.Dropdown(
                         label="Hidden Dim",
+                        info="GNN embedding dimension. 256 balances quality/speed. 512 for large KGs.",
                         choices=["128", "256", "512"],
                         value="256",
                         elem_id="hidden_dim",
                     )
                     num_layers = gr.Slider(
                         label="Num Layers",
+                        info="GNN message-passing depth. 3-4 typical. More layers = wider receptive field.",
                         minimum=2,
                         maximum=8,
                         value=4,
@@ -577,6 +723,7 @@ def create_training_tab() -> None:
                     )
                     dropout = gr.Slider(
                         label="Dropout",
+                        info="Regularization. 0.1 typical. Increase to 0.2-0.3 if overfitting.",
                         minimum=0.0,
                         maximum=0.5,
                         value=0.1,
@@ -585,6 +732,7 @@ def create_training_tab() -> None:
                     )
                     weight_decay = gr.Slider(
                         label="Weight Decay",
+                        info="L2 regularization. 0.01 typical for AdamW. Lower (1e-4) if underfitting.",
                         minimum=1e-5,
                         maximum=0.1,
                         value=0.01,
@@ -593,12 +741,14 @@ def create_training_tab() -> None:
                     )
                     scheduler_type = gr.Dropdown(
                         label="Scheduler",
+                        info="cosine: smooth decay (recommended) | onecycle: aggressive | linear: steady",
                         choices=["cosine", "onecycle", "linear", "none"],
                         value="cosine",
                         elem_id="scheduler_type",
                     )
                     warmup_steps = gr.Number(
                         label="Warmup Steps",
+                        info="Steps to linearly ramp LR from 0. 500 typical. Set 0 to disable.",
                         value=500,
                         minimum=0,
                         precision=0,
@@ -606,6 +756,7 @@ def create_training_tab() -> None:
                     )
                     early_stopping_patience = gr.Number(
                         label="Early Stopping Patience",
+                        info="Epochs without improvement before stopping. 10 is a good default.",
                         value=10,
                         minimum=1,
                         precision=0,
@@ -616,6 +767,7 @@ def create_training_tab() -> None:
                 with gr.Group():
                     diagnosis_weight = gr.Slider(
                         label="Diagnosis Weight",
+                        info="Primary task weight. Keep at 1.0 (anchor). Other weights are relative to this.",
                         minimum=0.0,
                         maximum=2.0,
                         value=1.0,
@@ -624,6 +776,7 @@ def create_training_tab() -> None:
                     )
                     link_prediction_weight = gr.Slider(
                         label="Link Prediction Weight",
+                        info="KG structure learning. 0.3-0.5 typical. Higher improves KG representation.",
                         minimum=0.0,
                         maximum=2.0,
                         value=0.5,
@@ -632,6 +785,7 @@ def create_training_tab() -> None:
                     )
                     contrastive_weight = gr.Slider(
                         label="Contrastive Weight",
+                        info="Phenotype-disease similarity learning. 0.2-0.5 typical.",
                         minimum=0.0,
                         maximum=2.0,
                         value=0.3,
@@ -640,6 +794,7 @@ def create_training_tab() -> None:
                     )
                     ortholog_weight = gr.Slider(
                         label="Ortholog Weight",
+                        info="Cross-species gene mapping. 0.1-0.3 typical. Set 0 to disable.",
                         minimum=0.0,
                         maximum=2.0,
                         value=0.2,
@@ -654,6 +809,7 @@ def create_training_tab() -> None:
                 with gr.Group():
                     gradient_accumulation_steps = gr.Number(
                         label="Gradient Accumulation Steps",
+                        info="Simulate larger batch by accumulating N steps. Useful when VRAM-limited.",
                         value=1,
                         minimum=1,
                         precision=0,
@@ -661,34 +817,40 @@ def create_training_tab() -> None:
                     )
                     max_grad_norm = gr.Number(
                         label="Max Grad Norm",
+                        info="Gradient clipping threshold. 1.0 typical. Prevents training instability.",
                         value=1.0,
                         minimum=0.01,
                         elem_id="max_grad_norm",
                     )
                     num_heads = gr.Dropdown(
                         label="Attention Heads",
+                        info="Multi-head attention count. 8 typical. Must evenly divide hidden_dim.",
                         choices=["4", "8", "16"],
                         value="8",
                         elem_id="num_heads",
                     )
                     use_ortholog_gate = gr.Checkbox(
                         label="Use Ortholog Gate",
+                        info="Learnable gate for cross-species gene signals. Disable if no ortholog data.",
                         value=True,
                         elem_id="use_ortholog_gate",
                     )
                     use_amp = gr.Checkbox(
                         label="Automatic Mixed Precision",
+                        info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues.",
                         value=True,
                         elem_id="use_amp",
                     )
                     amp_dtype = gr.Radio(
                         label="AMP Dtype",
+                        info="float16: wider GPU support | bfloat16: better stability (RTX 30/40, A100+)",
                         choices=["float16", "bfloat16"],
                         value="float16",
                         elem_id="amp_dtype",
                     )
                     temperature = gr.Slider(
                         label="Contrastive Temperature",
+                        info="Lower = sharper similarity. 0.07 typical for contrastive learning.",
                         minimum=0.01,
                         maximum=1.0,
                         value=0.07,
@@ -697,6 +859,7 @@ def create_training_tab() -> None:
                     )
                     label_smoothing = gr.Slider(
                         label="Label Smoothing",
+                        info="Softens one-hot labels. 0.1 typical. Prevents overconfident predictions.",
                         minimum=0.0,
                         maximum=0.3,
                         value=0.1,
@@ -705,6 +868,7 @@ def create_training_tab() -> None:
                     )
                     margin = gr.Slider(
                         label="Margin",
+                        info="Margin for ranking loss. 1.0 typical. Larger margin = stricter separation.",
                         minimum=0.1,
                         maximum=3.0,
                         value=1.0,
@@ -713,11 +877,13 @@ def create_training_tab() -> None:
                     )
                     num_neighbors_str = gr.Textbox(
                         label="Num Neighbors (comma-separated)",
+                        info="Neighbor samples per GNN layer (deepest to shallowest). E.g. '15, 10, 5'.",
                         value="15, 10, 5",
                         elem_id="num_neighbors_str",
                     )
                     max_subgraph_nodes = gr.Number(
                         label="Max Subgraph Nodes",
+                        info="Max nodes in sampled subgraph. Larger = more context but slower. 5000 typical.",
                         value=5000,
                         minimum=100,
                         precision=0,
@@ -732,6 +898,19 @@ def create_training_tab() -> None:
                 start_btn = gr.Button("Start Training", variant="primary")
                 stop_btn = gr.Button("Stop Training", variant="stop", interactive=False)
                 resume_btn = gr.Button("Resume Training")
+
+            # Checkpoint selection for resume
+            with gr.Accordion("Checkpoint Selection", open=False):
+                with gr.Row():
+                    checkpoint_dropdown = gr.Dropdown(
+                        label="Resume Checkpoint",
+                        info="Select a checkpoint to resume from. Click Refresh to update the list.",
+                        choices=[],
+                        value=None,
+                        allow_custom_value=True,
+                        elem_id="checkpoint_dropdown",
+                    )
+                    refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0)
 
             status_display = gr.Markdown(
                 value="**Status**: IDLE",
@@ -797,9 +976,17 @@ def create_training_tab() -> None:
                     elem_id="lr_plot",
                 )
 
+            with gr.Row():
+                export_csv_btn = gr.Button("Export Metrics CSV", size="sm")
+                export_csv_file = gr.File(
+                    label="Download",
+                    visible=False,
+                    elem_id="export_csv_file",
+                )
+
             gr.Markdown("### System Resources")
             resource_display = gr.HTML(
-                value='<div style="font-size:13px;color:#6b7280">Waiting for data...</div>',
+                value='<div style="font-size:13px;color:#6b7280">Loading resource info...</div>',
                 elem_id="resource_display",
             )
 
@@ -807,6 +994,8 @@ def create_training_tab() -> None:
     # Collect all parameter inputs in order matching _collect_config signature
     # =========================================================================
     all_params = [
+        # Paths
+        data_dir, output_dir, checkpoint_dir,
         # Tier 1
         num_epochs, learning_rate, batch_size, conv_type, device,
         resume_from, seed,
@@ -823,20 +1012,44 @@ def create_training_tab() -> None:
     # =========================================================================
     # Event Handlers
     # =========================================================================
+    # Shared output list: status + 4 plots + 3 buttons
+    btn_outputs = [
+        status_display,
+        loss_plot, mrr_plot, hits_plot, lr_plot,
+        start_btn, stop_btn, resume_btn,
+    ]
+
     start_btn.click(
         fn=_on_start,
         inputs=all_params,
-        outputs=[status_display, start_btn, stop_btn, resume_btn],
+        outputs=btn_outputs,
     )
     stop_btn.click(
         fn=_on_stop,
         inputs=[],
-        outputs=[status_display, start_btn, stop_btn, resume_btn],
+        outputs=btn_outputs,
     )
     resume_btn.click(
         fn=_on_resume,
-        inputs=all_params,
-        outputs=[status_display, start_btn, stop_btn, resume_btn],
+        inputs=all_params + [checkpoint_dropdown],
+        outputs=btn_outputs,
+    )
+    refresh_ckpt_btn.click(
+        fn=_refresh_checkpoints,
+        inputs=[],
+        outputs=[checkpoint_dropdown],
+    )
+
+    def _handle_export():
+        path = _export_metrics_csv()
+        if path is None:
+            return gr.update(visible=False, value=None)
+        return gr.update(visible=True, value=path)
+
+    export_csv_btn.click(
+        fn=_handle_export,
+        inputs=[],
+        outputs=[export_csv_file],
     )
 
     # =========================================================================

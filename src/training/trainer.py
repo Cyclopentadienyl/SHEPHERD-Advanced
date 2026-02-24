@@ -822,6 +822,23 @@ class Trainer:
     # =========================================================================
     # Checkpoint Operations
     # =========================================================================
+    def _serialize_config(self) -> Dict[str, Any]:
+        """Serialize config to primitive types for safe pickling.
+
+        Converts dataclass fields (e.g. LossConfig) to plain dicts so that
+        checkpoints can be loaded without requiring the original class
+        definitions (avoids WeightsUnpickler errors in PyTorch 2.6+).
+        """
+        import dataclasses
+
+        config_dict: Dict[str, Any] = {}
+        for k, v in self.config.__dict__.items():
+            if dataclasses.is_dataclass(v) and not isinstance(v, type):
+                config_dict[k] = dataclasses.asdict(v)
+            else:
+                config_dict[k] = v
+        return config_dict
+
     def save_checkpoint(self, filepath: Union[str, Path]) -> None:
         """保存檢查點"""
         filepath = Path(filepath)
@@ -833,7 +850,7 @@ class Trainer:
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "state": self.state.__dict__,
-            "config": self.config.__dict__,
+            "config": self._serialize_config(),
         }
 
         if self.scheduler is not None:
@@ -852,7 +869,7 @@ class Trainer:
         if not filepath.exists():
             raise FileNotFoundError(f"Checkpoint not found: {filepath}")
 
-        checkpoint = torch.load(filepath, map_location=self.device)
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
