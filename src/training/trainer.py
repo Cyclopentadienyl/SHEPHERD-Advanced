@@ -871,7 +871,15 @@ class Trainer:
 
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        # Accept both key conventions: Trainer.save_checkpoint() uses
+        # "model_state_dict" while ModelCheckpoint callback uses "state_dict".
+        model_sd = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+        if model_sd is None:
+            raise KeyError(
+                "Checkpoint contains neither 'model_state_dict' nor 'state_dict'. "
+                f"Available keys: {list(checkpoint.keys())}"
+            )
+        self.model.load_state_dict(model_sd)
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         if self.scheduler is not None and "scheduler_state_dict" in checkpoint:
