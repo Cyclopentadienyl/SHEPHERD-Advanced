@@ -165,7 +165,7 @@ def _on_resume(*args) -> str:
 
 def _poll_status() -> Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
     """
-    Poll training status and metrics. Called by gr.Timer every 2 seconds.
+    Poll training status and metrics. Called by gr.Timer every 1.5 seconds.
 
     Returns:
         (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text)
@@ -750,9 +750,9 @@ def create_training_tab() -> None:
     )
 
     # =========================================================================
-    # Polling Timer (2 second interval)
+    # Polling Timer (1.5 second interval)
     # =========================================================================
-    timer = gr.Timer(value=2)
+    timer = gr.Timer(value=1.5)
     timer.tick(
         fn=_poll_status,
         inputs=[],
