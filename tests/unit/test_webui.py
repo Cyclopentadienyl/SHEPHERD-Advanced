@@ -142,6 +142,9 @@ class TestTrainingConsoleHelpers:
         from src.webui.components.training_console import _collect_config
 
         config = _collect_config(
+            # Paths
+            data_dir="data/processed", output_dir="outputs",
+            checkpoint_dir="checkpoints",
             # Tier 1
             num_epochs=50, learning_rate=0.001, batch_size="32",
             conv_type="gat", device="auto", resume_from="", seed=42,
@@ -163,6 +166,9 @@ class TestTrainingConsoleHelpers:
         assert config["batch_size"] == 32
         assert config["hidden_dim"] == 256
         assert config["num_neighbors"] == [15, 10, 5]
+        assert config["data_dir"] == "data/processed"
+        assert config["output_dir"] == "outputs"
+        assert config["checkpoint_dir"] == "checkpoints"
         assert "resume_from" not in config  # empty string should be excluded
 
 
