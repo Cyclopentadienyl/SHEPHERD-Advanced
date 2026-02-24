@@ -144,10 +144,10 @@ class TestTrainingConsoleHelpers:
         config = _collect_config(
             # Paths
             data_dir="data/processed", output_dir="outputs",
-            checkpoint_dir="checkpoints",
+            checkpoint_dir="models/checkpoints",
             # Tier 1
             num_epochs=50, learning_rate=0.001, batch_size="32",
-            conv_type="gat", device="auto", resume_from="", seed=42,
+            conv_type="gat", device="auto", seed=42,
             # Tier 2
             hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
             scheduler_type="cosine", warmup_steps=500,
@@ -168,8 +168,37 @@ class TestTrainingConsoleHelpers:
         assert config["num_neighbors"] == [15, 10, 5]
         assert config["data_dir"] == "data/processed"
         assert config["output_dir"] == "outputs"
-        assert config["checkpoint_dir"] == "checkpoints"
-        assert "resume_from" not in config  # empty string should be excluded
+        assert config["checkpoint_dir"] == "models/checkpoints"
+
+    def test_collect_config_strips_prefix(self):
+        """Verify that SHEPHERD-Advanced/ display prefix is stripped from paths."""
+        from src.webui.components.training_console import _collect_config
+
+        config = _collect_config(
+            # Paths with display prefix
+            data_dir="SHEPHERD-Advanced/data/processed",
+            output_dir="SHEPHERD-Advanced/outputs",
+            checkpoint_dir="SHEPHERD-Advanced/models/checkpoints",
+            # Tier 1
+            num_epochs=10, learning_rate=0.001, batch_size="32",
+            conv_type="gat", device="auto", seed=42,
+            # Tier 2
+            hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
+            scheduler_type="cosine", warmup_steps=500,
+            early_stopping_patience=10,
+            diagnosis_weight=1.0, link_prediction_weight=0.5,
+            contrastive_weight=0.3, ortholog_weight=0.2,
+            # Tier 3
+            gradient_accumulation_steps=1, max_grad_norm=1.0,
+            num_heads="8", use_ortholog_gate=True,
+            use_amp=True, amp_dtype="float16",
+            temperature=0.07, label_smoothing=0.1, margin=1.0,
+            num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
+        )
+        # Prefix should be stripped — backend uses project-root-relative paths
+        assert config["data_dir"] == "data/processed"
+        assert config["output_dir"] == "outputs"
+        assert config["checkpoint_dir"] == "models/checkpoints"
 
 
 # ==============================================================================

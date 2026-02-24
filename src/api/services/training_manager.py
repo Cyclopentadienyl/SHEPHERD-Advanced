@@ -85,7 +85,7 @@ class TrainingManager:
     def __init__(
         self,
         log_dir: str = "logs",
-        checkpoint_dir: str = "checkpoints",
+        checkpoint_dir: str = "models/checkpoints",
         output_dir: str = "outputs",
     ):
         self._process: Optional[subprocess.Popen] = None
