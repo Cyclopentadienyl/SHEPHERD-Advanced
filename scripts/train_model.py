@@ -92,7 +92,7 @@ class TrainConfig:
     # Paths
     data_dir: str = "data/processed"
     output_dir: str = "outputs"
-    checkpoint_dir: str = "checkpoints"
+    checkpoint_dir: str = "models/checkpoints"
     log_dir: str = "logs"
     config_file: Optional[str] = None
 

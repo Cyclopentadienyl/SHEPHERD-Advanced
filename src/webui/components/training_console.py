@@ -54,7 +54,6 @@ def _collect_config(
     batch_size: str,
     conv_type: str,
     device: str,
-    resume_from: str,
     seed: int,
     # Tier 2 — Advanced
     hidden_dim: str,
@@ -88,11 +87,18 @@ def _collect_config(
     except (ValueError, AttributeError):
         num_neighbors = [15, 10, 5]
 
+    # Strip the display prefix — training subprocess uses paths relative to project root
+    def _strip_prefix(path: str) -> str:
+        p = path.strip()
+        if p.startswith("SHEPHERD-Advanced/"):
+            p = p[len("SHEPHERD-Advanced/"):]
+        return p
+
     config: Dict[str, Any] = {
-        # Paths
-        "data_dir": data_dir.strip() or "data/processed",
-        "output_dir": output_dir.strip() or "outputs",
-        "checkpoint_dir": checkpoint_dir.strip() or "checkpoints",
+        # Paths (strip display prefix so backend receives relative-to-project-root paths)
+        "data_dir": _strip_prefix(data_dir) or "data/processed",
+        "output_dir": _strip_prefix(output_dir) or "outputs",
+        "checkpoint_dir": _strip_prefix(checkpoint_dir) or "models/checkpoints",
         # Tier 1
         "num_epochs": int(num_epochs),
         "learning_rate": float(learning_rate),
@@ -125,10 +131,6 @@ def _collect_config(
         "num_neighbors": num_neighbors,
         "max_subgraph_nodes": int(max_subgraph_nodes),
     }
-
-    # Only include resume_from if non-empty
-    if resume_from and resume_from.strip():
-        config["resume_from"] = resume_from.strip()
 
     return config
 
@@ -195,11 +197,11 @@ def _on_resume(*args):
     checkpoint_selection = args[-1] if args else None
     config = _collect_config(*args[:-1])
 
-    # Dropdown selection overrides resume_from textbox
+    # Use checkpoint from dropdown selection
     if checkpoint_selection and str(checkpoint_selection).strip():
         config["resume_from"] = str(checkpoint_selection).strip()
 
-    # For resume, try to find the last checkpoint if no path specified
+    # If no dropdown selection, auto-find the last checkpoint
     if "resume_from" not in config:
         checkpoints = training_manager.get_checkpoints()
         if checkpoints:
@@ -614,8 +616,6 @@ def create_training_tab() -> None:
         # Left Column: Parameters & Controls
         # =====================================================================
         with gr.Column(scale=1):
-            gr.Markdown("### Training Parameters")
-
             # -----------------------------------------------------------------
             # Data Paths
             # -----------------------------------------------------------------
@@ -623,27 +623,27 @@ def create_training_tab() -> None:
                 with gr.Group():
                     data_dir = gr.Textbox(
                         label="Data Directory",
-                        info="Processed data with node_features.pt, edge_indices.pt, etc.",
-                        value="data/processed",
+                        info="Processed data with node_features.pt, edge_indices.pt, etc. (relative to project root)",
+                        value="SHEPHERD-Advanced/data/processed",
                         elem_id="data_dir",
                     )
                     output_dir = gr.Textbox(
                         label="Output Directory",
-                        info="Where final metrics and results are saved.",
-                        value="outputs",
+                        info="Where final metrics and results are saved. (relative to project root)",
+                        value="SHEPHERD-Advanced/outputs",
                         elem_id="output_dir",
                     )
                     checkpoint_dir = gr.Textbox(
                         label="Checkpoint Directory",
-                        info="Where model checkpoints (.pt files) are saved.",
-                        value="checkpoints",
+                        info="Where model checkpoints (.pt files) are saved. (relative to project root)",
+                        value="SHEPHERD-Advanced/models/checkpoints",
                         elem_id="checkpoint_dir",
                     )
 
             # -----------------------------------------------------------------
             # Tier 1 — Basic Parameters (always visible)
             # -----------------------------------------------------------------
-            gr.Markdown("#### Basic")
+            gr.Markdown("### Basic Training Parameters")
             with gr.Group():
                 num_epochs = gr.Number(
                     label="Epochs",
@@ -683,13 +683,6 @@ def create_training_tab() -> None:
                     choices=["auto", "cuda", "cpu"],
                     value="auto",
                     elem_id="device",
-                )
-                resume_from = gr.Textbox(
-                    label="Resume From",
-                    info="Path to a checkpoint .pt file. Leave empty to start fresh.",
-                    placeholder="checkpoint path (optional)",
-                    value="",
-                    elem_id="resume_from",
                 )
                 seed = gr.Number(
                     label="Seed",
@@ -900,7 +893,7 @@ def create_training_tab() -> None:
                 resume_btn = gr.Button("Resume Training")
 
             # Checkpoint selection for resume
-            with gr.Accordion("Checkpoint Selection", open=False):
+            with gr.Accordion("Resume Checkpoint Selection", open=False):
                 with gr.Row():
                     checkpoint_dropdown = gr.Dropdown(
                         label="Resume Checkpoint",
@@ -998,7 +991,7 @@ def create_training_tab() -> None:
         data_dir, output_dir, checkpoint_dir,
         # Tier 1
         num_epochs, learning_rate, batch_size, conv_type, device,
-        resume_from, seed,
+        seed,
         # Tier 2
         hidden_dim, num_layers, dropout, weight_decay, scheduler_type,
         warmup_steps, early_stopping_patience,

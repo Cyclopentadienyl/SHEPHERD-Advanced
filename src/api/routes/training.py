@@ -45,7 +45,7 @@ class TrainingStartRequest(BaseModel):
     # Paths
     data_dir: str = Field(default="data/processed", description="Processed data directory")
     output_dir: str = Field(default="outputs", description="Output directory")
-    checkpoint_dir: str = Field(default="checkpoints", description="Checkpoint directory")
+    checkpoint_dir: str = Field(default="models/checkpoints", description="Checkpoint directory")
     log_dir: str = Field(default="logs", description="Log directory")
 
     # Tier 1 — Basic
