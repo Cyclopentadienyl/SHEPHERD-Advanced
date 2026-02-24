@@ -200,7 +200,7 @@ def _on_resume(*args):
 
 _IDLE_RESOURCE_HTML = (
     '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
-    '<div style="font-size:13px;color:#6b7280">Start training to monitor resources</div>'
+    '<div style="font-size:13px;color:#6b7280">Loading resource info...</div>'
     '</div>'
 )
 
@@ -222,18 +222,21 @@ def _poll_status():
     stop_update = gr.update(interactive=is_running)
     resume_update = gr.update(interactive=not is_running)
 
+    # System resources are always polled so users can check load before training
+    resources = training_manager.get_system_resources()
+    resource_text = _format_resources(resources)
+
     if s == "idle":
-        # No training ever started — skip file reads and subprocess calls
+        # No training ever started — skip metrics file reads
         return (
             _format_status(status_info),
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-            _IDLE_RESOURCE_HTML,
+            resource_text,
             start_update, stop_update, resume_update,
         )
 
     # Training is or was active — do full poll
     metrics_history = training_manager.get_metrics_history()
-    resources = training_manager.get_system_resources()
 
     status_text = _format_status(status_info)
 
@@ -244,8 +247,6 @@ def _poll_status():
     mrr_df = _build_metric_df(val_data, "val_mrr", "MRR")
     hits_df = _build_hits_df(val_data)
     lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
-
-    resource_text = _format_resources(resources)
 
     return (
         status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
@@ -325,7 +326,11 @@ _EMPTY_METRIC_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
 def _build_loss_df(
     train_data: List[Dict[str, Any]], val_data: List[Dict[str, Any]]
 ) -> pd.DataFrame:
-    """Build a DataFrame for the loss plot (train + val)."""
+    """Build a DataFrame for the loss plot (train + val).
+
+    Epochs are converted from 0-indexed (as stored in log files) to
+    1-indexed to match the status display shown to the user.
+    """
     rows = []
 
     for entry in train_data:
@@ -333,13 +338,13 @@ def _build_loss_df(
         # Train loss can be 'total' or 'train_loss'
         loss = entry.get("total") or entry.get("train_loss")
         if epoch is not None and loss is not None and _is_finite(loss):
-            rows.append({"epoch": epoch, "loss": loss, "split": "train"})
+            rows.append({"epoch": epoch + 1, "loss": loss, "split": "train"})
 
     for entry in val_data:
         epoch = entry.get("epoch")
         loss = entry.get("val_loss")
         if epoch is not None and loss is not None and _is_finite(loss):
-            rows.append({"epoch": epoch, "loss": loss, "split": "val"})
+            rows.append({"epoch": epoch + 1, "loss": loss, "split": "val"})
 
     if not rows:
         return _EMPTY_LOSS_DF
@@ -349,13 +354,16 @@ def _build_loss_df(
 def _build_metric_df(
     data: List[Dict[str, Any]], key: str, label: str
 ) -> pd.DataFrame:
-    """Build a single-series DataFrame for a metric."""
+    """Build a single-series DataFrame for a metric.
+
+    Epochs are converted from 0-indexed to 1-indexed.
+    """
     rows = []
     for entry in data:
         epoch = entry.get("epoch")
         value = entry.get(key)
         if epoch is not None and value is not None and _is_finite(value):
-            rows.append({"epoch": epoch, "value": value, "metric": label})
+            rows.append({"epoch": epoch + 1, "value": value, "metric": label})
 
     if not rows:
         return _EMPTY_METRIC_DF
@@ -363,7 +371,10 @@ def _build_metric_df(
 
 
 def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
-    """Build a DataFrame for Hits@1 and Hits@10."""
+    """Build a DataFrame for Hits@1 and Hits@10.
+
+    Epochs are converted from 0-indexed to 1-indexed.
+    """
     rows = []
     for entry in val_data:
         epoch = entry.get("epoch")
@@ -371,9 +382,9 @@ def _build_hits_df(val_data: List[Dict[str, Any]]) -> pd.DataFrame:
         h10 = entry.get("val_hits@10")
         if epoch is not None:
             if h1 is not None and _is_finite(h1):
-                rows.append({"epoch": epoch, "value": h1, "metric": "Hits@1"})
+                rows.append({"epoch": epoch + 1, "value": h1, "metric": "Hits@1"})
             if h10 is not None and _is_finite(h10):
-                rows.append({"epoch": epoch, "value": h10, "metric": "Hits@10"})
+                rows.append({"epoch": epoch + 1, "value": h10, "metric": "Hits@10"})
 
     if not rows:
         return _EMPTY_METRIC_DF
@@ -799,7 +810,7 @@ def create_training_tab() -> None:
 
             gr.Markdown("### System Resources")
             resource_display = gr.HTML(
-                value='<div style="font-size:13px;color:#6b7280">Waiting for data...</div>',
+                value='<div style="font-size:13px;color:#6b7280">Loading resource info...</div>',
                 elem_id="resource_display",
             )
 

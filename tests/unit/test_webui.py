@@ -122,6 +122,8 @@ class TestTrainingConsoleHelpers:
         df = _build_loss_df(train_data, val_data)
         assert len(df) == 4
         assert set(df["split"].unique()) == {"train", "val"}
+        # Epochs should be 1-indexed for display (0-indexed log + 1)
+        assert list(sorted(df["epoch"].unique())) == [1, 2]
 
     def test_build_hits_df(self):
         from src.webui.components.training_console import _build_hits_df
@@ -133,6 +135,8 @@ class TestTrainingConsoleHelpers:
         df = _build_hits_df(val_data)
         assert len(df) == 4
         assert set(df["metric"].unique()) == {"Hits@1", "Hits@10"}
+        # Epochs should be 1-indexed for display
+        assert list(sorted(df["epoch"].unique())) == [1, 2]
 
     def test_collect_config(self):
         from src.webui.components.training_console import _collect_config
