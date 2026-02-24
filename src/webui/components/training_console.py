@@ -402,8 +402,15 @@ def _poll_status(epoch_window: str = "All"):
     hits_df = _trim_df_to_window(hits_df, window)
     lr_df = _trim_df_to_window(lr_df, window)
 
+    windowed = window is not None
+
     return (
-        status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
+        status_text,
+        _wrap_plot_update(loss_df, windowed),
+        _wrap_plot_update(mrr_df, windowed),
+        _wrap_plot_update(hits_df, windowed),
+        _wrap_plot_update(lr_df, windowed),
+        resource_text,
         start_update, stop_update, resume_update,
     )
 
@@ -492,6 +499,28 @@ def _trim_df_to_window(df: pd.DataFrame, window: Optional[int]) -> pd.DataFrame:
     if cutoff <= 0:
         return df
     return df[df["epoch"] > cutoff].reset_index(drop=True)
+
+
+def _wrap_plot_update(df: pd.DataFrame, windowed: bool):
+    """Wrap a DataFrame for LinePlot output, setting explicit x_lim when windowed.
+
+    When epoch windowing is active, Gradio may not automatically reset the
+    X-axis range to fit the filtered data.  Passing ``x_lim`` explicitly
+    forces the chart axis to match the visible epoch range.
+
+    When switching back to "All", ``x_lim=None`` clears any previously
+    locked range so the chart auto-scales again.
+    """
+    if df.empty:
+        return df
+    if not windowed:
+        # Explicitly clear x_lim so axis auto-scales to full data range
+        return gr.update(value=df, x_lim=None)
+    min_e = float(df["epoch"].min())
+    max_e = float(df["epoch"].max())
+    # Small padding so endpoints aren't clipped at the axis boundary
+    padding = max(0.5, (max_e - min_e) * 0.02)
+    return gr.update(value=df, x_lim=[min_e - padding, max_e + padding])
 
 
 # ---------------------------------------------------------------------------
