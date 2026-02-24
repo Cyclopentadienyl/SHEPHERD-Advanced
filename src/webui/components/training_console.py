@@ -141,6 +141,8 @@ def _on_start(*args):
     Returns status text, 4 empty plot DataFrames (to clear stale charts),
     and 3 button updates.
     """
+    global _poll_cache_key
+    _poll_cache_key = None  # force full refresh on next poll tick
     config = _collect_config(*args)
     result = training_manager.start_training(config)
     if result.get("success"):
@@ -165,6 +167,8 @@ def _on_stop():
 
     Returns status text, gr.update() for 4 plots (no change), and 3 button updates.
     """
+    global _poll_cache_key
+    _poll_cache_key = None  # force full refresh on next poll tick
     result = training_manager.stop_training()
     no_change = gr.update()
     if result.get("success"):
@@ -193,6 +197,8 @@ def _on_resume(*args):
     Returns status text, 4 empty plot DataFrames (to clear stale charts),
     and 3 button updates.
     """
+    global _poll_cache_key
+    _poll_cache_key = None  # force full refresh on next poll tick
     # Last arg is checkpoint dropdown; rest go to _collect_config
     checkpoint_selection = args[-1] if args else None
     config = _collect_config(*args[:-1])
@@ -309,26 +315,63 @@ _IDLE_RESOURCE_HTML = (
 )
 
 
-def _poll_status():
+def _poll_status(epoch_window: str = "All"):
     """
     Poll training status and metrics. Called by gr.Timer every 1.5 seconds.
+
+    Smart refresh strategy:
+        - **System Resources** are polled every tick (always fresh).
+        - **Charts, status text, buttons** are only refreshed when training
+          is actively running or when the state/window just changed.  When
+          training is idle, completed, or stopped, these outputs return
+          ``gr.update()`` (Gradio no-op) so Plotly chart zoom/pan and other
+          component state are preserved.
+
+    Args:
+        epoch_window: Value from the Epoch Window dropdown.
+            ``"All"`` shows every epoch; ``"Last N"`` trims charts to the
+            most recent *N* epochs.
 
     Returns:
         (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
          start_btn_update, stop_btn_update, resume_btn_update)
     """
+    global _poll_cache_key
+
     status_info = training_manager.get_status()
     s = status_info.get("status", "idle")
+
+    # System resources are ALWAYS polled (user checks GPU/RAM before starting)
+    resources = training_manager.get_system_resources()
+    resource_text = _format_resources(resources)
+
+    # --- Smart refresh: skip re-renders when nothing changed ---------------
+    cache_key = (s, epoch_window)
+    is_stable = (
+        s not in ("running", "stopping")
+        and cache_key == _poll_cache_key
+    )
+
+    if is_stable:
+        # State hasn't changed — only send fresh resource_text.
+        # gr.update() is a Gradio no-op that preserves current component
+        # state, including Plotly manual zoom/pan.
+        _no_change = gr.update()
+        return (
+            _no_change,                                        # status_display
+            _no_change, _no_change, _no_change, _no_change,   # 4 plots
+            resource_text,                                     # always fresh
+            _no_change, _no_change, _no_change,                # 3 buttons
+        )
+
+    # State changed or training is active → full refresh
+    _poll_cache_key = cache_key
 
     # Button state
     is_running = s in ("running", "stopping")
     start_update = gr.update(interactive=not is_running)
     stop_update = gr.update(interactive=is_running)
     resume_update = gr.update(interactive=not is_running)
-
-    # System resources are always polled so users can check load before training
-    resources = training_manager.get_system_resources()
-    resource_text = _format_resources(resources)
 
     if s == "idle":
         # No training ever started — skip metrics file reads
@@ -351,6 +394,13 @@ def _poll_status():
     mrr_df = _build_metric_df(val_data, "val_mrr", "MRR")
     hits_df = _build_hits_df(val_data)
     lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
+
+    # Apply epoch windowing
+    window = _parse_epoch_window(epoch_window)
+    loss_df = _trim_df_to_window(loss_df, window)
+    mrr_df = _trim_df_to_window(mrr_df, window)
+    hits_df = _trim_df_to_window(hits_df, window)
+    lr_df = _trim_df_to_window(lr_df, window)
 
     return (
         status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
@@ -414,6 +464,42 @@ def _is_finite(v: Any) -> bool:
         return isinstance(v, (int, float)) and math.isfinite(v)
     except (TypeError, OverflowError):
         return False
+
+
+def _parse_epoch_window(epoch_window: str) -> Optional[int]:
+    """Parse 'Last N' dropdown value into an integer count, or None for 'All'."""
+    if not epoch_window or epoch_window == "All":
+        return None
+    parts = epoch_window.split()
+    if len(parts) == 2 and parts[0] == "Last":
+        try:
+            return int(parts[1])
+        except ValueError:
+            return None
+    return None
+
+
+def _trim_df_to_window(df: pd.DataFrame, window: Optional[int]) -> pd.DataFrame:
+    """Keep only rows from the last *window* epochs.
+
+    If *window* is None or the DataFrame has fewer epochs than *window*,
+    return the DataFrame unchanged.
+    """
+    if window is None or df.empty:
+        return df
+    max_epoch = df["epoch"].max()
+    cutoff = max_epoch - window
+    if cutoff <= 0:
+        return df
+    return df[df["epoch"] > cutoff].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Smart polling: skip re-renders when training is not active.
+# Only System Resources needs continuous polling; charts, status text, and
+# button states are static once training finishes (or before it starts).
+# ---------------------------------------------------------------------------
+_poll_cache_key: Optional[Tuple[str, str]] = None  # (status, epoch_window)
 
 
 # Empty DataFrames with correct column structure for Gradio LinePlot.
@@ -892,8 +978,8 @@ def create_training_tab() -> None:
                 stop_btn = gr.Button("Stop Training", variant="stop", interactive=False)
                 resume_btn = gr.Button("Resume Training")
 
-            # Checkpoint selection for resume
-            with gr.Accordion("Resume Checkpoint Selection", open=False):
+            # Checkpoint selection for resume training
+            with gr.Accordion("Checkpoint Selection for Resume Training", open=False):
                 with gr.Row():
                     checkpoint_dropdown = gr.Dropdown(
                         label="Resume Checkpoint",
@@ -916,6 +1002,16 @@ def create_training_tab() -> None:
         # =====================================================================
         with gr.Column(scale=2):
             gr.Markdown("### Training Metrics")
+
+            with gr.Row():
+                epoch_window = gr.Dropdown(
+                    label="Epoch Window",
+                    info="Limit charts to the most recent N epochs for detail.",
+                    choices=["All", "Last 10", "Last 20", "Last 50", "Last 100"],
+                    value="All",
+                    elem_id="epoch_window",
+                    scale=1,
+                )
 
             with gr.Row():
                 loss_plot = gr.LinePlot(
@@ -1051,7 +1147,7 @@ def create_training_tab() -> None:
     timer = gr.Timer(value=1.5)
     timer.tick(
         fn=_poll_status,
-        inputs=[],
+        inputs=[epoch_window],
         outputs=[
             status_display,
             loss_plot,
