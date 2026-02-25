@@ -233,61 +233,134 @@ def check_installation() -> Dict[str, Optional[str]]:
     return result
 
 
-def build_install_commands(config: InstallConfig, upgrade: bool = True) -> List[List[str]]:
-    """Build installation commands"""
-    commands = []
+@dataclass
+class InstallStep:
+    """A single installation step with criticality level."""
+    label: str
+    cmd: List[str]
+    critical: bool  # If True, failure aborts the entire install
 
+
+def build_install_steps(config: InstallConfig, upgrade: bool = True) -> List[InstallStep]:
+    """Build installation steps with criticality levels.
+
+    Installation strategy (smart adaptation):
+      1. PyTorch stack          - torch, torchvision, torchaudio    [CRITICAL]
+      2. torch_geometric        - main PyG package (pure Python)    [CRITICAL]
+      3. pyg-lib               - pyg-team native ops (has wheels)   [OPTIONAL]
+      4. torch_scatter/sparse  - third-party extensions (may lag)   [OPTIONAL]
+
+    Steps 3-4 are optional: PyG auto-falls back to torch.scatter_reduce
+    (PyTorch 2.0+ native) for all operations our model uses.
+    """
+    steps = []
     upgrade_flag = ["--upgrade"] if upgrade else []
 
-    # Install PyTorch stack (torch, torchvision, torchaudio)
-    # Version mapping: torch 2.9.0 -> torchvision 0.24.0, torchaudio 2.9.0
-    torch_cmd = [
-        sys.executable, "-m", "pip", "install",
-        *upgrade_flag,
-        f"torch=={config.torch_version}",
-        "torchvision==0.24.0",
-        "torchaudio==2.9.0",
-        "--index-url", config.extra_index_url,
-    ]
-    commands.append(torch_cmd)
+    # [CRITICAL] PyTorch stack
+    steps.append(InstallStep(
+        label="PyTorch stack",
+        cmd=[
+            sys.executable, "-m", "pip", "install",
+            *upgrade_flag,
+            f"torch=={config.torch_version}",
+            "torchvision==0.24.0",
+            "torchaudio==2.9.0",
+            "--index-url", config.extra_index_url,
+        ],
+        critical=True,
+    ))
 
-    # Install PyG extensions (pyg_lib is the new unified library)
-    pyg_ext_cmd = [
-        sys.executable, "-m", "pip", "install",
-        *upgrade_flag,
-        "pyg_lib", "torch_scatter", "torch_sparse", "torch_cluster", "torch_spline_conv",
-        "-f", config.pyg_wheel_url,
-    ]
-    commands.append(pyg_ext_cmd)
+    # [CRITICAL] PyG main package (pure Python, always installs)
+    steps.append(InstallStep(
+        label="PyTorch Geometric",
+        cmd=[
+            sys.executable, "-m", "pip", "install",
+            *upgrade_flag,
+            f"torch_geometric>={config.pyg_version}",
+        ],
+        critical=True,
+    ))
 
-    # Install PyG main package
-    pyg_cmd = [
-        sys.executable, "-m", "pip", "install",
-        *upgrade_flag,
-        f"torch_geometric>={config.pyg_version}",
-    ]
-    commands.append(pyg_cmd)
+    # [OPTIONAL] pyg-lib (pyg-team maintained, has torch 2.9+cu130 wheels)
+    steps.append(InstallStep(
+        label="pyg-lib (native GNN kernels)",
+        cmd=[
+            sys.executable, "-m", "pip", "install",
+            *upgrade_flag,
+            "pyg_lib",
+            "-f", config.pyg_wheel_url,
+        ],
+        critical=False,
+    ))
 
-    return commands
+    # [OPTIONAL] Third-party scatter/sparse extensions (wheels often lag)
+    steps.append(InstallStep(
+        label="PyG native extensions (torch_scatter, torch_sparse, torch_cluster)",
+        cmd=[
+            sys.executable, "-m", "pip", "install",
+            *upgrade_flag,
+            "torch_scatter", "torch_sparse", "torch_cluster",
+            "-f", config.pyg_wheel_url,
+        ],
+        critical=False,
+    ))
+
+    return steps
+
+
+def build_install_commands(config: InstallConfig, upgrade: bool = True) -> List[List[str]]:
+    """Build installation commands (legacy interface for dry-run display)."""
+    return [step.cmd for step in build_install_steps(config, upgrade)]
 
 
 def run_install(commands: List[List[str]], dry_run: bool = False) -> bool:
-    """Run installation commands"""
+    """Run installation using the new step-based system."""
+    # Legacy interface: convert to steps for backward compat with dry_run
+    if dry_run:
+        for cmd in commands:
+            print(f"\n[DRY RUN] Running: {' '.join(cmd)}")
+        return True
+
+    # Build proper steps to get criticality info
+    # (caller should use run_install_steps directly for production use)
     for cmd in commands:
-        print(f"\n{'[DRY RUN] ' if dry_run else ''}Running: {' '.join(cmd)}")
-
-        if dry_run:
-            continue
-
+        print(f"\nRunning: {' '.join(cmd)}")
         try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=False,
-            )
+            subprocess.run(cmd, check=True, capture_output=False)
         except subprocess.CalledProcessError as e:
             print(f"Error: Command failed with code {e.returncode}")
             return False
+    return True
+
+
+def run_install_steps(steps: List[InstallStep]) -> bool:
+    """Run installation steps with smart fallback for optional components."""
+    optional_skipped = []
+
+    for step in steps:
+        print(f"\n{'=' * 60}")
+        print(f"  {'[REQUIRED]' if step.critical else '[OPTIONAL]'} {step.label}")
+        print(f"{'=' * 60}")
+        print(f"  Command: {' '.join(step.cmd)}")
+
+        try:
+            subprocess.run(step.cmd, check=True, capture_output=False)
+            print(f"\033[92m  [OK] {step.label} installed successfully\033[0m")
+        except subprocess.CalledProcessError as e:
+            if step.critical:
+                print(f"\033[91m  [ERROR] {step.label} failed (exit code {e.returncode})\033[0m")
+                return False
+            else:
+                print(f"\033[93m  [SKIP] {step.label} not available for this platform/torch version\033[0m")
+                print(f"         This is expected and non-critical.")
+                print(f"         PyG will use PyTorch-native fallbacks (torch.scatter_reduce).")
+                optional_skipped.append(step.label)
+
+    if optional_skipped:
+        print(f"\n\033[93mNote: {len(optional_skipped)} optional component(s) skipped:\033[0m")
+        for name in optional_skipped:
+            print(f"  - {name}")
+        print("  These do not affect model correctness. See PyG docs for details.")
 
     return True
 
@@ -304,6 +377,9 @@ def print_platform_info(info: PlatformInfo):
     print(f"  Conda:        {'Yes' if info.is_conda else 'No'}")
 
 
+_OPTIONAL_PKGS = {"pyg_lib", "torch_scatter", "torch_sparse", "torch_cluster"}
+
+
 def print_install_status(status: Dict[str, Optional[str]]):
     """Print installation status"""
     print("\n" + "=" * 60)
@@ -311,7 +387,12 @@ def print_install_status(status: Dict[str, Optional[str]]):
     print("=" * 60)
 
     for pkg, version in status.items():
-        status_str = f"\033[92m{version}\033[0m" if version else "\033[91mNot installed\033[0m"
+        if version:
+            status_str = f"\033[92m{version}\033[0m"
+        elif pkg in _OPTIONAL_PKGS:
+            status_str = "\033[93mNot installed (optional)\033[0m"
+        else:
+            status_str = "\033[91mNot installed\033[0m"
         print(f"  {pkg:20s}: {status_str}")
 
 
@@ -378,27 +459,35 @@ def main():
     print(f"  Index URL:    {config.extra_index_url}")
     print(f"  PyG Wheels:   {config.pyg_wheel_url}")
 
-    # Build and run commands
-    commands = build_install_commands(config, upgrade=not args.no_upgrade)
+    # Build installation steps
+    steps = build_install_steps(config, upgrade=not args.no_upgrade)
 
     print("\n" + "=" * 60)
-    print("Installation Commands")
+    print("Installation Plan")
     print("=" * 60)
+    for step in steps:
+        tag = "[REQUIRED]" if step.critical else "[OPTIONAL]"
+        print(f"  {tag:11s} {step.label}")
 
     if args.dry_run:
-        for cmd in commands:
-            print(f"  {' '.join(cmd)}")
+        print("\n" + "=" * 60)
+        print("Commands (dry run)")
+        print("=" * 60)
+        for step in steps:
+            print(f"\n  # {step.label}")
+            print(f"  {' '.join(step.cmd)}")
         return 0
 
     # Confirm
     print("\nThis will install/upgrade the packages listed above.")
+    print("Optional components will be skipped gracefully if unavailable.")
     response = input("Continue? [y/N]: ")
     if response.lower() not in ("y", "yes"):
         print("Aborted.")
         return 1
 
-    # Run installation
-    success = run_install(commands, dry_run=False)
+    # Run installation with smart fallback
+    success = run_install_steps(steps)
 
     if success:
         print("\n" + "=" * 60)
