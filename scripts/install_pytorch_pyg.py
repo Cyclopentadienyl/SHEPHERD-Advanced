@@ -282,11 +282,14 @@ def build_install_steps(config: InstallConfig, upgrade: bool = True) -> List[Ins
     ))
 
     # [OPTIONAL] pyg-lib (pyg-team maintained, has torch 2.9+cu130 wheels)
+    # --only-binary :all: prevents pip from downloading source tarballs and
+    # attempting to compile (which fails with long tracebacks when no wheel exists)
     steps.append(InstallStep(
         label="pyg-lib (native GNN kernels)",
         cmd=[
             sys.executable, "-m", "pip", "install",
             *upgrade_flag,
+            "--only-binary", ":all:",
             "pyg_lib",
             "-f", config.pyg_wheel_url,
         ],
@@ -299,6 +302,7 @@ def build_install_steps(config: InstallConfig, upgrade: bool = True) -> List[Ins
         cmd=[
             sys.executable, "-m", "pip", "install",
             *upgrade_flag,
+            "--only-binary", ":all:",
             "torch_scatter", "torch_sparse", "torch_cluster",
             "-f", config.pyg_wheel_url,
         ],

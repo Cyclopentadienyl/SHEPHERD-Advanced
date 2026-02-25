@@ -149,24 +149,26 @@ echo [INFO] Installing PyTorch Geometric (PyG)
 echo [OK] torch_geometric installed
 
 rem --- pyg-lib (maintained by pyg-team, has torch 2.9+cu130 wheels) ---
+rem --only-binary :all: prevents pip from downloading source tarballs and
+rem attempting to compile them (which fails with long tracebacks).
+rem If no pre-built wheel exists, pip fails instantly and cleanly.
 echo [INFO] Installing pyg-lib (native GNN kernels)
-"%PIP%" install pyg-lib -f %PYG_WHEEL_URL% && (
+"%PIP%" install pyg-lib --only-binary :all: -f %PYG_WHEEL_URL% 2>nul && (
   echo [OK] pyg-lib installed
 ) || (
-  echo [WARN] pyg-lib not available for this platform/torch combination.
-  echo       This is non-critical; PyG will use PyTorch-native fallbacks.
+  echo [SKIP] pyg-lib: no pre-built wheel for this platform/torch combination.
+  echo        This is non-critical; PyG will use PyTorch-native fallbacks.
 )
 
 rem --- Third-party scatter/sparse extensions (wheels often lag behind) ---
 echo [INFO] Installing PyG native extensions (torch-scatter, torch-sparse, torch-cluster)
-echo [INFO] Wheel index: %PYG_WHEEL_URL%
-"%PIP%" install torch-scatter torch-sparse torch-cluster -f %PYG_WHEEL_URL% && (
+"%PIP%" install torch-scatter torch-sparse torch-cluster --only-binary :all: -f %PYG_WHEEL_URL% 2>nul && (
   echo [OK] PyG native extensions installed
 ) || (
-  echo [INFO] PyG native extensions not yet available for torch 2.9+cu130.
-  echo       This is expected -- these third-party packages lag behind PyTorch releases.
-  echo       Performance impact: negligible for our architecture ^(HeteroConv/GATConv/SAGEConv^).
-  echo       PyG will automatically use torch.scatter_reduce as fallback.
+  echo [SKIP] PyG native extensions: no pre-built wheels for torch 2.9+cu130.
+  echo        This is expected -- these packages lag behind new PyTorch releases.
+  echo        Performance impact: negligible for our architecture.
+  echo        PyG will automatically use torch.scatter_reduce as fallback.
 )
 echo [OK] PyTorch Geometric setup complete
 
