@@ -128,20 +128,47 @@ echo [INFO] Validating PyTorch installation
 
 rem --- PyTorch Geometric (PyG) ---
 rem PyG is required for heterogeneous GNN message passing (HeteroGNNLayer).
-rem The companion native libraries must match the exact torch + CUDA version.
+rem
+rem Installation strategy (smart adaptation):
+rem   1. torch_geometric   - main package, pure Python, always installs    [REQUIRED]
+rem   2. pyg-lib           - pyg-team native ops, has torch 2.9+cu130 whl [RECOMMENDED]
+rem   3. torch_scatter etc. - third-party extensions, wheels lag behind    [OPTIONAL]
+rem
+rem If (3) is unavailable, PyG auto-falls back to torch.scatter_reduce
+rem (PyTorch 2.0+ native). Our model uses only high-level PyG layers
+rem (HeteroConv, GATConv, SAGEConv) which all support this fallback.
+
+set "PYG_WHEEL_URL=https://data.pyg.org/whl/torch-2.9.0+cu130.html"
+
 echo.
 echo [INFO] Installing PyTorch Geometric (PyG)
 "%PIP%" install torch_geometric || (
   echo [ERROR] Failed to install torch_geometric
   exit /b 2
 )
-echo [INFO] Installing PyG native extensions (pyg-lib, torch-sparse, torch-scatter, torch-cluster)
-"%PIP%" install pyg-lib torch-sparse torch-scatter torch-cluster -f https://data.pyg.org/whl/torch-2.9.0+cu130.html || (
-  echo [WARN] Some PyG native extensions failed to install.
-  echo [HINT] The model will still work but may be slower without native sparse ops.
-  echo [HINT] Check compatibility at https://data.pyg.org/whl/
+echo [OK] torch_geometric installed
+
+rem --- pyg-lib (maintained by pyg-team, has torch 2.9+cu130 wheels) ---
+echo [INFO] Installing pyg-lib (native GNN kernels)
+"%PIP%" install pyg-lib -f %PYG_WHEEL_URL% && (
+  echo [OK] pyg-lib installed
+) || (
+  echo [WARN] pyg-lib not available for this platform/torch combination.
+  echo       This is non-critical; PyG will use PyTorch-native fallbacks.
 )
-echo [OK] PyTorch Geometric installed
+
+rem --- Third-party scatter/sparse extensions (wheels often lag behind) ---
+echo [INFO] Installing PyG native extensions (torch-scatter, torch-sparse, torch-cluster)
+echo [INFO] Wheel index: %PYG_WHEEL_URL%
+"%PIP%" install torch-scatter torch-sparse torch-cluster -f %PYG_WHEEL_URL% && (
+  echo [OK] PyG native extensions installed
+) || (
+  echo [INFO] PyG native extensions not yet available for torch 2.9+cu130.
+  echo       This is expected -- these third-party packages lag behind PyTorch releases.
+  echo       Performance impact: negligible for our architecture ^(HeteroConv/GATConv/SAGEConv^).
+  echo       PyG will automatically use torch.scatter_reduce as fallback.
+)
+echo [OK] PyTorch Geometric setup complete
 
 rem ============================================================================
 rem STAGE 3: CORE DEPENDENCIES
