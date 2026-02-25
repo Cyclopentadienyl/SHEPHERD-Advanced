@@ -1,4 +1,21 @@
 @echo off
+rem --- Wrapper: keep the window open on error so the user can read messages ---
+call :main %*
+set "_EXIT_CODE=%ERRORLEVEL%"
+if %_EXIT_CODE% neq 0 (
+    echo.
+    echo ============================================================================
+    echo   [ERROR] Launch failed ^(exit code %_EXIT_CODE%^). Review the messages above.
+    echo ============================================================================
+    echo.
+    pause
+)
+exit /b %_EXIT_CODE%
+
+rem ============================================================================
+rem :main - actual launch logic (called as subroutine)
+rem ============================================================================
+:main
 setlocal EnableExtensions
 
 REM =======================

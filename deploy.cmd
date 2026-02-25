@@ -1,4 +1,22 @@
 @echo off
+rem --- Wrapper: ensure the window never closes before the user reads output ---
+rem   All "exit /b N" inside :main return here, then we pause.
+call :main %*
+set "_EXIT_CODE=%ERRORLEVEL%"
+echo.
+if %_EXIT_CODE% neq 0 (
+    echo ============================================================================
+    echo   [ERROR] Deployment failed at stage %_EXIT_CODE%. Review the messages above.
+    echo ============================================================================
+    echo.
+)
+pause
+exit /b %_EXIT_CODE%
+
+rem ============================================================================
+rem :main - actual deployment logic (called as subroutine)
+rem ============================================================================
+:main
 setlocal EnableExtensions DisableDelayedExpansion
 
 rem ============================================================================
@@ -205,7 +223,5 @@ echo       .venv\Scripts\pip.exe install -e ".[dev]"
 echo.
 echo [TIP] See docs/deployment-guide.md for troubleshooting
 echo.
-
-pause
 
 exit /b 0
