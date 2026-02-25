@@ -48,9 +48,18 @@ echo   SHEPHERD-Advanced Deployment Script
 echo ============================================================================
 echo.
 
-rem === Configuration ===
+rem === Configuration (single source of truth for versions) ===
 if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.12"
-if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130"
+set "TORCH_VER=2.9.0"
+set "TORCHVISION_VER=0.24.0"
+set "TORCHAUDIO_VER=2.9.0"
+set "CUDA_TAG=cu130"
+
+rem --- Derived URLs (match pyg-lib recommended format) ---
+rem PyTorch:  https://download.pytorch.org/whl/${CUDA}
+rem PyG:      https://data.pyg.org/whl/torch-${TORCH}+${CUDA}.html
+if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/%CUDA_TAG%"
+set "PYG_WHEEL_URL=https://data.pyg.org/whl/torch-%TORCH_VER%+%CUDA_TAG%.html"
 
 rem Dependencies are now managed via pyproject.toml (single source of truth).
 rem Platform-specific CUDA packages (torch, torchvision, torchaudio) are
@@ -110,10 +119,10 @@ echo.
 echo [STAGE 2/4] PyTorch Installation
 echo ----------------------------------------------------------------------------
 
-echo [INFO] Installing PyTorch stack (torch 2.9.0 + cu130)
+echo [INFO] Installing PyTorch stack (torch %TORCH_VER% + %CUDA_TAG%)
 echo [INFO] Index URL: %TORCH_INDEX_URL%
-rem CRITICAL: Use exact torch==2.9.0 to ensure pyg-lib compatibility (torch 2.9.1+ breaks pyg-lib)
-"%PIP%" install --index-url %TORCH_INDEX_URL% "torch==2.9.0" "torchvision==0.24.0" "torchaudio==2.9.0" || (
+rem CRITICAL: Use exact torch version to ensure pyg-lib compatibility
+"%PIP%" install --index-url %TORCH_INDEX_URL% "torch==%TORCH_VER%" "torchvision==%TORCHVISION_VER%" "torchaudio==%TORCHAUDIO_VER%" || (
   echo [ERROR] Failed to install PyTorch stack
   echo [HINT] Check CUDA version and index URL from https://pytorch.org/get-started/locally/
   exit /b 2
@@ -138,8 +147,6 @@ rem If (3) is unavailable, PyG auto-falls back to torch.scatter_reduce
 rem (PyTorch 2.0+ native). Our model uses only high-level PyG layers
 rem (HeteroConv, GATConv, SAGEConv) which all support this fallback.
 
-set "PYG_WHEEL_URL=https://data.pyg.org/whl/torch-2.9.0+cu130.html"
-
 echo.
 echo [INFO] Installing PyTorch Geometric (PyG)
 "%PIP%" install torch_geometric || (
@@ -149,24 +156,26 @@ echo [INFO] Installing PyTorch Geometric (PyG)
 echo [OK] torch_geometric installed
 
 rem --- pyg-lib (maintained by pyg-team, has torch 2.9+cu130 wheels) ---
+rem --only-binary :all: prevents pip from downloading source tarballs and
+rem attempting to compile them (which fails with long tracebacks).
+rem If no pre-built wheel exists, pip fails instantly and cleanly.
 echo [INFO] Installing pyg-lib (native GNN kernels)
-"%PIP%" install pyg-lib -f %PYG_WHEEL_URL% && (
+"%PIP%" install pyg-lib --only-binary :all: -f %PYG_WHEEL_URL% 2>nul && (
   echo [OK] pyg-lib installed
 ) || (
-  echo [WARN] pyg-lib not available for this platform/torch combination.
-  echo       This is non-critical; PyG will use PyTorch-native fallbacks.
+  echo [SKIP] pyg-lib: no pre-built wheel for this platform/torch combination.
+  echo        This is non-critical; PyG will use PyTorch-native fallbacks.
 )
 
 rem --- Third-party scatter/sparse extensions (wheels often lag behind) ---
 echo [INFO] Installing PyG native extensions (torch-scatter, torch-sparse, torch-cluster)
-echo [INFO] Wheel index: %PYG_WHEEL_URL%
-"%PIP%" install torch-scatter torch-sparse torch-cluster -f %PYG_WHEEL_URL% && (
+"%PIP%" install torch-scatter torch-sparse torch-cluster --only-binary :all: -f %PYG_WHEEL_URL% 2>nul && (
   echo [OK] PyG native extensions installed
 ) || (
-  echo [INFO] PyG native extensions not yet available for torch 2.9+cu130.
-  echo       This is expected -- these third-party packages lag behind PyTorch releases.
-  echo       Performance impact: negligible for our architecture ^(HeteroConv/GATConv/SAGEConv^).
-  echo       PyG will automatically use torch.scatter_reduce as fallback.
+  echo [SKIP] PyG native extensions: no pre-built wheels for torch %TORCH_VER%+%CUDA_TAG%.
+  echo        This is expected -- these packages lag behind new PyTorch releases.
+  echo        Performance impact: negligible for our architecture.
+  echo        PyG will automatically use torch.scatter_reduce as fallback.
 )
 echo [OK] PyTorch Geometric setup complete
 
