@@ -138,88 +138,10 @@ def generate_graph_data(
     """
     Generate synthetic graph data files matching the KG structure.
 
-    Creates:
-    - node_features.pt: Random embeddings for each node type
-    - edge_indices.pt: Edge indices matching KG edges
-    - num_nodes.json: Node counts per type
+    Delegates to KnowledgeGraph.export_graph_data() which is the single
+    source of truth for graph data generation.
     """
-    node_mapping = kg.get_node_id_mapping()
-    # node_mapping: {"phenotype": {"hpo:HP:0001234": 0, ...}, ...}
-
-    # Node features (random embeddings)
-    x_dict = {}
-    num_nodes_dict = {}
-    for node_type, mapping in node_mapping.items():
-        num_nodes = len(mapping)
-        if num_nodes > 0:
-            x_dict[node_type] = torch.randn(num_nodes, hidden_dim)
-            num_nodes_dict[node_type] = num_nodes
-
-    # Edge indices (from KG structure)
-    pyg_data = kg.to_pyg_hetero_data()
-    edge_index_dict = {}
-    for attr_name in dir(pyg_data):
-        # Skip non-edge attributes
-        pass
-
-    # Build edge_index_dict from KG edges directly
-    from collections import defaultdict
-    edge_indices_raw: dict = defaultdict(lambda: [[], []])
-
-    for edge in kg._edges:
-        source_str = str(edge.source_id)
-        target_str = str(edge.target_id)
-
-        source_node = kg._nodes.get(source_str)
-        target_node = kg._nodes.get(target_str)
-        if source_node is None or target_node is None:
-            continue
-
-        src_type = source_node.node_type.value
-        tgt_type = target_node.node_type.value
-        edge_type_str = edge.edge_type.value
-        key = (src_type, edge_type_str, tgt_type)
-
-        src_mapping = node_mapping.get(src_type, {})
-        tgt_mapping = node_mapping.get(tgt_type, {})
-
-        src_idx = src_mapping.get(source_str)
-        tgt_idx = tgt_mapping.get(target_str)
-
-        if src_idx is not None and tgt_idx is not None:
-            edge_indices_raw[key][0].append(src_idx)
-            edge_indices_raw[key][1].append(tgt_idx)
-
-    edge_index_dict = {}
-    for key, (src_list, tgt_list) in edge_indices_raw.items():
-        if src_list:
-            edge_index_dict[key] = torch.tensor(
-                [src_list, tgt_list], dtype=torch.long
-            )
-
-    # Also add reverse edges for bidirectional message passing
-    reverse_edges = {}
-    for (src_type, rel, tgt_type), edge_index in edge_index_dict.items():
-        rev_key = (tgt_type, f"rev_{rel}", src_type)
-        reverse_edges[rev_key] = edge_index.flip(0)
-    edge_index_dict.update(reverse_edges)
-
-    graph_data = {
-        "x_dict": x_dict,
-        "edge_index_dict": edge_index_dict,
-        "num_nodes_dict": num_nodes_dict,
-    }
-
-    # Save to disk if data_dir is provided
-    if data_dir is not None:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        torch.save(x_dict, data_dir / "node_features.pt")
-        torch.save(edge_index_dict, data_dir / "edge_indices.pt")
-        with open(data_dir / "num_nodes.json", "w") as f:
-            json.dump(num_nodes_dict, f)
-        logger.info(f"Graph data saved to {data_dir}")
-
-    return graph_data
+    return kg.export_graph_data(output_dir=data_dir, feature_dim=hidden_dim)
 
 
 # =============================================================================
@@ -455,19 +377,17 @@ def test_gnn_inference():
             logger.error(f"  FAIL: {e}")
             failed += 1
 
-        # TEST: Confidence scores should incorporate both reasoning and GNN
+        # TEST: When GNN is ready, confidence_score == gnn_score (GNN-primary)
+        # PathReasoner is explanation-only and does not contribute to scoring.
+        # NOTE: In the future (Step B), this will become:
+        #   confidence = eta * gnn_score + (1-eta) * shortest_path_similarity
         try:
             for c in gnn_result.candidates:
-                expected = (
-                    gnn_pipeline.config.reasoning_weight * c.reasoning_score
-                    + gnn_pipeline.config.gnn_weight * c.gnn_score
+                assert abs(c.confidence_score - c.gnn_score) < 1e-5, (
+                    f"GNN-primary: confidence {c.confidence_score:.6f} "
+                    f"should equal gnn_score {c.gnn_score:.6f}"
                 )
-                assert abs(c.confidence_score - expected) < 1e-5, (
-                    f"Confidence {c.confidence_score:.6f} != "
-                    f"expected {expected:.6f} "
-                    f"(reason={c.reasoning_score:.4f}, gnn={c.gnn_score:.4f})"
-                )
-            logger.info("  PASS: Confidence = reasoning_weight * reasoning + gnn_weight * gnn")
+            logger.info("  PASS: Confidence == GNN score (GNN-primary design)")
             passed += 1
         except AssertionError as e:
             logger.error(f"  FAIL: {e}")
