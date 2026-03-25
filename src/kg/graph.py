@@ -478,6 +478,108 @@ class KnowledgeGraph:
 
         return data
 
+    def export_graph_data(
+        self,
+        output_dir: Optional[Path] = None,
+        feature_dim: int = 256,
+    ) -> Dict[str, Any]:
+        """
+        Export graph data files for GNN training and inference.
+
+        Produces the three files expected by DiagnosisPipeline._load_graph_data():
+          - node_features.pt: {node_type: Tensor(N, feature_dim)}
+          - edge_indices.pt:  {(src, rel, dst): Tensor(2, E)} with reverse edges
+          - num_nodes.json:   {node_type: int}
+
+        Node features are initialized as random embeddings (to be learned by
+        the GNN during training).  Edge indices are derived from the KG edges,
+        with automatic reverse edges for bidirectional message passing.
+
+        Args:
+            output_dir: If provided, save files to this directory.
+            feature_dim: Dimensionality of node feature vectors.
+
+        Returns:
+            Dict with keys "x_dict", "edge_index_dict", "num_nodes_dict".
+        """
+        try:
+            import torch
+        except ImportError:
+            raise ImportError(
+                "torch is required for graph data export. "
+                "Install via platform-specific deploy script."
+            )
+
+        node_mapping = self.get_node_id_mapping()
+
+        # --- Node features (random init) ---
+        x_dict: Dict[str, Any] = {}
+        num_nodes_dict: Dict[str, int] = {}
+        for node_type, mapping in node_mapping.items():
+            n = len(mapping)
+            if n > 0:
+                x_dict[node_type] = torch.randn(n, feature_dim)
+                num_nodes_dict[node_type] = n
+
+        # --- Edge indices from KG structure ---
+        edge_indices_raw: Dict[tuple, list] = defaultdict(lambda: [[], []])
+
+        for edge in self._edges:
+            source_str = str(edge.source_id)
+            target_str = str(edge.target_id)
+
+            source_node = self._nodes.get(source_str)
+            target_node = self._nodes.get(target_str)
+            if source_node is None or target_node is None:
+                continue
+
+            src_type = source_node.node_type.value
+            tgt_type = target_node.node_type.value
+            key = (src_type, edge.edge_type.value, tgt_type)
+
+            src_idx = node_mapping.get(src_type, {}).get(source_str)
+            tgt_idx = node_mapping.get(tgt_type, {}).get(target_str)
+
+            if src_idx is not None and tgt_idx is not None:
+                edge_indices_raw[key][0].append(src_idx)
+                edge_indices_raw[key][1].append(tgt_idx)
+
+        edge_index_dict: Dict[tuple, Any] = {}
+        for key, (src_list, tgt_list) in edge_indices_raw.items():
+            if src_list:
+                edge_index_dict[key] = torch.tensor(
+                    [src_list, tgt_list], dtype=torch.long
+                )
+
+        # Add reverse edges for bidirectional message passing
+        reverse_edges = {}
+        for (src_type, rel, tgt_type), ei in edge_index_dict.items():
+            rev_key = (tgt_type, f"rev_{rel}", src_type)
+            reverse_edges[rev_key] = ei.flip(0)
+        edge_index_dict.update(reverse_edges)
+
+        graph_data = {
+            "x_dict": x_dict,
+            "edge_index_dict": edge_index_dict,
+            "num_nodes_dict": num_nodes_dict,
+        }
+
+        # --- Persist to disk ---
+        if output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(x_dict, output_dir / "node_features.pt")
+            torch.save(edge_index_dict, output_dir / "edge_indices.pt")
+            with open(output_dir / "num_nodes.json", "w") as f:
+                json.dump(num_nodes_dict, f)
+            logger.info(
+                f"Graph data exported to {output_dir}: "
+                f"{len(x_dict)} node types, "
+                f"{len(edge_index_dict)} edge types (inc. reverse)"
+            )
+
+        return graph_data
+
     def to_edge_list(self) -> List[Tuple[str, str, str, float]]:
         """
         Export to edge list format

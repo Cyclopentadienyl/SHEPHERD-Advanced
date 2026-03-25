@@ -181,23 +181,39 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints
 
 ## 8. Scoring Formula
 
-When GNN is available (`_gnn_ready = True`):
+Per the original SHEPHERD paper, the final score combines two signals:
 
+```
+final_score = η × embedding_similarity + (1 - η) × shortest_path_similarity
+```
+
+### Signal 1: GNN Embedding Similarity (implemented)
 ```
 patient_embedding = mean_pool(GNN_embeddings[phenotype_nodes])
 patient_norm = L2_normalize(patient_embedding)
 disease_norm  = L2_normalize(GNN_embedding[disease_node])
 
-cosine_sim = dot(patient_norm, disease_norm)
-confidence_score = (cosine_sim + 1.0) / 2.0    # normalize to [0, 1]
+embedding_similarity = (dot(patient_norm, disease_norm) + 1.0) / 2.0
 ```
-
 This formula is identical in training (`trainer.py:704-707`) and inference (`pipeline.py:1134-1140`).
 
-When GNN is NOT available (fallback):
+### Signal 2: Shortest Path Similarity (Step B — not yet implemented)
 ```
-confidence_score = path_reasoning_aggregate_score
+sp_lengths = [shortest_path_length(KG, phenotype, candidate) for phenotype in patient]
+avg_sp = mean(sp_lengths)
+shortest_path_similarity = 1.0 / (1.0 + avg_sp)
 ```
+Pre-computed offline as a lookup table. Acts as a deterministic fallback when GNN embeddings are unreliable (e.g., sparse phenotype input).
+
+### Current state
+- **Currently**: `confidence_score = embedding_similarity` (η = 1.0 implicitly)
+- **Step B will add**: shortest path pre-computation + η mixing parameter
+- **Fallback** (no GNN): `confidence_score = path_reasoning_aggregate_score`
+
+### PathReasoner Role (explanation only)
+PathReasoner does NOT contribute to scoring. After ranking is determined, it generates evidence for clinician review:
+- **Mode A** (direct path): when KG paths exist, show them
+- **Mode B** (analogy-based): when no KG path exists, find K nearest known genes in embedding space and show their paths as analogy evidence
 
 ---
 

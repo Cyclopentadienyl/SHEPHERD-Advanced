@@ -112,12 +112,17 @@ class PipelineConfig:
     path_length_penalty: float = 0.9
     aggregation_method: str = "weighted_sum"
 
-    # Scoring: GNN is the primary scoring source when available.
-    # PathReasoner provides explanation paths only (not blended into score).
-    # When GNN is unavailable, reasoning_score is used as fallback.
-    # Legacy weight fields kept for backward compatibility / future tuning.
-    reasoning_weight: float = 0.5
-    gnn_weight: float = 0.5
+    # Scoring architecture (per original SHEPHERD paper):
+    #   final_score = eta * embedding_similarity + (1 - eta) * SP_similarity
+    # Currently only embedding_similarity (GNN cosine) is implemented.
+    # SP_similarity (pre-computed shortest path) is planned for Step B.
+    # PathReasoner is explanation-only and does NOT contribute to scoring.
+    #
+    # DEPRECATED: reasoning_weight / gnn_weight — these were never used in
+    # the scoring logic. They will be replaced by `eta` when shortest path
+    # integration is implemented. Kept temporarily for checkpoint compat.
+    reasoning_weight: float = 0.5  # DEPRECATED — do not use
+    gnn_weight: float = 0.5  # DEPRECATED — do not use
     ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
 
     # Output control
