@@ -6,6 +6,22 @@
 
 ---
 
+## Feature Scope Decisions (2026-03-25)
+
+The following scope decisions were made after auditing all extended features:
+
+| Feature | Decision | Rationale |
+|---------|----------|-----------|
+| **Genotype input (Channel 2)** | ✅ KEEP | Original paper feature, already integrated |
+| **Three diagnostic tasks** | ✅ KEEP | Original paper feature, already integrated |
+| **Ortholog inference** | 🔲 PHASE 2 | OrthologGate in model is fine (skip-connection degrades gracefully); data pipeline deferred |
+| **Drug suggestions** | ⛔ PHASE 3+ RESERVED | Schema-only (no model/training/inference code); leave enum definitions, do not implement |
+| **Literature/PubMed** | ⛔ PHASE 3+ FROZEN | Skeleton exists; not needed before core validation |
+| **FHIR/HL7** | ⛔ PHASE 3+ FROZEN | Empty stubs; pure I/O layer, add when hospital integration begins |
+| **NLP fuzzy input** | 🔲 SEPARATE PROJECT | Needs RAG+LLM architecture + doctor review UI; interface via HPO IDs (keep `src/nlp/` stubs as integration point) |
+
+---
+
 ## Phase 1: Core Architecture Verification (P0)
 
 ### 1.1 End-to-End Pipeline Verification
@@ -25,20 +41,25 @@
 - [ ] Remove empty placeholder config files (`configs/base_config.yaml`, `data_config.yaml`, `model_config.yaml`, `medical_standards.yaml`, `deployment_config.yaml`)
 - [ ] Update Makefile to reference current deploy scripts (`deploy.sh`/`deploy.cmd`)
 
+### 1.4 PyG Compatibility Update
+- [x] Confirm PyG official cu130 wheel availability (verified 2026-03-25)
+- [ ] Update `deploy.sh` line 108 comment — remove outdated "torch 2.9.1 breaks pyg-lib" warning
+- [ ] Consider aligning `deploy.sh` PyG install with `deploy.cmd` style (`--only-binary :all:` for cleaner failure)
+
 ---
 
 ## Phase 2: Documentation Reset (P1)
 
 ### 2.1 Remove Outdated/Empty Docs
-- [ ] Remove `docs/architecture_v3.md` (empty)
-- [ ] Remove `docs/api_reference.md` (empty)
-- [ ] Remove `docs/developer_guide.md` (empty)
-- [ ] Remove `docs/medical_integration.md` (empty)
-- [ ] Remove `docs/implementation_plan_v1.md` (outdated, assumes fresh start)
-- [ ] Remove `docs/TODO_Advanced_Features.md` (premature Phase 2-3 features)
+- [x] Remove `docs/architecture_v3.md` (empty)
+- [x] Remove `docs/api_reference.md` (empty)
+- [x] Remove `docs/developer_guide.md` (empty)
+- [x] Remove `docs/medical_integration.md` (empty)
+- [x] Remove `docs/implementation_plan_v1.md` (outdated, assumes fresh start)
+- [x] Remove `docs/TODO_Advanced_Features.md` (premature Phase 2-3 features)
 
 ### 2.2 Archive Historical Docs
-- [ ] Move historical docs to `docs/archive/` (or clearly mark as superseded):
+- [x] Move historical docs to `docs/archive/`:
   - `HANDOFF_SESSION_2026-02-21.md`
   - `ARCHITECTURE_REVIEW_2026-02-25.md`
   - `PROGRESS_2026-01-20.md`
@@ -47,29 +68,18 @@
   - `data_structure_and_validation_v3.md`
 
 ### 2.3 Update Remaining Docs
-- [ ] Update `ENGINEERING_PROGRESS_REPORT_2026-02.md` to reflect actual state before showing to hospital
-- [ ] Update `SESSION_HANDOFF.md` to reference `ARCHITECTURE.md` as canonical source
+- [ ] Update `docs/archive/ENGINEERING_PROGRESS_REPORT_2026-02.md` to reflect actual state before showing to hospital
+- [ ] Update `docs/archive/SESSION_HANDOFF.md` to reference `ARCHITECTURE.md` as canonical source
 
 ---
 
-## Phase 3: Missing Functionality (P1-P2)
+## Phase 3: Ortholog Data Pipeline (P1-P2, when core is verified)
 
-### 3.1 NLP / Fuzzy Input (Critical Gap)
-- [ ] Implement `src/nlp/hpo_matcher.py` — fuzzy string matching (free-text → HPO terms)
-- [ ] Implement `src/nlp/symptom_extractor.py` — clinical note parsing
-- [ ] Implement `src/nlp/entity_recognizer.py` — biomedical NER
-- [ ] Implement `src/nlp/clinical_bert.py` — biomedical text encoding
-- [ ] Implement `src/kg/entity_linker.py` — link recognized entities to KG nodes
-- [ ] Wire NLP modules into API diagnose endpoint (optional `phenotype_text` field)
-
-### 3.2 Data Source Integration (Phase 2)
-- [ ] Implement ortholog data loading in `src/data_sources/ortholog.py`
-- [ ] Implement PubMed/Pubtator integration in `src/data_sources/pubmed.py`
-- [ ] Wire data sources into KG builder
-
-### 3.3 Constraint Validation
-- [ ] Implement `src/reasoning/constraint_checker.py`
-- [ ] Add inference result validation against ontology constraints
+- [ ] Implement Ensembl Compara data loading in `src/data_sources/ortholog.py`
+- [ ] Implement MGI (mouse) phenotype mapping
+- [ ] Implement Upheno cross-species phenotype mapping (MP↔HPO)
+- [ ] Wire ortholog data into KG builder
+- [ ] Validate OrthologGate improves ranking metrics vs baseline (no ortholog)
 
 ---
 
@@ -85,7 +95,6 @@
 - [ ] Restrict CORS in `src/api/main.py` (environment-based config)
 - [ ] Review `toml` dependency — remove if unused
 - [ ] Relax Gradio version pin if possible (`>=5.20` instead of `>=5.20,<5.30`)
-- [ ] Add performance warnings in validation script when using PyG fallback kernels
 
 ---
 
@@ -93,5 +102,6 @@
 
 | Date | Session | Tasks Completed | Notes |
 |------|---------|----------------|-------|
-| 2026-03-24 | Initial scan | Phase A complete | Created SCAN_REPORT, ARCHITECTURE, this checklist |
+| 2026-03-24 | Initial scan | Created SCAN_REPORT, ARCHITECTURE, REPAIR_CHECKLIST | 5 agents scanned modules, deps, docs; committed + pushed |
+| 2026-03-25 | Feature scope | Feature freeze decisions; doc cleanup marked done | Drug=reserved, NLP=separate project, Literature/FHIR=frozen; PyG cu130 confirmed by user |
 | | | | |
