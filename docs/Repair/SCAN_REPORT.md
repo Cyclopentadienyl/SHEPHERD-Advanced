@@ -1,8 +1,10 @@
 # SHEPHERD-Advanced Full Repository Scan Report
 
-> **Date**: 2026-03-24
+> **Date**: 2026-03-24 (updated 2026-03-25)
 > **Purpose**: Comprehensive audit of all modules, dependencies, and documentation to inform architectural repair.
 > **Anchor**: Original SHEPHERD paper (npj Digital Medicine 2025) — GNN-primary architecture with PathReasoner as auxiliary explainability layer.
+>
+> **2026-03-25 update**: Feature scope decisions finalized. Drug suggestions = Phase 3+ reserved (schema-only, not in model/training/inference). NLP = separate project (RAG+LLM with doctor review UI). Literature/FHIR = frozen. Ortholog = Phase 2 (after core verified). PyG confirmed officially supporting torch 2.9.0+cu130.
 
 ---
 
