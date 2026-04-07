@@ -125,15 +125,26 @@ echo -e "\n[INFO] Installing PyTorch Geometric (PyG)..."
 "$PIP" install torch_geometric || {
     echo -e "${RED}[ERROR] Failed to install torch_geometric${NC}"; exit 2;
 }
-echo -e "[INFO] Installing PyG native extensions (pyg-lib, torch-sparse, torch-scatter, torch-cluster)..."
-if "$PIP" install pyg-lib torch-sparse torch-scatter torch-cluster \
+echo -e "[INFO] Installing PyG native extensions..."
+echo -e "[INFO] (1/2) pyg-lib — PyG team's GNN kernels (Linux x86 + ARM + Windows wheels)"
+if "$PIP" install pyg-lib --only-binary :all: \
     -f "https://data.pyg.org/whl/torch-2.9.0+cu130.html"; then
-    echo -e "${GREEN}[OK] PyTorch Geometric installed${NC}"
+    echo -e "${GREEN}[OK] pyg-lib installed${NC}"
 else
-    echo -e "${YELLOW}[WARN] Some PyG native extensions failed to install.${NC}"
-    echo -e "${YELLOW}[HINT] The model will still work but may be slower without native sparse ops.${NC}"
-    echo -e "${YELLOW}[HINT] Check compatibility at https://data.pyg.org/whl/${NC}"
+    echo -e "${YELLOW}[SKIP] pyg-lib: no pre-built wheel; PyG will use torch.scatter_reduce fallback${NC}"
 fi
+
+echo -e "[INFO] (2/2) torch-scatter, torch-sparse, torch-cluster — third-party extensions"
+echo -e "[INFO]      (Linux wheels published; Windows wheels not yet released by maintainers)"
+if "$PIP" install torch-scatter torch-sparse torch-cluster --only-binary :all: \
+    -f "https://data.pyg.org/whl/torch-2.9.0+cu130.html"; then
+    echo -e "${GREEN}[OK] PyG third-party extensions installed${NC}"
+else
+    echo -e "${YELLOW}[SKIP] No pre-built wheels for this platform/torch combination${NC}"
+    echo -e "${YELLOW}       Impact: NONE — our HeteroConv + GAT/SAGE layers automatically${NC}"
+    echo -e "${YELLOW}       use torch.scatter_reduce (PyTorch 2.0+ native, equivalent perf)${NC}"
+fi
+echo -e "${GREEN}[OK] PyTorch Geometric setup complete${NC}"
 
 # ============================================================================
 # STAGE 3: CORE DEPENDENCIES

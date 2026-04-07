@@ -433,9 +433,24 @@ class DiagnosisPipeline:
         # Extract model config from checkpoint
         ckpt_config = checkpoint.get("config", {})
 
-        # Reconstruct model architecture
-        # Get metadata from KG
-        kg_metadata = self.kg.metadata()
+        # Reconstruct model architecture.
+        # CRITICAL: metadata MUST be derived from graph_data["edge_index_dict"]
+        # to match how scripts/train_model.py builds the model. The trainer
+        # uses graph_data keys (which include rev_* reverse edges for
+        # bidirectional message passing), NOT kg.metadata() (which only has
+        # forward edges from the KG). Using kg.metadata() here would create a
+        # model with fewer conv layers than the checkpoint expects, causing
+        # state_dict load to fail.
+        if self._graph_data is None:
+            logger.error(
+                "Cannot reconstruct model: graph_data not loaded. "
+                "_init_gnn_inference must load graph_data before model."
+            )
+            return None
+
+        node_types = list(self._graph_data["x_dict"].keys())
+        edge_types = list(self._graph_data["edge_index_dict"].keys())
+        metadata = (node_types, edge_types)
 
         # Get in_channels_dict from graph data features
         in_channels_dict = {}
@@ -470,20 +485,29 @@ class DiagnosisPipeline:
 
         # Provide default in_channels if not inferred from data
         if not in_channels_dict:
-            for node_type in kg_metadata[0]:
+            for node_type in node_types:
                 in_channels_dict[node_type] = hidden_dim
 
         model = ShepherdGNN(
-            metadata=kg_metadata,
+            metadata=metadata,
             in_channels_dict=in_channels_dict,
             config=model_config,
         )
 
-        # Load trained weights
+        # Load trained weights. If this fails, log the SPECIFIC mismatch so
+        # operators can diagnose checkpoint compat issues (e.g., metadata
+        # source mismatch between trainer and inference paths).
         try:
             model.load_state_dict(state_dict)
         except RuntimeError as e:
-            logger.error(f"Failed to load state dict: {e}")
+            logger.error(
+                f"Failed to load state dict from {ckpt_path}: {e}\n"
+                f"Model expects {len(metadata[1])} edge types: "
+                f"{[f'{s}--{r}--{t}' for s, r, t in metadata[1]][:5]}...\n"
+                f"Checkpoint has {len(state_dict)} parameter tensors. "
+                f"Common cause: trainer and inference use different metadata "
+                f"sources (trainer uses graph_data keys, inference must too)."
+            )
             return None
 
         model.eval()

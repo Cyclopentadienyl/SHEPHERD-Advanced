@@ -160,8 +160,11 @@ def train_minimal_model(
     This uses a simplified training loop (no DataLoader, just direct forward
     pass + contrastive-style loss) to produce a trained checkpoint quickly.
     """
-    # Get metadata from KG
-    metadata = kg.metadata()
+    # Build metadata from graph_data — matches scripts/train_model.py and
+    # pipeline._load_model_from_checkpoint. Includes rev_* reverse edges.
+    node_types = list(graph_data["num_nodes_dict"].keys())
+    edge_types = list(graph_data["edge_index_dict"].keys())
+    metadata = (node_types, edge_types)
 
     # Determine input channels from features
     in_channels_dict = {}
