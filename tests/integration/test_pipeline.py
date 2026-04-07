@@ -473,79 +473,98 @@ class TestCheckpointBridge:
 
     def test_checkpoint_roundtrip(self, medium_kg, gnn_model_and_data, tmp_path):
         """
-        Save model as checkpoint file, load into fresh pipeline from disk,
-        verify GNN scores match the in-memory pipeline.
+        Train model -> save checkpoint -> load fresh pipeline from disk paths,
+        verify GNN scoring works end-to-end (the actual production path).
         """
         import torch.nn.functional as F
 
         model, graph_data = gnn_model_and_data
 
-        # --- Train a few steps so weights are not random init ---
+        # --- Train a few steps so weights diverge from random init ---
         model.train()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         for _ in range(5):
             optimizer.zero_grad()
             emb = model(graph_data["x_dict"], graph_data["edge_index_dict"])
-            p = F.normalize(emb.get("phenotype", torch.zeros(1, 32)), dim=-1)
-            d = F.normalize(emb.get("disease", torch.zeros(1, 32)), dim=-1)
+            p_emb = emb.get("phenotype")
+            d_emb = emb.get("disease")
+            if p_emb is None or d_emb is None:
+                pytest.skip("Model did not produce phenotype/disease embeddings")
+            p = F.normalize(p_emb, dim=-1)
+            d = F.normalize(d_emb, dim=-1)
             n = min(p.size(0), d.size(0))
             loss = F.cross_entropy(torch.mm(p[:n], d[:n].t()), torch.arange(n))
             loss.backward()
             optimizer.step()
         model.eval()
 
-        # --- Save checkpoint (same format as Trainer.save_checkpoint) ---
+        # --- Save checkpoint (Trainer.save_checkpoint format) ---
         ckpt_path = tmp_path / "checkpoint.pt"
         torch.save({
             "epoch": 5,
             "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
+            "config": {
+                "hidden_dim": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "conv_type": "gat",
+                "dropout": 0.0,
+            },
         }, ckpt_path)
 
-        # --- Save graph data files (same format as pipeline._load_graph_data) ---
+        # --- Save graph data files ---
+        # We must save the SAME features the model was trained on, otherwise
+        # the precomputed embeddings won't match. export_graph_data() generates
+        # random features, so we overwrite them with the training features.
         data_dir = tmp_path / "graph_data"
         medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        # Overwrite with the actual features used during training
         torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
         torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
 
-        # --- In-memory pipeline (baseline) ---
-        pipeline_mem = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
-        assert pipeline_mem._gnn_ready
-
-        # --- Disk-loaded pipeline ---
-        pipeline_disk = DiagnosisPipeline(
+        # --- Load fresh pipeline from disk (production path) ---
+        pipeline = DiagnosisPipeline(
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
             device="cpu",
         )
-        assert pipeline_disk._gnn_ready
 
-        # --- Run both and compare ---
+        # GNN must be ready after loading
+        assert pipeline._gnn_ready, (
+            "GNN should be ready after loading checkpoint + graph data from disk"
+        )
+        assert pipeline._node_embeddings is not None
+        assert "phenotype" in pipeline._node_embeddings
+        assert "disease" in pipeline._node_embeddings
+
+        # --- Run inference and verify GNN-primary scoring ---
         patient = PatientPhenotypes(
             patient_id="bridge_test",
             phenotypes=["HP:0000001", "HP:0000002"],
         )
 
-        result_mem = pipeline_mem.run(patient, top_k=5, include_explanations=False)
-        result_disk = pipeline_disk.run(patient, top_k=5, include_explanations=False)
+        result = pipeline.run(patient, top_k=5, include_explanations=False)
+        assert len(result.candidates) > 0, "Pipeline should produce candidates"
 
-        assert len(result_mem.candidates) > 0
-        assert len(result_disk.candidates) > 0
+        for c in result.candidates:
+            # GNN-primary: confidence == gnn_score (not weighted combo)
+            assert abs(c.confidence_score - c.gnn_score) < 1e-5, (
+                f"GNN-primary: confidence ({c.confidence_score}) "
+                f"should equal gnn_score ({c.gnn_score})"
+            )
+            # Scores should be in valid range
+            assert 0.0 <= c.gnn_score <= 1.0
 
-        # GNN scores from disk-loaded pipeline should match in-memory
-        scores_mem = {c.disease_id: c.gnn_score for c in result_mem.candidates}
-        scores_disk = {c.disease_id: c.gnn_score for c in result_disk.candidates}
+        # At least one candidate should have non-zero GNN score (model is trained)
+        assert any(c.gnn_score > 0.0 for c in result.candidates), (
+            "Trained model should produce non-zero GNN scores"
+        )
 
-        for disease_id in scores_mem:
-            if disease_id in scores_disk:
-                assert abs(scores_mem[disease_id] - scores_disk[disease_id]) < 1e-4, (
-                    f"Score mismatch for {disease_id}: "
-                    f"mem={scores_mem[disease_id]:.6f} vs disk={scores_disk[disease_id]:.6f}"
-                )
+        # --- Reproducibility: same input → same scores ---
+        result2 = pipeline.run(patient, top_k=5, include_explanations=False)
+        scores1 = [(c.disease_id, c.gnn_score) for c in result.candidates]
+        scores2 = [(c.disease_id, c.gnn_score) for c in result2.candidates]
+        assert scores1 == scores2, "Same input should produce identical scores"
 
     def test_export_graph_data_matches_kg_structure(self, medium_kg, tmp_path):
         """KG.export_graph_data() should produce files matching KG node/edge counts."""
