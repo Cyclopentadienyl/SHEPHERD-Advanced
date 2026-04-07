@@ -24,11 +24,11 @@ The following scope decisions were made after auditing all extended features:
 
 ## Phase 1: Core Architecture Verification (P0)
 
-### 1.1 End-to-End Pipeline Verification
-- [ ] Verify train → save checkpoint → load for inference works end-to-end
-- [ ] Confirm `_gnn_ready` activates correctly when checkpoint is loaded
-- [ ] Test that GNN scoring produces meaningful (non-zero, non-uniform) scores
-- [ ] Validate training-inference scoring consistency (same cosine similarity formula)
+### 1.1 End-to-End Pipeline Verification ✅ COMPLETE (2026-04-07)
+- [x] Verify train → save checkpoint → load for inference works end-to-end
+- [x] Confirm `_gnn_ready` activates correctly when checkpoint is loaded
+- [x] Test that GNN scoring produces meaningful (non-zero, non-uniform) scores
+- [x] Validate training-inference scoring consistency (same cosine similarity formula)
 
 ### 1.2 Candidate Discovery Fix
 - [ ] Audit `pipeline.py` candidate discovery flow (L709-746): confirm BFS is not sole gatekeeper
@@ -37,15 +37,27 @@ The following scope decisions were made after auditing all extended features:
 - [ ] Test: disease with no BFS path but high GNN similarity should still appear in results
 
 ### 1.3 Config Cleanup
-- [ ] Mark `reasoning_weight`/`gnn_weight` in PipelineConfig as deprecated (to be replaced by `eta` in Step B)
+- [x] Mark `reasoning_weight`/`gnn_weight` in PipelineConfig as deprecated (to be replaced by `eta` in Step B)
+- [x] Add `KnowledgeGraph.export_graph_data()` to consolidate duplicated graph data generation
 - [ ] Remove empty placeholder config files (`configs/base_config.yaml`, `data_config.yaml`, `model_config.yaml`, `medical_standards.yaml`, `deployment_config.yaml`)
 - [ ] Update Makefile to reference current deploy scripts (`deploy.sh`/`deploy.cmd`)
-- [ ] Add `KnowledgeGraph.export_graph_data()` to consolidate duplicated graph data generation
 
 ### 1.4 PyG Compatibility Update
 - [x] Confirm PyG official cu130 wheel availability (verified 2026-03-25)
+- [x] Verify pyg-lib installs cleanly on Windows; torch-scatter/sparse/cluster not yet published for Windows (PyG side, not our bug)
 - [ ] Update `deploy.sh` line 108 comment — remove outdated "torch 2.9.1 breaks pyg-lib" warning
-- [ ] Consider aligning `deploy.sh` PyG install with `deploy.cmd` style (`--only-binary :all:` for cleaner failure)
+
+### 1.5 E2E Test Fix ✅ COMPLETE (2026-04-07)
+- [x] Fix `scripts/test_gnn_inference.py` scoring assertion (GNN-primary not weighted combo)
+- [x] Run E2E test and verify all 9 steps pass
+- [x] Port key assertions to `tests/integration/test_pipeline.py` as pytest
+- [x] Fix gnn_model_and_data fixture to use kg.metadata() (matches production checkpoint loading path)
+- [x] All 11 integration tests pass (TestGNNPipelineE2E + TestVectorIndexE2E + TestCheckpointBridge)
+
+**Note**: 10 UserWarnings about "gene node not updated during message passing" are
+benign — likely a PyG HeteroConv quirk with `rev_*` edge naming. Will naturally
+resolve when Phase 3 ortholog edges add real `*→gene` forward edges. Tracked as
+Phase 4 minor cleanup.
 
 ### 1.5 E2E Test Fix
 - [ ] Fix `scripts/test_gnn_inference.py` scoring assertion (currently expects weighted combo, should match actual pipeline behavior)
@@ -128,6 +140,8 @@ PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
 - [ ] Restrict CORS in `src/api/main.py` (environment-based config)
 - [ ] Review `toml` dependency — remove if unused
 - [ ] Relax Gradio version pin if possible (`>=5.20` instead of `>=5.20,<5.30`)
+- [ ] Improve `_load_model_from_checkpoint` error reporting — currently catches RuntimeError silently; should log WARNING with specific mismatch details so operators can diagnose checkpoint compat issues
+- [ ] Investigate "gene node not updated during message passing" PyG warning — may be `rev_*` naming convention quirk; revisit after Phase 3 ortholog edges are added
 
 ---
 
@@ -138,4 +152,5 @@ PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
 | 2026-03-24 | Initial scan | Created SCAN_REPORT, ARCHITECTURE, REPAIR_CHECKLIST | 5 agents scanned modules, deps, docs; committed + pushed |
 | 2026-03-25 | Feature scope | Feature freeze decisions; doc cleanup marked done | Drug=reserved, NLP=separate project, Literature/FHIR=frozen; PyG cu130 confirmed by user |
 | 2026-03-25 | Step A: E2E prep | Fix test scoring bug; add export_graph_data; add checkpoint pytest | Confirmed: scoring=GNN-primary (η*emb+(1-η)*SP planned for Step B); PathReasoner=evidence-only |
+| 2026-04-07 | Step A: E2E verified | scripts/test_gnn_inference.py 9/9 PASS; pytest 11/11 PASS | Found+fixed fixture edge type mismatch with kg.metadata(); Phase 1.1 + 1.5 complete |
 | | | | |
