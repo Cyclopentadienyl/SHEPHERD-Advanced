@@ -128,56 +128,26 @@ def medium_kg():
 
 @pytest.fixture
 def gnn_model_and_data(medium_kg):
-    """Build a small GNN model + graph data matching medium_kg."""
+    """
+    Build a small GNN model + graph data matching medium_kg.
+
+    Uses kg.metadata() and kg.export_graph_data() so that edge type names
+    match what _load_model_from_checkpoint() will produce when reconstructing
+    the model. This ensures checkpoint round-trip works in tests.
+    """
     hidden_dim = 32
-    node_mapping = medium_kg.get_node_id_mapping()
 
-    num_nodes = {ntype: len(mapping) for ntype, mapping in node_mapping.items()}
-
+    # Build graph data using the same code path the production pipeline uses
     torch.manual_seed(42)
-    x_dict = {
-        ntype: torch.randn(count, hidden_dim)
-        for ntype, count in num_nodes.items()
+    graph_data = medium_kg.export_graph_data(
+        output_dir=None, feature_dim=hidden_dim
+    )
+
+    # Build model using kg.metadata() — same as _load_model_from_checkpoint
+    metadata = medium_kg.metadata()
+    in_channels_dict = {
+        k: v.shape[1] for k, v in graph_data["x_dict"].items()
     }
-
-    # Build edges from KG
-    pheno_map = node_mapping["phenotype"]
-    gene_map = node_mapping["gene"]
-    disease_map = node_mapping["disease"]
-
-    gp_src, gp_dst = [], []
-    gd_src, gd_dst = [], []
-
-    for edge in medium_kg._edges:
-        src_str = str(edge.source_id)
-        tgt_str = str(edge.target_id)
-        if src_str in gene_map and tgt_str in pheno_map:
-            gp_src.append(gene_map[src_str])
-            gp_dst.append(pheno_map[tgt_str])
-        elif src_str in gene_map and tgt_str in disease_map:
-            gd_src.append(gene_map[src_str])
-            gd_dst.append(disease_map[tgt_str])
-
-    edge_index_dict = {}
-    if gp_src:
-        gp = torch.tensor([gp_src, gp_dst], dtype=torch.long)
-        edge_index_dict[("gene", "has_phenotype", "phenotype")] = gp
-        edge_index_dict[("phenotype", "rev_has_phenotype", "gene")] = gp.flip(0)
-    if gd_src:
-        gd = torch.tensor([gd_src, gd_dst], dtype=torch.long)
-        edge_index_dict[("gene", "associated_with", "disease")] = gd
-        edge_index_dict[("disease", "rev_associated_with", "gene")] = gd.flip(0)
-
-    graph_data = {
-        "x_dict": x_dict,
-        "edge_index_dict": edge_index_dict,
-        "num_nodes_dict": num_nodes,
-    }
-
-    # Build model
-    node_types = sorted(x_dict.keys())
-    edge_types = list(edge_index_dict.keys())
-    in_channels_dict = {k: v.shape[1] for k, v in x_dict.items()}
 
     config = ShepherdGNNConfig(
         hidden_dim=hidden_dim,
@@ -187,7 +157,7 @@ def gnn_model_and_data(medium_kg):
         dropout=0.0,
     )
     model = ShepherdGNN(
-        metadata=(node_types, edge_types),
+        metadata=metadata,
         in_channels_dict=in_channels_dict,
         config=config,
     )
@@ -513,9 +483,10 @@ class TestCheckpointBridge:
         }, ckpt_path)
 
         # --- Save graph data files ---
-        # We must save the SAME features the model was trained on, otherwise
-        # the precomputed embeddings won't match. export_graph_data() generates
-        # random features, so we overwrite them with the training features.
+        # Save the SAME features+edges the model was trained on so the
+        # precomputed embeddings match training. We use export_graph_data() to
+        # create the directory + num_nodes.json, then overwrite the tensor
+        # files with the fixture's exact data (which is what the model saw).
         data_dir = tmp_path / "graph_data"
         medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
         torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
