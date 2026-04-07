@@ -131,9 +131,15 @@ def gnn_model_and_data(medium_kg):
     """
     Build a small GNN model + graph data matching medium_kg.
 
-    Uses kg.metadata() and kg.export_graph_data() so that edge type names
-    match what _load_model_from_checkpoint() will produce when reconstructing
-    the model. This ensures checkpoint round-trip works in tests.
+    CRITICAL: This fixture mirrors the production training path
+    (scripts/train_model.py:create_model_from_config) which derives metadata
+    from graph_data["edge_index_dict"].keys() — INCLUDING reverse rev_* edges
+    for bidirectional message passing. Do NOT switch to kg.metadata() (forward
+    edges only) — that would diverge from the trainer and let checkpoint
+    round-trip bugs slip through CI.
+
+    The matching change is in pipeline._load_model_from_checkpoint, which
+    must also derive metadata from graph_data, not kg.metadata().
     """
     hidden_dim = 32
 
@@ -143,8 +149,10 @@ def gnn_model_and_data(medium_kg):
         output_dir=None, feature_dim=hidden_dim
     )
 
-    # Build model using kg.metadata() — same as _load_model_from_checkpoint
-    metadata = medium_kg.metadata()
+    # Build model metadata from graph_data — matches scripts/train_model.py
+    node_types = list(graph_data["num_nodes_dict"].keys())
+    edge_types = list(graph_data["edge_index_dict"].keys())
+    metadata = (node_types, edge_types)
     in_channels_dict = {
         k: v.shape[1] for k, v in graph_data["x_dict"].items()
     }
