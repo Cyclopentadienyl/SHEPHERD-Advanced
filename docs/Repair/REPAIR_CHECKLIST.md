@@ -36,16 +36,16 @@ The following scope decisions were made after auditing all extended features:
 - [ ] Consider making vector index mandatory (or precomputing all disease embeddings for direct scoring)
 - [ ] Test: disease with no BFS path but high GNN similarity should still appear in results
 
-### 1.3 Config Cleanup
+### 1.3 Config Cleanup ✅ COMPLETE (2026-04-07)
 - [x] Mark `reasoning_weight`/`gnn_weight` in PipelineConfig as deprecated (to be replaced by `eta` in Step B)
 - [x] Add `KnowledgeGraph.export_graph_data()` to consolidate duplicated graph data generation
-- [ ] Remove empty placeholder config files (`configs/base_config.yaml`, `data_config.yaml`, `model_config.yaml`, `medical_standards.yaml`, `deployment_config.yaml`)
-- [ ] Update Makefile to reference current deploy scripts (`deploy.sh`/`deploy.cmd`)
+- [x] Remove empty placeholder config files (5 files removed; verified no code references)
+- [x] Rewrite Makefile to reference current deploy scripts and add `test`/`help` targets
 
-### 1.4 PyG Compatibility Update
+### 1.4 PyG Compatibility Update ✅ COMPLETE (2026-04-07)
 - [x] Confirm PyG official cu130 wheel availability (verified 2026-03-25)
 - [x] Verify pyg-lib installs cleanly on Windows; torch-scatter/sparse/cluster not yet published for Windows (PyG side, not our bug)
-- [ ] Update `deploy.sh` line 108 comment — remove outdated "torch 2.9.1 breaks pyg-lib" warning
+- [x] Update `deploy.sh` PyG installation: split pyg-lib from third-party extensions, align with `deploy.cmd` style, improve skip messaging
 
 ### 1.5 E2E Test Fix ✅ COMPLETE (2026-04-07)
 - [x] Fix `scripts/test_gnn_inference.py` scoring assertion (GNN-primary not weighted combo)
@@ -153,4 +153,5 @@ PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
 | 2026-03-25 | Feature scope | Feature freeze decisions; doc cleanup marked done | Drug=reserved, NLP=separate project, Literature/FHIR=frozen; PyG cu130 confirmed by user |
 | 2026-03-25 | Step A: E2E prep | Fix test scoring bug; add export_graph_data; add checkpoint pytest | Confirmed: scoring=GNN-primary (η*emb+(1-η)*SP planned for Step B); PathReasoner=evidence-only |
 | 2026-04-07 | Step A: E2E verified | scripts/test_gnn_inference.py 9/9 PASS; pytest 11/11 PASS | Found+fixed fixture edge type mismatch with kg.metadata(); Phase 1.1 + 1.5 complete |
+| 2026-04-07 | Phase 1.3 + 1.4 cleanup | Removed 5 empty configs; rewrote Makefile; aligned deploy.sh PyG install with deploy.cmd | Phase 1 substantially complete (1.2 deferred to Step B/C); ready for PR merge |
 | | | | |
