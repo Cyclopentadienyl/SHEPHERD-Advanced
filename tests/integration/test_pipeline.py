@@ -840,6 +840,7 @@ class TestShortestPathIntegration:
             f"close={sp_close:.4f}, far={sp_far:.4f}"
         )
         assert 0.0 <= sp_close <= 1.0
+        assert 0.0 <= sp_far <= 1.0
 
 
 # =============================================================================
@@ -1101,4 +1102,3 @@ class TestEvidencePanel:
 
         assert package.mode == EvidenceMode.INSUFFICIENT
         assert package.confidence_label == ConfidenceLabel.INSUFFICIENT
-        assert 0.0 <= sp_far <= 1.0
