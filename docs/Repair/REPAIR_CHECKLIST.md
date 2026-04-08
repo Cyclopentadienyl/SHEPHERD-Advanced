@@ -66,15 +66,19 @@ Phase 4 minor cleanup.
 
 ---
 
-## Step B: Shortest Path Integration (after Phase 1 verified)
+## Step B: Shortest Path Integration ✅ COMPLETE (2026-04-07)
 
-Per original SHEPHERD paper, scoring should be: `final_score = η × embedding_sim + (1-η) × SP_sim`
+Per original SHEPHERD paper: `final_score = η × embedding_sim + (1-η) × SP_sim`
 
-- [ ] Pre-compute shortest path lengths for all (phenotype, gene/disease) pairs → store as lookup table
-- [ ] Add `eta` parameter to PipelineConfig (replaces deprecated `reasoning_weight`/`gnn_weight`)
-- [ ] Modify `_calculate_gnn_score()` to incorporate SP similarity signal
-- [ ] Update E2E tests for new scoring formula
-- [ ] Remove deprecated `reasoning_weight`/`gnn_weight` after `eta` is working
+- [x] Pre-compute shortest path lengths for all (phenotype, gene/disease) pairs → `scripts/compute_shortest_paths.py`
+- [x] Add `eta` parameter to PipelineConfig (replaces deprecated `reasoning_weight`/`gnn_weight`)
+- [x] Add `_load_shortest_paths()` to pipeline (loads `shortest_paths.pt` from data_dir)
+- [x] Add `_calculate_sp_score()` and `_calculate_combined_score()` to pipeline
+- [x] Update both candidate scoring sites (BFS-discovered + ANN-only) to use combined score
+- [x] Add `sp_score` field to `DiagnosisCandidate`
+- [x] Add `TestShortestPathIntegration` test class (6 tests covering load, fallback, formula, eta extremes, distance ordering)
+- [x] Remove deprecated `reasoning_weight`/`gnn_weight` after `eta` is working
+- [x] Update `get_pipeline_config()` to expose `scoring_mode`, `eta_effective`, `sp_ready`, `sp_max_hops`
 
 ---
 
@@ -154,4 +158,6 @@ PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
 | 2026-03-25 | Step A: E2E prep | Fix test scoring bug; add export_graph_data; add checkpoint pytest | Confirmed: scoring=GNN-primary (η*emb+(1-η)*SP planned for Step B); PathReasoner=evidence-only |
 | 2026-04-07 | Step A: E2E verified | scripts/test_gnn_inference.py 9/9 PASS; pytest 11/11 PASS | Found+fixed fixture edge type mismatch with kg.metadata(); Phase 1.1 + 1.5 complete |
 | 2026-04-07 | Phase 1.3 + 1.4 cleanup | Removed 5 empty configs; rewrote Makefile; aligned deploy.sh PyG install with deploy.cmd | Phase 1 substantially complete (1.2 deferred to Step B/C); ready for PR merge |
+| 2026-04-07 | PR #52 review fix | Fix _load_model_from_checkpoint metadata source to match production trainer | chatgpt-codex-connector caught fixture-masked production bug; aligned all 3 paths |
+| 2026-04-07 | Step B: Shortest path | Precompute script + pipeline loading + eta mixing + 6 new tests | Implements original SHEPHERD scoring formula η*emb + (1-η)*SP with graceful fallback |
 | | | | |

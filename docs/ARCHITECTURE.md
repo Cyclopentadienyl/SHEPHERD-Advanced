@@ -197,18 +197,29 @@ embedding_similarity = (dot(patient_norm, disease_norm) + 1.0) / 2.0
 ```
 This formula is identical in training (`trainer.py:704-707`) and inference (`pipeline.py:1134-1140`).
 
-### Signal 2: Shortest Path Similarity (Step B — not yet implemented)
+### Signal 2: Shortest Path Similarity (Step B — implemented)
 ```
-sp_lengths = [shortest_path_length(KG, phenotype, candidate) for phenotype in patient]
+sp_lengths = [SP_lookup[(phenotype_idx, target_idx)] for phenotype in patient]
+# Phenotypes with no path within max_hops contribute (max_hops + 1)
 avg_sp = mean(sp_lengths)
 shortest_path_similarity = 1.0 / (1.0 + avg_sp)
 ```
-Pre-computed offline as a lookup table. Acts as a deterministic fallback when GNN embeddings are unreliable (e.g., sparse phenotype input).
+- Pre-computed offline by `scripts/compute_shortest_paths.py`
+- Stored as parallel int64/int8 tensors (`shortest_paths.pt`) alongside `node_features.pt`
+- Loaded automatically by `pipeline._load_shortest_paths()` if present
+- Default `max_hops = 5`; pairs beyond this are treated as unreachable
+- Acts as a deterministic fallback when GNN embeddings are unreliable (e.g., sparse phenotype input)
 
-### Current state
-- **Currently**: `confidence_score = embedding_similarity` (η = 1.0 implicitly)
-- **Step B will add**: shortest path pre-computation + η mixing parameter
-- **Fallback** (no GNN): `confidence_score = path_reasoning_aggregate_score`
+### Mixing parameter η (`PipelineConfig.eta`)
+- **Default**: `eta = 0.7` (70% GNN, 30% shortest path)
+- `eta = 1.0` → pure GNN
+- `eta = 0.0` → pure shortest path
+- Tunable via validation set
+
+### Graceful degradation
+- **`shortest_paths.pt` missing + `sp_optional=True`** (default): pipeline reports `scoring_mode="gnn_only"`, effective η = 1.0
+- **`shortest_paths.pt` missing + `sp_optional=False`**: pipeline init refuses to set `_gnn_ready=True`
+- **No GNN model loaded**: pipeline falls back to `confidence_score = path_reasoning_aggregate_score` (PathReasoner only)
 
 ### PathReasoner Role (explanation only)
 PathReasoner does NOT contribute to scoring. After ranking is determined, it generates evidence for clinician review:

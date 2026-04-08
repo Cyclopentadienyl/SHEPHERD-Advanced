@@ -433,8 +433,8 @@ class TestPipelineConfig:
         config = PipelineConfig()
 
         assert config.max_path_length == 4
-        assert config.reasoning_weight == 0.5
-        assert config.gnn_weight == 0.5
+        assert config.eta == 0.7  # Default 70% GNN, 30% shortest path
+        assert config.sp_optional is True
         assert config.include_explanations is True
         assert config.include_ortholog_evidence is True
 
@@ -442,17 +442,25 @@ class TestPipelineConfig:
         """Test custom configuration"""
         config = PipelineConfig(
             max_path_length=3,
-            reasoning_weight=0.7,
-            gnn_weight=0.3,
+            eta=0.5,
+            sp_optional=False,
             include_explanations=False,
             include_ortholog_evidence=False,
         )
 
         assert config.max_path_length == 3
-        assert config.reasoning_weight == 0.7
-        assert config.gnn_weight == 0.3
+        assert config.eta == 0.5
+        assert config.sp_optional is False
         assert config.include_explanations is False
         assert config.include_ortholog_evidence is False
+
+    def test_eta_extreme_values(self):
+        """eta=1.0 = pure GNN; eta=0.0 = pure shortest path"""
+        config_pure_gnn = PipelineConfig(eta=1.0)
+        assert config_pure_gnn.eta == 1.0
+
+        config_pure_sp = PipelineConfig(eta=0.0)
+        assert config_pure_sp.eta == 0.0
 
 
 # =============================================================================
