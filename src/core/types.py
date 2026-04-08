@@ -404,10 +404,12 @@ class DiagnosisCandidate:
     disease_id: NodeID
     disease_name: str
 
-    # Scores
+    # Scores (per original SHEPHERD paper:
+    # confidence = eta * gnn_score + (1-eta) * sp_score)
     confidence_score: float
     gnn_score: float
     reasoning_score: float
+    sp_score: float = 0.0  # Shortest-path similarity (Step B+)
 
     # Evidence
     supporting_genes: List[str] = field(default_factory=list)

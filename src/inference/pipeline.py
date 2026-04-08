@@ -114,15 +114,24 @@ class PipelineConfig:
 
     # Scoring architecture (per original SHEPHERD paper):
     #   final_score = eta * embedding_similarity + (1 - eta) * SP_similarity
-    # Currently only embedding_similarity (GNN cosine) is implemented.
-    # SP_similarity (pre-computed shortest path) is planned for Step B.
-    # PathReasoner is explanation-only and does NOT contribute to scoring.
     #
-    # DEPRECATED: reasoning_weight / gnn_weight — these were never used in
-    # the scoring logic. They will be replaced by `eta` when shortest path
-    # integration is implemented. Kept temporarily for checkpoint compat.
-    reasoning_weight: float = 0.5  # DEPRECATED — do not use
-    gnn_weight: float = 0.5  # DEPRECATED — do not use
+    # - embedding_similarity: GNN cosine sim between patient and target
+    # - SP_similarity:        derived from pre-computed shortest path lengths
+    #                         (loaded from shortest_paths.pt; computed offline
+    #                         by scripts/compute_shortest_paths.py)
+    # - eta:                  mixing weight (1.0 = pure GNN, 0.0 = pure SP).
+    #                         The paper does not fix a value; 0.7 is a
+    #                         reasonable default that favors GNN's learned
+    #                         signal but lets SP catch sparse-input cases.
+    #
+    # PathReasoner is explanation-only and does NOT contribute to scoring.
+    eta: float = 0.7
+
+    # Fallback when shortest path lookup table is not available.
+    # If True, missing SP table is treated as eta=1.0 (pure GNN).
+    # If False, pipeline raises at init when both signals are not available.
+    sp_optional: bool = True
+
     ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
 
     # Output control
@@ -241,6 +250,15 @@ class DiagnosisPipeline:
         self._graph_data: Optional[Dict[str, Any]] = graph_data
         self._gnn_ready = False
 
+        # Shortest path lookup state (populated by _load_shortest_paths)
+        # Sparse storage: parallel tensors of (phenotype_idx, target_idx,
+        # target_type, distance). See scripts/compute_shortest_paths.py.
+        # When None, the pipeline degrades to pure GNN scoring (eta=1.0).
+        self._sp_lookup: Optional[Dict[str, "torch.Tensor"]] = None
+        self._sp_index: Optional[Dict[Tuple[int, int, int], int]] = None
+        self._sp_max_hops: int = 5
+        self._sp_ready = False
+
         # Vector index state (populated by _init_vector_index)
         self._vector_index = None
         self._vector_index_ready = False
@@ -345,8 +363,23 @@ class DiagnosisPipeline:
         # Step 4: Build NodeID -> index mapping from KG
         self._node_id_to_idx = self.kg.get_node_id_mapping()
 
+        # Step 5: Load shortest path lookup table (optional)
+        if data_dir is not None:
+            self._load_shortest_paths(Path(data_dir))
+
         self._gnn_ready = True
-        logger.info("GNN inference initialized successfully")
+        logger.info(
+            f"GNN inference initialized successfully "
+            f"(sp_ready={self._sp_ready}, eta={self.config.eta})"
+        )
+
+        if not self._sp_ready and not self.config.sp_optional:
+            logger.error(
+                "Shortest path lookup required (sp_optional=False) but "
+                "no shortest_paths.pt found in data_dir. Run "
+                "scripts/compute_shortest_paths.py to generate it."
+            )
+            self._gnn_ready = False
 
     def _load_graph_data(self, data_dir: str) -> Optional[Dict[str, Any]]:
         """Load graph data files from a processed data directory."""
@@ -395,6 +428,81 @@ class DiagnosisPipeline:
                 graph_data["num_nodes_dict"][node_type] = features.size(0)
 
         return graph_data
+
+    def _load_shortest_paths(self, data_dir: Path) -> None:
+        """
+        Load pre-computed shortest path lookup table from data_dir.
+
+        Expected format (produced by scripts/compute_shortest_paths.py):
+            shortest_paths.pt: dict with keys
+                phenotype_idx: int64 tensor (N,)
+                target_idx:    int64 tensor (N,)
+                target_type:   int64 tensor (N,) — 0=gene, 1=disease
+                distance:      int8  tensor (N,)
+            shortest_paths.meta.json: {"max_hops": int, ...}
+
+        Builds an in-memory dict for O(1) lookup keyed by
+        (phenotype_idx, target_idx, target_type) → distance. This trades
+        a one-time init cost for fast per-query access during inference.
+
+        If the file is missing and sp_optional=True, the pipeline silently
+        falls back to pure GNN scoring (eta is ignored, treated as 1.0).
+        """
+        sp_path = data_dir / "shortest_paths.pt"
+        if not sp_path.exists():
+            logger.info(
+                f"No shortest_paths.pt found in {data_dir}; "
+                f"scoring will use pure GNN (eta=1.0 effective)"
+            )
+            return
+
+        try:
+            sp_data = torch.load(sp_path, map_location="cpu", weights_only=True)
+        except Exception as e:
+            logger.warning(f"Failed to load {sp_path}: {e}")
+            return
+
+        # Validate expected keys
+        required = {"phenotype_idx", "target_idx", "target_type", "distance"}
+        if not required.issubset(sp_data.keys()):
+            logger.warning(
+                f"shortest_paths.pt missing required keys. "
+                f"Expected {required}, got {set(sp_data.keys())}"
+            )
+            return
+
+        n_pairs = sp_data["distance"].numel()
+
+        # Build O(1) lookup index. Memory: ~80 bytes per entry (Python dict
+        # overhead). For 13 万 phenotypes × 5 hops, expect ~10M entries → ~800MB.
+        # Acceptable on inference servers; will optimize if needed.
+        ph_arr = sp_data["phenotype_idx"].tolist()
+        tg_arr = sp_data["target_idx"].tolist()
+        ty_arr = sp_data["target_type"].tolist()
+        di_arr = sp_data["distance"].tolist()
+
+        index: Dict[Tuple[int, int, int], int] = {}
+        for i in range(n_pairs):
+            index[(ph_arr[i], tg_arr[i], ty_arr[i])] = di_arr[i]
+
+        self._sp_lookup = sp_data
+        self._sp_index = index
+        self._sp_ready = True
+
+        # Load metadata sidecar if present
+        meta_path = sp_path.with_suffix(".meta.json")
+        if meta_path.exists():
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                self._sp_max_hops = int(meta.get("max_hops", 5))
+            except Exception:
+                pass
+
+        logger.info(
+            f"Loaded shortest paths: {n_pairs:,} pairs, "
+            f"max_hops={self._sp_max_hops}"
+        )
 
     def _load_model_from_checkpoint(
         self,
@@ -981,17 +1089,19 @@ class DiagnosisPipeline:
             # quality ranking and as fallback when GNN is unavailable)
             reasoning_score = self._calculate_reasoning_score(paths)
 
-            # Calculate GNN score if model available
+            # Combined score per original SHEPHERD paper:
+            #   confidence = eta * embedding_sim + (1-eta) * SP_sim
+            # PathReasoner's `reasoning_score` is NOT part of confidence;
+            # it's only used as a fallback when GNN is unavailable.
             gnn_score = 0.0
+            sp_score = 0.0
             if self._gnn_ready:
-                gnn_score = self._calculate_gnn_score(
-                    source_ids, disease_id, patient_input
+                confidence_score, gnn_score, sp_score = (
+                    self._calculate_combined_score(
+                        source_ids, disease_id, patient_input,
+                        target_type_idx=1,  # disease
+                    )
                 )
-
-            # Confidence score: GNN-primary when available, path-reasoning
-            # as fallback. PathReasoner's role is explanation, not scoring.
-            if self._gnn_ready:
-                confidence_score = gnn_score
             else:
                 confidence_score = reasoning_score
 
@@ -1012,6 +1122,7 @@ class DiagnosisPipeline:
                 confidence_score=confidence_score,
                 gnn_score=gnn_score,
                 reasoning_score=reasoning_score,
+                sp_score=sp_score,
                 supporting_genes=supporting_genes,
                 reasoning_paths=reasoning_paths,
                 evidence_sources=evidence_sources,
@@ -1035,13 +1146,16 @@ class DiagnosisPipeline:
 
                 disease_name = disease_node.name if disease_node else disease_id_str
 
-                # Compute GNN score
-                gnn_score = self._calculate_gnn_score(
-                    source_ids, disease_id, patient_input
+                # Combined score for ANN-only candidate. SP signal still
+                # applies if the lookup table is loaded — even ANN-discovered
+                # candidates without explicit BFS paths can have shortest
+                # path connectivity in the underlying KG.
+                confidence_score, gnn_score, sp_score = (
+                    self._calculate_combined_score(
+                        source_ids, disease_id, patient_input,
+                        target_type_idx=1,  # disease
+                    )
                 )
-
-                # For ANN-only candidates, confidence comes from GNN
-                confidence_score = gnn_score
 
                 candidate = DiagnosisCandidate(
                     rank=0,
@@ -1050,6 +1164,7 @@ class DiagnosisPipeline:
                     confidence_score=confidence_score,
                     gnn_score=gnn_score,
                     reasoning_score=0.0,  # No paths found
+                    sp_score=sp_score,
                     supporting_genes=[],
                     reasoning_paths=[],
                     evidence_sources=[],
@@ -1096,6 +1211,98 @@ class DiagnosisPipeline:
         else:
             return max(scores)
 
+    def _calculate_combined_score(
+        self,
+        source_ids: List[NodeID],
+        target_id: NodeID,
+        patient_input: PatientPhenotypes,
+        target_type_idx: int = 1,  # 1 = disease, 0 = gene
+    ) -> Tuple[float, float, float]:
+        """
+        Compute the final score using the original SHEPHERD formula:
+
+            final = eta * embedding_similarity + (1 - eta) * SP_similarity
+
+        Returns (combined_score, embedding_score, sp_score). When the
+        shortest path lookup table is not loaded, the formula degrades
+        gracefully to pure GNN scoring (effectively eta=1.0).
+        """
+        emb_score = self._calculate_gnn_score(
+            source_ids, target_id, patient_input
+        )
+
+        if not self._sp_ready:
+            # No SP table → pure GNN
+            return emb_score, emb_score, 0.0
+
+        sp_score = self._calculate_sp_score(
+            source_ids, target_id, target_type_idx
+        )
+
+        eta = self.config.eta
+        combined = eta * emb_score + (1.0 - eta) * sp_score
+        return combined, emb_score, sp_score
+
+    def _calculate_sp_score(
+        self,
+        source_ids: List[NodeID],
+        target_id: NodeID,
+        target_type_idx: int,
+    ) -> float:
+        """
+        Compute shortest path similarity between patient phenotypes and a
+        target node (gene or disease).
+
+        For each phenotype, looks up the pre-computed shortest path length
+        to the target. Averages those distances and converts to a similarity
+        score in [0, 1] via 1 / (1 + avg_distance). Phenotypes with no
+        connection within max_hops contribute the maximum possible distance
+        (max_hops + 1) to penalize but not zero out the average.
+
+        Returns 0.0 if the SP table is not loaded or no phenotypes can be
+        looked up.
+        """
+        if not self._sp_ready or self._sp_index is None:
+            return 0.0
+
+        node_mapping = self._node_id_to_idx
+        if node_mapping is None:
+            return 0.0
+
+        phenotype_type = NodeType.PHENOTYPE.value
+        target_type_str = (
+            NodeType.GENE.value if target_type_idx == 0 else NodeType.DISEASE.value
+        )
+
+        # Resolve target index
+        target_idx = node_mapping.get(target_type_str, {}).get(str(target_id))
+        if target_idx is None:
+            return 0.0
+
+        # Resolve phenotype indices
+        phenotype_mapping = node_mapping.get(phenotype_type, {})
+        phenotype_indices = []
+        for nid in source_ids:
+            idx = phenotype_mapping.get(str(nid))
+            if idx is not None:
+                phenotype_indices.append(idx)
+
+        if not phenotype_indices:
+            return 0.0
+
+        # Look up distances. Missing entries get a sentinel distance
+        # (max_hops + 1) so that completely unreachable phenotypes drag
+        # the average down without producing inf or nan.
+        unreachable_distance = float(self._sp_max_hops + 1)
+        total = 0.0
+        for ph_idx in phenotype_indices:
+            dist = self._sp_index.get((ph_idx, target_idx, target_type_idx))
+            total += float(dist) if dist is not None else unreachable_distance
+
+        avg_distance = total / len(phenotype_indices)
+        # 1 / (1 + d): d=0 → 1.0, d=1 → 0.5, d=∞ → 0
+        return 1.0 / (1.0 + avg_distance)
+
     def _calculate_gnn_score(
         self,
         source_ids: List[NodeID],
@@ -1103,7 +1310,7 @@ class DiagnosisPipeline:
         patient_input: PatientPhenotypes,
     ) -> float:
         """
-        Calculate GNN-based score for a disease candidate.
+        Calculate GNN-based embedding similarity score for a candidate.
 
         Uses precomputed node embeddings from the GNN forward pass to compute
         cosine similarity between the aggregated patient phenotype profile
@@ -1112,6 +1319,10 @@ class DiagnosisPipeline:
 
         The cosine similarity [-1, 1] is normalized to [0, 1] via
         (sim + 1) / 2 to match the reasoning_score scale.
+
+        This is the embedding-only signal — the final score is a mixture
+        of this and the shortest path similarity, computed in
+        _calculate_combined_score().
 
         Returns 0.0 if GNN inference is not available.
         """
@@ -1284,18 +1495,33 @@ class DiagnosisPipeline:
 
     def get_pipeline_config(self) -> Dict[str, Any]:
         """Get pipeline configuration as dictionary."""
+        # Effective scoring mode reflects whether SP signal is contributing
+        if self._gnn_ready and self._sp_ready:
+            scoring_mode = "gnn_plus_shortest_path"
+            effective_eta = self.config.eta
+        elif self._gnn_ready:
+            scoring_mode = "gnn_only"
+            effective_eta = 1.0
+        else:
+            scoring_mode = "path_reasoning_fallback"
+            effective_eta = 0.0
+
         return {
             "version": self.VERSION,
             "max_path_length": self.config.max_path_length,
             "path_length_penalty": self.config.path_length_penalty,
             "aggregation_method": self.config.aggregation_method,
-            "scoring_mode": "gnn_primary" if self._gnn_ready else "path_reasoning_fallback",
+            "scoring_mode": scoring_mode,
+            "eta_configured": self.config.eta,
+            "eta_effective": effective_eta,
+            "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,
             "include_literature_evidence": self.config.include_literature_evidence,
             "has_model": self.model is not None,
             "gnn_ready": self._gnn_ready,
+            "sp_ready": self._sp_ready,
             "vector_index_ready": self._vector_index_ready,
             "vector_index_size": len(self._vector_index) if self._vector_index else 0,
         }
