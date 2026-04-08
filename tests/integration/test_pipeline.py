@@ -841,3 +841,264 @@ class TestShortestPathIntegration:
         )
         assert 0.0 <= sp_close <= 1.0
         assert 0.0 <= sp_far <= 1.0
+
+
+# =============================================================================
+# Test: Evidence Panel (Step C)
+# =============================================================================
+class TestEvidencePanel:
+    """
+    Verify Step C: PathReasoner is decoupled from scoring; evidence is
+    presented as Mode A (direct path) or Mode B (analogy-based) with
+    confidence labels.
+    """
+
+    def test_mode_a_strong_path_for_close_disease(
+        self, medium_kg, gnn_model_and_data
+    ):
+        """A disease reachable in 2 hops should get STRONG_PATH label."""
+        from src.reasoning import (
+            EvidencePanel, ConfidenceLabel, EvidenceMode,
+        )
+        from src.core.types import NodeID, DataSource
+
+        model, graph_data = gnn_model_and_data
+        pipeline = DiagnosisPipeline(
+            kg=medium_kg, model=model, graph_data=graph_data,
+        )
+
+        patient = PatientPhenotypes(
+            patient_id="mode_a_test",
+            phenotypes=["HP:0000001", "HP:0000002"],  # GeneA → Disease1 (2 hops)
+        )
+        result = pipeline.run(patient, top_k=5, include_explanations=True)
+
+        # The top candidate should have a Mode A evidence package
+        top = result.candidates[0]
+        assert top.evidence_package is not None
+        assert top.evidence_package["mode"] in (
+            EvidenceMode.DIRECT_PATH.value, EvidenceMode.ANALOGY_BASED.value
+        )
+
+        # At least one candidate should be Mode A with STRONG label
+        # (the one reachable via GeneA in 2 hops)
+        strong_found = any(
+            c.evidence_package
+            and c.evidence_package["mode"] == EvidenceMode.DIRECT_PATH.value
+            and c.confidence_label == ConfidenceLabel.STRONG_PATH.value
+            for c in result.candidates
+        )
+        assert strong_found, (
+            f"Expected at least one STRONG_PATH candidate. Got labels: "
+            f"{[c.confidence_label for c in result.candidates]}"
+        )
+
+    def test_evidence_has_min_path_length(self, medium_kg, gnn_model_and_data):
+        """Mode A evidence should report the minimum path length."""
+        from src.reasoning import EvidenceMode
+
+        model, graph_data = gnn_model_and_data
+        pipeline = DiagnosisPipeline(
+            kg=medium_kg, model=model, graph_data=graph_data,
+        )
+
+        patient = PatientPhenotypes(
+            patient_id="path_len_test",
+            phenotypes=["HP:0000001", "HP:0000002"],
+        )
+        result = pipeline.run(patient, top_k=5, include_explanations=True)
+
+        for c in result.candidates:
+            if (
+                c.evidence_package
+                and c.evidence_package["mode"] == EvidenceMode.DIRECT_PATH.value
+            ):
+                assert c.evidence_package["min_path_length"] is not None
+                assert c.evidence_package["min_path_length"] > 0
+
+    def test_evidence_panel_used_when_explanations_enabled(
+        self, medium_kg, gnn_model_and_data
+    ):
+        """include_explanations=True should populate evidence_package."""
+        model, graph_data = gnn_model_and_data
+        pipeline = DiagnosisPipeline(
+            kg=medium_kg, model=model, graph_data=graph_data,
+        )
+
+        patient = PatientPhenotypes(
+            patient_id="enabled",
+            phenotypes=["HP:0000001"],
+        )
+        result = pipeline.run(patient, top_k=3, include_explanations=True)
+
+        # Every candidate should have an evidence package and label
+        for c in result.candidates:
+            assert c.evidence_package is not None, (
+                "evidence_package missing when include_explanations=True"
+            )
+            assert c.confidence_label is not None
+            # Confidence label should be one of the known values
+            assert c.confidence_label in (
+                "Strong path support",
+                "Weak path support",
+                "Analogy-based (no direct KG path)",
+                "Insufficient evidence",
+            )
+
+    def test_evidence_skipped_when_explanations_disabled(
+        self, medium_kg, gnn_model_and_data
+    ):
+        """include_explanations=False should NOT populate evidence_package."""
+        model, graph_data = gnn_model_and_data
+        pipeline = DiagnosisPipeline(
+            kg=medium_kg, model=model, graph_data=graph_data,
+        )
+
+        patient = PatientPhenotypes(
+            patient_id="disabled",
+            phenotypes=["HP:0000001"],
+        )
+        result = pipeline.run(patient, top_k=3, include_explanations=False)
+
+        for c in result.candidates:
+            assert c.evidence_package is None
+            assert c.confidence_label is None
+
+    def test_evidence_panel_does_not_affect_ranking(
+        self, medium_kg, gnn_model_and_data
+    ):
+        """Critical invariant: enabling evidence must not change scores
+        or ranking. Evidence is decorative/explanatory, not a scoring input."""
+        model, graph_data = gnn_model_and_data
+
+        pipeline_a = DiagnosisPipeline(
+            kg=medium_kg, model=model, graph_data=graph_data,
+        )
+        pipeline_b = DiagnosisPipeline(
+            kg=medium_kg, model=model, graph_data=graph_data,
+        )
+
+        patient = PatientPhenotypes(
+            patient_id="invariant_test",
+            phenotypes=["HP:0000003", "HP:0000004"],
+        )
+
+        result_no_evidence = pipeline_a.run(
+            patient, top_k=5, include_explanations=False
+        )
+        result_with_evidence = pipeline_b.run(
+            patient, top_k=5, include_explanations=True
+        )
+
+        # Same number of candidates, same ordering, same scores
+        assert len(result_no_evidence.candidates) == len(
+            result_with_evidence.candidates
+        )
+        for c_no, c_yes in zip(
+            result_no_evidence.candidates, result_with_evidence.candidates
+        ):
+            assert c_no.disease_id == c_yes.disease_id, (
+                "Evidence panel changed ranking order"
+            )
+            assert abs(c_no.confidence_score - c_yes.confidence_score) < 1e-9, (
+                "Evidence panel changed confidence scores"
+            )
+
+    def test_evidence_panel_direct_unit_test(self, medium_kg):
+        """Direct unit test of EvidencePanel without going through pipeline."""
+        from src.reasoning import (
+            EvidencePanel, EvidencePanelConfig, EvidenceMode, ConfidenceLabel,
+        )
+        from src.core.types import (
+            NodeID, DataSource, DiagnosisCandidate,
+        )
+
+        panel = EvidencePanel(
+            kg=medium_kg,
+            config=EvidencePanelConfig(
+                strong_path_max_hops=2,
+                weak_path_max_hops=4,
+            ),
+        )
+
+        # Disease1 is reachable from HP:0000001 via GeneA (2 hops)
+        candidate = DiagnosisCandidate(
+            rank=1,
+            disease_id=NodeID(source=DataSource.MONDO, local_id="MONDO:0000001"),
+            disease_name="Disease 1",
+            confidence_score=0.9,
+            gnn_score=0.9,
+            reasoning_score=0.5,
+        )
+        patient = PatientPhenotypes(
+            patient_id="unit",
+            phenotypes=["HP:0000001"],
+        )
+        source_ids = [NodeID(source=DataSource.HPO, local_id="HP:0000001")]
+
+        package = panel.build_evidence(
+            candidate=candidate,
+            patient_input=patient,
+            source_ids=source_ids,
+            existing_paths=None,  # force fresh path search
+        )
+
+        # Without GNN embeddings, Mode B is unavailable. Result must be
+        # either DIRECT_PATH (if KG has a path) or INSUFFICIENT.
+        assert package.mode in (
+            EvidenceMode.DIRECT_PATH, EvidenceMode.INSUFFICIENT,
+        )
+        if package.mode == EvidenceMode.DIRECT_PATH:
+            assert package.confidence_label in (
+                ConfidenceLabel.STRONG_PATH, ConfidenceLabel.WEAK_PATH,
+            )
+            assert package.min_path_length is not None
+            assert len(package.direct_paths) > 0
+
+    def test_evidence_panel_insufficient_when_no_paths_no_embeddings(
+        self, medium_kg
+    ):
+        """When neither paths nor embeddings are available → INSUFFICIENT."""
+        from src.reasoning import EvidencePanel, EvidenceMode, ConfidenceLabel
+        from src.core.types import (
+            NodeID, DataSource, DiagnosisCandidate, NodeType, Node,
+        )
+
+        # Build a candidate for a disease the patient phenotype CANNOT
+        # reach by adding an isolated disease to the KG.
+        kg = medium_kg
+        isolated_id = NodeID(source=DataSource.MONDO, local_id="MONDO:9999999")
+        kg.add_node(Node(
+            id=isolated_id,
+            node_type=NodeType.DISEASE,
+            name="Isolated Disease",
+            data_sources={DataSource.MONDO},
+        ))
+
+        panel = EvidencePanel(kg=kg)
+
+        candidate = DiagnosisCandidate(
+            rank=1,
+            disease_id=isolated_id,
+            disease_name="Isolated Disease",
+            confidence_score=0.5,
+            gnn_score=0.5,
+            reasoning_score=0.0,
+        )
+        patient = PatientPhenotypes(
+            patient_id="iso",
+            phenotypes=["HP:0000001"],
+        )
+        source_ids = [NodeID(source=DataSource.HPO, local_id="HP:0000001")]
+
+        package = panel.build_evidence(
+            candidate=candidate,
+            patient_input=patient,
+            source_ids=source_ids,
+            existing_paths=None,
+            node_embeddings=None,  # no GNN → no Mode B
+            node_id_to_idx=None,
+        )
+
+        assert package.mode == EvidenceMode.INSUFFICIENT
+        assert package.confidence_label == ConfidenceLabel.INSUFFICIENT

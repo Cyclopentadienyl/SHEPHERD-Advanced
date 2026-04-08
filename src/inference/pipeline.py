@@ -65,8 +65,12 @@ from src.reasoning import (
     ReasoningPath,
     DirectPathFinder,
     ExplanationGenerator,
+    EvidencePanel,
+    EvidencePanelConfig,
+    EvidencePackage,
     create_path_reasoner,
     create_explanation_generator,
+    create_evidence_panel,
 )
 
 # Optional torch dependency for GNN inference
@@ -301,10 +305,22 @@ class DiagnosisPipeline:
             self.direct_finder = None
 
     def _init_explanation_generator(self) -> None:
-        """Initialize explanation generator."""
+        """Initialize explanation generator and Step C evidence panel."""
         self.explanation_generator = create_explanation_generator(
             include_ortholog_evidence=self.config.include_ortholog_evidence,
             include_literature_evidence=self.config.include_literature_evidence,
+        )
+        # Step C: clinician-facing evidence builder. Mode A (direct path)
+        # uses self.path_reasoner; Mode B (analogy) reuses GNN embeddings
+        # which are passed in at build_evidence() call time.
+        self.evidence_panel = create_evidence_panel(
+            kg=self.kg,
+            path_reasoner=self.path_reasoner,
+            config=EvidencePanelConfig(
+                strong_path_max_hops=2,
+                weak_path_max_hops=self.config.max_path_length,
+                analogy_top_k=3,
+            ),
         )
 
     # ==========================================================================
@@ -882,13 +898,14 @@ class DiagnosisPipeline:
             ann_only_candidates=ann_only_candidates,
         )
 
-        # Step 5: Generate explanations
+        # Step 5: Generate explanations + Step C evidence packages
         if include_explanations:
-            logger.debug("Generating explanations...")
+            logger.debug("Generating explanations and evidence packages...")
             candidates = self._add_explanations(
                 candidates=candidates,
                 all_paths=all_paths,
                 patient_input=patient_input,
+                source_ids=source_ids,
             )
 
         # Step 6: Create summary explanation
@@ -1420,12 +1437,24 @@ class DiagnosisPipeline:
         candidates: List[DiagnosisCandidate],
         all_paths: Dict[str, List[ReasoningPath]],
         patient_input: PatientPhenotypes,
+        source_ids: Optional[List[NodeID]] = None,
     ) -> List[DiagnosisCandidate]:
-        """Add explanations to candidates."""
+        """
+        Add explanations and Step C evidence packages to each candidate.
+
+        For each candidate, the EvidencePanel decides between:
+          - Mode A (direct path): use existing paths from BFS, label as
+            STRONG/WEAK depending on shortest hop count
+          - Mode B (analogy-based): when no direct path is available, find
+            the K nearest known candidates in GNN embedding space whose
+            paths to the patient phenotypes DO exist, and surface them
+          - INSUFFICIENT: if neither mode succeeds
+        """
         for candidate in candidates:
             disease_key = str(candidate.disease_id)
             paths = all_paths.get(disease_key, [])
 
+            # Legacy narrative explanation (kept for backwards compat)
             explanation = self.explanation_generator.generate_explanation(
                 candidate=candidate,
                 phenotypes=patient_input,
@@ -1433,6 +1462,21 @@ class DiagnosisPipeline:
                 paths=paths,
             )
             candidate.explanation = explanation
+
+            # Step C: structured evidence package with confidence label.
+            # Mode B requires GNN embeddings and the index map; both are
+            # passed when available so the panel can attempt analogy search.
+            if source_ids is not None:
+                package: EvidencePackage = self.evidence_panel.build_evidence(
+                    candidate=candidate,
+                    patient_input=patient_input,
+                    source_ids=source_ids,
+                    existing_paths=paths if paths else None,
+                    node_embeddings=self._node_embeddings,
+                    node_id_to_idx=self._node_id_to_idx,
+                )
+                candidate.evidence_package = package.to_dict()
+                candidate.confidence_label = package.confidence_label.value
 
         return candidates
 

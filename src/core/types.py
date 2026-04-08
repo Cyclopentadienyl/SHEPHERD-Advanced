@@ -419,6 +419,13 @@ class DiagnosisCandidate:
     # Ortholog evidence (同源基因證據)
     ortholog_evidence: Optional[List[OrthologMapping]] = None
 
+    # Step C evidence panel: Mode A (direct path) or Mode B (analogy-based)
+    # Stored as a generic dict to avoid an import cycle with the reasoning
+    # module. Schema produced by EvidencePackage.to_dict() — see
+    # src/reasoning/evidence_panel.py.
+    evidence_package: Optional[Dict[str, Any]] = None
+    confidence_label: Optional[str] = None
+
     # Explanation
     explanation: Optional[str] = None
 

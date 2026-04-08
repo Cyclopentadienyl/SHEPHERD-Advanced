@@ -82,18 +82,21 @@ Per original SHEPHERD paper: `final_score = η × embedding_sim + (1-η) × SP_s
 
 ---
 
-## Step C: PathReasoner Evidence Panel Redesign (after Step B)
+## Step C: PathReasoner Evidence Panel Redesign ✅ COMPLETE (2026-04-08)
 
-PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
+EvidencePanel is now a separate module that consumes PathReasoner as a building block. PathReasoner itself is unchanged but is no longer the gatekeeper for evidence generation.
 
-- [ ] Mode A (direct path): when KG paths exist (≤3 hops), show them as direct evidence
-- [ ] Mode B (analogy-based): when no KG path exists (zero-shot):
-  - Find K nearest known genes in GNN embedding space
-  - Run PathReasoner on those known genes
-  - Present as analogy evidence with confidence labels
-- [ ] Add confidence labels: "Strong path support" / "Weak path support" / "Analogy-based" / "Insufficient evidence"
-- [ ] Decouple PathReasoner from scoring pipeline completely
-- [ ] Update ExplanationGenerator to support both modes
+- [x] Build new `src/reasoning/evidence_panel.py` module (EvidencePanel class)
+- [x] Mode A (direct path): when KG paths exist (≤weak_path_max_hops), surface them with STRONG/WEAK label
+- [x] Mode B (analogy-based): when no KG path exists, find K nearest known nodes in GNN embedding space, run PathReasoner on them, present as analogy evidence
+- [x] Add confidence label enum: STRONG_PATH / WEAK_PATH / ANALOGY_BASED / INSUFFICIENT
+- [x] Decouple PathReasoner from scoring pipeline (already done in Step B; verified Step C does not re-couple)
+- [x] Add `evidence_package` and `confidence_label` fields to `DiagnosisCandidate`
+- [x] Wire EvidencePanel into pipeline via `_add_explanations()`
+- [x] Add `TestEvidencePanel` test class (7 tests covering Mode A label thresholds, Mode B unavailable fallback, ranking invariance, direct unit tests)
+- [x] Update ARCHITECTURE.md Section 8 with full Mode A/B description and ranking invariant
+- [x] Add shared-feature heuristic for Mode B (KG neighborhood overlap)
+- [x] Add `EvidencePanelConfig` for tunable thresholds
 
 ---
 
@@ -194,4 +197,6 @@ PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
 | 2026-04-07 | Phase 1.3 + 1.4 cleanup | Removed 5 empty configs; rewrote Makefile; aligned deploy.sh PyG install with deploy.cmd | Phase 1 substantially complete (1.2 deferred to Step B/C); ready for PR merge |
 | 2026-04-07 | PR #52 review fix | Fix _load_model_from_checkpoint metadata source to match production trainer | chatgpt-codex-connector caught fixture-masked production bug; aligned all 3 paths |
 | 2026-04-07 | Step B: Shortest path | Precompute script + pipeline loading + eta mixing + 6 new tests | Implements original SHEPHERD scoring formula η*emb + (1-η)*SP with graceful fallback |
+| 2026-04-08 | Step C: Evidence panel | New EvidencePanel module with Mode A/B + confidence labels + 7 new tests | Backend now 100% complete; ready for frontend planning |
+| 2026-04-08 | PR #54 test fix | Restore stray `sp_far` assertion that Edit operation misplaced | 24/24 integration tests PASS locally (17 existing + 7 new); backend verified end-to-end |
 | | | | |
