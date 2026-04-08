@@ -132,6 +132,40 @@ PathReasoner becomes pure post-hoc explanation layer (no scoring involvement):
 
 ---
 
+## Frontend Repair (after Step C — backend must be 100% complete first)
+
+> **Design inspiration**: stable-diffusion-webui — single system, multiple
+> sub-pages with vastly different complexity for different user types.
+>
+> **User segments**:
+> 1. **Clinicians** (doctors, genetic counselors) — simple, intuitive
+> 2. **Engineering team** (hospital IT, ML engineers) — advanced controls
+
+### F.1 Audit current frontend state (must run before any code changes)
+- [ ] Deep scan `src/api/` — list every endpoint, mark which return real data vs mocks
+- [ ] Deep scan `src/webui/` — what works, what's a placeholder
+- [ ] Document gaps in a SCAN_REPORT supplement
+
+### F.2 Clinician-facing sub-pages (priority)
+- [ ] **Patient Diagnosis** page — HPO symptom input → ranked diseases + evidence
+  - Must display Mode A (direct path) and Mode B (analogy) evidence from Step C
+  - Confidence labels: "Strong path support" / "Weak path support" / "Analogy-based" / "Insufficient evidence"
+- [ ] **Patients-Like-Me** retrieval page — phenotype input → K most similar known patients
+
+### F.3 Engineering-facing sub-pages
+- [x] Training console (already exists)
+- [x] Hyperparameter tuning UI (already exists)
+- [ ] **Checkpoint management** — list / load / delete / compare checkpoints
+- [ ] **Vector index rebuild** — trigger ANN index rebuild from current model
+- [ ] **System health dashboard** — `_gnn_ready`, `_sp_ready`, `_vector_index_ready`, KG stats, GPU usage
+
+### F.4 API gaps to fill
+- [ ] Replace mock responses in `src/api/routes/diagnose.py` once Step C output schema is finalized
+- [ ] Add `/diagnose/explain/{candidate_id}` endpoint for on-demand evidence detail
+- [ ] Restrict CORS for production (Phase 4.2 task)
+
+---
+
 ## Phase 4: Infrastructure (P2)
 
 ### 4.1 CI/CD
