@@ -635,11 +635,20 @@ class TestGNNInference:
             )
 
     def test_pipeline_config_reports_gnn(self, gnn_pipeline):
-        """get_pipeline_config should report GNN status."""
+        """get_pipeline_config should report GNN status.
+
+        scoring_mode values (Step B+):
+          - "gnn_plus_shortest_path" — GNN + SP table both loaded
+          - "gnn_only"                — GNN loaded, SP table not found (eta=1.0 effective)
+          - "path_reasoning_fallback" — no GNN (PathReasoner only)
+        This fixture doesn't generate shortest_paths.pt → expect "gnn_only".
+        """
         config = gnn_pipeline.get_pipeline_config()
         assert config["gnn_ready"] is True
         assert config["has_model"] is True
-        assert config["scoring_mode"] == "gnn_primary"
+        assert config["scoring_mode"] in ("gnn_only", "gnn_plus_shortest_path")
+        # Step C: evidence is decoupled from scoring
+        assert config["path_reasoner_role"] == "explanation_only"
 
     def test_path_reasoner_still_runs(self, gnn_pipeline, patient_phenotypes):
         """Path reasoning should still provide explanation paths alongside GNN."""
