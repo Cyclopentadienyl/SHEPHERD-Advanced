@@ -225,59 +225,16 @@ def generate_graph_data(kg: KnowledgeGraph, output_dir: Path) -> None:
     """
     Generate PyG-compatible graph data files from the KG.
 
-    Creates node_features.pt, edge_indices.pt, num_nodes.json.
+    Delegates to KnowledgeGraph.export_graph_data() which is the single
+    source of truth for graph-data generation. It automatically adds
+    reverse `rev_*` edges so every node type participates as a destination
+    in message passing — without this, node types that only appear as
+    source (e.g. `gene` in the demo KG) would never have their embeddings
+    updated during training.
+
+    Creates node_features.pt, edge_indices.pt, num_nodes.json in output_dir.
     """
-    import torch
-
-    hidden_dim = 64
-
-    metadata = kg.metadata()
-    node_types, edge_types = metadata
-
-    # Generate random features for each node type (in production these
-    # would come from ontology embeddings or learned features)
-    x_dict = {}
-    num_nodes_dict = {}
-    for nt_str in node_types:
-        nt = NodeType(nt_str)
-        count = len(kg._nodes_by_type.get(nt, set()))
-        if count > 0:
-            x_dict[nt_str] = torch.randn(count, hidden_dim)
-            num_nodes_dict[nt_str] = count
-
-    # Build edge indices
-    edge_index_dict = {}
-    node_mapping = kg.get_node_id_mapping()
-
-    for src_type, rel_type, dst_type in edge_types:
-        sources = []
-        targets = []
-        for edge in kg._edges:
-            src_node = kg._nodes.get(str(edge.source_id))
-            tgt_node = kg._nodes.get(str(edge.target_id))
-            if src_node is None or tgt_node is None:
-                continue
-            if (src_node.node_type.value == src_type
-                    and edge.edge_type.value == rel_type
-                    and tgt_node.node_type.value == dst_type):
-                src_idx = node_mapping.get(src_type, {}).get(str(edge.source_id))
-                tgt_idx = node_mapping.get(dst_type, {}).get(str(edge.target_id))
-                if src_idx is not None and tgt_idx is not None:
-                    sources.append(src_idx)
-                    targets.append(tgt_idx)
-
-        if sources:
-            edge_index_dict[(src_type, rel_type, dst_type)] = torch.tensor(
-                [sources, targets], dtype=torch.long
-            )
-
-    # Save
-    output_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(x_dict, output_dir / "node_features.pt")
-    torch.save(edge_index_dict, output_dir / "edge_indices.pt")
-    with open(output_dir / "num_nodes.json", "w") as f:
-        json.dump(num_nodes_dict, f, indent=2)
-
+    kg.export_graph_data(output_dir=output_dir, feature_dim=64)
     logger.info(f"Graph data saved to {output_dir}")
 
 
@@ -298,9 +255,23 @@ def train_minimal_model(
     import torch
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
 
-    metadata = kg.metadata()
     node_features = torch.load(output_dir / "node_features.pt", weights_only=True)
     edge_indices = torch.load(output_dir / "edge_indices.pt", weights_only=True)
+
+    # CRITICAL: metadata MUST be derived from the graph_data's edge keys
+    # (which include rev_* reverse edges added by export_graph_data), not
+    # from kg.metadata() (which only has forward edges). Using kg.metadata()
+    # here would build a model with only forward-edge conv layers, and PyG's
+    # HeteroConv would silently ignore the reverse edges during forward
+    # pass — leaving any "source-only" node type (e.g. `gene` in this demo)
+    # with its initial random embeddings forever.
+    #
+    # This matches the pattern in:
+    #   - scripts/train_model.py:create_model_from_config
+    #   - src/inference/pipeline.py:_load_model_from_checkpoint
+    node_types = list(node_features.keys())
+    edge_types = list(edge_indices.keys())
+    metadata = (node_types, edge_types)
 
     in_channels_dict = {nt: feat.size(-1) for nt, feat in node_features.items()}
 
