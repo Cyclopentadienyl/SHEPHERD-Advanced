@@ -184,6 +184,14 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [ ] Improve `_load_model_from_checkpoint` error reporting — currently catches RuntimeError silently; should log WARNING with specific mismatch details so operators can diagnose checkpoint compat issues
 - [ ] Investigate "gene node not updated during message passing" PyG warning — may be `rev_*` naming convention quirk; revisit after Phase 3 ortholog edges are added
 
+### 4.3 CLI / Script Integration Gaps (discovered during CLI smoke test 2026-04-08)
+- [ ] **`train_model.py` ↔ `compute_shortest_paths.py` output mismatch**: `train_model.py:generate_synthetic_data()` produces `node_features.pt`/`edge_indices.pt`/`num_nodes.json` but NOT `kg.json`. `compute_shortest_paths.py` requires `kg.json` as input. Result: the two scripts cannot be chained directly. Either:
+  - (a) Make `train_model.py` also emit a `kg.json` when generating synthetic data, OR
+  - (b) Make `compute_shortest_paths.py` accept `node_features.pt`+`edge_indices.pt` directly (no KG object), OR
+  - (c) Document that real workflows should start from `build_knowledge_graph.py` → `kg.json` → train_model.py + compute_shortest_paths.py
+- [ ] **`train_model.py` synthetic data has no biological meaning**: pure random features and edges. Only useful for "does the code run?" — NOT for "does the model learn anything meaningful?". Consider deprecating it in favor of `setup_demo.py` as the canonical small-scale test path, OR document its limitation clearly in the docstring.
+- [ ] **No canonical "from scratch" workflow**: we have multiple scripts that each produce partial data (setup_demo, train_model, build_knowledge_graph, compute_shortest_paths) but no single entry point that runs them in the correct order. Consider adding a top-level `scripts/bootstrap_demo.sh` (or Makefile target) that chains them correctly.
+
 ---
 
 ## Session Log
