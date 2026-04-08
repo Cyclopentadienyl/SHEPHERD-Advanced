@@ -54,6 +54,15 @@ from src.reasoning.explanation_generator import (
     EvidenceItem,
     create_explanation_generator,
 )
+from src.reasoning.evidence_panel import (
+    EvidencePanel,
+    EvidencePanelConfig,
+    EvidencePackage,
+    EvidenceMode,
+    ConfidenceLabel,
+    AnalogyMatch,
+    create_evidence_panel,
+)
 
 __all__ = [
     # Path reasoning
@@ -67,4 +76,12 @@ __all__ = [
     "EvidenceSummary",
     "EvidenceItem",
     "create_explanation_generator",
+    # Evidence panel (Step C)
+    "EvidencePanel",
+    "EvidencePanelConfig",
+    "EvidencePackage",
+    "EvidenceMode",
+    "ConfidenceLabel",
+    "AnalogyMatch",
+    "create_evidence_panel",
 ]

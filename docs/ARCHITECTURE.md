@@ -222,9 +222,27 @@ shortest_path_similarity = 1.0 / (1.0 + avg_sp)
 - **No GNN model loaded**: pipeline falls back to `confidence_score = path_reasoning_aggregate_score` (PathReasoner only)
 
 ### PathReasoner Role (explanation only)
-PathReasoner does NOT contribute to scoring. After ranking is determined, it generates evidence for clinician review:
-- **Mode A** (direct path): when KG paths exist, show them
-- **Mode B** (analogy-based): when no KG path exists, find K nearest known genes in embedding space and show their paths as analogy evidence
+PathReasoner does NOT contribute to scoring. After ranking is determined, the **EvidencePanel** module (`src/reasoning/evidence_panel.py`) generates clinician-facing evidence for each top-K candidate. EvidencePanel uses PathReasoner internally as a building block.
+
+#### Mode A — Direct Path Evidence
+When the KG contains explicit paths from patient phenotypes to the candidate (≤ `weak_path_max_hops`, default 4), surface those paths verbatim:
+- **STRONG_PATH** label if shortest path ≤ 2 hops
+- **WEAK_PATH** label if shortest path is 3-4 hops
+
+#### Mode B — Analogy-Based Evidence (the GNN's killer feature)
+When no direct path exists in the KG but the GNN ranks the candidate highly:
+1. In the GNN embedding space, find the K nearest known nodes (default K=3)
+2. For each similar known node, run PathReasoner — they have full KG connections
+3. Present those known paths as **analogy evidence** with shared-feature summary
+4. Label as **ANALOGY_BASED**
+
+This handles the zero-shot case the original SHEPHERD paper highlights — GNN can rank a candidate via neighborhood structure similarity even with missing KG edges, and Mode B gives the clinician a trustworthy "why" without inventing fake direct paths.
+
+#### Mode INSUFFICIENT
+When neither mode produces usable evidence, the candidate is labeled **INSUFFICIENT** so clinicians know to validate via independent clinical judgment.
+
+#### Critical invariant
+EvidencePanel is run **after** scoring/ranking is complete. Toggling `include_explanations` does not change `confidence_score` or candidate ordering — verified by `TestEvidencePanel.test_evidence_panel_does_not_affect_ranking`.
 
 ---
 
