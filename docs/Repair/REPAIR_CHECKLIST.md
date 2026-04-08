@@ -198,4 +198,5 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-07 | PR #52 review fix | Fix _load_model_from_checkpoint metadata source to match production trainer | chatgpt-codex-connector caught fixture-masked production bug; aligned all 3 paths |
 | 2026-04-07 | Step B: Shortest path | Precompute script + pipeline loading + eta mixing + 6 new tests | Implements original SHEPHERD scoring formula η*emb + (1-η)*SP with graceful fallback |
 | 2026-04-08 | Step C: Evidence panel | New EvidencePanel module with Mode A/B + confidence labels + 7 new tests | Backend now 100% complete; ready for frontend planning |
+| 2026-04-08 | PR #54 test fix | Restore stray `sp_far` assertion that Edit operation misplaced | 24/24 integration tests PASS locally (17 existing + 7 new); backend verified end-to-end |
 | | | | |
