@@ -73,7 +73,7 @@ class PipelineReloadResponse(BaseModel):
     success: bool
     message: str
     status: PipelineStatusResponse
-    files_found: Dict[str, bool] = Field(default_factory=dict)
+    files_found: Dict[str, Any] = Field(default_factory=dict)
 
 
 class UIConfigResponse(BaseModel):
