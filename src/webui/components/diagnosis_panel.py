@@ -46,15 +46,6 @@ LABEL_STYLES = {
     "Insufficient evidence": ("⚪", "#9ca3af"),
 }
 
-# Demo phenotypes for quick testing
-DEMO_PHENOTYPES = [
-    "HP:0001250 — Seizure",
-    "HP:0001263 — Global developmental delay",
-    "HP:0001252 — Hypotonia",
-    "HP:0000256 — Macrocephaly",
-    "HP:0002069 — Bilateral tonic-clonic seizure",
-    "HP:0000729 — Autistic behavior",
-]
 
 
 # =============================================================================
@@ -99,13 +90,14 @@ def _format_results_table(candidates: List[Dict]) -> str:
 
     rows = []
     for c in candidates:
-        label = c.get("confidence_label", "—")
+        label = c.get("confidence_label") or "—"
         emoji, _ = LABEL_STYLES.get(label, ("", "#888"))
+        conf = c.get("confidence_score") or 0
+        gnn = c.get("gnn_score") or 0
+        sp = c.get("sp_score") or 0
         rows.append(
             f"| {c['rank']} | **{c['disease_name']}** | "
-            f"{c['confidence_score']:.3f} | "
-            f"{c.get('gnn_score', 0):.3f} | "
-            f"{c.get('sp_score', 0):.3f} | "
+            f"{conf:.3f} | {gnn:.3f} | {sp:.3f} | "
             f"{emoji} {label} |"
         )
 
@@ -122,9 +114,9 @@ def _format_evidence_detail(candidate: Dict) -> str:
     if not pkg:
         return "*No evidence package available. Run with `include_explanations=true`.*"
 
-    mode = pkg.get("mode", "unknown")
-    summary = pkg.get("summary", "")
-    label = pkg.get("confidence_label", "—")
+    mode = pkg.get("mode") or "unknown"
+    summary = pkg.get("summary") or ""
+    label = pkg.get("confidence_label") or "—"
     emoji, color = LABEL_STYLES.get(label, ("", "#888"))
 
     parts = [
@@ -150,8 +142,8 @@ def _format_evidence_detail(candidate: Dict) -> str:
         parts.append("**Mode B — Analogy-Based Evidence**")
         parts.append("")
         for a in analogies[:3]:
-            sim = a.get("embedding_similarity", 0)
-            name = a.get("similar_gene_name", "?")
+            sim = a.get("embedding_similarity") or 0
+            name = a.get("similar_gene_name") or "?"
             shared = a.get("shared_features", [])
             known_paths = a.get("known_paths", [])
             parts.append(
@@ -312,11 +304,6 @@ def _on_candidate_select(
     return _format_evidence_detail(target), _format_full_explanation(target)
 
 
-def _on_load_demo() -> str:
-    """Load demo phenotypes into the input box."""
-    return "\n".join(DEMO_PHENOTYPES[:3])
-
-
 # =============================================================================
 # Tab builder (called from app.py)
 # =============================================================================
@@ -349,14 +336,12 @@ def create_diagnosis_tab() -> None:
                 info="Enter HPO IDs, optionally followed by '—' and the name. One per line.",
             )
 
-            with gr.Row():
-                demo_btn = gr.Button("📋 Load Demo", size="sm", variant="secondary")
-                clear_btn = gr.ClearButton(
-                    components=[phenotype_input],
-                    value="🗑️ Clear",
-                    size="sm",
-                    variant="secondary",
-                )
+            clear_btn = gr.ClearButton(
+                components=[phenotype_input],
+                value="🗑️ Clear",
+                size="sm",
+                variant="secondary",
+            )
 
             with gr.Accordion("Options", open=False):
                 patient_id_input = gr.Textbox(
@@ -409,12 +394,6 @@ def create_diagnosis_tab() -> None:
                 )
 
     # === Event wiring ===
-    demo_btn.click(
-        fn=_on_load_demo,
-        inputs=[],
-        outputs=[phenotype_input],
-    )
-
     diagnose_btn.click(
         fn=_on_diagnose,
         inputs=[phenotype_input, patient_id_input, top_k_input],
