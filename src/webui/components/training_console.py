@@ -96,9 +96,9 @@ def _collect_config(
 
     config: Dict[str, Any] = {
         # Paths (strip display prefix so backend receives relative-to-project-root paths)
-        "data_dir": _strip_prefix(data_dir) or "data/processed",
+        "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",
         "output_dir": _strip_prefix(output_dir) or "outputs",
-        "checkpoint_dir": _strip_prefix(checkpoint_dir) or "models/checkpoints",
+        "checkpoint_dir": _strip_prefix(checkpoint_dir) or "",  # empty = auto-derive from data_dir
         # Tier 1
         "num_epochs": int(num_epochs),
         "learning_rate": float(learning_rate),
@@ -737,9 +737,9 @@ def create_training_tab() -> None:
             with gr.Accordion("Data Paths", open=False):
                 with gr.Group():
                     data_dir = gr.Textbox(
-                        label="Data Directory",
-                        info="Processed data with node_features.pt, edge_indices.pt, etc. (relative to project root)",
-                        value="SHEPHERD-Advanced/data/processed",
+                        label="Data Directory (Workspace)",
+                        info="Workspace folder with kg.json, node_features.pt, edge_indices.pt, etc.",
+                        value="SHEPHERD-Advanced/data/workspaces/default",
                         elem_id="data_dir",
                     )
                     output_dir = gr.Textbox(
@@ -750,8 +750,8 @@ def create_training_tab() -> None:
                     )
                     checkpoint_dir = gr.Textbox(
                         label="Checkpoint Directory",
-                        info="Where model checkpoints (.pt files) are saved. (relative to project root)",
-                        value="SHEPHERD-Advanced/models/checkpoints",
+                        info="Where model checkpoints (.pt files) are saved. Leave blank to auto-derive from workspace.",
+                        value="",
                         elem_id="checkpoint_dir",
                     )
 

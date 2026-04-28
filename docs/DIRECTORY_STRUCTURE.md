@@ -1,9 +1,9 @@
 # SHEPHERD-Advanced Directory Structure Blueprint
 
-**Last Updated**: 2026-02-24
+**Last Updated**: 2026-04-28
 **Status**: Canonical Reference
 
-This document defines the official directory layout for the SHEPHERD-Advanced project. All code, configuration, and runtime artifacts should follow this structure.
+This document defines the official directory layout for the SHEPHERD-Advanced project.
 
 ---
 
@@ -11,14 +11,12 @@ This document defines the official directory layout for the SHEPHERD-Advanced pr
 
 ```
 SHEPHERD-Advanced/
-├── configs/                # Configuration files (YAML)
-├── data/                   # Input data (raw + processed)
-├── deployment/             # Deployment manifests (future: Docker, K8s)
+├── configs/                # Configuration files (YAML, JSON)
+├── data/                   # All data: external downloads + workspaces
 ├── docs/                   # Documentation
 ├── logs/                   # Training logs & real-time progress
-├── models/                 # All model artifacts (checkpoints, pretrained, production)
+├── models/                 # Only KG-independent pretrained models
 ├── outputs/                # Training outputs (final metrics, results)
-├── reports/                # Evaluation reports & analysis
 ├── scripts/                # Entry-point scripts (train, evaluate, infer)
 ├── src/                    # Source code (7-layer architecture)
 └── tests/                  # Test suite (unit, integration, e2e)
@@ -26,185 +24,145 @@ SHEPHERD-Advanced/
 
 ---
 
-## Directory Details
+## Core Concept: Workspaces
 
-### `configs/` — Configuration Files
+A **workspace** is a self-contained directory holding one KG version and all
+training artifacts derived from it. Everything a model needs for inference
+lives in the same folder.
 
-Centralized YAML configuration for all runtime modes.
+**Key rule**: one KG version = one workspace. Checkpoints trained on a
+different KG version belong in a different workspace.
 
 ```
-configs/
-├── default.yaml             # Default training hyperparameters
-├── deployment.yaml          # Unified deployment configuration (v3.2)
-├── logging.yaml             # Logging configuration
-└── ...
+data/workspaces/{name}/
+├── kg.json                  # Knowledge graph structure
+├── node_features.pt         # Node feature vectors (GNN input)
+├── edge_indices.pt          # Edge connectivity (with reverse edges)
+├── num_nodes.json           # Node counts per type
+├── shortest_paths.pt        # Pre-computed SP lookup (Step B)
+├── shortest_paths.meta.json # SP metadata
+└── checkpoints/             # Model checkpoints trained on THIS KG
+    ├── epoch_010.pt
+    ├── epoch_050_best.pt
+    └── ...
 ```
 
-**Used by**: `scripts/train_model.py`, `src/api/main.py`
+### Workspace Lifecycle
+
+```
+1. Data Preparation (run once per KG version):
+   build_knowledge_graph.py → kg.json
+   kg.export_graph_data()   → node_features.pt, edge_indices.pt, num_nodes.json
+   compute_shortest_paths.py → shortest_paths.pt
+
+2. Training (may run many times with different hyperparameters):
+   train_model.py reads from workspace root, writes to checkpoints/
+
+3. Inference (ongoing):
+   Pipeline loads kg.json + graph data + chosen checkpoint + SP table
+   All from the same workspace directory
+```
+
+### Relationship Between Files
+
+| File | When Created | Changes During Training? | Purpose |
+|------|-------------|------------------------|---------|
+| `kg.json` | Data prep (once) | No | KG structure (nodes + edges) |
+| `node_features.pt` | Data prep (once) | No | GNN input features |
+| `edge_indices.pt` | Data prep (once) | No | Graph connectivity |
+| `num_nodes.json` | Data prep (once) | No | Node count statistics |
+| `shortest_paths.pt` | Data prep (once) | No | BFS distance lookup |
+| `checkpoints/*.pt` | Every training epoch | **Yes** (new files) | Learned GNN weights |
+
+The first 5 files are **static** — shared by all training runs within the
+workspace. Only checkpoint files accumulate over time.
+
+### KG Version Compatibility
+
+Each checkpoint embeds a **data fingerprint** (node types, counts, edge types).
+At inference load time, the fingerprint is compared against the current
+workspace data. Mismatches produce a warning:
+
+> KG/data version mismatch detected between checkpoint and current data.
+> Inference results may be incorrect.
 
 ---
 
-### `data/` — Input Data
+## Directory Details
 
-All input datasets. Large files are excluded from version control via `.gitignore`.
+### `data/` — All Data
 
 ```
 data/
 ├── external/                # Large external datasets (git-ignored)
 │   ├── README.md            # Download instructions
-│   └── .gitignore           # Ignores all data files
-└── processed/               # Processed data ready for training
-    └── knowledge_graph/     # Knowledge graph artifacts
-        ├── node_features.pt
-        ├── edge_indices.pt
-        ├── metadata.json
-        └── VERSION
+│   └── .gitignore
+└── workspaces/              # Workspace directories
+    ├── .gitkeep
+    ├── demo/                # Development/testing workspace
+    └── (future workspaces)
 ```
 
-**Used by**: Training pipeline (`scripts/train_model.py`), data processing scripts
-**Default path in UI**: `SHEPHERD-Advanced/data/processed`
-
----
-
-### `logs/` — Training Logs
-
-Runtime training logs and real-time progress files. Written by `MetricsLogger` callback.
-
-```
-logs/
-├── .gitkeep
-├── progress.json            # Real-time batch-level progress (updated every ~5s)
-└── train_YYYYMMDD_HHMMSS.json  # Epoch-level metrics history (one per training run)
-```
-
-**Used by**: `src/training/callbacks.py` (MetricsLogger), `src/api/services/training_manager.py` (polling)
-**Default path**: `logs/`
-
----
-
-### `models/` — Model Artifacts
-
-All model-related files organized by lifecycle stage.
+### `models/` — KG-Independent Models Only
 
 ```
 models/
-├── checkpoints/             # Training checkpoints (.pt files)
-│   ├── .gitkeep
-│   ├── last.pt              # Latest checkpoint (auto-saved)
-│   ├── model-epoch03-0.1234.pt  # Top-K best checkpoints
-│   └── ...
-├── experiments/             # Experimental/trial models (manual saves)
-│   └── .gitkeep
-├── pretrained/              # Pretrained base models (e.g., ClinicalBERT for NLP module)
-│   └── README.md
-└── production/              # Production-ready models (promoted from checkpoints)
-    └── registry.json        # Model registry (tracks promoted models)
+└── pretrained/              # Pre-trained base models (e.g., ClinicalBERT)
+    └── README.md
 ```
 
-**Lifecycle**: `checkpoints/` → (evaluate) → `production/` (via promotion)
-**Default checkpoint path in UI**: `SHEPHERD-Advanced/models/checkpoints`
+KG-specific checkpoints now live inside their workspace's `checkpoints/`
+directory, NOT in `models/`.
 
-| Subdirectory | Purpose | When Populated |
-|---|---|---|
-| `checkpoints/` | Auto-saved during training (top-K best + last.pt) | Every training run |
-| `experiments/` | Manual saves for experimental configurations | User-initiated |
-| `pretrained/` | Downloaded pretrained models for fine-tuning | Before first training |
-| `production/` | Promoted best models for inference serving | After evaluation |
+### `configs/` — Configuration Files
 
----
+```
+configs/
+├── deployment.yaml          # Unified deployment configuration
+├── accelerators.json        # GPU accelerator specifications
+└── schemas/                 # JSON schemas for validation
+```
+
+### `logs/` — Training Logs
+
+```
+logs/
+├── progress.json            # Real-time batch-level progress
+└── train_YYYYMMDD_HHMMSS.json  # Epoch-level metrics history
+```
 
 ### `outputs/` — Training Outputs
 
-Final training results, exported metrics, and generated artifacts.
-
 ```
 outputs/
-├── .gitkeep
-├── training_metrics_YYYYMMDD.csv   # Exported metrics CSV
-└── final_results.json              # Final training summary
-```
-
-**Used by**: `src/api/services/training_manager.py`, `scripts/train_model.py`
-**Default path in UI**: `SHEPHERD-Advanced/outputs`
-
----
-
-### `reports/` — Evaluation Reports
-
-Evaluation and analysis reports generated by evaluation scripts.
-
-```
-reports/
-├── .gitkeep
-└── eval_report_YYYYMMDD.json   # Evaluation results (MRR, Hits@K, etc.)
-```
-
-**Used by**: `scripts/evaluate_model.py`
-**Distinct from `outputs/`**: `outputs/` stores raw training artifacts; `reports/` stores structured evaluation analyses.
-
----
-
-### `scripts/` — Entry-Point Scripts
-
-Standalone scripts that serve as subprocess entry points.
-
-```
-scripts/
-├── train_model.py           # Training entry point (launched by TrainingManager)
-├── evaluate_model.py        # Evaluation entry point
-├── test_gnn_inference.py    # GNN inference testing
-├── process_knowledge_graph.py  # KG data processing
-└── ...
+└── training_metrics_YYYYMMDD.csv  # Exported metrics CSV
 ```
 
 ---
 
-### `src/` — Source Code (7-Layer Architecture)
+## Path Configuration
 
-```
-src/
-├── core/          # Layer 0: Types, protocols, config, utilities
-├── kg/            # Layer 2: Knowledge graph builder, ontology, data sources
-├── data_sources/  # Layer 2: External data connectors (HPO, MONDO, PubMed)
-├── retrieval/     # Layer 3: Vector index, subgraph sampler
-├── models/        # Layer 4: ShepherdGNN, HeteroGNNLayer, attention backends
-├── training/      # Layer 1: Trainer, loss functions, callbacks
-├── inference/     # Layer 5: Inference pipeline, path reasoner, explanation
-├── reasoning/     # Layer 5: Path reasoning, evidence scoring
-├── api/           # Layer 6: FastAPI routes, services, middleware
-├── webui/         # Layer 6: Gradio dashboard components
-└── config/        # Layer 0: Hyperparameter definitions
+### In deployment.yaml
+
+```yaml
+paths:
+  workspaces_root: data/workspaces/
+  default_workspace: data/workspaces/default
+  pretrained_root: models/pretrained/
+  logs_root: logs/
+  cache_root: .cache/
 ```
 
-**Import rules** (enforced by import-linter):
-- `webui` → `api` (allowed)
-- `webui` → `training` (FORBIDDEN — use subprocess via TrainingManager)
-- Higher layers may import lower layers, not vice versa
+### In WebUI
 
----
+The Diagnosis tab's **Model Configuration** accordion allows selecting a
+workspace directory. The pipeline auto-detects `kg.json`, graph data files,
+and checkpoints within that workspace.
 
-### `tests/` — Test Suite
+### In Training Console
 
-```
-tests/
-├── unit/            # Unit tests (fast, no external deps)
-├── integration/     # Integration tests (may use filesystem, subprocess)
-├── e2e/             # End-to-end tests (full pipeline)
-├── conftest.py      # Shared fixtures
-└── ...
-```
-
----
-
-## Runtime Directory Creation
-
-The following directories are created automatically at runtime if they don't exist:
-
-| Directory | Created By | When |
-|---|---|---|
-| `logs/` | `TrainingManager.start_training()` | Training start |
-| `models/checkpoints/` | `TrainingManager.start_training()` | Training start |
-| `outputs/` | `TrainingManager.start_training()` | Training start |
+The **Data Directory** field points to a workspace. The **Checkpoint Directory**
+auto-derives as `{workspace}/checkpoints/` if left blank.
 
 ---
 
@@ -212,25 +170,26 @@ The following directories are created automatically at runtime if they don't exi
 
 | Directory | Tracked | Strategy |
 |---|---|---|
-| `configs/` | Yes | All YAML files tracked |
-| `data/external/` | Structure only | `.gitignore` excludes data files |
-| `data/processed/` | Metadata only | `metadata.json` + `VERSION` tracked |
-| `logs/` | Structure only | `.gitkeep` tracked, log files ignored |
-| `models/checkpoints/` | Structure only | `.gitkeep` tracked, .pt files ignored |
-| `models/production/` | Registry only | `registry.json` tracked |
-| `outputs/` | Structure only | `.gitkeep` tracked, artifacts ignored |
-| `reports/` | Structure only | `.gitkeep` tracked, report files ignored |
+| `configs/` | Yes | All config files tracked |
+| `data/external/` | Structure only | README tracked, data files ignored |
+| `data/workspaces/` | Structure only | `.gitkeep` tracked, all data ignored |
+| `models/pretrained/` | README only | Model files too large for git |
+| `logs/` | Structure only | Log files ignored |
+| `outputs/` | Structure only | Artifacts ignored |
 
 ---
 
-## Path Display Convention
+## Migration from Legacy Layout
 
-In the Gradio UI, all paths are displayed with the `SHEPHERD-Advanced/` prefix for clarity:
+If upgrading from the old `data/processed/` + `models/checkpoints/` layout:
 
-| UI Display | Actual Path (relative to project root) |
-|---|---|
-| `SHEPHERD-Advanced/data/processed` | `data/processed` |
-| `SHEPHERD-Advanced/outputs` | `outputs` |
-| `SHEPHERD-Advanced/models/checkpoints` | `models/checkpoints` |
+```
+# Move legacy data into a workspace
+mkdir data/workspaces/legacy
+mv data/processed/*.pt data/workspaces/legacy/
+mv data/processed/*.json data/workspaces/legacy/
+mv models/checkpoints/*.pt data/workspaces/legacy/checkpoints/
+```
 
-The prefix is automatically stripped before passing to the training backend.
+The pipeline code reads path parameters (not hardcoded paths), so both old
+and new layouts work — only the default values changed.

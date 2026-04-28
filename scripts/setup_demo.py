@@ -20,11 +20,11 @@ Output files:
     <output_dir>/node_features.pt     - Node feature tensors (if --train-model)
     <output_dir>/edge_indices.pt      - Edge index tensors   (if --train-model)
     <output_dir>/num_nodes.json       - Node counts           (if --train-model)
-    <output_dir>/model_checkpoint.pt  - Trained GNN checkpoint (if --train-model)
+    <output_dir>/checkpoints/model_checkpoint.pt  - Trained GNN checkpoint (if --train-model)
 
 After running, start the API with:
     SHEPHERD_KG_PATH=data/demo/kg.json \\
-    SHEPHERD_CHECKPOINT_PATH=data/demo/model_checkpoint.pt \\
+    SHEPHERD_CHECKPOINT_PATH=data/workspaces/demo/checkpoints/model_checkpoint.pt \\
     SHEPHERD_DATA_DIR=data/demo \\
     python -m uvicorn src.api.main:app --reload
 """
@@ -318,7 +318,20 @@ def train_minimal_model(
 
     model.eval()
 
-    # Save checkpoint (Trainer format)
+    # Compute data fingerprint for KG version tracking
+    from src.utils.fingerprint import compute_fingerprint
+    graph_data = {
+        "x_dict": node_features,
+        "edge_index_dict": edge_indices,
+        "num_nodes_dict": {nt: feat.size(0) for nt, feat in node_features.items()},
+    }
+    data_fp = compute_fingerprint(
+        graph_data,
+        kg_total_nodes=kg.total_nodes,
+        kg_total_edges=kg.total_edges,
+    )
+
+    # Save checkpoint (Trainer format) with fingerprint
     checkpoint = {
         "model_state_dict": model.state_dict(),
         "config": {
@@ -329,8 +342,11 @@ def train_minimal_model(
             "use_positional_encoding": config.use_positional_encoding,
             "use_ortholog_gate": config.use_ortholog_gate,
         },
+        "data_fingerprint": data_fp,
     }
-    ckpt_path = output_dir / "model_checkpoint.pt"
+    ckpt_dir = output_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / "model_checkpoint.pt"
     torch.save(checkpoint, ckpt_path)
     logger.info(f"Model checkpoint saved to {ckpt_path}")
 
@@ -345,8 +361,8 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="data/demo",
-        help="Output directory (default: data/demo)",
+        default="data/workspaces/demo",
+        help="Output directory (default: data/workspaces/demo)",
     )
     parser.add_argument(
         "--train-model",
@@ -382,7 +398,7 @@ def main():
 Start the API with GNN scoring (full mode):
 
   SHEPHERD_KG_PATH={kg_path} \\
-  SHEPHERD_CHECKPOINT_PATH={output_dir / 'model_checkpoint.pt'} \\
+  SHEPHERD_CHECKPOINT_PATH={output_dir / 'checkpoints' / 'model_checkpoint.pt'} \\
   SHEPHERD_DATA_DIR={output_dir} \\
   python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 """)

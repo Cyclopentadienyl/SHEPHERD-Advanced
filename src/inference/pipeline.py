@@ -35,7 +35,7 @@
 #   pipeline = DiagnosisPipeline(
 #       kg=knowledge_graph,
 #       checkpoint_path="checkpoints/last.pt",
-#       data_dir="data/processed",
+#       data_dir="data/workspaces/demo",
 #   )
 #   result = pipeline.run(patient_phenotypes, top_k=10)
 # ==============================================================================
@@ -262,6 +262,9 @@ class DiagnosisPipeline:
         self._sp_index: Optional[Dict[Tuple[int, int, int], int]] = None
         self._sp_max_hops: int = 5
         self._sp_ready = False
+
+        # Fingerprint verification warnings (populated by _load_model_from_checkpoint)
+        self._fingerprint_warnings: List[str] = []
 
         # Vector index state (populated by _init_vector_index)
         self._vector_index = None
@@ -556,6 +559,19 @@ class DiagnosisPipeline:
 
         # Extract model config from checkpoint
         ckpt_config = checkpoint.get("config", {})
+
+        # Verify data fingerprint compatibility (KG version check)
+        from src.utils.fingerprint import verify_fingerprint
+        fp_warnings = verify_fingerprint(
+            checkpoint,
+            self._graph_data,
+            kg_total_nodes=len(self.kg._nodes) if self.kg else None,
+            kg_total_edges=len(self.kg._edges) if self.kg else None,
+        )
+        if fp_warnings:
+            for w in fp_warnings:
+                logger.warning(f"[Fingerprint] {w}")
+        self._fingerprint_warnings = fp_warnings
 
         # Reconstruct model architecture.
         # CRITICAL: metadata MUST be derived from graph_data["edge_index_dict"]
@@ -1568,6 +1584,9 @@ class DiagnosisPipeline:
             "sp_ready": self._sp_ready,
             "vector_index_ready": self._vector_index_ready,
             "vector_index_size": len(self._vector_index) if self._vector_index else 0,
+            "fingerprint_warnings": getattr(self, "_fingerprint_warnings", []),
+            "kg_nodes": len(self.kg._nodes) if self.kg else 0,
+            "kg_edges": len(self.kg._edges) if self.kg else 0,
         }
 
 

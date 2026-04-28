@@ -208,7 +208,7 @@ class EarlyStopping(Callback):
 @dataclass
 class ModelCheckpointConfig:
     """模型檢查點配置"""
-    dirpath: str = "models/checkpoints"
+    dirpath: str = "checkpoints"  # relative to workspace or project root
     filename: str = "model-{epoch:02d}-{val_loss:.4f}"
     monitor: str = "val_loss"
     mode: str = "min"
@@ -310,6 +310,10 @@ class ModelCheckpoint(Callback):
 
             if trainer.scheduler is not None:
                 checkpoint["scheduler_state_dict"] = trainer.scheduler.state_dict()
+
+        # Embed data fingerprint if the trainer has one (set by training script)
+        if hasattr(trainer, "data_fingerprint") and trainer.data_fingerprint is not None:
+            checkpoint["data_fingerprint"] = trainer.data_fingerprint
 
         torch.save(checkpoint, filepath)
         logger.info(f"ModelCheckpoint: saved to {filepath}")

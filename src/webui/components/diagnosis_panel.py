@@ -37,6 +37,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 API_BASE = "http://127.0.0.1:8000"
+PIPELINE_API = f"{API_BASE}/api/v1"
 
 # Confidence label → (emoji, CSS color)
 LABEL_STYLES = {
@@ -82,6 +83,88 @@ def _call_diagnose(
 
 # =============================================================================
 # Formatting helpers
+def _get_pipeline_status() -> Dict[str, Any]:
+    """Get pipeline status from API."""
+    try:
+        resp = requests.get(f"{PIPELINE_API}/pipeline/status", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {"initialized": False, "error": "API not reachable"}
+
+
+def _reload_pipeline(data_dir: str, checkpoint_path: str) -> Dict[str, Any]:
+    """Reload pipeline via API."""
+    payload = {"data_dir": data_dir}
+    if checkpoint_path and checkpoint_path.strip():
+        payload["checkpoint_path"] = checkpoint_path.strip()
+    try:
+        resp = requests.post(
+            f"{PIPELINE_API}/pipeline/reload",
+            json=payload,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except requests.ConnectionError:
+        return {"success": False, "message": "API server not reachable."}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def _load_saved_config() -> Dict[str, Any]:
+    """Load saved UI config from API."""
+    try:
+        resp = requests.get(f"{PIPELINE_API}/pipeline/config", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {"data_dir": "data/workspaces/default", "checkpoint_path": None}
+
+
+def _save_config_to_server(data_dir: str, checkpoint_path: str) -> str:
+    """Save current path config via API."""
+    try:
+        resp = requests.post(
+            f"{PIPELINE_API}/pipeline/config",
+            json={"data_dir": data_dir, "checkpoint_path": checkpoint_path or None},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return "Configuration saved."
+    except Exception as e:
+        return f"Failed to save: {e}"
+
+
+def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
+    """Format pipeline status as Markdown."""
+    if not status_data.get("initialized", False):
+        return "⚪ **Pipeline not loaded.** Configure paths below and click Reload."
+
+    gnn = "✅" if status_data.get("gnn_ready") else "❌"
+    sp = "✅" if status_data.get("sp_ready") else "❌"
+    mode = status_data.get("scoring_mode", "unknown")
+    kg_n = status_data.get("kg_nodes", 0)
+    kg_e = status_data.get("kg_edges", 0)
+
+    lines = [
+        f"🟢 **Pipeline loaded** | Mode: `{mode}`",
+        f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
+    ]
+
+    # Fingerprint warnings
+    fp_warns = status_data.get("fingerprint_warnings", [])
+    if fp_warns:
+        lines.append("")
+        lines.append(f"⚠️ **KG version mismatch** ({len(fp_warns)} warning{'s' if len(fp_warns) != 1 else ''}):")
+        for w in fp_warns[:3]:
+            lines.append(f"- {w}")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Formatting helpers — diagnosis results
 # =============================================================================
 def _format_results_table(candidates: List[Dict]) -> str:
     """Format candidates as a Markdown table for the results area."""
@@ -304,6 +387,49 @@ def _on_candidate_select(
     return _format_evidence_detail(target), _format_full_explanation(target)
 
 
+def _on_reload_pipeline(data_dir: str, checkpoint_path: str) -> Tuple[str, str]:
+    """Handle Reload Pipeline button click."""
+    if not data_dir or not data_dir.strip():
+        return "⚠️ Data directory is required.", ""
+
+    result = _reload_pipeline(data_dir.strip(), checkpoint_path.strip() if checkpoint_path else "")
+
+    status_md = ""
+    if result.get("success"):
+        status_md = _format_pipeline_status(result.get("status", {}))
+    else:
+        status_md = f"❌ {result.get('message', 'Unknown error')}"
+
+    # Format file check results
+    files = result.get("files_found", {})
+    if files:
+        file_lines = []
+        for fname, exists in files.items():
+            if isinstance(exists, bool):
+                icon = "✅" if exists else "❌"
+                file_lines.append(f"  {icon} {fname}")
+        status_md += "\n\n**Files:**\n" + "\n".join(file_lines)
+
+    msg = result.get("message", "")
+    return status_md, msg
+
+
+def _on_save_config(data_dir: str, checkpoint_path: str) -> str:
+    """Handle Save Config button click."""
+    return _save_config_to_server(data_dir, checkpoint_path)
+
+
+def _on_reset_defaults() -> Tuple[str, str, str]:
+    """Handle Reset Defaults button click."""
+    return "data/workspaces/default", "", "Paths reset to defaults."
+
+
+def _on_load_status() -> str:
+    """Refresh pipeline status display."""
+    status_data = _get_pipeline_status()
+    return _format_pipeline_status(status_data)
+
+
 # =============================================================================
 # Tab builder (called from app.py)
 # =============================================================================
@@ -324,6 +450,36 @@ def create_diagnosis_tab() -> None:
             - Full explanation accordion (Markdown)
     """
 
+    # === MODEL CONFIGURATION (top accordion) ===
+    # Load saved config for default values
+    saved_cfg = _load_saved_config()
+
+    with gr.Accordion("Model Configuration", open=False):
+        config_status_md = gr.Markdown(
+            value=_format_pipeline_status(_get_pipeline_status()),
+        )
+
+        with gr.Row():
+            data_dir_input = gr.Textbox(
+                label="Data Directory",
+                value=saved_cfg.get("data_dir", "data/workspaces/default"),
+                info="Folder containing kg.json, node_features.pt, edge_indices.pt, etc.",
+            )
+            checkpoint_input = gr.Textbox(
+                label="Checkpoint Path (optional)",
+                value=saved_cfg.get("checkpoint_path") or "",
+                placeholder="(auto-detect from data directory)",
+                info="Path to .pt checkpoint file. Leave blank to auto-detect.",
+            )
+
+        with gr.Row():
+            reload_btn = gr.Button("🔄 Reload Pipeline", variant="primary", size="sm")
+            save_cfg_btn = gr.Button("💾 Save Config", variant="secondary", size="sm")
+            reset_btn = gr.Button("↩️ Reset Defaults", variant="secondary", size="sm")
+
+        config_msg = gr.Markdown(value="")
+
+    # === MAIN LAYOUT ===
     with gr.Row():
         # === LEFT COLUMN: Input ===
         with gr.Column(scale=1):
@@ -404,4 +560,23 @@ def create_diagnosis_tab() -> None:
         fn=_on_candidate_select,
         inputs=[candidate_selector, phenotype_input, patient_id_input, top_k_input],
         outputs=[evidence_md, explanation_md],
+    )
+
+    # === Model config event wiring ===
+    reload_btn.click(
+        fn=_on_reload_pipeline,
+        inputs=[data_dir_input, checkpoint_input],
+        outputs=[config_status_md, config_msg],
+    )
+
+    save_cfg_btn.click(
+        fn=_on_save_config,
+        inputs=[data_dir_input, checkpoint_input],
+        outputs=[config_msg],
+    )
+
+    reset_btn.click(
+        fn=_on_reset_defaults,
+        inputs=[],
+        outputs=[data_dir_input, checkpoint_input, config_msg],
     )

@@ -115,7 +115,7 @@ class TrainerConfig:
     eval_every_n_steps: Optional[int] = None
 
     # Checkpointing
-    checkpoint_dir: str = "models/checkpoints"
+    checkpoint_dir: str = ""  # empty = auto-derive from data_dir + /checkpoints
     save_top_k: int = 3
     save_last: bool = True
 
@@ -839,8 +839,8 @@ class Trainer:
                 config_dict[k] = v
         return config_dict
 
-    def save_checkpoint(self, filepath: Union[str, Path]) -> None:
-        """保存檢查點"""
+    def save_checkpoint(self, filepath: Union[str, Path], data_fingerprint: Optional[Dict[str, Any]] = None) -> None:
+        """Save training checkpoint with optional data fingerprint for KG version tracking."""
         filepath = Path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -852,6 +852,9 @@ class Trainer:
             "state": self.state.__dict__,
             "config": self._serialize_config(),
         }
+
+        if data_fingerprint is not None:
+            checkpoint["data_fingerprint"] = data_fingerprint
 
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
