@@ -839,8 +839,8 @@ class Trainer:
                 config_dict[k] = v
         return config_dict
 
-    def save_checkpoint(self, filepath: Union[str, Path]) -> None:
-        """保存檢查點"""
+    def save_checkpoint(self, filepath: Union[str, Path], data_fingerprint: Optional[Dict[str, Any]] = None) -> None:
+        """Save training checkpoint with optional data fingerprint for KG version tracking."""
         filepath = Path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -852,6 +852,9 @@ class Trainer:
             "state": self.state.__dict__,
             "config": self._serialize_config(),
         }
+
+        if data_fingerprint is not None:
+            checkpoint["data_fingerprint"] = data_fingerprint
 
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()

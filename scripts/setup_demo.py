@@ -318,7 +318,20 @@ def train_minimal_model(
 
     model.eval()
 
-    # Save checkpoint (Trainer format)
+    # Compute data fingerprint for KG version tracking
+    from src.utils.fingerprint import compute_fingerprint
+    graph_data = {
+        "x_dict": node_features,
+        "edge_index_dict": edge_indices,
+        "num_nodes_dict": {nt: feat.size(0) for nt, feat in node_features.items()},
+    }
+    data_fp = compute_fingerprint(
+        graph_data,
+        kg_total_nodes=kg.total_nodes,
+        kg_total_edges=kg.total_edges,
+    )
+
+    # Save checkpoint (Trainer format) with fingerprint
     checkpoint = {
         "model_state_dict": model.state_dict(),
         "config": {
@@ -329,6 +342,7 @@ def train_minimal_model(
             "use_positional_encoding": config.use_positional_encoding,
             "use_ortholog_gate": config.use_ortholog_gate,
         },
+        "data_fingerprint": data_fp,
     }
     ckpt_path = output_dir / "model_checkpoint.pt"
     torch.save(checkpoint, ckpt_path)

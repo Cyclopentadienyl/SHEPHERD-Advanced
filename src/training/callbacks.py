@@ -311,6 +311,10 @@ class ModelCheckpoint(Callback):
             if trainer.scheduler is not None:
                 checkpoint["scheduler_state_dict"] = trainer.scheduler.state_dict()
 
+        # Embed data fingerprint if the trainer has one (set by training script)
+        if hasattr(trainer, "data_fingerprint") and trainer.data_fingerprint is not None:
+            checkpoint["data_fingerprint"] = trainer.data_fingerprint
+
         torch.save(checkpoint, filepath)
         logger.info(f"ModelCheckpoint: saved to {filepath}")
 

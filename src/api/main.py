@@ -273,9 +273,10 @@ async def readiness_check() -> Dict[str, Any]:
 # =============================================================================
 # Import and Register Routes
 # =============================================================================
-from src.api.routes import diagnose, search, disease, training, system
+from src.api.routes import diagnose, search, disease, training, system, pipeline
 
 app.include_router(diagnose.router, prefix="/api/v1", tags=["Diagnosis"])
+app.include_router(pipeline.router, prefix="/api/v1", tags=["Pipeline"])
 app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])
