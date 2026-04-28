@@ -29,6 +29,7 @@ from __future__ import annotations
 import gradio as gr
 
 from src.webui.components.training_console import create_training_tab
+from src.webui.components.diagnosis_panel import create_diagnosis_tab
 
 
 def create_gradio_app() -> gr.Blocks:
@@ -81,11 +82,8 @@ def create_gradio_app() -> gr.Blocks:
             with gr.Tab("Training Console", id="train"):
                 create_training_tab()
 
-            with gr.Tab("Inference Testing", id="infer"):
-                gr.Markdown(
-                    "### Inference Testing\n"
-                    "*Coming soon — will provide HPO term input and diagnosis result display.*"
-                )
+            with gr.Tab("Diagnosis", id="infer"):
+                create_diagnosis_tab()
 
             with gr.Tab("Model Management", id="models"):
                 gr.Markdown(

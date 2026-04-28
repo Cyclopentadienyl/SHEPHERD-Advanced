@@ -12,7 +12,9 @@ Version: 1.0.0
 """
 
 from src.webui.components.training_console import create_training_tab
+from src.webui.components.diagnosis_panel import create_diagnosis_tab
 
 __all__ = [
     "create_training_tab",
+    "create_diagnosis_tab",
 ]
