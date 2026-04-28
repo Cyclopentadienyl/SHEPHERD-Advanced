@@ -221,4 +221,5 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-28 | CLI smoke test | Full E2E via CLI: setup_demo → train → SP → uvicorn → curl /diagnose | Real pipeline result (not mock); found API schema gap (sp_score/evidence_package/confidence_label missing from Pydantic model) |
 | 2026-04-28 | API schema fix | Sync API Pydantic DiagnosisCandidate with core types.py; update endpoint mapping | Added sp_score, evidence_package, confidence_label to API response |
 | 2026-04-28 | Diagnosis Panel | New diagnosis_panel.py (Tab 2): HPO input → ranked results table + evidence panel + confidence labels | First clinician-facing UI; NoneType format bug fixed; demo button removed per user feedback |
+| 2026-04-28 | F.5: Model Config + Workspace restructure | Data fingerprint, pipeline reload API, Model Config UI, workspace directory layout | Unified data/workspaces/ structure; KG version tracking via fingerprint; UI-based model switching |
 | | | | |
