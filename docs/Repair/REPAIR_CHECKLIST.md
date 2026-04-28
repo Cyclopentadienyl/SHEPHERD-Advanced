@@ -163,9 +163,19 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [ ] **System health dashboard** — `_gnn_ready`, `_sp_ready`, `_vector_index_ready`, KG stats, GPU usage
 
 ### F.4 API gaps to fill
-- [ ] Replace mock responses in `src/api/routes/diagnose.py` once Step C output schema is finalized
+- [x] Replace mock responses in `src/api/routes/diagnose.py` once Step C output schema is finalized — DONE (PR #55, API schema sync)
 - [ ] Add `/diagnose/explain/{candidate_id}` endpoint for on-demand evidence detail
 - [ ] Restrict CORS for production (Phase 4.2 task)
+
+### F.5 Model/Pipeline Configuration UX (discovered 2026-04-28)
+- [ ] **Diagnosis tab should allow selecting which model directory to load** — currently requires setting `SHEPHERD_KG_PATH` / `SHEPHERD_CHECKPOINT_PATH` / `SHEPHERD_DATA_DIR` as OS environment variables before starting uvicorn. Doctors should not need to run `set` or `$env:` commands.
+  - Design: a "Model Configuration" accordion in the Diagnosis tab (or a separate Settings tab) with:
+    - Data directory path (default: `data/processed` for production, `data/demo` for demo)
+    - Pipeline status indicator (loaded / not loaded / error)
+    - "Load Pipeline" button to initialize or reload
+  - All files in a model directory share the same folder: `kg.json`, `node_features.pt`, `edge_indices.pt`, `num_nodes.json`, `model_checkpoint.pt`, `shortest_paths.pt`
+  - Production deployment should have defaults configured in `configs/deployment.yaml` or `launch_shepherd.sh`/`.cmd` so the UI "just works" without manual env var setup
+- [ ] **Ensure `launch_shepherd.sh` / `launch_shepherd.cmd` set default env vars** from `configs/deployment.yaml` paths section, so production startup is zero-config for the UI
 
 ---
 
@@ -210,4 +220,5 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-08 | PR #54 test fix | Restore stray `sp_far` assertion that Edit operation misplaced | 24/24 integration tests PASS locally (17 existing + 7 new); backend verified end-to-end |
 | 2026-04-28 | CLI smoke test | Full E2E via CLI: setup_demo → train → SP → uvicorn → curl /diagnose | Real pipeline result (not mock); found API schema gap (sp_score/evidence_package/confidence_label missing from Pydantic model) |
 | 2026-04-28 | API schema fix | Sync API Pydantic DiagnosisCandidate with core types.py; update endpoint mapping | Added sp_score, evidence_package, confidence_label to API response |
+| 2026-04-28 | Diagnosis Panel | New diagnosis_panel.py (Tab 2): HPO input → ranked results table + evidence panel + confidence labels | First clinician-facing UI; NoneType format bug fixed; demo button removed per user feedback |
 | | | | |
