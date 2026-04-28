@@ -163,9 +163,19 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [ ] **System health dashboard** — `_gnn_ready`, `_sp_ready`, `_vector_index_ready`, KG stats, GPU usage
 
 ### F.4 API gaps to fill
-- [ ] Replace mock responses in `src/api/routes/diagnose.py` once Step C output schema is finalized
+- [x] Replace mock responses in `src/api/routes/diagnose.py` once Step C output schema is finalized — DONE (PR #55, API schema sync)
 - [ ] Add `/diagnose/explain/{candidate_id}` endpoint for on-demand evidence detail
 - [ ] Restrict CORS for production (Phase 4.2 task)
+
+### F.5 Model/Pipeline Configuration UX (discovered 2026-04-28)
+- [ ] **Diagnosis tab should allow selecting which model directory to load** — currently requires setting `SHEPHERD_KG_PATH` / `SHEPHERD_CHECKPOINT_PATH` / `SHEPHERD_DATA_DIR` as OS environment variables before starting uvicorn. Doctors should not need to run `set` or `$env:` commands.
+  - Design: a "Model Configuration" accordion in the Diagnosis tab (or a separate Settings tab) with:
+    - Data directory path (default: `data/processed` for production, `data/demo` for demo)
+    - Pipeline status indicator (loaded / not loaded / error)
+    - "Load Pipeline" button to initialize or reload
+  - All files in a model directory share the same folder: `kg.json`, `node_features.pt`, `edge_indices.pt`, `num_nodes.json`, `model_checkpoint.pt`, `shortest_paths.pt`
+  - Production deployment should have defaults configured in `configs/deployment.yaml` or `launch_shepherd.sh`/`.cmd` so the UI "just works" without manual env var setup
+- [ ] **Ensure `launch_shepherd.sh` / `launch_shepherd.cmd` set default env vars** from `configs/deployment.yaml` paths section, so production startup is zero-config for the UI
 
 ---
 
@@ -191,6 +201,7 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
   - (c) Document that real workflows should start from `build_knowledge_graph.py` → `kg.json` → train_model.py + compute_shortest_paths.py
 - [ ] **`train_model.py` synthetic data has no biological meaning**: pure random features and edges. Only useful for "does the code run?" — NOT for "does the model learn anything meaningful?". Consider deprecating it in favor of `setup_demo.py` as the canonical small-scale test path, OR document its limitation clearly in the docstring.
 - [ ] **No canonical "from scratch" workflow**: we have multiple scripts that each produce partial data (setup_demo, train_model, build_knowledge_graph, compute_shortest_paths) but no single entry point that runs them in the correct order. Consider adding a top-level `scripts/bootstrap_demo.sh` (or Makefile target) that chains them correctly.
+- [ ] **Training Console ↔ demo data incompatibility** (discovered 2026-04-28): Training Console WebUI calls `train_model.py` which expects `train_samples.json` / `val_samples.json` (patient→disease supervised training pairs). `setup_demo.py` does NOT produce these files — it uses its own self-supervised mini training loop instead. If Training Console is pointed at `data/demo/`, `train_model.py` auto-triggers `generate_synthetic_data()` which (a) overwrites demo graph data files with random noise, AND (b) uses hardcoded edge type names (`"associated_with"`) that mismatch the KG edge types (`"gene_associated_with_disease"`), causing the same metadata mismatch bug fixed in PR #52. **Fix**: make `setup_demo.py` also generate `train_samples.json`/`val_samples.json` from the demo KG, OR add a guard in `train_model.py` to never auto-overwrite existing graph data files.
 
 ---
 
@@ -209,4 +220,5 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-08 | PR #54 test fix | Restore stray `sp_far` assertion that Edit operation misplaced | 24/24 integration tests PASS locally (17 existing + 7 new); backend verified end-to-end |
 | 2026-04-28 | CLI smoke test | Full E2E via CLI: setup_demo → train → SP → uvicorn → curl /diagnose | Real pipeline result (not mock); found API schema gap (sp_score/evidence_package/confidence_label missing from Pydantic model) |
 | 2026-04-28 | API schema fix | Sync API Pydantic DiagnosisCandidate with core types.py; update endpoint mapping | Added sp_score, evidence_package, confidence_label to API response |
+| 2026-04-28 | Diagnosis Panel | New diagnosis_panel.py (Tab 2): HPO input → ranked results table + evidence panel + confidence labels | First clinician-facing UI; NoneType format bug fixed; demo button removed per user feedback |
 | | | | |
