@@ -115,13 +115,16 @@ class DiagnosisCandidate(BaseModel):
     rank: int = Field(..., description="Ranking position (1-based)")
     disease_id: str = Field(..., description="Disease identifier (MONDO/OMIM)")
     disease_name: str = Field(..., description="Disease name")
-    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Overall confidence")
-    gnn_score: Optional[float] = Field(None, description="GNN model score")
-    reasoning_score: Optional[float] = Field(None, description="Path reasoning score")
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Overall confidence (eta * gnn + (1-eta) * sp)")
+    gnn_score: Optional[float] = Field(None, description="GNN embedding similarity score")
+    reasoning_score: Optional[float] = Field(None, description="Path reasoning score (fallback only)")
+    sp_score: Optional[float] = Field(None, description="Shortest-path similarity score")
     matching_phenotypes: List[str] = Field(default_factory=list, description="Matched HPO terms")
     supporting_genes: List[str] = Field(default_factory=list, description="Supporting gene evidence")
     explanation: Optional[str] = Field(None, description="Human-readable explanation")
-    reasoning_paths: Optional[List[List[str]]] = Field(None, description="Reasoning paths")
+    reasoning_paths: Optional[List[List[str]]] = Field(None, description="Reasoning paths through KG")
+    evidence_package: Optional[Dict[str, Any]] = Field(None, description="Step C evidence: mode (direct_path/analogy_based/insufficient), confidence_label, paths or analogies")
+    confidence_label: Optional[str] = Field(None, description="Clinician-facing label: Strong path support / Weak path support / Analogy-based / Insufficient evidence")
 
 
 class DiagnoseResponse(BaseModel):
@@ -138,19 +141,22 @@ class DiagnoseResponse(BaseModel):
 
     model_config = {"json_schema_extra": {
         "example": {
-            "session_id": "sess_abc123",
-            "patient_id": "patient_001",
-            "timestamp": "2026-01-25T10:30:00Z",
+            "session_id": "sess_a1b2c3d4e5f6",
+            "patient_id": "demo_001",
+            "timestamp": "2026-04-28T10:30:00Z",
             "candidates": [
                 {
                     "rank": 1,
-                    "disease_id": "MONDO:0007947",
-                    "disease_name": "Marfan syndrome",
-                    "confidence_score": 0.85,
-                    "explanation": "High match based on skeletal and cardiovascular phenotypes",
+                    "disease_id": "mondo:MONDO:0011073",
+                    "disease_name": "Dravet syndrome",
+                    "confidence_score": 0.72,
+                    "gnn_score": 0.65,
+                    "sp_score": 0.88,
+                    "confidence_label": "Strong path support",
+                    "explanation": "Direct KG path: Seizure → SCN1A → Dravet syndrome",
                 }
             ],
-            "inference_time_ms": 150.5,
+            "inference_time_ms": 2.5,
             "model_version": "1.0.0",
         }
     }}
@@ -224,12 +230,15 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                     confidence_score=c.confidence_score,
                     gnn_score=c.gnn_score,
                     reasoning_score=c.reasoning_score,
+                    sp_score=c.sp_score,
                     supporting_genes=c.supporting_genes,
                     explanation=c.explanation if request.include_explanations else None,
                     reasoning_paths=(
                         [[str(n) for n in path] for path in c.reasoning_paths]
                         if request.include_paths and c.reasoning_paths else None
                     ),
+                    evidence_package=c.evidence_package if request.include_explanations else None,
+                    confidence_label=c.confidence_label if request.include_explanations else None,
                 )
                 for c in result.candidates
             ]
