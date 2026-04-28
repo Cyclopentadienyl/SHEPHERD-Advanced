@@ -184,6 +184,14 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [ ] Improve `_load_model_from_checkpoint` error reporting — currently catches RuntimeError silently; should log WARNING with specific mismatch details so operators can diagnose checkpoint compat issues
 - [ ] Investigate "gene node not updated during message passing" PyG warning — may be `rev_*` naming convention quirk; revisit after Phase 3 ortholog edges are added
 
+### 4.3 CLI / Script Integration Gaps (discovered during CLI smoke test 2026-04-08)
+- [ ] **`train_model.py` ↔ `compute_shortest_paths.py` output mismatch**: `train_model.py:generate_synthetic_data()` produces `node_features.pt`/`edge_indices.pt`/`num_nodes.json` but NOT `kg.json`. `compute_shortest_paths.py` requires `kg.json` as input. Result: the two scripts cannot be chained directly. Either:
+  - (a) Make `train_model.py` also emit a `kg.json` when generating synthetic data, OR
+  - (b) Make `compute_shortest_paths.py` accept `node_features.pt`+`edge_indices.pt` directly (no KG object), OR
+  - (c) Document that real workflows should start from `build_knowledge_graph.py` → `kg.json` → train_model.py + compute_shortest_paths.py
+- [ ] **`train_model.py` synthetic data has no biological meaning**: pure random features and edges. Only useful for "does the code run?" — NOT for "does the model learn anything meaningful?". Consider deprecating it in favor of `setup_demo.py` as the canonical small-scale test path, OR document its limitation clearly in the docstring.
+- [ ] **No canonical "from scratch" workflow**: we have multiple scripts that each produce partial data (setup_demo, train_model, build_knowledge_graph, compute_shortest_paths) but no single entry point that runs them in the correct order. Consider adding a top-level `scripts/bootstrap_demo.sh` (or Makefile target) that chains them correctly.
+
 ---
 
 ## Session Log
@@ -199,4 +207,6 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-07 | Step B: Shortest path | Precompute script + pipeline loading + eta mixing + 6 new tests | Implements original SHEPHERD scoring formula η*emb + (1-η)*SP with graceful fallback |
 | 2026-04-08 | Step C: Evidence panel | New EvidencePanel module with Mode A/B + confidence labels + 7 new tests | Backend now 100% complete; ready for frontend planning |
 | 2026-04-08 | PR #54 test fix | Restore stray `sp_far` assertion that Edit operation misplaced | 24/24 integration tests PASS locally (17 existing + 7 new); backend verified end-to-end |
+| 2026-04-28 | CLI smoke test | Full E2E via CLI: setup_demo → train → SP → uvicorn → curl /diagnose | Real pipeline result (not mock); found API schema gap (sp_score/evidence_package/confidence_label missing from Pydantic model) |
+| 2026-04-28 | API schema fix | Sync API Pydantic DiagnosisCandidate with core types.py; update endpoint mapping | Added sp_score, evidence_package, confidence_label to API response |
 | | | | |
