@@ -119,7 +119,7 @@ def _load_saved_config() -> Dict[str, Any]:
         resp.raise_for_status()
         return resp.json()
     except Exception:
-        return {"data_dir": "data/processed", "checkpoint_path": None}
+        return {"data_dir": "data/workspaces/default", "checkpoint_path": None}
 
 
 def _save_config_to_server(data_dir: str, checkpoint_path: str) -> str:
@@ -421,7 +421,7 @@ def _on_save_config(data_dir: str, checkpoint_path: str) -> str:
 
 def _on_reset_defaults() -> Tuple[str, str, str]:
     """Handle Reset Defaults button click."""
-    return "data/processed", "", "Paths reset to defaults."
+    return "data/workspaces/default", "", "Paths reset to defaults."
 
 
 def _on_load_status() -> str:
@@ -462,7 +462,7 @@ def create_diagnosis_tab() -> None:
         with gr.Row():
             data_dir_input = gr.Textbox(
                 label="Data Directory",
-                value=saved_cfg.get("data_dir", "data/processed"),
+                value=saved_cfg.get("data_dir", "data/workspaces/default"),
                 info="Folder containing kg.json, node_features.pt, edge_indices.pt, etc.",
             )
             checkpoint_input = gr.Textbox(

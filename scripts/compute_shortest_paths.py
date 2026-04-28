@@ -26,8 +26,8 @@ should be assigned SP_similarity = 0.0 by the inference pipeline.
 
 Usage:
     python scripts/compute_shortest_paths.py \\
-        --kg-path data/processed/kg.json \\
-        --output-dir data/processed/ \\
+        --kg-path data/workspaces/demo/kg.json \\
+        --output-dir data/workspaces/demo/ \\
         --max-hops 5
 """
 from __future__ import annotations

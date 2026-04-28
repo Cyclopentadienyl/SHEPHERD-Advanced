@@ -14,7 +14,7 @@ Purpose:
 
 Usage:
     python scripts/train_model.py --config configs/train_config.yaml
-    python scripts/train_model.py --data-dir data/processed --epochs 100
+    python scripts/train_model.py --data-dir data/workspaces/demo --epochs 100
     python scripts/train_model.py --resume checkpoints/last.pt
 
 Dependencies:
@@ -90,9 +90,9 @@ logger = logging.getLogger(__name__)
 class TrainConfig:
     """Complete training configuration"""
     # Paths
-    data_dir: str = "data/processed"
+    data_dir: str = "data/workspaces/default"
     output_dir: str = "outputs"
-    checkpoint_dir: str = "models/checkpoints"
+    checkpoint_dir: str = ""  # empty = auto-derive as {data_dir}/checkpoints
     log_dir: str = "logs"
     config_file: Optional[str] = None
 
@@ -513,7 +513,11 @@ def train(config: TrainConfig) -> Dict[str, float]:
 
     # Create output directories
     output_dir = Path(config.output_dir)
-    checkpoint_dir = Path(config.checkpoint_dir)
+    # Auto-derive checkpoint_dir from data_dir if not explicitly set
+    if config.checkpoint_dir:
+        checkpoint_dir = Path(config.checkpoint_dir)
+    else:
+        checkpoint_dir = Path(config.data_dir) / "checkpoints"
     log_dir = Path(config.log_dir)
 
     for d in [output_dir, checkpoint_dir, log_dir]:

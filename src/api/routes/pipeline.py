@@ -28,8 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 CONFIG_FILE = Path(".shepherd_ui_config.json")
-DEFAULT_DATA_DIR = "data/processed"
-DEFAULT_CHECKPOINT_DIR = "models/production"
+DEFAULT_WORKSPACE_DIR = "data/workspaces/default"
 
 
 # =============================================================================
@@ -79,7 +78,7 @@ class PipelineReloadResponse(BaseModel):
 
 class UIConfigResponse(BaseModel):
     """Saved UI configuration."""
-    data_dir: str = DEFAULT_DATA_DIR
+    data_dir: str = DEFAULT_WORKSPACE_DIR
     checkpoint_path: Optional[str] = None
 
 
@@ -108,11 +107,17 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
     if checkpoint_path:
         result["checkpoint"] = Path(checkpoint_path).exists()
     else:
-        pts = list(d.glob("*.pt"))
-        ckpts = [p for p in pts if "checkpoint" in p.name or "model" in p.name]
+        # Scan workspace/checkpoints/ subdirectory for .pt files
+        ckpt_dir = d / "checkpoints"
+        if ckpt_dir.is_dir():
+            ckpts = list(ckpt_dir.glob("*.pt"))
+        else:
+            # Fallback: scan root for legacy layout
+            ckpts = [p for p in d.glob("*.pt")
+                     if "checkpoint" in p.name or "model" in p.name]
         result["checkpoint"] = len(ckpts) > 0
         if ckpts:
-            result["checkpoint_files"] = [p.name for p in ckpts]
+            result["checkpoint_files"] = [str(p.relative_to(d)) for p in ckpts]
 
     return result
 
@@ -176,11 +181,17 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             files_found=files,
         )
 
-    # Resolve checkpoint path
+    # Resolve checkpoint path (prefer checkpoints/ subdir, fallback to root)
     if not checkpoint_path:
         d = Path(data_dir)
-        ckpts = [p for p in d.glob("*.pt")
-                 if "checkpoint" in p.name or "model" in p.name]
+        ckpt_dir = d / "checkpoints"
+        if ckpt_dir.is_dir():
+            ckpts = sorted(ckpt_dir.glob("*.pt"))
+        else:
+            ckpts = sorted(
+                p for p in d.glob("*.pt")
+                if "checkpoint" in p.name or "model" in p.name
+            )
         if ckpts:
             checkpoint_path = str(ckpts[0])
             logger.info(f"Auto-detected checkpoint: {checkpoint_path}")

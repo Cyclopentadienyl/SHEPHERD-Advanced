@@ -43,9 +43,9 @@ class TrainingStartRequest(BaseModel):
     """Training start request with configuration parameters."""
 
     # Paths
-    data_dir: str = Field(default="data/processed", description="Processed data directory")
+    data_dir: str = Field(default="data/workspaces/default", description="Workspace directory")
     output_dir: str = Field(default="outputs", description="Output directory")
-    checkpoint_dir: str = Field(default="models/checkpoints", description="Checkpoint directory")
+    checkpoint_dir: str = Field(default="", description="Checkpoint directory (blank = auto-derive from workspace)")
     log_dir: str = Field(default="logs", description="Log directory")
 
     # Tier 1 — Basic

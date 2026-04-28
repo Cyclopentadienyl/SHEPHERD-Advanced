@@ -208,7 +208,7 @@ class EarlyStopping(Callback):
 @dataclass
 class ModelCheckpointConfig:
     """模型檢查點配置"""
-    dirpath: str = "models/checkpoints"
+    dirpath: str = "checkpoints"  # relative to workspace or project root
     filename: str = "model-{epoch:02d}-{val_loss:.4f}"
     monitor: str = "val_loss"
     mode: str = "min"

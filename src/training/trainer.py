@@ -115,7 +115,7 @@ class TrainerConfig:
     eval_every_n_steps: Optional[int] = None
 
     # Checkpointing
-    checkpoint_dir: str = "models/checkpoints"
+    checkpoint_dir: str = ""  # empty = auto-derive from data_dir + /checkpoints
     save_top_k: int = 3
     save_last: bool = True
 

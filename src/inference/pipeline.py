@@ -35,7 +35,7 @@
 #   pipeline = DiagnosisPipeline(
 #       kg=knowledge_graph,
 #       checkpoint_path="checkpoints/last.pt",
-#       data_dir="data/processed",
+#       data_dir="data/workspaces/demo",
 #   )
 #   result = pipeline.run(patient_phenotypes, top_k=10)
 # ==============================================================================

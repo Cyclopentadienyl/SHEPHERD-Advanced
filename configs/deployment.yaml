@@ -138,8 +138,9 @@ indexing:
 # Directory Paths
 # =============================================================================
 paths:
-  data_root: data/
-  models_root: models/
+  workspaces_root: data/workspaces/
+  default_workspace: data/workspaces/default
+  pretrained_root: models/pretrained/
   logs_root: logs/
   cache_root: .cache/
 
