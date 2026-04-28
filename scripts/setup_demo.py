@@ -352,6 +352,140 @@ def train_minimal_model(
 
 
 # =============================================================================
+# Training sample generation
+# =============================================================================
+def generate_training_samples(
+    kg: KnowledgeGraph,
+    output_dir: Path,
+    num_train: int = 200,
+    num_val: int = 50,
+) -> None:
+    """
+    Generate train_samples.json and val_samples.json for the demo workspace.
+
+    These files are required by scripts/train_model.py (via Training Console).
+    Each sample is a simulated patient with a subset of phenotypes and a
+    target disease, derived from the actual KG structure so the training
+    signal is meaningful (not random).
+
+    Format per sample:
+        {"patient_id": str, "phenotype_ids": [int], "disease_id": int}
+
+    Where phenotype_ids and disease_id are integer indices matching the
+    node ordering in node_features.pt (from kg.get_node_id_mapping()).
+    """
+    import random
+    random.seed(42)
+
+    node_mapping = kg.get_node_id_mapping()
+    pheno_map = node_mapping.get("phenotype", {})
+    disease_map = node_mapping.get("disease", {})
+
+    if not pheno_map or not disease_map:
+        logger.warning("Cannot generate training samples: no phenotype or disease nodes")
+        return
+
+    # Build disease → associated phenotype indices from KG edges
+    disease_phenotypes: dict = {}
+    for edge in kg._edges:
+        src_node = kg._nodes.get(str(edge.source_id))
+        tgt_node = kg._nodes.get(str(edge.target_id))
+        if src_node is None or tgt_node is None:
+            continue
+
+        # gene_has_phenotype + gene_associated_with_disease → indirect mapping
+        # phenotype_of_disease → direct mapping
+        if (src_node.node_type == NodeType.PHENOTYPE
+                and tgt_node.node_type == NodeType.DISEASE):
+            d_idx = disease_map.get(str(edge.target_id))
+            p_idx = pheno_map.get(str(edge.source_id))
+            if d_idx is not None and p_idx is not None:
+                disease_phenotypes.setdefault(d_idx, set()).add(p_idx)
+
+    # Also build indirect: phenotype → gene → disease
+    gene_phenotypes: dict = {}
+    gene_diseases: dict = {}
+    gene_map = node_mapping.get("gene", {})
+
+    for edge in kg._edges:
+        src_node = kg._nodes.get(str(edge.source_id))
+        tgt_node = kg._nodes.get(str(edge.target_id))
+        if src_node is None or tgt_node is None:
+            continue
+        src_str = str(edge.source_id)
+        tgt_str = str(edge.target_id)
+
+        if (src_node.node_type.value == "gene"
+                and tgt_node.node_type.value == "phenotype"):
+            g_idx = gene_map.get(src_str)
+            p_idx = pheno_map.get(tgt_str)
+            if g_idx is not None and p_idx is not None:
+                gene_phenotypes.setdefault(g_idx, set()).add(p_idx)
+
+        if (src_node.node_type.value == "gene"
+                and tgt_node.node_type.value == "disease"):
+            g_idx = gene_map.get(src_str)
+            d_idx = disease_map.get(tgt_str)
+            if g_idx is not None and d_idx is not None:
+                gene_diseases.setdefault(g_idx, set()).add(d_idx)
+
+    # Merge indirect phenotypes into disease_phenotypes
+    for g_idx, d_indices in gene_diseases.items():
+        g_phenos = gene_phenotypes.get(g_idx, set())
+        for d_idx in d_indices:
+            disease_phenotypes.setdefault(d_idx, set()).update(g_phenos)
+
+    if not disease_phenotypes:
+        logger.warning("No disease-phenotype associations found in KG")
+        return
+
+    all_pheno_indices = list(range(len(pheno_map)))
+    disease_indices = list(disease_phenotypes.keys())
+
+    def make_samples(n: int) -> list:
+        samples = []
+        for i in range(n):
+            # Pick a random disease
+            d_idx = random.choice(disease_indices)
+            associated = list(disease_phenotypes.get(d_idx, set()))
+
+            if not associated:
+                continue
+
+            # Patient gets 2-5 associated phenotypes + 0-2 noise phenotypes
+            n_assoc = min(len(associated), random.randint(2, 5))
+            patient_phenos = random.sample(associated, n_assoc)
+
+            noise_pool = [p for p in all_pheno_indices if p not in associated]
+            n_noise = min(len(noise_pool), random.randint(0, 2))
+            if n_noise > 0:
+                patient_phenos += random.sample(noise_pool, n_noise)
+
+            random.shuffle(patient_phenos)
+
+            samples.append({
+                "patient_id": f"patient_{i:05d}",
+                "phenotype_ids": patient_phenos,
+                "disease_id": d_idx,
+            })
+        return samples
+
+    train_samples = make_samples(num_train)
+    val_samples = make_samples(num_val)
+
+    with open(output_dir / "train_samples.json", "w") as f:
+        json.dump(train_samples, f)
+    with open(output_dir / "val_samples.json", "w") as f:
+        json.dump(val_samples, f)
+
+    logger.info(
+        f"Training samples generated: {len(train_samples)} train, "
+        f"{len(val_samples)} val ({len(disease_indices)} diseases, "
+        f"{len(all_pheno_indices)} phenotypes)"
+    )
+
+
+# =============================================================================
 # Main
 # =============================================================================
 def main():
@@ -385,7 +519,11 @@ def main():
         logger.info("Generating graph data for GNN...")
         generate_graph_data(kg, output_dir)
 
-        # Step 3: Train minimal model
+        # Step 3: Generate training samples
+        logger.info("Generating training samples...")
+        generate_training_samples(kg, output_dir)
+
+        # Step 4: Train minimal model
         train_minimal_model(kg, output_dir)
 
     # Print startup instructions
