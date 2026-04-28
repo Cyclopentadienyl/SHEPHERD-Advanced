@@ -85,28 +85,86 @@ SHEPHERD-Advanced 的後端（診斷推理引擎）已完整對齊原始 SHEPHER
 
 ---
 
-## 里程碑 3：前端開發（規劃中）
+## 里程碑 3：前端診斷介面上線（2026-04-28）
 
-### 設計方向
+### 完成的工作
 
-受 stable-diffusion-webui 啟發——單一系統中包含功能和複雜程度不同的多個子頁面：
+醫生用的「病患診斷介面」已實作完成並通過端到端測試。這是整個系統中**醫療團隊直接使用**的核心功能頁面。
 
-| 使用者 | 子頁面 | 功能 |
+### 功能介紹
+
+#### 診斷介面（Diagnosis Tab）
+
+醫生在左側輸入病患的 HPO 症狀代碼（例如 `HP:0001250 — Seizure`），點擊「Run Diagnosis」後，右側即時顯示：
+
+1. **候選疾病排名表**：每個候選顯示綜合信心分數、GNN 嵌入相似度、最短路徑相似度、以及信心標籤
+2. **證據面板**：選擇任一候選後，展示 AI 的推理路徑（Mode A 直接路徑或 Mode B 類比證據）
+3. **完整解釋**：可展開查看詳細的推理說明，包含關聯基因和推理路徑分數
+
+<!-- 如果有截圖，放在 docs/images/ 並取消下面的註解 -->
+<!-- ![診斷結果展示](images/diagnosis_results.png) -->
+<!-- ![證據面板展示](images/evidence_panel.png) -->
+
+#### 模型配置面板（Model Configuration）
+
+診斷介面頂部有一個可摺疊的「Model Configuration」面板，提供：
+
+- **Workspace 路徑設定**：指定包含 KG 和模型檔案的資料夾（預設使用標準路徑，醫生不需要更改）
+- **Pipeline 狀態顯示**：即時展示 GNN、SP、KG 的載入狀態和統計資料
+- **檔案完整性檢查**：自動掃描資料夾中的必要檔案，用 ✅/❌ 標記
+- **KG 版本校驗**：當模型和 KG 版本不匹配時，自動顯示黃色警告
+- **三個操作按鈕**：
+  - 🔄 Reload Pipeline — 載入或重新載入模型
+  - 💾 Save Config — 儲存路徑設定（下次啟動自動記住）
+  - ↩️ Reset Defaults — 恢復預設路徑
+
+### 展示結果（Seizure + Global developmental delay）
+
+| Rank | 疾病 | 信心分數 | GNN | SP | 信心標籤 |
+|------|------|---------|-----|-----|---------|
+| #1 | Dravet syndrome | 0.512 | 0.560 | 0.400 | 🟢 Strong path support |
+| #2 | Rett syndrome | 0.489 | 0.556 | 0.333 | 🟢 Strong path support |
+| #3 | CDKL5 deficiency disorder | 0.476 | 0.509 | 0.400 | 🟢 Strong path support |
+| #4 | Achondroplasia | 0.416 | 0.522 | 0.167 | 🟡 Weak path support |
+| #5 | Tuberous sclerosis complex | 0.371 | 0.388 | 0.333 | 🟢 Strong path support |
+
+**臨床解讀**：Dravet syndrome 排名第一，符合 Seizure + Developmental delay 的臨床表現。Supporting genes 包含 SCN1A（Dravet 的主要致病基因），Evidence Panel 顯示從 HP:0001250（Seizure）到 MONDO:0011073（Dravet syndrome）只需 1 hop 的直接路徑。
+
+> **注意**：此結果使用 24 節點迷你知識圖譜和簡易訓練模型。正式 PrimeKG 訓練後排名精確度會進一步提升。
+
+### 資料結構重整
+
+同步完成了資料目錄結構的重大重構——從舊的「data/ + models/ 分離」改為「workspace 統一管理」：
+
+```
+data/workspaces/{KG版本名稱}/      ← 一個資料夾 = 一個完整的工作環境
+├── kg.json                         ← 知識圖譜
+├── node_features.pt, edge_indices.pt, num_nodes.json  ← 圖數據
+├── shortest_paths.pt               ← 最短路徑 lookup
+└── checkpoints/                    ← 基於此 KG 訓練的模型（可有多個）
+```
+
+**好處**：
+- 不可能配錯 KG 版本和 model 版本（同資料夾 = 同版本）
+- 切換版本只需要改一個路徑
+- 內建 fingerprint 校驗機制防止誤配
+
+### 目前完成的子頁面
+
+| 使用者 | 子頁面 | 狀態 |
 |--------|-------|------|
-| 臨床醫生 | 病患診斷頁面 | 輸入 HPO 症狀 → 查看排名 + 證據 + 信心標籤 |
-| 臨床醫生 | 相似病患檢索 | 查找與當前病患最相似的已確診病例 |
-| 工程團隊 | 訓練監控 console | 即時監控訓練進度（已完成 ✅） |
-| 工程團隊 | 超參數調整 | 調整訓練配置（已完成 ✅） |
-| 工程團隊 | Checkpoint 管理 | 管理已訓練的模型版本 |
-| 工程團隊 | 系統健康儀表板 | 監控 GNN/SP/Vector Index 狀態 |
+| 臨床醫生 | **病患診斷頁面** | ✅ **已完成** |
+| 臨床醫生 | 相似病患檢索（Patients-Like-Me） | ⏸ 規劃中 |
+| 工程團隊 | 訓練監控 console | ✅ 已完成 |
+| 工程團隊 | 超參數調整 | ✅ 已完成 |
+| 工程團隊 | Checkpoint 管理 | ⏸ 規劃中 |
+| 工程團隊 | 系統健康儀表板 | ⏸ 規劃中 |
 
-### 目前進度
+### 下一步
 
-- ✅ 後端推理引擎：完成
-- ✅ API 端點：基本診斷功能完成（`/api/v1/diagnose`）
-- ✅ 訓練監控 WebUI：已完成
-- 🔜 臨床醫生用診斷介面：規劃中
-- ⏸ 進階擴充功能（跨物種推理、文獻整合、FHIR 對接）：已凍結至 Phase 2+
+- 完善 UI 細節（HPO 自動完成搜尋、結果匯出等）
+- Patients-Like-Me 檢索頁面
+- 工程團隊進階頁面
 
 ---
 
