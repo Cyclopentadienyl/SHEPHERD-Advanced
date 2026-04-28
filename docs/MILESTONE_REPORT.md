@@ -102,8 +102,8 @@ SHEPHERD-Advanced 的後端（診斷推理引擎）已完整對齊原始 SHEPHER
 3. **完整解釋**：可展開查看詳細的推理說明，包含關聯基因和推理路徑分數
 
 <!-- 如果有截圖，放在 docs/images/ 並取消下面的註解 -->
-<!-- ![診斷結果展示](images/diagnosis_results.png) -->
-<!-- ![證據面板展示](images/evidence_panel.png) -->
+[診斷結果展示](images/diagnosis_results.png) 
+[證據面板展示](images/evidence_panel.png) 
 
 #### 模型配置面板（Model Configuration）
 
