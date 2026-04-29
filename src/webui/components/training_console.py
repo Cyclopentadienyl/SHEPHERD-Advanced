@@ -29,6 +29,7 @@ Version: 1.0.0
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -41,6 +42,40 @@ import pandas as pd
 from src.api.services.training_manager import training_manager
 
 logger = logging.getLogger(__name__)
+
+
+TRAINING_CONFIG_FILE = Path(".shepherd_training_config.json")
+DEFAULT_WORKSPACE = "data/workspaces/default"
+DISPLAY_PREFIX = "SHEPHERD-Advanced/"
+
+
+def _load_training_config() -> Dict[str, str]:
+    """Load saved training path config."""
+    if TRAINING_CONFIG_FILE.exists():
+        try:
+            with open(TRAINING_CONFIG_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"data_dir": DEFAULT_WORKSPACE}
+
+
+def _save_training_config(data_dir: str) -> str:
+    """Save training path config."""
+    stripped = data_dir.strip()
+    if stripped.startswith(DISPLAY_PREFIX):
+        stripped = stripped[len(DISPLAY_PREFIX):]
+    try:
+        with open(TRAINING_CONFIG_FILE, "w") as f:
+            json.dump({"data_dir": stripped}, f, indent=2)
+        return "Training path config saved."
+    except Exception as e:
+        return f"Failed to save: {e}"
+
+
+def _reset_training_config() -> Tuple[str, str]:
+    """Reset training path config to defaults."""
+    return f"{DISPLAY_PREFIX}{DEFAULT_WORKSPACE}", "Paths reset to defaults."
 
 
 def _collect_config(
@@ -745,11 +780,13 @@ def create_training_tab() -> None:
             # Data Paths
             # -----------------------------------------------------------------
             with gr.Accordion("Data Paths", open=False):
+                saved_train_cfg = _load_training_config()
+                saved_data_dir = saved_train_cfg.get("data_dir", DEFAULT_WORKSPACE)
                 with gr.Group():
                     data_dir = gr.Textbox(
                         label="Data Directory (Workspace)",
                         info="Workspace folder with kg.json, node_features.pt, edge_indices.pt, etc.",
-                        value="SHEPHERD-Advanced/data/workspaces/default",
+                        value=f"{DISPLAY_PREFIX}{saved_data_dir}",
                         elem_id="data_dir",
                     )
                     output_dir = gr.Textbox(
@@ -764,6 +801,10 @@ def create_training_tab() -> None:
                         value="",
                         elem_id="checkpoint_dir",
                     )
+                with gr.Row():
+                    save_path_btn = gr.Button("💾 Save Path", size="sm", variant="secondary")
+                    reset_path_btn = gr.Button("↩️ Reset Default", size="sm", variant="secondary")
+                path_msg = gr.Markdown(value="")
 
             # -----------------------------------------------------------------
             # Tier 1 — Basic Parameters (always visible)
@@ -1166,6 +1207,16 @@ def create_training_tab() -> None:
         fn=_refresh_checkpoints,
         inputs=[data_dir],
         outputs=[checkpoint_dropdown],
+    )
+    save_path_btn.click(
+        fn=_save_training_config,
+        inputs=[data_dir],
+        outputs=[path_msg],
+    )
+    reset_path_btn.click(
+        fn=_reset_training_config,
+        inputs=[],
+        outputs=[data_dir, path_msg],
     )
 
     def _handle_export():

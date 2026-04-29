@@ -578,6 +578,12 @@ def train(config: TrainConfig) -> Dict[str, float]:
         config=trainer_config,
     )
 
+    # Compute and attach data fingerprint for KG version tracking.
+    # This gets embedded in every checkpoint saved by Trainer and
+    # ModelCheckpoint callback (they read trainer.data_fingerprint).
+    from src.utils.fingerprint import compute_fingerprint
+    trainer.data_fingerprint = compute_fingerprint(graph_data)
+
     # Resume if specified
     if config.resume_from:
         resume_path = Path(config.resume_from)
