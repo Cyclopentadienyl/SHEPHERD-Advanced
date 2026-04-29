@@ -300,9 +300,9 @@ def _refresh_checkpoints(data_dir_value: str = ""):
         stripped = stripped[len("SHEPHERD-Advanced/"):]
 
     if stripped:
-        workspace_ckpt = Path(stripped) / "checkpoints"
-        if workspace_ckpt.exists():
-            training_manager.checkpoint_dir = workspace_ckpt
+        training_manager.checkpoint_dir = Path(stripped) / "checkpoints"
+
+    logger.info(f"Scanning checkpoints in: {training_manager.checkpoint_dir} (exists={training_manager.checkpoint_dir.exists()})")
 
     checkpoints = training_manager.get_checkpoints()
     choices = []
