@@ -126,5 +126,9 @@ lightning_logs/      # PyTorch Lightning
 
 # --- ARM-specific (DGX Spark) ---
 *.arm64.log
-*_arm_debug.txt.shepherd_ui_config.json
+*_arm_debug.txt
+
+# --- UI config files (user-specific, not tracked) ---
+.shepherd_ui_config.json
+.shepherd_training_config.json
 .workspace_restructure_blueprint.md

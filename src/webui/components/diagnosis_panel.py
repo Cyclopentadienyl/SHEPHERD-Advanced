@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -112,18 +113,29 @@ def _reload_pipeline(data_dir: str, checkpoint_path: str) -> Dict[str, Any]:
         return {"success": False, "message": str(e)}
 
 
+CONFIG_FILE = Path(".shepherd_ui_config.json")
+DEFAULT_WORKSPACE = "data/workspaces/default"
+
+
 def _load_saved_config() -> Dict[str, Any]:
-    """Load saved UI config from API."""
+    """Load saved UI config directly from file (not HTTP — avoids startup race)."""
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"data_dir": DEFAULT_WORKSPACE, "checkpoint_path": None}
+
+
+def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
+    """Save current path config directly to file."""
     try:
-        resp = requests.get(f"{PIPELINE_API}/pipeline/config", timeout=5)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return {"data_dir": "data/workspaces/default", "checkpoint_path": None}
-
-
-def _save_config_to_server(data_dir: str, checkpoint_path: str) -> str:
-    """Save current path config via API."""
+        with open(CONFIG_FILE, "w") as f:
+            json.dump({"data_dir": data_dir, "checkpoint_path": checkpoint_path or None}, f, indent=2)
+        return "Configuration saved."
+    except Exception as e:
+        return f"Failed to save: {e}"
     try:
         resp = requests.post(
             f"{PIPELINE_API}/pipeline/config",
@@ -139,7 +151,7 @@ def _save_config_to_server(data_dir: str, checkpoint_path: str) -> str:
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     """Format pipeline status as Markdown."""
     if not status_data.get("initialized", False):
-        return "⚪ **Pipeline not loaded.** Configure paths below and click Reload."
+        return "⚪ **Pipeline not loaded.** Configure paths below and click Load / Reload Pipeline."
 
     gnn = "✅" if status_data.get("gnn_ready") else "❌"
     sp = "✅" if status_data.get("sp_ready") else "❌"
@@ -151,6 +163,26 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
         f"🟢 **Pipeline loaded** | Mode: `{mode}`",
         f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
     ]
+
+    # Checkpoint training info
+    ckpt_meta = status_data.get("checkpoint_meta", {})
+    if ckpt_meta:
+        epoch = ckpt_meta.get("epoch")
+        params = ckpt_meta.get("params")
+        device = ckpt_meta.get("device", "?")
+        meta_parts = []
+        if epoch is not None:
+            meta_parts.append(f"Epoch {epoch}")
+        if params is not None:
+            meta_parts.append(f"{params:,} params")
+        meta_parts.append(f"device={device}")
+        # Training metrics if available
+        for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
+            val = ckpt_meta.get(key)
+            if val is not None:
+                label = key.replace("_", " ").title()
+                meta_parts.append(f"{label}: {val:.4f}")
+        lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
 
     # Fingerprint warnings
     fp_warns = status_data.get("fingerprint_warnings", [])
@@ -416,12 +448,12 @@ def _on_reload_pipeline(data_dir: str, checkpoint_path: str) -> Tuple[str, str]:
 
 def _on_save_config(data_dir: str, checkpoint_path: str) -> str:
     """Handle Save Config button click."""
-    return _save_config_to_server(data_dir, checkpoint_path)
+    return _save_config_to_file(data_dir, checkpoint_path)
 
 
 def _on_reset_defaults() -> Tuple[str, str, str]:
     """Handle Reset Defaults button click."""
-    return "data/workspaces/default", "", "Paths reset to defaults."
+    return DEFAULT_WORKSPACE, "", "Paths reset to defaults."
 
 
 def _on_load_status() -> str:
@@ -473,7 +505,7 @@ def create_diagnosis_tab() -> None:
             )
 
         with gr.Row():
-            reload_btn = gr.Button("🔄 Reload Pipeline", variant="primary", size="sm")
+            reload_btn = gr.Button("🔄 Load / Reload Pipeline", variant="primary", size="sm")
             save_cfg_btn = gr.Button("💾 Save Config", variant="secondary", size="sm")
             reset_btn = gr.Button("↩️ Reset Defaults", variant="secondary", size="sm")
 
