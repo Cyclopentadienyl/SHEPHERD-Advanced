@@ -151,7 +151,7 @@ def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     """Format pipeline status as Markdown."""
     if not status_data.get("initialized", False):
-        return "⚪ **Pipeline not loaded.** Configure paths below and click Reload."
+        return "⚪ **Pipeline not loaded.** Configure paths below and click Load / Reload Pipeline."
 
     gnn = "✅" if status_data.get("gnn_ready") else "❌"
     sp = "✅" if status_data.get("sp_ready") else "❌"
@@ -485,7 +485,7 @@ def create_diagnosis_tab() -> None:
             )
 
         with gr.Row():
-            reload_btn = gr.Button("🔄 Reload Pipeline", variant="primary", size="sm")
+            reload_btn = gr.Button("🔄 Load / Reload Pipeline", variant="primary", size="sm")
             save_cfg_btn = gr.Button("💾 Save Config", variant="secondary", size="sm")
             reset_btn = gr.Button("↩️ Reset Defaults", variant="secondary", size="sm")
 
