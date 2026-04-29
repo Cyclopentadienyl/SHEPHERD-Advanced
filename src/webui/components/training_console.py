@@ -292,8 +292,15 @@ def _export_metrics_csv() -> Optional[str]:
     return path
 
 
-def _refresh_checkpoints():
-    """Refresh checkpoint dropdown choices."""
+def _refresh_checkpoints(data_dir_value: str = ""):
+    """Refresh checkpoint dropdown choices, deriving path from workspace."""
+    # Update training_manager's checkpoint_dir from current data_dir
+    stripped = _strip_prefix(data_dir_value) if data_dir_value else ""
+    if stripped:
+        workspace_ckpt = Path(stripped) / "checkpoints"
+        if workspace_ckpt.exists():
+            training_manager.checkpoint_dir = workspace_ckpt
+
     checkpoints = training_manager.get_checkpoints()
     choices = []
     for ckpt in checkpoints:
@@ -1154,7 +1161,7 @@ def create_training_tab() -> None:
     )
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
-        inputs=[],
+        inputs=[data_dir],
         outputs=[checkpoint_dropdown],
     )
 
