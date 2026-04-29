@@ -265,6 +265,7 @@ class DiagnosisPipeline:
 
         # Fingerprint verification warnings (populated by _load_model_from_checkpoint)
         self._fingerprint_warnings: List[str] = []
+        self._checkpoint_meta: Dict[str, Any] = {}
 
         # Vector index state (populated by _init_vector_index)
         self._vector_index = None
@@ -652,12 +653,26 @@ class DiagnosisPipeline:
 
         model.eval()
 
+        # Store checkpoint training metadata for UI display
+        self._checkpoint_meta = {
+            "epoch": checkpoint.get("epoch"),
+            "params": sum(p.numel() for p in model.parameters()),
+            "device": str(device) if device else "cpu",
+        }
+        # Extract best metrics from logs if available
+        logs = checkpoint.get("logs", {})
+        if isinstance(logs, dict):
+            for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
+                if key in logs:
+                    self._checkpoint_meta[key] = logs[key]
+
         # Move to device
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         model = model.to(device)
+        self._checkpoint_meta["device"] = str(device)
 
-        num_params = sum(p.numel() for p in model.parameters())
+        num_params = self._checkpoint_meta["params"]
         logger.info(
             f"GNN model loaded: {num_params:,} parameters, device={device}"
         )
@@ -1585,6 +1600,7 @@ class DiagnosisPipeline:
             "vector_index_ready": self._vector_index_ready,
             "vector_index_size": len(self._vector_index) if self._vector_index else 0,
             "fingerprint_warnings": getattr(self, "_fingerprint_warnings", []),
+            "checkpoint_meta": getattr(self, "_checkpoint_meta", {}),
             "kg_nodes": len(self.kg._nodes) if self.kg else 0,
             "kg_edges": len(self.kg._edges) if self.kg else 0,
         }

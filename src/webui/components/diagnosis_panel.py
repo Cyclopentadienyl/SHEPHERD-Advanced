@@ -164,6 +164,26 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
         f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
     ]
 
+    # Checkpoint training info
+    ckpt_meta = status_data.get("checkpoint_meta", {})
+    if ckpt_meta:
+        epoch = ckpt_meta.get("epoch")
+        params = ckpt_meta.get("params")
+        device = ckpt_meta.get("device", "?")
+        meta_parts = []
+        if epoch is not None:
+            meta_parts.append(f"Epoch {epoch}")
+        if params is not None:
+            meta_parts.append(f"{params:,} params")
+        meta_parts.append(f"device={device}")
+        # Training metrics if available
+        for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
+            val = ckpt_meta.get(key)
+            if val is not None:
+                label = key.replace("_", " ").title()
+                meta_parts.append(f"{label}: {val:.4f}")
+        lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
+
     # Fingerprint warnings
     fp_warns = status_data.get("fingerprint_warnings", [])
     if fp_warns:
