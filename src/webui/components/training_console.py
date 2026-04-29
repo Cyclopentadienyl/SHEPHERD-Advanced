@@ -292,8 +292,18 @@ def _export_metrics_csv() -> Optional[str]:
     return path
 
 
-def _refresh_checkpoints():
-    """Refresh checkpoint dropdown choices."""
+def _refresh_checkpoints(data_dir_value: str = ""):
+    """Refresh checkpoint dropdown choices, deriving path from workspace."""
+    # Strip UI display prefix (e.g. "SHEPHERD-Advanced/data/..." → "data/...")
+    stripped = data_dir_value.strip() if data_dir_value else ""
+    if stripped.startswith("SHEPHERD-Advanced/"):
+        stripped = stripped[len("SHEPHERD-Advanced/"):]
+
+    if stripped:
+        training_manager.checkpoint_dir = Path(stripped) / "checkpoints"
+
+    logger.info(f"Scanning checkpoints in: {training_manager.checkpoint_dir} (exists={training_manager.checkpoint_dir.exists()})")
+
     checkpoints = training_manager.get_checkpoints()
     choices = []
     for ckpt in checkpoints:
@@ -1154,7 +1164,7 @@ def create_training_tab() -> None:
     )
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
-        inputs=[],
+        inputs=[data_dir],
         outputs=[checkpoint_dropdown],
     )
 

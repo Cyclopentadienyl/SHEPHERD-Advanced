@@ -129,6 +129,14 @@ class TrainingManager:
             self._config = config
             self._error_message = None
 
+            # Derive checkpoint_dir from workspace data_dir if not explicitly set
+            data_dir = config.get("data_dir", "")
+            cfg_ckpt_dir = config.get("checkpoint_dir", "")
+            if data_dir and not cfg_ckpt_dir:
+                self.checkpoint_dir = Path(data_dir) / "checkpoints"
+            elif cfg_ckpt_dir:
+                self.checkpoint_dir = Path(cfg_ckpt_dir)
+
             # Ensure directories exist
             self.log_dir.mkdir(parents=True, exist_ok=True)
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
