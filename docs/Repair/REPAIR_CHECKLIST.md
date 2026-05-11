@@ -59,11 +59,6 @@ benign — likely a PyG HeteroConv quirk with `rev_*` edge naming. Will naturall
 resolve when Phase 3 ortholog edges add real `*→gene` forward edges. Tracked as
 Phase 4 minor cleanup.
 
-### 1.5 E2E Test Fix
-- [ ] Fix `scripts/test_gnn_inference.py` scoring assertion (currently expects weighted combo, should match actual pipeline behavior)
-- [ ] Run E2E test and verify all 9 steps pass
-- [ ] Port key assertions to `tests/integration/test_pipeline.py` as pytest
-
 ---
 
 ## Step B: Shortest Path Integration ✅ COMPLETE (2026-04-07)
@@ -144,15 +139,15 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 > 1. **Clinicians** (doctors, genetic counselors) — simple, intuitive
 > 2. **Engineering team** (hospital IT, ML engineers) — advanced controls
 
-### F.1 Audit current frontend state (must run before any code changes)
-- [ ] Deep scan `src/api/` — list every endpoint, mark which return real data vs mocks
-- [ ] Deep scan `src/webui/` — what works, what's a placeholder
-- [ ] Document gaps in a SCAN_REPORT supplement
+### F.1 Audit current frontend state ✅ COMPLETE (2026-04-28)
+- [x] Deep scan `src/api/` — all endpoints catalogued (real vs mock)
+- [x] Deep scan `src/webui/` — Training Console complete, Tab 2/3 were placeholders
+- [x] Gaps documented in session (agent scan report)
 
-### F.2 Clinician-facing sub-pages (priority)
-- [ ] **Patient Diagnosis** page — HPO symptom input → ranked diseases + evidence
-  - Must display Mode A (direct path) and Mode B (analogy) evidence from Step C
-  - Confidence labels: "Strong path support" / "Weak path support" / "Analogy-based" / "Insufficient evidence"
+### F.2 Clinician-facing sub-pages
+- [x] **Patient Diagnosis** page — HPO symptom input → ranked diseases + evidence (PR #57)
+  - Displays Mode A (direct path) and Mode B (analogy) evidence from Step C ✅
+  - Confidence labels: Strong/Weak/Analogy/Insufficient ✅
 - [ ] **Patients-Like-Me** retrieval page — phenotype input → K most similar known patients
 
 ### F.3 Engineering-facing sub-pages
@@ -167,15 +162,15 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [ ] Add `/diagnose/explain/{candidate_id}` endpoint for on-demand evidence detail
 - [ ] Restrict CORS for production (Phase 4.2 task)
 
-### F.5 Model/Pipeline Configuration UX (discovered 2026-04-28)
-- [ ] **Diagnosis tab should allow selecting which model directory to load** — currently requires setting `SHEPHERD_KG_PATH` / `SHEPHERD_CHECKPOINT_PATH` / `SHEPHERD_DATA_DIR` as OS environment variables before starting uvicorn. Doctors should not need to run `set` or `$env:` commands.
-  - Design: a "Model Configuration" accordion in the Diagnosis tab (or a separate Settings tab) with:
-    - Data directory path (default: `data/processed` for production, `data/demo` for demo)
-    - Pipeline status indicator (loaded / not loaded / error)
-    - "Load Pipeline" button to initialize or reload
-  - All files in a model directory share the same folder: `kg.json`, `node_features.pt`, `edge_indices.pt`, `num_nodes.json`, `model_checkpoint.pt`, `shortest_paths.pt`
-  - Production deployment should have defaults configured in `configs/deployment.yaml` or `launch_shepherd.sh`/`.cmd` so the UI "just works" without manual env var setup
-- [ ] **Ensure `launch_shepherd.sh` / `launch_shepherd.cmd` set default env vars** from `configs/deployment.yaml` paths section, so production startup is zero-config for the UI
+### F.5 Model/Pipeline Configuration UX ✅ COMPLETE (2026-04-28)
+- [x] Model Configuration accordion in Diagnosis tab: workspace path + checkpoint selection + pipeline status + file check (PR #59)
+- [x] Pipeline reload API: `POST /api/v1/pipeline/reload` + `GET /api/v1/pipeline/status` (PR #59)
+- [x] Data fingerprint for KG version tracking: embedded in checkpoints, verified on load (PR #59 + #61)
+- [x] Config persistence: `.shepherd_ui_config.json` (Diagnosis) + `.shepherd_training_config.json` (Training Console) — both file-based, no HTTP race (PR #61)
+- [x] Workspace-based directory layout: `data/workspaces/{name}/` replaces old split layout (PR #59)
+- [x] Save/Reset path buttons on both Diagnosis and Training Console tabs (PR #59 + #61)
+- [x] Checkpoint training metadata displayed in pipeline status (epoch, loss, params) (PR #61)
+- [ ] **Ensure `launch_shepherd.sh` / `launch_shepherd.cmd` set default env vars** from `configs/deployment.yaml` paths section, so production startup is zero-config
 
 ---
 
@@ -225,4 +220,7 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-28 | API schema fix | Sync API Pydantic DiagnosisCandidate with core types.py; update endpoint mapping | Added sp_score, evidence_package, confidence_label to API response |
 | 2026-04-28 | Diagnosis Panel | New diagnosis_panel.py (Tab 2): HPO input → ranked results table + evidence panel + confidence labels | First clinician-facing UI; NoneType format bug fixed; demo button removed per user feedback |
 | 2026-04-28 | F.5: Model Config + Workspace restructure | Data fingerprint, pipeline reload API, Model Config UI, workspace directory layout | Unified data/workspaces/ structure; KG version tracking via fingerprint; UI-based model switching |
+| 2026-04-29 | Training pipeline fix (PR #61) | train_samples generation, overwrite guard, resume ckpt path, fingerprint in train_model.py | Training Console verified: loss curves OK, 4 charts working, checkpoint saves to workspace |
+| 2026-04-29 | UX fixes (PR #61) | Save/Reset buttons on both tabs, Diagnosis config file-based (race fix), "Load/Reload" text, ckpt metadata in status | Fixed: config persistence across restarts, gitignore malformed line, _strip_prefix scope |
+| 2026-04-29 | Checklist cleanup | Remove duplicate 1.5, mark F.1/F.2/F.5 done, update session log | Full progress review confirms architecture alignment — no drift detected |
 | | | | |
