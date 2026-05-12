@@ -94,6 +94,7 @@ def build_demo_kg() -> KnowledgeGraph:
             id=NodeID(source=DataSource.HPO, local_id=hpo_id),
             node_type=NodeType.PHENOTYPE,
             name=name,
+            attributes={"hpo_id": hpo_id, "name": name},
         ))
 
     # --- Genes ---
@@ -112,6 +113,7 @@ def build_demo_kg() -> KnowledgeGraph:
             id=NodeID(source=DataSource.DISGENET, local_id=gene_id),
             node_type=NodeType.GENE,
             name=name,
+            attributes={"symbol": gene_id, "entrez_id": ""},
         ))
 
     # --- Diseases (MONDO) ---
@@ -127,6 +129,7 @@ def build_demo_kg() -> KnowledgeGraph:
             id=NodeID(source=DataSource.MONDO, local_id=mondo_id),
             node_type=NodeType.DISEASE,
             name=name,
+            attributes={"mondo_id": mondo_id, "name": name},
         ))
 
     # --- Gene -> Phenotype edges ---
@@ -205,6 +208,7 @@ def build_demo_kg() -> KnowledgeGraph:
         id=NodeID(source=DataSource.MGI, local_id="Scn1a"),
         node_type=NodeType.MOUSE_GENE,
         name="Scn1a (mouse)",
+        attributes={"mgi_id": "Scn1a", "symbol": "Scn1a"},
     ))
     kg.add_edge(Edge(
         source_id=NodeID(source=DataSource.DISGENET, local_id="SCN1A"),
