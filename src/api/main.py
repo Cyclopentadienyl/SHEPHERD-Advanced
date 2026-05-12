@@ -284,6 +284,16 @@ app.include_router(system.router, prefix="/api/v1", tags=["System"])
 
 
 # =============================================================================
+# Mount Static Files (fonts, etc.) — must be BEFORE Gradio mount
+# =============================================================================
+from starlette.staticfiles import StaticFiles
+
+_static_dir = Path(__file__).parent.parent / "webui" / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+    logger.info(f"Static files mounted at /static from {_static_dir}")
+
+# =============================================================================
 # Mount Gradio Dashboard
 # =============================================================================
 try:
