@@ -207,25 +207,32 @@ class KnowledgeGraphBuilder:
             edges_added = 0
 
             for child_id, parent_id, rel_type in edges:
-                if rel_type == "is_a":
-                    # Determine data source from term ID prefix
-                    if child_id.startswith("HP:"):
-                        data_source = DataSource.HPO
-                    elif child_id.startswith("MONDO:"):
-                        data_source = DataSource.MONDO
-                    elif child_id.startswith("GO:"):
-                        data_source = DataSource.GO
-                    else:
-                        data_source = DataSource.HPO
+                if rel_type != "is_a":
+                    continue
 
-                    edge = Edge(
-                        source_id=NodeID(source=data_source, local_id=child_id),
-                        target_id=NodeID(source=data_source, local_id=parent_id),
-                        edge_type=EdgeType.IS_A,
-                        weight=1.0,
-                    )
-                    self._graph.add_edge(edge)
-                    edges_added += 1
+                # Skip edges referencing imported terms
+                if expected_prefix:
+                    if not child_id.startswith(expected_prefix) or not parent_id.startswith(expected_prefix):
+                        continue
+
+                # Determine data source from term ID prefix
+                if child_id.startswith("HP:"):
+                    data_source = DataSource.HPO
+                elif child_id.startswith("MONDO:"):
+                    data_source = DataSource.MONDO
+                elif child_id.startswith("GO:"):
+                    data_source = DataSource.GO
+                else:
+                    data_source = DataSource.HPO
+
+                edge = Edge(
+                    source_id=NodeID(source=data_source, local_id=child_id),
+                    target_id=NodeID(source=data_source, local_id=parent_id),
+                    edge_type=EdgeType.IS_A,
+                    weight=1.0,
+                )
+                self._graph.add_edge(edge)
+                edges_added += 1
 
             logger.info(f"Added {edges_added} IS_A edges from {ontology.name}")
 
