@@ -508,13 +508,19 @@ class Trainer:
 
                 # Optimizer step
                 if self.scaler is not None:
+                    scale_before = self.scaler.get_scale()
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
+                    # GradScaler skips optimizer.step() on NaN/Inf gradients,
+                    # indicated by scale decreasing. Only step the scheduler
+                    # when the optimizer actually ran.
+                    optimizer_was_run = self.scaler.get_scale() >= scale_before
                 else:
                     self.optimizer.step()
+                    optimizer_was_run = True
 
-                # Scheduler step
-                if self.scheduler is not None:
+                # Scheduler step (only if optimizer actually updated weights)
+                if self.scheduler is not None and optimizer_was_run:
                     self.scheduler.step()
 
                 # Zero gradients
