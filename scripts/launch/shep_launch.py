@@ -314,25 +314,15 @@ def main() -> int:
     ========================
     """))
 
-    # Auto-open Gradio UI in default browser after a short delay
-    def _open_browser() -> None:
-        time.sleep(3)  # wait for uvicorn to start
-        try:
-            webbrowser.open(f"{base_url}/ui")
-        except Exception:
-            pass  # non-critical; ignore if no browser available
-
-    threading.Thread(target=_open_browser, daemon=True).start()
-
     # Build launch command
     if args.entry == "uvicorn":
         cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + ["--no-access-log"] + passthrough
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
-    # Auto-open browser in background once server is ready
+    # Auto-open browser once server is ready (polls /health endpoint)
     opener = threading.Thread(
         target=_open_browser_when_ready,
-        args=("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health"),
+        args=(f"{base_url}/ui", f"{base_url}/health"),
         daemon=True,
     )
     opener.start()
