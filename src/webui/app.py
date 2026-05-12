@@ -42,8 +42,8 @@ def create_gradio_app() -> gr.Blocks:
     with gr.Blocks(
         title="SHEPHERD-Advanced Dashboard",
         theme=gr.themes.Soft(
-            font=["IBM Plex Sans", "system-ui", "sans-serif"],
-            font_mono=["IBM Plex Mono", "monospace"],
+            font=["IBM Plex Sans"],
+            font_mono=["IBM Plex Mono"],
         ),
         css="""
             /* IBM Plex Sans — local font files (offline-safe) */
@@ -74,6 +74,11 @@ def create_gradio_app() -> gr.Blocks:
                 font-weight: 700;
                 font-style: normal;
                 font-display: swap;
+            }
+
+            /* CSS fallback stack (not in theme font= to avoid Gradio trying to load them as files) */
+            .gradio-container, .gradio-container * {
+                font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
             }
 
             /* Suppress Gradio's opacity/loading flash on polled components */
