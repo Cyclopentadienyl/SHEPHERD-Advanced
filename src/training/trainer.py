@@ -60,10 +60,10 @@ from torch import Tensor
 from torch.optim import AdamW, Optimizer
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
+    LambdaLR,
     LRScheduler,
     OneCycleLR,
     LinearLR,
-    SequentialLR,
 )
 from torch.amp import GradScaler, autocast
 
@@ -277,32 +277,22 @@ class Trainer:
             )
 
         if self.config.scheduler_type == "cosine":
-            # Warmup + Cosine decay
-            warmup = LinearLR(
-                self.optimizer,
-                start_factor=0.01,
-                end_factor=1.0,
-                total_iters=max(1, warmup_steps),
-            )
-            cosine = CosineAnnealingLR(
-                self.optimizer,
-                T_max=max(1, total_steps - warmup_steps),
-                eta_min=self.config.learning_rate * self.config.min_lr_ratio,
-            )
-            # SequentialLR calls step() on sub-schedulers during __init__,
-            # which triggers a spurious warning. Suppress it, then reset state.
-            import warnings
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                scheduler = SequentialLR(
-                    self.optimizer,
-                    schedulers=[warmup, cosine],
-                    milestones=[warmup_steps],
+            import math
+            min_lr_ratio = self.config.min_lr_ratio
+            ws = max(1, warmup_steps)
+            cs = max(1, total_steps - warmup_steps)
+
+            def lr_lambda(current_step: int) -> float:
+                if current_step < ws:
+                    # Linear warmup: 0.01 -> 1.0
+                    return 0.01 + 0.99 * current_step / ws
+                # Cosine decay: 1.0 -> min_lr_ratio
+                progress = (current_step - ws) / cs
+                return min_lr_ratio + (1.0 - min_lr_ratio) * 0.5 * (
+                    1.0 + math.cos(math.pi * progress)
                 )
-            for group in self.optimizer.param_groups:
-                group['lr'] = self.config.learning_rate * 0.01
-            scheduler.last_epoch = 0
-            return scheduler
+
+            return LambdaLR(self.optimizer, lr_lambda)
 
         elif self.config.scheduler_type == "onecycle":
             return OneCycleLR(
