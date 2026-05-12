@@ -702,6 +702,8 @@ class KnowledgeGraph:
                 node_dict["aliases"] = node.aliases
             if node.species:
                 node_dict["species"] = node.species.value
+            if node.attributes:
+                node_dict["attributes"] = node.attributes
             nodes_data.append(node_dict)
 
         edges_data = []
@@ -769,6 +771,7 @@ class KnowledgeGraph:
                 description=node_dict.get("description"),
                 aliases=node_dict.get("aliases", []),
                 species=species,
+                attributes=node_dict.get("attributes", {}),
             )
             kg.add_node(node)
 
