@@ -41,18 +41,18 @@ class OntologyLoader:
     pronto 是專為生物醫學本體設計的庫，比手寫解析器更可靠
     """
 
-    # Known ontology URLs
+    # Known ontology URLs (OBO Foundry PURLs — stable permanent redirects)
     ONTOLOGY_URLS = {
-        'hpo': 'https://raw.githubusercontent.com/obophenotype/human-phenotype-ontology/master/hp.obo',
-        'mondo': 'https://raw.githubusercontent.com/monarch-initiative/mondo/master/mondo.obo',
+        'hpo': 'http://purl.obolibrary.org/obo/hp.obo',
+        'mondo': 'http://purl.obolibrary.org/obo/mondo.obo',
         'go': 'http://purl.obolibrary.org/obo/go.obo',
         'mp': 'http://purl.obolibrary.org/obo/mp.obo',
     }
 
     # Alternative OWL URLs (if OBO fails)
     ONTOLOGY_OWL_URLS = {
-        'hpo': 'https://raw.githubusercontent.com/obophenotype/human-phenotype-ontology/master/hp.owl',
-        'mondo': 'https://raw.githubusercontent.com/monarch-initiative/mondo/master/mondo.owl',
+        'hpo': 'http://purl.obolibrary.org/obo/hp.owl',
+        'mondo': 'http://purl.obolibrary.org/obo/mondo.owl',
     }
 
     def __init__(self, cache_dir: Optional[Path] = None):
@@ -151,8 +151,16 @@ class OntologyLoader:
 
         return ontology
 
+    # Manual download instructions per ontology
+    ONTOLOGY_MANUAL_INSTRUCTIONS = {
+        'hpo': 'https://hpo.jax.org/data/ontology  (download hp.obo)',
+        'mondo': 'https://mondo.monarchinitiative.org/pages/download/  (download mondo.obo)',
+        'go': 'https://geneontology.org/docs/download-ontology/  (download go.obo)',
+        'mp': 'https://www.informatics.jax.org/vocabulary/mp_ontology  (download mp.obo)',
+    }
+
     def _download_ontology(self, ontology_name: str, force_download: bool) -> Path:
-        """下載本體檔案"""
+        """Download ontology file, with manual download instructions on failure."""
         # Try OBO first
         url = self.ONTOLOGY_URLS.get(ontology_name)
         cache_file = self.cache_dir / f"{ontology_name}.obo"
@@ -187,7 +195,19 @@ class OntologyLoader:
             logger.warning(f"Download failed, using existing cache: {cache_file_owl}")
             return cache_file_owl
 
-        raise RuntimeError(f"Failed to download {ontology_name} ontology")
+        # All attempts failed — give clear manual download instructions
+        manual_hint = self.ONTOLOGY_MANUAL_INSTRUCTIONS.get(ontology_name, "")
+        raise RuntimeError(
+            f"Failed to download {ontology_name} ontology.\n"
+            f"\n"
+            f"  Auto-download URLs may be outdated. Please download manually:\n"
+            f"    {manual_hint}\n"
+            f"\n"
+            f"  Then place the file at:\n"
+            f"    {cache_file}\n"
+            f"\n"
+            f"  The file will be cached and reused on subsequent runs."
+        )
 
 
 # =============================================================================

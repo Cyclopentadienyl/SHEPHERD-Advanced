@@ -60,10 +60,10 @@ from torch import Tensor
 from torch.optim import AdamW, Optimizer
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
+    LambdaLR,
     LRScheduler,
     OneCycleLR,
     LinearLR,
-    SequentialLR,
 )
 from torch.amp import GradScaler, autocast
 
@@ -277,23 +277,22 @@ class Trainer:
             )
 
         if self.config.scheduler_type == "cosine":
-            # Warmup + Cosine decay
-            warmup = LinearLR(
-                self.optimizer,
-                start_factor=0.01,
-                end_factor=1.0,
-                total_iters=max(1, warmup_steps),
-            )
-            cosine = CosineAnnealingLR(
-                self.optimizer,
-                T_max=max(1, total_steps - warmup_steps),
-                eta_min=self.config.learning_rate * self.config.min_lr_ratio,
-            )
-            return SequentialLR(
-                self.optimizer,
-                schedulers=[warmup, cosine],
-                milestones=[warmup_steps],
-            )
+            import math
+            min_lr_ratio = self.config.min_lr_ratio
+            ws = max(1, warmup_steps)
+            cs = max(1, total_steps - warmup_steps)
+
+            def lr_lambda(current_step: int) -> float:
+                if current_step < ws:
+                    # Linear warmup: 0.01 -> 1.0
+                    return 0.01 + 0.99 * current_step / ws
+                # Cosine decay: 1.0 -> min_lr_ratio
+                progress = (current_step - ws) / cs
+                return min_lr_ratio + (1.0 - min_lr_ratio) * 0.5 * (
+                    1.0 + math.cos(math.pi * progress)
+                )
+
+            return LambdaLR(self.optimizer, lr_lambda)
 
         elif self.config.scheduler_type == "onecycle":
             return OneCycleLR(
@@ -509,13 +508,19 @@ class Trainer:
 
                 # Optimizer step
                 if self.scaler is not None:
+                    scale_before = self.scaler.get_scale()
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
+                    # GradScaler skips optimizer.step() on NaN/Inf gradients,
+                    # indicated by scale decreasing. Only step the scheduler
+                    # when the optimizer actually ran.
+                    optimizer_was_run = self.scaler.get_scale() >= scale_before
                 else:
                     self.optimizer.step()
+                    optimizer_was_run = True
 
-                # Scheduler step
-                if self.scheduler is not None:
+                # Scheduler step (only if optimizer actually updated weights)
+                if self.scheduler is not None and optimizer_was_run:
                     self.scheduler.step()
 
                 # Zero gradients

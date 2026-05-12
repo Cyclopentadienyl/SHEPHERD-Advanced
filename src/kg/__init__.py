@@ -52,6 +52,7 @@ from src.kg.preprocessing import (
     compute_degree_features,
     preprocess_for_gnn,
 )
+from src.kg.sample_generator import generate_training_samples
 
 __all__ = [
     # Core graph
@@ -65,4 +66,6 @@ __all__ = [
     "compute_laplacian_pe",
     "compute_rwse",
     "compute_degree_features",
+    # Sample generation
+    "generate_training_samples",
 ]

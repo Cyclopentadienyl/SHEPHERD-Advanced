@@ -140,10 +140,27 @@ class KnowledgeGraphBuilder:
 
         logger.info(f"Adding ontology {ontology.name} as {node_type.value} nodes")
 
+        # Determine which term ID prefix belongs to this ontology.
+        # OBO files can import terms from other ontologies (e.g. MONDO
+        # imports HP: terms). We skip those to avoid misclassifying them.
+        EXPECTED_PREFIXES = {
+            NodeType.DISEASE: "MONDO:",
+            NodeType.PHENOTYPE: "HP:",
+            NodeType.PATHWAY: "GO:",
+            NodeType.MOUSE_PHENOTYPE: "MP:",
+        }
+        expected_prefix = EXPECTED_PREFIXES.get(node_type)
+
         nodes_added = 0
+        skipped_imported = 0
 
         # Add term nodes
         for term_id in ontology.get_all_terms(include_obsolete=False):
+            # Skip imported terms from other ontologies
+            if expected_prefix and not term_id.startswith(expected_prefix):
+                skipped_imported += 1
+                continue
+
             term_info = ontology.get_term(term_id)
             if term_info is None:
                 continue
@@ -159,15 +176,27 @@ class KnowledgeGraphBuilder:
                 # Default based on node type
                 data_source = DataSource.HPO
 
+            term_name = term_info.get("name", "")
+
+            # Build attributes dict including schema-required fields
+            attrs = {
+                "name": term_name,
+                "definition": term_info.get("definition", ""),
+                "synonyms": term_info.get("synonyms", []),
+            }
+            if term_id.startswith("HP:"):
+                attrs["hpo_id"] = term_id
+            elif term_id.startswith("MONDO:"):
+                attrs["mondo_id"] = term_id
+            elif term_id.startswith("GO:"):
+                attrs["pathway_id"] = term_id
+
             node = Node(
                 id=NodeID(source=data_source, local_id=term_id),
                 node_type=node_type,
-                name=term_info.get("name", ""),
+                name=term_name,
                 data_sources={data_source},
-                attributes={
-                    "definition": term_info.get("definition", ""),
-                    "synonyms": term_info.get("synonyms", []),
-                },
+                attributes=attrs,
             )
             self._graph.add_node(node)
             nodes_added += 1
@@ -178,29 +207,38 @@ class KnowledgeGraphBuilder:
             edges_added = 0
 
             for child_id, parent_id, rel_type in edges:
-                if rel_type == "is_a":
-                    # Determine data source from term ID prefix
-                    if child_id.startswith("HP:"):
-                        data_source = DataSource.HPO
-                    elif child_id.startswith("MONDO:"):
-                        data_source = DataSource.MONDO
-                    elif child_id.startswith("GO:"):
-                        data_source = DataSource.GO
-                    else:
-                        data_source = DataSource.HPO
+                if rel_type != "is_a":
+                    continue
 
-                    edge = Edge(
-                        source_id=NodeID(source=data_source, local_id=child_id),
-                        target_id=NodeID(source=data_source, local_id=parent_id),
-                        edge_type=EdgeType.IS_A,
-                        weight=1.0,
-                    )
-                    self._graph.add_edge(edge)
-                    edges_added += 1
+                # Skip edges referencing imported terms
+                if expected_prefix:
+                    if not child_id.startswith(expected_prefix) or not parent_id.startswith(expected_prefix):
+                        continue
+
+                # Determine data source from term ID prefix
+                if child_id.startswith("HP:"):
+                    data_source = DataSource.HPO
+                elif child_id.startswith("MONDO:"):
+                    data_source = DataSource.MONDO
+                elif child_id.startswith("GO:"):
+                    data_source = DataSource.GO
+                else:
+                    data_source = DataSource.HPO
+
+                edge = Edge(
+                    source_id=NodeID(source=data_source, local_id=child_id),
+                    target_id=NodeID(source=data_source, local_id=parent_id),
+                    edge_type=EdgeType.IS_A,
+                    weight=1.0,
+                )
+                self._graph.add_edge(edge)
+                edges_added += 1
 
             logger.info(f"Added {edges_added} IS_A edges from {ontology.name}")
 
         self._sources_added.add(f"ontology:{ontology.name}")
+        if skipped_imported > 0:
+            logger.info(f"Skipped {skipped_imported} imported terms from other ontologies")
         logger.info(f"Added {nodes_added} {node_type.value} nodes from {ontology.name}")
 
         return nodes_added
