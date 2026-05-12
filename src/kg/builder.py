@@ -140,10 +140,27 @@ class KnowledgeGraphBuilder:
 
         logger.info(f"Adding ontology {ontology.name} as {node_type.value} nodes")
 
+        # Determine which term ID prefix belongs to this ontology.
+        # OBO files can import terms from other ontologies (e.g. MONDO
+        # imports HP: terms). We skip those to avoid misclassifying them.
+        EXPECTED_PREFIXES = {
+            NodeType.DISEASE: "MONDO:",
+            NodeType.PHENOTYPE: "HP:",
+            NodeType.PATHWAY: "GO:",
+            NodeType.MOUSE_PHENOTYPE: "MP:",
+        }
+        expected_prefix = EXPECTED_PREFIXES.get(node_type)
+
         nodes_added = 0
+        skipped_imported = 0
 
         # Add term nodes
         for term_id in ontology.get_all_terms(include_obsolete=False):
+            # Skip imported terms from other ontologies
+            if expected_prefix and not term_id.startswith(expected_prefix):
+                skipped_imported += 1
+                continue
+
             term_info = ontology.get_term(term_id)
             if term_info is None:
                 continue
@@ -213,6 +230,8 @@ class KnowledgeGraphBuilder:
             logger.info(f"Added {edges_added} IS_A edges from {ontology.name}")
 
         self._sources_added.add(f"ontology:{ontology.name}")
+        if skipped_imported > 0:
+            logger.info(f"Skipped {skipped_imported} imported terms from other ontologies")
         logger.info(f"Added {nodes_added} {node_type.value} nodes from {ontology.name}")
 
         return nodes_added

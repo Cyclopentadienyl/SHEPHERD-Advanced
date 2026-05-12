@@ -138,7 +138,10 @@ def _build_disease_profiles(
     disease_strs = {v: k for k, v in disease_mapping.items()}
     gene_strs = {v: k for k, v in gene_mapping.items()}
 
-    # Traverse all edges
+    # Two-pass edge traversal:
+    # Pass 1: collect direct edges (phenotype-disease, gene-disease)
+    gene_phenotype_edges: List[Tuple[int, int]] = []
+
     for edge in kg._edges:
         src_str = str(edge.source_id)
         tgt_str = str(edge.target_id)
@@ -160,10 +163,17 @@ def _build_disease_profiles(
             gene_idx = gene_mapping.get(src_str)
             pheno_idx = phenotype_mapping.get(tgt_str)
             if gene_idx is not None and pheno_idx is not None:
-                # Find which diseases this gene is associated with
-                for d_idx, prof in profiles.items():
-                    if gene_idx in prof["gene_ids"]:
-                        prof["phenotype_ids"].add(pheno_idx)
+                gene_phenotype_edges.append((gene_idx, pheno_idx))
+
+    # Pass 2: propagate gene-phenotype edges to diseases via reverse index
+    gene_to_diseases: Dict[int, Set[int]] = {}
+    for d_idx, prof in profiles.items():
+        for g_idx in prof["gene_ids"]:
+            gene_to_diseases.setdefault(g_idx, set()).add(d_idx)
+
+    for gene_idx, pheno_idx in gene_phenotype_edges:
+        for d_idx in gene_to_diseases.get(gene_idx, ()):
+            profiles[d_idx]["phenotype_ids"].add(pheno_idx)
 
     return {
         d_idx: {
