@@ -244,6 +244,74 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 
 ---
 
+## 附錄 B：資料來源與編碼系統 Q&A（供醫療團隊參考）
+
+> 以下內容整理自工程團隊與醫療團隊的技術問答，目的是說明系統的資料來源、資料準確性以及業界標準的對齊情況。
+
+### Q1：系統使用了哪些疾病編碼系統？為什麼需要 ID 映射？
+
+不同的疾病資料庫使用不同的編號系統描述同一個疾病：
+
+| 資料庫 | ID 範例 | 來源 |
+|--------|---------|------|
+| OMIM | OMIM:100800 | 美國，最老牌的遺傳病資料庫 |
+| Orphanet (ORPHA) | ORPHA:15 | 歐盟罕見病資料庫 |
+| DECIPHER | DECIPHER:1 | 英國，染色體異常資料庫 |
+| MONDO | MONDO:0007037 | 統一疾病本體，專門整合上述資料庫 |
+
+以「軟骨發育不全症（Achondroplasia）」為例，上面四個 ID 指的是同一個疾病。
+
+SHEPHERD-Advanced 使用 **MONDO** 作為疾病的標準編碼。但 HPO 的 annotation 檔案中的疾病 ID 大部分是 OMIM 和 ORPHA 格式，因此需要映射：將 annotation 中的 OMIM ID 翻譯成知識圖譜中對應的 MONDO 節點。
+
+### Q2：ID 映射的準確性如何保證？
+
+映射來自 **MONDO 本體自身的交叉引用（xref）**。MONDO 本體的設計目的就是統一各大疾病資料庫，每個 MONDO 術語都標註了它對應的 OMIM、ORPHA、DOID 等 ID。這些映射由 [Monarch Initiative](https://monarchinitiative.org/) 團隊人工審核，並由國際社群持續維護，不是系統自行做的自動配對。
+
+目前系統已實作 OMIM→MONDO 映射（9,905 條），約覆蓋 59% 的原始 annotation。未映射的部分（ORPHA、DECIPHER 來源）不會產生錯誤資料，只是代表目前的覆蓋率尚不完整。後續可加入 ORPHA→MONDO 映射以提升覆蓋率。
+
+### Q3：基因的記錄格式使用什麼標準？
+
+系統使用 **HGNC（HUGO Gene Nomenclature Committee）** 基因符號，這是國際基因命名委員會維護的標準命名系統。學術論文和臨床報告幾乎都使用此格式（如 SCN1A、BRCA1、MECP2）。
+
+其他常見的基因 ID 系統：
+
+| 系統 | 範例 | 用途 |
+|------|------|------|
+| HGNC symbol | SCN1A | 臨床與學術論文（系統目前使用） |
+| Entrez Gene ID | 6323 | NCBI 的數字 ID |
+| Ensembl ID | ENSG00000141510 | 基因組學研究 |
+| UniProt ID | P38398 | 蛋白質層級研究 |
+
+### Q4：針對罕見疾病，有沒有更適合的通用記錄格式？
+
+有。**GA4GH Phenopackets** 是由 Global Alliance for Genomics and Health 制定的標準格式，專為罕見疾病和基因組醫學設計。它將一個病例需要的所有資訊打包成結構化 schema：
+
+| 欄位 | 使用的標準 | 範例 |
+|------|-----------|------|
+| 表型特徵 | HPO | HP:0001250 (Seizure)，含發病年齡 |
+| 疾病診斷 | MONDO / OMIM | MONDO:0011073 (Dravet syndrome) |
+| 基因變異 | HGVS + VRS | NM_006920.6:c.2837G>A |
+| 變異致病性 | ClinVar / ACMG | Pathogenic |
+| 基因 | HGNC | SCN1A |
+
+Phenopackets 目前已被歐盟罕見病網路（ERN）、Matchmaker Exchange 等主要機構採用，並有 ISO 標準化進程。SHEPHERD-Advanced 在資料層面已與 Phenopackets 高度相容（使用 HPO 編碼表型、MONDO 編碼疾病、HGNC 編碼基因），未來可直接接受 Phenopacket 格式的病例輸入。
+
+### Q5：知識圖譜的規模與資料覆蓋
+
+目前使用 HPO 官方免費資料建構的知識圖譜規模：
+
+| 項目 | 數量 |
+|------|------|
+| 疾病節點（MONDO） | 27,990 |
+| 表型節點（HPO） | 19,389 |
+| 基因節點（HGNC） | 4,929 |
+| 表型-疾病關聯 | 165,570 |
+| 基因-疾病關聯 | 7,286 |
+| 基因-表型關聯 | 255,782 |
+| 本體層級邊（IS_A） | 65,585 |
+
+---
+
 <!-- 
 未來里程碑模板：
 
