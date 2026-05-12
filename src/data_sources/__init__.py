@@ -29,6 +29,7 @@ from src.core.protocols import (
     OrthologDataSourceProtocol,
 )
 from src.core.types import DataSource, Species
+from src.data_sources.hpo_annotations import HPOAnnotationParser
 
 __all__ = [
     # Protocols (for type hints)
@@ -36,6 +37,8 @@ __all__ = [
     "PubMedDataSourceProtocol",
     "PubtatorLocalDBProtocol",
     "OrthologDataSourceProtocol",
+    # Parsers
+    "HPOAnnotationParser",
     # Enums
     "DataSource",
     "Species",
