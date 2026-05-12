@@ -289,11 +289,17 @@ class Trainer:
                 T_max=max(1, total_steps - warmup_steps),
                 eta_min=self.config.learning_rate * self.config.min_lr_ratio,
             )
-            return SequentialLR(
+            scheduler = SequentialLR(
                 self.optimizer,
                 schedulers=[warmup, cosine],
                 milestones=[warmup_steps],
             )
+            # SequentialLR calls step() on sub-schedulers during __init__,
+            # which fires before any optimizer.step(). Reset to initial state.
+            for group in self.optimizer.param_groups:
+                group['lr'] = self.config.learning_rate * 0.01
+            scheduler.last_epoch = 0
+            return scheduler
 
         elif self.config.scheduler_type == "onecycle":
             return OneCycleLR(
