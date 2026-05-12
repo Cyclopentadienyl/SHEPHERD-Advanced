@@ -2,11 +2,11 @@
 """
 Build Knowledge Graph for SHEPHERD-Advanced
 =============================================
-Constructs a production-scale knowledge graph from HPO annotation files
-and ontologies (HPO, MONDO).
+Constructs a production-scale knowledge graph from locally provided
+annotation files and ontologies (HPO, MONDO).
 
-Prerequisites:
-    python scripts/download_data.py --output-dir data/external/
+Before running, manually download the annotation files into data/external/:
+    See data/external/README.md for download links and instructions.
 
 Usage:
     # Build KG with training samples
@@ -96,36 +96,49 @@ def build_knowledge_graph(
     n_phenos = builder.add_ontology(hpo, NodeType.PHENOTYPE)
     logger.info(f"  -> {n_phenos} phenotype nodes")
 
+    # --- Validate annotation files exist ---
+    required_files = {
+        "phenotype.hpoa": "https://hpo.jax.org/data/annotations -> phenotype.hpoa",
+        "genes_to_phenotype.txt": "https://hpo.jax.org/data/annotations -> genes_to_phenotype.txt",
+    }
+    missing = [
+        (name, hint)
+        for name, hint in required_files.items()
+        if not (external_dir / name).exists()
+    ]
+    if missing:
+        print("\nERROR: Required annotation files not found.", file=sys.stderr)
+        print(f"Expected location: {external_dir}/\n", file=sys.stderr)
+        for name, hint in missing:
+            print(f"  Missing: {name}", file=sys.stderr)
+            print(f"    Download from: {hint}", file=sys.stderr)
+        print(f"\nSee data/external/README.md for detailed instructions.", file=sys.stderr)
+        sys.exit(1)
+
     # --- Parse annotation files ---
     parser = HPOAnnotationParser(mondo_ontology=mondo)
 
     # Step 3: Phenotype-disease annotations
     hpoa_path = external_dir / "phenotype.hpoa"
-    if hpoa_path.exists():
-        logger.info("Adding phenotype-disease annotations...")
-        pheno_disease = parser.parse_phenotype_hpoa(hpoa_path)
-        n_pd_edges = builder.add_phenotype_disease_annotations(pheno_disease)
-        logger.info(f"  -> {n_pd_edges} phenotype-disease edges")
-    else:
-        logger.warning(f"phenotype.hpoa not found at {hpoa_path}, skipping")
+    logger.info("Adding phenotype-disease annotations...")
+    pheno_disease = parser.parse_phenotype_hpoa(hpoa_path)
+    n_pd_edges = builder.add_phenotype_disease_annotations(pheno_disease)
+    logger.info(f"  -> {n_pd_edges} phenotype-disease edges")
 
     # Step 4: Gene-phenotype and gene-disease associations
     g2p_path = external_dir / "genes_to_phenotype.txt"
-    if g2p_path.exists():
-        logger.info("Adding gene associations...")
-        gene_pheno, gene_disease = parser.parse_genes_to_phenotype(g2p_path)
+    logger.info("Adding gene associations...")
+    gene_pheno, gene_disease = parser.parse_genes_to_phenotype(g2p_path)
 
-        n_genes, n_gd_edges = builder.add_gene_disease_associations(
-            gene_disease, source=DataSource.HPO
-        )
-        logger.info(f"  -> {n_genes} gene nodes, {n_gd_edges} gene-disease edges")
+    n_genes, n_gd_edges = builder.add_gene_disease_associations(
+        gene_disease, source=DataSource.HPO
+    )
+    logger.info(f"  -> {n_genes} gene nodes, {n_gd_edges} gene-disease edges")
 
-        n_gp_edges = builder.add_gene_phenotype_associations(
-            gene_pheno, source=DataSource.HPO
-        )
-        logger.info(f"  -> {n_gp_edges} gene-phenotype edges")
-    else:
-        logger.warning(f"genes_to_phenotype.txt not found at {g2p_path}, skipping")
+    n_gp_edges = builder.add_gene_phenotype_associations(
+        gene_pheno, source=DataSource.HPO
+    )
+    logger.info(f"  -> {n_gp_edges} gene-phenotype edges")
 
     # --- Finalize KG ---
     kg = builder.build()
