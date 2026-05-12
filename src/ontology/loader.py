@@ -41,18 +41,18 @@ class OntologyLoader:
     pronto 是專為生物醫學本體設計的庫，比手寫解析器更可靠
     """
 
-    # Known ontology URLs
+    # Known ontology URLs (OBO Foundry PURLs — stable permanent redirects)
     ONTOLOGY_URLS = {
-        'hpo': 'https://raw.githubusercontent.com/obophenotype/human-phenotype-ontology/master/hp.obo',
-        'mondo': 'https://raw.githubusercontent.com/monarch-initiative/mondo/master/mondo.obo',
+        'hpo': 'http://purl.obolibrary.org/obo/hp.obo',
+        'mondo': 'http://purl.obolibrary.org/obo/mondo.obo',
         'go': 'http://purl.obolibrary.org/obo/go.obo',
         'mp': 'http://purl.obolibrary.org/obo/mp.obo',
     }
 
     # Alternative OWL URLs (if OBO fails)
     ONTOLOGY_OWL_URLS = {
-        'hpo': 'https://raw.githubusercontent.com/obophenotype/human-phenotype-ontology/master/hp.owl',
-        'mondo': 'https://raw.githubusercontent.com/monarch-initiative/mondo/master/mondo.owl',
+        'hpo': 'http://purl.obolibrary.org/obo/hp.owl',
+        'mondo': 'http://purl.obolibrary.org/obo/mondo.owl',
     }
 
     def __init__(self, cache_dir: Optional[Path] = None):
