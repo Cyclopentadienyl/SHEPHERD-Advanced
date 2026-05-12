@@ -159,15 +159,27 @@ class KnowledgeGraphBuilder:
                 # Default based on node type
                 data_source = DataSource.HPO
 
+            term_name = term_info.get("name", "")
+
+            # Build attributes dict including schema-required fields
+            attrs = {
+                "name": term_name,
+                "definition": term_info.get("definition", ""),
+                "synonyms": term_info.get("synonyms", []),
+            }
+            if term_id.startswith("HP:"):
+                attrs["hpo_id"] = term_id
+            elif term_id.startswith("MONDO:"):
+                attrs["mondo_id"] = term_id
+            elif term_id.startswith("GO:"):
+                attrs["pathway_id"] = term_id
+
             node = Node(
                 id=NodeID(source=data_source, local_id=term_id),
                 node_type=node_type,
-                name=term_info.get("name", ""),
+                name=term_name,
                 data_sources={data_source},
-                attributes={
-                    "definition": term_info.get("definition", ""),
-                    "synonyms": term_info.get("synonyms", []),
-                },
+                attributes=attrs,
             )
             self._graph.add_node(node)
             nodes_added += 1

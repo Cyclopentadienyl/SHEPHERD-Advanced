@@ -168,7 +168,7 @@ class Ontology:
                     "namespace": str(term.namespace) if term.namespace else None,
                     "definition": str(term.definition) if term.definition else None,
                     "synonyms": [str(s.description) for s in term.synonyms],
-                    "xrefs": [str(x) for x in term.xrefs],
+                    "xrefs": [x.id if hasattr(x, 'id') else str(x) for x in term.xrefs],
                     "is_obsolete": term.obsolete,
                     "parents": [str(p.id) for p in term.superclasses(distance=1, with_self=False)],
                 }
