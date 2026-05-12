@@ -717,26 +717,23 @@ def main():
     # Load configuration
     config = load_config(args)
 
-    # Check if training data exists
+    # Validate training data exists
     data_dir = Path(config.data_dir)
     has_graph_data = (data_dir / "node_features.pt").exists()
     has_train_samples = (data_dir / "train_samples.json").exists()
 
     if has_graph_data and not has_train_samples:
-        # Workspace has graph data (from setup_demo or build_knowledge_graph)
-        # but no training samples. This is a setup error — do NOT overwrite
-        # the existing graph data with random synthetic data.
         logger.error(
             f"Workspace {data_dir} has graph data but no train_samples.json. "
-            f"Run 'python scripts/setup_demo.py --train-model' to generate "
-            f"training samples, or create them manually."
+            f"Re-run build_knowledge_graph.py with --generate-samples."
         )
         return 1
-    elif not data_dir.exists() or (not has_graph_data and not has_train_samples):
-        # No workspace data at all — generate synthetic for quick testing
-        logger.warning(f"No data found in {data_dir}")
-        logger.info("Generating synthetic data for testing...")
-        generate_synthetic_data(data_dir)
+    elif not data_dir.exists() or not has_graph_data:
+        logger.error(f"Training data not found in {data_dir}")
+        logger.error("Required files: train_samples.json, node_features.pt, edge_indices.pt")
+        logger.error("Build training data first:")
+        logger.error("  python scripts/build_knowledge_graph.py --workspace <dir> --external-dir data/external --generate-samples")
+        return 1
 
     # Run training
     try:
