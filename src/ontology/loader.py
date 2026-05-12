@@ -160,7 +160,7 @@ class OntologyLoader:
     }
 
     def _download_ontology(self, ontology_name: str, force_download: bool) -> Path:
-        """下載本體檔案，失敗時提示手動下載"""
+        """Download ontology file, with manual download instructions on failure."""
         # Try OBO first
         url = self.ONTOLOGY_URLS.get(ontology_name)
         cache_file = self.cache_dir / f"{ontology_name}.obo"
