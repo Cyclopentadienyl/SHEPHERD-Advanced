@@ -354,7 +354,7 @@ def _refresh_checkpoints(data_dir_value: str = ""):
 
 
 _IDLE_RESOURCE_HTML = (
-    '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
+    '<div style="font-family:IBM Plex Sans,system-ui,sans-serif;padding:4px 0">'
     '<div style="font-size:13px;color:#6b7280">Loading resource info...</div>'
     '</div>'
 )
@@ -755,7 +755,7 @@ def _format_resources(resources: Dict[str, Any]) -> str:
         )
 
     return (
-        '<div style="font-family:system-ui,sans-serif;padding:4px 0">'
+        '<div style="font-family:IBM Plex Sans,system-ui,sans-serif;padding:4px 0">'
         + "\n".join(bars)
         + "</div>"
     )
