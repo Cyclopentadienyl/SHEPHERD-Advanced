@@ -72,6 +72,25 @@ def build_knowledge_graph(
     workspace.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
+    # --- Validate annotation files exist (fail fast before expensive ontology loading) ---
+    required_files = {
+        "phenotype.hpoa": "https://hpo.jax.org/data/annotations -> phenotype.hpoa",
+        "genes_to_phenotype.txt": "https://hpo.jax.org/data/annotations -> genes_to_phenotype.txt",
+    }
+    missing = [
+        (name, hint)
+        for name, hint in required_files.items()
+        if not (external_dir / name).exists()
+    ]
+    if missing:
+        print("\nERROR: Required annotation files not found.", file=sys.stderr)
+        print(f"Expected location: {external_dir}/\n", file=sys.stderr)
+        for name, hint in missing:
+            print(f"  Missing: {name}", file=sys.stderr)
+            print(f"    Download from: {hint}", file=sys.stderr)
+        print(f"\nSee data/external/README.md for detailed instructions.", file=sys.stderr)
+        sys.exit(1)
+
     # --- Load ontologies ---
     logger.info("Loading ontologies...")
     ont_loader = OntologyLoader(cache_dir=ontology_cache_dir)
@@ -95,25 +114,6 @@ def build_knowledge_graph(
     logger.info("Adding HPO phenotype nodes...")
     n_phenos = builder.add_ontology(hpo, NodeType.PHENOTYPE)
     logger.info(f"  -> {n_phenos} phenotype nodes")
-
-    # --- Validate annotation files exist ---
-    required_files = {
-        "phenotype.hpoa": "https://hpo.jax.org/data/annotations -> phenotype.hpoa",
-        "genes_to_phenotype.txt": "https://hpo.jax.org/data/annotations -> genes_to_phenotype.txt",
-    }
-    missing = [
-        (name, hint)
-        for name, hint in required_files.items()
-        if not (external_dir / name).exists()
-    ]
-    if missing:
-        print("\nERROR: Required annotation files not found.", file=sys.stderr)
-        print(f"Expected location: {external_dir}/\n", file=sys.stderr)
-        for name, hint in missing:
-            print(f"  Missing: {name}", file=sys.stderr)
-            print(f"    Download from: {hint}", file=sys.stderr)
-        print(f"\nSee data/external/README.md for detailed instructions.", file=sys.stderr)
-        sys.exit(1)
 
     # --- Parse annotation files ---
     parser = HPOAnnotationParser(mondo_ontology=mondo)
