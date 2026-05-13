@@ -496,38 +496,40 @@ class DiagnosisPipeline:
 
         n_pairs = sp_data["distance"].numel()
 
-        # Compact tensors to int32 (52K nodes fits easily)
+        # Compact to int32 one at a time, freeing originals to limit peak RAM.
         ph_t = sp_data["phenotype_idx"].to(torch.int32)
+        del sp_data["phenotype_idx"]
         tg_t = sp_data["target_idx"].to(torch.int32)
+        del sp_data["target_idx"]
         ty_t = sp_data["target_type"].to(torch.int8)
+        del sp_data["target_type"]
         di_t = sp_data["distance"]  # already int8
+        del sp_data
 
-        # Build per-phenotype index for fast lookup.
-        # Sort by phenotype_idx so each phenotype's entries are contiguous,
-        # then record start/end offsets. Query-time lookup is O(entries_per_pheno)
-        # instead of building a 374M-entry Python dict (~50GB RAM).
+        # Sort by phenotype_idx so each phenotype's entries are contiguous.
         sort_idx = ph_t.argsort()
         self._sp_ph = ph_t[sort_idx]
+        del ph_t
         self._sp_tg = tg_t[sort_idx]
+        del tg_t
         self._sp_ty = ty_t[sort_idx]
+        del ty_t
         self._sp_di = di_t[sort_idx]
+        del di_t, sort_idx
 
-        # Build offset table: phenotype_idx -> (start, end) in sorted arrays
+        # Build offset table using tensor ops (no .tolist()).
+        # Find indices where phenotype_idx changes value.
+        changes = torch.where(self._sp_ph[1:] != self._sp_ph[:-1])[0] + 1
+        starts = torch.cat([torch.zeros(1, dtype=torch.int64), changes])
+        ends = torch.cat([changes, torch.tensor([len(self._sp_ph)], dtype=torch.int64)])
+        unique_phs = self._sp_ph[starts].tolist()  # only ~19K ints, trivial
+        starts_list = starts.tolist()
+        ends_list = ends.tolist()
+        del changes, starts, ends
+
         self._sp_offsets: Dict[int, Tuple[int, int]] = {}
-        prev_ph = -1
-        start = 0
-        ph_list = self._sp_ph.tolist()
-        for i, ph in enumerate(ph_list):
-            if ph != prev_ph:
-                if prev_ph >= 0:
-                    self._sp_offsets[prev_ph] = (start, i)
-                prev_ph = ph
-                start = i
-        if prev_ph >= 0:
-            self._sp_offsets[prev_ph] = (start, len(ph_list))
-
-        # Free the original large tensors
-        del sp_data, sort_idx, ph_list
+        for i, ph in enumerate(unique_phs):
+            self._sp_offsets[ph] = (starts_list[i], ends_list[i])
 
         self._sp_ready = True
 
