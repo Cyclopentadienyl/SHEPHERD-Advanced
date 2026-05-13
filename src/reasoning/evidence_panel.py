@@ -275,6 +275,10 @@ class EvidencePanel:
                 if p.target == target_id:
                     all_paths.append(p)
 
+        # Score the paths (find_paths returns unscored paths with score=0.0)
+        if all_paths:
+            all_paths = self.path_reasoner.score_paths(all_paths, self.kg)
+
         return all_paths
 
     def _build_mode_a(self, paths: List[ReasoningPath]) -> EvidencePackage:
