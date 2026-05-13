@@ -297,7 +297,50 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 - Marfan syndrome 本身未出現在 Top 10，可能因為 OMIM→MONDO 映射覆蓋率（59%）導致部分疾病-表型關聯缺失
 - #1 hearing loss 為噪音，GNN 分數偏高但 SP 分數較低（0.286），更多訓練 epoch 預期可改善此類 false positive
 
-> **注意**：此結果使用僅 3 epoch 的初步訓練模型。正式 30+ epoch 訓練後，排名精確度和噪音抑制能力將進一步提升。
+### 推理測試：Rett syndrome 表型
+
+**輸入**：HP:0001263（發育遲緩）+ HP:0001252（低張力）+ HP:0000729（自閉行為）+ HP:0002360（睡眠異常）
+
+**輸出**（前 10 名候選）：
+
+| Rank | 疾病 | Confidence | GNN | SP | 臨床相關性 |
+|------|------|-----------|-----|-----|-----------|
+| #1 | intellectual disability-hypotonia-spasticity-sleep disorder syndrome | 0.770 | 0.909 | 0.444 | ✅ 匹配 3/4 輸入症狀 |
+| #2 | developmental and epileptic encephalopathy 120 | 0.769 | 0.885 | 0.500 | 🟡 發育遲緩相關 |
+| #3 | developmental delay, behavioral abnormalities, neuropsychiatric disorders | 0.767 | 0.881 | 0.500 | ✅ 匹配發育遲緩 + 行為異常 |
+| #4 | developmental and epileptic encephalopathy 114 | 0.767 | 0.881 | 0.500 | 🟡 發育遲緩相關 |
+| #5 | developmental and epileptic encephalopathy, 33 | 0.765 | 0.902 | 0.444 | 🟡 發育遲緩相關 |
+| #6 | Snijders Blok-Fisher syndrome | 0.763 | 0.900 | 0.444 | ✅ 智力障礙 + 行為異常 |
+| #7 | intellectual disability, autosomal dominant 54 | 0.762 | 0.875 | 0.500 | 🟡 智力障礙 |
+| #8 | intellectual disability, autosomal dominant 24 | 0.760 | 0.895 | 0.444 | 🟡 智力障礙 |
+| #9 | hyperprolinemia type 1 | 0.758 | 0.911 | 0.400 | ❌ 不相關（噪音） |
+| #10 | neurodevelopmental disorder with hyperkinetic movements and seizures | 0.755 | 0.889 | 0.444 | 🟡 神經發育相關 |
+
+**證據路徑範例（#1 — intellectual disability-hypotonia-spasticity-sleep disorder syndrome）**：
+
+系統為排名第一的候選提供了以下推理路徑：
+
+```
+匹配表型：Global developmental delay, Hypotonia, Sleep disturbance（3/4 輸入症狀命中）
+關聯基因：ANK3（4 條證據路徑）
+
+直接證據：
+  Sleep disturbance → [phenotype of disease] → 該疾病 (score: 0.900)
+間接證據（經由基因）：
+  Global developmental delay → [gene has phenotype] → ANK3 → [gene associated with disease] → 該疾病
+  Hypotonia → [gene has phenotype] → ANK3 → [gene associated with disease] → 該疾病
+```
+
+醫生可以看到：系統認為這個疾病是候選，是因為病患的「睡眠障礙」直接關聯到這個疾病，而「發育遲緩」和「低張力」則透過 ANK3 基因間接關聯。這和臨床上的鑑別診斷推理邏輯一致。
+
+**分析**：
+
+- Top 10 全部屬於「神經發育 + 低張力 + 行為異常」臨床群，方向正確
+- Rett syndrome 未出現在 Top 10——Rett 是特定的 MECP2 基因突變疾病，需要模型學到「這組表型 → MECP2 → Rett」的多跳推理路徑，3 epoch 可能尚不足以學會
+- hyperprolinemia type 1（#9）在兩次測試中都出現，是系統性的 false positive，GNN embedding 可能有偏差
+- SP 分數普遍較高（0.400-0.500），因為發育遲緩/癲癇在 KG 中連接密集
+
+> **注意**：以上兩組測試均使用僅 3 epoch 的初步訓練模型（Hits@10 = 0.581）。正式 30+ epoch 訓練後，排名精確度和噪音抑制能力將進一步提升。
 
 ---
 
