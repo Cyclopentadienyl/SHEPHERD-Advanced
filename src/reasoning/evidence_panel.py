@@ -217,7 +217,13 @@ class EvidencePanel:
         # Try Mode A first
         direct_paths = existing_paths
         if direct_paths is None:
+            logger.info(f"[EvidencePanel] No existing_paths for {candidate.disease_name}, running fallback search")
             direct_paths = self._find_direct_paths(source_ids, candidate.disease_id)
+        else:
+            logger.info(
+                f"[EvidencePanel] Using {len(direct_paths)} existing_paths for {candidate.disease_name}, "
+                f"scores: {[f'{p.score:.4f} (len={p.length})' for p in direct_paths[:5]]}"
+            )
 
         if direct_paths:
             return self._build_mode_a(direct_paths)
@@ -274,6 +280,10 @@ class EvidencePanel:
             for p in paths:
                 if p.target == target_id:
                     all_paths.append(p)
+
+        # Score the paths (find_paths returns unscored paths with score=0.0)
+        if all_paths:
+            all_paths = self.path_reasoner.score_paths(all_paths, self.kg)
 
         return all_paths
 
