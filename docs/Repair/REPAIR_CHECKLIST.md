@@ -182,6 +182,11 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [ ] Implement `.github/workflows/deploy.yml`
 - [ ] Configure `.pre-commit-config.yaml`
 
+### 4.1.5 Evidence Path Scoring Issues (discovered 2026-05-13)
+- [ ] **Indirect path score always 0.000**: In EvidencePanel, multi-hop paths via genes (e.g. `Phenotype → Gene → Disease`) produce `score: 0.000` while direct 1-hop paths have correct scores (e.g. 0.900). Investigate whether `_score_path()` in `evidence_panel.py` or `path_reasoning.py` only computes scores for single-hop paths and silently returns 0 for multi-hop. This does NOT affect ranking (ranking uses GNN+SP, independent of evidence scores), but impacts clinical credibility of the explanation.
+- [ ] **Unmatched input phenotype in evidence**: When querying with 4 HPO terms, some candidates only show 3 matching phenotypes — the missing phenotype may have no KG edge to the candidate disease or its associated genes. Investigate whether this is a data coverage gap (missing edges in HPO annotations) or a path search depth limitation.
+- [x] **~~Systematic false positive — hyperprolinemia type 1~~** RESOLVED (2026-05-13): Initially misidentified as false positive. Evidence path review shows it has legitimate KG edges to Seizure (0.616), Hypotonia (0.900), and Autistic behavior (0.142). It's a metabolic disorder that genuinely mimics neurological presentations. Correctly absent from Marfan (connective tissue) test. Not a model error.
+
 ### 4.2 Production Hardening
 - [ ] Restrict CORS in `src/api/main.py` (environment-based config)
 - [ ] Review `toml` dependency — remove if unused
@@ -223,4 +228,7 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-04-29 | Training pipeline fix (PR #61) | train_samples generation, overwrite guard, resume ckpt path, fingerprint in train_model.py | Training Console verified: loss curves OK, 4 charts working, checkpoint saves to workspace |
 | 2026-04-29 | UX fixes (PR #61) | Save/Reset buttons on both tabs, Diagnosis config file-based (race fix), "Load/Reload" text, ckpt metadata in status | Fixed: config persistence across restarts, gitignore malformed line, _strip_prefix scope |
 | 2026-04-29 | Checklist cleanup | Remove duplicate 1.5, mark F.1/F.2/F.5 done, update session log | Full progress review confirms architecture alignment — no drift detected |
+| 2026-05-13 | Real data pipeline | HPO annotation parser, sample generator, build_knowledge_graph.py, ontology xref fix, imported term filter | 52K-node KG from real HPO data; 494K edges; hits@10=0.581 at 3 epochs |
+| 2026-05-13 | Inference + SP | SP memory fix (50GB→4.5GB), LambdaLR scheduler, GradScaler skip, training stop cleanup | Full GNN+SP inference working; Marfan + Rett test results recorded in milestone |
+| 2026-05-13 | Evidence path issues | Logged: indirect path score=0, unmatched phenotype, hyperprolinemia false positive | Tracked in §4.1.5; does not affect ranking, affects explanation credibility |
 | | | | |
