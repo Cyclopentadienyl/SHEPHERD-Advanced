@@ -820,19 +820,17 @@ def create_training_tab() -> None:
                     precision=0,
                     elem_id="num_epochs",
                 )
-                learning_rate = gr.Slider(
+                learning_rate = gr.Number(
                     label="Learning Rate",
-                    info="Initial LR. Recommended: 1e-4 (GAT) | 5e-5 (HGT). Use with scheduler.",
-                    minimum=1e-6,
-                    maximum=1e-1,
+                    info="Initial LR. Recommended: 1e-4 (GAT) | 5e-5 (HGT). Supports scientific notation (e.g. 5e-5).",
                     value=1e-4,
-                    step=1e-6,
+                    precision=8,
                     elem_id="learning_rate",
                 )
                 batch_size = gr.Dropdown(
                     label="Batch Size",
                     info="Samples per step. Larger = faster but more VRAM. 32 is a safe default.",
-                    choices=["8", "16", "32", "64"],
+                    choices=["8", "16", "32", "64", "128", "256", "512"],
                     value="32",
                     elem_id="batch_size",
                 )
