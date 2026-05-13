@@ -356,7 +356,33 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 
 兩項問題已記錄至工程追蹤清單，將在後續工程中排查。
 
-> **注意**：以上兩組測試均使用僅 3 epoch 的初步訓練模型（Hits@10 = 0.581）。正式 30+ epoch 訓練後，排名精確度和噪音抑制能力將進一步提升。
+### 推理測試：單一非特異症狀（魯棒性測試）
+
+**輸入**：HP:0001250（Seizure）——僅一個高頻率、非特異性的症狀
+
+**輸出**（前 10 名候選）：
+
+| Rank | 疾病 | Confidence | GNN | SP | 臨床相關性 |
+|------|------|-----------|-----|-----|-----------|
+| #1 | intellectual developmental disorder with seizures or ataxia | 0.733 | 0.833 | 0.500 | ✅ 直接提到 seizures |
+| #2 | intellectual disability, autosomal recessive 34 | 0.729 | 0.828 | 0.500 | 🟡 常伴隨癲癇 |
+| #3 | hyperprolinemia type 1 | 0.723 | 0.819 | 0.500 | ❌ 不相關（第三次出現） |
+| #4 | intellectual disability, autosomal recessive 64 | 0.722 | 0.817 | 0.500 | 🟡 |
+| #5 | cerebral palsy, spastic quadriplegic, 3 | 0.721 | 0.816 | 0.500 | 🟡 CP 常伴癲癇 |
+| #6 | autism, susceptibility to, X-linked 1 | 0.720 | 0.815 | 0.500 | 🟡 |
+| #7 | mitochondrial complex V deficiency, nuclear type 7 | 0.717 | 0.810 | 0.500 | 🟡 粒線體疾病常有癲癇 |
+| #8 | 2-methylbutyryl-CoA dehydrogenase deficiency | 0.715 | 0.807 | 0.500 | 🟡 代謝疾病 |
+| #9 | intellectual disability-hypotonia-spasticity-sleep disorder | 0.710 | 0.799 | 0.500 | 🟡 |
+| #10 | spastic paraplegia 89, autosomal recessive | 0.709 | 0.798 | 0.500 | 🟡 |
+
+**分析**：
+
+- **SP 全部為 0.500**：Seizure 是 KG 中連接最密集的表型之一，與幾乎所有疾病都有 1-hop 直接路徑（`1/(1+1) = 0.5`）。SP 完全無法區分候選，排名 100% 由 GNN 決定。這展示了為什麼需要 GNN + SP 混合模式——單靠 SP 在高頻症狀上沒有區分度
+- **GNN 分數極度壓縮**（0.798-0.833，top 10 只差 0.035）：只有一個症狀時模型無法有效區分，這是預期內的合理行為
+- **hyperprolinemia type 1 第三次出現**（#3）：三組完全不同的測試（Marfan、Rett、單一 Seizure）中都出現，確認為系統性 false positive
+- 沒有經典癲癇綜合症（Dravet、Lennox-Gastaut）出現在 Top 10——可能是訓練不足或 OMIM→MONDO 映射缺失所致
+
+> **注意**：以上三組測試均使用僅 3 epoch 的初步訓練模型（Hits@10 = 0.581）。正式 30+ epoch 訓練後，排名精確度和噪音抑制能力將進一步提升。
 
 ---
 
