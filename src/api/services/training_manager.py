@@ -90,6 +90,7 @@ class TrainingManager:
     ):
         self._process: Optional[subprocess.Popen] = None
         self._status: str = "idle"
+        self._user_stopped: bool = False
         self._config: Optional[Dict[str, Any]] = None
         self._start_time: Optional[datetime] = None
         self._error_message: Optional[str] = None
@@ -128,6 +129,7 @@ class TrainingManager:
 
             self._config = config
             self._error_message = None
+            self._user_stopped = False
 
             # Derive checkpoint_dir from workspace data_dir if not explicitly set
             data_dir = config.get("data_dir", "")
@@ -219,6 +221,7 @@ class TrainingManager:
                 }
 
             self._status = "stopping"
+            self._user_stopped = True
             pid = self._process.pid
 
         logger.info(f"Stopping training (PID: {pid})...")
@@ -278,14 +281,26 @@ class TrainingManager:
 
         returncode = self._process.poll()
         with self._lock:
-            if self._status == "stopping":
+            if self._status == "stopping" or self._user_stopped:
+                # User-initiated stop — always treat as completed
                 self._status = "completed"
             elif returncode == 0:
                 self._status = "completed"
+            elif returncode and returncode < 0:
+                # Killed by signal (Unix) — if we sent the signal, it's a stop
+                self._status = "completed"
             else:
                 self._status = "failed"
-                # Include the last few lines of output for diagnosis
-                tail = "\n".join(recent_lines[-20:]) if recent_lines else ""
+                # Filter out Intel MKL/Fortran noise from error output
+                filtered = [
+                    line for line in recent_lines[-20:]
+                    if "forrtl:" not in line
+                    and "KERNELBASE" not in line
+                    and "KERNEL32" not in line
+                    and "ntdll.dll" not in line
+                    and "Unknown               Unknown  Unknown" not in line
+                ]
+                tail = "\n".join(filtered) if filtered else ""
                 self._error_message = (
                     f"Process exited with code {returncode}"
                     + (f"\n\n--- Last output ---\n{tail}" if tail else "")
