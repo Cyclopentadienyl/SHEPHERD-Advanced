@@ -296,6 +296,7 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 - MASS syndrome（#6）是 Marfan 的亞型
 - Marfan syndrome 本身未出現在 Top 10，可能因為 OMIM→MONDO 映射覆蓋率（59%）導致部分疾病-表型關聯缺失
 - #1 hearing loss 為噪音，GNN 分數偏高但 SP 分數較低（0.286），更多訓練 epoch 預期可改善此類 false positive
+- hyperprolinemia type 1 未出現在此組結果中——該疾病是代謝性疾病，與結締組織表型無關，模型正確地排除了它
 
 ### 推理測試：Rett syndrome 表型
 
@@ -337,7 +338,7 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 
 - Top 10 全部屬於「神經發育 + 低張力 + 行為異常」臨床群，方向正確
 - Rett syndrome 未出現在 Top 10——Rett 是特定的 MECP2 基因突變疾病，需要模型學到「這組表型 → MECP2 → Rett」的多跳推理路徑，3 epoch 可能尚不足以學會
-- hyperprolinemia type 1（#9）在兩次測試中都出現，是系統性的 false positive，GNN embedding 可能有偏差
+- hyperprolinemia type 1（#9）出現在此組結果中——經查證，該疾病在 KG 中與 Hypotonia（score 0.900）和 Autistic behavior（score 0.142）有直接邊，屬於合理的鑑別診斷（代謝疾病模擬神經發育表現），非 false positive
 - SP 分數普遍較高（0.400-0.500），因為發育遲緩/癲癇在 KG 中連接密集
 
 ### 已知問題：Evidence Path 間接路徑評分為零
@@ -379,7 +380,7 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 
 - **SP 全部為 0.500**：Seizure 是 KG 中連接最密集的表型之一，與幾乎所有疾病都有 1-hop 直接路徑（`1/(1+1) = 0.5`）。SP 完全無法區分候選，排名 100% 由 GNN 決定。這展示了為什麼需要 GNN + SP 混合模式——單靠 SP 在高頻症狀上沒有區分度
 - **GNN 分數極度壓縮**（0.798-0.833，top 10 只差 0.035）：只有一個症狀時模型無法有效區分，這是預期內的合理行為
-- **hyperprolinemia type 1 第三次出現**（#3）：三組完全不同的測試（Marfan、Rett、單一 Seizure）中都出現，確認為系統性 false positive
+- **hyperprolinemia type 1 出現在 #3**：該疾病在 KG 中與 Seizure 有直接邊（score 0.616），是合理的鑑別診斷（代謝疾病可表現為癲癇）。注意：它未出現在 Marfan 測試（結締組織表型）中，說明模型具有區分能力
 - 沒有經典癲癇綜合症（Dravet、Lennox-Gastaut）出現在 Top 10——可能是訓練不足或 OMIM→MONDO 映射缺失所致
 
 > **注意**：以上三組測試均使用僅 3 epoch 的初步訓練模型（Hits@10 = 0.581）。正式 30+ epoch 訓練後，排名精確度和噪音抑制能力將進一步提升。
