@@ -258,8 +258,11 @@ class DiagnosisPipeline:
         # Sparse storage: parallel tensors of (phenotype_idx, target_idx,
         # target_type, distance). See scripts/compute_shortest_paths.py.
         # When None, the pipeline degrades to pure GNN scoring (eta=1.0).
-        self._sp_lookup: Optional[Dict[str, "torch.Tensor"]] = None
-        self._sp_index: Optional[Dict[Tuple[int, int, int], int]] = None
+        self._sp_ph: Optional["torch.Tensor"] = None
+        self._sp_tg: Optional["torch.Tensor"] = None
+        self._sp_ty: Optional["torch.Tensor"] = None
+        self._sp_di: Optional["torch.Tensor"] = None
+        self._sp_offsets: Optional[Dict[int, Tuple[int, int]]] = None
         self._sp_max_hops: int = 5
         self._sp_ready = False
 
@@ -493,20 +496,39 @@ class DiagnosisPipeline:
 
         n_pairs = sp_data["distance"].numel()
 
-        # Build O(1) lookup index. Memory: ~80 bytes per entry (Python dict
-        # overhead). For 13 万 phenotypes × 5 hops, expect ~10M entries → ~800MB.
-        # Acceptable on inference servers; will optimize if needed.
-        ph_arr = sp_data["phenotype_idx"].tolist()
-        tg_arr = sp_data["target_idx"].tolist()
-        ty_arr = sp_data["target_type"].tolist()
-        di_arr = sp_data["distance"].tolist()
+        # Compact tensors to int32 (52K nodes fits easily)
+        ph_t = sp_data["phenotype_idx"].to(torch.int32)
+        tg_t = sp_data["target_idx"].to(torch.int32)
+        ty_t = sp_data["target_type"].to(torch.int8)
+        di_t = sp_data["distance"]  # already int8
 
-        index: Dict[Tuple[int, int, int], int] = {}
-        for i in range(n_pairs):
-            index[(ph_arr[i], tg_arr[i], ty_arr[i])] = di_arr[i]
+        # Build per-phenotype index for fast lookup.
+        # Sort by phenotype_idx so each phenotype's entries are contiguous,
+        # then record start/end offsets. Query-time lookup is O(entries_per_pheno)
+        # instead of building a 374M-entry Python dict (~50GB RAM).
+        sort_idx = ph_t.argsort()
+        self._sp_ph = ph_t[sort_idx]
+        self._sp_tg = tg_t[sort_idx]
+        self._sp_ty = ty_t[sort_idx]
+        self._sp_di = di_t[sort_idx]
 
-        self._sp_lookup = sp_data
-        self._sp_index = index
+        # Build offset table: phenotype_idx -> (start, end) in sorted arrays
+        self._sp_offsets: Dict[int, Tuple[int, int]] = {}
+        prev_ph = -1
+        start = 0
+        ph_list = self._sp_ph.tolist()
+        for i, ph in enumerate(ph_list):
+            if ph != prev_ph:
+                if prev_ph >= 0:
+                    self._sp_offsets[prev_ph] = (start, i)
+                prev_ph = ph
+                start = i
+        if prev_ph >= 0:
+            self._sp_offsets[prev_ph] = (start, len(ph_list))
+
+        # Free the original large tensors
+        del sp_data, sort_idx, ph_list
+
         self._sp_ready = True
 
         # Load metadata sidecar if present
@@ -1310,7 +1332,7 @@ class DiagnosisPipeline:
         Returns 0.0 if the SP table is not loaded or no phenotypes can be
         looked up.
         """
-        if not self._sp_ready or self._sp_index is None:
+        if not self._sp_ready:
             return 0.0
 
         node_mapping = self._node_id_to_idx
@@ -1338,17 +1360,26 @@ class DiagnosisPipeline:
         if not phenotype_indices:
             return 0.0
 
-        # Look up distances. Missing entries get a sentinel distance
-        # (max_hops + 1) so that completely unreachable phenotypes drag
-        # the average down without producing inf or nan.
+        # Look up distances from per-phenotype sorted index.
         unreachable_distance = float(self._sp_max_hops + 1)
         total = 0.0
         for ph_idx in phenotype_indices:
-            dist = self._sp_index.get((ph_idx, target_idx, target_type_idx))
-            total += float(dist) if dist is not None else unreachable_distance
+            offsets = self._sp_offsets.get(ph_idx)
+            if offsets is None:
+                total += unreachable_distance
+                continue
+            s, e = offsets
+            tg_slice = self._sp_tg[s:e]
+            ty_slice = self._sp_ty[s:e]
+            di_slice = self._sp_di[s:e]
+            mask = (tg_slice == target_idx) & (ty_slice == target_type_idx)
+            matches = di_slice[mask]
+            if len(matches) > 0:
+                total += float(matches[0])
+            else:
+                total += unreachable_distance
 
         avg_distance = total / len(phenotype_indices)
-        # 1 / (1 + d): d=0 → 1.0, d=1 → 0.5, d=∞ → 0
         return 1.0 / (1.0 + avg_distance)
 
     def _calculate_gnn_score(
