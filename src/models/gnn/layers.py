@@ -86,34 +86,37 @@ class HeteroGNNLayer(nn.Module):
         self.use_residual = use_residual
         self.use_layer_norm = use_layer_norm
 
-        # Build convolution dictionary
-        conv_dict = {}
-        for edge_type in self.edge_types:
-            src_type, rel_type, dst_type = edge_type
+        # Build convolution
+        if conv_type == "hgt":
+            # True HGT: type-aware heterogeneous graph transformer
+            self.conv = HGTConv(
+                in_channels=hidden_dim,
+                out_channels=hidden_dim,
+                metadata=metadata,
+                heads=num_heads,
+            )
+        else:
+            # GAT or SAGE: per-edge-type convolutions wrapped in HeteroConv
+            conv_dict = {}
+            for edge_type in self.edge_types:
+                if conv_type == "gat":
+                    conv_dict[edge_type] = GATConv(
+                        hidden_dim,
+                        hidden_dim // num_heads,
+                        heads=num_heads,
+                        dropout=dropout,
+                        add_self_loops=False,
+                        concat=True,
+                    )
+                elif conv_type == "sage":
+                    conv_dict[edge_type] = SAGEConv(
+                        hidden_dim,
+                        hidden_dim,
+                    )
+                else:
+                    raise ValueError(f"Unknown conv_type: {conv_type}")
 
-            if conv_type == "hgt":
-                # HGT requires specific setup
-                conv_dict[edge_type] = self._create_hgt_conv(
-                    hidden_dim, num_heads
-                )
-            elif conv_type == "gat":
-                conv_dict[edge_type] = GATConv(
-                    hidden_dim,
-                    hidden_dim // num_heads,
-                    heads=num_heads,
-                    dropout=dropout,
-                    add_self_loops=False,
-                    concat=True,
-                )
-            elif conv_type == "sage":
-                conv_dict[edge_type] = SAGEConv(
-                    hidden_dim,
-                    hidden_dim,
-                )
-            else:
-                raise ValueError(f"Unknown conv_type: {conv_type}")
-
-        self.conv = HeteroConv(conv_dict, aggr="sum")
+            self.conv = HeteroConv(conv_dict, aggr="sum")
 
         # Layer normalization per node type
         if use_layer_norm:
@@ -123,18 +126,6 @@ class HeteroGNNLayer(nn.Module):
             })
 
         self.dropout = nn.Dropout(dropout)
-
-    def _create_hgt_conv(self, hidden_dim: int, num_heads: int):
-        """Create a simplified HGT-style attention layer"""
-        # Using GAT as HGT approximation for simplicity
-        # Full HGT requires metadata at init time
-        return GATConv(
-            hidden_dim,
-            hidden_dim // num_heads,
-            heads=num_heads,
-            add_self_loops=False,
-            concat=True,
-        )
 
     def forward(
         self,
