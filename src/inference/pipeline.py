@@ -1097,6 +1097,16 @@ class DiagnosisPipeline:
         # Score paths
         scored_paths = self.path_reasoner.score_paths(general_paths, self.kg)
 
+        # Diagnostic: log path scores by length
+        by_length: Dict[int, list] = {}
+        for p in scored_paths:
+            by_length.setdefault(p.length, []).append(p.score)
+        for length, scores in sorted(by_length.items()):
+            logger.info(
+                f"[PathScoring] {length}-hop paths: {len(scores)} found, "
+                f"score range [{min(scores):.4f}, {max(scores):.4f}]"
+            )
+
         # Group by disease
         for path in scored_paths:
             disease_key = str(path.target)
