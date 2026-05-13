@@ -340,6 +340,22 @@ SHEPHERD 的核心設計特點之一是**不需要真實病患資料就能訓練
 - hyperprolinemia type 1（#9）在兩次測試中都出現，是系統性的 false positive，GNN embedding 可能有偏差
 - SP 分數普遍較高（0.400-0.500），因為發育遲緩/癲癇在 KG 中連接密集
 
+### 已知問題：Evidence Path 間接路徑評分為零
+
+在 Rett syndrome 測試的 Full Explanation 中，直接路徑有正常分數（0.900），但經由基因的間接路徑評分全部為 0.000：
+
+```
+直接：Sleep disturbance → [phenotype of disease] → 該疾病 (score: 0.900) ✅
+間接：Global developmental delay → ANK3 → 該疾病 (score: 0.000) ⚠️
+間接：Hypotonia → ANK3 → 該疾病 (score: 0.000) ⚠️
+```
+
+此問題不影響排名（排名由 GNN + SP 混合評分決定，與 evidence path scoring 獨立），但影響證據的說服力——醫生看到 0.000 會質疑「既然分數是零，為什麼還列出來」。
+
+另外，輸入的 4 個症狀中，Autistic behavior（HP:0000729）完全未出現在 matching phenotypes 中，可能是 KG 中該疾病與 HP:0000729 之間缺少連接邊。
+
+兩項問題已記錄至工程追蹤清單，將在後續工程中排查。
+
 > **注意**：以上兩組測試均使用僅 3 epoch 的初步訓練模型（Hits@10 = 0.581）。正式 30+ epoch 訓練後，排名精確度和噪音抑制能力將進一步提升。
 
 ---
