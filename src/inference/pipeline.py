@@ -1080,6 +1080,8 @@ class DiagnosisPipeline:
             direct_paths = self.direct_finder.find_phenotype_gene_disease_paths(
                 source_ids
             )
+            # Score the direct paths (DirectPathFinder returns unscored paths)
+            direct_paths = self.path_reasoner.score_paths(direct_paths, self.kg)
             for path in direct_paths:
                 disease_key = str(path.target)
                 if disease_key not in all_paths:
