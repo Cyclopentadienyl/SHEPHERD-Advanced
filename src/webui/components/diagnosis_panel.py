@@ -103,7 +103,7 @@ def _reload_pipeline(data_dir: str, checkpoint_path: str) -> Dict[str, Any]:
         resp = requests.post(
             f"{PIPELINE_API}/pipeline/reload",
             json=payload,
-            timeout=60,
+            timeout=180,
         )
         resp.raise_for_status()
         return resp.json()
