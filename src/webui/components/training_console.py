@@ -158,7 +158,7 @@ def _collect_config(
         "max_grad_norm": float(max_grad_norm),
         "num_heads": int(num_heads),
         "use_ortholog_gate": use_ortholog_gate,
-        "use_amp": use_amp,
+        "use_amp": False if conv_type == "hgt" else use_amp,
         "amp_dtype": amp_dtype,
         "temperature": float(temperature),
         "label_smoothing": float(label_smoothing),
@@ -836,7 +836,7 @@ def create_training_tab() -> None:
                 )
                 conv_type = gr.Radio(
                     label="GNN Conv Type",
-                    info="GAT: attention-based (default) | HGT: heterogeneous transformer | SAGE: mean aggregation",
+                    info="GAT: attention-based (default) | HGT: heterogeneous transformer (AMP disabled, more VRAM) | SAGE: mean aggregation",
                     choices=["gat", "hgt", "sage"],
                     value="gat",
                     elem_id="conv_type",
@@ -1227,6 +1227,24 @@ def create_training_tab() -> None:
         fn=_handle_export,
         inputs=[],
         outputs=[export_csv_file],
+    )
+
+    # HGT requires float32 (AMP disabled) — update UI when conv type changes
+    def _on_conv_type_change(ct):
+        if ct == "hgt":
+            return (
+                gr.update(value=False, interactive=False, info="Disabled: HGT requires float32 (pyg_lib segment_matmul limitation)"),
+                gr.update(interactive=False),
+            )
+        return (
+            gr.update(value=True, interactive=True, info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues."),
+            gr.update(interactive=True),
+        )
+
+    conv_type.change(
+        fn=_on_conv_type_change,
+        inputs=[conv_type],
+        outputs=[use_amp, amp_dtype],
     )
 
     # =========================================================================

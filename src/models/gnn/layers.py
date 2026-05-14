@@ -144,12 +144,13 @@ class HeteroGNNLayer(nn.Module):
         residual = x_dict if self.use_residual else None
 
         # Apply heterogeneous convolution
-        # HGTConv's internal segment_matmul does not support float16 (AMP default),
-        # but does support bfloat16. Cast to bf16 to keep reduced memory usage
-        # while avoiding the type mismatch error.
+        # HGTConv's internal segment_matmul (pyg_lib) only supports float32.
+        # Disable AMP autocast and cast inputs to float32 for HGT.
+        # This increases VRAM usage — use smaller batch sizes with HGT.
         if self.conv_type == "hgt":
-            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-                out_dict = self.conv(x_dict, edge_index_dict)
+            with torch.amp.autocast(device_type="cuda", enabled=False):
+                x_float = {k: v.float() for k, v in x_dict.items()}
+                out_dict = self.conv(x_float, edge_index_dict)
         else:
             out_dict = self.conv(x_dict, edge_index_dict)
 
