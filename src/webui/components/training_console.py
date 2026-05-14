@@ -992,19 +992,21 @@ def create_training_tab() -> None:
                         value=True,
                         elem_id="use_ortholog_gate",
                     )
-                    use_amp = gr.Checkbox(
-                        label="Automatic Mixed Precision",
-                        info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues.",
-                        value=True,
-                        elem_id="use_amp",
-                    )
-                    amp_dtype = gr.Radio(
-                        label="AMP Dtype",
-                        info="float16: wider GPU support | bfloat16: better stability (RTX 30/40, A100+)",
-                        choices=["float16", "bfloat16"],
-                        value="float16",
-                        elem_id="amp_dtype",
-                    )
+                    with gr.Group():
+                        gr.Markdown("**Mixed Precision (AMP)**")
+                        use_amp = gr.Checkbox(
+                            label="Enable AMP",
+                            info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues.",
+                            value=True,
+                            elem_id="use_amp",
+                        )
+                        amp_dtype = gr.Radio(
+                            label="AMP Dtype",
+                            info="float16: wider GPU support | bfloat16: better stability (RTX 30/40, A100+)",
+                            choices=["float16", "bfloat16"],
+                            value="float16",
+                            elem_id="amp_dtype",
+                        )
                     temperature = gr.Slider(
                         label="Contrastive Temperature",
                         info="Lower = sharper similarity. 0.07 typical for contrastive learning.",
