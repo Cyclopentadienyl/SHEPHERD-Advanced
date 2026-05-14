@@ -993,9 +993,8 @@ def create_training_tab() -> None:
                         elem_id="use_ortholog_gate",
                     )
                     with gr.Group():
-                        gr.Markdown("**Mixed Precision (AMP)**")
                         use_amp = gr.Checkbox(
-                            label="Enable AMP",
+                            label="Enable Mixed Precision (AMP)",
                             info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues.",
                             value=True,
                             elem_id="use_amp",
