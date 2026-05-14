@@ -19,9 +19,9 @@ ls data/external/phenotype.hpoa data/external/genes_to_phenotype.txt
 
 # Build the knowledge graph
 python scripts/build_knowledge_graph.py \
-    --workspace data/workspaces/hpo_2026/ \
-    --external-dir data/external/ \
-    --generate-samples
+    --workspace data/workspaces/test_real \
+    --external-dir data/external \
+    --generate-samples --num-train 80000 --num-val 15000
 ```
 
 ## Notes
