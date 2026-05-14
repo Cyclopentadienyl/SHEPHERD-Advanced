@@ -121,12 +121,173 @@ for layer in self.gnn_layers:
 
 HGTConv 內部 `segment_matmul` 不支援 float16/bf16，但 conv 前後的 LayerNorm、Dropout、殘差連接可以保持 float16。目前的實作已經這樣做（只有 conv 層用 float32，其餘 AMP 正常）。
 
+### 方案 4：禁用 segment_matmul（HGT Lite）
+
+PyG 的 `HeteroLinear`（HGTConv 內部使用）有一個 naive fallback — 當 `segment_matmul` 不可用時退回到標準 PyTorch 矩陣乘法（`x @ self.weight`），而標準矩陣乘法支援 float16。
+
+```python
+import torch_geometric
+torch_geometric.typing.WITH_SEGMM = False
+torch_geometric.typing.WITH_GMM = False
+```
+
+理論上可以讓 HGT 和 AMP float16 相容。速度會慢一些（沒有 CUTLASS kernel），但 VRAM 應該大幅降低。**尚未驗證**。
+
+---
+
+## PhenoKG 架構深度分析
+
+### Patient-Specific Subgraph 建構策略
+
+PhenoKG 的核心創新不在 GNN 層，而在子圖建構：
+
+```
+步驟 1：拿到病患的 HPO 表型列表（3-10 個）
+步驟 2：在 KG 中從每個表型出發，計算到候選基因的最短路徑
+步驟 3：收集路徑經過的所有節點 + 邊，形成 patient-specific 子圖
+步驟 4：從 KG 補充相關的疾病、通路等節點（augmentation）
+
+有候選基因列表 → 最短路徑直連到指定 ~20 個基因
+無候選列表 → 取表型的 k-hop 鄰居（k=2），區域內所有基因為候選
+```
+
+**和我們的差異**：我們對所有病患用同一個通用 subgraph sampling（`max_subgraph_nodes=5000`）。PhenoKG 為每個病患建不同的子圖，讓 GNN 只看到相關的局部結構。
+
+**實作難度**：中等（~1 週）。需要改 `DiagnosisDataLoader` 的 subgraph sampling 邏輯。核心算法是 BFS，已有現成（`compute_shortest_paths.py`）。
+
+### Transformer Gene Encoder
+
+```
+GATv2 輸出的基因 embedding（512 維）× L 個候選基因
+  ↓ Transformer Encoder（4 層，8 heads，中間維度 2048）
+精煉後的基因 embedding（512 維）× L 個
+  ↓ cosine similarity with patient representation
+基因排名
+```
+
+GATv2 給基因「初步身份向量」，Transformer 讓候選基因互相對比（「我和其他候選有什麼不同？」），產出更精確的表示。
+
+**實作難度**：低（~2-3 天）。`nn.TransformerEncoder` 是 PyTorch 原生組件。
+
+### 雙目標損失函數
+
+```
+L_total = L_gene（三元組損失：拉近正確基因、推遠錯誤基因，margin=0.3）
+        + L_sim（病患相似度：相同致病基因的病患在 embedding 空間靠近）
+```
+
+**實作難度**：中等（~3-5 天）。需要在 `MultiTaskLoss` 中加入 triplet loss 和 patient similarity。
+
+### 整體評估
+
+PhenoKG 沒有公開程式碼（2025 年 6 月論文），但其架構完全可以在 PyG + PyTorch 中實作：
+- GATv2Conv：PyG 內建 ✅
+- TransformerEncoder：PyTorch 內建 ✅
+- Patient-specific subgraph：需要自建，但不複雜 ⚠️
+- Triplet loss：PyTorch `nn.TripletMarginLoss` ✅
+
+---
+
+## 混合架構方案：GATv2 + Type Embedding
+
+在不使用 HGTConv 的情況下獲得 type-awareness：
+
+```
+目前：
+  HeteroConv 包 10 個獨立 GATv2 → 互不知道對方存在
+
+加入 type embedding：
+  把邊類型和節點類型編碼成 embedding，注入 GATv2 的 attention
+  → 每個 GATv2 知道「我在處理什麼類型的邊和節點」
+  → 保持 HeteroConv 的逐個處理（AMP 相容、低 VRAM）
+  → 但有了 HGT 的核心優勢：type-awareness
+```
+
+GATv2Conv 支持 `edge_attr` 參數，可以把 type embedding 作為邊特徵傳入。
+
+**實作難度**：低-中（~2 天）。不需要改框架。
+
+---
+
+## SeHGNN 家族
+
+### SeHGNN（AAAI 2023）
+
+核心思路：預計算 + 語義融合
+
+```
+離線預處理（一次性）：
+  對每種 meta-path，用無參數的 mean aggregator 聚合鄰居特徵
+  → 每個節點得到多組聚合特徵（每種 meta-path 一組）
+
+訓練時（每 epoch）：
+  Transformer-based semantic fusion → 融合不同 meta-path 的語義
+  → 只訓練融合模組，不重複計算鄰居聚合
+```
+
+**優勢**：訓練速度極快（鄰居聚合只算一次）、VRAM 低
+**劣勢**：只支持 2-hop meta-path，長距離依賴不足
+**GitHub**：[ICT-GIMLab/SeHGNN](https://github.com/ICT-GIMLab/SeHGNN)（學術專案）
+
+### LMSPS — Long-range Meta-path Search（NeurIPS 2024）
+
+針對 SeHGNN 的 2-hop 限制，擴展到 6-hop：
+
+- 自動搜索最佳 meta-path 組合（不需要人工指定）
+- 長距離依賴可以捕捉更複雜的關係（例如 表型 → 基因 → 通路 → 基因 → 疾病）
+- 在大規模異質圖上表現優於 SeHGNN
+
+### Seq-HGNN
+
+加入序列建模的 SeHGNN 變體，處理有時間順序的異質圖（和我們的靜態 KG 場景關係不大）。
+
+---
+
+## 計劃中的 Conv Type 選項
+
+| 選項 | 架構 | AMP | 預估 VRAM | 狀態 |
+|------|------|-----|-----------|------|
+| `gat` | GATConv via HeteroConv | ✅ float16 | ~6 GB | ✅ 已實作 |
+| `gatv2` | GATv2Conv via HeteroConv | ✅ float16 | ~6 GB | 🔲 待實作 |
+| `hgt` | HGTConv (原生，float32) | ❌ | >16 GB | ✅ 已實作 |
+| `hgt-lite` | HGTConv (禁用 segment_matmul) | ✅ 待驗證 | 待測 | 🔲 待驗證 |
+| `sage` | SAGEConv via HeteroConv | ✅ float16 | ~5 GB | ✅ 已實作 |
+
+未來可能加入：
+- `gatv2-typed`：GATv2 + type embedding（混合架構）
+- `sehgnn`：SeHGNN 預計算架構（需要較大改動）
+
+### UI 設計方案
+
+當架構選項超過 5 個時，Radio 按鈕 + 單行 info 不再適用。改用 Dropdown + 動態說明區：
+
+```
+┌──────────────────────────────────────────┐
+│ GNN Conv Type                       ▼   │
+│  GAT (default)                          │
+└──────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│ Standard graph attention network.        │
+│ AMP compatible. ~6GB VRAM.               │
+│ Recommended for GPUs ≤16GB.              │
+└──────────────────────────────────────────┘
+```
+
+選擇不同架構時，說明區自動更新為對應的描述。每個架構 2-3 行說明，不用擠在一行裡。
+
 ---
 
 ## 建議路線圖
 
 | 優先級 | 動作 | 預估工時 | 影響 |
 |--------|------|---------|------|
+| **P0** | GAT → GATv2 升級 | 0.5 天 | 動態 attention，可能改善排名精度；零 VRAM 增加 |
+| **P0.5** | HGT Lite 驗證（禁用 segment_matmul） | 0.5 天 | 若成功，HGT 可在 16GB GPU 上用 AMP |
+| **P1** | UI 改版（Dropdown + 動態說明） | 1 天 | 支援更多架構選項 |
+| **P1** | HGT + gradient checkpointing | 1 天 | 原版 HGT 在 16GB GPU 上可用 |
+| **P2** | GATv2 + type embedding | 2 天 | 「窮人版 HGT」— type-aware 但 AMP 相容 |
+| **P2** | 研究 PhenoKG 的 subgraph 策略 | 1-2 週 | patient-specific subgraph 可能是精度提升的關鍵 |
+| **P3** | 評估 SeHGNN / LMSPS | 1 週 | 預計算策略大幅加速訓練 |
 | **P0** | GAT → GATv2 升級 | 0.5 天 | 動態 attention，可能改善排名精度；零 VRAM 增加 |
 | **P1** | HGT + gradient checkpointing | 1 天 | 在 16GB GPU 上也能用 HGT |
 | **P2** | 研究 PhenoKG 的 subgraph 策略 | 1-2 週 | patient-specific subgraph 可能是精度提升的關鍵 |
@@ -144,3 +305,7 @@ HGTConv 內部 `segment_matmul` 不支援 float16/bf16，但 conv 前後的 Laye
 - [SeHGNN (AAAI 2023)](https://github.com/ICT-GIMLab/SeHGNN)
 - [Graph Transformer Survey (2025)](https://arxiv.org/html/2502.16533v2)
 - [PyTorch Gradient Checkpointing](https://docs.pytorch.org/docs/stable/checkpoint.html)
+- [LMSPS — Long-range Meta-path Search (NeurIPS 2024)](https://proceedings.neurips.cc/paper_files/paper/2024/file/4e392aa9bc70ed731d3c9c32810f92fb-Paper-Conference.pdf)
+- [PyG HeteroLinear Source (segment_matmul fallback)](https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/nn/dense/linear.html)
+- [GATv2 Paper (ICLR 2022)](https://arxiv.org/abs/2105.14491)
+- [GATv2Conv PyG Docs](https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.nn.conv.GATv2Conv.html)
