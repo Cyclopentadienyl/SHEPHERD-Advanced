@@ -835,7 +835,7 @@ def create_training_tab() -> None:
                 )
                 conv_type = gr.Radio(
                     label="GNN Conv Type",
-                    info="GAT: attention-based (default) | HGT: heterogeneous transformer (no AMP, high VRAM — batch ≤16 for 16GB GPUs) | SAGE: mean aggregation",
+                    info="GAT: attention-based (default) | HGT: heterogeneous transformer (no AMP, high VRAM requirements - batch size ≤16 for 16GB GPUs) | SAGE: mean aggregation",
                     choices=["gat", "hgt", "sage"],
                     value="gat",
                     elem_id="conv_type",
