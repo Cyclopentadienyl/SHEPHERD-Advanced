@@ -144,8 +144,15 @@ class HeteroGNNLayer(nn.Module):
         residual = x_dict if self.use_residual else None
 
         # Apply heterogeneous convolution
-        # HeteroConv automatically skips missing edge types
-        out_dict = self.conv(x_dict, edge_index_dict)
+        # HGTConv's internal segment_matmul (pyg_lib) only supports float32.
+        # Disable AMP autocast and cast inputs to float32 for HGT.
+        # This increases VRAM usage — use smaller batch sizes with HGT.
+        if self.conv_type == "hgt":
+            with torch.amp.autocast(device_type="cuda", enabled=False):
+                x_float = {k: v.float() for k, v in x_dict.items()}
+                out_dict = self.conv(x_float, edge_index_dict)
+        else:
+            out_dict = self.conv(x_dict, edge_index_dict)
 
         # Preserve features for node types that didn't receive messages
         # (they won't appear in out_dict from HeteroConv)
