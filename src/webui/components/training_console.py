@@ -107,8 +107,7 @@ def _collect_config(
     max_grad_norm: float,
     num_heads: str,
     use_ortholog_gate: bool,
-    use_amp: bool,
-    amp_dtype: str,
+    amp_mode: str,
     temperature: float,
     label_smoothing: float,
     margin: float,
@@ -158,8 +157,8 @@ def _collect_config(
         "max_grad_norm": float(max_grad_norm),
         "num_heads": int(num_heads),
         "use_ortholog_gate": use_ortholog_gate,
-        "use_amp": False if conv_type == "hgt" else use_amp,
-        "amp_dtype": amp_dtype,
+        "use_amp": False if (conv_type == "hgt" or amp_mode == "Off") else True,
+        "amp_dtype": amp_mode if amp_mode != "Off" else "float16",
         "temperature": float(temperature),
         "label_smoothing": float(label_smoothing),
         "margin": float(margin),
@@ -992,20 +991,13 @@ def create_training_tab() -> None:
                         value=True,
                         elem_id="use_ortholog_gate",
                     )
-                    with gr.Group():
-                        use_amp = gr.Checkbox(
-                            label="Enable Mixed Precision (AMP)",
-                            info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues.",
-                            value=True,
-                            elem_id="use_amp",
-                        )
-                        amp_dtype = gr.Radio(
-                            label="AMP Dtype",
-                            info="float16: wider GPU support | bfloat16: better stability (RTX 30/40, A100+)",
-                            choices=["float16", "bfloat16"],
-                            value="float16",
-                            elem_id="amp_dtype",
-                        )
+                    amp_mode = gr.Radio(
+                        label="Mixed Precision (AMP)",
+                        info="Faster & less VRAM on modern GPUs. Off: full float32. float16: wider GPU support. bfloat16: better numerical stability (RTX 30+, A100+).",
+                        choices=["Off", "float16", "bfloat16"],
+                        value="float16",
+                        elem_id="amp_mode",
+                    )
                     temperature = gr.Slider(
                         label="Contrastive Temperature",
                         info="Lower = sharper similarity. 0.07 typical for contrastive learning.",
@@ -1173,7 +1165,7 @@ def create_training_tab() -> None:
         diagnosis_weight, link_prediction_weight, contrastive_weight, ortholog_weight,
         # Tier 3
         gradient_accumulation_steps, max_grad_norm, num_heads,
-        use_ortholog_gate, use_amp, amp_dtype,
+        use_ortholog_gate, amp_mode,
         temperature, label_smoothing, margin, num_neighbors_str, max_subgraph_nodes,
     ]
 
@@ -1233,19 +1225,20 @@ def create_training_tab() -> None:
     # HGT requires float32 (AMP disabled) — update UI when conv type changes
     def _on_conv_type_change(ct):
         if ct == "hgt":
-            return (
-                gr.update(value=False, interactive=False, info="Disabled: HGT requires float32 (pyg_lib segment_matmul limitation)"),
-                gr.update(interactive=False),
+            return gr.update(
+                value="Off",
+                interactive=False,
+                info="Disabled: HGT requires full float32 (pyg_lib limitation).",
             )
-        return (
-            gr.update(value=True, interactive=True, info="FP16/BF16 training. Faster & less VRAM on modern GPUs. Disable if NaN issues."),
-            gr.update(interactive=True),
+        return gr.update(
+            interactive=True,
+            info="Faster & less VRAM on modern GPUs. Off: full float32. float16: wider GPU support. bfloat16: better numerical stability (RTX 30+, A100+).",
         )
 
     conv_type.change(
         fn=_on_conv_type_change,
         inputs=[conv_type],
-        outputs=[use_amp, amp_dtype],
+        outputs=[amp_mode],
     )
 
     # =========================================================================
