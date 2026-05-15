@@ -36,7 +36,7 @@ echo -e "${CYAN}================================================================
 # === Configuration ===
 PYTHON_EXE="${PYTHON_EXE:-python3}"
 # [NOTE] Using cu130 (CUDA 13.0) unified across all platforms.
-# PyTorch 2.9.0 + cu130 for best ecosystem compatibility and latest hardware support.
+# PyTorch 2.10.0 + cu130 for best ecosystem compatibility and latest hardware support.
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 
 # Dependencies are now managed via pyproject.toml (single source of truth).
@@ -101,22 +101,36 @@ echo -e "${GREEN}[OK] Pip upgraded${NC}"
 echo -e "\n${CYAN}[STAGE 2/4] PyTorch Installation${NC}"
 echo "----------------------------------------------------------------------------"
 
-echo -e "[INFO] Installing PyTorch stack (torch==2.9.0 + cu130)"
+echo -e "[INFO] Installing PyTorch stack (torch==2.10.0 + cu130)"
 echo -e "[INFO] Index URL: $TORCH_INDEX_URL"
 
 # Install Torch (exact versions to ensure pyg-lib compatibility)
-# Pin to 2.9.0 for reproducibility; PyG has official cu130 wheels as of 2026-03.
-"$PIP" install --index-url "$TORCH_INDEX_URL" "torch==2.9.0" "torchvision==0.24.0" "torchaudio==2.9.0" || {
+# Pin to 2.10.0 for reproducibility; PyG has official cu130 wheels for this version.
+"$PIP" install --index-url "$TORCH_INDEX_URL" "torch==2.10.0" "torchvision==0.25.0" "torchaudio==2.10.0" || {
     echo -e "${RED}[ERROR] Failed to install PyTorch stack${NC}"
     echo -e "${YELLOW}[HINT] If on DGX Spark, ensure you have internet access or use the local NVIDIA mirror.${NC}"
     exit 2
 }
 echo -e "${GREEN}[OK] PyTorch stack installed${NC}"
 
-# Validate
-"$PY" -c "import torch; print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()}')" || {
-    echo -e "${YELLOW}[WARN] PyTorch validation returned non-zero${NC}"
-}
+# NOTE on sm_121 warning (Blackwell GB10 / DGX Spark):
+#   PyTorch < 2.10 may emit: "Found GPU0 ... with cuda capability sm_121.
+#   PyTorch supports cuda capability sm_80 - sm_120." PyTorch maintainer
+#   ptrblck confirmed this is harmless (sm_121 is SASS binary compatible
+#   with sm_120). The misleading message is fixed in PyTorch 2.10+, but
+#   this note remains for reference if anyone rolls back.
+#   Ref: https://discuss.pytorch.org/t/nvidia-dgx-spark-support/223677
+
+# Validate (CUDA smoke test when available; graceful CPU-only fallback)
+"$PY" -c "
+import torch
+print(f'PyTorch {torch.__version__} | CUDA build: {torch.version.cuda} | available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    x = torch.zeros(2, 2, device='cuda')
+    print(f'[OK] CUDA smoke test passed | device: {x.device} | GPU: {torch.cuda.get_device_name(0)}')
+else:
+    print('[WARN] CUDA not detected at deploy time; launch-time detection will retry')
+" || echo -e "${YELLOW}[WARN] PyTorch validation returned non-zero${NC}"
 
 # --- PyTorch Geometric (PyG) ---
 # PyG is required for heterogeneous GNN message passing (HeteroGNNLayer).
@@ -128,7 +142,7 @@ echo -e "\n[INFO] Installing PyTorch Geometric (PyG)..."
 echo -e "[INFO] Installing PyG native extensions..."
 echo -e "[INFO] (1/2) pyg-lib — PyG team's GNN kernels (Linux x86 + ARM + Windows wheels)"
 if "$PIP" install pyg-lib --only-binary :all: \
-    -f "https://data.pyg.org/whl/torch-2.9.0+cu130.html"; then
+    -f "https://data.pyg.org/whl/torch-2.10.0+cu130.html"; then
     echo -e "${GREEN}[OK] pyg-lib installed${NC}"
 else
     echo -e "${YELLOW}[SKIP] pyg-lib: no pre-built wheel; PyG will use torch.scatter_reduce fallback${NC}"
@@ -137,7 +151,7 @@ fi
 echo -e "[INFO] (2/2) torch-scatter, torch-sparse, torch-cluster — third-party extensions"
 echo -e "[INFO]      (Linux wheels published; Windows wheels not yet released by maintainers)"
 if "$PIP" install torch-scatter torch-sparse torch-cluster --only-binary :all: \
-    -f "https://data.pyg.org/whl/torch-2.9.0+cu130.html"; then
+    -f "https://data.pyg.org/whl/torch-2.10.0+cu130.html"; then
     echo -e "${GREEN}[OK] PyG third-party extensions installed${NC}"
 else
     echo -e "${YELLOW}[SKIP] No pre-built wheels for this platform/torch combination${NC}"
@@ -187,26 +201,6 @@ echo "--------------------------------------------------------------------------
 if [ -f "scripts/validate_installation.py" ]; then
     echo -e "[INFO] Running validation..."
     "$PY" scripts/validate_installation.py || echo -e "${YELLOW}[WARN] Validation returned warnings${NC}"
-fi
-
-# Config Generation
-if [ -f "scripts/generate_config.py" ]; then
-    echo -e "[INFO] Generating platform configuration..."
-    "$PY" scripts/generate_config.py || echo -e "${YELLOW}[WARN] Config generation failed${NC}"
-else
-    mkdir -p configs
-    if [ ! -f "configs/platform.yaml" ]; then
-        echo -e "[INFO] Generating default platform.yaml..."
-        cat <<EOF > configs/platform.yaml
-platform: linux_${ARCH}
-cuda_version: auto
-model_config:
-  attention_backend: auto
-vector_index:
-  backend: auto
-EOF
-        echo -e "${GREEN}[OK] Config generated${NC}"
-    fi
 fi
 
 echo -e "\n${GREEN}============================================================================${NC}"

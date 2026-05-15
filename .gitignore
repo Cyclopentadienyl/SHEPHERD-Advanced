@@ -93,6 +93,10 @@ htmlcov/
 *.key
 *.pem
 
+# --- Claude Code session transcripts (do not commit) ---
+from claude.md
+claude_session_*.md
+
 
 # ============================================
 # Advanced: CI/CD, HPC, and Training

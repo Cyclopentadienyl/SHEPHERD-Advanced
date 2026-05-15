@@ -50,9 +50,9 @@ echo.
 
 rem === Configuration (single source of truth for versions) ===
 if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.12"
-set "TORCH_VER=2.9.0"
-set "TORCHVISION_VER=0.24.0"
-set "TORCHAUDIO_VER=2.9.0"
+set "TORCH_VER=2.10.0"
+set "TORCHVISION_VER=0.25.0"
+set "TORCHAUDIO_VER=2.10.0"
 set "CUDA_TAG=cu130"
 
 rem --- Derived URLs (match pyg-lib recommended format) ---
@@ -140,7 +140,7 @@ rem PyG is required for heterogeneous GNN message passing (HeteroGNNLayer).
 rem
 rem Installation strategy (smart adaptation):
 rem   1. torch_geometric   - main package, pure Python, always installs    [REQUIRED]
-rem   2. pyg-lib           - pyg-team native ops, has torch 2.9+cu130 whl [RECOMMENDED]
+rem   2. pyg-lib           - pyg-team native ops, has torch 2.10+cu130 whl [RECOMMENDED]
 rem   3. torch_scatter etc. - third-party extensions, wheels lag behind    [OPTIONAL]
 rem
 rem If (3) is unavailable, PyG auto-falls back to torch.scatter_reduce
@@ -155,7 +155,7 @@ echo [INFO] Installing PyTorch Geometric (PyG)
 )
 echo [OK] torch_geometric installed
 
-rem --- pyg-lib (maintained by pyg-team, has torch 2.9+cu130 wheels) ---
+rem --- pyg-lib (maintained by pyg-team, has torch 2.10+cu130 wheels) ---
 rem --only-binary :all: prevents pip from downloading source tarballs and
 rem attempting to compile them (which fails with long tracebacks).
 rem If no pre-built wheel exists, pip fails instantly and cleanly.
@@ -218,12 +218,6 @@ if exist "scripts\validate_installation.py" (
   echo [INFO] scripts\validate_installation.py not found, skipping validation
 )
 
-rem Generate platform configuration (Dynamic via Python)
-echo [INFO] Generating platform configuration...
-"%PY%" scripts\generate_config.py || (
-    echo [WARN] Failed to generate platform config automatically
-)
-
 echo.
 echo ============================================================================
 echo   Deployment Complete!
@@ -231,7 +225,6 @@ echo ===========================================================================
 echo.
 echo [INFO] Virtual environment: .venv
 echo [INFO] Python: %PY%
-echo [INFO] Platform config: configs\platform.yaml
 echo.
 echo Next steps:
 echo   1. Test the installation:
