@@ -2,6 +2,11 @@
 
 Place manually downloaded annotation files here before running the KG build pipeline.
 
+**Prerequisites**: this assumes you have already run `./deploy.sh` (Linux) or
+`deploy.cmd` (Windows). The deploy script uses uv to create `.venv/` with all
+dependencies from `uv.lock`. The `python` invocations below resolve to that
+`.venv/` interpreter.
+
 ## Required Files
 
 | File | Source | Description |

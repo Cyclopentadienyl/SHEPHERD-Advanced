@@ -9,36 +9,53 @@ authors = [
 readme = "README.md"
 license = {text = "MIT"}
 
-# Core dependencies - Pure Python packages with cross-platform compatibility
-# CRITICAL: Do NOT include torch, torch-geometric, flash-attn, xformers, or CUDA-dependent packages
-# These will be installed via platform-specific scripts to ensure CUDA 13.0 compatibility
+# Core dependencies
+#
+# Dependency management policy (Phase C onwards):
+#   - PyTorch (torch/torchvision/torchaudio) is listed here and routed to the
+#     CUDA 13.0 wheel index via [tool.uv.sources] + [[tool.uv.index]] below.
+#     uv resolves wheels per-platform (linux_x86_64, linux_aarch64, win_amd64)
+#     and records them in uv.lock for cross-platform reproducible installs.
+#   - PyG native extensions (pyg-lib, torch-scatter, torch-sparse, torch-cluster)
+#     are NOT listed here. They come from a flat HTML wheel index
+#     (https://data.pyg.org/whl/torch-2.10.0+cu130.html) whose URL is
+#     torch-version-coupled, and three of them have no Windows wheels.
+#     deploy.sh / deploy.cmd install them post-sync with graceful skip on
+#     missing wheels (fallback to torch.scatter_reduce is built into PyG).
+#   - Optional acceleration packages (flash-attn, xformers, sage-attn) remain
+#     opt-in via launch_shepherd.{sh,cmd} flags; not managed by uv.
 dependencies = [
+    # PyTorch stack (CUDA 13.0; routed via [tool.uv.sources] below)
+    "torch==2.10.0",
+    "torchvision==0.25.0",
+    "torchaudio==2.10.0",
+
     # Ontology processing
     "pronto>=2.7",
     "networkx>=3.2",
-    
+
     # Data processing & scientific computing
     "pandas>=2.2",
     "numpy>=2.0",  # Python 3.12 supports NumPy 2.3+
     "scipy>=1.14",
-    
+
     # Configuration & serialization
     "pyyaml>=6.0",
     "jsonschema>=4.21",
     "toml>=0.10",
-    
+
     # Data validation & schemas
     "pydantic>=2.7",
     "pydantic-settings>=2.2",
-    
+
     # API framework
     "fastapi>=0.115",
     "uvicorn[standard]>=0.29",
     "gradio>=5.20,<5.30",
-    
+
     # Vector retrieval (cross-platform CPU backend)
     "voyager>=2.0",  # Spotify's HNSW library, replaces hnswlib
-    
+
     # System monitoring
     "psutil>=5.9",
 
@@ -60,8 +77,7 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-xdist>=3.5",
     "pytest-asyncio>=0.23",
-    "pip-tools>=7.4",
-    "pipdeptree>=2.23",
+    "pipdeptree>=2.23",  # diagnostic — see conflicts in installed env (uv pip check is the install-time counterpart)
 ]
 
 # NLP modules (optional)
@@ -75,7 +91,7 @@ nlp = [
 # Medical standards (optional)
 medical = [
     "fhir.resources>=7.1",
-    "python-hl7>=0.4.6",
+    "hl7>=0.4.5",  # PyPI canonical name is "hl7"; GitHub repo is "python-hl7" (same maintainer, different name)
 ]
 
 # Benchmarking tools
@@ -93,6 +109,37 @@ Documentation = "https://shepherd-advanced.readthedocs.io"
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# ============================================
+# uv Configuration (Phase C: uv-managed deployment)
+# ============================================
+
+[tool.uv]
+# Platforms this project targets. uv produces a universal lockfile by default;
+# listing environments here narrows resolution to only these platforms, which
+# keeps uv.lock smaller and makes "wheel missing for platform X" failures
+# surface during `uv lock` instead of at deploy time on an end-user machine.
+environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
+# Route the PyTorch stack to the CUDA 13.0 wheel index. Without this, uv would
+# pull torch from default PyPI (CPU-only wheels).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
+torchvision = [{ index = "pytorch-cu130" }]
+torchaudio = [{ index = "pytorch-cu130" }]
+
+# explicit = true means this index is consulted ONLY for packages explicitly
+# mapped to it via [tool.uv.sources] above. All other packages continue to
+# resolve from default PyPI. This prevents the PyTorch index from accidentally
+# satisfying transitive deps with a CUDA-tagged wheel.
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 # ============================================
 # Tool Configurations

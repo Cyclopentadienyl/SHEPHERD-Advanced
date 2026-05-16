@@ -9,12 +9,18 @@ set -u
 #   1. Linux x86_64 (Standard Servers/Workstations)
 #   2. Linux aarch64 (NVIDIA DGX Spark / Grace Hopper / Jetson Orin)
 #
+# Phase C onwards: this script uses uv (https://docs.astral.sh/uv/) as the
+# primary deployment tool. PyTorch (torch/torchvision/torchaudio) is now
+# managed by uv via [tool.uv.sources] in pyproject.toml and recorded in
+# uv.lock for cross-platform reproducibility. PyG native extensions
+# (pyg-lib, torch-scatter/sparse/cluster) remain out of the lock and are
+# installed via 'uv pip install' with graceful fallback on missing wheels.
+#
 # Usage:
 #   ./deploy.sh
 #
 # Environment Variables:
-#   PYTHON_EXE        - Python executable (default: python3)
-#   TORCH_INDEX_URL   - PyTorch index URL (default: cu130 for all platforms)
+#   PYTHON_EXE   - Python executable used to bootstrap uv venv (default: python3)
 #
 # Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
 #   These are NOT installed during deployment. They are auto-installed
@@ -35,14 +41,7 @@ echo -e "${CYAN}================================================================
 
 # === Configuration ===
 PYTHON_EXE="${PYTHON_EXE:-python3}"
-# [NOTE] Using cu130 (CUDA 13.0) unified across all platforms.
-# PyTorch 2.10.0 + cu130 for best ecosystem compatibility and latest hardware support.
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
-
-# Dependencies are now managed via pyproject.toml (single source of truth).
-# Platform-specific CUDA packages (torch, torchvision, torchaudio) are
-# installed in Stage 2 with --index-url. All other deps come from
-# pip install . in Stage 3.
+PYG_WHEEL_URL="https://data.pyg.org/whl/torch-2.10.0+cu130.html"
 
 # Detect Architecture
 ARCH=$(uname -m)
@@ -52,13 +51,13 @@ if [ "$ARCH" == "aarch64" ]; then
 fi
 
 # ============================================================================
-# STAGE 1: ENVIRONMENT SETUP
+# STAGE 1/4: HARDWARE DETECTION & uv SETUP
 # ============================================================================
-echo -e "\n${CYAN}[STAGE 1/4] Environment Setup${NC}"
+echo -e "\n${CYAN}[STAGE 1/4] Hardware Detection & uv Setup${NC}"
 echo "----------------------------------------------------------------------------"
 
-# Check Python
-echo -e "[INFO] Python executable: $PYTHON_EXE"
+# Check Python (used only to bootstrap uv venv selection; uv manages versions itself)
+echo -e "[INFO] Bootstrap Python: $PYTHON_EXE"
 if ! $PYTHON_EXE --version > /dev/null 2>&1; then
     echo -e "${RED}[ERROR] Python not found. Please install Python 3.12+${NC}"
     exit 1
@@ -74,44 +73,59 @@ else
     echo -e "${YELLOW}[WARN] nvidia-smi not found. GPU may not be available.${NC}"
 fi
 
-# Create Virtual Environment
-if [ ! -d ".venv" ]; then
-    echo -e "[INFO] Creating virtual environment at .venv..."
-    $PYTHON_EXE -m venv .venv || { echo -e "${RED}[ERROR] Failed to create venv${NC}"; exit 1; }
-    echo -e "${GREEN}[OK] Virtual environment created${NC}"
-else
-    echo -e "[INFO] Virtual environment already exists"
+# uv installation check (with y/N confirmation if missing)
+if ! command -v uv >/dev/null 2>&1; then
+    echo ""
+    echo -e "${YELLOW}[INFO] uv is not installed. uv is required for SHEPHERD-Advanced deployment.${NC}"
+    echo -e "[INFO] Official installer: https://docs.astral.sh/uv/getting-started/installation/"
+    echo ""
+    read -r -p "Install uv now via official installer? (y/N): " ans
+    case "$ans" in
+        [yY]|[yY][eE][sS])
+            echo -e "[INFO] Installing uv..."
+            if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+                echo -e "${RED}[ERROR] uv installer failed (network error?). Install manually and re-run.${NC}"
+                exit 1
+            fi
+            # uv installs to ~/.local/bin by default; ensure it's on PATH for this session
+            export PATH="$HOME/.local/bin:$PATH"
+            if ! command -v uv >/dev/null 2>&1; then
+                echo -e "${RED}[ERROR] uv installed but not found on PATH.${NC}"
+                echo -e "${YELLOW}[HINT] Add ~/.local/bin to your PATH and re-run this script.${NC}"
+                exit 1
+            fi
+            ;;
+        *)
+            echo -e "${RED}[ERROR] Deployment aborted: uv is required but not installed.${NC}"
+            exit 1
+            ;;
+    esac
 fi
-
-# Activate Environment
-# We use the full path to avoid shell sourcing issues in scripts
-PY=".venv/bin/python"
-PIP=".venv/bin/pip"
-
-# Upgrade pip
-echo -e "[INFO] Upgrading pip, setuptools, wheel..."
-"$PY" -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1 || {
-    echo -e "${RED}[ERROR] Failed to upgrade pip${NC}"; exit 1;
-}
-echo -e "${GREEN}[OK] Pip upgraded${NC}"
+echo -e "${GREEN}[OK] uv: $(uv --version)${NC}"
 
 # ============================================================================
-# STAGE 2: PYTORCH INSTALLATION
+# STAGE 2/4: ENVIRONMENT + DEPENDENCY SYNC (uv.lock driven)
 # ============================================================================
-echo -e "\n${CYAN}[STAGE 2/4] PyTorch Installation${NC}"
+echo -e "\n${CYAN}[STAGE 2/4] Environment + Dependency Sync${NC}"
 echo "----------------------------------------------------------------------------"
 
-echo -e "[INFO] Installing PyTorch stack (torch==2.10.0 + cu130)"
-echo -e "[INFO] Index URL: $TORCH_INDEX_URL"
-
-# Install Torch (exact versions to ensure pyg-lib compatibility)
-# Pin to 2.10.0 for reproducibility; PyG has official cu130 wheels for this version.
-"$PIP" install --index-url "$TORCH_INDEX_URL" "torch==2.10.0" "torchvision==0.25.0" "torchaudio==2.10.0" || {
-    echo -e "${RED}[ERROR] Failed to install PyTorch stack${NC}"
-    echo -e "${YELLOW}[HINT] If on DGX Spark, ensure you have internet access or use the local NVIDIA mirror.${NC}"
+# uv sync creates .venv if missing and installs everything from uv.lock.
+# torch/torchvision/torchaudio are routed to cu130 index automatically via
+# [tool.uv.sources] in pyproject.toml; resolved per platform.
+#
+# --inexact: do NOT remove packages that aren't in the lock. This protects
+# PyG native extensions (installed in Stage 3) from being purged on repeat
+# deploys.
+echo -e "[INFO] Running 'uv sync --inexact' (creates .venv, installs lock contents)..."
+if ! uv sync --inexact; then
+    echo -e "${RED}[ERROR] uv sync failed. Check network and that uv.lock matches pyproject.toml.${NC}"
+    echo -e "${YELLOW}[HINT] If uv.lock is stale, regenerate with 'uv lock'.${NC}"
     exit 2
-}
-echo -e "${GREEN}[OK] PyTorch stack installed${NC}"
+fi
+echo -e "${GREEN}[OK] uv.lock contents synced into .venv${NC}"
+
+# Pointer for downstream Python invocations
+PY=".venv/bin/python"
 
 # NOTE on sm_121 warning (Blackwell GB10 / DGX Spark):
 #   PyTorch < 2.10 may emit: "Found GPU0 ... with cuda capability sm_121.
@@ -132,74 +146,60 @@ else:
     print('[WARN] CUDA not detected at deploy time; launch-time detection will retry')
 " || echo -e "${YELLOW}[WARN] PyTorch validation returned non-zero${NC}"
 
-# --- PyTorch Geometric (PyG) ---
-# PyG is required for heterogeneous GNN message passing (HeteroGNNLayer).
-# The companion native libraries must match the exact torch + CUDA version.
-echo -e "\n[INFO] Installing PyTorch Geometric (PyG)..."
-"$PIP" install torch_geometric || {
-    echo -e "${RED}[ERROR] Failed to install torch_geometric${NC}"; exit 2;
-}
-echo -e "[INFO] Installing PyG native extensions..."
-echo -e "[INFO] (1/2) pyg-lib — PyG team's GNN kernels (Linux x86 + ARM + Windows wheels)"
-if "$PIP" install pyg-lib --only-binary :all: \
-    -f "https://data.pyg.org/whl/torch-2.10.0+cu130.html"; then
+# ============================================================================
+# STAGE 3/4: PyG NATIVE EXTENSIONS (out-of-lock, graceful fallback)
+# ============================================================================
+echo -e "\n${CYAN}[STAGE 3/4] PyG Native Extensions${NC}"
+echo "----------------------------------------------------------------------------"
+echo -e "[INFO] PyG native ext are installed outside uv.lock because their wheel"
+echo -e "[INFO] index is torch-version-coupled HTML and three of them lack Windows"
+echo -e "[INFO] wheels. Missing wheels fall back to torch.scatter_reduce (built-in)."
+
+# torch_geometric: pure Python high-level API; install via uv pip (post-sync)
+echo -e "\n[INFO] Installing torch_geometric (high-level PyG API)..."
+if ! uv pip install torch_geometric; then
+    echo -e "${RED}[ERROR] Failed to install torch_geometric${NC}"
+    exit 3
+fi
+
+# pyg-lib: native kernels, has wheels for Linux x86 + ARM + Windows
+echo -e "\n[INFO] Installing pyg-lib (native GNN kernels)..."
+if uv pip install pyg-lib --find-links "$PYG_WHEEL_URL"; then
     echo -e "${GREEN}[OK] pyg-lib installed${NC}"
 else
     echo -e "${YELLOW}[SKIP] pyg-lib: no pre-built wheel; PyG will use torch.scatter_reduce fallback${NC}"
 fi
 
-echo -e "[INFO] (2/2) torch-scatter, torch-sparse, torch-cluster — third-party extensions"
-echo -e "[INFO]      (Linux wheels published; Windows wheels not yet released by maintainers)"
-if "$PIP" install torch-scatter torch-sparse torch-cluster --only-binary :all: \
-    -f "https://data.pyg.org/whl/torch-2.10.0+cu130.html"; then
+# torch-scatter / torch-sparse / torch-cluster: third-party ext
+# Linux wheels available; Windows wheels never published by upstream maintainers.
+echo -e "\n[INFO] Installing torch-scatter/sparse/cluster (third-party ext, optional)..."
+if uv pip install torch-scatter torch-sparse torch-cluster \
+    --find-links "$PYG_WHEEL_URL" --only-binary :all:; then
     echo -e "${GREEN}[OK] PyG third-party extensions installed${NC}"
 else
     echo -e "${YELLOW}[SKIP] No pre-built wheels for this platform/torch combination${NC}"
-    echo -e "${YELLOW}       Impact: NONE — our HeteroConv + GAT/SAGE layers automatically${NC}"
-    echo -e "${YELLOW}       use torch.scatter_reduce (PyTorch 2.0+ native, equivalent perf)${NC}"
+    echo -e "${YELLOW}       Impact: NONE — HeteroConv + GAT/SAGE auto-use torch.scatter_reduce${NC}"
+    echo -e "${YELLOW}       (PyTorch 2.0+ native, equivalent perf for our architecture)${NC}"
 fi
-echo -e "${GREEN}[OK] PyTorch Geometric setup complete${NC}"
 
-# ============================================================================
-# STAGE 3: CORE DEPENDENCIES
-# ============================================================================
-echo -e "\n${CYAN}[STAGE 3/4] Core Dependencies Installation${NC}"
-echo "----------------------------------------------------------------------------"
-
-# Install all pure-Python dependencies from pyproject.toml (single source of truth).
-# This includes: pronto, networkx, pandas, numpy, scipy, pydantic, fastapi,
-# uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.
-#
-# NOTE: torch/CUDA packages are NOT in pyproject.toml (installed in Stage 2).
-#       pip install . will NOT modify the existing torch installation.
-echo -e "[INFO] Installing project dependencies from pyproject.toml..."
-"$PIP" install . || { echo -e "${RED}[ERROR] Failed to install dependencies${NC}"; exit 3; }
-echo -e "${GREEN}[OK] Core dependencies installed${NC}"
-
-# Install cuVS (Linux GPU-accelerated vector backend, optional)
-# Voyager is already installed via pyproject.toml above.
-# cuVS requires special --extra-index-url from NVIDIA PyPI.
-if [ "$ARCH" == "aarch64" ] || [ "$ARCH" == "x86_64" ]; then
-    echo -e "[INFO] Attempting to install cuVS (NVIDIA RAPIDS)..."
-    # cuVS requires CUDA 12+ and is only available via NVIDIA PyPI
-    if "$PIP" install --extra-index-url https://pypi.nvidia.com "cuvs-cu12>=24.12" 2>/dev/null; then
-        echo -e "${GREEN}[OK] cuVS installed (GPU backend available)${NC}"
-    else
-        echo -e "${YELLOW}[INFO] cuVS not available; using Voyager as primary backend${NC}"
-        echo -e "${YELLOW}[HINT] For GPU acceleration, install cuVS manually:${NC}"
-        echo -e "${YELLOW}       pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12${NC}"
-    fi
+# cuVS: Linux GPU-accelerated vector backend, optional (Voyager is the CPU fallback)
+echo -e "\n[INFO] Attempting cuVS (NVIDIA RAPIDS GPU vector backend)..."
+if uv pip install --extra-index-url https://pypi.nvidia.com "cuvs-cu12>=24.12" 2>/dev/null; then
+    echo -e "${GREEN}[OK] cuVS installed (GPU vector backend available)${NC}"
+else
+    echo -e "${YELLOW}[INFO] cuVS not available; Voyager (CPU) remains the primary backend${NC}"
+    echo -e "${YELLOW}[HINT] For GPU acceleration, manually try:${NC}"
+    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12${NC}"
 fi
 
 # ============================================================================
-# STAGE 4: VALIDATION & FINALIZATION
+# STAGE 4/4: VALIDATION & FINALIZATION
 # ============================================================================
 echo -e "\n${CYAN}[STAGE 4/4] Validation & Finalization${NC}"
 echo "----------------------------------------------------------------------------"
 
-# Validation
 if [ -f "scripts/validate_installation.py" ]; then
-    echo -e "[INFO] Running validation..."
+    echo -e "[INFO] Running installation validation..."
     "$PY" scripts/validate_installation.py || echo -e "${YELLOW}[WARN] Validation returned warnings${NC}"
 fi
 
@@ -207,7 +207,8 @@ echo -e "\n${GREEN}=============================================================
 echo -e "${GREEN}   Deployment Complete!${NC}"
 echo -e "${GREEN}============================================================================${NC}"
 echo -e "[INFO] Virtual environment: .venv"
-echo -e "[INFO] Python Interpreter:  $PY"
+echo -e "[INFO] Python interpreter:  $PY"
+echo -e "[INFO] Lock file:           uv.lock (commit'd to repo)"
 echo -e "\nNext steps:"
 echo -e "   1. Verify the installation:"
 echo -e "      ${YELLOW}$PY -c \"import torch; print(torch.cuda.is_available())\"${NC}"
@@ -236,7 +237,10 @@ echo -e "        ${YELLOW}./launch_shepherd.sh --sage-attn${NC}     (SageAttenti
 echo -e "      Compatibility not guaranteed; fallback to PyTorch SDPA is always available."
 echo -e ""
 echo -e "[TIP] For development (pytest, linting, etc.):"
-echo -e "      ${YELLOW}$PIP install -e \".[dev]\"${NC}"
+echo -e "      ${YELLOW}uv sync --extra dev${NC}"
 echo -e ""
-echo -e "[TIP] If using DGX Spark, ensure 'nvcc --version' matches your torch CUDA version."
+echo -e "[TIP] To regenerate uv.lock after editing pyproject.toml:"
+echo -e "      ${YELLOW}uv lock${NC}"
+echo -e ""
+echo -e "[TIP] If using DGX Spark, ensure 'nvcc --version' matches torch CUDA (13.0)."
 echo ""

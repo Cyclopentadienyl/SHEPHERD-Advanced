@@ -15,6 +15,11 @@ __pycache__/
 env/
 venv/
 
+# --- uv ---
+# NOTE: uv.lock MUST be committed for cross-platform reproducible builds.
+# Do not add uv.lock to this file. The uv cache lives outside the repo
+# (~/.cache/uv on Linux, %LOCALAPPDATA%\uv\cache on Windows).
+
 # --- Packaging / build ---
 build/
 dist/

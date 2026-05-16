@@ -1,7 +1,22 @@
-# SHEPHERD-Advanced dependencies are managed via:
-#   - pyproject.toml          : all pure-Python deps (single source of truth)
-#   - deploy.sh / deploy.cmd  : CUDA-specific torch/torchvision/torchaudio + PyG
+# SHEPHERD-Advanced — dependency management
+#
+# As of Phase C (May 2026), all dependencies are managed by uv:
+#
+#   - pyproject.toml          : source of truth for top-level deps + uv config
+#                               (including [tool.uv.sources] routing torch to
+#                               the CUDA 13.0 wheel index)
+#   - uv.lock                 : exact resolved versions for win_amd64,
+#                               manylinux_2_28_x86_64, manylinux_2_28_aarch64
+#                               (committed to repo for reproducibility)
+#   - deploy.sh / deploy.cmd  : drive `uv sync` + post-sync PyG ext install
 #
 # Do NOT install via this file. Run instead:
 #   Linux:    ./deploy.sh
 #   Windows:  deploy.cmd
+#
+# To manually install everything in an existing uv-aware shell:
+#   uv sync                   # production deps only
+#   uv sync --extra dev       # + dev tools (pytest, ruff, black, ...)
+#
+# To regenerate uv.lock after editing pyproject.toml:
+#   uv lock

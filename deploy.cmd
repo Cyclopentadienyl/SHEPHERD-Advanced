@@ -23,18 +23,25 @@ rem ============================================================================
 rem SHEPHERD-Advanced | Windows Deployment Script (Unified)
 rem ============================================================================
 rem
-rem This script handles the complete deployment process:
-rem   1. Environment setup (virtual environment)
-rem   2. PyTorch installation (CUDA-specific, via --index-url)
-rem   3. Core dependencies (from pyproject.toml via pip install .)
-rem   4. Installation validation & platform configuration
+rem Phase C onwards: this script uses uv (https://docs.astral.sh/uv/) as the
+rem primary deployment tool. PyTorch (torch/torchvision/torchaudio) is now
+rem managed by uv via [tool.uv.sources] in pyproject.toml and recorded in
+rem uv.lock for cross-platform reproducibility. PyG native extensions
+rem (pyg-lib, torch-scatter/sparse/cluster) remain out of the lock and are
+rem installed via 'uv pip install' with graceful fallback on missing wheels.
+rem
+rem Stages:
+rem   1. Hardware detection + uv setup (auto-install with y/N confirmation)
+rem   2. Environment + dependency sync (uv sync from uv.lock)
+rem   3. PyG native extensions (out-of-lock, graceful skip)
+rem   4. Validation
 rem
 rem Usage:
 rem   deploy.cmd
 rem
 rem Environment Variables:
-rem   PYTHON_EXE        - Python launcher (default: py -3.12)
-rem   TORCH_INDEX_URL   - PyTorch index URL (default: cu130)
+rem   PYTHON_EXE   - Python launcher used by uv to find a base interpreter
+rem                  (default: py -3.12)
 rem
 rem Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
 rem   These are NOT installed during deployment. They are auto-installed
@@ -48,32 +55,20 @@ echo   SHEPHERD-Advanced Deployment Script
 echo ============================================================================
 echo.
 
-rem === Configuration (single source of truth for versions) ===
+rem === Configuration ===
 if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.12"
 set "TORCH_VER=2.10.0"
-set "TORCHVISION_VER=0.25.0"
-set "TORCHAUDIO_VER=2.10.0"
 set "CUDA_TAG=cu130"
-
-rem --- Derived URLs (match pyg-lib recommended format) ---
-rem PyTorch:  https://download.pytorch.org/whl/${CUDA}
-rem PyG:      https://data.pyg.org/whl/torch-${TORCH}+${CUDA}.html
-if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/%CUDA_TAG%"
 set "PYG_WHEEL_URL=https://data.pyg.org/whl/torch-%TORCH_VER%+%CUDA_TAG%.html"
 
-rem Dependencies are now managed via pyproject.toml (single source of truth).
-rem Platform-specific CUDA packages (torch, torchvision, torchaudio) are
-rem installed in Stage 2 with --index-url. All other deps come from
-rem pip install . in Stage 3.
-
 rem ============================================================================
-rem STAGE 1: ENVIRONMENT SETUP
+rem STAGE 1/4: HARDWARE DETECTION & uv SETUP
 rem ============================================================================
 echo.
-echo [STAGE 1/4] Environment Setup
+echo [STAGE 1/4] Hardware Detection ^& uv Setup
 echo ----------------------------------------------------------------------------
 
-echo [INFO] Python launcher: %PYTHON_EXE%
+echo [INFO] Bootstrap Python launcher: %PYTHON_EXE%
 %PYTHON_EXE% --version || (
   echo [ERROR] Python not found. Please install Python 3.12+ from python.org
   exit /b 1
@@ -88,125 +83,128 @@ if %errorlevel%==0 (
   echo [WARN] nvidia-smi not found. GPU may not be available.
 )
 
-rem Create virtual environment
-if not exist ".venv" (
-  echo [INFO] Creating virtual environment at .venv
-  %PYTHON_EXE% -m venv .venv || (
-    echo [ERROR] Failed to create virtual environment
-    exit /b 1
-  )
-  echo [OK] Virtual environment created
-) else (
-  echo [INFO] Virtual environment already exists
-)
+rem --- uv detection ---
+rem Use goto-style flow rather than if-blocks because set/p variables don't
+rem expand correctly inside a parenthesized if-block without DelayedExpansion.
+where uv >nul 2>&1
+if errorlevel 1 goto UV_NEED_INSTALL
+goto UV_VERIFY
 
-rem Activate environment
-set "PY=.venv\Scripts\python.exe"
-set "PIP=.venv\Scripts\pip.exe"
+:UV_NEED_INSTALL
+echo.
+echo [INFO] uv is not installed. uv is required for SHEPHERD-Advanced deployment.
+echo [INFO] Official installer: https://docs.astral.sh/uv/getting-started/installation/
+echo.
+set "ans="
+set /p ans="Install uv now via official PowerShell installer? (y/N): "
+if /i "%ans%"=="y"   goto UV_DO_INSTALL
+if /i "%ans%"=="yes" goto UV_DO_INSTALL
+echo [ERROR] Deployment aborted: uv is required but not installed.
+exit /b 1
 
-rem Upgrade pip
-echo [INFO] Upgrading pip, setuptools, wheel
-"%PY%" -m pip install --upgrade pip setuptools wheel >nul 2>&1 || (
-  echo [ERROR] Failed to upgrade pip
+:UV_DO_INSTALL
+echo [INFO] Installing uv via PowerShell installer...
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+if errorlevel 1 (
+  echo [ERROR] uv installer failed ^(network error or PowerShell policy^)
   exit /b 1
 )
-echo [OK] pip upgraded
+rem uv installs to %USERPROFILE%\.local\bin by default; add to PATH for this session
+set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+
+:UV_VERIFY
+where uv >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] uv installed but not found on PATH.
+  echo [HINT] Open a new terminal so PATH is refreshed, then re-run deploy.cmd
+  exit /b 1
+)
+echo [OK] uv detected:
+uv --version
 
 rem ============================================================================
-rem STAGE 2: PYTORCH INSTALLATION
+rem STAGE 2/4: ENVIRONMENT + DEPENDENCY SYNC (uv.lock driven)
 rem ============================================================================
 echo.
-echo [STAGE 2/4] PyTorch Installation
+echo [STAGE 2/4] Environment + Dependency Sync
 echo ----------------------------------------------------------------------------
 
-echo [INFO] Installing PyTorch stack (torch %TORCH_VER% + %CUDA_TAG%)
-echo [INFO] Index URL: %TORCH_INDEX_URL%
-rem CRITICAL: Use exact torch version to ensure pyg-lib compatibility
-"%PIP%" install --index-url %TORCH_INDEX_URL% "torch==%TORCH_VER%" "torchvision==%TORCHVISION_VER%" "torchaudio==%TORCHAUDIO_VER%" || (
-  echo [ERROR] Failed to install PyTorch stack
-  echo [HINT] Check CUDA version and index URL from https://pytorch.org/get-started/locally/
+rem uv sync creates .venv if missing and installs everything from uv.lock.
+rem torch/torchvision/torchaudio are routed to cu130 index via [tool.uv.sources].
+rem --inexact: do NOT remove packages outside the lock; protects Stage 3 ext.
+echo [INFO] Running 'uv sync --inexact' (creates .venv, installs lock contents)
+uv sync --inexact
+if errorlevel 1 (
+  echo [ERROR] uv sync failed. Check network connectivity.
+  echo [HINT] If uv.lock is out of sync with pyproject.toml, run 'uv lock' first.
   exit /b 2
 )
-echo [OK] PyTorch stack installed
+echo [OK] uv.lock contents synced into .venv
+
+set "PY=.venv\Scripts\python.exe"
+
+rem NOTE on sm_121 warning (Blackwell GB10 / DGX Spark):
+rem   PyTorch ^< 2.10 may emit "Found GPU0 ... with cuda capability sm_121.
+rem   PyTorch supports cuda capability sm_80 - sm_120." This is harmless
+rem   (sm_121 is SASS binary compatible with sm_120, confirmed by maintainer
+rem   ptrblck). Fixed in PyTorch 2.10+ — kept for reference.
 
 rem Validate PyTorch + CUDA
 echo [INFO] Validating PyTorch installation
-"%PY%" -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')" || (
-  echo [WARN] PyTorch validation failed
+"%PY%" -c "import torch; print(f'PyTorch {torch.__version__} | CUDA build: {torch.version.cuda} | available: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A (CPU-only at deploy time)\"}')" || (
+  echo [WARN] PyTorch validation returned non-zero
 )
 
-rem --- PyTorch Geometric (PyG) ---
-rem PyG is required for heterogeneous GNN message passing (HeteroGNNLayer).
-rem
-rem Installation strategy (smart adaptation):
-rem   1. torch_geometric   - main package, pure Python, always installs    [REQUIRED]
-rem   2. pyg-lib           - pyg-team native ops, has torch 2.10+cu130 whl [RECOMMENDED]
-rem   3. torch_scatter etc. - third-party extensions, wheels lag behind    [OPTIONAL]
-rem
-rem If (3) is unavailable, PyG auto-falls back to torch.scatter_reduce
-rem (PyTorch 2.0+ native). Our model uses only high-level PyG layers
-rem (HeteroConv, GATConv, SAGEConv) which all support this fallback.
-
+rem ============================================================================
+rem STAGE 3/4: PyG NATIVE EXTENSIONS (out-of-lock, graceful fallback)
+rem ============================================================================
 echo.
-echo [INFO] Installing PyTorch Geometric (PyG)
-"%PIP%" install torch_geometric || (
+echo [STAGE 3/4] PyG Native Extensions
+echo ----------------------------------------------------------------------------
+echo [INFO] PyG native ext are installed outside uv.lock because their wheel
+echo [INFO] index is torch-version-coupled HTML and three of them lack Windows
+echo [INFO] wheels. Missing wheels fall back to torch.scatter_reduce (built-in).
+echo.
+
+rem torch_geometric: pure Python high-level API; install via uv pip post-sync
+echo [INFO] Installing torch_geometric (high-level PyG API)
+uv pip install torch_geometric
+if errorlevel 1 (
   echo [ERROR] Failed to install torch_geometric
-  exit /b 2
+  exit /b 3
 )
 echo [OK] torch_geometric installed
 
-rem --- pyg-lib (maintained by pyg-team, has torch 2.10+cu130 wheels) ---
-rem --only-binary :all: prevents pip from downloading source tarballs and
-rem attempting to compile them (which fails with long tracebacks).
-rem If no pre-built wheel exists, pip fails instantly and cleanly.
+rem pyg-lib: native kernels, has wheels for Linux x86 + ARM + Windows
+echo.
 echo [INFO] Installing pyg-lib (native GNN kernels)
-"%PIP%" install pyg-lib --only-binary :all: -f %PYG_WHEEL_URL% 2>nul && (
+uv pip install pyg-lib --find-links %PYG_WHEEL_URL% 2>nul && (
   echo [OK] pyg-lib installed
 ) || (
   echo [SKIP] pyg-lib: no pre-built wheel for this platform/torch combination.
   echo        This is non-critical; PyG will use PyTorch-native fallbacks.
 )
 
-rem --- Third-party scatter/sparse extensions (wheels often lag behind) ---
-echo [INFO] Installing PyG native extensions (torch-scatter, torch-sparse, torch-cluster)
-"%PIP%" install torch-scatter torch-sparse torch-cluster --only-binary :all: -f %PYG_WHEEL_URL% 2>nul && (
-  echo [OK] PyG native extensions installed
-) || (
-  echo [SKIP] PyG native extensions: no pre-built wheels for torch %TORCH_VER%+%CUDA_TAG%.
-  echo        This is expected -- these packages lag behind new PyTorch releases.
-  echo        Performance impact: negligible for our architecture.
-  echo        PyG will automatically use torch.scatter_reduce as fallback.
-)
-echo [OK] PyTorch Geometric setup complete
-
-rem ============================================================================
-rem STAGE 3: CORE DEPENDENCIES
-rem ============================================================================
+rem torch-scatter / torch-sparse / torch-cluster: third-party ext
+rem Linux wheels available; Windows wheels never published by upstream maintainers.
 echo.
-echo [STAGE 3/4] Core Dependencies Installation
-echo ----------------------------------------------------------------------------
-
-rem Install all pure-Python dependencies from pyproject.toml (single source of truth).
-rem This includes: pronto, networkx, pandas, numpy, scipy, pydantic, fastapi,
-rem uvicorn, gradio, voyager, tqdm, requests, python-dotenv, etc.
-rem
-rem NOTE: torch/CUDA packages are NOT in pyproject.toml (installed in Stage 2).
-rem       pip install . will NOT modify the existing torch installation.
-echo [INFO] Installing project dependencies from pyproject.toml
-"%PIP%" install . || (
-  echo [ERROR] Failed to install core dependencies
-  exit /b 3
+echo [INFO] Installing torch-scatter/sparse/cluster (third-party ext, optional)
+uv pip install torch-scatter torch-sparse torch-cluster --find-links %PYG_WHEEL_URL% --only-binary :all: 2>nul && (
+  echo [OK] PyG third-party extensions installed
+) || (
+  echo [SKIP] PyG third-party extensions: no pre-built wheels for this platform/torch combo.
+  echo        Expected on Windows ^(maintainers never published Windows wheels^).
+  echo        Impact: NONE -- HeteroConv + GAT/SAGE auto-use torch.scatter_reduce
+  echo        ^(PyTorch 2.0+ native, equivalent perf for our architecture^).
 )
-echo [OK] Core dependencies installed
 
 rem ============================================================================
-rem STAGE 4: VALIDATION & FINALIZATION
+rem STAGE 4/4: VALIDATION & FINALIZATION
 rem ============================================================================
 echo.
 echo [STAGE 4/4] Validation ^& Finalization
 echo ----------------------------------------------------------------------------
 
-rem Run validation script (if exists)
 if exist "scripts\validate_installation.py" (
   echo [INFO] Running installation validation
   "%PY%" scripts\validate_installation.py && (
@@ -224,7 +222,8 @@ echo   Deployment Complete!
 echo ============================================================================
 echo.
 echo [INFO] Virtual environment: .venv
-echo [INFO] Python: %PY%
+echo [INFO] Python:              %PY%
+echo [INFO] Lock file:           uv.lock (commit'd to repo)
 echo.
 echo Next steps:
 echo   1. Verify the installation:
@@ -254,7 +253,10 @@ echo         launch_shepherd.cmd --sage-attn     (SageAttention)
 echo       Compatibility not guaranteed; fallback to PyTorch SDPA is always available.
 echo.
 echo [TIP] For development (pytest, linting, etc.):
-echo       .venv\Scripts\pip.exe install -e ".[dev]"
+echo       uv sync --extra dev
+echo.
+echo [TIP] To regenerate uv.lock after editing pyproject.toml:
+echo       uv lock
 echo.
 echo [TIP] See deployment-guide.md for troubleshooting
 echo.

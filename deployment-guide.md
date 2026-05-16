@@ -6,6 +6,25 @@
 
 ---
 
+> **⚠️ Phase C 更新通知 (2026-05)**
+>
+> 部署流程已遷移至 [uv](https://docs.astral.sh/uv/) 作為核心套件管理工具。
+> **使用者應以 `deploy.sh` (Linux) / `deploy.cmd` (Windows) 為主要部署入口**。
+>
+> - PyTorch (torch/torchvision/torchaudio) 現由 uv 透過 `pyproject.toml`
+>   中的 `[tool.uv.sources]` 管理，並鎖定於 `uv.lock`，跨平台版本完全一致。
+> - PyG native ext (pyg-lib, torch-scatter/sparse/cluster) 仍由 deploy
+>   腳本 post-sync 安裝，缺 wheel 時 graceful skip，fallback 到
+>   `torch.scatter_reduce`。
+> - 本文檔中內嵌的 `pip install` / `python -m venv` 範例（例如
+>   下方「DGX Spark 設置腳本」段落）為原 v2.0 內容，**僅供原理理解參考**，
+>   實際部署請執行 `deploy.{sh,cmd}`。
+>
+> 詳見：`pyproject.toml` 的 `[tool.uv]` 段、`uv.lock`、以及
+> `data/external/README.md` 的「Currently Supported Data Sources」表格。
+
+---
+
 ## 文檔目的 🎯
 
 本指南提供：
