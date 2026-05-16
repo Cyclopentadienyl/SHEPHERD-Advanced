@@ -227,17 +227,23 @@ echo [INFO] Virtual environment: .venv
 echo [INFO] Python: %PY%
 echo.
 echo Next steps:
-echo   1. Test the installation:
+echo   1. Verify the installation:
 echo      .venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available())"
 echo.
-echo   2. Prepare data (first time only):
-echo      .venv\Scripts\python.exe scripts\data_preparation\download_ontologies.py
-echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py
+echo   2. Quick demo (synthetic data, ~1 min):
+echo      .venv\Scripts\python.exe scripts\setup_demo.py --train-model
 echo.
-echo   3. Launch the system:
+echo   3. Real data pipeline (manual HPO download required first;
+echo      see data\external\README.md for the required annotation files):
+echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py
+echo      .venv\Scripts\python.exe scripts\compute_shortest_paths.py
+echo      .venv\Scripts\python.exe scripts\train_model.py
+echo      .venv\Scripts\python.exe scripts\build_index.py
+echo.
+echo   4. Launch the system:
 echo      launch_shepherd.cmd
 echo.
-echo   4. Run tests (optional):
+echo   5. Run tests (optional):
 echo      .venv\Scripts\python.exe -m pytest tests\unit\
 echo.
 echo [TIP] Optional accelerators (FlashAttention, xFormers, SageAttention):
@@ -250,7 +256,7 @@ echo.
 echo [TIP] For development (pytest, linting, etc.):
 echo       .venv\Scripts\pip.exe install -e ".[dev]"
 echo.
-echo [TIP] See docs/deployment-guide.md for troubleshooting
+echo [TIP] See deployment-guide.md for troubleshooting
 echo.
 
 exit /b 0

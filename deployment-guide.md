@@ -54,8 +54,8 @@
 3. **驅動成熟度**: ARM + Blackwell組合較新
 
 #### ⚠️ **Windows x86 的限制**
-1. **16GB VRAM瓶頸**: 無法載入完整PrimeKG（~500萬節點）
-2. **記憶體拷貝開銷**: CPU ↔ GPU數據傳輸慢
+1. **VRAM 容量限制**: 消費級 GPU 的 VRAM（通常 8-24 GB）小於 DGX Spark 的 96 GB 統一記憶體，較大的 KG（如完整 PrimeKG 130K 節點 / 4M 邊）需要子圖採樣或分批訓練；GNN 推理仍可運行。
+2. **記憶體拷貝開銷**: CPU ↔ GPU 數據傳輸經 PCIe，比 DGX Spark 的 NVLink-C2C 慢。
 
 ---
 

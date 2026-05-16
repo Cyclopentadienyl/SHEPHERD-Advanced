@@ -43,3 +43,38 @@ python scripts/build_knowledge_graph.py \
 - Ontology files (HPO, MONDO) are downloaded automatically by `OntologyLoader` — you do not need to download them manually.
 - These annotation files are updated periodically by the HPO project. Re-download and rebuild the KG when you want to incorporate new annotations.
 - This directory is gitignored — data files are not version controlled.
+
+---
+
+## Currently Supported Data Sources
+
+The KG build pipeline uses per-source parsers under `src/data_sources/`.
+Each parser converts an external file format into a normalised
+`List[Dict[str, Any]]` that `src/kg/builder.py` then assembles into the
+graph. Adding a new data source means writing a new parser; the builder
+and downstream pipeline do not need to change.
+
+| Data Source | Parser | Status | Notes |
+|-------------|--------|--------|-------|
+| **HPO annotations** (`phenotype.hpoa`, `genes_to_phenotype.txt`) | `src/data_sources/hpo_annotations.py` | ✅ Active | Drives the current production pipeline (52K nodes / 494K edges from real HPO data) |
+| **HPO / MONDO ontologies** | `src/ontology/loader.py` | ✅ Active | Auto-downloaded; no manual file placement needed |
+| **PubMed** literature edges | `src/data_sources/pubmed.py` | ⏸️ Frozen | Implementation present but not wired into builder; literature integration is deferred (see `medical-kg-todo.md`) |
+| **Ortholog** mappings (mouse, zebrafish) | `src/data_sources/ortholog.py` | ⏸️ Reserved | Interface defined; cross-species inference is a Phase 3 feature |
+| **PrimeKG** (Harvard Dataverse `kg.csv`) | — | 🔜 Planned | Tracked in `docs/Repair/REPAIR_CHECKLIST.md` L206; integration requires extending `NodeType` / `EdgeType` enums and writing a new parser following the `hpo_annotations.py` pattern |
+| **DisGeNET**, **ClinVar**, **Orphanet**, **GO**, **Reactome** | — | 📋 Backlog | Listed in `medical-kg-blueprint.md` L139-160 (priorities P0-P1); no parser yet |
+
+### Adding a new data source
+
+The recommended pattern is to follow `hpo_annotations.py`:
+
+1. Create `src/data_sources/<source_name>.py` exposing a parser class.
+2. Each `parse_*()` method returns `List[Dict[str, Any]]` matching the
+   key schema expected by the relevant `KnowledgeGraphBuilder.add_*`
+   method (see docstrings on those methods).
+3. Wire it into `scripts/build_knowledge_graph.py` as another step.
+4. Do **not** import `src/kg/*` from within the parser — it should stay
+   format-translation-only. The data dict is the contract.
+
+This keeps the parser ⇄ builder boundary clean (data coupling only)
+and allows each new source to be added without touching the GNN
+training / inference path.
