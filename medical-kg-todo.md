@@ -115,6 +115,17 @@
 - [ ] 生產部署
 - [ ] CI/CD
 
+#### 🔴 立即待辦：cuVS 在 cu13 環境的正確整合（2026-05-26）
+**定位釐清**：cuVS 是 Linux 上的**主力 GPU 向量加速後端**（加速效益強、NVIDIA 官方積極維護），**不是** faiss/Voyager 等級的備選。Voyager 只是因為 cuVS **在 Windows 沒有官方 wheel**、為了跨平台才採用的 CPU 替代品；在 Linux/DGX 上 cuVS 應為首選。
+
+**問題**：目前 `deploy.sh` 裝的是 `cuvs-cu12`（CUDA 12 build），但專案 torch 是 **cu13**。兩者對 `cuda-bindings` 需求衝突 → 每次 deploy 都在 `12.9.6`(cuVS) ↔ `13.0.3`(torch lock) 間來回換裝（`uv sync --inexact` 還原 → Stage 3 cuVS 再降級）。
+
+**待辦**：
+1. 確認是否有 **cu13 版 cuVS**（`cuvs-cu13` 或對應 RAPIDS channel），有則改用以消除版本衝突。
+2. 若只有 cu12 版：驗證它在 cu13 torch 環境下**實際能否正常 GPU 加速**（不只是 import 成功），並決定是否 pin `cuda-bindings` / 調整安裝順序消除 flip-flop。
+3. 釐清 cuVS 與 torch 是否真的共用同一 `cuda-bindings`，或可各自隔離。
+4. 確認 ARM(aarch64) 上 cuVS 的 wheel 可用性（DGX 場景）。
+
 #### 📌 未來：放寬 torch/cuda 版本支援（維護筆記，2026-05-26）
 目前整個依賴鏈**硬鎖在 torch 2.10.0 + cu130** 單一組合：
 - `pyproject.toml`：`torch/vision/audio==2.10.0` 精確 pin + 強制 `pytorch-cu130` 索引
