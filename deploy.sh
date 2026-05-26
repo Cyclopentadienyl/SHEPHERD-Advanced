@@ -292,16 +292,24 @@ else
 fi
 
 # cuVS: Linux GPU-accelerated vector backend, optional (Voyager is the CPU fallback).
-# MUST be the cu13 build: cuvs-cu12 pulls cuda-bindings 12.x, which conflicts with
-# torch's cu13 stack (cuda-bindings 13.x) and causes uv to flip-flop the version on
-# every deploy. cuvs-cu13 shares the cu13 cuda-bindings line, so they coexist.
+# Use the cu13 build (cuvs-cu12 would pull a cuda-bindings 12.x that conflicts with
+# torch's cu13 stack). cuvs-cu13 itself only requires cuda-bindings>=13, so an
+# unconstrained install would let uv bump it to the newest 13.x (e.g. 13.2.0) --
+# but torch 2.10.0+cu130 PINS cuda-bindings==13.0.3, and 'uv pip install' resolves
+# only cuVS's subtree (torch's pin is not in view), so it would silently override
+# torch's version and flip-flop it on every deploy. Re-inject torch's constraint by
+# pinning cuda-bindings to whatever Stage 2 installed from the lock (version-agnostic:
+# follows torch on future bumps). cuvs-cu13 26.4.0 resolves fine against 13.0.3; if a
+# future cuVS ever needs >13.0.3, the pinned install fails and we fall back to Voyager.
 echo -e "\n[INFO] Attempting cuVS (NVIDIA RAPIDS GPU vector backend)..."
-if uv pip install --extra-index-url https://pypi.nvidia.com "cuvs-cu13>=24.12" 2>/dev/null; then
+CB_VER="$("$PY" -c 'import importlib.metadata as m; print(m.version("cuda-bindings"))' 2>/dev/null)"
+if uv pip install --extra-index-url https://pypi.nvidia.com \
+       "cuvs-cu13>=24.12" ${CB_VER:+"cuda-bindings==$CB_VER"} 2>/dev/null; then
     echo -e "${GREEN}[OK] cuVS installed (GPU vector backend available)${NC}"
 else
     echo -e "${YELLOW}[INFO] cuVS not available; Voyager (CPU) remains the primary backend${NC}"
     echo -e "${YELLOW}[HINT] For GPU acceleration, manually try:${NC}"
-    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13${NC}"
+    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13 cuda-bindings==${CB_VER:-13.0.3}${NC}"
 fi
 
 # ============================================================================
