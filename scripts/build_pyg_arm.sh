@@ -225,7 +225,7 @@ run_build() {  # run_build "<label>" "<logfile>" <cmd...>
 }
 
 build_one() {  # build_one <pkg-name> <pip-spec>
-    local name="$1" spec="$2"
+    local name="$1" spec="$2"; shift 2  # remaining args -> extra pip flags
     say "\n${CYAN}>>> $name${NC}  ($spec)"
     # Drop any prior wheel of this package so a stale version can't shadow the
     # fresh build at --find-links install time (e.g. an old pyg_lib-0.7.0).
@@ -235,7 +235,7 @@ build_one() {  # build_one <pkg-name> <pip-spec>
     # -v: surface the build backend's output (incl. CMake's ABI decision) into
     # the saved log for diagnostics; only shown on failure (run_build tails it).
     if run_build "$name" "$LOGDIR/$name.log" \
-        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps -v; then
+        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps -v "$@"; then
         RESULTS+=("OK   $name")
         OK_PKGS+=("$name")
     else
@@ -254,7 +254,10 @@ build_one() {  # build_one <pkg-name> <pip-spec>
 build_one "torch-scatter" "${SCATTER_SPEC:-torch-scatter}"
 build_one "torch-sparse"  "${SPARSE_SPEC:-torch-sparse}"
 build_one "torch-cluster" "${CLUSTER_SPEC:-torch-cluster}"
-build_one "pyg-lib"       "${PYGLIB_SPEC:-git+https://github.com/pyg-team/pyg-lib.git@0.6.0}"
+# --no-cache-dir: pip caches VCS-built wheels keyed by commit, ignoring our env
+# (e.g. the ABI flags), so it would otherwise serve a previously-built ABI=0
+# wheel. Force a fresh build so the venv-python/ABI fix actually takes effect.
+build_one "pyg-lib"       "${PYGLIB_SPEC:-git+https://github.com/pyg-team/pyg-lib.git@0.6.0}" --no-cache-dir
 
 # === Summary + optional install =============================================
 say "\n${CYAN}[STAGE 5/5] Summary${NC}"
