@@ -139,11 +139,12 @@ echo -e "${GREEN}[OK] uv.lock contents synced into .venv${NC}"
 PY=".venv/bin/python"
 
 # NOTE on sm_121 warning (Blackwell GB10 / DGX Spark):
-#   PyTorch < 2.10 may emit: "Found GPU0 ... with cuda capability sm_121.
-#   PyTorch supports cuda capability sm_80 - sm_120." PyTorch maintainer
-#   ptrblck confirmed this is harmless (sm_121 is SASS binary compatible
-#   with sm_120). The misleading message is fixed in PyTorch 2.10+, but
-#   this note remains for reference if anyone rolls back.
+#   torch 2.10.0+cu130 still emits: "Found GPU0 NVIDIA GB10 which is of cuda
+#   capability 12.1. Minimum and Maximum cuda capability supported by this
+#   version of PyTorch is (8.0) - (12.0)". This is HARMLESS: sm_121 is SASS/PTX
+#   binary-compatible with sm_120, so kernels run fine (the CUDA smoke test
+#   below passes). It is just a conservative capability-range check that has not
+#   been widened to include sm_121 yet; not fixed as of 2.10.
 #   Ref: https://discuss.pytorch.org/t/nvidia-dgx-spark-support/223677
 
 # Validate (CUDA smoke test when available; graceful CPU-only fallback)
