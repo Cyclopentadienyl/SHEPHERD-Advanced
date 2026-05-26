@@ -132,6 +132,17 @@ export TORCH_CUDA_ARCH_LIST
 export FORCE_CUDA=1
 export MAX_JOBS="${MAX_JOBS:-$(( _NCPU > 4 ? _NCPU - 4 : 1 ))}"
 export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$MAX_JOBS}"
+
+# "Activate" the target venv for child build processes. pyg-lib's CMake build
+# runs find_package(Python3) in a subprocess to ask torch for its CXX11 ABI; if
+# it picks the system python (no torch), it silently defaults to ABI=0 and the
+# resulting libpyg.so fails to load against torch's ABI=1 libtorch ("undefined
+# symbol: torch::autograd::Node::name() const"). Exporting VIRTUAL_ENV + PATH
+# makes CMake's FindPython3 prefer the venv interpreter, so it reads the correct
+# ABI. (torch's cpp_extension handles this itself, which is why scatter/sparse/
+# cluster were unaffected.)
+export VIRTUAL_ENV="$(cd "$(dirname "$TPY")/.." && pwd)"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
 say "[INFO] CUDA_HOME     : $CUDA_HOME"
 say "[INFO] arch list     : $TORCH_CUDA_ARCH_LIST   FORCE_CUDA=1"
 say "[INFO] parallelism   : MAX_JOBS=$MAX_JOBS (of $_NCPU cores; ~4 reserved for OS/browser)"
@@ -221,8 +232,10 @@ build_one() {  # build_one <pkg-name> <pip-spec>
     rm -f "$OUT_DIR/$(echo "$name" | tr '-' '_')-"*.whl 2>/dev/null
     # --no-deps: build ONLY this package's wheel, not its runtime deps
     # (otherwise pip drags numpy/scipy/etc. into the output dir).
+    # -v: surface the build backend's output (incl. CMake's ABI decision) into
+    # the saved log for diagnostics; only shown on failure (run_build tails it).
     if run_build "$name" "$LOGDIR/$name.log" \
-        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps; then
+        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps -v; then
         RESULTS+=("OK   $name")
         OK_PKGS+=("$name")
     else
