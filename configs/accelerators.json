@@ -43,15 +43,15 @@
     "windows": {
       "x86_64": {
         "3.10": {
-          "2.9.0+cu130": "flash-attn --no-build-isolation",
+          "2.10.0+cu130": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.11": {
-          "2.9.0+cu130": "flash-attn --no-build-isolation",
+          "2.10.0+cu130": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.12": {
-          "2.9.0+cu130": "flash-attn --no-build-isolation",
+          "2.10.0+cu130": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         }
       }
@@ -59,15 +59,15 @@
     "linux": {
       "x86_64": {
         "3.10": {
-          "2.9.0+cu130": "flash-attn --no-build-isolation",
+          "2.10.0+cu130": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.11": {
-          "2.9.0+cu130": "flash-attn --no-build-isolation",
+          "2.10.0+cu130": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         },
         "3.12": {
-          "2.9.0+cu130": "flash-attn --no-build-isolation",
+          "2.10.0+cu130": "flash-attn --no-build-isolation",
           "*": "flash-attn --no-build-isolation"
         }
       },

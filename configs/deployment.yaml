@@ -30,7 +30,7 @@ defaults:
     cudnn: "9"
 
   torch:
-    version: "2.9.0"
+    version: "2.10.0"
     index_url: "https://download.pytorch.org/whl/cu130"
 
   attention_backend:

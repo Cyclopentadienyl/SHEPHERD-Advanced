@@ -115,6 +115,29 @@
 - [ ] 生產部署
 - [ ] CI/CD
 
+#### ✅ 已驗證修復：cuVS 在 cu13 環境的正確整合（2026-05-26，Phase E，DGX GB10 實測）
+**定位釐清**：cuVS 是 Linux 上的**主力 GPU 向量加速後端**（加速效益強、NVIDIA 官方積極維護），**不是** faiss/Voyager 等級的備選。Voyager 只是因為 cuVS **在 Windows 沒有官方 wheel**、為了跨平台才採用的 CPU 替代品；在 Linux/DGX 上 cuVS 應為首選。
+
+**根因（完整）**：deploy 的 Stage 3 用 `uv pip install` 裝 cuVS，而該指令**只解析 cuVS 自己的子樹**，看不到 torch 已安裝的版本約束。torch 2.10.0+cu130 對一整組共用套件有精確 pin（`cuda-bindings==13.0.3` 及 `nvidia-cublas/nvrtc/curand/cusolver/cusparse/nvjitlink` 等），但 cuVS 的 RAPIDS 鏈只要求 `>=`，於是 uv 在無約束下把它們全升到最新 → 下次 `uv sync` 依 lock 還原 → **每次 deploy 版本翻來覆去**。（早期還疊加一個 `cuvs-cu12`(CUDA 12) 的錯誤選擇，先以 `cuvs-cu13` 修正。）
+
+**最終修復**：`deploy.sh` 改用 `cuvs-cu13`，且安裝時用 `uv export` 產生 lock 的版本約束、以 `-c` 餵給 `uv pip install`——cuVS 仍可裝自己的新套件，但**不准動任何 torch 鎖定的共用套件**。已線上驗證 `cuvs-cu13 26.4.0` 在 aarch64/py312 下對 torch 全套 pin 乾淨解析；DGX 實測連跑兩次 deploy，`cuda-bindings` 穩定 `13.0.3`、整組 nvidia 庫不再翻轉，`cuvs` 26.04.000 正常 import。同步更新 deployment-guide / blueprint 文件。
+
+**已知殘留（cosmetic，已接受）**：`nvidia-cusparselt-cu13==0.8.0` 在**每次** `uv sync` 都會被「同版本重裝」（uv 輸出的 `~`）。經隔離測試確認此現象**與 cuVS / 本次修改無關**（兩次乾淨 `uv sync`、甚至清快取重新下載後仍重現），是 uv（含最新版）對該特定 wheel 的內在 quirk；版本不變、暖快取下僅 ~2ms hardlink 重連，無功能影響。待 uv 上游修復。
+
+#### 📌 未來：放寬 torch/cuda 版本支援（維護筆記，2026-05-26）
+目前整個依賴鏈**硬鎖在 torch 2.10.0 + cu130** 單一組合：
+- `pyproject.toml`：`torch/vision/audio==2.10.0` 精確 pin + 強制 `pytorch-cu130` 索引
+- `uv.lock`：鎖到帶 hash 的 `2.10.0+cu130` wheel（含 aarch64）
+- `deploy.sh`：`PYG_WHEEL_URL` 寫死 `torch-2.10.0+cu130.html`
+
+計畫適度放寬（例如新增 cu131/132 + torch 2.11/2.12 適配）。**升版時三處必須同步處理**：
+1. 放寬 `pyproject.toml` 的 pin/索引並重新 `uv lock`
+2. 在 DGX 上用 `scripts/build_pyg_arm.sh` 對新 torch **重編 PyG ARM wheel 並重新上傳到 GitHub Release**
+   - ⚠️ **pyg-lib 的 git tag 與 torch 版本耦合**：須 pin 到對應 torch 的 release（在 `data.pyg.org/whl/torch-<新版>.html` 查官方建的 pyg_lib 版本），用 `PYGLIB_SPEC` 覆寫。HEAD/錯版會 `undefined symbol` 載入失敗。torch 2.10 → pyg-lib 0.6.0。
+3. 更新 `deploy.sh` 的版本判斷與 Release 下載 URL
+
+註：ARM 自編譯腳本設計為**版本無關**（直接對 deploy `.venv` 的 torch 編譯、GPU 算力自動偵測），故升版時**腳本本身不需改**，只需重編+重傳 wheel。版本不符時 deploy 會走「自編譯救援」分支。
+
 ---
 
 ## P1 Ortholog 功能（接口已預留）

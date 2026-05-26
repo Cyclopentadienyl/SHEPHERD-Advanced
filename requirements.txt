@@ -1,28 +1,22 @@
-# =============================================================================
-# SHEPHERD-Advanced Dependencies
-# =============================================================================
+# SHEPHERD-Advanced — dependency management
 #
-# This file is intentionally minimal. Dependencies are managed via TWO sources:
+# As of Phase C (May 2026), all dependencies are managed by uv:
 #
-#   1. pyproject.toml          — All pure-Python packages (single source of truth)
-#                                 Install with: pip install .
-#                                 For development: pip install -e ".[dev]"
+#   - pyproject.toml          : source of truth for top-level deps + uv config
+#                               (including [tool.uv.sources] routing torch to
+#                               the CUDA 13.0 wheel index)
+#   - uv.lock                 : exact resolved versions for win_amd64,
+#                               manylinux_2_28_x86_64, manylinux_2_28_aarch64
+#                               (committed to repo for reproducibility)
+#   - deploy.sh / deploy.cmd  : drive `uv sync` + post-sync PyG ext install
 #
-#   2. deploy.cmd / deploy.sh  — CUDA-dependent packages (torch, torchvision,
-#                                 torchaudio) that require --index-url for GPU
-#                                 support. These are installed in Stage 2 of
-#                                 the deployment script.
-#
-# For a full deployment, run:
-#   Windows:  deploy.cmd
+# Do NOT install via this file. Run instead:
 #   Linux:    ./deploy.sh
+#   Windows:  deploy.cmd
 #
-# For manual installation:
-#   pip install --index-url https://download.pytorch.org/whl/cu130 \
-#       torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0
-#   pip install .
+# To manually install everything in an existing uv-aware shell:
+#   uv sync                   # production deps only
+#   uv sync --extra dev       # + dev tools (pytest, ruff, black, ...)
 #
-# See also:
-#   requirements_windows.txt   — Windows CUDA reference
-#   requirements_arm.txt       — Linux ARM (DGX Spark) CUDA reference
-# =============================================================================
+# To regenerate uv.lock after editing pyproject.toml:
+#   uv lock

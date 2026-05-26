@@ -6,6 +6,25 @@
 
 ---
 
+> **⚠️ Phase C 更新通知 (2026-05)**
+>
+> 部署流程已遷移至 [uv](https://docs.astral.sh/uv/) 作為核心套件管理工具。
+> **使用者應以 `deploy.sh` (Linux) / `deploy.cmd` (Windows) 為主要部署入口**。
+>
+> - PyTorch (torch/torchvision/torchaudio) 現由 uv 透過 `pyproject.toml`
+>   中的 `[tool.uv.sources]` 管理，並鎖定於 `uv.lock`，跨平台版本完全一致。
+> - PyG native ext (pyg-lib, torch-scatter/sparse/cluster) 仍由 deploy
+>   腳本 post-sync 安裝，缺 wheel 時 graceful skip，fallback 到
+>   `torch.scatter_reduce`。
+> - 本文檔中內嵌的 `pip install` / `python -m venv` 範例（例如
+>   下方「DGX Spark 設置腳本」段落）為原 v2.0 內容，**僅供原理理解參考**，
+>   實際部署請執行 `deploy.{sh,cmd}`。
+>
+> 詳見：`pyproject.toml` 的 `[tool.uv]` 段、`uv.lock`、以及
+> `data/external/README.md` 的「Currently Supported Data Sources」表格。
+
+---
+
 ## 文檔目的 🎯
 
 本指南提供：
@@ -54,8 +73,8 @@
 3. **驅動成熟度**: ARM + Blackwell組合較新
 
 #### ⚠️ **Windows x86 的限制**
-1. **16GB VRAM瓶頸**: 無法載入完整PrimeKG（~500萬節點）
-2. **記憶體拷貝開銷**: CPU ↔ GPU數據傳輸慢
+1. **VRAM 容量限制**: 消費級 GPU 的 VRAM（通常 8-24 GB）小於 DGX Spark 的 96 GB 統一記憶體，較大的 KG（如完整 PrimeKG 130K 節點 / 4M 邊）需要子圖採樣或分批訓練；GNN 推理仍可運行。
+2. **記憶體拷貝開銷**: CPU ↔ GPU 數據傳輸經 PCIe，比 DGX Spark 的 NVLink-C2C 慢。
 
 ---
 
@@ -66,8 +85,8 @@
 | 套件 | 版本 | Win x86 | ARM | 安裝難度 | 備註 |
 |------|------|---------|-----|----------|------|
 | **Python** | 3.12 | ✅ | ✅ | 簡單 | 兩者都支持 |
-| **PyTorch** | 2.8.0 | ✅ | ✅ | 簡單 | 官方ARM+CUDA wheel |
-| **CUDA Toolkit** | 12.8 | ✅ | ✅ | 簡單 | Blackwell要求 |
+| **PyTorch** | 2.10.0 | ✅ | ✅ | 簡單 | 官方ARM+CUDA wheel |
+| **CUDA Toolkit** | 13.0 | ✅ | ✅ | 簡單 | Blackwell要求 |
 | **cuDNN** | 9.x | ✅ | ✅ | 簡單 | PyTorch包含 |
 | **PyTorch Geometric** | 2.6+ | ✅ | ⚠️ | 中等 | ARM可能需從源碼編譯 |
 | **pyg-lib** | 最新 | ✅ | ⚠️ | 中等 | 同上 |
@@ -107,7 +126,7 @@
 pip install torch-geometric==2.6.0
 
 # 策略 2: 嘗試從PyG倉庫安裝 (成功率: 80%)
-pip install torch-geometric -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
+pip install torch-geometric -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
 
 # 策略 3: 從源碼編譯 (成功率: 95%, 耗時: 1-2h)
 git clone https://github.com/pyg-team/pytorch_geometric.git
@@ -155,7 +174,7 @@ else:
 **備用方案: 使用DGL**
 ```bash
 # 如果PyG完全無法安裝
-pip install dgl -f https://data.dgl.ai/wheels/torch-2.8/cu128/repo.html
+pip install dgl -f https://data.dgl.ai/wheels/torch-2.10/cu130/repo.html
 
 # DGL on ARM 支持較好
 ```
@@ -366,8 +385,8 @@ results = index.search(query_vector, top_k=10)
 # Voyager (必裝，跨平台)
 pip install voyager>=2.0
 
-# cuVS (選裝，Linux GPU)
-pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12
+# cuVS (選裝，Linux GPU；須用 cu13 build 與專案 torch cu130 對齊)
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13
 ```
 
 **效能對比**:
@@ -451,9 +470,9 @@ Write-Host "[5/8] 升級 pip..." -ForegroundColor Yellow
 python -m pip install --upgrade pip setuptools wheel
 
 # 6. 安裝PyTorch
-Write-Host "[6/8] 安裝 PyTorch 2.8.0 + CUDA 12.8..." -ForegroundColor Yellow
-pip install torch==2.8.0 torchvision==0.19.0 torchaudio==2.8.0 `
-    --index-url https://download.pytorch.org/whl/cu128
+Write-Host "[6/8] 安裝 PyTorch 2.10.0 + CUDA 13.0..." -ForegroundColor Yellow
+pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 `
+    --index-url https://download.pytorch.org/whl/cu130
 
 # 驗證PyTorch
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA不可用'; print(f'✅ PyTorch {torch.__version__} + CUDA {torch.version.cuda}')"
@@ -461,7 +480,7 @@ python -c "import torch; assert torch.cuda.is_available(), 'CUDA不可用'; prin
 # 7. 安裝PyTorch Geometric
 Write-Host "[7/8] 安裝 PyTorch Geometric..." -ForegroundColor Yellow
 pip install torch-geometric pyg-lib torch-scatter torch-sparse torch-cluster `
-    -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
+    -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
 
 # 8. 安裝其他依賴
 Write-Host "[8/8] 安裝其他依賴..." -ForegroundColor Yellow
@@ -523,11 +542,11 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # 步驟2: PyTorch
-pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
 
 # 步驟3: PyG (如果上面的安裝失敗)
 # 方案A: 使用PyG倉庫
-pip install torch-geometric -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
+pip install torch-geometric -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
 
 # 方案B: 從源碼
 git clone https://github.com/pyg-team/pytorch_geometric.git
@@ -629,9 +648,9 @@ echo -e "${YELLOW}[7/10] 升級 pip...${NC}"
 pip install --upgrade pip setuptools wheel
 
 # 8. 安裝PyTorch (ARM + CUDA)
-echo -e "${YELLOW}[8/10] 安裝 PyTorch 2.8.0 (ARM + CUDA 12.8)...${NC}"
-pip install torch==2.8.0 torchvision==0.19.0 torchaudio==2.8.0 \
-    --index-url https://download.pytorch.org/whl/cu128
+echo -e "${YELLOW}[8/10] 安裝 PyTorch 2.10.0 (ARM + CUDA 13.0)...${NC}"
+pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+    --index-url https://download.pytorch.org/whl/cu130
 
 # 驗證PyTorch
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA不可用'; print(f'✅ PyTorch {torch.__version__} + CUDA OK')"
@@ -690,7 +709,7 @@ pip install \
 
 # cuVS for GPU acceleration (optional)
 echo -e "${CYAN}  嘗試安裝 cuVS (GPU 加速)...${NC}"
-pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12 || \
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13 || \
     echo -e "${YELLOW}  cuVS 安裝失敗，將使用 Voyager (CPU)${NC}"
 
 # 11. 環境驗證
@@ -723,27 +742,10 @@ except ImportError:
         print('⚠️  FlashAttention-2: 不可用，使用 PyTorch SDPA')
 """
 
-# 12. 寫入配置文件
+# 12. 平台配置
 echo ""
-echo -e "${CYAN}寫入平台配置...${NC}"
-cat > config/platform.yaml << EOF
-platform: dgx_spark_arm_blackwell
-architecture: aarch64
-cuda_version: 12.8
-memory_gb: 128
-unified_memory: true
-
-model_config:
-  hidden_dim: 256  # 比x86小（節省記憶體）
-  num_layers: 4
-  attention_backend: auto  # 自動檢測
-  batch_size: 64  # 利用大記憶體優勢
-
-vector_index:
-  backend: auto  # cuVS (GPU) -> Voyager (CPU fallback)
-EOF
-
-echo -e "${GREEN}✅ 配置文件已生成: config/platform.yaml${NC}"
+echo -e "${CYAN}平台配置由 configs/deployment.yaml 集中管理；${NC}"
+echo -e "${CYAN}硬體偵測（GPU / arch / CUDA）由 deploy.sh 與 scripts/launch/shep_launch.py 啟動時自動完成，無需手動寫入 platform 配置檔。${NC}"
 
 echo ""
 echo -e "${GREEN}========================================"
@@ -751,9 +753,9 @@ echo -e "  ✅ DGX Spark 環境設置完成！"
 echo -e "========================================${NC}"
 echo ""
 echo -e "下一步："
-echo -e "  1. 下載資料: python scripts/download_data.py"
-echo -e "  2. 構建知識圖譜: python scripts/build_kg.py"
-echo -e "  3. 訓練模型: python scripts/train_model.py --config config/platform.yaml"
+echo -e "  1. 構建知識圖譜: python scripts/build_knowledge_graph.py"
+echo -e "  2. 構建向量索引: python scripts/build_index.py"
+echo -e "  3. 訓練模型:     python scripts/train_model.py  (可選 --config <hyperparameters.yaml>)"
 echo ""
 echo -e "${YELLOW}注意事項：${NC}"
 echo -e "  - FlashAttention-2 在 ARM 上不可用，已自動降級"
@@ -869,9 +871,9 @@ pip uninstall torch torch-geometric pyg-lib torch-scatter torch-sparse -y
 pip cache purge
 
 # 按順序重新安裝
-pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
 pip install torch-geometric pyg-lib torch-scatter torch-sparse \
-    -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
+    -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
 ```
 
 ---

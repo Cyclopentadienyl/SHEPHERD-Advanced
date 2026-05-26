@@ -735,7 +735,7 @@ class AdaptiveDeployment:
 | FlashAttn-2 | `pip install flash-attn --no-build-isolation` | ❌ 跳過 | 使用備案 |
 | xformers | `pip install xformers` | 嘗試安裝 | ARM支持有限 |
 | Voyager | `pip install voyager>=2.0` | ✅ | 跨平台 CPU |
-| cuVS | ❌ (Linux only) | `pip install cuvs-cu12` | Linux GPU 加速 |
+| cuVS | ❌ (Linux only) | `pip install cuvs-cu13` | Linux GPU 加速 |
 
 ### 自適應注意力實現
 
