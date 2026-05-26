@@ -292,25 +292,27 @@ else
 fi
 
 # cuVS: Linux GPU-accelerated vector backend, optional (Voyager is the CPU fallback).
-# Use the cu13 build (cuvs-cu12 would pull a cuda-bindings 12.x that conflicts with
-# torch's cu13 stack). cuvs-cu13 itself only requires cuda-bindings>=13, so an
-# unconstrained install would let uv bump it to the newest 13.x (e.g. 13.2.0) --
-# but torch 2.10.0+cu130 PINS cuda-bindings==13.0.3, and 'uv pip install' resolves
-# only cuVS's subtree (torch's pin is not in view), so it would silently override
-# torch's version and flip-flop it on every deploy. Re-inject torch's constraint by
-# pinning cuda-bindings to whatever Stage 2 installed from the lock (version-agnostic:
-# follows torch on future bumps). cuvs-cu13 26.4.0 resolves fine against 13.0.3; if a
-# future cuVS ever needs >13.0.3, the pinned install fails and we fall back to Voyager.
+# Use the cu13 build (cuvs-cu12 would pull a CUDA-12 binding line). cuVS's RAPIDS
+# chain depends on a set of shared deps that torch also uses (cuda-bindings plus the
+# nvidia-* CUDA libs), and torch 2.10.0+cu130 pins them to specific versions. An
+# unconstrained 'uv pip install' resolves only cuVS's subtree (torch's pins are not
+# in view), so it upgrades those shared deps past torch's pins, which the next
+# 'uv sync' then reverts -> version flip-flop on every deploy. Constrain the install
+# to the lock's resolved versions: cuVS may add its own packages but can never bump
+# a torch-pinned shared dep. cuvs-cu13 26.4.0 resolves cleanly under these pins
+# (verified); if a future cuVS needs newer, the constrained install fails -> Voyager.
 echo -e "\n[INFO] Attempting cuVS (NVIDIA RAPIDS GPU vector backend)..."
-CB_VER="$("$PY" -c 'import importlib.metadata as m; print(m.version("cuda-bindings"))' 2>/dev/null)"
+CUVS_CONSTRAINTS="$(mktemp)"
+uv export --format requirements-txt --no-hashes --no-emit-project -o "$CUVS_CONSTRAINTS" 2>/dev/null
 if uv pip install --extra-index-url https://pypi.nvidia.com \
-       "cuvs-cu13>=24.12" ${CB_VER:+"cuda-bindings==$CB_VER"} 2>/dev/null; then
+       -c "$CUVS_CONSTRAINTS" "cuvs-cu13>=24.12" 2>/dev/null; then
     echo -e "${GREEN}[OK] cuVS installed (GPU vector backend available)${NC}"
 else
     echo -e "${YELLOW}[INFO] cuVS not available; Voyager (CPU) remains the primary backend${NC}"
     echo -e "${YELLOW}[HINT] For GPU acceleration, manually try:${NC}"
-    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13 cuda-bindings==${CB_VER:-13.0.3}${NC}"
+    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13${NC}"
 fi
+rm -f "$CUVS_CONSTRAINTS"
 
 # ============================================================================
 # STAGE 4/4: VALIDATION & FINALIZATION
