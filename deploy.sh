@@ -303,7 +303,7 @@ fi
 # (verified); if a future cuVS needs newer, the constrained install fails -> Voyager.
 echo -e "\n[INFO] Attempting cuVS (NVIDIA RAPIDS GPU vector backend)..."
 CUVS_CONSTRAINTS="$(mktemp)"
-uv export --format requirements-txt --no-hashes --no-emit-project -o "$CUVS_CONSTRAINTS" 2>/dev/null
+uv export --format requirements-txt --no-hashes --no-emit-project -o "$CUVS_CONSTRAINTS" >/dev/null 2>&1
 if uv pip install --extra-index-url https://pypi.nvidia.com \
        -c "$CUVS_CONSTRAINTS" "cuvs-cu13>=24.12" 2>/dev/null; then
     echo -e "${GREEN}[OK] cuVS installed (GPU vector backend available)${NC}"
