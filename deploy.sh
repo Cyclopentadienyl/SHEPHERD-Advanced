@@ -43,6 +43,17 @@ echo -e "${CYAN}================================================================
 PYTHON_EXE="${PYTHON_EXE:-python3}"
 PYG_WHEEL_URL="https://data.pyg.org/whl/torch-2.10.0+cu130.html"
 
+# Prebuilt PyG ARM wheels (Phase D). data.pyg.org publishes NO aarch64 wheels,
+# so for ARM+CUDA hosts we host self-compiled wheels on a GitHub Release built
+# for exactly this torch+CUDA combo. deploy compares the host's actual torch
+# against these to decide whether the prebuilt wheels are usable (Case A) or a
+# source build is required (Case B). When the prebuilt target changes, update
+# all three together with the Release (see medical-kg-todo.md Phase 3 note).
+PYG_PREBUILT_TORCH="2.10.0"
+PYG_PREBUILT_CUDA="130"
+PYG_RELEASE_REPO="cyclopentadienyl/shepherd-advanced"
+PYG_RELEASE_TAG="pyg-arm-cu130-torch2.10.0"
+
 # Detect Architecture
 ARCH=$(uname -m)
 echo -e "${CYAN}[INFO] Detected Architecture: ${ARCH}${NC}"
@@ -162,24 +173,121 @@ if ! uv pip install torch_geometric; then
     exit 3
 fi
 
-# pyg-lib: native kernels, has wheels for Linux x86 + ARM + Windows
-echo -e "\n[INFO] Installing pyg-lib (native GNN kernels)..."
-if uv pip install pyg-lib --find-links "$PYG_WHEEL_URL"; then
-    echo -e "${GREEN}[OK] pyg-lib installed${NC}"
-else
-    echo -e "${YELLOW}[SKIP] pyg-lib: no pre-built wheel; PyG will use torch.scatter_reduce fallback${NC}"
-fi
+# ---------------------------------------------------------------------------
+# Native extensions: pyg-lib, torch-scatter, torch-sparse, torch-cluster.
+#   - non-ARM / no-CUDA: data.pyg.org has wheels (linux_x86_64 / win_amd64) ->
+#     install via find-links with graceful skip (built-in fallback covers misses).
+#   - ARM + CUDA (DGX): data.pyg.org has NO aarch64 wheel for ANY torch/CUDA, so
+#     offer: prebuilt-from-Release (only if host torch matches what we prebuilt,
+#     "Case A") / self-compile / skip-with-fallback / abort.
+# Non-interactive override: PYG_ARM_STRATEGY=pull|compile|skip|abort
+# ---------------------------------------------------------------------------
+NATIVE_PKGS="pyg-lib torch-scatter torch-sparse torch-cluster"
 
-# torch-scatter / torch-sparse / torch-cluster: third-party ext
-# Linux wheels available; Windows wheels never published by upstream maintainers.
-echo -e "\n[INFO] Installing torch-scatter/sparse/cluster (third-party ext, optional)..."
-if uv pip install torch-scatter torch-sparse torch-cluster \
-    --find-links "$PYG_WHEEL_URL" --only-binary :all:; then
-    echo -e "${GREEN}[OK] PyG third-party extensions installed${NC}"
+TVER="$("$PY" -c 'import torch;print(torch.__version__)' 2>/dev/null)"
+TBASE="${TVER%%+*}"
+TCU="$("$PY" -c 'import torch;print((torch.version.cuda or "").replace(".",""))' 2>/dev/null)"
+CUDA_AVAIL="$("$PY" -c 'import torch;print(1 if torch.cuda.is_available() else 0)' 2>/dev/null)"
+
+install_pyg_from_index() {  # original non-ARM path: data.pyg.org find-links
+    echo -e "\n[INFO] Installing pyg-lib (native GNN kernels)..."
+    if uv pip install pyg-lib --find-links "$PYG_WHEEL_URL"; then
+        echo -e "${GREEN}[OK] pyg-lib installed${NC}"
+    else
+        echo -e "${YELLOW}[SKIP] pyg-lib: no pre-built wheel; using torch.scatter_reduce fallback${NC}"
+    fi
+    echo -e "\n[INFO] Installing torch-scatter/sparse/cluster (third-party ext, optional)..."
+    if uv pip install torch-scatter torch-sparse torch-cluster \
+        --find-links "$PYG_WHEEL_URL" --only-binary :all:; then
+        echo -e "${GREEN}[OK] PyG third-party extensions installed${NC}"
+    else
+        echo -e "${YELLOW}[SKIP] No pre-built wheels for this platform/torch combination${NC}"
+        echo -e "${YELLOW}       Impact: NONE — HeteroConv + GAT/SAGE auto-use torch.scatter_reduce${NC}"
+        echo -e "${YELLOW}       (PyTorch 2.0+ native, equivalent perf for our architecture)${NC}"
+    fi
+}
+
+run_source_build() {  # self-compile via the standalone builder
+    if [ ! -f scripts/build_pyg_arm.sh ]; then
+        echo -e "${RED}[ERROR] scripts/build_pyg_arm.sh not found.${NC}"; return 1
+    fi
+    echo -e "[INFO] Compiling from source via scripts/build_pyg_arm.sh ..."
+    # ASSUME_YES: deploy menu already obtained consent. Builder targets ./.venv.
+    ASSUME_YES=1 INSTALL_AFTER_BUILD=1 bash scripts/build_pyg_arm.sh
+}
+
+fetch_prebuilt_wheels() {  # downloads + extracts Release tarball; sets WHEELDIR
+    local pyver asset url tmp
+    pyver="$("$PY" -c 'import sys;print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
+    asset="pyg-ext-torch${PYG_PREBUILT_TORCH}-cu${PYG_PREBUILT_CUDA}-${pyver}-linux_aarch64.tar.gz"
+    url="https://github.com/${PYG_RELEASE_REPO}/releases/download/${PYG_RELEASE_TAG}/${asset}"
+    tmp="$(mktemp -d)"
+    echo -e "[INFO] Downloading prebuilt wheels: $url"
+    if curl -fSL "$url" -o "$tmp/$asset" && tar xzf "$tmp/$asset" -C "$tmp"; then
+        WHEELDIR="$tmp"; return 0
+    fi
+    return 1
+}
+
+if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
+    echo -e "[INFO] ARM + CUDA detected; data.pyg.org has no aarch64 wheels."
+    echo -e "[INFO] Host torch: ${TVER:-unknown}  |  prebuilt target: torch ${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}"
+    if [ "$TBASE" = "$PYG_PREBUILT_TORCH" ] && [ "$TCU" = "$PYG_PREBUILT_CUDA" ]; then
+        PYG_CASE=A; echo -e "${GREEN}[INFO] Host matches prebuilt target -> prebuilt wheels are usable.${NC}"
+    else
+        PYG_CASE=B; echo -e "${YELLOW}[INFO] Host differs from prebuilt target -> prebuilt NOT usable; source build only.${NC}"
+    fi
+
+    PYG_STRAT=""
+    if [ -n "${PYG_ARM_STRATEGY:-}" ]; then
+        PYG_STRAT="$PYG_ARM_STRATEGY"
+        echo -e "[INFO] PYG_ARM_STRATEGY=$PYG_STRAT (non-interactive override)"
+    elif [ ! -t 0 ]; then
+        PYG_STRAT="skip"
+        echo -e "${YELLOW}[INFO] No TTY; defaulting to 'skip' (fallback). Set PYG_ARM_STRATEGY=pull|compile|skip|abort to override.${NC}"
+    elif [ "$PYG_CASE" = "A" ]; then
+        echo ""
+        echo -e "  ${GREEN}1)${NC} Download prebuilt wheels from GitHub Release   ${GREEN}[recommended]${NC}"
+        echo -e "  ${CYAN}2)${NC} Compile from source now (slower)"
+        echo -e "  ${CYAN}3)${NC} Skip — continue with built-in torch.scatter_reduce fallback"
+        echo -e "  ${CYAN}4)${NC} Abort deployment"
+        read -r -p "Select [1-4] (default 1): " c
+        case "${c:-1}" in 1) PYG_STRAT=pull;; 2) PYG_STRAT=compile;; 3) PYG_STRAT=skip;; 4) PYG_STRAT=abort;; *) PYG_STRAT=pull;; esac
+    else
+        echo ""
+        echo -e "  ${YELLOW}Host torch (${TVER}) != prebuilt (torch ${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}); prebuilt wheels are NOT usable.${NC}"
+        echo -e "  ${GREEN}1)${NC} Compile from source now   ${GREEN}[recommended]${NC}"
+        echo -e "  ${CYAN}2)${NC} Skip — continue with built-in torch.scatter_reduce fallback"
+        echo -e "  ${CYAN}3)${NC} Abort deployment"
+        read -r -p "Select [1-3] (default 1): " c
+        case "${c:-1}" in 1) PYG_STRAT=compile;; 2) PYG_STRAT=skip;; 3) PYG_STRAT=abort;; *) PYG_STRAT=compile;; esac
+    fi
+
+    # Case B can never use prebuilt wheels.
+    if [ "$PYG_CASE" = "B" ] && [ "$PYG_STRAT" = "pull" ]; then
+        echo -e "${YELLOW}[WARN] prebuilt wheels don't match host torch; switching to source build.${NC}"
+        PYG_STRAT=compile
+    fi
+
+    case "$PYG_STRAT" in
+        pull)
+            if fetch_prebuilt_wheels && uv pip install --no-deps --find-links "$WHEELDIR" $NATIVE_PKGS; then
+                echo -e "${GREEN}[OK] Prebuilt PyG wheels installed.${NC}"
+            else
+                echo -e "${YELLOW}[WARN] Prebuilt download/install failed (Release asset missing?). Falling back to source build...${NC}"
+                run_source_build || echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
+            fi ;;
+        compile)
+            run_source_build || echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}" ;;
+        skip)
+            echo -e "${YELLOW}[SKIP] PyG native ext not installed; using torch.scatter_reduce fallback (Impact: none for our architecture).${NC}" ;;
+        abort)
+            echo -e "${RED}[ABORT] Deployment terminated by user at PyG native-extension stage.${NC}"; exit 10 ;;
+        *)
+            echo -e "${YELLOW}[WARN] Unknown strategy '$PYG_STRAT'; skipping (fallback).${NC}" ;;
+    esac
 else
-    echo -e "${YELLOW}[SKIP] No pre-built wheels for this platform/torch combination${NC}"
-    echo -e "${YELLOW}       Impact: NONE — HeteroConv + GAT/SAGE auto-use torch.scatter_reduce${NC}"
-    echo -e "${YELLOW}       (PyTorch 2.0+ native, equivalent perf for our architecture)${NC}"
+    install_pyg_from_index
 fi
 
 # cuVS: Linux GPU-accelerated vector backend, optional (Voyager is the CPU fallback)
