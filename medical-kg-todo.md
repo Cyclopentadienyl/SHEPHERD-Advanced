@@ -124,6 +124,7 @@
 計畫適度放寬（例如新增 cu131/132 + torch 2.11/2.12 適配）。**升版時三處必須同步處理**：
 1. 放寬 `pyproject.toml` 的 pin/索引並重新 `uv lock`
 2. 在 DGX 上用 `scripts/build_pyg_arm.sh` 對新 torch **重編 PyG ARM wheel 並重新上傳到 GitHub Release**
+   - ⚠️ **pyg-lib 的 git tag 與 torch 版本耦合**：須 pin 到對應 torch 的 release（在 `data.pyg.org/whl/torch-<新版>.html` 查官方建的 pyg_lib 版本），用 `PYGLIB_SPEC` 覆寫。HEAD/錯版會 `undefined symbol` 載入失敗。torch 2.10 → pyg-lib 0.6.0。
 3. 更新 `deploy.sh` 的版本判斷與 Release 下載 URL
 
 註：ARM 自編譯腳本設計為**版本無關**（直接對 deploy `.venv` 的 torch 編譯、GPU 算力自動偵測），故升版時**腳本本身不需改**，只需重編+重傳 wheel。版本不符時 deploy 會走「自編譯救援」分支。

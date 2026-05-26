@@ -216,6 +216,9 @@ run_build() {  # run_build "<label>" "<logfile>" <cmd...>
 build_one() {  # build_one <pkg-name> <pip-spec>
     local name="$1" spec="$2"
     say "\n${CYAN}>>> $name${NC}  ($spec)"
+    # Drop any prior wheel of this package so a stale version can't shadow the
+    # fresh build at --find-links install time (e.g. an old pyg_lib-0.7.0).
+    rm -f "$OUT_DIR/$(echo "$name" | tr '-' '_')-"*.whl 2>/dev/null
     # --no-deps: build ONLY this package's wheel, not its runtime deps
     # (otherwise pip drags numpy/scipy/etc. into the output dir).
     if run_build "$name" "$LOGDIR/$name.log" \
@@ -229,12 +232,16 @@ build_one() {  # build_one <pkg-name> <pip-spec>
 
 # Order: scatter first (sparse/cluster use it at runtime), then sparse/cluster,
 # then the independent pyg-lib. scatter/sparse/cluster have PyPI sdists; pyg-lib
-# does NOT publish to PyPI, so it must be built from its git source (submodules
-# are fetched by pip). Specs overridable via *_SPEC for reproducible builds.
+# does NOT publish to PyPI, so it is built from a pinned git tag (submodules are
+# fetched by pip). pyg-lib's tag is torch-version-coupled: 0.6.0 matches torch
+# 2.10 (data.pyg.org ships pyg_lib-0.6.0+pt210). Building HEAD against torch 2.10
+# links a symbol (torch::autograd::Node::name() const) absent from torch 2.10's
+# libtorch -> "undefined symbol" at load. When bumping torch, set PYGLIB_SPEC to
+# the tag matching the new torch (check the data.pyg.org index for that torch).
 build_one "torch-scatter" "${SCATTER_SPEC:-torch-scatter}"
 build_one "torch-sparse"  "${SPARSE_SPEC:-torch-sparse}"
 build_one "torch-cluster" "${CLUSTER_SPEC:-torch-cluster}"
-build_one "pyg-lib"       "${PYGLIB_SPEC:-git+https://github.com/pyg-team/pyg-lib.git}"
+build_one "pyg-lib"       "${PYGLIB_SPEC:-git+https://github.com/pyg-team/pyg-lib.git@0.6.0}"
 
 # === Summary + optional install =============================================
 say "\n${CYAN}[STAGE 5/5] Summary${NC}"
