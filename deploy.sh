@@ -291,14 +291,17 @@ else
     install_pyg_from_index
 fi
 
-# cuVS: Linux GPU-accelerated vector backend, optional (Voyager is the CPU fallback)
+# cuVS: Linux GPU-accelerated vector backend, optional (Voyager is the CPU fallback).
+# MUST be the cu13 build: cuvs-cu12 pulls cuda-bindings 12.x, which conflicts with
+# torch's cu13 stack (cuda-bindings 13.x) and causes uv to flip-flop the version on
+# every deploy. cuvs-cu13 shares the cu13 cuda-bindings line, so they coexist.
 echo -e "\n[INFO] Attempting cuVS (NVIDIA RAPIDS GPU vector backend)..."
-if uv pip install --extra-index-url https://pypi.nvidia.com "cuvs-cu12>=24.12" 2>/dev/null; then
+if uv pip install --extra-index-url https://pypi.nvidia.com "cuvs-cu13>=24.12" 2>/dev/null; then
     echo -e "${GREEN}[OK] cuVS installed (GPU vector backend available)${NC}"
 else
     echo -e "${YELLOW}[INFO] cuVS not available; Voyager (CPU) remains the primary backend${NC}"
     echo -e "${YELLOW}[HINT] For GPU acceleration, manually try:${NC}"
-    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12${NC}"
+    echo -e "${YELLOW}       uv pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13${NC}"
 fi
 
 # ============================================================================

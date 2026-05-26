@@ -385,8 +385,8 @@ results = index.search(query_vector, top_k=10)
 # Voyager (必裝，跨平台)
 pip install voyager>=2.0
 
-# cuVS (選裝，Linux GPU)
-pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12
+# cuVS (選裝，Linux GPU；須用 cu13 build 與專案 torch cu130 對齊)
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13
 ```
 
 **效能對比**:
@@ -709,7 +709,7 @@ pip install \
 
 # cuVS for GPU acceleration (optional)
 echo -e "${CYAN}  嘗試安裝 cuVS (GPU 加速)...${NC}"
-pip install --extra-index-url https://pypi.nvidia.com cuvs-cu12 || \
+pip install --extra-index-url https://pypi.nvidia.com cuvs-cu13 || \
     echo -e "${YELLOW}  cuVS 安裝失敗，將使用 Voyager (CPU)${NC}"
 
 # 11. 環境驗證
