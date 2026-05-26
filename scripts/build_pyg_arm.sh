@@ -254,23 +254,33 @@ build_one() {  # build_one <pkg-name> <pip-spec>
 build_one "torch-scatter" "${SCATTER_SPEC:-torch-scatter}"
 build_one "torch-sparse"  "${SPARSE_SPEC:-torch-sparse}"
 build_one "torch-cluster" "${CLUSTER_SPEC:-torch-cluster}"
-# The default pyg-lib git tag (0.6.0) is matched to torch 2.10.x. Unlike the
-# other three (PyPI sdists that pip version-resolves against the live torch),
-# pyg-lib has no sdist, so its tag is hard-coded here and does NOT auto-adapt.
-# For any other torch, warn the user to point PYGLIB_SPEC at the matching tag.
-_TBASE="${TORCH_VER%%+*}"; _TMM="${_TBASE%.*}"
-if [ -z "${PYGLIB_SPEC:-}" ] && [ "$_TMM" != "2.10" ]; then
-    say "${YELLOW}[WARN] Default pyg-lib tag 0.6.0 targets torch 2.10.x, but this torch is $TORCH_VER.${NC}"
-    say "${YELLOW}       If pyg-lib fails to build/import (e.g. undefined symbol), set PYGLIB_SPEC to the${NC}"
-    say "${YELLOW}       tag matching your torch, e.g.:${NC}"
-    say "${YELLOW}         PYGLIB_SPEC=git+https://github.com/pyg-team/pyg-lib.git@<tag> bash $0${NC}"
-    say "${YELLOW}       Find the pyg_lib version that ships for your torch at https://data.pyg.org/whl/ ${NC}"
-    say "${YELLOW}       (open the torch-${_TBASE}+cu${TORCH_CUDA//./} page), then use its matching git tag.${NC}"
+# pyg-lib has no PyPI sdist, so (unlike scatter/sparse/cluster, which pip
+# version-resolves against the live torch) its version must be pinned by git
+# tag. Resolve the tag matching this torch from PyG's own wheel index: the
+# pyg_lib version string is platform-independent for a given torch, so the x86
+# listing reveals the right tag even though no aarch64 wheel is published there.
+# Users may override via PYGLIB_SPEC; fall back to a known-good tag on failure.
+if [ -z "${PYGLIB_SPEC:-}" ]; then
+    _PGVER=""
+    if command -v curl >/dev/null 2>&1; then
+        _PGVER="$(curl -fsSL --max-time 15 "https://data.pyg.org/whl/torch-${TORCH_VER}.html" 2>/dev/null \
+            | grep -oE 'pyg_lib-[0-9]+\.[0-9]+\.[0-9]+' | sed 's/^pyg_lib-//' | sort -V | uniq | tail -1)"
+    fi
+    if [ -n "$_PGVER" ]; then
+        PYGLIB_SPEC="git+https://github.com/pyg-team/pyg-lib.git@$_PGVER"
+        say "[INFO] pyg-lib       : resolved tag $_PGVER for torch $TORCH_VER (via data.pyg.org)"
+    else
+        PYGLIB_SPEC="git+https://github.com/pyg-team/pyg-lib.git@0.6.0"
+        say "${YELLOW}[WARN] Could not resolve a pyg-lib tag for torch $TORCH_VER from data.pyg.org;${NC}"
+        say "${YELLOW}       falling back to tag 0.6.0 (matches torch 2.10.x). If pyg-lib then fails to${NC}"
+        say "${YELLOW}       build/import, override (env var, inline before the command):${NC}"
+        say "${YELLOW}         PYGLIB_SPEC=git+https://github.com/pyg-team/pyg-lib.git@<tag> bash $0${NC}"
+    fi
 fi
 # --no-cache-dir: pip caches VCS-built wheels keyed by commit, ignoring our env
 # (e.g. the ABI flags), so it would otherwise serve a previously-built ABI=0
 # wheel. Force a fresh build so the venv-python/ABI fix actually takes effect.
-build_one "pyg-lib"       "${PYGLIB_SPEC:-git+https://github.com/pyg-team/pyg-lib.git@0.6.0}" --no-cache-dir
+build_one "pyg-lib"       "$PYGLIB_SPEC" --no-cache-dir
 
 # === Summary + optional install =============================================
 say "\n${CYAN}[STAGE 5/5] Summary${NC}"
