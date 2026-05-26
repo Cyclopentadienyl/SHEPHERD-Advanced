@@ -115,6 +115,19 @@
 - [ ] 生產部署
 - [ ] CI/CD
 
+#### 📌 未來：放寬 torch/cuda 版本支援（維護筆記，2026-05-26）
+目前整個依賴鏈**硬鎖在 torch 2.10.0 + cu130** 單一組合：
+- `pyproject.toml`：`torch/vision/audio==2.10.0` 精確 pin + 強制 `pytorch-cu130` 索引
+- `uv.lock`：鎖到帶 hash 的 `2.10.0+cu130` wheel（含 aarch64）
+- `deploy.sh`：`PYG_WHEEL_URL` 寫死 `torch-2.10.0+cu130.html`
+
+計畫適度放寬（例如新增 cu131/132 + torch 2.11/2.12 適配）。**升版時三處必須同步處理**：
+1. 放寬 `pyproject.toml` 的 pin/索引並重新 `uv lock`
+2. 在 DGX 上用 `scripts/build_pyg_arm.sh` 對新 torch **重編 PyG ARM wheel 並重新上傳到 GitHub Release**
+3. 更新 `deploy.sh` 的版本判斷與 Release 下載 URL
+
+註：ARM 自編譯腳本設計為**版本無關**（直接對 deploy `.venv` 的 torch 編譯、GPU 算力自動偵測），故升版時**腳本本身不需改**，只需重編+重傳 wheel。版本不符時 deploy 會走「自編譯救援」分支。
+
 ---
 
 ## P1 Ortholog 功能（接口已預留）
