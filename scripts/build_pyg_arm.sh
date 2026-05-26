@@ -183,6 +183,7 @@ say "---------------------------------------------------------------------------
 mkdir -p "$OUT_DIR"
 LOGDIR="$(mktemp -d)"
 declare -a RESULTS
+declare -a OK_PKGS
 
 run_build() {  # run_build "<label>" "<logfile>" <cmd...>
     local label="$1" logf="$2"; shift 2
@@ -215,21 +216,25 @@ run_build() {  # run_build "<label>" "<logfile>" <cmd...>
 build_one() {  # build_one <pkg-name> <pip-spec>
     local name="$1" spec="$2"
     say "\n${CYAN}>>> $name${NC}  ($spec)"
+    # --no-deps: build ONLY this package's wheel, not its runtime deps
+    # (otherwise pip drags numpy/scipy/etc. into the output dir).
     if run_build "$name" "$LOGDIR/$name.log" \
-        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation; then
+        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps; then
         RESULTS+=("OK   $name")
+        OK_PKGS+=("$name")
     else
         RESULTS+=("FAIL $name")
     fi
 }
 
 # Order: scatter first (sparse/cluster use it at runtime), then sparse/cluster,
-# then the independent pyg-lib. Specs unpinned by default (pip picks the latest
-# source-compatible release); override via *_SPEC for reproducible builds.
+# then the independent pyg-lib. scatter/sparse/cluster have PyPI sdists; pyg-lib
+# does NOT publish to PyPI, so it must be built from its git source (submodules
+# are fetched by pip). Specs overridable via *_SPEC for reproducible builds.
 build_one "torch-scatter" "${SCATTER_SPEC:-torch-scatter}"
 build_one "torch-sparse"  "${SPARSE_SPEC:-torch-sparse}"
 build_one "torch-cluster" "${CLUSTER_SPEC:-torch-cluster}"
-build_one "pyg-lib"       "${PYGLIB_SPEC:-pyg-lib}"
+build_one "pyg-lib"       "${PYGLIB_SPEC:-git+https://github.com/pyg-team/pyg-lib.git}"
 
 # === Summary + optional install =============================================
 say "\n${CYAN}[STAGE 5/5] Summary${NC}"
@@ -241,11 +246,12 @@ done
 say "\n[INFO] Wheels in $OUT_DIR:"
 ls -1 "$OUT_DIR"/*.whl 2>/dev/null | sed 's/^/  /' || say "${YELLOW}  (none)${NC}"
 
-if [ "$INSTALL_AFTER_BUILD" = "1" ] && [ "$NFAIL" -lt 4 ]; then
-    say "\n[INFO] Installing built wheels into target venv (--no-deps, from $OUT_DIR)..."
-    uv pip install --python "$TPY" --no-deps --find-links "$OUT_DIR" \
-        torch-scatter torch-sparse torch-cluster pyg-lib 2>&1 | tail -8 \
-        || say "${YELLOW}[WARN] install reported issues (a failed/skipped package is expected to be absent)${NC}"
+if [ "$INSTALL_AFTER_BUILD" = "1" ] && [ "${#OK_PKGS[@]}" -gt 0 ]; then
+    say "\n[INFO] Installing built wheels into target venv (--no-deps, from $OUT_DIR):"
+    say "       ${OK_PKGS[*]}"
+    # Install only what actually built, so one failure can't block the rest.
+    uv pip install --python "$TPY" --no-deps --find-links "$OUT_DIR" "${OK_PKGS[@]}" 2>&1 | tail -8 \
+        || say "${YELLOW}[WARN] install reported issues${NC}"
 fi
 
 say "\n[INFO] Import smoke test (in target venv):"
