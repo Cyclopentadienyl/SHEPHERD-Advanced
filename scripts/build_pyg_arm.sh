@@ -257,7 +257,10 @@ if [ "$INSTALL_AFTER_BUILD" = "1" ] && [ "${#OK_PKGS[@]}" -gt 0 ]; then
     say "\n[INFO] Installing built wheels into target venv (--no-deps, from $OUT_DIR):"
     say "       ${OK_PKGS[*]}"
     # Install only what actually built, so one failure can't block the rest.
-    uv pip install --python "$TPY" --no-deps --find-links "$OUT_DIR" "${OK_PKGS[@]}" 2>&1 | tail -8 \
+    # --reinstall: force the freshly built wheel in, even if a higher version is
+    # already installed (e.g. a previously-built pyg_lib-0.7.0 would otherwise
+    # not be downgraded to the torch-matched 0.6.0).
+    uv pip install --python "$TPY" --reinstall --no-deps --find-links "$OUT_DIR" "${OK_PKGS[@]}" 2>&1 | tail -8 \
         || say "${YELLOW}[WARN] install reported issues${NC}"
 fi
 
