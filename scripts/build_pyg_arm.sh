@@ -254,6 +254,19 @@ build_one() {  # build_one <pkg-name> <pip-spec>
 build_one "torch-scatter" "${SCATTER_SPEC:-torch-scatter}"
 build_one "torch-sparse"  "${SPARSE_SPEC:-torch-sparse}"
 build_one "torch-cluster" "${CLUSTER_SPEC:-torch-cluster}"
+# The default pyg-lib git tag (0.6.0) is matched to torch 2.10.x. Unlike the
+# other three (PyPI sdists that pip version-resolves against the live torch),
+# pyg-lib has no sdist, so its tag is hard-coded here and does NOT auto-adapt.
+# For any other torch, warn the user to point PYGLIB_SPEC at the matching tag.
+_TBASE="${TORCH_VER%%+*}"; _TMM="${_TBASE%.*}"
+if [ -z "${PYGLIB_SPEC:-}" ] && [ "$_TMM" != "2.10" ]; then
+    say "${YELLOW}[WARN] Default pyg-lib tag 0.6.0 targets torch 2.10.x, but this torch is $TORCH_VER.${NC}"
+    say "${YELLOW}       If pyg-lib fails to build/import (e.g. undefined symbol), set PYGLIB_SPEC to the${NC}"
+    say "${YELLOW}       tag matching your torch, e.g.:${NC}"
+    say "${YELLOW}         PYGLIB_SPEC=git+https://github.com/pyg-team/pyg-lib.git@<tag> bash $0${NC}"
+    say "${YELLOW}       Find the pyg_lib version that ships for your torch at https://data.pyg.org/whl/ ${NC}"
+    say "${YELLOW}       (open the torch-${_TBASE}+cu${TORCH_CUDA//./} page), then use its matching git tag.${NC}"
+fi
 # --no-cache-dir: pip caches VCS-built wheels keyed by commit, ignoring our env
 # (e.g. the ABI flags), so it would otherwise serve a previously-built ABI=0
 # wheel. Force a fresh build so the venv-python/ABI fix actually takes effect.
