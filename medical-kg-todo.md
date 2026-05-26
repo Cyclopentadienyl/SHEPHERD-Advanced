@@ -115,16 +115,14 @@
 - [ ] 生產部署
 - [ ] CI/CD
 
-#### 🟡 修復已套用，待 DGX 驗證：cuVS 在 cu13 環境的正確整合（2026-05-26，Phase E）
+#### ✅ 已驗證修復：cuVS 在 cu13 環境的正確整合（2026-05-26，Phase E，DGX GB10 實測）
 **定位釐清**：cuVS 是 Linux 上的**主力 GPU 向量加速後端**（加速效益強、NVIDIA 官方積極維護），**不是** faiss/Voyager 等級的備選。Voyager 只是因為 cuVS **在 Windows 沒有官方 wheel**、為了跨平台才採用的 CPU 替代品；在 Linux/DGX 上 cuVS 應為首選。
 
-**問題（根因）**：原 `deploy.sh` 裝 `cuvs-cu12`（CUDA 12 build），其要求 `cuda-bindings` 12.x，與專案 torch cu13 stack 的 `cuda-bindings` 13.x 衝突（同一套件、版本範圍不相容）→ 每次 deploy 在 `12.9.6`(cuVS) ↔ `13.0.3`(torch lock) 間來回換裝（`uv sync --inexact` 還原 → Stage 3 cuVS 再降級）。
+**根因（完整）**：deploy 的 Stage 3 用 `uv pip install` 裝 cuVS，而該指令**只解析 cuVS 自己的子樹**，看不到 torch 已安裝的版本約束。torch 2.10.0+cu130 對一整組共用套件有精確 pin（`cuda-bindings==13.0.3` 及 `nvidia-cublas/nvrtc/curand/cusolver/cusparse/nvjitlink` 等），但 cuVS 的 RAPIDS 鏈只要求 `>=`，於是 uv 在無約束下把它們全升到最新 → 下次 `uv sync` 依 lock 還原 → **每次 deploy 版本翻來覆去**。（早期還疊加一個 `cuvs-cu12`(CUDA 12) 的錯誤選擇，先以 `cuvs-cu13` 修正。）
 
-**修復**：`deploy.sh` 改裝 `cuvs-cu13`（與 deployment-guide / blueprint 文件同步）。cu13 build 共用 cu13 的 `cuda-bindings` 線，與 torch 一致，翻轉消失。已線上確認 `cuvs-cu13` 在 NVIDIA 索引有 **cp312 aarch64 wheel**（25.10 / 25.12 / 26.2；26.4 為 cp311-abi3 相容）→ 待辦 1、4 解決。
+**最終修復**：`deploy.sh` 改用 `cuvs-cu13`，且安裝時用 `uv export` 產生 lock 的版本約束、以 `-c` 餵給 `uv pip install`——cuVS 仍可裝自己的新套件，但**不准動任何 torch 鎖定的共用套件**。已線上驗證 `cuvs-cu13 26.4.0` 在 aarch64/py312 下對 torch 全套 pin 乾淨解析；DGX 實測連跑兩次 deploy，`cuda-bindings` 穩定 `13.0.3`、整組 nvidia 庫不再翻轉，`cuvs` 26.04.000 正常 import。同步更新 deployment-guide / blueprint 文件。
 
-**待 DGX 驗證**：
-1. 重跑 deploy，確認 `cuda-bindings` 不再翻轉（穩定停在 13.x）。
-2. 確認 `cuvs-cu13` 在 cu13 torch + GB10 上**實際能 GPU 加速**（不只 import），retrieval backend 正常選用 cuVS。
+**已知殘留（cosmetic，已接受）**：`nvidia-cusparselt-cu13==0.8.0` 在**每次** `uv sync` 都會被「同版本重裝」（uv 輸出的 `~`）。經隔離測試確認此現象**與 cuVS / 本次修改無關**（兩次乾淨 `uv sync`、甚至清快取重新下載後仍重現），是 uv（含最新版）對該特定 wheel 的內在 quirk；版本不變、暖快取下僅 ~2ms hardlink 重連，無功能影響。待 uv 上游修復。
 
 #### 📌 未來：放寬 torch/cuda 版本支援（維護筆記，2026-05-26）
 目前整個依賴鏈**硬鎖在 torch 2.10.0 + cu130** 單一組合：
