@@ -491,10 +491,13 @@ class TrainingManager:
         }
         return resources
 
-    # Integrated/unified-memory SoCs where the GPU and CPU share one physical
-    # memory pool (so nvidia-smi "VRAM total" and system RAM are the SAME bytes,
-    # not two separate budgets). Matched case-insensitively against the GPU name.
-    _UNIFIED_GPU_TAGS = ("GB10", "GH200", "GH100", "GRACE", "JETSON", "ORIN", "THOR", "TEGRA")
+    # Truly integrated SoCs where the GPU and CPU share ONE physical pool and
+    # nvidia-smi (and NVML) report GPU memory as [N/A] / NOT_SUPPORTED, so there
+    # is no separate VRAM figure to show. Matched case-insensitively vs GPU name.
+    # NOTE: Grace Hopper (GH200) and Grace-Blackwell superchips (GB200/GB300) are
+    # deliberately EXCLUDED — they have discrete HBM that nvidia-smi reports
+    # correctly, so their VRAM bar is meaningful and must stay visible.
+    _UNIFIED_GPU_TAGS = ("GB10", "JETSON", "ORIN", "XAVIER", "THOR", "TEGRA")
 
     @staticmethod
     def _detect_unified_memory(gpu_info: Dict[str, Any], ram_info: Dict[str, Any]) -> bool:

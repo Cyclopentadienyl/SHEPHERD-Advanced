@@ -757,9 +757,15 @@ def _format_resources(resources: Dict[str, Any]) -> str:
     ram = resources.get("ram", {})
     mem_label = "Unified Memory" if unified else "RAM"
     if "error" not in ram:
-        used = ram.get("used_gb", 0)
         total = ram.get("total_gb", 1)
         pct = ram.get("percent", 0)
+        if unified and ram.get("available_gb") is not None:
+            # On a shared pool "used = total - available" matches the bar % and
+            # counts reclaimable page cache as free. psutil's .used can understate
+            # pressure on huge-page LPDDR (e.g. GB10). Mirrors nvtop / sparkview.
+            used = total - ram.get("available_gb", 0)
+        else:
+            used = ram.get("used_gb", 0)
         bars.append(_make_bar(
             mem_label,
             f"{used:.1f} / {total:.1f} GB",
