@@ -689,6 +689,12 @@ def _format_resources(resources: Dict[str, Any]) -> str:
     """Format system resources as HTML dashboard with progress bar gauges."""
     bars: List[str] = []
 
+    # On unified-memory machines (e.g. DGX Spark GB10) the GPU and CPU share one
+    # physical pool, so a separate "VRAM" bar and "RAM" bar would show the SAME
+    # bytes twice. When detected, drop the per-GPU VRAM bar and render a single
+    # "Unified Memory" gauge (from system RAM, which sees the whole shared pool).
+    unified = resources.get("unified_memory", False)
+
     gpu = resources.get("gpu", {})
     if gpu.get("available"):
         for dev in gpu.get("devices", []):
@@ -704,16 +710,18 @@ def _format_resources(resources: Dict[str, Any]) -> str:
                 _bar_color(util_pct),
             ))
 
-            # GPU Memory bar
-            mem_used = dev.get("memory_used_mb", 0)
-            mem_total = dev.get("memory_total_mb", 1)
-            mem_pct = (mem_used / mem_total * 100) if mem_total > 0 else 0
-            bars.append(_make_bar(
-                f"GPU {idx} VRAM",
-                f"{mem_used:.0f} / {mem_total:.0f} MB",
-                mem_pct,
-                _bar_color(mem_pct),
-            ))
+            # GPU Memory bar — skipped under unified memory (shown as one shared
+            # gauge below instead, to avoid double-counting the same pool).
+            if not unified:
+                mem_used = dev.get("memory_used_mb", 0)
+                mem_total = dev.get("memory_total_mb", 1)
+                mem_pct = (mem_used / mem_total * 100) if mem_total > 0 else 0
+                bars.append(_make_bar(
+                    f"GPU {idx} VRAM",
+                    f"{mem_used:.0f} / {mem_total:.0f} MB",
+                    mem_pct,
+                    _bar_color(mem_pct),
+                ))
 
             # Temperature bar (scale: 0-100 °C)
             temp = dev.get("temperature_c", 0)
@@ -735,22 +743,29 @@ def _format_resources(resources: Dict[str, Any]) -> str:
             'GPU: Not available</div>'
         )
 
-    # RAM bar
+    # Memory bar: one shared "Unified Memory" gauge on unified-memory machines,
+    # otherwise the conventional separate system "RAM" gauge.
     ram = resources.get("ram", {})
+    mem_label = "Unified Memory" if unified else "RAM"
     if "error" not in ram:
         used = ram.get("used_gb", 0)
         total = ram.get("total_gb", 1)
         pct = ram.get("percent", 0)
         bars.append(_make_bar(
-            "RAM",
+            mem_label,
             f"{used:.1f} / {total:.1f} GB",
             pct,
             _bar_color(pct),
         ))
+        if unified:
+            bars.append(
+                '<div style="font-size:11px;color:#6b7280;margin-bottom:8px">'
+                'Shared CPU + GPU pool (no separate VRAM)</div>'
+            )
     else:
         bars.append(
             f'<div style="font-size:13px;color:#ef4444;margin-bottom:8px">'
-            f'RAM: {ram.get("error", "Unknown")}</div>'
+            f'{mem_label}: {ram.get("error", "Unknown")}</div>'
         )
 
     return (

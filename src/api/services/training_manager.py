@@ -481,12 +481,51 @@ class TrainingManager:
         Returns:
             Dict with gpu and ram fields.
         """
+        gpu_info = TrainingManager._get_gpu_info()
+        ram_info = TrainingManager._get_ram_info()
         resources: Dict[str, Any] = {
-            "gpu": TrainingManager._get_gpu_info(),
-            "ram": TrainingManager._get_ram_info(),
+            "gpu": gpu_info,
+            "ram": ram_info,
+            "unified_memory": TrainingManager._detect_unified_memory(gpu_info, ram_info),
             "timestamp": datetime.now().isoformat(),
         }
         return resources
+
+    # Integrated/unified-memory SoCs where the GPU and CPU share one physical
+    # memory pool (so nvidia-smi "VRAM total" and system RAM are the SAME bytes,
+    # not two separate budgets). Matched case-insensitively against the GPU name.
+    _UNIFIED_GPU_TAGS = ("GB10", "GH200", "GH100", "GRACE", "JETSON", "ORIN", "THOR", "TEGRA")
+
+    @staticmethod
+    def _detect_unified_memory(gpu_info: Dict[str, Any], ram_info: Dict[str, Any]) -> bool:
+        """Detect a unified-memory architecture (e.g. DGX Spark GB10, Grace Hopper).
+
+        Two independent signals, either is sufficient:
+          1. GPU name matches a known integrated/unified SoC.
+          2. GPU-visible memory is about as large as total system RAM — physically
+             only possible when they are the same shared pool (a discrete GPU's
+             VRAM is far smaller than system RAM).
+        torch is intentionally not imported here (webui avoids the torch dep).
+        """
+        devices = gpu_info.get("devices", [])
+        if not gpu_info.get("available") or not devices:
+            return False
+
+        # Signal 1: known integrated SoC by name.
+        for dev in devices:
+            name = str(dev.get("name", "")).upper()
+            if any(tag in name for tag in TrainingManager._UNIFIED_GPU_TAGS):
+                return True
+
+        # Signal 2: GPU memory ~= system RAM (shared pool). Conservative ratio so
+        # high-VRAM discrete cards on small-RAM hosts don't false-positive.
+        ram_total_mb = float(ram_info.get("total_gb", 0) or 0) * 1024.0
+        gpu_total_mb = max((float(d.get("memory_total_mb", 0) or 0) for d in devices), default=0.0)
+        if ram_total_mb > 0 and gpu_total_mb > 0:
+            if gpu_total_mb / ram_total_mb >= 0.85:
+                return True
+
+        return False
 
     @staticmethod
     def _get_gpu_info() -> Dict[str, Any]:
