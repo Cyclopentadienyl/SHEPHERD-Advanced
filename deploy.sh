@@ -291,7 +291,8 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
                 PYG_FALLBACK_REASON="build-failed"
             fi ;;
         skip)
-            echo -e "${YELLOW}[SKIP] PyG native ext not installed; using torch.scatter_reduce fallback (Impact: none for our architecture).${NC}" ;;
+            echo -e "${YELLOW}[SKIP] PyG native ext not installed; using torch.scatter_reduce fallback.${NC}"
+            PYG_FALLBACK_REASON="user-skipped" ;;
         abort)
             echo -e "${RED}[ABORT] Deployment terminated by user at PyG native-extension stage.${NC}"; exit 10 ;;
         *)
@@ -335,17 +336,25 @@ if [ -f "scripts/validate_installation.py" ]; then
     "$PY" scripts/validate_installation.py || echo -e "${YELLOW}[WARN] Validation returned warnings${NC}"
 fi
 
-# Warn if the user asked to build/pull PyG native ext but we fell back. The app
-# still runs (torch_geometric uses a built-in fallback), so this is a perf advisory.
+# Advise whenever we end up on the torch.scatter_reduce fallback -- whether the
+# source build failed OR the user deliberately skipped. The app still runs
+# correctly (torch_geometric falls back), so this is a performance advisory with
+# remediation. Only the opening line differs by reason; impact + how-to are shared.
 if [ -n "$PYG_FALLBACK_REASON" ]; then
     echo -e "\n${YELLOW}----------------------------------------------------------------------------${NC}"
     echo -e "${YELLOW}[WARN] PyG native extensions are NOT installed — running on the${NC}"
     echo -e "${YELLOW}       torch.scatter_reduce fallback.${NC}"
-    echo -e "${YELLOW}       You chose to build PyG from source but the build did not complete${NC}"
-    echo -e "${YELLOW}       (commonly: missing system build tools — see the [STAGE 2/5] output above).${NC}"
-    echo -e "${YELLOW}       Impact: training and inference still run, but GNN message-passing /${NC}"
-    echo -e "${YELLOW}       neighbor-sampling will be slower than with the native CUDA kernels.${NC}"
-    echo -e "${YELLOW}       To enable them, install the toolchain and re-run, picking prebuilt or compile:${NC}"
+    if [ "$PYG_FALLBACK_REASON" = "build-failed" ]; then
+        echo -e "${YELLOW}       You chose to build PyG from source but the build did not complete${NC}"
+        echo -e "${YELLOW}       (commonly: missing system build tools — see the [STAGE 2/5] output above).${NC}"
+    else
+        echo -e "${YELLOW}       You chose to skip the PyG native extensions.${NC}"
+    fi
+    echo -e "${YELLOW}       Impact: training and inference still RUN correctly, but some GNN ops${NC}"
+    echo -e "${YELLOW}       (notably HGTConv message-passing and neighbor sampling) run slower${NC}"
+    echo -e "${YELLOW}       than with the native CUDA kernels.${NC}"
+    echo -e "${YELLOW}       To enable them later, install the toolchain (if needed) and re-run,${NC}"
+    echo -e "${YELLOW}       choosing prebuilt download or compile:${NC}"
     echo -e "${YELLOW}         sudo apt install build-essential cmake ninja-build python3.12-dev${NC}"
     echo -e "${YELLOW}         ./deploy.sh${NC}"
     echo -e "${YELLOW}       Then confirm with: ${PY} scripts/validate_pyg_ext.py${NC}"
