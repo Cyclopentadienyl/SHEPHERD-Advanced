@@ -554,20 +554,38 @@ class TrainingManager:
                         continue
                     parts = [p.strip() for p in line.split(",")]
                     if len(parts) >= 6:
+                        # nvidia-smi prints "[N/A]" / "[Not Supported]" for fields a
+                        # driver can't read — integrated GPUs like the GB10 return
+                        # [N/A] for memory. Parse numerics defensively (-> None) so a
+                        # placeholder doesn't crash the whole resource poll; the
+                        # frontend renders "N/A" for missing values.
+                        try:
+                            index = int(parts[0])
+                        except ValueError:
+                            continue
                         gpu_info["devices"].append(
                             {
-                                "index": int(parts[0]),
+                                "index": index,
                                 "name": parts[1],
-                                "utilization_percent": float(parts[2]),
-                                "memory_used_mb": float(parts[3]),
-                                "memory_total_mb": float(parts[4]),
-                                "temperature_c": float(parts[5]),
+                                "utilization_percent": TrainingManager._safe_float(parts[2]),
+                                "memory_used_mb": TrainingManager._safe_float(parts[3]),
+                                "memory_total_mb": TrainingManager._safe_float(parts[4]),
+                                "temperature_c": TrainingManager._safe_float(parts[5]),
                             }
                         )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
 
         return gpu_info
+
+    @staticmethod
+    def _safe_float(value: str) -> Optional[float]:
+        """Parse an nvidia-smi numeric field, returning None for non-numeric
+        placeholders like '[N/A]' or '[Not Supported]' (seen on integrated GPUs)."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _get_ram_info() -> Dict[str, Any]:

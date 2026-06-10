@@ -701,36 +701,45 @@ def _format_resources(resources: Dict[str, Any]) -> str:
             name = dev.get("name", "GPU")
             idx = dev.get("index", 0)
 
-            # GPU Utilization bar
-            util_pct = dev.get("utilization_percent", 0)
-            bars.append(_make_bar(
-                f"GPU {idx} Util",
-                f"{util_pct:.0f}%",
-                util_pct,
-                _bar_color(util_pct),
-            ))
+            # GPU Utilization bar (value may be None if nvidia-smi reports [N/A])
+            util_pct = dev.get("utilization_percent")
+            if util_pct is None:
+                bars.append(_make_bar(f"GPU {idx} Util", "N/A", 0, "#9ca3af"))
+            else:
+                bars.append(_make_bar(
+                    f"GPU {idx} Util",
+                    f"{util_pct:.0f}%",
+                    util_pct,
+                    _bar_color(util_pct),
+                ))
 
             # GPU Memory bar — skipped under unified memory (shown as one shared
             # gauge below instead, to avoid double-counting the same pool).
             if not unified:
-                mem_used = dev.get("memory_used_mb", 0)
-                mem_total = dev.get("memory_total_mb", 1)
-                mem_pct = (mem_used / mem_total * 100) if mem_total > 0 else 0
-                bars.append(_make_bar(
-                    f"GPU {idx} VRAM",
-                    f"{mem_used:.0f} / {mem_total:.0f} MB",
-                    mem_pct,
-                    _bar_color(mem_pct),
-                ))
+                mem_used = dev.get("memory_used_mb")
+                mem_total = dev.get("memory_total_mb")
+                if mem_used is None or mem_total is None or mem_total <= 0:
+                    bars.append(_make_bar(f"GPU {idx} VRAM", "N/A", 0, "#9ca3af"))
+                else:
+                    mem_pct = mem_used / mem_total * 100
+                    bars.append(_make_bar(
+                        f"GPU {idx} VRAM",
+                        f"{mem_used:.0f} / {mem_total:.0f} MB",
+                        mem_pct,
+                        _bar_color(mem_pct),
+                    ))
 
             # Temperature bar (scale: 0-100 °C)
-            temp = dev.get("temperature_c", 0)
-            bars.append(_make_bar(
-                f"GPU {idx} Temp",
-                f"{temp:.0f}\u00b0C",
-                temp,
-                _temp_color(temp),
-            ))
+            temp = dev.get("temperature_c")
+            if temp is None:
+                bars.append(_make_bar(f"GPU {idx} Temp", "N/A", 0, "#9ca3af"))
+            else:
+                bars.append(_make_bar(
+                    f"GPU {idx} Temp",
+                    f"{temp:.0f}\u00b0C",
+                    temp,
+                    _temp_color(temp),
+                ))
 
             # Add device name as a subtle label
             bars.append(
