@@ -230,6 +230,10 @@ fetch_prebuilt_wheels() {  # downloads + extracts Release tarball; sets WHEELDIR
     return 1
 }
 
+# Set when the user asked for native ext (pull/compile) but we ended up on the
+# torch.scatter_reduce fallback, so Stage 4 can surface a remediation warning.
+PYG_FALLBACK_REASON=""
+
 if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
     echo -e "[INFO] ARM + CUDA detected; data.pyg.org has no aarch64 wheels."
     echo -e "[INFO] Host torch: ${TVER:-unknown}  |  prebuilt target: torch ${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}"
@@ -276,12 +280,19 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
                 echo -e "${GREEN}[OK] Prebuilt PyG wheels installed.${NC}"
             else
                 echo -e "${YELLOW}[WARN] Prebuilt download/install failed (Release asset missing?). Falling back to source build...${NC}"
-                run_source_build || echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
+                if ! run_source_build; then
+                    echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
+                    PYG_FALLBACK_REASON="build-failed"
+                fi
             fi ;;
         compile)
-            run_source_build || echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}" ;;
+            if ! run_source_build; then
+                echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
+                PYG_FALLBACK_REASON="build-failed"
+            fi ;;
         skip)
-            echo -e "${YELLOW}[SKIP] PyG native ext not installed; using torch.scatter_reduce fallback (Impact: none for our architecture).${NC}" ;;
+            echo -e "${YELLOW}[SKIP] PyG native ext not installed; using torch.scatter_reduce fallback.${NC}"
+            PYG_FALLBACK_REASON="user-skipped" ;;
         abort)
             echo -e "${RED}[ABORT] Deployment terminated by user at PyG native-extension stage.${NC}"; exit 10 ;;
         *)
@@ -323,6 +334,31 @@ echo "--------------------------------------------------------------------------
 if [ -f "scripts/validate_installation.py" ]; then
     echo -e "[INFO] Running installation validation..."
     "$PY" scripts/validate_installation.py || echo -e "${YELLOW}[WARN] Validation returned warnings${NC}"
+fi
+
+# Advise whenever we end up on the torch.scatter_reduce fallback -- whether the
+# source build failed OR the user deliberately skipped. The app still runs
+# correctly (torch_geometric falls back), so this is a performance advisory with
+# remediation. Only the opening line differs by reason; impact + how-to are shared.
+if [ -n "$PYG_FALLBACK_REASON" ]; then
+    echo -e "\n${YELLOW}----------------------------------------------------------------------------${NC}"
+    echo -e "${YELLOW}[WARN] PyG native extensions are NOT installed — running on the${NC}"
+    echo -e "${YELLOW}       torch.scatter_reduce fallback.${NC}"
+    if [ "$PYG_FALLBACK_REASON" = "build-failed" ]; then
+        echo -e "${YELLOW}       You chose to build PyG from source but the build did not complete${NC}"
+        echo -e "${YELLOW}       (commonly: missing system build tools — see the [STAGE 2/5] output above).${NC}"
+    else
+        echo -e "${YELLOW}       You chose to skip the PyG native extensions.${NC}"
+    fi
+    echo -e "${YELLOW}       Impact: training and inference still RUN correctly, but some GNN ops${NC}"
+    echo -e "${YELLOW}       (notably HGTConv message-passing and neighbor sampling) run slower${NC}"
+    echo -e "${YELLOW}       than with the native CUDA kernels.${NC}"
+    echo -e "${YELLOW}       To enable them later, install the toolchain (if needed) and re-run,${NC}"
+    echo -e "${YELLOW}       choosing prebuilt download or compile:${NC}"
+    echo -e "${YELLOW}         sudo apt install build-essential cmake ninja-build python3.12-dev${NC}"
+    echo -e "${YELLOW}         ./deploy.sh${NC}"
+    echo -e "${YELLOW}       Then confirm with: ${PY} scripts/validate_pyg_ext.py${NC}"
+    echo -e "${YELLOW}----------------------------------------------------------------------------${NC}"
 fi
 
 echo -e "\n${GREEN}============================================================================${NC}"
