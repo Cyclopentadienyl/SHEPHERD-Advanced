@@ -241,3 +241,70 @@ class TestImportRuleCompliance:
             "src.webui must not import from src.training. Violations:\n"
             + "\n".join(violations)
         )
+
+
+# ==============================================================================
+# Test: Error / Warning Banner
+# ==============================================================================
+class TestErrorBanner:
+    """The dedicated banner surfaces hard errors (red) and PyG fallback
+    warnings (yellow), separately from the normal status text."""
+
+    def test_no_error_no_warning_is_hidden(self):
+        from src.webui.components.training_console import _build_error_banner_payload
+
+        html, key = _build_error_banner_payload({"status": "running"}, None)
+        assert html is None and key is None
+
+    def test_error_only_renders_red_block(self):
+        from src.webui.components.training_console import _build_error_banner_payload
+
+        html, key = _build_error_banner_payload(
+            {"error_message": "RuntimeError: CUDA out of memory"}, None
+        )
+        assert html is not None
+        assert "#dc2626" in html  # red accent
+        assert key.startswith("ERR:")
+        assert "PYG:" not in key
+
+    def test_pyg_warning_only_renders_yellow_block(self):
+        from src.webui.components.training_console import _build_error_banner_payload
+
+        html, key = _build_error_banner_payload({}, "pyg_lib missing")
+        assert html is not None
+        assert "#d97706" in html  # yellow accent
+        assert key.startswith("PYG:")
+
+    def test_error_rendered_before_warning(self):
+        from src.webui.components.training_console import _build_error_banner_payload
+
+        html, key = _build_error_banner_payload({"error_message": "boom"}, "slow")
+        assert "ERR:" in key and "PYG:" in key
+        assert html.index("#dc2626") < html.index("#d97706")
+
+    def test_html_is_escaped(self):
+        from src.webui.components.training_console import _build_error_banner_payload
+
+        html, _ = _build_error_banner_payload(
+            {"error_message": "<script>alert(1)</script>"}, None
+        )
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_key_is_stable_for_identical_content(self):
+        from src.webui.components.training_console import _build_error_banner_payload
+
+        _, k1 = _build_error_banner_payload({"error_message": "same"}, None)
+        _, k2 = _build_error_banner_payload({"error_message": "same"}, None)
+        _, k3 = _build_error_banner_payload({"error_message": "other"}, None)
+        assert k1 == k2  # dismissal stickiness relies on this
+        assert k1 != k3  # a different error re-shows
+
+    def test_error_not_in_status_text(self):
+        """error_message must live in the banner, not the status markdown."""
+        from src.webui.components.training_console import _format_status
+
+        text = _format_status(
+            {"status": "failed", "error_message": "RuntimeError: boom"}
+        )
+        assert "boom" not in text

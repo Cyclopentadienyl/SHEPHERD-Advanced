@@ -380,7 +380,7 @@ def _poll_status(epoch_window: str = "All"):
         (status_text, loss_df, mrr_df, hits_df, lr_df, resource_text,
          start_btn_update, stop_btn_update, resume_btn_update)
     """
-    global _poll_cache_key
+    global _poll_cache_key, _current_banner_key
 
     status_info = training_manager.get_status()
     s = status_info.get("status", "idle")
@@ -388,6 +388,24 @@ def _poll_status(epoch_window: str = "All"):
     # System resources are ALWAYS polled (user checks GPU/RAM before starting)
     resources = training_manager.get_system_resources()
     resource_text = _format_resources(resources)
+
+    # --- Error/warning banner (independent of the smart-refresh gating) -----
+    # Cheap to recompute every tick; carried in all return paths so it stays
+    # correct whether or not the charts/status are refreshed.
+    try:
+        banner_html, banner_key = _build_error_banner_payload(
+            status_info, _get_pyg_warning()
+        )
+    except Exception as exc:  # banner must never break polling
+        logger.debug("error banner build failed: %s", exc)
+        banner_html, banner_key = None, None
+    _current_banner_key = banner_key
+    if banner_key is None or banner_key in _dismissed_banner_keys:
+        banner_update = gr.update(visible=False, value="")
+        dismiss_update = gr.update(visible=False)
+    else:
+        banner_update = gr.update(visible=True, value=banner_html)
+        dismiss_update = gr.update(visible=True)
 
     # --- Smart refresh: skip re-renders when nothing changed ---------------
     cache_key = (s, epoch_window)
@@ -405,6 +423,7 @@ def _poll_status(epoch_window: str = "All"):
             _no_change,                                        # status_display
             _no_change, _no_change, _no_change, _no_change,   # 4 plots
             resource_text,                                     # always fresh
+            banner_update, dismiss_update,                     # error banner
             _no_change, _no_change, _no_change,                # 3 buttons
         )
 
@@ -423,6 +442,7 @@ def _poll_status(epoch_window: str = "All"):
             _format_status(status_info),
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             resource_text,
+            banner_update, dismiss_update,
             start_update, stop_update, resume_update,
         )
 
@@ -455,6 +475,7 @@ def _poll_status(epoch_window: str = "All"):
         _wrap_plot_update(hits_df, windowed),
         _wrap_plot_update(lr_df, windowed),
         resource_text,
+        banner_update, dismiss_update,
         start_update, stop_update, resume_update,
     )
 
@@ -499,14 +520,92 @@ def _format_status(status_info: Dict[str, Any]) -> str:
         if metric_strs:
             lines.append("**Metrics**: " + " | ".join(metric_strs[:6]))
 
-    if status_info.get("error_message"):
-        err = status_info["error_message"]
-        if "\n" in err:
-            lines.append(f"**Error**:\n```\n{err}\n```")
-        else:
-            lines.append(f"**Error**: {err}")
+    # NOTE: error_message is intentionally NOT rendered here. It is surfaced in
+    # the dedicated error banner (see _build_error_banner_payload) so failures
+    # stand alone instead of being buried in the normal status text.
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Error / warning banner
+#
+# A dedicated banner that is hidden during normal operation and only appears
+# when the backend reports something the user must see:
+#   * red  — a hard training error (subprocess crashed; error_message set)
+#   * yellow — a non-fatal warning (PyG native extensions missing -> slow
+#              fallback kernels)
+# The banner is rendered separately from the normal status text and can be
+# dismissed manually. A dismissal is keyed to the banner's *content*, so it
+# stays dismissed until the underlying problem changes (a new/different error
+# re-shows automatically).
+# ---------------------------------------------------------------------------
+def _get_pyg_warning() -> Optional[str]:
+    """PyG native-extension fallback warning (probed + logged once, cached)."""
+    global _pyg_warning_cache
+    if _pyg_warning_cache is _UNSET:
+        try:
+            from src.utils.pyg_native_check import (
+                get_fallback_warning,
+                log_pyg_native_status,
+            )
+
+            log_pyg_native_status()
+            _pyg_warning_cache = get_fallback_warning()
+        except Exception as exc:  # torch stack may be unavailable in this process
+            logger.debug("PyG native check unavailable in UI process: %s", exc)
+            _pyg_warning_cache = None
+    return _pyg_warning_cache
+
+
+def _render_error_block(message: str) -> str:
+    """Red error block (monospace, preserves the traceback tail layout)."""
+    import html
+
+    body = html.escape(str(message)).replace("\n", "<br>")
+    return (
+        '<div style="background:#fef2f2;border:1px solid #fecaca;'
+        "border-left:4px solid #dc2626;border-radius:6px;padding:10px 12px;"
+        "margin-bottom:6px;font-size:13px;color:#991b1b;"
+        'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto">'
+        "<b>&#9888;&#65039; Error</b><br>" + body + "</div>"
+    )
+
+
+def _render_warning_block(message: str) -> str:
+    """Yellow warning block for non-fatal advisories."""
+    import html
+
+    body = html.escape(str(message))
+    return (
+        '<div style="background:#fffbeb;border:1px solid #fde68a;'
+        "border-left:4px solid #d97706;border-radius:6px;padding:10px 12px;"
+        'margin-bottom:6px;font-size:13px;color:#92400e">'
+        "<b>&#9888;&#65039; Warning</b><br>" + body + "</div>"
+    )
+
+
+def _build_error_banner_payload(
+    status_info: Dict[str, Any], pyg_warning: Optional[str]
+) -> Tuple[Optional[str], Optional[str]]:
+    """Build ``(html, key)`` for the banner, or ``(None, None)`` if nothing to
+    show. ``key`` identifies the content so a dismissal sticks until it changes.
+    """
+    blocks: List[str] = []
+    key_parts: List[str] = []
+
+    error_msg = status_info.get("error_message")
+    if error_msg:
+        blocks.append(_render_error_block(error_msg))
+        key_parts.append("ERR:" + str(error_msg))
+
+    if pyg_warning:
+        blocks.append(_render_warning_block(pyg_warning))
+        key_parts.append("PYG:" + str(pyg_warning))
+
+    if not blocks:
+        return None, None
+    return "".join(blocks), "||".join(key_parts)
 
 
 def _is_finite(v: Any) -> bool:
@@ -573,6 +672,12 @@ def _wrap_plot_update(df: pd.DataFrame, windowed: bool):
 # button states are static once training finishes (or before it starts).
 # ---------------------------------------------------------------------------
 _poll_cache_key: Optional[Tuple[str, str]] = None  # (status, epoch_window)
+
+# Error-banner state (see _build_error_banner_payload).
+_UNSET = object()
+_pyg_warning_cache: Any = _UNSET  # None once probed and clean; str if fallback
+_dismissed_banner_keys: set = set()  # content-keys the user dismissed this session
+_current_banner_key: Optional[str] = None  # latest key, read by the dismiss handler
 
 
 # Empty DataFrames with correct column structure for Gradio LinePlot.
@@ -1098,6 +1203,22 @@ def create_training_tab() -> None:
                 elem_id="status_display",
             )
 
+            # Dedicated error/warning banner: hidden during normal operation,
+            # shown (red error / yellow warning) only when the backend reports
+            # a problem, separate from the status text above. Manually
+            # dismissable; auto-clears when the underlying problem resolves.
+            error_banner = gr.HTML(
+                value="",
+                visible=False,
+                elem_id="error_banner",
+            )
+            error_dismiss_btn = gr.Button(
+                "✕ Dismiss",
+                visible=False,
+                size="sm",
+                elem_id="error_dismiss_btn",
+            )
+
         # =====================================================================
         # Right Column: Metrics & Resources
         # =====================================================================
@@ -1252,6 +1373,19 @@ def create_training_tab() -> None:
         outputs=[export_csv_file],
     )
 
+    def _dismiss_error_banner():
+        # Remember this exact content so the poll loop keeps it hidden until the
+        # underlying problem changes (a new/different error re-shows on its own).
+        if _current_banner_key is not None:
+            _dismissed_banner_keys.add(_current_banner_key)
+        return gr.update(visible=False, value=""), gr.update(visible=False)
+
+    error_dismiss_btn.click(
+        fn=_dismiss_error_banner,
+        inputs=[],
+        outputs=[error_banner, error_dismiss_btn],
+    )
+
     # HGT requires float32 (AMP disabled) — update UI when conv type changes
     def _on_conv_type_change(ct):
         if ct == "hgt":
@@ -1285,6 +1419,8 @@ def create_training_tab() -> None:
             hits_plot,
             lr_plot,
             resource_display,
+            error_banner,
+            error_dismiss_btn,
             start_btn,
             stop_btn,
             resume_btn,

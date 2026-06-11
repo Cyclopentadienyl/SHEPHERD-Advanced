@@ -223,6 +223,17 @@ class Trainer:
         if self.config.seed is not None:
             self._set_seed(self.config.seed)
 
+        # Report PyG native-extension status once. PyG falls back to slower
+        # pure-Python / torch.scatter_reduce kernels *silently* when the native
+        # extensions are missing, so surfacing it here makes a degraded build
+        # visible in the training log instead of going unnoticed.
+        try:
+            from src.utils.pyg_native_check import log_pyg_native_status
+
+            log_pyg_native_status()
+        except Exception as exc:  # observability must never break training
+            logger.debug("PyG native-extension check skipped: %s", exc)
+
     def _create_optimizer(self) -> Optimizer:
         """創建優化器"""
         # Separate parameters for weight decay
