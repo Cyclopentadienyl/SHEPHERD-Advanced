@@ -91,6 +91,11 @@ class DataLoaderConfig:
 
     # 預取設定
     prefetch_factor: int = 2
+    # Background subgraph-sampling pipeline depth. The expensive per-batch
+    # subgraph sampling runs in the main thread; a prefetch thread overlaps it
+    # with GPU compute (CUDA releases the GIL), filling the GPU's idle gaps.
+    # 0 disables it (serial, original behaviour). Output is identical either way.
+    pipeline_prefetch: int = 2
 
 
 # =============================================================================
@@ -742,30 +747,81 @@ class DiagnosisDataLoader:
             prefetch_factor=self.config.prefetch_factor if self.config.num_workers > 0 else None,
         )
 
+    def _process_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Sample the subgraph for one raw batch and assemble the yielded dict.
+
+        This is the expensive per-batch CPU work (pure-Python subgraph
+        sampling + feature gather + index remap). Pulled into a method so it can
+        run either serially or on the prefetch thread — the output is identical.
+        """
+        # 採樣子圖
+        seed_nodes = self._get_seed_nodes(batch)
+        subgraph_nodes, subgraph_edges, node_mapping = \
+            self.subgraph_sampler.sample_subgraph(seed_nodes, num_hops=2)
+
+        # 準備子圖特徵
+        subgraph_x_dict = {}
+        for node_type, indices in subgraph_nodes.items():
+            if node_type in self.graph_data.get("x_dict", {}):
+                subgraph_x_dict[node_type] = self.graph_data["x_dict"][node_type][indices]
+
+        # 更新批次中的索引到子圖索引
+        batch = self._remap_indices(batch, node_mapping)
+
+        return {
+            "batch": batch,
+            "subgraph_x_dict": subgraph_x_dict,
+            "subgraph_edge_index_dict": subgraph_edges,
+            "node_mapping": node_mapping,
+            "original_indices": subgraph_nodes,
+        }
+
     def __iter__(self) -> Iterator[Dict[str, Any]]:
-        """迭代批次"""
-        for batch in self._dataloader:
-            # 採樣子圖
-            seed_nodes = self._get_seed_nodes(batch)
-            subgraph_nodes, subgraph_edges, node_mapping = \
-                self.subgraph_sampler.sample_subgraph(seed_nodes, num_hops=2)
+        """迭代批次。
 
-            # 準備子圖特徵
-            subgraph_x_dict = {}
-            for node_type, indices in subgraph_nodes.items():
-                if node_type in self.graph_data.get("x_dict", {}):
-                    subgraph_x_dict[node_type] = self.graph_data["x_dict"][node_type][indices]
+        Subgraph sampling is the per-batch bottleneck and runs in the main
+        thread. When ``pipeline_prefetch`` is enabled, a background thread runs
+        it for upcoming batches while the GPU processes the current one (CUDA
+        ops release the GIL, so the two overlap). Order is preserved and the
+        yielded dicts are identical to the serial path.
+        """
+        depth = getattr(self.config, "pipeline_prefetch", 0) or 0
 
-            # 更新批次中的索引到子圖索引
-            batch = self._remap_indices(batch, node_mapping)
+        if depth < 1:
+            # Serial path (original behaviour).
+            for batch in self._dataloader:
+                yield self._process_batch(batch)
+            return
 
-            yield {
-                "batch": batch,
-                "subgraph_x_dict": subgraph_x_dict,
-                "subgraph_edge_index_dict": subgraph_edges,
-                "node_mapping": node_mapping,
-                "original_indices": subgraph_nodes,
-            }
+        import queue
+        import threading
+
+        q: "queue.Queue" = queue.Queue(maxsize=depth)
+        sentinel = object()
+        err_box: Dict[str, BaseException] = {}
+
+        def _producer() -> None:
+            try:
+                for batch in self._dataloader:
+                    q.put(self._process_batch(batch))  # blocks when queue full (backpressure)
+            except BaseException as exc:  # noqa: BLE001 - re-raised in consumer
+                err_box["error"] = exc
+            finally:
+                q.put(sentinel)
+
+        thread = threading.Thread(
+            target=_producer, name="subgraph-prefetch", daemon=True
+        )
+        thread.start()
+
+        while True:
+            item = q.get()
+            if item is sentinel:
+                break
+            yield item
+
+        if "error" in err_box:
+            raise err_box["error"]
 
     def __len__(self) -> int:
         return len(self._dataloader)
