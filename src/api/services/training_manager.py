@@ -481,12 +481,54 @@ class TrainingManager:
         Returns:
             Dict with gpu and ram fields.
         """
+        gpu_info = TrainingManager._get_gpu_info()
+        ram_info = TrainingManager._get_ram_info()
         resources: Dict[str, Any] = {
-            "gpu": TrainingManager._get_gpu_info(),
-            "ram": TrainingManager._get_ram_info(),
+            "gpu": gpu_info,
+            "ram": ram_info,
+            "unified_memory": TrainingManager._detect_unified_memory(gpu_info, ram_info),
             "timestamp": datetime.now().isoformat(),
         }
         return resources
+
+    # Truly integrated SoCs where the GPU and CPU share ONE physical pool and
+    # nvidia-smi (and NVML) report GPU memory as [N/A] / NOT_SUPPORTED, so there
+    # is no separate VRAM figure to show. Matched case-insensitively vs GPU name.
+    # NOTE: Grace Hopper (GH200) and Grace-Blackwell superchips (GB200/GB300) are
+    # deliberately EXCLUDED — they have discrete HBM that nvidia-smi reports
+    # correctly, so their VRAM bar is meaningful and must stay visible.
+    _UNIFIED_GPU_TAGS = ("GB10", "JETSON", "ORIN", "XAVIER", "THOR", "TEGRA")
+
+    @staticmethod
+    def _detect_unified_memory(gpu_info: Dict[str, Any], ram_info: Dict[str, Any]) -> bool:
+        """Detect a unified-memory architecture (e.g. DGX Spark GB10, Grace Hopper).
+
+        Two independent signals, either is sufficient:
+          1. GPU name matches a known integrated/unified SoC.
+          2. GPU-visible memory is about as large as total system RAM — physically
+             only possible when they are the same shared pool (a discrete GPU's
+             VRAM is far smaller than system RAM).
+        torch is intentionally not imported here (webui avoids the torch dep).
+        """
+        devices = gpu_info.get("devices", [])
+        if not gpu_info.get("available") or not devices:
+            return False
+
+        # Signal 1: known integrated SoC by name.
+        for dev in devices:
+            name = str(dev.get("name", "")).upper()
+            if any(tag in name for tag in TrainingManager._UNIFIED_GPU_TAGS):
+                return True
+
+        # Signal 2: GPU memory ~= system RAM (shared pool). Conservative ratio so
+        # high-VRAM discrete cards on small-RAM hosts don't false-positive.
+        ram_total_mb = float(ram_info.get("total_gb", 0) or 0) * 1024.0
+        gpu_total_mb = max((float(d.get("memory_total_mb", 0) or 0) for d in devices), default=0.0)
+        if ram_total_mb > 0 and gpu_total_mb > 0:
+            if gpu_total_mb / ram_total_mb >= 0.85:
+                return True
+
+        return False
 
     @staticmethod
     def _get_gpu_info() -> Dict[str, Any]:
@@ -515,20 +557,38 @@ class TrainingManager:
                         continue
                     parts = [p.strip() for p in line.split(",")]
                     if len(parts) >= 6:
+                        # nvidia-smi prints "[N/A]" / "[Not Supported]" for fields a
+                        # driver can't read — integrated GPUs like the GB10 return
+                        # [N/A] for memory. Parse numerics defensively (-> None) so a
+                        # placeholder doesn't crash the whole resource poll; the
+                        # frontend renders "N/A" for missing values.
+                        try:
+                            index = int(parts[0])
+                        except ValueError:
+                            continue
                         gpu_info["devices"].append(
                             {
-                                "index": int(parts[0]),
+                                "index": index,
                                 "name": parts[1],
-                                "utilization_percent": float(parts[2]),
-                                "memory_used_mb": float(parts[3]),
-                                "memory_total_mb": float(parts[4]),
-                                "temperature_c": float(parts[5]),
+                                "utilization_percent": TrainingManager._safe_float(parts[2]),
+                                "memory_used_mb": TrainingManager._safe_float(parts[3]),
+                                "memory_total_mb": TrainingManager._safe_float(parts[4]),
+                                "temperature_c": TrainingManager._safe_float(parts[5]),
                             }
                         )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
 
         return gpu_info
+
+    @staticmethod
+    def _safe_float(value: str) -> Optional[float]:
+        """Parse an nvidia-smi numeric field, returning None for non-numeric
+        placeholders like '[N/A]' or '[Not Supported]' (seen on integrated GPUs)."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _get_ram_info() -> Dict[str, Any]:
