@@ -30,11 +30,21 @@ The following scope decisions were made after auditing all extended features:
 - [x] Test that GNN scoring produces meaningful (non-zero, non-uniform) scores
 - [x] Validate training-inference scoring consistency (same cosine similarity formula)
 
-### 1.2 Candidate Discovery Fix
-- [ ] Audit `pipeline.py` candidate discovery flow (L709-746): confirm BFS is not sole gatekeeper
-- [ ] Ensure ANN vector index is properly integrated for GNN-based candidate discovery
-- [ ] Consider making vector index mandatory (or precomputing all disease embeddings for direct scoring)
-- [ ] Test: disease with no BFS path but high GNN similarity should still appear in results
+### 1.2 Candidate Discovery Fix ✅ COMPLETE (implemented in Step B/C; verified 2026-06-11)
+- [x] Audit `pipeline.py` candidate discovery flow: confirm BFS is not sole gatekeeper
+      → `diagnose()` Step 3b adds ANN-discovered candidates; termination guard is
+        `if not all_paths and not ann_only_candidates` (`pipeline.py:921-943`), so a
+        candidate with no BFS path still proceeds.
+- [x] Ensure ANN vector index is properly integrated for GNN-based candidate discovery
+      → `_init_vector_index()` / `_find_ann_candidates()` + `vector_index_path`,
+        `ann_top_k`, `ann_score_threshold` config (`pipeline.py:745-854`).
+- [x] Consider making vector index mandatory (or precomputing all disease embeddings)
+      → Design decision: keep it OPTIONAL with graceful degradation. ANN-only candidates
+        are scored through the same `_calculate_combined_score()` (GNN + SP) path as
+        BFS candidates (`pipeline.py:1216-1265`); pipeline runs with or without the index.
+- [x] Test: disease with no BFS path but high GNN similarity should still appear in results
+      → `tests/integration/test_pipeline.py`: `test_full_pipeline_with_ann`,
+        `test_ann_candidates_have_correct_structure`, `test_pipeline_without_index_still_works`.
 
 ### 1.3 Config Cleanup ✅ COMPLETE (2026-04-07)
 - [x] Mark `reasoning_weight`/`gnn_weight` in PipelineConfig as deprecated (to be replaced by `eta` in Step B)
@@ -231,4 +241,5 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-05-13 | Real data pipeline | HPO annotation parser, sample generator, build_knowledge_graph.py, ontology xref fix, imported term filter | 52K-node KG from real HPO data; 494K edges; hits@10=0.581 at 3 epochs |
 | 2026-05-13 | Inference + SP | SP memory fix (50GB→4.5GB), LambdaLR scheduler, GradScaler skip, training stop cleanup | Full GNN+SP inference working; Marfan + Rett test results recorded in milestone |
 | 2026-05-13 | Evidence path issues | Logged: indirect path score=0, unmatched phenotype, hyperprolinemia false positive | Tracked in §4.1.5; does not affect ranking, affects explanation credibility |
+| 2026-06-11 | 1.2 verify + checklist sync | Code audit confirms Candidate Discovery fix landed in Step B/C (was logged "deferred" on 2026-04-07) | BFS no longer sole gatekeeper: ANN-only candidates discovered (Step 3b) + scored via combined GNN+SP; integration tests cover it. Marked 1.2 COMPLETE |
 | | | | |
