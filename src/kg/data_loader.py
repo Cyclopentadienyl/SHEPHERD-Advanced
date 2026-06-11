@@ -54,6 +54,7 @@ Version: 1.0.0
 """
 from __future__ import annotations
 
+import logging
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -67,6 +68,8 @@ from torch.utils.data import Dataset, DataLoader
 
 # Type aliases
 EdgeType = Tuple[str, str, str]
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -96,6 +99,11 @@ class DataLoaderConfig:
     # with GPU compute (CUDA releases the GIL), filling the GPU's idle gaps.
     # 0 disables it (serial, original behaviour). Output is identical either way.
     pipeline_prefetch: int = 2
+    # Build the induced subgraph edges with vectorized tensor ops (native,
+    # GIL-releasing) instead of a per-edge Python loop. The induced subgraph is
+    # deterministic, so the output is bit-identical to the legacy loop — this is
+    # a pure speedup with no effect on what the model sees. False = legacy loop.
+    fast_subgraph_build: bool = True
 
 
 # =============================================================================
@@ -296,8 +304,18 @@ class SubgraphSampler:
         self,
         sampled_nodes: Dict[str, Set[int]],
     ) -> Tuple[Dict[str, Tensor], Dict[EdgeType, Tensor], Dict[str, Tensor]]:
-        """從採樣節點建立子圖"""
-        # 建立節點映射 (原始索引 -> 子圖索引)
+        """從採樣節點建立子圖。
+
+        The induced subgraph on a given node set is *deterministic*, so the edge
+        construction can use vectorized tensor ops (native, GIL-releasing)
+        instead of a per-edge Python loop. Boolean masking preserves the
+        original edge order and local indices follow the same sorted-node order,
+        so the output is bit-identical to the legacy loop (verified by the
+        feasibility spike). Node selection upstream is unchanged, so the model
+        sees exactly the same inputs — this is a pure speedup.
+        `config.fast_subgraph_build=False` forces the legacy Python loop.
+        """
+        # 建立節點映射 (原始索引 -> 子圖索引) — cheap, unchanged
         node_mapping: Dict[str, Dict[int, int]] = {}
         subgraph_nodes: Dict[str, Tensor] = {}
 
@@ -312,35 +330,19 @@ class SubgraphSampler:
                 node_mapping[node_type] = {}
                 subgraph_nodes[node_type] = torch.tensor([], dtype=torch.long)
 
-        # 建立子圖邊
-        subgraph_edges: Dict[EdgeType, Tensor] = {}
+        # 建立子圖邊 — vectorized (default) or legacy Python loop
+        if getattr(self.config, "fast_subgraph_build", True):
+            try:
+                subgraph_edges = self._build_subgraph_edges_vectorized(subgraph_nodes)
+            except Exception as exc:  # provably-identical; never block training
+                logger.warning(
+                    "fast_subgraph_build failed (%s); using legacy Python loop", exc
+                )
+                subgraph_edges = self._build_subgraph_edges_legacy(node_mapping)
+        else:
+            subgraph_edges = self._build_subgraph_edges_legacy(node_mapping)
 
-        for edge_type, edge_index in self.edge_index_dict.items():
-            src_type, _, dst_type = edge_type
-            src_mapping = node_mapping[src_type]
-            dst_mapping = node_mapping[dst_type]
-
-            if not src_mapping or not dst_mapping:
-                subgraph_edges[edge_type] = torch.tensor([[], []], dtype=torch.long)
-                continue
-
-            # 篩選在子圖中的邊
-            new_src = []
-            new_dst = []
-
-            src_nodes = edge_index[0].tolist()
-            dst_nodes = edge_index[1].tolist()
-
-            for src, dst in zip(src_nodes, dst_nodes):
-                if src in src_mapping and dst in dst_mapping:
-                    new_src.append(src_mapping[src])
-                    new_dst.append(dst_mapping[dst])
-
-            subgraph_edges[edge_type] = torch.tensor(
-                [new_src, new_dst], dtype=torch.long
-            )
-
-        # 建立映射張量
+        # 建立映射張量 — cheap, unchanged
         mapping_tensors: Dict[str, Tensor] = {}
         for node_type, mapping in node_mapping.items():
             if mapping:
@@ -351,6 +353,67 @@ class SubgraphSampler:
                 mapping_tensors[node_type] = tensor
 
         return subgraph_nodes, subgraph_edges, mapping_tensors
+
+    def _build_subgraph_edges_legacy(
+        self, node_mapping: Dict[str, Dict[int, int]]
+    ) -> Dict[EdgeType, Tensor]:
+        """Per-edge Python loop (original implementation; kept as fallback)."""
+        subgraph_edges: Dict[EdgeType, Tensor] = {}
+        for edge_type, edge_index in self.edge_index_dict.items():
+            src_type, _, dst_type = edge_type
+            src_mapping = node_mapping[src_type]
+            dst_mapping = node_mapping[dst_type]
+
+            if not src_mapping or not dst_mapping:
+                subgraph_edges[edge_type] = torch.tensor([[], []], dtype=torch.long)
+                continue
+
+            new_src = []
+            new_dst = []
+            src_nodes = edge_index[0].tolist()
+            dst_nodes = edge_index[1].tolist()
+            for src, dst in zip(src_nodes, dst_nodes):
+                if src in src_mapping and dst in dst_mapping:
+                    new_src.append(src_mapping[src])
+                    new_dst.append(dst_mapping[dst])
+
+            subgraph_edges[edge_type] = torch.tensor(
+                [new_src, new_dst], dtype=torch.long
+            )
+        return subgraph_edges
+
+    def _build_subgraph_edges_vectorized(
+        self, subgraph_nodes: Dict[str, Tensor]
+    ) -> Dict[EdgeType, Tensor]:
+        """Induced-subgraph edges via vectorized gather + boolean mask.
+
+        Bit-identical to the legacy loop: a full-size orig->local map per node
+        type gives the same local indices as the sorted ``node_mapping`` dict,
+        and boolean masking preserves the original edge order. Runs entirely in
+        native tensor kernels (no per-edge Python), so it releases the GIL.
+        """
+        # orig -> local index map per node type (built once, reused per edge type)
+        maps: Dict[str, Tensor] = {}
+        for ntype, local_nodes in subgraph_nodes.items():
+            if local_nodes.numel() > 0:
+                m = torch.full(
+                    (self.num_nodes_dict[ntype],), -1, dtype=torch.long
+                )
+                m[local_nodes] = torch.arange(local_nodes.numel(), dtype=torch.long)
+                maps[ntype] = m
+
+        subgraph_edges: Dict[EdgeType, Tensor] = {}
+        for edge_type, edge_index in self.edge_index_dict.items():
+            src_type, _, dst_type = edge_type
+            if src_type not in maps or dst_type not in maps:
+                subgraph_edges[edge_type] = torch.tensor([[], []], dtype=torch.long)
+                continue
+
+            src_local = maps[src_type][edge_index[0]]
+            dst_local = maps[dst_type][edge_index[1]]
+            mask = (src_local >= 0) & (dst_local >= 0)
+            subgraph_edges[edge_type] = torch.stack([src_local[mask], dst_local[mask]])
+        return subgraph_edges
 
 
 # =============================================================================
