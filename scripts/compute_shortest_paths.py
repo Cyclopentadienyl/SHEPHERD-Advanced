@@ -168,17 +168,36 @@ def _process_chunk(
     return src, tgt, typ, dist
 
 
+def _fork_available() -> bool:
+    """True only where the `fork` start method exists (Linux, macOS)."""
+    try:
+        return "fork" in mp.get_all_start_methods()
+    except Exception:
+        return False
+
+
 def _resolve_workers(requested: int, n_items: int) -> int:
-    """Resolve worker count. requested<=0 => auto (~75% of cores). Small jobs
-    stay serial to avoid process-spawn overhead."""
+    """Resolve worker count.
+
+    - ``requested > 0``: honored on any platform (explicit opt-in).
+    - ``requested <= 0`` (auto): ~75% of cores, but ONLY where `fork` is
+      available. On spawn-only platforms (Windows) auto stays **serial** —
+      spawn re-imports the module per worker and is historically fragile, so we
+      keep the default identical to the old single-process behaviour. Windows
+      users can still opt in explicitly with ``--workers N`` (that path is
+      pickling-safe and guarded by ``if __name__ == "__main__"``).
+    - Small jobs (<1000 phenotypes) stay serial regardless.
+    """
     cpu = os.cpu_count() or 1
     if requested and requested > 0:
-        workers = requested
+        workers = requested  # explicit: honor on any platform
     else:
+        if not _fork_available():
+            return 1  # Windows auto => serial (unchanged, zero risk)
         workers = max(1, round(cpu * 0.75))
     workers = min(workers, cpu, max(1, n_items))
     if n_items < 1000:
-        return 1  # not worth parallelizing
+        return 1  # not worth the process-spawn overhead
     return workers
 
 
@@ -279,6 +298,7 @@ def compute_shortest_paths(
         except ValueError:
             ctx = mp.get_context()  # spawn (Windows/macOS): pass data explicitly
             use_fork = False
+        logger.info(f"  start method: {ctx.get_start_method()}")
 
         if use_fork:
             # Children inherit the big adjacency via copy-on-write (no pickling).
@@ -361,9 +381,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--workers", type=int, default=0,
-        help="Parallel BFS worker processes. 0 = auto (~75%% of CPU cores); "
-             "1 = serial. The BFS is embarrassingly parallel, so on a "
-             "many-core box this is a large speedup (default: auto)",
+        help="Parallel BFS worker processes. 0 = auto (~75%% of cores on Linux; "
+             "stays serial on Windows where only spawn is available); "
+             "1 = serial; N = force N (opt-in, works on Windows too). "
+             "The BFS is embarrassingly parallel, so on a many-core box this "
+             "is a large speedup (default: auto)",
     )
     return parser.parse_args()
 
