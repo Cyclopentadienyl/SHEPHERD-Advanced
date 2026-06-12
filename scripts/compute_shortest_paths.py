@@ -35,6 +35,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+import multiprocessing as mp
+import os
 import sys
 import time
 from collections import deque
@@ -105,9 +108,103 @@ def build_undirected_adjacency(kg: KnowledgeGraph) -> Dict[str, List[str]]:
     return adj
 
 
+# ---------------------------------------------------------------------------
+# Parallel BFS workers
+#
+# Each phenotype's BFS is independent, so the work is embarrassingly parallel.
+# The GIL makes threads useless for this pure-Python loop, so we use processes.
+# On Linux (the Spark target) the default `fork` start method lets workers
+# inherit the big read-only adjacency via copy-on-write — no pickling. On
+# spawn platforms (Windows/macOS) the data is passed through an initializer.
+# Workers do pure-Python BFS only (no torch/CUDA), so forking is safe here.
+# ---------------------------------------------------------------------------
+_W_ADJ: Dict[str, List[str]] = {}
+_W_GENE_MAP: Dict[str, int] = {}
+_W_DISEASE_MAP: Dict[str, int] = {}
+_W_GENE_SET: set = set()
+_W_DISEASE_SET: set = set()
+_W_MAX_HOPS: int = 5
+
+
+def _init_worker_state(adjacency, gene_map, disease_map, max_hops) -> None:
+    """Populate module-global read-only state used by _process_chunk."""
+    global _W_ADJ, _W_GENE_MAP, _W_DISEASE_MAP, _W_GENE_SET, _W_DISEASE_SET, _W_MAX_HOPS
+    _W_ADJ = adjacency
+    _W_GENE_MAP = gene_map
+    _W_DISEASE_MAP = disease_map
+    _W_GENE_SET = set(gene_map.keys())
+    _W_DISEASE_SET = set(disease_map.keys())
+    _W_MAX_HOPS = max_hops
+
+
+def _process_chunk(
+    chunk: List[Tuple[str, int]],
+) -> Tuple[List[int], List[int], List[int], List[int]]:
+    """Run BFS for a chunk of (phenotype_id, phenotype_idx) and collect the
+    (src, tgt, type, dist) pairs. Reads the module-global worker state."""
+    src: List[int] = []
+    tgt: List[int] = []
+    typ: List[int] = []
+    dist: List[int] = []
+    adj = _W_ADJ
+    gset, dset = _W_GENE_SET, _W_DISEASE_SET
+    gmap, dmap = _W_GENE_MAP, _W_DISEASE_MAP
+    max_hops = _W_MAX_HOPS
+    for pheno_id, pheno_idx in chunk:
+        reachable = bfs_from_source(adj, pheno_id, max_hops)
+        for tgt_id, d in reachable.items():
+            if d == 0:
+                continue
+            if tgt_id in gset:
+                src.append(pheno_idx)
+                tgt.append(gmap[tgt_id])
+                typ.append(TARGET_TYPE_GENE)
+                dist.append(d)
+            elif tgt_id in dset:
+                src.append(pheno_idx)
+                tgt.append(dmap[tgt_id])
+                typ.append(TARGET_TYPE_DISEASE)
+                dist.append(d)
+    return src, tgt, typ, dist
+
+
+def _fork_available() -> bool:
+    """True only where the `fork` start method exists (Linux, macOS)."""
+    try:
+        return "fork" in mp.get_all_start_methods()
+    except Exception:
+        return False
+
+
+def _resolve_workers(requested: int, n_items: int) -> int:
+    """Resolve worker count.
+
+    - ``requested > 0``: honored on any platform (explicit opt-in).
+    - ``requested <= 0`` (auto): ~75% of cores, but ONLY where `fork` is
+      available. On spawn-only platforms (Windows) auto stays **serial** —
+      spawn re-imports the module per worker and is historically fragile, so we
+      keep the default identical to the old single-process behaviour. Windows
+      users can still opt in explicitly with ``--workers N`` (that path is
+      pickling-safe and guarded by ``if __name__ == "__main__"``).
+    - Small jobs (<1000 phenotypes) stay serial regardless.
+    """
+    cpu = os.cpu_count() or 1
+    if requested and requested > 0:
+        workers = requested  # explicit: honor on any platform
+    else:
+        if not _fork_available():
+            return 1  # Windows auto => serial (unchanged, zero risk)
+        workers = max(1, round(cpu * 0.75))
+    workers = min(workers, cpu, max(1, n_items))
+    if n_items < 1000:
+        return 1  # not worth the process-spawn overhead
+    return workers
+
+
 def compute_shortest_paths(
     kg: KnowledgeGraph,
     max_hops: int = 5,
+    workers: int = 1,
 ) -> Dict[str, torch.Tensor]:
     """
     Compute shortest path lengths from all phenotype nodes to all gene
@@ -150,38 +247,93 @@ def compute_shortest_paths(
     tgt_types: List[int] = []
     distances: List[int] = []
 
-    # BFS from each phenotype
+    # BFS from each phenotype (serial or parallel across processes)
+    pheno_items = list(pheno_map.items())
+    n_phenotypes = len(pheno_items)
+    n_workers = _resolve_workers(workers, n_phenotypes)
     start_time = time.time()
-    n_phenotypes = len(pheno_map)
-    for i, (pheno_id, pheno_idx) in enumerate(pheno_map.items()):
-        if (i + 1) % 100 == 0 or i == n_phenotypes - 1:
-            elapsed = time.time() - start_time
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            logger.info(
-                f"  Processed {i + 1}/{n_phenotypes} phenotypes "
-                f"({rate:.1f}/s, {len(distances):,} pairs collected)"
+
+    if n_workers <= 1:
+        logger.info("Running BFS serially (1 worker)")
+        for i, (pheno_id, pheno_idx) in enumerate(pheno_items):
+            if (i + 1) % 100 == 0 or i == n_phenotypes - 1:
+                elapsed = time.time() - start_time
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                logger.info(
+                    f"  Processed {i + 1}/{n_phenotypes} phenotypes "
+                    f"({rate:.1f}/s, {len(distances):,} pairs collected)"
+                )
+
+            reachable = bfs_from_source(adjacency, pheno_id, max_hops)
+
+            for tgt_id, dist in reachable.items():
+                if dist == 0:
+                    continue  # skip self
+                if tgt_id in gene_set:
+                    src_indices.append(pheno_idx)
+                    tgt_indices.append(gene_map[tgt_id])
+                    tgt_types.append(TARGET_TYPE_GENE)
+                    distances.append(dist)
+                elif tgt_id in disease_set:
+                    src_indices.append(pheno_idx)
+                    tgt_indices.append(disease_map[tgt_id])
+                    tgt_types.append(TARGET_TYPE_DISEASE)
+                    distances.append(dist)
+    else:
+        # Over-partition into chunks for load balancing + progress granularity.
+        n_chunks = n_workers * 8
+        chunk_size = max(1, math.ceil(n_phenotypes / n_chunks))
+        chunks = [
+            pheno_items[i:i + chunk_size]
+            for i in range(0, n_phenotypes, chunk_size)
+        ]
+        logger.info(
+            f"Running BFS on {n_workers} processes "
+            f"({len(chunks)} chunks of ~{chunk_size} phenotypes)"
+        )
+
+        try:
+            ctx = mp.get_context("fork")
+            use_fork = True
+        except ValueError:
+            ctx = mp.get_context()  # spawn (Windows/macOS): pass data explicitly
+            use_fork = False
+        logger.info(f"  start method: {ctx.get_start_method()}")
+
+        if use_fork:
+            # Children inherit the big adjacency via copy-on-write (no pickling).
+            _init_worker_state(adjacency, gene_map, disease_map, max_hops)
+            pool = ctx.Pool(n_workers)
+        else:
+            pool = ctx.Pool(
+                n_workers,
+                initializer=_init_worker_state,
+                initargs=(adjacency, gene_map, disease_map, max_hops),
             )
 
-        reachable = bfs_from_source(adjacency, pheno_id, max_hops)
-
-        for tgt_id, dist in reachable.items():
-            if dist == 0:
-                continue  # skip self
-            if tgt_id in gene_set:
-                src_indices.append(pheno_idx)
-                tgt_indices.append(gene_map[tgt_id])
-                tgt_types.append(TARGET_TYPE_GENE)
-                distances.append(dist)
-            elif tgt_id in disease_set:
-                src_indices.append(pheno_idx)
-                tgt_indices.append(disease_map[tgt_id])
-                tgt_types.append(TARGET_TYPE_DISEASE)
-                distances.append(dist)
+        try:
+            done = 0
+            log_every = max(1, len(chunks) // 20)
+            for s, t, ty, d in pool.imap_unordered(_process_chunk, chunks):
+                src_indices.extend(s)
+                tgt_indices.extend(t)
+                tgt_types.extend(ty)
+                distances.extend(d)
+                done += 1
+                if done % log_every == 0 or done == len(chunks):
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"  {done}/{len(chunks)} chunks done "
+                        f"({elapsed:.1f}s, {len(distances):,} pairs collected)"
+                    )
+        finally:
+            pool.close()
+            pool.join()
 
     elapsed = time.time() - start_time
     logger.info(
         f"Done. Computed {len(distances):,} (phenotype, target) pairs "
-        f"in {elapsed:.1f}s"
+        f"in {elapsed:.1f}s ({n_workers} worker(s))"
     )
 
     # Convert to tensors
@@ -227,6 +379,14 @@ def parse_args() -> argparse.Namespace:
         "--max-hops", type=int, default=5,
         help="Maximum BFS depth (default: 5; pairs beyond this are dropped)",
     )
+    parser.add_argument(
+        "--workers", type=int, default=0,
+        help="Parallel BFS worker processes. 0 = auto (~75%% of cores on Linux; "
+             "stays serial on Windows where only spawn is available); "
+             "1 = serial; N = force N (opt-in, works on Windows too). "
+             "The BFS is embarrassingly parallel, so on a many-core box this "
+             "is a large speedup (default: auto)",
+    )
     return parser.parse_args()
 
 
@@ -244,7 +404,7 @@ def main() -> int:
     kg = KnowledgeGraph.load_json(str(args.kg_path))
     logger.info(f"Loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
-    sp_data = compute_shortest_paths(kg, max_hops=args.max_hops)
+    sp_data = compute_shortest_paths(kg, max_hops=args.max_hops, workers=args.workers)
 
     metadata = {
         "max_hops": args.max_hops,

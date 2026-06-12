@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Dict, List, Optional, Tuple
 
@@ -39,6 +40,8 @@ except ImportError:
     HAS_PYG = False
     EdgeType = Tuple[str, str, str]
     NodeType = str
+
+logger = logging.getLogger(__name__)
 
 
 class HeteroGNNLayer(nn.Module):
@@ -88,6 +91,23 @@ class HeteroGNNLayer(nn.Module):
 
         # Build convolution
         if conv_type == "hgt":
+            # HGTConv's internal segment_matmul comes from pyg_lib. Without the
+            # native extension the layer still builds, but that op drops to a
+            # much slower fallback — and HGT is the most pyg_lib-sensitive conv
+            # type we offer, so warn loudly rather than let it run silently slow.
+            try:
+                from src.utils.pyg_native_check import check_pyg_native_extensions
+
+                if not check_pyg_native_extensions()["pyg_lib"].available:
+                    logger.warning(
+                        "HGTConv selected but pyg_lib is not importable: "
+                        "segment_matmul will use a slow fallback. Install the PyG "
+                        "native extensions (see scripts/validate_pyg_ext.py) for "
+                        "usable HGT performance."
+                    )
+            except Exception as exc:  # never block model construction
+                logger.debug("pyg_lib availability check skipped: %s", exc)
+
             # True HGT: type-aware heterogeneous graph transformer
             self.conv = HGTConv(
                 in_channels=hidden_dim,
