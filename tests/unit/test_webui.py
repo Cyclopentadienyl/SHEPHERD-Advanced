@@ -157,11 +157,13 @@ class TestTrainingConsoleHelpers:
             # Tier 3
             gradient_accumulation_steps=1, max_grad_norm=1.0,
             num_heads="8", use_ortholog_gate=True,
-            use_amp=True, amp_dtype="float16",
+            amp_mode="float16",
             temperature=0.07, label_smoothing=0.1, margin=1.0,
             num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
+            compile_enabled=False,
         )
         assert config["num_epochs"] == 50
+        assert config["compile"] is False
         assert config["learning_rate"] == 0.001
         assert config["batch_size"] == 32
         assert config["hidden_dim"] == 256
@@ -191,9 +193,10 @@ class TestTrainingConsoleHelpers:
             # Tier 3
             gradient_accumulation_steps=1, max_grad_norm=1.0,
             num_heads="8", use_ortholog_gate=True,
-            use_amp=True, amp_dtype="float16",
+            amp_mode="float16",
             temperature=0.07, label_smoothing=0.1, margin=1.0,
             num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
+            compile_enabled=False,
         )
         # Prefix should be stripped — backend uses project-root-relative paths
         assert config["data_dir"] == "data/processed"

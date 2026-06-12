@@ -113,6 +113,7 @@ def _collect_config(
     margin: float,
     num_neighbors_str: str,
     max_subgraph_nodes: int,
+    compile_enabled: bool,
 ) -> Dict[str, Any]:
     """Collect all parameter widgets into a config dict."""
     # Parse comma-separated neighbors
@@ -164,6 +165,7 @@ def _collect_config(
         "margin": float(margin),
         "num_neighbors": num_neighbors,
         "max_subgraph_nodes": int(max_subgraph_nodes),
+        "compile": bool(compile_enabled),
     }
 
     return config
@@ -1174,6 +1176,14 @@ def create_training_tab() -> None:
                         precision=0,
                         elem_id="max_subgraph_nodes",
                     )
+                    compile_enabled = gr.Checkbox(
+                        label="Enable torch.compile (experimental)",
+                        info="Fuses kernels to cut launch overhead. Falls back to eager on failure "
+                             "(e.g. sm_121 Triton). Verify MRR/Hits vs eager before trusting — "
+                             "heterogeneous GNNs can graph-break and gain little.",
+                        value=False,
+                        elem_id="compile_enabled",
+                    )
 
             # -----------------------------------------------------------------
             # Control Buttons
@@ -1318,6 +1328,7 @@ def create_training_tab() -> None:
         gradient_accumulation_steps, max_grad_norm, num_heads,
         use_ortholog_gate, amp_mode,
         temperature, label_smoothing, margin, num_neighbors_str, max_subgraph_nodes,
+        compile_enabled,
     ]
 
     # =========================================================================
