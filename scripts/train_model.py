@@ -566,8 +566,12 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # on GB10) fall back to eager per-graph instead of killing training.
     if config.compile:
         try:
-            import torch._dynamo
-            torch._dynamo.config.suppress_errors = True
+            # NOTE: `import torch._dynamo as _dynamo` binds `_dynamo`, NOT `torch`.
+            # A bare `import torch._dynamo` here would bind `torch` as a function-local
+            # name, shadowing the module-level torch for the whole function and
+            # breaking earlier `torch.*` uses with UnboundLocalError.
+            import torch._dynamo as _dynamo
+            _dynamo.config.suppress_errors = True
             model.compile()
             logger.info(
                 "torch.compile ENABLED (in-place, dynamic=auto, mode=default). "
