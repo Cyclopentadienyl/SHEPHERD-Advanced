@@ -1176,14 +1176,27 @@ def create_training_tab() -> None:
                         precision=0,
                         elem_id="max_subgraph_nodes",
                     )
-                    compile_enabled = gr.Checkbox(
-                        label="Enable torch.compile (experimental)",
-                        info="Fuses kernels to cut launch overhead. Falls back to eager on failure "
-                             "(e.g. sm_121 Triton). Verify MRR/Hits vs eager before trusting — "
-                             "heterogeneous GNNs can graph-break and gain little.",
-                        value=False,
-                        elem_id="compile_enabled",
-                    )
+
+            # -----------------------------------------------------------------
+            # Experimental Features (high-risk, unverified — kept in their own
+            # section, deliberately separate from the stable Expert parameters)
+            # -----------------------------------------------------------------
+            with gr.Accordion("🧪 Experimental Features", open=False):
+                gr.Markdown(
+                    "⚠️ **Experimental — use at your own risk.** These features are "
+                    "not yet validated on this hardware; their performance and "
+                    "accuracy impact are unknown, and they may change or be removed "
+                    "without notice. Always verify training metrics (MRR / Hits@K) "
+                    "against a normal run before trusting any result."
+                )
+                compile_enabled = gr.Checkbox(
+                    label="Enable torch.compile",
+                    info="Fuses kernels to cut launch overhead. Falls back to eager on "
+                         "failure (e.g. the sm_121 Triton issue on GB10). Heterogeneous "
+                         "GNNs can graph-break and gain little — verify MRR/Hits vs eager.",
+                    value=False,
+                    elem_id="compile_enabled",
+                )
 
             # -----------------------------------------------------------------
             # Control Buttons
