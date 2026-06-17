@@ -144,6 +144,13 @@ class TrainConfig:
     # Reproducibility
     seed: int = 42
 
+    # torch.compile (experimental). Off by default. When True, the model's
+    # forward is compiled in-place via nn.Module.compile() (no _orig_mod prefix,
+    # so checkpoints stay compatible). dynamic=None (auto) handles variable
+    # subgraph shapes; mode="default". A graph break / codegen failure (e.g. the
+    # sm_121 Triton/ptxas issue on GB10) falls back to eager via suppress_errors.
+    compile: bool = False
+
     # Resume training
     resume_from: Optional[str] = None
 
@@ -242,6 +249,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable automatic mixed precision",
     )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable torch.compile (experimental; falls back to eager on failure)",
+    )
 
     # Resume
     parser.add_argument(
@@ -303,6 +315,8 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
         config.device = args.device
     if args.no_amp:
         config.use_amp = False
+    if args.compile:
+        config.compile = True
     if args.resume:
         config.resume_from = args.resume
     if args.seed is not None:
@@ -542,6 +556,32 @@ def train(config: TrainConfig) -> Dict[str, float]:
 
     # Create model
     model = create_model_from_config(config, graph_data)
+
+    # torch.compile (experimental, opt-in). Compile in-place so the model
+    # object/state_dict are unchanged (no _orig_mod prefix -> checkpoints stay
+    # compatible with the non-compiled inference path). dynamic=None (auto)
+    # tolerates the variable per-batch subgraph shapes; mode stays "default"
+    # (reduce-overhead/CUDA-graphs need static shapes). suppress_errors makes a
+    # graph break or codegen failure (e.g. the known sm_121 Triton/ptxas crash
+    # on GB10) fall back to eager per-graph instead of killing training.
+    if config.compile:
+        try:
+            # NOTE: `import torch._dynamo as _dynamo` binds `_dynamo`, NOT `torch`.
+            # A bare `import torch._dynamo` here would bind `torch` as a function-local
+            # name, shadowing the module-level torch for the whole function and
+            # breaking earlier `torch.*` uses with UnboundLocalError.
+            import torch._dynamo as _dynamo
+            _dynamo.config.suppress_errors = True
+            model.compile()
+            logger.info(
+                "torch.compile ENABLED (in-place, dynamic=auto, mode=default). "
+                "Tip: run once with TORCH_LOGS=graph_breaks to count breaks; "
+                "verify MRR/Hits vs eager before trusting the speedup."
+            )
+        except Exception as exc:  # never let compile break training
+            logger.warning(f"torch.compile failed to enable; using eager: {exc}")
+    else:
+        logger.info("torch.compile disabled (eager mode)")
 
     # Training configuration
     trainer_config = TrainerConfig(

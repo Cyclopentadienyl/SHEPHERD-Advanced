@@ -113,6 +113,7 @@ def _collect_config(
     margin: float,
     num_neighbors_str: str,
     max_subgraph_nodes: int,
+    compile_enabled: bool,
 ) -> Dict[str, Any]:
     """Collect all parameter widgets into a config dict."""
     # Parse comma-separated neighbors
@@ -164,6 +165,7 @@ def _collect_config(
         "margin": float(margin),
         "num_neighbors": num_neighbors,
         "max_subgraph_nodes": int(max_subgraph_nodes),
+        "compile": bool(compile_enabled),
     }
 
     return config
@@ -1176,6 +1178,27 @@ def create_training_tab() -> None:
                     )
 
             # -----------------------------------------------------------------
+            # Experimental Features (high-risk, unverified — kept in their own
+            # section, deliberately separate from the stable Expert parameters)
+            # -----------------------------------------------------------------
+            with gr.Accordion("🧪 Experimental Features", open=False):
+                gr.Markdown(
+                    "⚠️ **Experimental — use at your own risk.** These features are "
+                    "not yet validated on this hardware; their performance and "
+                    "accuracy impact are unknown, and they may change or be removed "
+                    "without notice. Always verify training metrics (MRR / Hits@K) "
+                    "against a normal run before trusting any result."
+                )
+                compile_enabled = gr.Checkbox(
+                    label="Enable torch.compile",
+                    info="Fuses kernels to cut launch overhead. Falls back to eager on "
+                         "failure (e.g. the sm_121 Triton issue on GB10). Heterogeneous "
+                         "GNNs can graph-break and gain little — verify MRR/Hits vs eager.",
+                    value=False,
+                    elem_id="compile_enabled",
+                )
+
+            # -----------------------------------------------------------------
             # Control Buttons
             # -----------------------------------------------------------------
             gr.Markdown("### Control")
@@ -1318,6 +1341,7 @@ def create_training_tab() -> None:
         gradient_accumulation_steps, max_grad_norm, num_heads,
         use_ortholog_gate, amp_mode,
         temperature, label_smoothing, margin, num_neighbors_str, max_subgraph_nodes,
+        compile_enabled,
     ]
 
     # =========================================================================
