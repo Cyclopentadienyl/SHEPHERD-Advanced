@@ -26,8 +26,9 @@ class HPOAnnotationParser:
     def __init__(self, mondo_ontology=None):
         """
         Args:
-            mondo_ontology: Optional Ontology instance for OMIM->MONDO ID mapping.
-                           If provided, OMIM disease IDs will be translated to MONDO.
+            mondo_ontology: Optional Ontology instance for OMIM/ORPHA -> MONDO ID
+                           mapping. If provided, OMIM and ORPHA disease IDs are
+                           translated to MONDO (via MONDO's OMIM / Orphanet xrefs).
         """
         self._omim_to_mondo: Dict[str, str] = {}
         self._orpha_to_mondo: Dict[str, str] = {}
