@@ -97,6 +97,7 @@ def _collect_config(
     weight_decay: float,
     scheduler_type: str,
     warmup_steps: int,
+    min_lr_ratio: float,
     early_stopping_patience: int,
     diagnosis_weight: float,
     link_prediction_weight: float,
@@ -148,6 +149,7 @@ def _collect_config(
         "weight_decay": float(weight_decay),
         "scheduler_type": scheduler_type,
         "warmup_steps": int(warmup_steps),
+        "min_lr_ratio": float(min_lr_ratio),
         "early_stopping_patience": int(early_stopping_patience),
         "diagnosis_weight": float(diagnosis_weight),
         "link_prediction_weight": float(link_prediction_weight),
@@ -1047,6 +1049,15 @@ def create_training_tab() -> None:
                         precision=0,
                         elem_id="warmup_steps",
                     )
+                    min_lr_ratio = gr.Number(
+                        label="Min LR Ratio",
+                        info="Floor of LR decay as a fraction of peak (cosine/onecycle/linear). "
+                             "0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
+                        value=0.01,
+                        minimum=0.0,
+                        maximum=1.0,
+                        elem_id="min_lr_ratio",
+                    )
                     early_stopping_patience = gr.Number(
                         label="Early Stopping Patience",
                         info="Epochs without improvement before stopping. 10 is a good default.",
@@ -1335,7 +1346,7 @@ def create_training_tab() -> None:
         seed,
         # Tier 2
         hidden_dim, num_layers, dropout, weight_decay, scheduler_type,
-        warmup_steps, early_stopping_patience,
+        warmup_steps, min_lr_ratio, early_stopping_patience,
         diagnosis_weight, link_prediction_weight, contrastive_weight, ortholog_weight,
         # Tier 3
         gradient_accumulation_steps, max_grad_norm, num_heads,
