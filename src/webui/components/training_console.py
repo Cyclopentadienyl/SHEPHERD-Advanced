@@ -1051,10 +1051,10 @@ def create_training_tab() -> None:
                     )
                     min_lr_ratio = gr.Number(
                         label="Min LR Ratio",
-                        info="Floor of LR decay as a fraction of peak (cosine/onecycle/linear). "
+                        info="Floor of LR decay as a fraction of peak (must be > 0; onecycle uses 1/min_lr_ratio). "
                              "0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
                         value=0.01,
-                        minimum=0.0,
+                        minimum=1e-4,
                         maximum=1.0,
                         elem_id="min_lr_ratio",
                     )

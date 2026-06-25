@@ -150,7 +150,7 @@ class TestTrainingConsoleHelpers:
             conv_type="gat", device="auto", seed=42,
             # Tier 2
             hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
-            scheduler_type="cosine", warmup_steps=500, min_lr_ratio=0.01,
+            scheduler_type="cosine", warmup_steps=500, min_lr_ratio=0.1,
             early_stopping_patience=10,
             diagnosis_weight=1.0, link_prediction_weight=0.5,
             contrastive_weight=0.3, ortholog_weight=0.2,
@@ -163,7 +163,7 @@ class TestTrainingConsoleHelpers:
             compile_enabled=False,
         )
         assert config["num_epochs"] == 50
-        assert config["min_lr_ratio"] == 0.01
+        assert config["min_lr_ratio"] == 0.1
         assert config["compile"] is False
         assert config["learning_rate"] == 0.001
         assert config["batch_size"] == 32
