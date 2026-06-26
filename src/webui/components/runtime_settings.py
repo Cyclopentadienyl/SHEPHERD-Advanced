@@ -117,7 +117,8 @@ def create_runtime_settings_tab() -> None:
         gr.Markdown(
             "🟩 **Speed**  ·  🟧 **Precision ⚠️**  ·  🧪 **Experimental**  ·  "
             "⏭️ **Next run** (no restart)\n\n"
-            "Fuses kernels to cut launch overhead; falls back to eager on failure. "
+            "Attempts to compile supported model regions to reduce overhead; dynamic "
+            "PyG/HGT workloads may graph-break, fall back to eager, or run slower. "
             "Applies to the **next training run** — no backend restart needed."
         )
         with gr.Accordion("Details", open=False):

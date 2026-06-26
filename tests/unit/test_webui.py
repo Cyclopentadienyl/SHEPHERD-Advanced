@@ -138,8 +138,13 @@ class TestTrainingConsoleHelpers:
         # Epochs should be 1-indexed for display
         assert list(sorted(df["epoch"].unique())) == [1, 2]
 
-    def test_collect_config(self):
+    def test_collect_config(self, monkeypatch):
+        from src.webui.components import training_console as tc
         from src.webui.components.training_console import _collect_config
+
+        # Isolate from any local .shepherd_runtime_settings.json so config["compile"]
+        # is deterministic.
+        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
 
         config = _collect_config(
             # Paths
@@ -163,6 +168,7 @@ class TestTrainingConsoleHelpers:
         )
         assert config["num_epochs"] == 50
         assert config["min_lr_ratio"] == 0.1
+        assert config["compile"] is False
         assert config["learning_rate"] == 0.001
         assert config["batch_size"] == 32
         assert config["hidden_dim"] == 256
@@ -171,9 +177,12 @@ class TestTrainingConsoleHelpers:
         assert config["output_dir"] == "outputs"
         assert config["checkpoint_dir"] == "models/checkpoints"
 
-    def test_collect_config_strips_prefix(self):
+    def test_collect_config_strips_prefix(self, monkeypatch):
         """Verify that SHEPHERD-Advanced/ display prefix is stripped from paths."""
+        from src.webui.components import training_console as tc
         from src.webui.components.training_console import _collect_config
+
+        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
 
         config = _collect_config(
             # Paths with display prefix
