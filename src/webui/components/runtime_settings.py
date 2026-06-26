@@ -14,47 +14,27 @@ Module: src/webui/components/runtime_settings.py
 Apply model:
     Changes are staged in the UI and only persisted when the user clicks
     "Apply Settings". Persisted values live in ``.shepherd_runtime_settings.json``
-    at the repo root and are consumed at launch time by
-    ``scripts/launch/shep_launch.py`` (allocator) and by the training subprocess
-    it spawns (which inherits the environment).
+    at the repo root (path + presets defined in ``src.runtime_presets``) and are
+    consumed at launch time by ``scripts/launch/shep_launch.py`` (allocator) and
+    by the training subprocess it spawns (which inherits the environment).
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import os
 
 import gradio as gr
 
-# Persisted at repo root; read by shep_launch.py at startup.
-RUNTIME_SETTINGS_FILE = Path(".shepherd_runtime_settings.json")
-
-# Preset name -> PYTORCH_ALLOC_CONF value. "" means "framework default" (no tuning).
-# NOTE: this mapping is intentionally duplicated (small + stable) in
-# scripts/launch/shep_launch.py so the launcher stays import-light (no gradio).
-# Keep the two in sync if presets change.
-ALLOCATOR_PRESETS: dict[str, str] = {
-    "cuda_async": "backend:cudaMallocAsync",
-    "expandable": "expandable_segments:True",
-    "native_roundup": "roundup_power2_divisions:4,max_non_split_rounding_mb:512",
-    "native": "",
-}
-DEFAULT_ALLOCATOR = "cuda_async"
+from src.runtime_presets import (
+    ALLOCATOR_PRESETS,
+    DEFAULT_ALLOCATOR,
+    load_runtime_settings,
+    save_runtime_settings,
+)
 
 
-def load_runtime_settings() -> dict:
-    """Load persisted runtime settings (empty dict if absent/unreadable)."""
-    if RUNTIME_SETTINGS_FILE.exists():
-        try:
-            with open(RUNTIME_SETTINGS_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _save_runtime_settings(data: dict) -> None:
-    with open(RUNTIME_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+def _active_env_override() -> str | None:
+    """Return the explicit allocator env override if one is set, else None."""
+    return os.environ.get("PYTORCH_ALLOC_CONF") or os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
 
 
 def create_runtime_settings_tab() -> None:
@@ -70,8 +50,21 @@ def create_runtime_settings_tab() -> None:
         "memory, and numerical precision — and are separate from the Training "
         "Console (which configures the model). Changes take effect only after you "
         "click **Apply Settings**; items tagged **🔄 Restart required** also need a "
-        "backend restart."
+        "backend restart.\n\n"
+        "_An explicit `PYTORCH_ALLOC_CONF` / `PYTORCH_CUDA_ALLOC_CONF` set in the "
+        "launch environment overrides the Memory Allocator chosen here._"
     )
+
+    # If the backend was launched with an explicit allocator env override, the
+    # persisted UI choice is being ignored — surface that prominently.
+    env_override = _active_env_override()
+    if env_override:
+        gr.Markdown(
+            f"> ⚠️ **An explicit allocator override is active in the environment** "
+            f"(`{env_override}`). It takes precedence over the Memory Allocator "
+            f"setting below until the backend is restarted without it.",
+            elem_id="runtime_env_override",
+        )
 
     # Apply bar — placed above all options, as a single explicit action.
     with gr.Row():
@@ -97,15 +90,15 @@ def create_runtime_settings_tab() -> None:
         with gr.Accordion("Details — what each option does", open=False):
             gr.Markdown(
                 "- **cuda_async** *(default)* — NVIDIA driver's stream-ordered memory "
-                "pool. Zero-tuning, driver-managed, and improves automatically with "
-                "driver upgrades. Note: PyTorch's native memory snapshot stats are "
-                "reduced under this backend.\n"
+                "pool. Zero-tuning and driver-managed; behaviour may change or improve "
+                "with CUDA driver/runtime upgrades. Note: PyTorch's native memory "
+                "snapshot stats are reduced under this backend.\n"
                 "- **expandable** — PyTorch growable VMM segments. Bounds fragmentation "
                 "for variable-size GNN subgraphs while keeping native memory "
                 "observability.\n"
                 "- **native_roundup** — native allocator with power-of-2 size rounding "
                 "(plus non-split rounding) to cut fragmentation at low overhead.\n"
-                "- **native** — framework default (no tuning); can fragment badly on "
+                "- **native** — native allocator with no tuning; can fragment badly on "
                 "variable tensor sizes.\n\n"
                 "_Measured on this project (HGT, batch 256): cuda_async ≈ expandable "
                 "(~26 GB, comparable speed); plain native fragments (≈60→120 GB)._"
@@ -118,12 +111,17 @@ def create_runtime_settings_tab() -> None:
         data = load_runtime_settings()
         previous = data.get("allocator_preset", DEFAULT_ALLOCATOR)
         data["allocator_preset"] = alloc
-        _save_runtime_settings(data)
+        save_runtime_settings(data)
         msg = f"✓ Applied. Memory Allocator = **{alloc}**."
         if alloc != previous:
             msg += (
                 "  🔄 **Restart the backend** for the new allocator to take effect "
                 "(it is read once at startup)."
+            )
+        if _active_env_override():
+            msg += (
+                "  ⚠️ Note: an explicit `PYTORCH_ALLOC_CONF` env override is currently "
+                "active and will take precedence until removed."
             )
         return msg
 
@@ -131,4 +129,4 @@ def create_runtime_settings_tab() -> None:
     apply_btn.click(fn=_on_apply, inputs=[allocator], outputs=[status])
 
 
-__all__ = ["create_runtime_settings_tab", "load_runtime_settings", "ALLOCATOR_PRESETS"]
+__all__ = ["create_runtime_settings_tab"]

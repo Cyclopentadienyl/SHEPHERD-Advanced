@@ -16,6 +16,12 @@ DEFAULT_ENTRY = "uvicorn"
 UVICORN_APP = "src.api.main:app"
 UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
 
+# Ensure repo root is importable so the shared, gradio-free runtime presets
+# module loads regardless of how the launcher is invoked.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from src.runtime_presets import effective_allocator, load_runtime_settings  # noqa: E402
+
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
 
@@ -267,29 +273,21 @@ def main() -> int:
     if retrieval_cfg:
         os.environ["SHEPHERD_RETRIEVAL_BACKEND"] = retrieval_cfg.get("default", "auto")
 
-    # Apply persisted Runtime Settings: CUDA memory allocator preset.
-    # Read once here so both this server's in-process CUDA and the training
-    # subprocesses it spawns inherit the same allocator. An explicitly-set
-    # PYTORCH_ALLOC_CONF / PYTORCH_CUDA_ALLOC_CONF always wins (e.g. for A/B tests).
-    # NOTE: presets duplicated from src/webui/components/runtime_settings.py to keep
-    # this launcher import-light (no gradio); keep the two in sync.
-    _ALLOCATOR_PRESETS = {
-        "cuda_async": "backend:cudaMallocAsync",
-        "expandable": "expandable_segments:True",
-        "native_roundup": "roundup_power2_divisions:4,max_non_split_rounding_mb:512",
-        "native": "",
-    }
-    if "PYTORCH_ALLOC_CONF" not in os.environ and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-        rt_settings = read_json(REPO_ROOT / ".shepherd_runtime_settings.json")
-        preset = rt_settings.get("allocator_preset", "cuda_async")
-        conf = _ALLOCATOR_PRESETS.get(preset, "")
-        if conf:
-            os.environ["PYTORCH_ALLOC_CONF"] = conf
-            log(f"Runtime: PYTORCH_ALLOC_CONF={conf} (allocator preset={preset})")
-        else:
-            log(f"Runtime: allocator preset={preset} (framework default, no override)")
-    else:
+    # Apply persisted Runtime Settings: CUDA memory allocator preset. Read once
+    # here so both this server's in-process CUDA and the training subprocesses it
+    # spawns inherit the same allocator. An explicit PYTORCH_ALLOC_CONF /
+    # PYTORCH_CUDA_ALLOC_CONF in the environment always wins (e.g. A/B tests).
+    # Presets + resolution live in src/runtime_presets.py (single source of truth);
+    # a malformed settings file falls back to {} and an unknown preset to the default.
+    raw_preset = load_runtime_settings().get("allocator_preset")
+    preset, conf = effective_allocator(os.environ, {"allocator_preset": raw_preset})
+    if preset is None:
         log("Runtime: PYTORCH_ALLOC_CONF set in environment — respecting explicit override")
+    else:
+        if raw_preset is not None and raw_preset != preset:
+            log(f"WARNING: unknown allocator preset '{raw_preset}'; falling back to '{preset}'")
+        os.environ["PYTORCH_ALLOC_CONF"] = conf
+        log(f"Runtime: PYTORCH_ALLOC_CONF={conf} (allocator preset={preset})")
 
     # Collect passthrough args
     passthrough: List[str] = []
