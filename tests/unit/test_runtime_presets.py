@@ -36,6 +36,15 @@ def test_load_malformed_json_falls_back(tmp_path):
     assert load_runtime_settings(p) == {}  # must not raise
 
 
+def test_load_non_object_json_falls_back(tmp_path):
+    # Valid JSON but not an object (list / string / number) -> {} so downstream
+    # .get(...) never crashes.
+    for payload in ("[]", '"hello"', "42"):
+        p = tmp_path / "rt.json"
+        p.write_text(payload, encoding="utf-8")
+        assert load_runtime_settings(p) == {}, payload
+
+
 # --------------------------------------------------------------------------- resolve
 def test_resolve_known_preset():
     assert resolve_allocator("expandable") == ("expandable", ALLOCATOR_PRESETS["expandable"])

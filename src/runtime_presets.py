@@ -44,7 +44,10 @@ def load_runtime_settings(path: Path | None = None) -> dict:
     if p.exists():
         try:
             with open(p, encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            # Valid JSON of the wrong shape (list/str/number) must not reach
+            # downstream .get(...) calls — only a JSON object is usable.
+            return data if isinstance(data, dict) else {}
         except (json.JSONDecodeError, OSError, ValueError):
             return {}
     return {}
