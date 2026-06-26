@@ -30,6 +30,7 @@ import gradio as gr
 
 from src.webui.components.training_console import create_training_tab
 from src.webui.components.diagnosis_panel import create_diagnosis_tab
+from src.webui.components.runtime_settings import create_runtime_settings_tab
 
 
 def create_gradio_app() -> gr.Blocks:
@@ -122,6 +123,9 @@ def create_gradio_app() -> gr.Blocks:
 
             with gr.Tab("Diagnosis", id="infer"):
                 create_diagnosis_tab()
+
+            with gr.Tab("Runtime Settings", id="runtime"):
+                create_runtime_settings_tab()
 
             with gr.Tab("Model Management", id="models"):
                 gr.Markdown(

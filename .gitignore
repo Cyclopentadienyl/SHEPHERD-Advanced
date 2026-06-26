@@ -140,4 +140,5 @@ lightning_logs/      # PyTorch Lightning
 # --- UI config files (user-specific, not tracked) ---
 .shepherd_ui_config.json
 .shepherd_training_config.json
+.shepherd_runtime_settings.json
 .workspace_restructure_blueprint.md

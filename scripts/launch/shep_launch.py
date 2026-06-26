@@ -267,6 +267,30 @@ def main() -> int:
     if retrieval_cfg:
         os.environ["SHEPHERD_RETRIEVAL_BACKEND"] = retrieval_cfg.get("default", "auto")
 
+    # Apply persisted Runtime Settings: CUDA memory allocator preset.
+    # Read once here so both this server's in-process CUDA and the training
+    # subprocesses it spawns inherit the same allocator. An explicitly-set
+    # PYTORCH_ALLOC_CONF / PYTORCH_CUDA_ALLOC_CONF always wins (e.g. for A/B tests).
+    # NOTE: presets duplicated from src/webui/components/runtime_settings.py to keep
+    # this launcher import-light (no gradio); keep the two in sync.
+    _ALLOCATOR_PRESETS = {
+        "cuda_async": "backend:cudaMallocAsync",
+        "expandable": "expandable_segments:True",
+        "native_roundup": "roundup_power2_divisions:4,max_non_split_rounding_mb:512",
+        "native": "",
+    }
+    if "PYTORCH_ALLOC_CONF" not in os.environ and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+        rt_settings = read_json(REPO_ROOT / ".shepherd_runtime_settings.json")
+        preset = rt_settings.get("allocator_preset", "cuda_async")
+        conf = _ALLOCATOR_PRESETS.get(preset, "")
+        if conf:
+            os.environ["PYTORCH_ALLOC_CONF"] = conf
+            log(f"Runtime: PYTORCH_ALLOC_CONF={conf} (allocator preset={preset})")
+        else:
+            log(f"Runtime: allocator preset={preset} (framework default, no override)")
+    else:
+        log("Runtime: PYTORCH_ALLOC_CONF set in environment — respecting explicit override")
+
     # Collect passthrough args
     passthrough: List[str] = []
     if args.passthrough:
