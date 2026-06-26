@@ -40,6 +40,7 @@ import gradio as gr
 import pandas as pd
 
 from src.api.services.training_manager import training_manager
+from src.runtime_presets import load_runtime_settings
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,6 @@ def _collect_config(
     margin: float,
     num_neighbors_str: str,
     max_subgraph_nodes: int,
-    compile_enabled: bool,
 ) -> Dict[str, Any]:
     """Collect all parameter widgets into a config dict."""
     # Parse comma-separated neighbors
@@ -167,7 +167,10 @@ def _collect_config(
         "margin": float(margin),
         "num_neighbors": num_neighbors,
         "max_subgraph_nodes": int(max_subgraph_nodes),
-        "compile": bool(compile_enabled),
+        # torch.compile is configured in the Runtime Settings tab (per-run, no
+        # restart). Read its persisted value here so it flows into the training
+        # config exactly once, sourced from a single place.
+        "compile": bool(load_runtime_settings().get("torch_compile", False)),
     }
 
     return config
@@ -1188,26 +1191,8 @@ def create_training_tab() -> None:
                         elem_id="max_subgraph_nodes",
                     )
 
-            # -----------------------------------------------------------------
-            # Experimental Features (high-risk, unverified — kept in their own
-            # section, deliberately separate from the stable Expert parameters)
-            # -----------------------------------------------------------------
-            with gr.Accordion("🧪 Experimental Features", open=False):
-                gr.Markdown(
-                    "⚠️ **Experimental — use at your own risk.** These features are "
-                    "not yet validated on this hardware; their performance and "
-                    "accuracy impact are unknown, and they may change or be removed "
-                    "without notice. Always verify training metrics (MRR / Hits@K) "
-                    "against a normal run before trusting any result."
-                )
-                compile_enabled = gr.Checkbox(
-                    label="Enable torch.compile",
-                    info="Fuses kernels to cut launch overhead. Falls back to eager on "
-                         "failure (e.g. the sm_121 Triton issue on GB10). Heterogeneous "
-                         "GNNs can graph-break and gain little — verify MRR/Hits vs eager.",
-                    value=False,
-                    elem_id="compile_enabled",
-                )
+            # torch.compile moved to the Runtime Settings tab (it is an
+            # execution/runtime knob, applied per training run).
 
             # -----------------------------------------------------------------
             # Control Buttons
@@ -1352,7 +1337,6 @@ def create_training_tab() -> None:
         gradient_accumulation_steps, max_grad_norm, num_heads,
         use_ortholog_gate, amp_mode,
         temperature, label_smoothing, margin, num_neighbors_str, max_subgraph_nodes,
-        compile_enabled,
     ]
 
     # =========================================================================

@@ -160,11 +160,9 @@ class TestTrainingConsoleHelpers:
             amp_mode="float16",
             temperature=0.07, label_smoothing=0.1, margin=1.0,
             num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
-            compile_enabled=False,
         )
         assert config["num_epochs"] == 50
         assert config["min_lr_ratio"] == 0.1
-        assert config["compile"] is False
         assert config["learning_rate"] == 0.001
         assert config["batch_size"] == 32
         assert config["hidden_dim"] == 256
@@ -197,12 +195,37 @@ class TestTrainingConsoleHelpers:
             amp_mode="float16",
             temperature=0.07, label_smoothing=0.1, margin=1.0,
             num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
-            compile_enabled=False,
         )
         # Prefix should be stripped — backend uses project-root-relative paths
         assert config["data_dir"] == "data/processed"
         assert config["output_dir"] == "outputs"
         assert config["checkpoint_dir"] == "models/checkpoints"
+
+    def test_collect_config_compile_from_runtime_settings(self, monkeypatch):
+        """torch.compile is now sourced from Runtime Settings, not a Training widget."""
+        from src.webui.components import training_console as tc
+
+        common = dict(
+            data_dir="data/processed", output_dir="outputs",
+            checkpoint_dir="models/checkpoints",
+            num_epochs=10, learning_rate=0.001, batch_size="32",
+            conv_type="gat", device="auto", seed=42,
+            hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
+            scheduler_type="cosine", warmup_steps=500, min_lr_ratio=0.1,
+            early_stopping_patience=10,
+            diagnosis_weight=1.0, link_prediction_weight=0.5,
+            contrastive_weight=0.3, ortholog_weight=0.2,
+            gradient_accumulation_steps=1, max_grad_norm=1.0,
+            num_heads="8", use_ortholog_gate=True, amp_mode="float16",
+            temperature=0.07, label_smoothing=0.1, margin=1.0,
+            num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
+        )
+
+        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {"torch_compile": True})
+        assert tc._collect_config(**common)["compile"] is True
+
+        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
+        assert tc._collect_config(**common)["compile"] is False
 
 
 # ==============================================================================

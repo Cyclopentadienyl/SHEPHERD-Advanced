@@ -43,6 +43,7 @@ def create_runtime_settings_tab() -> None:
     current_alloc = settings.get("allocator_preset", DEFAULT_ALLOCATOR)
     if current_alloc not in ALLOCATOR_PRESETS:
         current_alloc = DEFAULT_ALLOCATOR
+    current_compile = bool(settings.get("torch_compile", False))
 
     gr.Markdown(
         "### Runtime Settings\n"
@@ -70,7 +71,9 @@ def create_runtime_settings_tab() -> None:
     with gr.Row():
         apply_btn = gr.Button("Apply Settings", variant="primary", elem_id="runtime_apply")
     status = gr.Markdown(
-        f"Applied allocator: **{current_alloc}**.", elem_id="runtime_status"
+        f"Applied: allocator **{current_alloc}**, "
+        f"torch.compile **{'on' if current_compile else 'off'}**.",
+        elem_id="runtime_status",
     )
 
     gr.Markdown("#### Memory")
@@ -104,29 +107,59 @@ def create_runtime_settings_tab() -> None:
                 "(~26 GB, comparable speed); plain native fragments (≈60→120 GB)._"
             )
 
-    def _on_change(_value):
+    gr.Markdown("#### Compute")
+    with gr.Group():
+        torch_compile = gr.Checkbox(
+            label="Enable torch.compile",
+            value=current_compile,
+            elem_id="torch_compile",
+        )
+        gr.Markdown(
+            "🟩 **Speed**  ·  🟧 **Precision ⚠️**  ·  🧪 **Experimental**  ·  "
+            "⏭️ **Next run** (no restart)\n\n"
+            "Fuses kernels to cut launch overhead; falls back to eager on failure. "
+            "Applies to the **next training run** — no backend restart needed."
+        )
+        with gr.Accordion("Details", open=False):
+            gr.Markdown(
+                "⚠️ **Experimental / benchmark-only — keep this off unless you are "
+                "explicitly benchmarking it.** Heterogeneous GNNs (HGT/GAT) often "
+                "graph-break and gain little, and on **GB10 (DGX Spark), HGT has been "
+                "observed to run _slower_ with torch.compile enabled**. There is also a "
+                "known sm_121 Triton issue on GB10 (it falls back to eager). Always "
+                "compare MRR / Hits@K against an eager run before trusting any result."
+            )
+
+    def _on_change(*_values):
         return "● **Unsaved changes** — click **Apply Settings** to persist."
 
-    def _on_apply(alloc):
+    def _on_apply(alloc, compile_on):
         data = load_runtime_settings()
-        previous = data.get("allocator_preset", DEFAULT_ALLOCATOR)
+        prev_alloc = data.get("allocator_preset", DEFAULT_ALLOCATOR)
         data["allocator_preset"] = alloc
+        data["torch_compile"] = bool(compile_on)
         save_runtime_settings(data)
-        msg = f"✓ Applied. Memory Allocator = **{alloc}**."
-        if alloc != previous:
-            msg += (
-                "  🔄 **Restart the backend** for the new allocator to take effect "
-                "(it is read once at startup)."
+
+        parts = [
+            f"✓ Applied. Memory Allocator = **{alloc}**, "
+            f"torch.compile = **{'on' if compile_on else 'off'}**."
+        ]
+        if alloc != prev_alloc:
+            parts.append(
+                "🔄 **Restart the backend** for the new allocator to take effect "
+                "(read once at startup)."
             )
+        parts.append("torch.compile applies to the **next training run** (no restart).")
         if _active_env_override():
-            msg += (
-                "  ⚠️ Note: an explicit `PYTORCH_ALLOC_CONF` env override is currently "
-                "active and will take precedence until removed."
+            parts.append(
+                "⚠️ An explicit `PYTORCH_ALLOC_CONF` env override is active and takes "
+                "precedence over the allocator until removed."
             )
-        return msg
+        return "  ".join(parts)
 
     allocator.change(fn=_on_change, inputs=[allocator], outputs=[status])
-    apply_btn.click(fn=_on_apply, inputs=[allocator], outputs=[status])
+    torch_compile.change(fn=_on_change, inputs=[torch_compile], outputs=[status])
+    apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile], outputs=[status])
 
 
 __all__ = ["create_runtime_settings_tab"]
