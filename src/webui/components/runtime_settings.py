@@ -54,6 +54,45 @@ _RESTART_LOCKED_HTML = (
     "restart is locked.</span>"
 )
 
+# Browser-side poller chained after the restart click. Re-exec'ing the backend
+# gives the new process a fresh Gradio session, so the already-loaded page keeps
+# polling against a session the new server doesn't know — System Resources and
+# dropdowns hang until a manual refresh. This watches /health and reloads the
+# page (an automatic F5) only once the NEW process is up, detected by EITHER the
+# uptime resetting (uptime_seconds drops below the value seen at click time) OR a
+# down→up transition. If the restart was refused (e.g. training active), neither
+# condition fires, the backend never goes down, and the poller just times out
+# without reloading.
+_RESTART_RELOAD_JS = """
+async () => {
+    const get = async () => {
+        try {
+            const r = await fetch('/health', {cache: 'no-store'});
+            return r.ok ? await r.json() : null;
+        } catch (e) { return null; }
+    };
+    const first = await get();
+    const oldUptime = (first && typeof first.uptime_seconds === 'number')
+        ? first.uptime_seconds : null;
+    const deadline = Date.now() + 90000;
+    let sawDown = false;
+    const poll = async () => {
+        const h = await get();
+        if (h === null) {
+            sawDown = true;
+        } else if (h.status === 'healthy') {
+            const restarted =
+                (oldUptime !== null && typeof h.uptime_seconds === 'number'
+                    && h.uptime_seconds < oldUptime)
+                || sawDown;
+            if (restarted) { window.location.reload(); return; }
+        }
+        if (Date.now() < deadline) { setTimeout(poll, 1000); }
+    };
+    setTimeout(poll, 2000);
+}
+"""
+
 
 def create_runtime_settings_tab() -> None:
     """Build the Runtime Settings tab (call inside a gr.Tab/gr.Blocks context)."""
@@ -197,14 +236,20 @@ def create_runtime_settings_tab() -> None:
                 value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
             )
         return gr.update(
-            value="🔄 **Restarting backend…** This page will reconnect "
-            "automatically in a few seconds."
+            value="🔄 **Restarting backend…** This page will reload "
+            "automatically once the backend is back (a few seconds)."
         )
 
     restart_lock_timer.tick(
         fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note]
     )
-    restart_btn.click(fn=_on_restart, outputs=[restart_status])
+    # After the click handler runs, kick off a browser-side poller that reloads
+    # the page once the fresh backend is up (a new process means a new Gradio
+    # session; without a reload the old page's pollers hang). The poller no-ops
+    # if the restart was refused.
+    restart_btn.click(fn=_on_restart, outputs=[restart_status]).then(
+        fn=None, inputs=None, outputs=None, js=_RESTART_RELOAD_JS
+    )
 
     def _on_change(*_values):
         return "● **Unsaved changes** — click **Apply Settings** to persist."
