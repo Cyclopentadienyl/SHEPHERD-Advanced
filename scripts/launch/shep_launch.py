@@ -16,6 +16,12 @@ DEFAULT_ENTRY = "uvicorn"
 UVICORN_APP = "src.api.main:app"
 UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
 
+# Ensure repo root is importable so the shared, gradio-free runtime presets
+# module loads regardless of how the launcher is invoked.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from src.runtime_presets import effective_allocator, load_runtime_settings  # noqa: E402
+
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
 
@@ -266,6 +272,28 @@ def main() -> int:
     retrieval_cfg = deploy_cfg.get("retrieval_backend", {})
     if retrieval_cfg:
         os.environ["SHEPHERD_RETRIEVAL_BACKEND"] = retrieval_cfg.get("default", "auto")
+
+    # Apply persisted Runtime Settings: CUDA memory allocator preset. Read once
+    # here so both this server's in-process CUDA and the training subprocesses it
+    # spawns inherit the same allocator. An explicit PYTORCH_ALLOC_CONF /
+    # PYTORCH_CUDA_ALLOC_CONF in the environment always wins (e.g. A/B tests).
+    # Presets + resolution live in src/runtime_presets.py (single source of truth);
+    # a malformed settings file falls back to {} and an unknown preset to the default.
+    raw_preset = load_runtime_settings().get("allocator_preset")
+    preset, conf = effective_allocator(os.environ, {"allocator_preset": raw_preset})
+    if preset is None:
+        # An explicit override was already present — record that so the WebUI
+        # "Restart Backend" action preserves it instead of re-resolving a preset.
+        os.environ["SHEPHERD_ALLOC_SOURCE"] = "env"
+        log("Runtime: PYTORCH_ALLOC_CONF set in environment — respecting explicit override")
+    else:
+        if raw_preset is not None and raw_preset != preset:
+            log(f"WARNING: unknown allocator preset '{raw_preset}'; falling back to '{preset}'")
+        os.environ["PYTORCH_ALLOC_CONF"] = conf
+        # Mark the value as preset-derived so a WebUI restart can re-resolve it
+        # from the freshly saved settings (picking up a newly chosen allocator).
+        os.environ["SHEPHERD_ALLOC_SOURCE"] = "preset"
+        log(f"Runtime: PYTORCH_ALLOC_CONF={conf} (allocator preset={preset})")
 
     # Collect passthrough args
     passthrough: List[str] = []

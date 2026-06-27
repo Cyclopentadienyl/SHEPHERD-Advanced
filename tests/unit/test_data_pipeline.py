@@ -153,6 +153,27 @@ gene_id	gene_symbol	hpo_id	hpo_name	frequency	disease_id
     return path
 
 
+@pytest.fixture
+def fake_mondo():
+    """Minimal stand-in for a MONDO Ontology exposing get_all_terms/get_term.
+
+    Note the prefix difference exercised here: MONDO xrefs use "Orphanet:<n>",
+    while the annotation files use "ORPHA:<n>".
+    """
+    class FakeMondo:
+        def get_all_terms(self, include_obsolete=False):
+            return ["MONDO:0000001", "MONDO:0000002"]
+
+        def get_term(self, term_id):
+            xrefs = {
+                "MONDO:0000001": ["OMIM:123456", "Orphanet:558"],
+                "MONDO:0000002": ["Orphanet:999"],
+            }.get(term_id)
+            return {"xrefs": xrefs} if xrefs is not None else None
+
+    return FakeMondo()
+
+
 # =============================================================================
 # HPOAnnotationParser Tests
 # =============================================================================
@@ -248,9 +269,47 @@ gene_id	gene_symbol	hpo_id	hpo_name	frequency	disease_id
         assert len(gene_pheno) == 1
 
     def test_build_omim_to_mondo_map_without_ontology(self):
-        """Parser works without mondo_ontology (empty OMIM map)."""
+        """Parser works without mondo_ontology (empty OMIM/ORPHA maps)."""
         parser = HPOAnnotationParser(mondo_ontology=None)
         assert parser._omim_to_mondo == {}
+        assert parser._orpha_to_mondo == {}
+
+    def test_xref_maps_built_from_ontology(self, fake_mondo):
+        """OMIM and ORPHA maps are built from MONDO xrefs, re-keying Orphanet->ORPHA."""
+        parser = HPOAnnotationParser(fake_mondo)
+
+        assert parser._omim_to_mondo == {"OMIM:123456": "MONDO:0000001"}
+        assert parser._orpha_to_mondo == {
+            "ORPHA:558": "MONDO:0000001",
+            "ORPHA:999": "MONDO:0000002",
+        }
+
+    def test_resolve_disease_id_all_prefixes(self, fake_mondo):
+        """_resolve_disease_id resolves MONDO/OMIM/ORPHA; rejects unmapped + DECIPHER."""
+        parser = HPOAnnotationParser(fake_mondo)
+
+        assert parser._resolve_disease_id("MONDO:0000123") == "MONDO:0000123"  # passthrough
+        assert parser._resolve_disease_id("OMIM:123456") == "MONDO:0000001"
+        assert parser._resolve_disease_id("ORPHA:558") == "MONDO:0000001"
+        assert parser._resolve_disease_id("ORPHA:999") == "MONDO:0000002"
+        assert parser._resolve_disease_id("ORPHA:000000") is None  # unmapped ORPHA
+        assert parser._resolve_disease_id("DECIPHER:1") is None
+
+    def test_orpha_annotation_mapped_with_ontology(self, tmp_dir, fake_mondo):
+        """An ORPHA-keyed phenotype.hpoa row is kept and mapped to MONDO."""
+        content = (
+            "database_id\tdisease_name\tqualifier\thpo_id\treference\tevidence\t"
+            "onset\tfrequency\tsex\tmodifier\taspect\tbiocuration\n"
+            "ORPHA:558\tMarfan syndrome\t\tHP:0001166\tPMID:1\tPCS\t\t\t\t\tP\tHPO:test\n"
+        )
+        path = tmp_dir / "phenotype.hpoa"
+        path.write_text(content, encoding="utf-8")
+
+        parser = HPOAnnotationParser(fake_mondo)
+        annotations = parser.parse_phenotype_hpoa(path)
+
+        assert len(annotations) == 1
+        assert annotations[0]["disease_id"] == "MONDO:0000001"
 
 
 # =============================================================================

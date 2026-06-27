@@ -26,13 +26,19 @@ class HPOAnnotationParser:
     def __init__(self, mondo_ontology=None):
         """
         Args:
-            mondo_ontology: Optional Ontology instance for OMIM->MONDO ID mapping.
-                           If provided, OMIM disease IDs will be translated to MONDO.
+            mondo_ontology: Optional Ontology instance for OMIM/ORPHA -> MONDO ID
+                           mapping. If provided, OMIM and ORPHA disease IDs are
+                           translated to MONDO (via MONDO's OMIM / Orphanet xrefs).
         """
         self._omim_to_mondo: Dict[str, str] = {}
+        self._orpha_to_mondo: Dict[str, str] = {}
         if mondo_ontology is not None:
             self._omim_to_mondo = self.build_omim_to_mondo_map(mondo_ontology)
-            logger.info(f"Built OMIM->MONDO map: {len(self._omim_to_mondo)} mappings")
+            self._orpha_to_mondo = self.build_orpha_to_mondo_map(mondo_ontology)
+            logger.info(
+                f"Built OMIM->MONDO map: {len(self._omim_to_mondo)} mappings; "
+                f"ORPHA->MONDO map: {len(self._orpha_to_mondo)} mappings"
+            )
 
     @staticmethod
     def build_omim_to_mondo_map(mondo_ontology) -> Dict[str, str]:
@@ -61,6 +67,36 @@ class HPOAnnotationParser:
 
         return omim_to_mondo
 
+    @staticmethod
+    def build_orpha_to_mondo_map(mondo_ontology) -> Dict[str, str]:
+        """
+        Build ORPHA -> MONDO ID mapping from MONDO ontology xrefs.
+
+        Note the prefix mismatch: phenotype.hpoa (and genes_to_phenotype.txt)
+        use "ORPHA:<n>", while MONDO xrefs use "Orphanet:<n>". The returned
+        dict is keyed by the annotation-file form ("ORPHA:<n>") so that
+        _resolve_disease_id can look it up directly.
+
+        Returns:
+            Dict mapping "ORPHA:558" -> "MONDO:0001234"
+        """
+        orpha_to_mondo: Dict[str, str] = {}
+
+        for term_id in mondo_ontology.get_all_terms(include_obsolete=False):
+            if not term_id.startswith("MONDO:"):
+                continue
+            term_info = mondo_ontology.get_term(term_id)
+            if term_info is None:
+                continue
+
+            for xref in term_info.get("xrefs", []):
+                xref_str = str(xref)
+                if xref_str.startswith("Orphanet:"):
+                    orpha_id = "ORPHA:" + xref_str.split(":", 1)[1]
+                    orpha_to_mondo[orpha_id] = term_id
+
+        return orpha_to_mondo
+
     def _resolve_disease_id(self, raw_id: str) -> Optional[str]:
         """
         Resolve a disease ID to a MONDO ID if possible.
@@ -72,7 +108,9 @@ class HPOAnnotationParser:
             return raw_id
         if raw_id.startswith("OMIM:"):
             return self._omim_to_mondo.get(raw_id)
-        # ORPHA and DECIPHER are not mapped for now
+        if raw_id.startswith("ORPHA:"):
+            return self._orpha_to_mondo.get(raw_id)
+        # DECIPHER is not mapped for now (only 296 annotations / 47 diseases)
         return None
 
     def parse_phenotype_hpoa(
