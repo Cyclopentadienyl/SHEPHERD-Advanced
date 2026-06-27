@@ -110,6 +110,32 @@ def create_gradio_app() -> gr.Blocks:
             div:has(> #status_display) .eta-bar {
                 display: none !important;
             }
+
+            /* Runtime Settings — coloured impact/scope pill badges */
+            .shep-badge-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin: 2px 0 8px;
+            }
+            .shep-badge {
+                display: inline-flex;
+                align-items: center;
+                padding: 2px 10px;
+                border-radius: 999px;
+                font-size: 0.72rem;
+                font-weight: 600;
+                line-height: 1.55;
+                letter-spacing: 0.01em;
+                white-space: nowrap;
+                border: 1px solid transparent;
+            }
+            .shep-badge-mem     { background: rgba(37,99,235,0.12);  color: #1d4ed8; border-color: rgba(37,99,235,0.30); }
+            .shep-badge-speed   { background: rgba(22,163,74,0.12);  color: #15803d; border-color: rgba(22,163,74,0.30); }
+            .shep-badge-prec    { background: rgba(217,119,6,0.14);  color: #b45309; border-color: rgba(217,119,6,0.34); }
+            .shep-badge-exp     { background: rgba(147,51,234,0.12); color: #7e22ce; border-color: rgba(147,51,234,0.30); }
+            .shep-badge-restart { background: rgba(220,38,38,0.12);  color: #b91c1c; border-color: rgba(220,38,38,0.30); }
+            .shep-badge-nextrun { background: rgba(100,116,139,0.14);color: #475569; border-color: rgba(100,116,139,0.32); }
         """,
     ) as app:
         gr.Markdown(

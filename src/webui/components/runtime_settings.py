@@ -37,6 +37,16 @@ def _active_env_override() -> str | None:
     return os.environ.get("PYTORCH_ALLOC_CONF") or os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
 
 
+def _badge(label: str, kind: str) -> str:
+    """Render a single coloured pill badge (styled by global CSS in app.py)."""
+    return f"<span class='shep-badge shep-badge-{kind}'>{label}</span>"
+
+
+def _badge_row(*badges: str) -> str:
+    """Wrap one or more badges in a flex row."""
+    return "<div class='shep-badge-row'>" + "".join(badges) + "</div>"
+
+
 def create_runtime_settings_tab() -> None:
     """Build the Runtime Settings tab (call inside a gr.Tab/gr.Blocks context)."""
     settings = load_runtime_settings()
@@ -84,8 +94,8 @@ def create_runtime_settings_tab() -> None:
             value=current_alloc,
             elem_id="allocator_preset",
         )
+        gr.HTML(_badge_row(_badge("Memory", "mem"), _badge("Restart required", "restart")))
         gr.Markdown(
-            "🟦 **Memory**  ·  🔄 **Restart required**\n\n"
             "GPU memory allocation strategy — governs fragmentation and peak usage. "
             "The backend also runs CUDA in-process (for diagnosis/inference), so a "
             "change applies only after the backend is restarted."
@@ -114,9 +124,15 @@ def create_runtime_settings_tab() -> None:
             value=current_compile,
             elem_id="torch_compile",
         )
+        gr.HTML(
+            _badge_row(
+                _badge("Speed", "speed"),
+                _badge("Precision ⚠", "prec"),
+                _badge("Experimental", "exp"),
+                _badge("Next run", "nextrun"),
+            )
+        )
         gr.Markdown(
-            "🟩 **Speed**  ·  🟧 **Precision ⚠️**  ·  🧪 **Experimental**  ·  "
-            "⏭️ **Next run** (no restart)\n\n"
             "Attempts to compile supported model regions to reduce overhead; dynamic "
             "PyG/HGT workloads may graph-break, fall back to eager, or run slower. "
             "Applies to the **next training run** — no backend restart needed."
