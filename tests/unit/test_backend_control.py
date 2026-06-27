@@ -40,7 +40,17 @@ def test_is_training_active_swallows_errors(monkeypatch):
         raise RuntimeError("status backend down")
 
     monkeypatch.setattr(bc.training_manager, "get_status", boom)
-    assert bc.is_training_active() is False  # must never raise into the UI
+    assert bc.is_training_active() is False  # UI default: fail open
+
+
+def test_is_training_active_fail_closed_on_error(monkeypatch):
+    def boom():
+        raise RuntimeError("status backend down")
+
+    monkeypatch.setattr(bc.training_manager, "get_status", boom)
+    # Destructive-restart path passes default_on_error=True -> treat as busy.
+    assert bc.is_training_active(default_on_error=True) is True
+    assert bc.is_training_active(default_on_error=False) is False
 
 
 # --------------------------------------------------------------------------- env re-resolve
@@ -71,8 +81,27 @@ def test_resolve_restart_env_preserves_explicit_override():
 
 
 def test_resolve_restart_env_no_marker_left_alone():
+    # No marker but an explicit allocator env var is present -> preserve it.
     out = bc.resolve_restart_env({"PYTORCH_ALLOC_CONF": "backend:native"})
     assert out["PYTORCH_ALLOC_CONF"] == "backend:native"
+
+
+def test_resolve_restart_env_no_marker_with_cuda_env_preserved():
+    # The legacy PYTORCH_CUDA_ALLOC_CONF override (no marker) is also preserved.
+    out = bc.resolve_restart_env({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
+    assert out["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert "PYTORCH_ALLOC_CONF" not in out  # nothing injected over an override
+
+
+def test_resolve_restart_env_direct_launch_resolves(monkeypatch):
+    # Direct `uvicorn ...` launch: no marker AND no allocator env -> the saved
+    # preset must be applied so "Apply + Restart" actually takes effect.
+    monkeypatch.setattr(
+        bc, "load_runtime_settings", lambda: {"allocator_preset": "expandable"}
+    )
+    out = bc.resolve_restart_env({})
+    assert out["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS["expandable"]
+    assert out[bc.ALLOC_SOURCE_ENV] == "preset"
 
 
 def test_resolve_restart_env_returns_copy():
@@ -113,7 +142,7 @@ def test_build_restart_argv_non_uvicorn_verbatim():
 
 # --------------------------------------------------------------------------- restart
 def test_restart_backend_refused_while_training(monkeypatch):
-    monkeypatch.setattr(bc, "is_training_active", lambda: True)
+    monkeypatch.setattr(bc, "is_training_active", lambda **_: True)
     calls = []
     res = bc.restart_backend(_scheduler=lambda fn: calls.append(fn))
     assert res["success"] is False
@@ -121,8 +150,30 @@ def test_restart_backend_refused_while_training(monkeypatch):
     assert calls == []  # nothing scheduled
 
 
+def test_restart_backend_aborts_if_training_starts_during_delay(monkeypatch):
+    # Guard sees idle (schedule), but the worker re-check sees training active
+    # (started during the delay) -> must NOT exec.
+    checks = {"n": 0}
+
+    def flaky_active(default_on_error=False):
+        checks["n"] += 1
+        return checks["n"] > 1  # False on the first call, True afterwards
+
+    monkeypatch.setattr(bc, "is_training_active", flaky_active)
+    executed = []
+    worker_box = []
+    res = bc.restart_backend(
+        delay=0,
+        _scheduler=lambda fn: worker_box.append(fn),
+        _execv=lambda *a: executed.append(a),
+    )
+    assert res["success"] is True  # scheduled at guard time
+    worker_box[0]()  # run the worker — it should abort on the second check
+    assert executed == []  # execve never called
+
+
 def test_restart_backend_schedules_and_execs(monkeypatch):
-    monkeypatch.setattr(bc, "is_training_active", lambda: False)
+    monkeypatch.setattr(bc, "is_training_active", lambda **_: False)
     monkeypatch.setattr(bc.sys, "executable", "/usr/bin/python")
     monkeypatch.setattr(
         bc.sys, "argv", ["/x/uvicorn/__main__.py", "src.api.main:app", "--port", "8000"]

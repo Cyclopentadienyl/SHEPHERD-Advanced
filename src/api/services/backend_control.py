@@ -59,26 +59,45 @@ ALLOC_SOURCE_ENV = "SHEPHERD_ALLOC_SOURCE"
 _BUSY_STATUSES = ("running", "stopping")
 
 
-def is_training_active() -> bool:
-    """True if a training run is in progress (restart must be blocked)."""
+def is_training_active(default_on_error: bool = False) -> bool:
+    """True if a training run is in progress (restart must be blocked).
+
+    ``default_on_error`` is what to return when the status can't be read:
+    callers that gate a destructive restart pass ``True`` (fail closed — treat
+    an unknown state as "busy"), while the UI polling path keeps the default
+    ``False`` (fail open — a transient read error must not break the page).
+    """
     try:
         return training_manager.get_status().get("status") in _BUSY_STATUSES
-    except Exception:  # a status read must never break the UI
+    except Exception:
         logger.debug("is_training_active: status check failed", exc_info=True)
-        return False
+        return default_on_error
 
 
 def resolve_restart_env(env: Dict[str, str]) -> Dict[str, str]:
     """Return a copy of ``env`` with the allocator re-resolved for restart.
 
-    If the launcher applied ``PYTORCH_ALLOC_CONF`` from a preset
-    (``SHEPHERD_ALLOC_SOURCE == "preset"``), re-resolve it from the freshly
-    saved settings so a newly chosen allocator takes effect on the next process.
-    A genuine explicit override (marker absent or ``"env"``) is left untouched.
+    The saved allocator preset is applied when the current allocator is
+    "preset-derived":
+      - the launcher applied it from a preset (``SHEPHERD_ALLOC_SOURCE ==
+        "preset"``), or
+      - the backend was launched directly (e.g. bare ``uvicorn``) with **no**
+        marker and **no** explicit allocator env var — so applying a setting via
+        the UI and restarting actually takes effect.
+
+    An explicit override is preserved untouched:
+      - ``SHEPHERD_ALLOC_SOURCE == "env"`` (launcher saw an override at launch), or
+      - a ``PYTORCH_ALLOC_CONF`` / ``PYTORCH_CUDA_ALLOC_CONF`` present without a
+        marker (set directly by whoever started the process).
     """
     new_env = dict(env)
-    if new_env.get(ALLOC_SOURCE_ENV) == "preset":
-        preset, conf = resolve_allocator(load_runtime_settings().get("allocator_preset"))
+    marker = new_env.get(ALLOC_SOURCE_ENV)
+    has_env_alloc = (
+        "PYTORCH_ALLOC_CONF" in new_env or "PYTORCH_CUDA_ALLOC_CONF" in new_env
+    )
+    preset_derived = marker == "preset" or (marker is None and not has_env_alloc)
+    if preset_derived:
+        _preset, conf = resolve_allocator(load_runtime_settings().get("allocator_preset"))
         new_env["PYTORCH_ALLOC_CONF"] = conf
         new_env[ALLOC_SOURCE_ENV] = "preset"
     return new_env
@@ -116,7 +135,8 @@ def restart_backend(
     The ``_scheduler`` / ``_execv`` hooks exist for testing — production uses a
     daemon thread and ``os.execve``.
     """
-    if is_training_active():
+    # Fail closed for this destructive action: an unreadable status blocks it.
+    if is_training_active(default_on_error=True):
         return {"success": False, "error": "Training in progress — restart is locked."}
 
     executable = sys.executable
@@ -124,6 +144,15 @@ def restart_backend(
 
     def _worker() -> None:
         time.sleep(delay)
+        # Re-check after the delay: training may have started (via the REST API
+        # or another tab) during the window. Aborting here prevents orphaning a
+        # live training subprocess. Fail closed if the status can't be read.
+        if is_training_active(default_on_error=True):
+            logger.warning(
+                "Backend restart aborted: training became active during the "
+                "restart delay."
+            )
+            return
         env = resolve_restart_env(dict(os.environ))
         logger.info("Restarting backend: %s", " ".join(argv))
         try:
