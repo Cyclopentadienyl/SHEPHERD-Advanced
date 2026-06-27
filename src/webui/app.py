@@ -136,6 +136,13 @@ def create_gradio_app() -> gr.Blocks:
             .shep-badge-exp     { background: rgba(147,51,234,0.12); color: #7e22ce; border-color: rgba(147,51,234,0.30); }
             .shep-badge-restart { background: rgba(220,38,38,0.12);  color: #b91c1c; border-color: rgba(220,38,38,0.30); }
             .shep-badge-nextrun { background: rgba(100,116,139,0.14);color: #475569; border-color: rgba(100,116,139,0.32); }
+
+            /* Restart-locked warning (training in progress) */
+            .shep-restart-locked {
+                color: #dc2626;
+                font-weight: 600;
+                font-size: 0.85rem;
+            }
         """,
     ) as app:
         gr.Markdown(

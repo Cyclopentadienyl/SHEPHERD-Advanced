@@ -24,6 +24,7 @@ import os
 
 import gradio as gr
 
+from src.api.services.backend_control import is_training_active, restart_backend
 from src.runtime_presets import (
     ALLOCATOR_PRESETS,
     DEFAULT_ALLOCATOR,
@@ -45,6 +46,13 @@ def _badge(label: str, kind: str) -> str:
 def _badge_row(*badges: str) -> str:
     """Wrap one or more badges in a flex row."""
     return "<div class='shep-badge-row'>" + "".join(badges) + "</div>"
+
+
+# Red warning shown beside the Restart button while training is in progress.
+_RESTART_LOCKED_HTML = (
+    "<span class='shep-restart-locked'>⛔ Training in progress — "
+    "restart is locked.</span>"
+)
 
 
 def create_runtime_settings_tab() -> None:
@@ -146,6 +154,57 @@ def create_runtime_settings_tab() -> None:
                 "known sm_121 Triton issue on GB10 (it falls back to eager). Always "
                 "compare MRR / Hits@K against an eager run before trusting any result."
             )
+
+    gr.Markdown("#### Backend")
+    with gr.Group():
+        gr.HTML(_badge_row(_badge("Process", "mem"), _badge("Restart required", "restart")))
+        # Initial lock state reflects whether training is running at page load;
+        # the timer below keeps it live.
+        _locked_now = is_training_active()
+        with gr.Row():
+            restart_btn = gr.Button(
+                "Restart Backend",
+                variant="secondary",
+                interactive=not _locked_now,
+                elem_id="runtime_restart",
+            )
+        restart_lock_note = gr.HTML(
+            _RESTART_LOCKED_HTML if _locked_now else "",
+            visible=_locked_now,
+            elem_id="runtime_restart_lock",
+        )
+        restart_status = gr.Markdown("", elem_id="runtime_restart_status")
+        gr.Markdown(
+            "Stops and relaunches the backend process (REST API **and** this UI) "
+            "so a newly applied **Memory Allocator** takes effect. The button is "
+            "**locked while training is running** to prevent accidental loss of a "
+            "run; this page reconnects automatically a few seconds after a restart."
+        )
+        # Keep the lock state live without manual refresh (cheap status read).
+        restart_lock_timer = gr.Timer(4.0)
+
+    def _refresh_restart_lock():
+        locked = is_training_active()
+        return (
+            gr.update(interactive=not locked),
+            gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
+        )
+
+    def _on_restart():
+        result = restart_backend()
+        if not result.get("success"):
+            return gr.update(
+                value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
+            )
+        return gr.update(
+            value="🔄 **Restarting backend…** This page will reconnect "
+            "automatically in a few seconds."
+        )
+
+    restart_lock_timer.tick(
+        fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note]
+    )
+    restart_btn.click(fn=_on_restart, outputs=[restart_status])
 
     def _on_change(*_values):
         return "● **Unsaved changes** — click **Apply Settings** to persist."

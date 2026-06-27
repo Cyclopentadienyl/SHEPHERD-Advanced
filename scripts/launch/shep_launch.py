@@ -282,11 +282,17 @@ def main() -> int:
     raw_preset = load_runtime_settings().get("allocator_preset")
     preset, conf = effective_allocator(os.environ, {"allocator_preset": raw_preset})
     if preset is None:
+        # An explicit override was already present — record that so the WebUI
+        # "Restart Backend" action preserves it instead of re-resolving a preset.
+        os.environ["SHEPHERD_ALLOC_SOURCE"] = "env"
         log("Runtime: PYTORCH_ALLOC_CONF set in environment — respecting explicit override")
     else:
         if raw_preset is not None and raw_preset != preset:
             log(f"WARNING: unknown allocator preset '{raw_preset}'; falling back to '{preset}'")
         os.environ["PYTORCH_ALLOC_CONF"] = conf
+        # Mark the value as preset-derived so a WebUI restart can re-resolve it
+        # from the freshly saved settings (picking up a newly chosen allocator).
+        os.environ["SHEPHERD_ALLOC_SOURCE"] = "preset"
         log(f"Runtime: PYTORCH_ALLOC_CONF={conf} (allocator preset={preset})")
 
     # Collect passthrough args
