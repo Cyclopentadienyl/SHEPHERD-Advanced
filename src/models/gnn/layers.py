@@ -43,6 +43,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Single source of truth for the conv types the factory below can build.
+# Adding a new architecture means: implement its branch in HeteroGNNLayer AND
+# add its name here. Inference validates a checkpoint's conv_type against this
+# set, so a newly registered type is accepted end-to-end with no other backend
+# changes.
+SUPPORTED_CONV_TYPES = ("hgt", "gat", "sage")
+
 
 class HeteroGNNLayer(nn.Module):
     """
@@ -134,7 +141,10 @@ class HeteroGNNLayer(nn.Module):
                         hidden_dim,
                     )
                 else:
-                    raise ValueError(f"Unknown conv_type: {conv_type}")
+                    raise ValueError(
+                        f"Unknown conv_type: {conv_type!r} "
+                        f"(supported: {SUPPORTED_CONV_TYPES})"
+                    )
 
             self.conv = HeteroConv(conv_dict, aggr="sum")
 
