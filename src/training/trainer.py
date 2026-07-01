@@ -853,6 +853,25 @@ class Trainer:
                 config_dict[k] = dataclasses.asdict(v)
             else:
                 config_dict[k] = v
+
+        # Embed the model architecture so checkpoints are self-describing for
+        # inference. TrainerConfig carries only training hyperparameters, so
+        # without this the model-arch fields (conv_type, dims, ...) never reach
+        # the checkpoint and inference has to guess them.
+        model_cfg = getattr(getattr(self, "model", None), "config", None)
+        if dataclasses.is_dataclass(model_cfg) and not isinstance(model_cfg, type):
+            for field in (
+                "conv_type",
+                "hidden_dim",
+                "num_layers",
+                "num_heads",
+                "use_positional_encoding",
+                "use_ortholog_gate",
+            ):
+                value = getattr(model_cfg, field, None)
+                if value is not None:
+                    config_dict.setdefault(field, value)
+
         return config_dict
 
     def save_checkpoint(self, filepath: Union[str, Path], data_fingerprint: Optional[Dict[str, Any]] = None) -> None:

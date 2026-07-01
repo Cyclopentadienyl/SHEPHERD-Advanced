@@ -105,6 +105,48 @@ PostProcessCallback = Callable[
 
 
 # ==============================================================================
+# Checkpoint architecture inference
+# ==============================================================================
+def _infer_conv_type_from_keys(state_keys) -> Optional[str]:
+    """Infer the GNN conv type from a checkpoint's parameter names.
+
+    Older checkpoints don't record ``conv_type`` in their config (the trainer
+    serialized only training hyperparameters), so we recover it from the weight
+    names — otherwise an HGT/SAGE checkpoint is silently rebuilt as the GAT
+    default and the state_dict load fails.
+
+    Distinguishing markers (params are under ``gnn_layers.<n>.conv...``):
+      - HGT (``HGTConv``): ``kqv_lin`` / ``k_rel`` / ``v_rel`` / ``p_rel`` / ``skip``
+      - GAT (``GATConv`` in ``HeteroConv``): ``att_src`` / ``att_dst``
+      - SAGE (``SAGEConv`` in ``HeteroConv``): ``lin_l`` / ``lin_r`` (no attention)
+    """
+    keys = state_keys if isinstance(state_keys, (set, frozenset)) else set(state_keys)
+    if any(
+        (".conv.kqv_lin." in k or ".conv.k_rel" in k or ".conv.v_rel" in k
+         or ".conv.p_rel." in k or ".conv.skip." in k)
+        for k in keys
+    ):
+        return "hgt"
+    if any(k.endswith(".att_src") or k.endswith(".att_dst") for k in keys):
+        return "gat"
+    if any((".conv.convs." in k) and (".lin_l." in k or ".lin_r." in k) for k in keys):
+        return "sage"
+    return None
+
+
+def _infer_num_layers_from_keys(state_keys) -> Optional[int]:
+    """Infer the number of GNN layers from the highest ``gnn_layers.<n>`` index."""
+    import re
+
+    indices = set()
+    for k in state_keys:
+        m = re.match(r"gnn_layers\.(\d+)\.", k)
+        if m:
+            indices.add(int(m.group(1)))
+    return (max(indices) + 1) if indices else None
+
+
+# ==============================================================================
 # Configuration
 # ==============================================================================
 @dataclass
@@ -634,11 +676,36 @@ class DiagnosisPipeline:
             k.startswith("ortholog_gate.") for k in state_keys
         )
 
+        # conv_type / num_layers: prefer the saved config, but recover them from
+        # the parameter names when absent (older checkpoints didn't record model
+        # architecture). Without this, an HGT/SAGE checkpoint is rebuilt as the
+        # GAT default -> state_dict load fails -> silent path_reasoning fallback.
+        cfg_conv = ckpt_config.get("conv_type")
+        detected_conv = _infer_conv_type_from_keys(state_keys)
+        if cfg_conv and detected_conv and cfg_conv != detected_conv:
+            logger.warning(
+                "Checkpoint config conv_type=%r disagrees with parameter names "
+                "(detected %r); trusting the weights.",
+                cfg_conv, detected_conv,
+            )
+            conv_type = detected_conv
+        else:
+            conv_type = cfg_conv or detected_conv or "gat"
+            if not cfg_conv and detected_conv:
+                logger.info(
+                    "conv_type not in checkpoint config; detected %r from weights.",
+                    detected_conv,
+                )
+
+        num_layers = ckpt_config.get("num_layers") or _infer_num_layers_from_keys(
+            state_keys
+        ) or 4
+
         model_config = ShepherdGNNConfig(
             hidden_dim=hidden_dim,
-            num_layers=ckpt_config.get("num_layers", 4),
+            num_layers=num_layers,
             num_heads=ckpt_config.get("num_heads", 8),
-            conv_type=ckpt_config.get("conv_type", "gat"),
+            conv_type=conv_type,
             dropout=0.0,  # No dropout at inference time
             use_positional_encoding=ckpt_config.get(
                 "use_positional_encoding", has_pos_encoder
