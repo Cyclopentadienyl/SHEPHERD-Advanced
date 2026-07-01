@@ -866,6 +866,22 @@ class Trainer:
         if dataclasses.is_dataclass(model_cfg) and not isinstance(model_cfg, type):
             config_dict["model_config"] = dataclasses.asdict(model_cfg)
 
+            # Forward-compat: also mirror the core arch fields at the top level so
+            # an interim inference build that reads flat fields (but not
+            # model_config yet) can still reconstruct the model. model_config
+            # remains the authoritative source; the loader prefers it.
+            for field in (
+                "conv_type",
+                "hidden_dim",
+                "num_layers",
+                "num_heads",
+                "use_positional_encoding",
+                "use_ortholog_gate",
+            ):
+                value = getattr(model_cfg, field, None)
+                if value is not None:
+                    config_dict.setdefault(field, value)
+
         return config_dict
 
     def save_checkpoint(self, filepath: Union[str, Path], data_fingerprint: Optional[Dict[str, Any]] = None) -> None:

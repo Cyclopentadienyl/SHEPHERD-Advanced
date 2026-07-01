@@ -173,18 +173,42 @@ def _resolve_arch_params(
       4. ``ShepherdGNNConfig`` defaults (applied by the caller when a key is
          simply absent from the returned dict).
 
-    Unknown keys are filtered against ``valid_fields`` to tolerate version drift.
-    The weights are treated as structural ground truth: an explicit ``conv_type``
-    that conflicts with the parameter names is overridden (with a warning). An
-    explicit-but-unsupported ``conv_type`` raises rather than silently degrading
-    to GAT.
+    Unknown keys are filtered against ``valid_fields`` to tolerate version drift
+    (and are logged). ``conv_type`` handling depends on where it came from, which
+    is tracked explicitly:
+
+      - ``model_config`` (tier 1) is the trainer's authoritative self-description
+        and is TRUSTED over the weight-key heuristic (only warned on conflict).
+        The heuristic is a legacy fallback that is not future-proof — a new
+        architecture may reuse PyG key patterns (e.g. ``att_src`` / ``lin_l``),
+        so it must not override an explicit model_config value.
+      - ``legacy_flat`` (tier 2) predates ``model_config``; here the weights are
+        treated as structural ground truth and override a conflicting value.
+      - ``inferred`` (tier 3) is derived from the weights, so it cannot conflict.
+
+    In all cases an explicit-but-unsupported ``conv_type`` raises rather than
+    silently degrading to GAT; only a truly absent/undetectable one defaults.
     """
     params: dict = {}
+    conv_source = None  # "model_config" | "legacy_flat" | "inferred"
 
     # Tier 1: full self-describing model_config sub-dict.
     model_config = ckpt_config.get("model_config")
     if isinstance(model_config, dict):
-        params.update({k: v for k, v in model_config.items() if k in valid_fields})
+        ignored = []
+        for k, v in model_config.items():
+            if k in valid_fields:
+                params[k] = v
+            else:
+                ignored.append(k)
+        if ignored:
+            logger.warning(
+                "Ignoring unknown model_config field(s) not in the current "
+                "ShepherdGNNConfig schema: %s",
+                sorted(ignored),
+            )
+        if "conv_type" in params:
+            conv_source = "model_config"
 
     # Tier 2: legacy flat arch fields (fill only what tier 1 didn't provide).
     for key in (
@@ -197,11 +221,14 @@ def _resolve_arch_params(
     ):
         if key not in params and key in valid_fields and ckpt_config.get(key) is not None:
             params[key] = ckpt_config[key]
+            if key == "conv_type":
+                conv_source = "legacy_flat"
 
     # Tier 3: infer structural fields from the parameter names when still absent.
     detected_conv = _infer_conv_type_from_keys(state_keys)
     if "conv_type" not in params and detected_conv:
         params["conv_type"] = detected_conv
+        conv_source = "inferred"
         logger.info(
             "conv_type not in checkpoint config; detected %r from weights.",
             detected_conv,
@@ -215,17 +242,26 @@ def _resolve_arch_params(
     if "use_ortholog_gate" in valid_fields:
         params.setdefault("use_ortholog_gate", has_ortholog_gate)
 
-    # Weights are ground truth: override an explicit conv_type that disagrees
-    # with the parameter names (detection only ever returns a known type; a new
-    # architecture whose weights match none of the markers yields None and is
-    # left untouched).
-    if params.get("conv_type") and detected_conv and params["conv_type"] != detected_conv:
-        logger.warning(
-            "Checkpoint conv_type=%r disagrees with parameter names (detected "
-            "%r); trusting the weights.",
-            params["conv_type"], detected_conv,
-        )
-        params["conv_type"] = detected_conv
+    # Conflict handling depends on the SOURCE of conv_type:
+    #   - legacy_flat: weights are ground truth -> override on conflict.
+    #   - model_config: authoritative -> keep it, only warn (the key heuristic is
+    #     a legacy fallback that may misclassify future architectures).
+    conv_type = params.get("conv_type")
+    if conv_type is not None and detected_conv and conv_type != detected_conv:
+        if conv_source == "legacy_flat":
+            logger.warning(
+                "Legacy flat conv_type=%r disagrees with parameter names "
+                "(detected %r); trusting the weights.",
+                conv_type, detected_conv,
+            )
+            params["conv_type"] = detected_conv
+        else:  # model_config
+            logger.warning(
+                "model_config conv_type=%r disagrees with the weight-key "
+                "heuristic (detected %r); trusting model_config, as the heuristic "
+                "is a legacy fallback that may misclassify newer architectures.",
+                conv_type, detected_conv,
+            )
 
     # Validate: an explicit-but-unsupported conv_type must fail loudly. Only a
     # truly absent/undetectable conv_type falls back to the GAT default.

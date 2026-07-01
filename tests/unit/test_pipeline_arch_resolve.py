@@ -72,15 +72,43 @@ def test_tier4_absent_defaults_to_gat():
     assert p["conv_type"] == "gat"
 
 
-# --------------------------------------------------------------- ground truth
-def test_conflicting_conv_type_trusts_weights():
-    p = _resolve({"model_config": {"conv_type": "gat"}}, HGT_KEYS)
-    assert p["conv_type"] == "hgt"  # weights win
+# --------------------------------------------------------------- conv_type source precedence
+def test_model_config_conv_type_trusted_over_heuristic():
+    # Tier-1 model_config is authoritative; the legacy weight heuristic must NOT
+    # override it (the heuristic is not future-proof).
+    p = _resolve({"model_config": {"conv_type": "sage"}}, GAT_KEYS)
+    assert p["conv_type"] == "sage"
+
+
+def test_legacy_flat_conv_type_overridden_by_weights():
+    # Tier-2 flat fields predate model_config; weights are structural ground
+    # truth and override a conflicting flat value.
+    p = _resolve({"conv_type": "gat"}, HGT_KEYS)
+    assert p["conv_type"] == "hgt"
+
+
+def test_supported_future_conv_type_not_overridden_by_heuristic():
+    # Codex case: a supported future type whose weights look GAT-like must be
+    # kept, not silently rewritten to "gat".
+    p = _resolve_arch_params(
+        {"model_config": {"conv_type": "gatv2"}},
+        set(GAT_KEYS),
+        valid_fields=VALID,
+        supported_conv=("hgt", "gat", "sage", "gatv2"),
+    )
+    assert p["conv_type"] == "gatv2"
 
 
 def test_unsupported_conv_type_raises():
     with pytest.raises(ValueError, match="unsupported conv_type"):
         _resolve({"model_config": {"conv_type": "newnet"}}, set())
+
+
+def test_unsupported_model_config_conv_type_raises_even_with_detectable_keys():
+    # Codex case: the raise must fire even when the state_dict is detectable —
+    # the explicit (unsupported) model_config value must not be "corrected" away.
+    with pytest.raises(ValueError, match="unsupported conv_type"):
+        _resolve({"model_config": {"conv_type": "newnet"}}, HGT_KEYS)
 
 
 def test_unknown_fields_filtered():
