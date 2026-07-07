@@ -27,8 +27,12 @@ Version: 1.0.0
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
+import re
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -39,6 +43,30 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "http://127.0.0.1:8000"
 PIPELINE_API = f"{API_BASE}/api/v1"
+
+# Canonical HPO term id, e.g. HP:0001250. Tolerant of case, an optional / missing
+# colon, and surrounding whitespace ("hp 0001250", "HP:0001250", "HP_0001250"),
+# and a trailing non-digit so it won't grab 7 digits out of a longer number. The
+# leading/trailing guards avoid matching inside another token (e.g. "CHP:...").
+_HPO_ID_RE = re.compile(r"(?<![A-Za-z0-9])HP[:_\s]*(\d{7})(?![0-9])", re.IGNORECASE)
+
+
+def _parse_hpo_ids(text: str) -> List[str]:
+    """Extract HPO term ids from free-form text, tolerant of formatting.
+
+    Accepts ids separated by newlines, commas, semicolons, spaces or tabs, with
+    or without a trailing name, and mixed with stray punctuation — everything the
+    strict one-per-line parser used to reject. Normalises to canonical
+    ``HP:0000000`` form, preserves order, and de-duplicates.
+    """
+    seen: set[str] = set()
+    ids: List[str] = []
+    for match in _HPO_ID_RE.finditer(text or ""):
+        hpo_id = f"HP:{match.group(1)}"
+        if hpo_id not in seen:
+            seen.add(hpo_id)
+            ids.append(hpo_id)
+    return ids
 
 # Confidence label → (emoji, CSS color)
 LABEL_STYLES = {
@@ -296,36 +324,194 @@ def _format_full_explanation(candidate: Dict) -> str:
 
 
 # =============================================================================
+# Export helpers — write ALL candidates (not just the previewed one) to a file
+# =============================================================================
+_CSV_COLUMNS = [
+    "rank", "disease_id", "disease_name", "confidence_score", "confidence_label",
+    "gnn_score", "sp_score", "reasoning_score", "evidence_mode", "evidence_summary",
+    "min_path_length", "num_direct_paths", "num_analogies",
+    "matching_phenotypes", "supporting_genes",
+]
+
+
+def _fmt_num(value: Any) -> str:
+    return f"{value:.4f}" if isinstance(value, (int, float)) else ""
+
+
+# KG disease ids are stored as "<source>:<CURIE>", e.g. "mondo:MONDO:0019441".
+# The lowercase source tag duplicates the CURIE namespace and reads as redundant.
+# Strip it — but conservatively: ONLY when the source maps to the inner namespace,
+# so a genuine cross-namespace id like "mondo:OMIM:123" is left untouched.
+_DISEASE_SOURCE_TO_NS = {
+    "mondo": "MONDO",
+    "omim": "OMIM",
+    "orpha": "ORPHA",
+    "orphanet": "ORPHA",
+    "decipher": "DECIPHER",
+}
+
+
+def _clean_disease_id(disease_id: Any) -> str:
+    """Drop a redundant lowercase source tag: 'mondo:MONDO:0019441' -> 'MONDO:0019441'.
+
+    Only strips when the source maps to (or literally equals) the inner CURIE
+    namespace; anything else — a bare CURIE, a cross-namespace id, or an
+    unknown shape — is returned unchanged.
+    """
+    text = str(disease_id or "").strip()
+    parts = text.split(":", 2)
+    if len(parts) == 3:
+        source, namespace, local = parts
+        expected = _DISEASE_SOURCE_TO_NS.get(source.lower())
+        if (expected is not None and expected == namespace.upper()) or \
+                source.lower() == namespace.lower():
+            return f"{namespace}:{local}"
+    return text
+
+
+def _build_results_csv(result: Dict[str, Any]) -> str:
+    """One row per candidate — the tabular summary, for spreadsheet analysis."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for c in result.get("candidates", []):
+        pkg = c.get("evidence_package") or {}
+        writer.writerow({
+            "rank": c.get("rank"),
+            "disease_id": _clean_disease_id(c.get("disease_id", "")),
+            "disease_name": c.get("disease_name", ""),
+            "confidence_score": _fmt_num(c.get("confidence_score")),
+            "confidence_label": c.get("confidence_label") or "",
+            "gnn_score": _fmt_num(c.get("gnn_score")),
+            "sp_score": _fmt_num(c.get("sp_score")),
+            "reasoning_score": _fmt_num(c.get("reasoning_score")),
+            "evidence_mode": pkg.get("mode") or "",
+            "evidence_summary": (pkg.get("summary") or "").replace("\n", " ").strip(),
+            "min_path_length": pkg.get("min_path_length", ""),
+            "num_direct_paths": len(pkg.get("direct_paths") or []),
+            "num_analogies": len(pkg.get("analogies") or []),
+            "matching_phenotypes": "; ".join(c.get("matching_phenotypes") or []),
+            "supporting_genes": "; ".join(c.get("supporting_genes") or []),
+        })
+    return buf.getvalue()
+
+
+def _build_results_report_md(result: Dict[str, Any]) -> str:
+    """Full human-readable report: session meta + summary table + per-candidate
+    evidence and explanation for EVERY candidate (reuses the preview formatters)."""
+    candidates = result.get("candidates", [])
+    lines = ["# SHEPHERD-Advanced Diagnosis Report", ""]
+    for key, value in (
+        ("Patient ID", result.get("patient_id")),
+        ("Session ID", result.get("session_id")),
+        ("Timestamp", result.get("timestamp")),
+        ("Model version", result.get("model_version")),
+        ("Inference time (ms)", f"{result.get('inference_time_ms', 0):.1f}"),
+        ("Candidates", len(candidates)),
+    ):
+        if value not in (None, ""):
+            lines.append(f"- **{key}**: {value}")
+    query = result.get("_query_phenotypes") or []
+    if query:
+        lines.append(f"- **Query phenotypes**: {', '.join(query)}")
+    warnings = result.get("warnings") or []
+    if warnings:
+        lines.append(f"- **Warnings**: {'; '.join(warnings)}")
+
+    lines += ["", "## Ranked candidates", "", _format_results_table(candidates),
+              "", "## Per-candidate detail"]
+    for c in candidates:
+        lines += [
+            "",
+            f"### #{c.get('rank')} — {c.get('disease_name')}",
+            f"`{_clean_disease_id(c.get('disease_id', ''))}` · confidence "
+            f"{_fmt_num(c.get('confidence_score')) or 'n/a'}",
+            "",
+            "**Evidence**",
+            "",
+            _format_evidence_detail(c),
+            "",
+            "**Full explanation**",
+            "",
+            _format_full_explanation(c),
+            "",
+            "---",
+        ]
+    return "\n".join(lines)
+
+
+def _slug(value: Any, default: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_") or default
+
+
+# One export directory reused across diagnoses in this process. Files are named by
+# session signature so they don't collide; periodic cleanup is future work.
+_EXPORT_DIR: Optional[Path] = None
+
+
+def _export_dir() -> Path:
+    global _EXPORT_DIR
+    if _EXPORT_DIR is None or not _EXPORT_DIR.exists():
+        _EXPORT_DIR = Path(tempfile.mkdtemp(prefix="shepherd_export_"))
+    return _EXPORT_DIR
+
+
+def _export_basename(result: Dict[str, Any]) -> str:
+    """diagnosis_<patient>_<session-signature> — distinct per run for easy filing."""
+    patient = _slug(result.get("patient_id"), "webui_patient")
+    session = _slug(result.get("session_id") or result.get("timestamp"), "run")
+    return f"diagnosis_{patient}_{session}"
+
+
+def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
+    """Generate both export files for a result up front (so the DownloadButtons
+    can serve them on the first click). Returns (csv_path, md_path)."""
+    base = _export_basename(result)
+    directory = _export_dir()
+    csv_path = directory / f"{base}.csv"
+    md_path = directory / f"{base}_report.md"
+    csv_path.write_text(_build_results_csv(result), encoding="utf-8")
+    md_path.write_text(_build_results_report_md(result), encoding="utf-8")
+    return str(csv_path), str(md_path)
+
+
+# =============================================================================
 # Event handlers
 # =============================================================================
+# DownloadButton update for the "no downloadable result" state.
+_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False)
+
+
 def _on_diagnose(
     phenotype_text: str,
     patient_id: str,
     top_k: int,
-) -> Tuple[str, str, str, gr.update]:
+):
     """
     Handle the Diagnose button click.
 
-    Returns: (results_table, evidence_detail, explanation, candidate_dropdown_update)
+    Returns: (results_table, evidence_detail, explanation,
+              candidate_dropdown_update, results_state,
+              export_csv_update, export_report_update)
+
+    The full API result is stashed in results_state so the candidate dropdown
+    reuses it without re-running inference. Export files are generated up front
+    here and set as the DownloadButtons' values, so a single click downloads
+    them (avoids the gr.DownloadButton "download current value, then update"
+    two-click behaviour).
     """
-    # Parse phenotype input
-    lines = [
-        line.strip() for line in phenotype_text.strip().split("\n")
-        if line.strip()
-    ]
-    hpo_ids = []
-    for line in lines:
-        # Accept "HP:0001250 — Seizure" or just "HP:0001250"
-        token = line.split("—")[0].split("-")[0].strip()
-        if token.startswith("HP:"):
-            hpo_ids.append(token.strip())
+    hpo_ids = _parse_hpo_ids(phenotype_text)
 
     if not hpo_ids:
         return (
-            "⚠️ **No valid HPO terms found.** Enter one HPO ID per line (e.g., `HP:0001250`).",
+            "⚠️ **No valid HPO terms found.** Enter HPO ids like `HP:0001250` — "
+            "one per line, or comma/space-separated; names are optional.",
             "",
             "",
             gr.update(choices=[], value=None),
+            None,
+            _DOWNLOAD_DISABLED,
+            _DOWNLOAD_DISABLED,
         )
 
     # Call API
@@ -342,6 +528,9 @@ def _on_diagnose(
             "",
             "",
             gr.update(choices=[], value=None),
+            None,
+            _DOWNLOAD_DISABLED,
+            _DOWNLOAD_DISABLED,
         )
 
     candidates = result.get("candidates", [])
@@ -364,25 +553,75 @@ def _on_diagnose(
     evidence_md = _format_evidence_detail(candidates[0]) if candidates else ""
     explain_md = _format_full_explanation(candidates[0]) if candidates else ""
 
+    # Stash the parsed query so an exported report records what was asked.
+    result["_query_phenotypes"] = hpo_ids
+
+    # Pre-generate the export files (single-click download). Export is secondary
+    # to showing the diagnosis, so a write failure must never hide the results:
+    # keep the downloads disabled and note it — re-running retries the export.
+    export_note = ""
+    if candidates:
+        try:
+            csv_path, md_path = _write_exports(result)
+            csv_update = gr.update(value=csv_path, interactive=True)
+            md_update = gr.update(value=md_path, interactive=True)
+        except Exception as exc:  # noqa: BLE001 — never let export break the result
+            logger.warning("Export file generation failed: %s", exc)
+            csv_update = md_update = _DOWNLOAD_DISABLED
+            export_note = (
+                "\n\n⚠️ *Export files could not be written (disk/permissions?). "
+                "Results are shown above; click 'Run Diagnosis' again to retry the "
+                "export.*"
+            )
+    else:
+        csv_update = md_update = _DOWNLOAD_DISABLED
+
     return (
-        table_md + meta,
+        table_md + meta + export_note,
         evidence_md,
         explain_md,
         gr.update(choices=choices, value=choices[0] if choices else None),
+        result,
+        csv_update,
+        md_update,
+    )
+
+
+def _on_phenotype_change(result_state: Optional[Dict[str, Any]]):
+    """Clear stale results/exports when the phenotype input is edited *after* a run.
+
+    Only the phenotype list is watched — it defines the diagnosis, so editing it
+    genuinely invalidates the shown/exported results. Patient ID (a per-keystroke
+    textbox that doesn't affect the run) and Top-K are intentionally NOT watched.
+    No-ops until there is a result to invalidate, so typing the first query
+    doesn't disturb the placeholder. Output order matches ``_diagnosis_outputs``.
+    """
+    if not result_state:
+        no_change = gr.update()
+        return (no_change, no_change, no_change, no_change, None,
+                no_change, no_change)
+    return (
+        "*Inputs changed — click 'Run Diagnosis' to refresh results.*",
+        "",
+        "",
+        gr.update(choices=[], value=None),
+        None,
+        _DOWNLOAD_DISABLED,
+        _DOWNLOAD_DISABLED,
     )
 
 
 def _on_candidate_select(
     selection: str,
-    phenotype_text: str,
-    patient_id: str,
-    top_k: int,
+    result_state: Optional[Dict[str, Any]],
 ) -> Tuple[str, str]:
     """
     Handle candidate dropdown selection change.
-    Re-calls API (stateless) and shows evidence for the selected candidate.
+
+    Reads the already-fetched result from ``result_state`` instead of re-calling
+    the API, so switching candidates for detail view no longer re-runs inference.
     """
-    if not selection:
+    if not selection or not result_state:
         return "", ""
 
     # Extract rank from "#{rank} — ..."
@@ -391,30 +630,10 @@ def _on_candidate_select(
     except (IndexError, ValueError):
         return "⚠️ Could not parse selection.", ""
 
-    # Parse phenotypes again
-    lines = [l.strip() for l in phenotype_text.strip().split("\n") if l.strip()]
-    hpo_ids = [
-        l.split("—")[0].split("-")[0].strip()
-        for l in lines if l.strip().startswith("HP:")
-    ]
-
-    if not hpo_ids:
-        return "⚠️ Phenotype list is empty.", ""
-
-    result = _call_diagnose(
-        phenotypes=hpo_ids,
-        patient_id=patient_id or "webui_patient",
-        top_k=int(top_k),
-        include_explanations=True,
-    )
-
-    if "error" in result:
-        return f"❌ {result['error']}", ""
-
-    candidates = result.get("candidates", [])
-    target = next((c for c in candidates if c["rank"] == rank), None)
+    candidates = result_state.get("candidates", [])
+    target = next((c for c in candidates if c.get("rank") == rank), None)
     if not target:
-        return f"⚠️ Rank #{rank} not found in results.", ""
+        return f"⚠️ Rank #{rank} not found in current results.", ""
 
     return _format_evidence_detail(target), _format_full_explanation(target)
 
@@ -482,6 +701,10 @@ def create_diagnosis_tab() -> None:
             - Full explanation accordion (Markdown)
     """
 
+    # Holds the full API result of the latest diagnosis so the candidate
+    # dropdown and the export buttons reuse it (no re-running inference).
+    results_state = gr.State(None)
+
     # === MODEL CONFIGURATION (top accordion) ===
     # Load saved config for default values
     saved_cfg = _load_saved_config()
@@ -518,10 +741,17 @@ def create_diagnosis_tab() -> None:
             gr.Markdown("### Patient Phenotypes")
 
             phenotype_input = gr.Textbox(
-                label="HPO Terms (one per line)",
-                placeholder="HP:0001250 — Seizure\nHP:0001263 — Global developmental delay",
+                label="HPO Terms",
+                placeholder=(
+                    "HP:0001250 — Seizure\n"
+                    "HP:0001263, HP:0002376   (commas / spaces are fine too)"
+                ),
                 lines=8,
-                info="Enter HPO IDs, optionally followed by '—' and the name. One per line.",
+                info=(
+                    "Paste HPO ids in any format — one per line, or comma/space-"
+                    "separated. Names and stray punctuation are ignored; only "
+                    "HP:####### ids are used."
+                ),
             )
 
             clear_btn = gr.ClearButton(
@@ -562,6 +792,24 @@ def create_diagnosis_tab() -> None:
                 label="Ranked Candidates",
             )
 
+            with gr.Row():
+                export_csv_btn = gr.DownloadButton(
+                    "⬇️ Export CSV (all candidates)",
+                    size="sm",
+                    variant="secondary",
+                    interactive=False,
+                )
+                export_report_btn = gr.DownloadButton(
+                    "⬇️ Export report (.md)",
+                    size="sm",
+                    variant="secondary",
+                    interactive=False,
+                )
+            gr.Markdown(
+                "<sub>CSV = one row per candidate (all Top-K) for spreadsheets · "
+                "report = full evidence + explanation for every candidate.</sub>"
+            )
+
             candidate_selector = gr.Dropdown(
                 label="Select candidate for evidence detail",
                 choices=[],
@@ -582,17 +830,32 @@ def create_diagnosis_tab() -> None:
                 )
 
     # === Event wiring ===
+    _diagnosis_outputs = [
+        results_md, evidence_md, explanation_md, candidate_selector, results_state,
+        export_csv_btn, export_report_btn,
+    ]
     diagnose_btn.click(
         fn=_on_diagnose,
         inputs=[phenotype_input, patient_id_input, top_k_input],
-        outputs=[results_md, evidence_md, explanation_md, candidate_selector],
+        outputs=_diagnosis_outputs,
     )
 
     candidate_selector.change(
         fn=_on_candidate_select,
-        inputs=[candidate_selector, phenotype_input, patient_id_input, top_k_input],
+        inputs=[candidate_selector, results_state],
         outputs=[evidence_md, explanation_md],
     )
+
+    # Editing the phenotype list invalidates the shown/exported results — clear
+    # them (and disable the downloads) so nothing stale can be exported.
+    phenotype_input.change(
+        fn=_on_phenotype_change,
+        inputs=[results_state],
+        outputs=_diagnosis_outputs,
+    )
+
+    # Note: export files are pre-generated in _on_diagnose and set as each
+    # DownloadButton's value, so a single click downloads them — no click handler.
 
     # === Model config event wiring ===
     reload_btn.click(
