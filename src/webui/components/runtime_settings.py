@@ -124,14 +124,39 @@ def create_runtime_settings_tab() -> None:
             elem_id="runtime_env_override",
         )
 
-    # Apply bar — placed above all options, as a single explicit action.
+    # Action bar — the two backend-level actions, kept together above the
+    # individual settings: Apply persists the settings; Restart relaunches the
+    # backend so a startup-read setting (the Memory Allocator) takes effect. This
+    # mirrors the natural workflow (change allocator → Apply → Restart).
+    _locked_now = is_training_active()
     with gr.Row():
         apply_btn = gr.Button("Apply Settings", variant="primary", elem_id="runtime_apply")
+        restart_btn = gr.Button(
+            "Restart Backend",
+            variant="secondary",
+            interactive=not _locked_now,
+            elem_id="runtime_restart",
+        )
     status = gr.Markdown(
         f"Applied: allocator **{current_alloc}**, "
         f"torch.compile **{'on' if current_compile else 'off'}**.",
         elem_id="runtime_status",
     )
+    # Restart feedback + training lock (kept next to the button it belongs to).
+    restart_lock_note = gr.HTML(
+        _RESTART_LOCKED_HTML if _locked_now else "",
+        visible=_locked_now,
+        elem_id="runtime_restart_lock",
+    )
+    restart_status = gr.Markdown("", elem_id="runtime_restart_status")
+    gr.Markdown(
+        "<sub>**Restart Backend** relaunches the backend (REST API + this UI) so a "
+        "newly applied **Memory Allocator** takes effect. Locked while training is "
+        "running; the page reconnects automatically a few seconds after a restart."
+        "</sub>"
+    )
+    # Keep the lock state live without manual refresh (cheap status read).
+    restart_lock_timer = gr.Timer(4.0)
 
     gr.Markdown("#### Memory")
     with gr.Group():
@@ -193,34 +218,6 @@ def create_runtime_settings_tab() -> None:
                 "known sm_121 Triton issue on GB10 (it falls back to eager). Always "
                 "compare MRR / Hits@K against an eager run before trusting any result."
             )
-
-    gr.Markdown("#### Backend")
-    with gr.Group():
-        gr.HTML(_badge_row(_badge("Process", "mem"), _badge("Restart required", "restart")))
-        # Initial lock state reflects whether training is running at page load;
-        # the timer below keeps it live.
-        _locked_now = is_training_active()
-        with gr.Row():
-            restart_btn = gr.Button(
-                "Restart Backend",
-                variant="secondary",
-                interactive=not _locked_now,
-                elem_id="runtime_restart",
-            )
-        restart_lock_note = gr.HTML(
-            _RESTART_LOCKED_HTML if _locked_now else "",
-            visible=_locked_now,
-            elem_id="runtime_restart_lock",
-        )
-        restart_status = gr.Markdown("", elem_id="runtime_restart_status")
-        gr.Markdown(
-            "Stops and relaunches the backend process (REST API **and** this UI) "
-            "so a newly applied **Memory Allocator** takes effect. The button is "
-            "**locked while training is running** to prevent accidental loss of a "
-            "run; this page reconnects automatically a few seconds after a restart."
-        )
-        # Keep the lock state live without manual refresh (cheap status read).
-        restart_lock_timer = gr.Timer(4.0)
 
     def _refresh_restart_lock():
         locked = is_training_active()
