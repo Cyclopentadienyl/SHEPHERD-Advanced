@@ -358,7 +358,7 @@ def _clean_disease_id(disease_id: Any) -> str:
     namespace; anything else — a bare CURIE, a cross-namespace id, or an
     unknown shape — is returned unchanged.
     """
-    text = str(disease_id or "")
+    text = str(disease_id or "").strip()
     parts = text.split(":", 2)
     if len(parts) == 3:
         source, namespace, local = parts
@@ -556,16 +556,28 @@ def _on_diagnose(
     # Stash the parsed query so an exported report records what was asked.
     result["_query_phenotypes"] = hpo_ids
 
-    # Pre-generate the export files (single-click download).
+    # Pre-generate the export files (single-click download). Export is secondary
+    # to showing the diagnosis, so a write failure must never hide the results:
+    # keep the downloads disabled and note it — re-running retries the export.
+    export_note = ""
     if candidates:
-        csv_path, md_path = _write_exports(result)
-        csv_update = gr.update(value=csv_path, interactive=True)
-        md_update = gr.update(value=md_path, interactive=True)
+        try:
+            csv_path, md_path = _write_exports(result)
+            csv_update = gr.update(value=csv_path, interactive=True)
+            md_update = gr.update(value=md_path, interactive=True)
+        except Exception as exc:  # noqa: BLE001 — never let export break the result
+            logger.warning("Export file generation failed: %s", exc)
+            csv_update = md_update = _DOWNLOAD_DISABLED
+            export_note = (
+                "\n\n⚠️ *Export files could not be written (disk/permissions?). "
+                "Results are shown above; click 'Run Diagnosis' again to retry the "
+                "export.*"
+            )
     else:
         csv_update = md_update = _DOWNLOAD_DISABLED
 
     return (
-        table_md + meta,
+        table_md + meta + export_note,
         evidence_md,
         explain_md,
         gr.update(choices=choices, value=choices[0] if choices else None),

@@ -130,6 +130,9 @@ def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
         ("orpha:ORPHA:456", "ORPHA:456"),
         ("mondo:OMIM:123", "mondo:OMIM:123"),  # cross-namespace: untouched
         ("MONDO:0019441", "MONDO:0019441"),  # bare CURIE: untouched
+        ("  mondo:MONDO:0019441  ", "MONDO:0019441"),  # surrounding whitespace
+        ("mondo:MONDO:0019441\n", "MONDO:0019441"),  # trailing newline
+        ("  MONDO:0019441  ", "MONDO:0019441"),  # padded bare CURIE
         ("", ""),
         (None, ""),
         ("weird", "weird"),
@@ -192,3 +195,19 @@ def test_on_diagnose_success_sets_download_values(monkeypatch):
     assert out[4] is not None and out[4].get("candidates")  # results_state populated
     # downloads enabled with a real file value (not the disabled sentinel)
     assert out[5] is not dp._DOWNLOAD_DISABLED and out[6] is not dp._DOWNLOAD_DISABLED
+
+
+def test_on_diagnose_export_failure_still_shows_results(monkeypatch):
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
+
+    def boom(_result):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dp, "_write_exports", boom)
+    out = dp._on_diagnose("HP:0001250", "", 10)
+    assert len(out) == 7
+    # results still shown, with a note; state still populated
+    assert "Dravet syndrome" in out[0] and "could not be written" in out[0]
+    assert out[4] is not None and out[4].get("candidates")
+    # downloads stay disabled (recoverable by re-running once disk is free)
+    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
