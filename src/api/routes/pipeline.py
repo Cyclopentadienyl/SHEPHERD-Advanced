@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from src.config.model_types import SUPPORTED_CONV_TYPES
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -118,18 +120,29 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
     if checkpoint_path:
         result["checkpoint"] = Path(checkpoint_path).exists()
     else:
-        # Scan checkpoints/ recursively — checkpoints now live in architecture
-        # subdirs ({data_dir}/checkpoints/{conv_type}/), while legacy flat files
-        # may still sit directly under checkpoints/ or the workspace root.
+        # Distinguish auto-selectable checkpoints (in architecture subdirs,
+        # {data_dir}/checkpoints/{conv_type}/) from LEGACY FLAT ones sitting
+        # directly under checkpoints/ (or the root). Auto only serves the former,
+        # so reporting them separately avoids "files say checkpoint=True while
+        # reload says none found".
         ckpt_dir = d / "checkpoints"
+        arch_pts: List[Path] = []
+        flat_pts: List[Path] = []
         if ckpt_dir.is_dir():
-            ckpts = list(ckpt_dir.rglob("*.pt"))
+            for p in ckpt_dir.rglob("*.pt"):
+                rel = p.relative_to(ckpt_dir)
+                if len(rel.parts) == 1:
+                    flat_pts.append(p)  # legacy flat, not auto-selected
+                elif rel.parts[0] in SUPPORTED_CONV_TYPES:
+                    arch_pts.append(p)  # architecture-scoped, auto-selectable
         else:
-            ckpts = [p for p in d.glob("*.pt")
-                     if "checkpoint" in p.name or "model" in p.name]
-        result["checkpoint"] = len(ckpts) > 0
-        if ckpts:
-            result["checkpoint_files"] = [str(p.relative_to(d)) for p in ckpts]
+            flat_pts = [p for p in d.glob("*.pt")
+                        if "checkpoint" in p.name or "model" in p.name]
+        result["checkpoint"] = len(arch_pts) > 0  # auto-selectable
+        result["checkpoint_legacy_flat"] = len(flat_pts) > 0
+        all_pts = arch_pts + flat_pts
+        if all_pts:
+            result["checkpoint_files"] = [str(p.relative_to(d)) for p in all_pts]
 
     return result
 
@@ -206,17 +219,27 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         select_checkpoint_in_dir,
     )
 
+    # architecture = the real GNN arch when known (None for an explicit path,
+    # where it's only known after load); selection_reason = how it was chosen.
     architecture: Optional[str] = None
     selection_reason: str = ""
     requested_conv = (request.conv_type or "auto").strip().lower()
 
     if checkpoint_path:
-        architecture = "explicit"
         selection_reason = "explicit checkpoint_path"
     else:
         base = Path(data_dir) / "checkpoints"
         if requested_conv and requested_conv != "auto":
-            architecture = normalize_conv_type(requested_conv)
+            try:
+                architecture = normalize_conv_type(requested_conv)
+            except ValueError as exc:
+                return PipelineReloadResponse(
+                    success=False,
+                    message=str(exc),
+                    status=PipelineStatusResponse(initialized=False),
+                    files_found=files,
+                    selection_reason="invalid conv_type",
+                )
             selected = select_checkpoint_in_dir(base / architecture)
             selection_reason = f"architecture '{architecture}'"
         else:
@@ -226,13 +249,20 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)
 
     if not checkpoint_path or not Path(checkpoint_path).exists():
+        # If legacy flat checkpoints exist but weren't auto-selected, say so —
+        # this is the migration-only design, so guide the user rather than
+        # contradict files_found.
+        if files.get("checkpoint_legacy_flat"):
+            hint = (
+                "Legacy flat checkpoints exist under checkpoints/ but are not "
+                "auto-selected; migrate them (scripts/migrate_checkpoints.py) or "
+                "pass an explicit checkpoint_path."
+            )
+        else:
+            hint = "Train a model or pass an explicit checkpoint_path."
         return PipelineReloadResponse(
             success=False,
-            message=(
-                f"No checkpoint found ({selection_reason}). Train a model, pass an "
-                f"explicit checkpoint_path, or migrate legacy flat checkpoints into "
-                f"{data_dir}/checkpoints/<arch>/ (scripts/migrate_checkpoints.py)."
-            ),
+            message=f"No checkpoint found ({selection_reason}). {hint}",
             status=PipelineStatusResponse(initialized=False),
             files_found=files,
             architecture=architecture,

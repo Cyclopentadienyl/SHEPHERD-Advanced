@@ -39,9 +39,21 @@ _MODEL_CKPT_RE = re.compile(r"^model-\d+-(?P<val>[0-9]+(?:\.[0-9]+)?)\.pt$")
 
 
 def normalize_conv_type(conv_type: Optional[str]) -> str:
-    """Lower-case and validate a conv type, falling back to the default."""
+    """Lower-case a conv type.
+
+    Empty/missing falls back to the default, but an explicit unsupported value
+    (e.g. ``"gatv2"``, ``"bad"``) raises rather than silently degrading to GAT —
+    a mislabelled checkpoint dir or a wrong-architecture load is worse than a
+    loud error.
+    """
     ct = str(conv_type or "").strip().lower()
-    return ct if ct in SUPPORTED_CONV_TYPES else DEFAULT_CONV_TYPE
+    if not ct:
+        return DEFAULT_CONV_TYPE
+    if ct not in SUPPORTED_CONV_TYPES:
+        raise ValueError(
+            f"Unsupported conv_type {conv_type!r}; supported: {SUPPORTED_CONV_TYPES}"
+        )
+    return ct
 
 
 def resolve_checkpoint_dir(

@@ -6,6 +6,8 @@ Dependency-light — checkpoint_paths imports only the torch-free constants modu
 import os
 from pathlib import Path
 
+import pytest
+
 from src.utils.checkpoint_paths import (
     normalize_conv_type,
     resolve_checkpoint_dir,
@@ -22,13 +24,21 @@ def _touch(path: Path, mtime: float) -> Path:
 
 
 # --------------------------------------------------------------- normalize
-def test_normalize_conv_type():
+def test_normalize_conv_type_valid_and_missing():
     assert normalize_conv_type("HGT") == "hgt"
     assert normalize_conv_type("  gat ") == "gat"
     assert normalize_conv_type("sage") == "sage"
-    assert normalize_conv_type("bogus") == "gat"  # default
+    # missing/empty -> default is fine
     assert normalize_conv_type(None) == "gat"
     assert normalize_conv_type("") == "gat"
+    assert normalize_conv_type("   ") == "gat"
+
+
+@pytest.mark.parametrize("bad", ["bogus", "gatv2", "gps", "hg", "GATT"])
+def test_normalize_conv_type_explicit_invalid_raises(bad):
+    # An explicit but unsupported value must fail loud, not silently become GAT.
+    with pytest.raises(ValueError, match="Unsupported conv_type"):
+        normalize_conv_type(bad)
 
 
 # --------------------------------------------------------------- resolve dir
@@ -38,9 +48,16 @@ def test_resolve_checkpoint_dir_auto():
     assert resolve_checkpoint_dir("ws", None) == Path("ws/checkpoints/gat")  # default
 
 
+def test_resolve_checkpoint_dir_invalid_conv_raises():
+    with pytest.raises(ValueError, match="Unsupported conv_type"):
+        resolve_checkpoint_dir("ws", "gatv2")
+
+
 def test_resolve_checkpoint_dir_explicit_wins_verbatim():
-    # explicit dir is returned unchanged — no conv_type appended
+    # explicit dir is returned unchanged — no conv_type appended, no validation
     assert resolve_checkpoint_dir("ws", "hgt", "/custom/ckpts") == Path("/custom/ckpts")
+    # even an odd conv_type is irrelevant when an explicit dir is given
+    assert resolve_checkpoint_dir("ws", "gatv2", "/custom") == Path("/custom")
 
 
 # --------------------------------------------------------------- select in dir

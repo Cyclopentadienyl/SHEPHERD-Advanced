@@ -26,16 +26,21 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.config.model_types import DEFAULT_CONV_TYPE, SUPPORTED_CONV_TYPES
+from src.config.model_types import SUPPORTED_CONV_TYPES
 
 
-def _conv_type_of(ckpt_path: Path) -> str:
-    """Determine a checkpoint's conv type from model_config, flat config, or weights."""
+def _conv_type_of(ckpt_path: Path) -> Optional[str]:
+    """Determine a checkpoint's conv type from model_config, flat config, or weights.
+
+    Returns None if it can't be determined — the caller then SKIPS the file
+    rather than mislabelling it under the default architecture.
+    """
     import torch
 
     from src.inference.pipeline import _infer_conv_type_from_keys
@@ -48,13 +53,18 @@ def _conv_type_of(ckpt_path: Path) -> str:
     if isinstance(config, dict) and config.get("conv_type"):
         return str(config["conv_type"]).strip().lower()
     state_dict = ckpt.get("model_state_dict") or ckpt.get("state_dict") or {}
-    return (_infer_conv_type_from_keys(set(state_dict.keys())) or DEFAULT_CONV_TYPE)
+    return _infer_conv_type_from_keys(set(state_dict.keys()))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("workspace", help="Workspace dir containing checkpoints/")
     parser.add_argument("--apply", action="store_true", help="Actually move (default: dry run)")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite an existing destination file (default: skip it)",
+    )
     args = parser.parse_args()
 
     ckpt_dir = Path(args.workspace) / "checkpoints"
@@ -68,22 +78,36 @@ def main() -> int:
         return 0
 
     print(f"{'MOVING' if args.apply else 'DRY RUN'} — {len(flat)} flat checkpoint(s):")
+    moved = skipped = 0
     for p in flat:
         try:
             conv_type = _conv_type_of(p)
         except Exception as exc:  # noqa: BLE001 — report and skip a bad file
             print(f"  ! {p.name}: could not read ({exc}); skipping")
+            skipped += 1
             continue
+        # Unknown architecture -> skip (never mislabel under a default arch).
         if conv_type not in SUPPORTED_CONV_TYPES:
-            print(f"  ! {p.name}: unrecognised conv_type '{conv_type}', using '{DEFAULT_CONV_TYPE}'")
-            conv_type = DEFAULT_CONV_TYPE
-        dest_dir = ckpt_dir / conv_type
+            print(f"  ! {p.name}: could not determine architecture "
+                  f"({conv_type!r}); skipping")
+            skipped += 1
+            continue
+        dest = ckpt_dir / conv_type / p.name
+        # Never clobber an existing destination unless explicitly allowed.
+        if dest.exists() and not args.overwrite:
+            print(f"  ! {p.name}: {conv_type}/{p.name} already exists; skipping "
+                  f"(use --overwrite to replace)")
+            skipped += 1
+            continue
         print(f"  {p.name}  ->  {conv_type}/{p.name}")
         if args.apply:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(p), str(dest_dir / p.name))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(p), str(dest))
+        moved += 1
 
-    print("\nDone." if args.apply else "\nDry run — re-run with --apply to move the files.")
+    verb = "moved" if args.apply else "would move"
+    print(f"\n{verb} {moved}, skipped {skipped}."
+          + ("" if args.apply else " Re-run with --apply to move the files."))
     return 0
 
 
