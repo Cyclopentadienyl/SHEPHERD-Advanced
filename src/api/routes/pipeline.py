@@ -215,9 +215,24 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # Legacy flat checkpoints are NOT auto-scanned here (see checkpoint_paths).
     from src.utils.checkpoint_paths import (
         normalize_conv_type,
+        ranking_score_detail,
         select_auto_checkpoint,
         select_checkpoint_in_dir,
     )
+
+    # score_fn reads the ranking metric from a checkpoint's OWN metadata (never
+    # the filename, whose number's meaning is config-dependent). Higher is better.
+    # Any read failure / missing metric returns None so one bad checkpoint can't
+    # block the rest; if none score, selection falls back to last.pt -> newest.
+    def _checkpoint_score(path: Path) -> Optional[float]:
+        try:
+            import torch
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
+            logger.debug("checkpoint score read failed for %s: %s", path, exc)
+            return None
+        detail = ranking_score_detail(ckpt.get("logs") if isinstance(ckpt, dict) else None)
+        return detail[1] if detail else None
 
     # architecture = the real GNN arch when known (None for an explicit path,
     # where it's only known after load); selection_reason = how it was chosen.
@@ -240,12 +255,23 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
                     files_found=files,
                     selection_reason="invalid conv_type",
                 )
-            selected = select_checkpoint_in_dir(base / architecture)
+            selected = select_checkpoint_in_dir(base / architecture, score_fn=_checkpoint_score)
             selection_reason = f"architecture '{architecture}'"
         else:
-            selected, architecture, selection_reason = select_auto_checkpoint(base)
+            selected, architecture, selection_reason = select_auto_checkpoint(
+                base, score_fn=_checkpoint_score
+            )
         if selected is not None:
             checkpoint_path = str(selected)
+            # Record which metric/score chose it, so "why this one?" is answerable.
+            try:
+                import torch
+                _logs = torch.load(selected, map_location="cpu", weights_only=False).get("logs")
+                _detail = ranking_score_detail(_logs)
+            except Exception:  # noqa: BLE001
+                _detail = None
+            if _detail:
+                selection_reason += f"; best {_detail[0]}={_detail[1]:.4f}"
             logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)
 
     if not checkpoint_path or not Path(checkpoint_path).exists():

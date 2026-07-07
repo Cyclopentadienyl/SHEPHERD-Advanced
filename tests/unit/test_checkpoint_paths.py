@@ -10,6 +10,8 @@ import pytest
 
 from src.utils.checkpoint_paths import (
     normalize_conv_type,
+    ranking_score_detail,
+    ranking_score_from_logs,
     resolve_checkpoint_dir,
     select_auto_checkpoint,
     select_checkpoint_in_dir,
@@ -60,26 +62,93 @@ def test_resolve_checkpoint_dir_explicit_wins_verbatim():
     assert resolve_checkpoint_dir("ws", "gatv2", "/custom") == Path("/custom")
 
 
+# ---------------------------------------------------------- ranking score reader
+def test_ranking_score_key_priority():
+    assert ranking_score_detail({"val_mrr": 0.7, "val_hits@10": 0.9}) == ("val_mrr", 0.7)
+    # val_mrr missing -> falls back to val_hits@10 (Codex case 7)
+    assert ranking_score_detail({"val_hits@10": 0.75, "val_hits@1": 0.2}) == (
+        "val_hits@10", 0.75,
+    )
+    assert ranking_score_detail({"val_hits@1": 0.3}) == ("val_hits@1", 0.3)
+
+
+def test_ranking_score_ignores_invalid():
+    assert ranking_score_detail({"val_loss": 8.6}) is None  # loss is not a ranking metric
+    assert ranking_score_detail({"val_mrr": float("nan")}) is None  # NaN ignored
+    assert ranking_score_detail({"val_mrr": True}) is None  # bool is not a numeric score
+    assert ranking_score_detail({}) is None
+    assert ranking_score_detail(None) is None
+    assert ranking_score_from_logs({"val_hits@10": 0.75}) == 0.75
+
+
 # --------------------------------------------------------------- select in dir
-def test_select_prefers_best_val(tmp_path):
+def _score_map(mapping):
+    """Build a score_fn from {filename: score | 'raise'} — no torch needed."""
+    def fn(path):
+        value = mapping.get(path.name)
+        if value == "raise":
+            raise RuntimeError("unreadable checkpoint")
+        return value
+    return fn
+
+
+def test_select_by_score_picks_highest(tmp_path):
+    # The event case: epoch-0 has the LOWEST ranking score and must not be chosen.
     d = tmp_path / "hgt"
-    _touch(d / "last.pt", 100)
-    _touch(d / "model-05-9.1000.pt", 101)
-    _touch(d / "model-11-8.6500.pt", 102)  # best (lowest val)
-    _touch(d / "model-14-8.9000.pt", 103)
-    assert select_checkpoint_in_dir(d).name == "model-11-8.6500.pt"
+    for name in ("model-00-0.0174.pt", "model-21-0.9200.pt", "last.pt"):
+        _touch(d / name, 100)
+    fn = _score_map({
+        "model-00-0.0174.pt": 0.0174,
+        "model-21-0.9200.pt": 0.9200,
+        "last.pt": 0.9000,
+    })
+    assert select_checkpoint_in_dir(d, score_fn=fn).name == "model-21-0.9200.pt"
+
+
+def test_select_trusts_metadata_not_filename(tmp_path):
+    # Filename number is misleading; the metadata score must win (locks in the fix).
+    d = tmp_path / "hgt"
+    _touch(d / "model-00-9999.pt", 100)
+    _touch(d / "model-10-0001.pt", 100)
+    fn = _score_map({"model-00-9999.pt": 0.01, "model-10-0001.pt": 0.90})
+    assert select_checkpoint_in_dir(d, score_fn=fn).name == "model-10-0001.pt"
 
 
 def test_select_falls_back_to_last(tmp_path):
     d = tmp_path / "hgt"
-    _touch(d / "last.pt", 100)  # no model-*.pt present
+    _touch(d / "model-01-x.pt", 100)
+    _touch(d / "last.pt", 100)
+    # no score_fn -> last.pt
     assert select_checkpoint_in_dir(d).name == "last.pt"
+
+
+def test_select_all_none_scores_fall_back_to_last(tmp_path):
+    d = tmp_path / "hgt"
+    _touch(d / "model-01-x.pt", 100)
+    _touch(d / "last.pt", 100)
+    assert select_checkpoint_in_dir(d, score_fn=_score_map({})).name == "last.pt"
+
+
+def test_select_bad_checkpoint_does_not_block_others(tmp_path):
+    d = tmp_path / "hgt"
+    _touch(d / "bad.pt", 100)
+    _touch(d / "good.pt", 100)
+    fn = _score_map({"bad.pt": "raise", "good.pt": 0.8})
+    assert select_checkpoint_in_dir(d, score_fn=fn).name == "good.pt"
+
+
+def test_select_nan_score_ignored(tmp_path):
+    d = tmp_path / "hgt"
+    _touch(d / "nan.pt", 100)
+    _touch(d / "good.pt", 100)
+    fn = _score_map({"nan.pt": float("nan"), "good.pt": 0.7})
+    assert select_checkpoint_in_dir(d, score_fn=fn).name == "good.pt"
 
 
 def test_select_falls_back_to_newest(tmp_path):
     d = tmp_path / "hgt"
     _touch(d / "epoch_a.pt", 100)
-    _touch(d / "epoch_b.pt", 200)  # newest, no last/model-*
+    _touch(d / "epoch_b.pt", 200)  # newest, no last/score
     assert select_checkpoint_in_dir(d).name == "epoch_b.pt"
 
 
@@ -90,15 +159,22 @@ def test_select_none_when_empty_or_missing(tmp_path):
 
 
 # --------------------------------------------------------------- auto selection
-def test_auto_picks_latest_trained_architecture(tmp_path):
+def test_auto_picks_latest_arch_then_best_within(tmp_path):
+    # auto = latest-trained architecture, then best-scoring checkpoint within it.
+    # hgt has a HIGHER score but is older -> not chosen (metrics not compared
+    # across architectures).
     base = tmp_path / "checkpoints"
-    _touch(base / "hgt" / "last.pt", 100)
-    _touch(base / "hgt" / "model-10-8.7.pt", 101)
-    _touch(base / "gat" / "last.pt", 500)  # gat trained more recently
-    _touch(base / "gat" / "model-10-8.5.pt", 501)
-    path, arch, reason = select_auto_checkpoint(base)
+    _touch(base / "hgt" / "model-40-hi.pt", 100)   # score 0.95 but older arch
+    _touch(base / "gat" / "model-05-lo.pt", 500)
+    _touch(base / "gat" / "model-20-hi.pt", 501)   # newer arch, its best
+    fn = _score_map({
+        "model-40-hi.pt": 0.95,
+        "model-05-lo.pt": 0.30,
+        "model-20-hi.pt": 0.85,
+    })
+    path, arch, reason = select_auto_checkpoint(base, score_fn=fn)
     assert arch == "gat"
-    assert path.name == "model-10-8.5.pt"  # best within the latest arch
+    assert path.name == "model-20-hi.pt"
     assert "gat" in reason
 
 
