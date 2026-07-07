@@ -122,11 +122,15 @@ def _get_pipeline_status() -> Dict[str, Any]:
         return {"initialized": False, "error": "API not reachable"}
 
 
-def _reload_pipeline(data_dir: str, checkpoint_path: str) -> Dict[str, Any]:
+def _reload_pipeline(
+    data_dir: str, checkpoint_path: str, conv_type: str = "auto"
+) -> Dict[str, Any]:
     """Reload pipeline via API."""
-    payload = {"data_dir": data_dir}
+    payload: Dict[str, Any] = {"data_dir": data_dir}
     if checkpoint_path and checkpoint_path.strip():
         payload["checkpoint_path"] = checkpoint_path.strip()
+    if conv_type:
+        payload["conv_type"] = conv_type
     try:
         resp = requests.post(
             f"{PIPELINE_API}/pipeline/reload",
@@ -638,18 +642,32 @@ def _on_candidate_select(
     return _format_evidence_detail(target), _format_full_explanation(target)
 
 
-def _on_reload_pipeline(data_dir: str, checkpoint_path: str) -> Tuple[str, str]:
+def _on_reload_pipeline(
+    data_dir: str, checkpoint_path: str, conv_type: str
+) -> Tuple[str, str]:
     """Handle Reload Pipeline button click."""
     if not data_dir or not data_dir.strip():
         return "⚠️ Data directory is required.", ""
 
-    result = _reload_pipeline(data_dir.strip(), checkpoint_path.strip() if checkpoint_path else "")
+    result = _reload_pipeline(
+        data_dir.strip(),
+        checkpoint_path.strip() if checkpoint_path else "",
+        (conv_type or "auto").strip().lower(),
+    )
 
     status_md = ""
     if result.get("success"):
         status_md = _format_pipeline_status(result.get("status", {}))
     else:
         status_md = f"❌ {result.get('message', 'Unknown error')}"
+
+    # Which checkpoint was actually loaded (auto must not be opaque).
+    sel_path = result.get("checkpoint_path")
+    sel_reason = result.get("selection_reason")
+    if sel_path:
+        status_md += f"\n\n**Loaded checkpoint:** `{sel_path}`"
+        if sel_reason:
+            status_md += f"  \n<sub>{sel_reason}</sub>"
 
     # Format file check results
     files = result.get("files_found", {})
@@ -724,7 +742,14 @@ def create_diagnosis_tab() -> None:
                 label="Checkpoint Path (optional)",
                 value=saved_cfg.get("checkpoint_path") or "",
                 placeholder="(auto-detect from data directory)",
-                info="Path to .pt checkpoint file. Leave blank to auto-detect.",
+                info="Explicit .pt path. Leave blank to auto-select by architecture.",
+            )
+            arch_input = gr.Dropdown(
+                label="Architecture",
+                choices=["auto", "hgt", "gat", "sage"],
+                value="auto",
+                info="Which GNN to serve from {data}/checkpoints/<arch>/. "
+                "'auto' = latest trained. Ignored if a checkpoint path is given.",
             )
 
         with gr.Row():
@@ -860,7 +885,7 @@ def create_diagnosis_tab() -> None:
     # === Model config event wiring ===
     reload_btn.click(
         fn=_on_reload_pipeline,
-        inputs=[data_dir_input, checkpoint_input],
+        inputs=[data_dir_input, checkpoint_input, arch_input],
         outputs=[config_status_md, config_msg],
     )
 

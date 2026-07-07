@@ -43,12 +43,11 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Single source of truth for the conv types the factory below can build.
-# Adding a new architecture means: implement its branch in HeteroGNNLayer AND
-# add its name here. Inference validates a checkpoint's conv_type against this
-# set, so a newly registered type is accepted end-to-end with no other backend
-# changes.
-SUPPORTED_CONV_TYPES = ("hgt", "gat", "sage")
+# Single source of truth for the conv types the factory below can build lives in
+# a dependency-free module (so training scripts / API services / path helpers can
+# import it without pulling torch — src/models/gnn eagerly imports torch).
+# Adding a new architecture = implement its branch here AND add its name there.
+from src.config.model_types import SUPPORTED_CONV_TYPES  # noqa: E402,F401
 
 
 class HeteroGNNLayer(nn.Module):

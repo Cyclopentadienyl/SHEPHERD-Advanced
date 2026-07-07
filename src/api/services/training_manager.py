@@ -131,13 +131,19 @@ class TrainingManager:
             self._error_message = None
             self._user_stopped = False
 
-            # Derive checkpoint_dir from workspace data_dir if not explicitly set
+            # Derive an architecture-scoped checkpoint_dir
+            # ({data_dir}/checkpoints/{conv_type}) so conv types don't collide;
+            # an explicit checkpoint_dir is honoured verbatim. The resolved dir
+            # is written back into the config below, so the training subprocess
+            # inherits it directly.
+            from src.utils.checkpoint_paths import resolve_checkpoint_dir
+
             data_dir = config.get("data_dir", "")
             cfg_ckpt_dir = config.get("checkpoint_dir", "")
-            if data_dir and not cfg_ckpt_dir:
-                self.checkpoint_dir = Path(data_dir) / "checkpoints"
-            elif cfg_ckpt_dir:
-                self.checkpoint_dir = Path(cfg_ckpt_dir)
+            if data_dir or cfg_ckpt_dir:
+                self.checkpoint_dir = resolve_checkpoint_dir(
+                    data_dir, config.get("conv_type"), cfg_ckpt_dir or None
+                )
 
             # Ensure directories exist
             self.log_dir.mkdir(parents=True, exist_ok=True)

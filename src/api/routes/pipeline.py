@@ -61,7 +61,14 @@ class PipelineReloadRequest(BaseModel):
     )
     checkpoint_path: Optional[str] = Field(
         None,
-        description="Path to model checkpoint .pt file. If null, scans data_dir for checkpoint files.",
+        description="Explicit path to a .pt checkpoint. If null, auto-selects from "
+        "the architecture subdirs under {data_dir}/checkpoints/.",
+    )
+    conv_type: Optional[str] = Field(
+        None,
+        description="GNN architecture to serve: 'auto' (latest-trained), or "
+        "'hgt'/'gat'/'sage' to load from that architecture's subdir. Ignored when "
+        "checkpoint_path is given.",
     )
     device: Optional[str] = Field(
         None,
@@ -75,6 +82,9 @@ class PipelineReloadResponse(BaseModel):
     message: str
     status: PipelineStatusResponse
     files_found: Dict[str, Any] = Field(default_factory=dict)
+    checkpoint_path: Optional[str] = None
+    architecture: Optional[str] = None
+    selection_reason: Optional[str] = None
 
 
 class UIConfigResponse(BaseModel):
@@ -108,12 +118,13 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
     if checkpoint_path:
         result["checkpoint"] = Path(checkpoint_path).exists()
     else:
-        # Scan workspace/checkpoints/ subdirectory for .pt files
+        # Scan checkpoints/ recursively — checkpoints now live in architecture
+        # subdirs ({data_dir}/checkpoints/{conv_type}/), while legacy flat files
+        # may still sit directly under checkpoints/ or the workspace root.
         ckpt_dir = d / "checkpoints"
         if ckpt_dir.is_dir():
-            ckpts = list(ckpt_dir.glob("*.pt"))
+            ckpts = list(ckpt_dir.rglob("*.pt"))
         else:
-            # Fallback: scan root for legacy layout
             ckpts = [p for p in d.glob("*.pt")
                      if "checkpoint" in p.name or "model" in p.name]
         result["checkpoint"] = len(ckpts) > 0
@@ -183,27 +194,49 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             files_found=files,
         )
 
-    # Resolve checkpoint path (prefer checkpoints/ subdir, fallback to root)
-    if not checkpoint_path:
-        d = Path(data_dir)
-        ckpt_dir = d / "checkpoints"
-        if ckpt_dir.is_dir():
-            ckpts = sorted(ckpt_dir.glob("*.pt"))
+    # Resolve which checkpoint to serve, from the architecture-scoped layout
+    # ({data_dir}/checkpoints/{conv_type}/). Priority:
+    #   1. explicit checkpoint_path (also the escape hatch for legacy flat files)
+    #   2. a specified conv_type -> that architecture's best/last/newest
+    #   3. auto -> latest-trained architecture, serving its best checkpoint
+    # Legacy flat checkpoints are NOT auto-scanned here (see checkpoint_paths).
+    from src.utils.checkpoint_paths import (
+        normalize_conv_type,
+        select_auto_checkpoint,
+        select_checkpoint_in_dir,
+    )
+
+    architecture: Optional[str] = None
+    selection_reason: str = ""
+    requested_conv = (request.conv_type or "auto").strip().lower()
+
+    if checkpoint_path:
+        architecture = "explicit"
+        selection_reason = "explicit checkpoint_path"
+    else:
+        base = Path(data_dir) / "checkpoints"
+        if requested_conv and requested_conv != "auto":
+            architecture = normalize_conv_type(requested_conv)
+            selected = select_checkpoint_in_dir(base / architecture)
+            selection_reason = f"architecture '{architecture}'"
         else:
-            ckpts = sorted(
-                p for p in d.glob("*.pt")
-                if "checkpoint" in p.name or "model" in p.name
-            )
-        if ckpts:
-            checkpoint_path = str(ckpts[0])
-            logger.info(f"Auto-detected checkpoint: {checkpoint_path}")
+            selected, architecture, selection_reason = select_auto_checkpoint(base)
+        if selected is not None:
+            checkpoint_path = str(selected)
+            logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)
 
     if not checkpoint_path or not Path(checkpoint_path).exists():
         return PipelineReloadResponse(
             success=False,
-            message=f"No valid checkpoint found. Provide checkpoint_path or place a *checkpoint*.pt / *model*.pt file in {data_dir}.",
+            message=(
+                f"No checkpoint found ({selection_reason}). Train a model, pass an "
+                f"explicit checkpoint_path, or migrate legacy flat checkpoints into "
+                f"{data_dir}/checkpoints/<arch>/ (scripts/migrate_checkpoints.py)."
+            ),
             status=PipelineStatusResponse(initialized=False),
             files_found=files,
+            architecture=architecture,
+            selection_reason=selection_reason,
         )
 
     # Release existing pipeline
@@ -248,6 +281,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     fp_warns = config.get("fingerprint_warnings", [])
 
     msg = "Pipeline reloaded successfully."
+    if selection_reason:
+        msg += f" ({selection_reason})"
     if fp_warns:
         msg += f" WARNING: {len(fp_warns)} fingerprint mismatch(es) detected."
 
@@ -274,6 +309,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         message=msg,
         status=status_resp,
         files_found=files,
+        checkpoint_path=checkpoint_path,
+        architecture=architecture,
+        selection_reason=selection_reason,
     )
 
 
