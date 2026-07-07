@@ -100,35 +100,95 @@ def _sample_result():
     }
 
 
-def test_csv_has_row_per_candidate_with_key_fields():
+def test_csv_has_row_per_candidate_with_cleaned_ids():
     csv_text = dp._build_results_csv(_sample_result())
     lines = csv_text.strip().splitlines()
     assert lines[0].startswith("rank,disease_id,disease_name,confidence_score")
     assert len(lines) - 1 == 2  # header + 2 candidates
     assert "Dravet syndrome" in csv_text
-    assert "mondo:MONDO:0011073" in csv_text
+    assert "MONDO:0011073" in csv_text and "mondo:MONDO" not in csv_text  # cleaned id
     assert "SCN1A" in csv_text
 
 
-def test_report_includes_meta_and_all_candidates():
+def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
     md = dp._build_results_report_md(_sample_result())
     assert "# SHEPHERD-Advanced Diagnosis Report" in md
     assert "pt_01" in md  # patient id
     assert "HP:0001250" in md  # query phenotypes
     assert "Dravet syndrome" in md and "Other disease" in md  # every candidate
     assert "Full explanation" in md
+    assert "`MONDO:0011073`" in md and "mondo:MONDO" not in md  # cleaned id
 
 
-def test_export_writes_named_files(tmp_path):
-    csv_path = dp._export_csv(_sample_result())
-    md_path = dp._export_report(_sample_result())
-    assert os.path.exists(csv_path) and os.path.basename(csv_path) == "diagnosis_pt_01.csv"
-    assert os.path.exists(md_path) and os.path.basename(md_path) == "diagnosis_report_pt_01.md"
+# ------------------------------------------------------------------- disease id cleaning
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("mondo:MONDO:0019441", "MONDO:0019441"),
+        ("omim:OMIM:123", "OMIM:123"),
+        ("orphanet:ORPHA:456", "ORPHA:456"),
+        ("orpha:ORPHA:456", "ORPHA:456"),
+        ("mondo:OMIM:123", "mondo:OMIM:123"),  # cross-namespace: untouched
+        ("MONDO:0019441", "MONDO:0019441"),  # bare CURIE: untouched
+        ("", ""),
+        (None, ""),
+        ("weird", "weird"),
+    ],
+)
+def test_clean_disease_id(raw, expected):
+    assert dp._clean_disease_id(raw) == expected
 
 
-def test_export_empty_state_raises():
-    for fn in (dp._export_csv, dp._export_report):
-        with pytest.raises(gr.Error):
-            fn(None)
-        with pytest.raises(gr.Error):
-            fn({"candidates": []})
+# ------------------------------------------------------------------- export files
+def test_write_exports_names_by_patient_and_session():
+    csv_path, md_path = dp._write_exports(_sample_result())
+    assert os.path.exists(csv_path) and os.path.exists(md_path)
+    assert os.path.basename(csv_path) == "diagnosis_pt_01_sess_abc.csv"
+    assert os.path.basename(md_path) == "diagnosis_pt_01_sess_abc_report.md"
+    # both files live in the single module-level export dir
+    assert os.path.dirname(csv_path) == os.path.dirname(md_path)
+
+
+def test_write_exports_reuses_single_dir():
+    p1, _ = dp._write_exports(_sample_result())
+    p2, _ = dp._write_exports(_sample_result())
+    assert os.path.dirname(p1) == os.path.dirname(p2)
+
+
+def test_export_basename_falls_back_when_ids_missing():
+    base = dp._export_basename({"candidates": []})
+    assert base == "diagnosis_webui_patient_run"
+
+
+# ------------------------------------------------------------------- stale-state clear
+def test_phenotype_change_noops_without_results():
+    out = dp._on_phenotype_change(None)
+    assert len(out) == 7
+    assert out[4] is None  # results_state stays cleared/None
+    # component outputs are gr.update() no-ops (leave UI untouched)
+    assert out[0] is not dp._DOWNLOAD_DISABLED
+
+
+def test_phenotype_change_clears_after_a_run():
+    out = dp._on_phenotype_change(_sample_result())
+    assert len(out) == 7
+    assert "Inputs changed" in out[0]
+    assert out[4] is None  # results_state cleared
+    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+
+
+# ------------------------------------------------------------------- diagnose download wiring
+def test_on_diagnose_no_hpo_disables_downloads():
+    out = dp._on_diagnose("no ids here", "", 10)
+    assert len(out) == 7
+    assert out[4] is None  # results_state
+    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+
+
+def test_on_diagnose_success_sets_download_values(monkeypatch):
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
+    out = dp._on_diagnose("HP:0001250", "", 10)
+    assert len(out) == 7
+    assert out[4] is not None and out[4].get("candidates")  # results_state populated
+    # downloads enabled with a real file value (not the disabled sentinel)
+    assert out[5] is not dp._DOWNLOAD_DISABLED and out[6] is not dp._DOWNLOAD_DISABLED

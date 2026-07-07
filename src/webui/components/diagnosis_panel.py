@@ -33,7 +33,6 @@ import json
 import logging
 import re
 import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -339,6 +338,37 @@ def _fmt_num(value: Any) -> str:
     return f"{value:.4f}" if isinstance(value, (int, float)) else ""
 
 
+# KG disease ids are stored as "<source>:<CURIE>", e.g. "mondo:MONDO:0019441".
+# The lowercase source tag duplicates the CURIE namespace and reads as redundant.
+# Strip it — but conservatively: ONLY when the source maps to the inner namespace,
+# so a genuine cross-namespace id like "mondo:OMIM:123" is left untouched.
+_DISEASE_SOURCE_TO_NS = {
+    "mondo": "MONDO",
+    "omim": "OMIM",
+    "orpha": "ORPHA",
+    "orphanet": "ORPHA",
+    "decipher": "DECIPHER",
+}
+
+
+def _clean_disease_id(disease_id: Any) -> str:
+    """Drop a redundant lowercase source tag: 'mondo:MONDO:0019441' -> 'MONDO:0019441'.
+
+    Only strips when the source maps to (or literally equals) the inner CURIE
+    namespace; anything else — a bare CURIE, a cross-namespace id, or an
+    unknown shape — is returned unchanged.
+    """
+    text = str(disease_id or "")
+    parts = text.split(":", 2)
+    if len(parts) == 3:
+        source, namespace, local = parts
+        expected = _DISEASE_SOURCE_TO_NS.get(source.lower())
+        if (expected is not None and expected == namespace.upper()) or \
+                source.lower() == namespace.lower():
+            return f"{namespace}:{local}"
+    return text
+
+
 def _build_results_csv(result: Dict[str, Any]) -> str:
     """One row per candidate — the tabular summary, for spreadsheet analysis."""
     buf = io.StringIO()
@@ -348,7 +378,7 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
         pkg = c.get("evidence_package") or {}
         writer.writerow({
             "rank": c.get("rank"),
-            "disease_id": c.get("disease_id", ""),
+            "disease_id": _clean_disease_id(c.get("disease_id", "")),
             "disease_name": c.get("disease_name", ""),
             "confidence_score": _fmt_num(c.get("confidence_score")),
             "confidence_label": c.get("confidence_label") or "",
@@ -394,7 +424,7 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         lines += [
             "",
             f"### #{c.get('rank')} — {c.get('disease_name')}",
-            f"`{c.get('disease_id', '')}` · confidence "
+            f"`{_clean_disease_id(c.get('disease_id', ''))}` · confidence "
             f"{_fmt_num(c.get('confidence_score')) or 'n/a'}",
             "",
             "**Evidence**",
@@ -410,50 +440,65 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _slug(value: Any) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_") or "session"
+def _slug(value: Any, default: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_") or default
 
 
-def _write_named_temp(content: str, filename: str) -> str:
-    """Write content to a uniquely-named temp dir so the download keeps a
-    human-friendly filename (tempfile alone would give a random basename)."""
-    directory = Path(tempfile.mkdtemp(prefix="shepherd_export_"))
-    path = directory / filename
-    path.write_text(content, encoding="utf-8")
-    return str(path)
+# One export directory reused across diagnoses in this process. Files are named by
+# session signature so they don't collide; periodic cleanup is future work.
+_EXPORT_DIR: Optional[Path] = None
 
 
-def _export_csv(result_state: Optional[Dict[str, Any]]) -> str:
-    if not result_state or not result_state.get("candidates"):
-        raise gr.Error("Run a diagnosis first — there are no results to export.")
-    tag = _slug(result_state.get("patient_id") or result_state.get("session_id"))
-    return _write_named_temp(_build_results_csv(result_state), f"diagnosis_{tag}.csv")
+def _export_dir() -> Path:
+    global _EXPORT_DIR
+    if _EXPORT_DIR is None or not _EXPORT_DIR.exists():
+        _EXPORT_DIR = Path(tempfile.mkdtemp(prefix="shepherd_export_"))
+    return _EXPORT_DIR
 
 
-def _export_report(result_state: Optional[Dict[str, Any]]) -> str:
-    if not result_state or not result_state.get("candidates"):
-        raise gr.Error("Run a diagnosis first — there are no results to export.")
-    tag = _slug(result_state.get("patient_id") or result_state.get("session_id"))
-    return _write_named_temp(
-        _build_results_report_md(result_state), f"diagnosis_report_{tag}.md"
-    )
+def _export_basename(result: Dict[str, Any]) -> str:
+    """diagnosis_<patient>_<session-signature> — distinct per run for easy filing."""
+    patient = _slug(result.get("patient_id"), "webui_patient")
+    session = _slug(result.get("session_id") or result.get("timestamp"), "run")
+    return f"diagnosis_{patient}_{session}"
+
+
+def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
+    """Generate both export files for a result up front (so the DownloadButtons
+    can serve them on the first click). Returns (csv_path, md_path)."""
+    base = _export_basename(result)
+    directory = _export_dir()
+    csv_path = directory / f"{base}.csv"
+    md_path = directory / f"{base}_report.md"
+    csv_path.write_text(_build_results_csv(result), encoding="utf-8")
+    md_path.write_text(_build_results_report_md(result), encoding="utf-8")
+    return str(csv_path), str(md_path)
 
 
 # =============================================================================
 # Event handlers
 # =============================================================================
+# DownloadButton update for the "no downloadable result" state.
+_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False)
+
+
 def _on_diagnose(
     phenotype_text: str,
     patient_id: str,
     top_k: int,
-) -> Tuple[str, str, str, "gr.update", Optional[Dict[str, Any]]]:
+):
     """
     Handle the Diagnose button click.
 
     Returns: (results_table, evidence_detail, explanation,
-              candidate_dropdown_update, results_state)
-    The full API result is stashed in results_state so the candidate dropdown and
-    the export buttons can reuse it without re-running inference.
+              candidate_dropdown_update, results_state,
+              export_csv_update, export_report_update)
+
+    The full API result is stashed in results_state so the candidate dropdown
+    reuses it without re-running inference. Export files are generated up front
+    here and set as the DownloadButtons' values, so a single click downloads
+    them (avoids the gr.DownloadButton "download current value, then update"
+    two-click behaviour).
     """
     hpo_ids = _parse_hpo_ids(phenotype_text)
 
@@ -465,6 +510,8 @@ def _on_diagnose(
             "",
             gr.update(choices=[], value=None),
             None,
+            _DOWNLOAD_DISABLED,
+            _DOWNLOAD_DISABLED,
         )
 
     # Call API
@@ -482,6 +529,8 @@ def _on_diagnose(
             "",
             gr.update(choices=[], value=None),
             None,
+            _DOWNLOAD_DISABLED,
+            _DOWNLOAD_DISABLED,
         )
 
     candidates = result.get("candidates", [])
@@ -507,12 +556,46 @@ def _on_diagnose(
     # Stash the parsed query so an exported report records what was asked.
     result["_query_phenotypes"] = hpo_ids
 
+    # Pre-generate the export files (single-click download).
+    if candidates:
+        csv_path, md_path = _write_exports(result)
+        csv_update = gr.update(value=csv_path, interactive=True)
+        md_update = gr.update(value=md_path, interactive=True)
+    else:
+        csv_update = md_update = _DOWNLOAD_DISABLED
+
     return (
         table_md + meta,
         evidence_md,
         explain_md,
         gr.update(choices=choices, value=choices[0] if choices else None),
         result,
+        csv_update,
+        md_update,
+    )
+
+
+def _on_phenotype_change(result_state: Optional[Dict[str, Any]]):
+    """Clear stale results/exports when the phenotype input is edited *after* a run.
+
+    Only the phenotype list is watched — it defines the diagnosis, so editing it
+    genuinely invalidates the shown/exported results. Patient ID (a per-keystroke
+    textbox that doesn't affect the run) and Top-K are intentionally NOT watched.
+    No-ops until there is a result to invalidate, so typing the first query
+    doesn't disturb the placeholder. Output order matches ``_diagnosis_outputs``.
+    """
+    if not result_state:
+        no_change = gr.update()
+        return (no_change, no_change, no_change, no_change, None,
+                no_change, no_change)
+    return (
+        "*Inputs changed — click 'Run Diagnosis' to refresh results.*",
+        "",
+        "",
+        gr.update(choices=[], value=None),
+        None,
+        _DOWNLOAD_DISABLED,
+        _DOWNLOAD_DISABLED,
     )
 
 
@@ -702,11 +785,13 @@ def create_diagnosis_tab() -> None:
                     "⬇️ Export CSV (all candidates)",
                     size="sm",
                     variant="secondary",
+                    interactive=False,
                 )
                 export_report_btn = gr.DownloadButton(
                     "⬇️ Export report (.md)",
                     size="sm",
                     variant="secondary",
+                    interactive=False,
                 )
             gr.Markdown(
                 "<sub>CSV = one row per candidate (all Top-K) for spreadsheets · "
@@ -733,12 +818,14 @@ def create_diagnosis_tab() -> None:
                 )
 
     # === Event wiring ===
+    _diagnosis_outputs = [
+        results_md, evidence_md, explanation_md, candidate_selector, results_state,
+        export_csv_btn, export_report_btn,
+    ]
     diagnose_btn.click(
         fn=_on_diagnose,
         inputs=[phenotype_input, patient_id_input, top_k_input],
-        outputs=[
-            results_md, evidence_md, explanation_md, candidate_selector, results_state,
-        ],
+        outputs=_diagnosis_outputs,
     )
 
     candidate_selector.change(
@@ -747,12 +834,16 @@ def create_diagnosis_tab() -> None:
         outputs=[evidence_md, explanation_md],
     )
 
-    export_csv_btn.click(
-        fn=_export_csv, inputs=[results_state], outputs=[export_csv_btn]
+    # Editing the phenotype list invalidates the shown/exported results — clear
+    # them (and disable the downloads) so nothing stale can be exported.
+    phenotype_input.change(
+        fn=_on_phenotype_change,
+        inputs=[results_state],
+        outputs=_diagnosis_outputs,
     )
-    export_report_btn.click(
-        fn=_export_report, inputs=[results_state], outputs=[export_report_btn]
-    )
+
+    # Note: export files are pre-generated in _on_diagnose and set as each
+    # DownloadButton's value, so a single click downloads them — no click handler.
 
     # === Model config event wiring ===
     reload_btn.click(
