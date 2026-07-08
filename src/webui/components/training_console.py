@@ -255,12 +255,12 @@ def _on_resume(*args):
     training_manager.checkpoint_dir = resolved_dir
 
     def _resume_error(message: str):
-        # Also raise a toast: the status_display below is overwritten by the
-        # ~1.5s status poll, too brief to read. The toast persists 15s and is
-        # not affected by polling — important for less-savvy users post-deploy.
-        gr.Warning(message, duration=15)
+        # The full message goes to a toast (persistent countdown bar + close X,
+        # unaffected by the ~1.5s status poll). The Status field only carries a
+        # short marker — details live in the toast.
+        gr.Warning(message, duration=12)
         return (
-            message,
+            "⚠️ **Resume rejected** — see the notification.",
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             gr.update(interactive=True),
             gr.update(interactive=False),
