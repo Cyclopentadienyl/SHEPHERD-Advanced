@@ -15,7 +15,7 @@ Purpose:
 Usage:
     python scripts/train_model.py --config configs/train_config.yaml
     python scripts/train_model.py --data-dir data/workspaces/demo --epochs 100
-    python scripts/train_model.py --resume checkpoints/last.pt
+    python scripts/train_model.py --resume data/workspaces/<ws>/checkpoints/hgt/last.pt
 
 Dependencies:
     - argparse: CLI argument parsing
@@ -527,11 +527,14 @@ def train(config: TrainConfig) -> Dict[str, float]:
 
     # Create output directories
     output_dir = Path(config.output_dir)
-    # Auto-derive checkpoint_dir from data_dir if not explicitly set
-    if config.checkpoint_dir:
-        checkpoint_dir = Path(config.checkpoint_dir)
-    else:
-        checkpoint_dir = Path(config.data_dir) / "checkpoints"
+    # Auto-derive an architecture-scoped checkpoint dir
+    # ({data_dir}/checkpoints/{conv_type}) so different conv types never
+    # overwrite each other. An explicit checkpoint_dir is honoured verbatim.
+    from src.utils.checkpoint_paths import resolve_checkpoint_dir
+
+    checkpoint_dir = resolve_checkpoint_dir(
+        config.data_dir, config.conv_type, config.checkpoint_dir or None
+    )
     log_dir = Path(config.log_dir)
 
     for d in [output_dir, checkpoint_dir, log_dir]:

@@ -808,7 +808,7 @@ class DiagnosisPipeline:
         # HGT/SAGE checkpoint is never silently rebuilt as GAT.
         import dataclasses as _dc
 
-        from src.models.gnn.layers import SUPPORTED_CONV_TYPES
+        from src.config.model_types import SUPPORTED_CONV_TYPES
 
         state_keys = set(state_dict.keys())
         has_pos_encoder = any(k.startswith("pos_encoder.") for k in state_keys)

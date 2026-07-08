@@ -244,29 +244,51 @@ def _on_resume(*args):
     checkpoint_selection = args[-1] if args else None
     config = _collect_config(*args[:-1])
 
-    # Use checkpoint from dropdown selection
-    if checkpoint_selection and str(checkpoint_selection).strip():
-        config["resume_from"] = str(checkpoint_selection).strip()
+    # Resolve the expected checkpoint dir from the CURRENT config (same rule as
+    # the write path). This is the authoritative gate — never trust whatever
+    # training_manager.checkpoint_dir happened to be from a previous refresh.
+    from src.utils.checkpoint_paths import select_checkpoint_in_dir
 
-    # If no dropdown selection, auto-find the last checkpoint
-    if "resume_from" not in config:
-        checkpoints = training_manager.get_checkpoints()
-        if checkpoints:
-            # Use the last.pt if it exists
-            for ckpt in checkpoints:
-                if ckpt["filename"] == "last.pt":
-                    config["resume_from"] = ckpt["filepath"]
-                    break
-            if "resume_from" not in config:
-                config["resume_from"] = checkpoints[0]["filepath"]
-        else:
-            return (
-                "No checkpoints found to resume from",
-                _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-                gr.update(interactive=True),
-                gr.update(interactive=False),
-                gr.update(interactive=True),
+    resolved_dir = _resolve_resume_dir(
+        config["data_dir"], config.get("conv_type", ""), config.get("checkpoint_dir", "")
+    )
+    training_manager.checkpoint_dir = resolved_dir
+
+    def _resume_error(message: str):
+        # The full message goes to a toast (persistent countdown bar + close X,
+        # unaffected by the ~1.5s status poll). The Status field only carries a
+        # short marker — details live in the toast.
+        gr.Warning(message, duration=12)
+        return (
+            "⚠️ **Resume rejected** — see the notification.",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            gr.update(interactive=True),
+            gr.update(interactive=False),
+            gr.update(interactive=True),
+        )
+
+    selection = str(checkpoint_selection).strip() if checkpoint_selection else ""
+    if selection:
+        sel_path = Path(selection)
+        if not sel_path.exists():
+            return _resume_error(
+                "⚠️ Selected checkpoint no longer exists. Click **Refresh** and pick again."
             )
+        # Guard against a stale dropdown pointing at another architecture's dir.
+        if not _is_within_dir(sel_path, resolved_dir):
+            return _resume_error(
+                "⚠️ Selected checkpoint is outside the checkpoint directory for the "
+                "current architecture/settings. Click **Refresh** and select a matching "
+                "checkpoint."
+            )
+        config["resume_from"] = str(sel_path)
+    else:
+        # No selection -> resume the LATEST state in the resolved dir (last.pt ->
+        # newest). No score_fn: resume wants the latest checkpoint, not the best-val.
+        fallback = select_checkpoint_in_dir(resolved_dir)
+        if fallback is None:
+            return _resume_error(f"No checkpoints found to resume from in {resolved_dir}.")
+        config["resume_from"] = str(fallback)
 
     result = training_manager.start_training(config)
     if result.get("success"):
@@ -333,17 +355,47 @@ def _export_metrics_csv() -> Optional[str]:
     return path
 
 
-def _refresh_checkpoints(data_dir_value: str = ""):
-    """Refresh checkpoint dropdown choices, deriving path from workspace."""
-    # Strip UI display prefix (e.g. "SHEPHERD-Advanced/data/..." → "data/...")
-    stripped = data_dir_value.strip() if data_dir_value else ""
-    if stripped.startswith("SHEPHERD-Advanced/"):
-        stripped = stripped[len("SHEPHERD-Advanced/"):]
+def _strip_display_prefix(path: str) -> str:
+    """Strip the UI display prefix (``SHEPHERD-Advanced/...`` -> ``...``)."""
+    p = (path or "").strip()
+    return p[len("SHEPHERD-Advanced/"):] if p.startswith("SHEPHERD-Advanced/") else p
 
-    if stripped:
-        training_manager.checkpoint_dir = Path(stripped) / "checkpoints"
 
-    logger.info(f"Scanning checkpoints in: {training_manager.checkpoint_dir} (exists={training_manager.checkpoint_dir.exists()})")
+def _is_within_dir(child: Path, parent: Path) -> bool:
+    """True if ``child`` is inside ``parent`` (resolved). Robust to odd/absent paths."""
+    try:
+        child_r = str(Path(child).resolve())
+        parent_r = str(Path(parent).resolve())
+        return os.path.commonpath([child_r, parent_r]) == parent_r
+    except (ValueError, OSError):
+        return False
+
+
+def _resolve_resume_dir(data_dir: str, conv_type: str, checkpoint_dir: str) -> Path:
+    """Resolve the checkpoint dir for resume, using the SAME rule as the write
+    path: an explicit checkpoint_dir wins; otherwise {data_dir}/checkpoints/{conv_type}."""
+    from src.utils.checkpoint_paths import resolve_checkpoint_dir
+
+    return resolve_checkpoint_dir(
+        _strip_display_prefix(data_dir) or "data/workspaces/default",
+        conv_type,
+        _strip_display_prefix(checkpoint_dir) or None,
+    )
+
+
+def _refresh_checkpoints(
+    data_dir_value: str = "", conv_type_value: str = "", checkpoint_dir_value: str = ""
+):
+    """Refresh the resume-checkpoint dropdown for the CURRENT training architecture.
+
+    Lists checkpoints from the architecture-scoped dir
+    ({data_dir}/checkpoints/{conv_type}/) — or an explicit checkpoint_dir if set —
+    so the dropdown always matches the selected conv_type. Wired to both the
+    Refresh button and conv_type's change event.
+    """
+    resolved = _resolve_resume_dir(data_dir_value, conv_type_value, checkpoint_dir_value)
+    training_manager.checkpoint_dir = resolved
+    logger.info("Scanning checkpoints in: %s (exists=%s)", resolved, resolved.exists())
 
     checkpoints = training_manager.get_checkpoints()
     choices = []
@@ -1366,7 +1418,17 @@ def create_training_tab() -> None:
     )
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
-        inputs=[data_dir],
+        inputs=[data_dir, conv_type, checkpoint_dir],
+        outputs=[checkpoint_dropdown],
+    )
+    # Auto-relink the resume list to the selected training architecture: changing
+    # conv_type repopulates the dropdown with that architecture's checkpoints, so
+    # a stale cross-architecture selection can't linger. (data_dir is free text —
+    # not bound here to avoid re-scanning on every keystroke; the manual Refresh
+    # and the _on_resume guard cover it.)
+    conv_type.change(
+        fn=_refresh_checkpoints,
+        inputs=[data_dir, conv_type, checkpoint_dir],
         outputs=[checkpoint_dropdown],
     )
     save_path_btn.click(
