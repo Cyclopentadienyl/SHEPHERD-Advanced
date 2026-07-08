@@ -15,7 +15,7 @@ Purpose:
 Usage:
     python scripts/train_model.py --config configs/train_config.yaml
     python scripts/train_model.py --data-dir data/workspaces/demo --epochs 100
-    python scripts/train_model.py --resume checkpoints/last.pt
+    python scripts/train_model.py --resume data/workspaces/<ws>/checkpoints/hgt/last.pt
 
 Dependencies:
     - argparse: CLI argument parsing
