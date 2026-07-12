@@ -346,3 +346,13 @@ class TestTrainingRequestValidation:
     def test_onecycle_positive_min_lr_ratio_ok(self):
         req = self._req(scheduler_type="onecycle", min_lr_ratio=0.01)
         assert req.scheduler_type == "onecycle"
+
+    # -- WS3: batch_size upper bound raised to 2048 ----------------------------
+    def test_batch_size_2048_accepted(self):
+        assert self._req(batch_size=2048).batch_size == 2048
+
+    def test_batch_size_over_2048_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._req(batch_size=2049)

@@ -1085,8 +1085,12 @@ def create_training_tab() -> None:
                 )
                 batch_size = gr.Dropdown(
                     label="Batch Size",
-                    info="Samples per step. Larger = faster but more VRAM. 32 is a safe default.",
-                    choices=["8", "16", "32", "64", "128", "256", "512"],
+                    info=(
+                        "Samples per step. Larger = faster but more VRAM. 32 = safe "
+                        "default; 1024 for large-VRAM GPUs (e.g. GB10); 2048 is "
+                        "experimental (HGT will OOM). Raise LR & warmup with batch."
+                    ),
+                    choices=["8", "16", "32", "64", "128", "256", "512", "1024", "2048"],
                     value="32",
                     elem_id="batch_size",
                 )

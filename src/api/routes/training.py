@@ -51,7 +51,7 @@ class TrainingStartRequest(BaseModel):
     # Tier 1 — Basic
     num_epochs: int = Field(default=100, ge=1, le=10000, description="Number of epochs")
     learning_rate: float = Field(default=1e-4, gt=0, le=1.0, description="Learning rate")
-    batch_size: int = Field(default=32, ge=1, le=1024, description="Batch size")
+    batch_size: int = Field(default=32, ge=1, le=2048, description="Batch size")
     conv_type: str = Field(default="gat", description="GNN convolution type")
     device: str = Field(default="auto", description="Device: auto, cuda, cpu")
     resume_from: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
