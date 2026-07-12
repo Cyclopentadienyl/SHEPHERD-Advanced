@@ -150,6 +150,39 @@ class TrainingState:
 
 
 # =============================================================================
+# Scheduler input validation
+# =============================================================================
+def _validate_min_lr_ratio(min_lr_ratio: float, scheduler_type: str) -> None:
+    """Validate ``min_lr_ratio`` for the chosen scheduler.
+
+    Rules (matched to PyTorch's actual behaviour, not stricter):
+      - ``scheduler_type == "none"``: the ratio is never consumed -> no check.
+      - A negative ratio is invalid for every scheduler that uses it. PyTorch's
+        LambdaLR (our cosine path) and OneCycleLR do not validate it and would
+        silently train at a negative learning rate, so reject it here.
+      - ``onecycle`` additionally requires a strictly positive ratio: it computes
+        ``final_div_factor = 1 / min_lr_ratio`` (0 -> ZeroDivisionError; OneCycleLR
+        does not validate the factor).
+      - ``cosine`` / ``linear`` accept 0 (legitimate decay-to-zero via a floor
+        factor), so 0 is NOT rejected for them.
+    """
+    if scheduler_type == "none":
+        return
+    if min_lr_ratio < 0:
+        raise ValueError(
+            f"min_lr_ratio must be >= 0 (got {min_lr_ratio!r}) for "
+            f"scheduler_type={scheduler_type!r}."
+        )
+    if scheduler_type == "onecycle" and min_lr_ratio <= 0:
+        raise ValueError(
+            f"min_lr_ratio must be > 0 for the 'onecycle' scheduler "
+            f"(got {min_lr_ratio!r}); onecycle computes "
+            f"final_div_factor = 1 / min_lr_ratio. Use a small positive value "
+            f"(e.g. 0.01), or choose scheduler_type 'cosine'/'linear' which accept 0."
+        )
+
+
+# =============================================================================
 # Trainer
 # =============================================================================
 class Trainer:
@@ -267,6 +300,10 @@ class Trainer:
         """創建學習率調度器"""
         if self.config.scheduler_type == "none":
             return None
+
+        # Fail loud on an illegal min_lr_ratio before building the scheduler. This
+        # covers every entry path (CLI / YAML / API / UI) since all funnel here.
+        _validate_min_lr_ratio(self.config.min_lr_ratio, self.config.scheduler_type)
 
         # Estimate total steps
         total_steps = self._estimate_total_steps()

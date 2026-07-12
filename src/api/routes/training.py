@@ -27,7 +27,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.api.services.training_manager import training_manager
 
@@ -89,6 +89,17 @@ class TrainingStartRequest(BaseModel):
     num_negative_samples: int = Field(default=5, ge=1, description="Negative samples")
     eval_every_n_epochs: int = Field(default=1, ge=1, description="Evaluate every N epochs")
     save_top_k: int = Field(default=3, ge=1, description="Save top K checkpoints")
+
+    @model_validator(mode="after")
+    def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":
+        # min_lr_ratio == 0 is valid for cosine/linear (decay-to-zero), so the
+        # field keeps ge=0.0. Only onecycle divides by it (final_div_factor =
+        # 1 / min_lr_ratio) and therefore needs a strictly positive value.
+        if self.scheduler_type == "onecycle" and self.min_lr_ratio <= 0:
+            raise ValueError(
+                "min_lr_ratio must be > 0 when scheduler_type is 'onecycle'."
+            )
+        return self
 
 
 class TrainingStatusResponse(BaseModel):

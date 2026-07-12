@@ -318,3 +318,31 @@ class TestSystemAPIEndpoint:
         data = resp.json()
         assert "gpu" in data
         assert "ram" in data
+
+
+class TestTrainingRequestValidation:
+    """TrainingStartRequest field + cross-field validation."""
+
+    def _req(self, **overrides):
+        from src.api.routes.training import TrainingStartRequest
+
+        return TrainingStartRequest(**overrides)
+
+    # -- WS1b: onecycle requires min_lr_ratio > 0; cosine/linear allow 0 --------
+    def test_onecycle_zero_min_lr_ratio_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._req(scheduler_type="onecycle", min_lr_ratio=0.0)
+
+    def test_cosine_zero_min_lr_ratio_allowed(self):
+        req = self._req(scheduler_type="cosine", min_lr_ratio=0.0)
+        assert req.min_lr_ratio == 0.0
+
+    def test_linear_zero_min_lr_ratio_allowed(self):
+        req = self._req(scheduler_type="linear", min_lr_ratio=0.0)
+        assert req.min_lr_ratio == 0.0
+
+    def test_onecycle_positive_min_lr_ratio_ok(self):
+        req = self._req(scheduler_type="onecycle", min_lr_ratio=0.01)
+        assert req.scheduler_type == "onecycle"
