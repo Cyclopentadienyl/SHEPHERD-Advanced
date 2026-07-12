@@ -79,6 +79,36 @@ def _reset_training_config() -> Tuple[str, str]:
     return f"{DISPLAY_PREFIX}{DEFAULT_WORKSPACE}", "Paths reset to defaults."
 
 
+class ConfigValidationError(ValueError):
+    """Raised when Training Console inputs are empty or illegal.
+
+    The message is user-facing: callers surface it as a gr.Warning toast and
+    abort without launching training.
+    """
+
+
+def _num(value, label, cast, errors, *, positive=False):
+    """Coerce one numeric widget value, accumulating a friendly message into
+    ``errors`` instead of leaking a raw TypeError/ValueError.
+
+    A cleared gr.Number yields None; string/punctuation is already blocked by
+    the number input client-side, but the try/except keeps a clean error
+    contract for direct/programmatic calls (e.g. tests). Returns the cast value,
+    or None when invalid (the caller aborts on a non-empty ``errors`` list).
+    """
+    if value is None:
+        errors.append(f"{label} is empty — enter a value.")
+        return None
+    try:
+        v = cast(value)
+    except (TypeError, ValueError):
+        errors.append(f"{label} must be a number (got {value!r}).")
+        return None
+    if positive and v <= 0:
+        errors.append(f"{label} must be > 0 (got {v}).")
+    return v
+
+
 def _collect_config(
     # Paths
     data_dir: str,
@@ -130,34 +160,40 @@ def _collect_config(
             p = p[len("SHEPHERD-Advanced/"):]
         return p
 
+    # Numeric gr.Number fields can arrive as None when a user clears them; route
+    # them through _num so an empty/illegal value becomes a friendly toast instead
+    # of a raw TypeError. Sliders and (string-choice) dropdowns can't be None, so
+    # they keep their bare casts. learning_rate is the one Number with no widget
+    # minimum, so it also gets a >0 check (aligns with the API's Field(gt=0)).
+    errors: List[str] = []
     config: Dict[str, Any] = {
         # Paths (strip display prefix so backend receives relative-to-project-root paths)
         "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",
         "output_dir": _strip_prefix(output_dir) or "outputs",
         "checkpoint_dir": _strip_prefix(checkpoint_dir) or "",  # empty = auto-derive from data_dir
         # Tier 1
-        "num_epochs": int(num_epochs),
-        "learning_rate": float(learning_rate),
+        "num_epochs": _num(num_epochs, "Epochs", int, errors),
+        "learning_rate": _num(learning_rate, "Learning Rate", float, errors, positive=True),
         "batch_size": int(batch_size),
         "conv_type": conv_type,
         "device": device,
-        "seed": int(seed),
+        "seed": _num(seed, "Seed", int, errors),
         # Tier 2
         "hidden_dim": int(hidden_dim),
         "num_layers": int(num_layers),
         "dropout": float(dropout),
         "weight_decay": float(weight_decay),
         "scheduler_type": scheduler_type,
-        "warmup_steps": int(warmup_steps),
-        "min_lr_ratio": float(min_lr_ratio),
-        "early_stopping_patience": int(early_stopping_patience),
+        "warmup_steps": _num(warmup_steps, "Warmup Steps", int, errors),
+        "min_lr_ratio": _num(min_lr_ratio, "Min LR Ratio", float, errors),
+        "early_stopping_patience": _num(early_stopping_patience, "Early Stopping Patience", int, errors),
         "diagnosis_weight": float(diagnosis_weight),
         "link_prediction_weight": float(link_prediction_weight),
         "contrastive_weight": float(contrastive_weight),
         "ortholog_weight": float(ortholog_weight),
         # Tier 3
-        "gradient_accumulation_steps": int(gradient_accumulation_steps),
-        "max_grad_norm": float(max_grad_norm),
+        "gradient_accumulation_steps": _num(gradient_accumulation_steps, "Gradient Accumulation Steps", int, errors),
+        "max_grad_norm": _num(max_grad_norm, "Max Grad Norm", float, errors),
         "num_heads": int(num_heads),
         "use_ortholog_gate": use_ortholog_gate,
         "use_amp": False if (conv_type == "hgt" or amp_mode == "Off") else True,
@@ -166,12 +202,17 @@ def _collect_config(
         "label_smoothing": float(label_smoothing),
         "margin": float(margin),
         "num_neighbors": num_neighbors,
-        "max_subgraph_nodes": int(max_subgraph_nodes),
+        "max_subgraph_nodes": _num(max_subgraph_nodes, "Max Subgraph Nodes", int, errors),
         # torch.compile is configured in the Runtime Settings tab (per-run, no
         # restart). Read its persisted value here so it flows into the training
         # config exactly once, sourced from a single place.
         "compile": bool(load_runtime_settings().get("torch_compile", False)),
     }
+
+    if errors:
+        raise ConfigValidationError(
+            "Cannot start training — please fix:\n• " + "\n• ".join(errors)
+        )
 
     return config
 
@@ -184,7 +225,19 @@ def _on_start(*args):
     """
     global _poll_cache_key
     _poll_cache_key = None  # force full refresh on next poll tick
-    config = _collect_config(*args)
+    try:
+        config = _collect_config(*args)
+    except ConfigValidationError as e:
+        # Toast carries the detail (survives the ~1.5s status poll); the Status
+        # field only shows a short marker.
+        gr.Warning(str(e), duration=12)
+        return (
+            "⚠️ **Invalid configuration** — see the notification.",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            gr.update(interactive=True),    # keep start enabled
+            gr.update(interactive=False),   # keep stop disabled
+            gr.update(interactive=True),    # keep resume enabled
+        )
     result = training_manager.start_training(config)
     if result.get("success"):
         return (
@@ -242,7 +295,17 @@ def _on_resume(*args):
     _poll_cache_key = None  # force full refresh on next poll tick
     # Last arg is checkpoint dropdown; rest go to _collect_config
     checkpoint_selection = args[-1] if args else None
-    config = _collect_config(*args[:-1])
+    try:
+        config = _collect_config(*args[:-1])
+    except ConfigValidationError as e:
+        gr.Warning(str(e), duration=12)
+        return (
+            "⚠️ **Invalid configuration** — see the notification.",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            gr.update(interactive=True),    # keep start enabled
+            gr.update(interactive=False),   # keep stop disabled
+            gr.update(interactive=True),    # keep resume enabled
+        )
 
     # Resolve the expected checkpoint dir from the CURRENT config (same rule as
     # the write path). This is the authoritative gate — never trust whatever
