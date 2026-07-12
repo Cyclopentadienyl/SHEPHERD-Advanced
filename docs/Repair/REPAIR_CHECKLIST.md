@@ -182,6 +182,24 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 - [x] Checkpoint training metadata displayed in pipeline status (epoch, loss, params) (PR #61)
 - [ ] **Ensure `launch_shepherd.sh` / `launch_shepherd.cmd` set default env vars** from `configs/deployment.yaml` paths section, so production startup is zero-config
 
+### F.6 Checkpoint Metadata Viewer (planned — after the current input-hardening stack)
+Engineering-facing page: load a checkpoint and display everything about the run that
+produced it. Most of the data is ALREADY embedded in each checkpoint, so this is
+largely a read-and-render page (no re-training / re-inference required).
+- [ ] **Load a checkpoint** — reuse the architecture-aware selection (auto / hgt / gat / sage, or an explicit path)
+- [ ] **Training curves** — from `checkpoint["state"]`: `train_loss_history` (loss) + `val_metric_history` (val_mrr / hits@10 / hits@1)
+- [ ] **Hyperparameters** — from `checkpoint["config"]` (full serialized `TrainerConfig`): learning_rate, weight_decay, scheduler_type, warmup_steps, min_lr_ratio, gradient_accumulation_steps, use_amp / amp_dtype, early_stopping_*, **seed**, device
+- [ ] **Model architecture** — from `checkpoint["config"]["model_config"]`: conv_type, hidden_dim, num_layers, num_heads, use_positional_encoding, use_ortholog_gate
+- [ ] **Best metrics** — from `checkpoint["logs"]` (ranking keys val_mrr → hits@10 → hits@1)
+- [ ] **KG compatibility** — from `checkpoint["data_fingerprint"]` (node/edge types, feature dims, counts); optionally verify against the currently-loaded KG
+- [ ] **Epoch / global_step** — from `checkpoint["epoch"]` / `["global_step"]`
+
+Notes / prerequisites:
+- **seed is NOT a fingerprint field.** `data_fingerprint` captures KG *structural identity* only (for version-compat warnings). The seed is already persisted at `checkpoint["config"]["seed"]` (`TrainerConfig.seed`, serialized by `trainer._serialize_config`), so the viewer reads it from there — no storage change, and it must NOT be pushed into `data_fingerprint`.
+- **Gap to fill before the viewer is complete:** `batch_size`, `num_neighbors`, `max_subgraph_nodes` live in `DataLoaderConfig`, not `TrainerConfig`, so `_serialize_config` does NOT capture them. Add a small enhancement to persist these data-loader knobs into the checkpoint metadata so the viewer can show the full run config (otherwise batch size etc. are unknown from a checkpoint alone).
+- **Related:** the randomize-seed UI work (🎲 + write-back + a `_set_seed` log line) makes the recorded `config["seed"]` the *actual* (possibly random) seed used, so a viewed checkpoint is reproducible.
+- Overlaps with the existing F.3 "Checkpoint management" item (list / load / compare) and reuses F.5's metadata plumbing (checkpoint metadata already shown in pipeline status).
+
 ---
 
 ## Phase 4: Infrastructure (P2)
@@ -242,4 +260,5 @@ EvidencePanel is now a separate module that consumes PathReasoner as a building 
 | 2026-05-13 | Inference + SP | SP memory fix (50GB→4.5GB), LambdaLR scheduler, GradScaler skip, training stop cleanup | Full GNN+SP inference working; Marfan + Rett test results recorded in milestone |
 | 2026-05-13 | Evidence path issues | Logged: indirect path score=0, unmatched phenotype, hyperprolinemia false positive | Tracked in §4.1.5; does not affect ranking, affects explanation credibility |
 | 2026-06-11 | 1.2 verify + checklist sync | Code audit confirms Candidate Discovery fix landed in Step B/C (was logged "deferred" on 2026-04-07) | BFS no longer sole gatekeeper: ANN-only candidates discovered (Step 3b) + scored via combined GNN+SP; integration tests cover it. Marked 1.2 COMPLETE |
+| 2026-07-12 | Input hardening + metadata planning | Implemented (branch, pending review): onecycle min_lr_ratio guard, WebUI numeric-input validation, batch 1024/2048 exposure, dead-code cleanup. Logged F.6 Checkpoint Metadata Viewer | seed already persisted in `checkpoint["config"]`; `data_fingerprint` is KG-identity only; batch_size/num_neighbors/max_subgraph_nodes not yet serialized |
 | | | | |
