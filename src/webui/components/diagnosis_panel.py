@@ -168,16 +168,6 @@ def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
         return "Configuration saved."
     except Exception as e:
         return f"Failed to save: {e}"
-    try:
-        resp = requests.post(
-            f"{PIPELINE_API}/pipeline/config",
-            json={"data_dir": data_dir, "checkpoint_path": checkpoint_path or None},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        return "Configuration saved."
-    except Exception as e:
-        return f"Failed to save: {e}"
 
 
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
