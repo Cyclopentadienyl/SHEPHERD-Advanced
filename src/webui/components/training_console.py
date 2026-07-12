@@ -87,14 +87,18 @@ class ConfigValidationError(ValueError):
     """
 
 
-def _num(value, label, cast, errors, *, positive=False):
-    """Coerce one numeric widget value, accumulating a friendly message into
-    ``errors`` instead of leaking a raw TypeError/ValueError.
+def _num(value, label, cast, errors, *, positive=False, lo=None, hi=None):
+    """Coerce and range-check one numeric widget value, accumulating a friendly,
+    field-named message into ``errors`` instead of leaking a raw
+    TypeError/ValueError or Gradio's terse field-less bound error.
 
-    A cleared gr.Number yields None; string/punctuation is already blocked by
-    the number input client-side, but the try/except keeps a clean error
-    contract for direct/programmatic calls (e.g. tests). Returns the cast value,
-    or None when invalid (the caller aborts on a non-empty ``errors`` list).
+    A cleared gr.Number yields None; string/punctuation is already blocked by the
+    number input client-side, but the try/except keeps a clean error contract for
+    direct/programmatic calls (e.g. tests). ``lo``/``hi`` are inclusive bounds
+    (replacing the widgets' minimum/maximum so the message names the field);
+    ``positive`` is a strict > 0 check (learning_rate, which has no widget bound).
+    Returns the cast value, or None when invalid (the caller aborts on a
+    non-empty ``errors`` list).
     """
     if value is None:
         errors.append(f"{label} is empty — enter a value.")
@@ -106,6 +110,10 @@ def _num(value, label, cast, errors, *, positive=False):
         return None
     if positive and v <= 0:
         errors.append(f"{label} must be > 0 (got {v}).")
+    if lo is not None and v < lo:
+        errors.append(f"{label} must be >= {lo} (got {v}).")
+    if hi is not None and v > hi:
+        errors.append(f"{label} must be <= {hi} (got {v}).")
     return v
 
 
@@ -172,28 +180,28 @@ def _collect_config(
         "output_dir": _strip_prefix(output_dir) or "outputs",
         "checkpoint_dir": _strip_prefix(checkpoint_dir) or "",  # empty = auto-derive from data_dir
         # Tier 1
-        "num_epochs": _num(num_epochs, "Epochs", int, errors),
+        "num_epochs": _num(num_epochs, "Epochs", int, errors, lo=1, hi=10000),
         "learning_rate": _num(learning_rate, "Learning Rate", float, errors, positive=True),
         "batch_size": int(batch_size),
         "conv_type": conv_type,
         "device": device,
-        "seed": _num(seed, "Seed", int, errors),
+        "seed": _num(seed, "Seed", int, errors, lo=0),
         # Tier 2
         "hidden_dim": int(hidden_dim),
         "num_layers": int(num_layers),
         "dropout": float(dropout),
         "weight_decay": float(weight_decay),
         "scheduler_type": scheduler_type,
-        "warmup_steps": _num(warmup_steps, "Warmup Steps", int, errors),
-        "min_lr_ratio": _num(min_lr_ratio, "Min LR Ratio", float, errors),
-        "early_stopping_patience": _num(early_stopping_patience, "Early Stopping Patience", int, errors),
+        "warmup_steps": _num(warmup_steps, "Warmup Steps", int, errors, lo=0),
+        "min_lr_ratio": _num(min_lr_ratio, "Min LR Ratio", float, errors, lo=1e-4, hi=1.0),
+        "early_stopping_patience": _num(early_stopping_patience, "Early Stopping Patience", int, errors, lo=1),
         "diagnosis_weight": float(diagnosis_weight),
         "link_prediction_weight": float(link_prediction_weight),
         "contrastive_weight": float(contrastive_weight),
         "ortholog_weight": float(ortholog_weight),
         # Tier 3
-        "gradient_accumulation_steps": _num(gradient_accumulation_steps, "Gradient Accumulation Steps", int, errors),
-        "max_grad_norm": _num(max_grad_norm, "Max Grad Norm", float, errors),
+        "gradient_accumulation_steps": _num(gradient_accumulation_steps, "Gradient Accumulation Steps", int, errors, lo=1),
+        "max_grad_norm": _num(max_grad_norm, "Max Grad Norm", float, errors, lo=0.01),
         "num_heads": int(num_heads),
         "use_ortholog_gate": use_ortholog_gate,
         "use_amp": False if (conv_type == "hgt" or amp_mode == "Off") else True,
@@ -202,7 +210,7 @@ def _collect_config(
         "label_smoothing": float(label_smoothing),
         "margin": float(margin),
         "num_neighbors": num_neighbors,
-        "max_subgraph_nodes": _num(max_subgraph_nodes, "Max Subgraph Nodes", int, errors),
+        "max_subgraph_nodes": _num(max_subgraph_nodes, "Max Subgraph Nodes", int, errors, lo=100),
         # torch.compile is configured in the Runtime Settings tab (per-run, no
         # restart). Read its persisted value here so it flows into the training
         # config exactly once, sourced from a single place.
@@ -1071,8 +1079,6 @@ def create_training_tab() -> None:
                     label="Epochs",
                     info="Smoke test: 2-5 | Quick: 10-50 | Full: 100-500",
                     value=100,
-                    minimum=1,
-                    maximum=10000,
                     precision=0,
                     elem_id="num_epochs",
                 )
@@ -1112,7 +1118,6 @@ def create_training_tab() -> None:
                     label="Seed",
                     info="Random seed for reproducibility. Change to try different initializations.",
                     value=42,
-                    minimum=0,
                     precision=0,
                     elem_id="seed",
                 )
@@ -1167,7 +1172,6 @@ def create_training_tab() -> None:
                         label="Warmup Steps",
                         info="Steps to linearly ramp LR from 0. 500 typical. Set 0 to disable.",
                         value=500,
-                        minimum=0,
                         precision=0,
                         elem_id="warmup_steps",
                     )
@@ -1176,15 +1180,12 @@ def create_training_tab() -> None:
                         info="Floor of LR decay as a fraction of peak (must be > 0; onecycle uses 1/min_lr_ratio). "
                              "0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
                         value=0.01,
-                        minimum=1e-4,
-                        maximum=1.0,
                         elem_id="min_lr_ratio",
                     )
                     early_stopping_patience = gr.Number(
                         label="Early Stopping Patience",
                         info="Epochs without improvement before stopping. 10 is a good default.",
                         value=10,
-                        minimum=1,
                         precision=0,
                         elem_id="early_stopping_patience",
                     )
@@ -1237,7 +1238,6 @@ def create_training_tab() -> None:
                         label="Gradient Accumulation Steps",
                         info="Simulate larger batch by accumulating N steps. Useful when VRAM-limited.",
                         value=1,
-                        minimum=1,
                         precision=0,
                         elem_id="gradient_accumulation_steps",
                     )
@@ -1245,7 +1245,6 @@ def create_training_tab() -> None:
                         label="Max Grad Norm",
                         info="Gradient clipping threshold. 1.0 typical. Prevents training instability.",
                         value=1.0,
-                        minimum=0.01,
                         elem_id="max_grad_norm",
                     )
                     num_heads = gr.Dropdown(
@@ -1305,7 +1304,6 @@ def create_training_tab() -> None:
                         label="Max Subgraph Nodes",
                         info="Max nodes in sampled subgraph. Larger = more context but slower. 5000 typical.",
                         value=5000,
-                        minimum=100,
                         precision=0,
                         elem_id="max_subgraph_nodes",
                     )

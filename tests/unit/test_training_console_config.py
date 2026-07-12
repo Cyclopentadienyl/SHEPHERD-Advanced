@@ -87,10 +87,42 @@ def test_nonpositive_learning_rate_raises(bad_lr):
     assert "Learning Rate" in str(ei.value)
 
 
-def test_min_lr_ratio_zero_is_allowed():
-    # 0 is valid for cosine/linear (decay-to-zero); must NOT be rejected here.
-    cfg = tc._collect_config(*_args(scheduler_type="cosine", min_lr_ratio=0.0))
-    assert cfg["min_lr_ratio"] == 0.0
+def test_min_lr_ratio_below_minimum_rejected():
+    # WS5 moved the widget's minimum=1e-4 into _collect_config so the message
+    # names the field. (WS1's backend rule allows 0 for cosine/linear; relaxing
+    # the UI to match is a separate opt-in, not part of this behavior-preserving
+    # change.)
+    with pytest.raises(tc.ConfigValidationError) as ei:
+        tc._collect_config(*_args(min_lr_ratio=0.0))
+    msg = str(ei.value)
+    assert "Min LR Ratio" in msg and "0.0001" in msg
+
+
+def test_below_minimum_names_field():
+    with pytest.raises(tc.ConfigValidationError) as ei:
+        tc._collect_config(*_args(max_subgraph_nodes=50))
+    assert "Max Subgraph Nodes" in str(ei.value)
+
+
+def test_above_maximum_names_field():
+    with pytest.raises(tc.ConfigValidationError) as ei:
+        tc._collect_config(*_args(num_epochs=10001))
+    assert "Epochs" in str(ei.value)
+
+
+def test_boundary_values_accepted():
+    # seed=0 (lo=0), num_epochs=1 (lo=1), min_lr_ratio=1e-4 (lo) are all valid.
+    cfg = tc._collect_config(*_args(seed=0, num_epochs=1, min_lr_ratio=1e-4))
+    assert cfg["seed"] == 0 and cfg["num_epochs"] == 1
+
+
+def test_multi_error_aggregation_lists_all():
+    with pytest.raises(tc.ConfigValidationError) as ei:
+        tc._collect_config(
+            *_args(num_epochs=0, learning_rate=None, max_subgraph_nodes=50)
+        )
+    msg = str(ei.value)
+    assert "Epochs" in msg and "Learning Rate" in msg and "Max Subgraph Nodes" in msg
 
 
 def test_nonnumeric_value_reports_friendly_error():
