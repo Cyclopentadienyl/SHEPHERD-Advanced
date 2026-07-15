@@ -33,6 +33,7 @@ import json
 import logging
 import math
 import os
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -48,6 +49,27 @@ logger = logging.getLogger(__name__)
 TRAINING_CONFIG_FILE = Path(".shepherd_training_config.json")
 DEFAULT_WORKSPACE = "data/workspaces/default"
 DISPLAY_PREFIX = "SHEPHERD-Advanced/"
+
+# Max seed value. trainer._set_seed calls np.random.seed(), whose legal range is
+# [0, 2**32 - 1] (the binding limit; torch.manual_seed is wider). Generated and
+# accepted seeds stay in this range.
+_MAX_SEED = 2**32 - 1
+
+# Position of the `seed` widget in all_params / _on_start's *args. MUST match the
+# order of all_params (and _collect_config's signature) below — used by _on_start
+# to swap in a random seed when "Randomize seed" is on.
+SEED_PARAM_INDEX = 8
+
+
+def _random_seed() -> int:
+    """A fresh seed in NumPy's legal range [0, _MAX_SEED]."""
+    return random.randint(0, _MAX_SEED)
+
+
+def _seed_field_lock(randomize: bool):
+    """Lock (grey out) the seed field while "Randomize seed" is on; the random
+    seed is generated on Start and written back, so manual editing is disabled."""
+    return gr.update(interactive=not bool(randomize))
 
 
 def _load_training_config() -> Dict[str, str]:
@@ -77,6 +99,44 @@ def _save_training_config(data_dir: str) -> str:
 def _reset_training_config() -> Tuple[str, str]:
     """Reset training path config to defaults."""
     return f"{DISPLAY_PREFIX}{DEFAULT_WORKSPACE}", "Paths reset to defaults."
+
+
+class ConfigValidationError(ValueError):
+    """Raised when Training Console inputs are empty or illegal.
+
+    The message is user-facing: callers surface it as a gr.Warning toast and
+    abort without launching training.
+    """
+
+
+def _num(value, label, cast, errors, *, positive=False, lo=None, hi=None):
+    """Coerce and range-check one numeric widget value, accumulating a friendly,
+    field-named message into ``errors`` instead of leaking a raw
+    TypeError/ValueError or Gradio's terse field-less bound error.
+
+    A cleared gr.Number yields None; string/punctuation is already blocked by the
+    number input client-side, but the try/except keeps a clean error contract for
+    direct/programmatic calls (e.g. tests). ``lo``/``hi`` are inclusive bounds
+    (replacing the widgets' minimum/maximum so the message names the field);
+    ``positive`` is a strict > 0 check (learning_rate, which has no widget bound).
+    Returns the cast value, or None when invalid (the caller aborts on a
+    non-empty ``errors`` list).
+    """
+    if value is None:
+        errors.append(f"{label} is empty — enter a value.")
+        return None
+    try:
+        v = cast(value)
+    except (TypeError, ValueError):
+        errors.append(f"{label} must be a number (got {value!r}).")
+        return None
+    if positive and v <= 0:
+        errors.append(f"{label} must be > 0 (got {v}).")
+    if lo is not None and v < lo:
+        errors.append(f"{label} must be >= {lo} (got {v}).")
+    if hi is not None and v > hi:
+        errors.append(f"{label} must be <= {hi} (got {v}).")
+    return v
 
 
 def _collect_config(
@@ -130,34 +190,40 @@ def _collect_config(
             p = p[len("SHEPHERD-Advanced/"):]
         return p
 
+    # Numeric gr.Number fields can arrive as None when a user clears them; route
+    # them through _num so an empty/illegal value becomes a friendly toast instead
+    # of a raw TypeError. Sliders and (string-choice) dropdowns can't be None, so
+    # they keep their bare casts. learning_rate is the one Number with no widget
+    # minimum, so it also gets a >0 check (aligns with the API's Field(gt=0)).
+    errors: List[str] = []
     config: Dict[str, Any] = {
         # Paths (strip display prefix so backend receives relative-to-project-root paths)
         "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",
         "output_dir": _strip_prefix(output_dir) or "outputs",
         "checkpoint_dir": _strip_prefix(checkpoint_dir) or "",  # empty = auto-derive from data_dir
         # Tier 1
-        "num_epochs": int(num_epochs),
-        "learning_rate": float(learning_rate),
+        "num_epochs": _num(num_epochs, "Epochs", int, errors, lo=1, hi=10000),
+        "learning_rate": _num(learning_rate, "Learning Rate", float, errors, positive=True),
         "batch_size": int(batch_size),
         "conv_type": conv_type,
         "device": device,
-        "seed": int(seed),
+        "seed": _num(seed, "Seed", int, errors, lo=0, hi=_MAX_SEED),
         # Tier 2
         "hidden_dim": int(hidden_dim),
         "num_layers": int(num_layers),
         "dropout": float(dropout),
         "weight_decay": float(weight_decay),
         "scheduler_type": scheduler_type,
-        "warmup_steps": int(warmup_steps),
-        "min_lr_ratio": float(min_lr_ratio),
-        "early_stopping_patience": int(early_stopping_patience),
+        "warmup_steps": _num(warmup_steps, "Warmup Steps", int, errors, lo=0),
+        "min_lr_ratio": _num(min_lr_ratio, "Min LR Ratio", float, errors, lo=1e-4, hi=1.0),
+        "early_stopping_patience": _num(early_stopping_patience, "Early Stopping Patience", int, errors, lo=1),
         "diagnosis_weight": float(diagnosis_weight),
         "link_prediction_weight": float(link_prediction_weight),
         "contrastive_weight": float(contrastive_weight),
         "ortholog_weight": float(ortholog_weight),
         # Tier 3
-        "gradient_accumulation_steps": int(gradient_accumulation_steps),
-        "max_grad_norm": float(max_grad_norm),
+        "gradient_accumulation_steps": _num(gradient_accumulation_steps, "Gradient Accumulation Steps", int, errors, lo=1),
+        "max_grad_norm": _num(max_grad_norm, "Max Grad Norm", float, errors, lo=0.01),
         "num_heads": int(num_heads),
         "use_ortholog_gate": use_ortholog_gate,
         "use_amp": False if (conv_type == "hgt" or amp_mode == "Off") else True,
@@ -166,12 +232,17 @@ def _collect_config(
         "label_smoothing": float(label_smoothing),
         "margin": float(margin),
         "num_neighbors": num_neighbors,
-        "max_subgraph_nodes": int(max_subgraph_nodes),
+        "max_subgraph_nodes": _num(max_subgraph_nodes, "Max Subgraph Nodes", int, errors, lo=100),
         # torch.compile is configured in the Runtime Settings tab (per-run, no
         # restart). Read its persisted value here so it flows into the training
         # config exactly once, sourced from a single place.
         "compile": bool(load_runtime_settings().get("torch_compile", False)),
     }
+
+    if errors:
+        raise ConfigValidationError(
+            "Cannot start training — please fix:\n• " + "\n• ".join(errors)
+        )
 
     return config
 
@@ -184,7 +255,27 @@ def _on_start(*args):
     """
     global _poll_cache_key
     _poll_cache_key = None  # force full refresh on next poll tick
-    config = _collect_config(*args)
+    # Last input is the "Randomize seed" checkbox; the rest are all_params.
+    randomize = bool(args[-1])
+    params = list(args[:-1])
+    if randomize:
+        # Swap in a fresh seed BEFORE validation so a locked/empty seed field
+        # still launches; the used seed is echoed back to the (locked) field.
+        params[SEED_PARAM_INDEX] = _random_seed()
+    try:
+        config = _collect_config(*params)
+    except ConfigValidationError as e:
+        # Toast carries the detail (survives the ~1.5s status poll); the Status
+        # field only shows a short marker.
+        gr.Warning(str(e), duration=12)
+        return (
+            "⚠️ **Invalid configuration** — see the notification.",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            gr.update(interactive=True),    # keep start enabled
+            gr.update(interactive=False),   # keep stop disabled
+            gr.update(interactive=True),    # keep resume enabled
+            gr.update(),                    # seed: unchanged (nothing launched)
+        )
     result = training_manager.start_training(config)
     if result.get("success"):
         return (
@@ -193,6 +284,7 @@ def _on_start(*args):
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
             gr.update(interactive=False),   # disable resume
+            gr.update(value=config["seed"]),  # echo the seed actually used
         )
     return (
         f"Failed: {result.get('error', 'Unknown error')}",
@@ -200,6 +292,7 @@ def _on_start(*args):
         gr.update(interactive=True),    # keep start enabled
         gr.update(interactive=False),   # keep stop disabled
         gr.update(interactive=True),    # keep resume enabled
+        gr.update(),                    # seed: unchanged (nothing launched)
     )
 
 
@@ -242,7 +335,17 @@ def _on_resume(*args):
     _poll_cache_key = None  # force full refresh on next poll tick
     # Last arg is checkpoint dropdown; rest go to _collect_config
     checkpoint_selection = args[-1] if args else None
-    config = _collect_config(*args[:-1])
+    try:
+        config = _collect_config(*args[:-1])
+    except ConfigValidationError as e:
+        gr.Warning(str(e), duration=12)
+        return (
+            "⚠️ **Invalid configuration** — see the notification.",
+            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
+            gr.update(interactive=True),    # keep start enabled
+            gr.update(interactive=False),   # keep stop disabled
+            gr.update(interactive=True),    # keep resume enabled
+        )
 
     # Resolve the expected checkpoint dir from the CURRENT config (same rule as
     # the write path). This is the authoritative gate — never trust whatever
@@ -1008,8 +1111,6 @@ def create_training_tab() -> None:
                     label="Epochs",
                     info="Smoke test: 2-5 | Quick: 10-50 | Full: 100-500",
                     value=100,
-                    minimum=1,
-                    maximum=10000,
                     precision=0,
                     elem_id="num_epochs",
                 )
@@ -1022,8 +1123,12 @@ def create_training_tab() -> None:
                 )
                 batch_size = gr.Dropdown(
                     label="Batch Size",
-                    info="Samples per step. Larger = faster but more VRAM. 32 is a safe default.",
-                    choices=["8", "16", "32", "64", "128", "256", "512"],
+                    info=(
+                        "Samples per step. Larger = faster but more VRAM. 32 = safe "
+                        "default; 1024 for large-VRAM GPUs (e.g. GB10); 2048 is "
+                        "experimental (HGT will OOM). Raise LR & warmup with batch."
+                    ),
+                    choices=["8", "16", "32", "64", "128", "256", "512", "1024", "2048"],
                     value="32",
                     elem_id="batch_size",
                 )
@@ -1045,9 +1150,16 @@ def create_training_tab() -> None:
                     label="Seed",
                     info="Random seed for reproducibility. Change to try different initializations.",
                     value=42,
-                    minimum=0,
                     precision=0,
                     elem_id="seed",
+                )
+                randomize_seed = gr.Checkbox(
+                    label="🎲 Randomize seed",
+                    info="On: the seed field is locked and a fresh random seed "
+                         "(0..2^32-1) is drawn on each Start and shown here. "
+                         "Off: the entered seed is used.",
+                    value=False,
+                    elem_id="randomize_seed",
                 )
 
             # -----------------------------------------------------------------
@@ -1100,7 +1212,6 @@ def create_training_tab() -> None:
                         label="Warmup Steps",
                         info="Steps to linearly ramp LR from 0. 500 typical. Set 0 to disable.",
                         value=500,
-                        minimum=0,
                         precision=0,
                         elem_id="warmup_steps",
                     )
@@ -1109,15 +1220,12 @@ def create_training_tab() -> None:
                         info="Floor of LR decay as a fraction of peak (must be > 0; onecycle uses 1/min_lr_ratio). "
                              "0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
                         value=0.01,
-                        minimum=1e-4,
-                        maximum=1.0,
                         elem_id="min_lr_ratio",
                     )
                     early_stopping_patience = gr.Number(
                         label="Early Stopping Patience",
                         info="Epochs without improvement before stopping. 10 is a good default.",
                         value=10,
-                        minimum=1,
                         precision=0,
                         elem_id="early_stopping_patience",
                     )
@@ -1170,7 +1278,6 @@ def create_training_tab() -> None:
                         label="Gradient Accumulation Steps",
                         info="Simulate larger batch by accumulating N steps. Useful when VRAM-limited.",
                         value=1,
-                        minimum=1,
                         precision=0,
                         elem_id="gradient_accumulation_steps",
                     )
@@ -1178,7 +1285,6 @@ def create_training_tab() -> None:
                         label="Max Grad Norm",
                         info="Gradient clipping threshold. 1.0 typical. Prevents training instability.",
                         value=1.0,
-                        minimum=0.01,
                         elem_id="max_grad_norm",
                     )
                     num_heads = gr.Dropdown(
@@ -1238,7 +1344,6 @@ def create_training_tab() -> None:
                         label="Max Subgraph Nodes",
                         info="Max nodes in sampled subgraph. Larger = more context but slower. 5000 typical.",
                         value=5000,
-                        minimum=100,
                         precision=0,
                         elem_id="max_subgraph_nodes",
                     )
@@ -1403,8 +1508,15 @@ def create_training_tab() -> None:
 
     start_btn.click(
         fn=_on_start,
-        inputs=all_params,
-        outputs=btn_outputs,
+        inputs=all_params + [randomize_seed],
+        outputs=btn_outputs + [seed],
+    )
+    # Lock/grey the seed field while "Randomize seed" is on (Start draws + echoes
+    # the actual seed used).
+    randomize_seed.change(
+        fn=_seed_field_lock,
+        inputs=[randomize_seed],
+        outputs=[seed],
     )
     stop_btn.click(
         fn=_on_stop,

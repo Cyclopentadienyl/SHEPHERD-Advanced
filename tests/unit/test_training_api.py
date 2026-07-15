@@ -318,3 +318,52 @@ class TestSystemAPIEndpoint:
         data = resp.json()
         assert "gpu" in data
         assert "ram" in data
+
+
+class TestTrainingRequestValidation:
+    """TrainingStartRequest field + cross-field validation."""
+
+    def _req(self, **overrides):
+        from src.api.routes.training import TrainingStartRequest
+
+        return TrainingStartRequest(**overrides)
+
+    # -- WS1b: onecycle requires min_lr_ratio > 0; cosine/linear allow 0 --------
+    def test_onecycle_zero_min_lr_ratio_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._req(scheduler_type="onecycle", min_lr_ratio=0.0)
+
+    def test_cosine_zero_min_lr_ratio_allowed(self):
+        req = self._req(scheduler_type="cosine", min_lr_ratio=0.0)
+        assert req.min_lr_ratio == 0.0
+
+    def test_linear_zero_min_lr_ratio_allowed(self):
+        req = self._req(scheduler_type="linear", min_lr_ratio=0.0)
+        assert req.min_lr_ratio == 0.0
+
+    def test_onecycle_positive_min_lr_ratio_ok(self):
+        req = self._req(scheduler_type="onecycle", min_lr_ratio=0.01)
+        assert req.scheduler_type == "onecycle"
+
+    # -- WS3: batch_size upper bound raised to 2048 ----------------------------
+    def test_batch_size_2048_accepted(self):
+        assert self._req(batch_size=2048).batch_size == 2048
+
+    def test_batch_size_over_2048_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._req(batch_size=2049)
+
+    # -- WS6: seed constrained to numpy's [0, 2**32 - 1] -----------------------
+    def test_seed_zero_and_max_accepted(self):
+        assert self._req(seed=0).seed == 0
+        assert self._req(seed=2**32 - 1).seed == 2**32 - 1
+
+    def test_seed_over_numpy_max_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._req(seed=2**32)

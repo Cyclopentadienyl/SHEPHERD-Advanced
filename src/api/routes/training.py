@@ -27,7 +27,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.api.services.training_manager import training_manager
 
@@ -51,11 +51,11 @@ class TrainingStartRequest(BaseModel):
     # Tier 1 — Basic
     num_epochs: int = Field(default=100, ge=1, le=10000, description="Number of epochs")
     learning_rate: float = Field(default=1e-4, gt=0, le=1.0, description="Learning rate")
-    batch_size: int = Field(default=32, ge=1, le=1024, description="Batch size")
+    batch_size: int = Field(default=32, ge=1, le=2048, description="Batch size")
     conv_type: str = Field(default="gat", description="GNN convolution type")
     device: str = Field(default="auto", description="Device: auto, cuda, cpu")
     resume_from: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
-    seed: int = Field(default=42, ge=0, description="Random seed")
+    seed: int = Field(default=42, ge=0, le=2**32 - 1, description="Random seed")
 
     # Tier 2 — Advanced
     hidden_dim: int = Field(default=256, ge=32, description="Hidden dimension size")
@@ -89,6 +89,17 @@ class TrainingStartRequest(BaseModel):
     num_negative_samples: int = Field(default=5, ge=1, description="Negative samples")
     eval_every_n_epochs: int = Field(default=1, ge=1, description="Evaluate every N epochs")
     save_top_k: int = Field(default=3, ge=1, description="Save top K checkpoints")
+
+    @model_validator(mode="after")
+    def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":
+        # min_lr_ratio == 0 is valid for cosine/linear (decay-to-zero), so the
+        # field keeps ge=0.0. Only onecycle divides by it (final_div_factor =
+        # 1 / min_lr_ratio) and therefore needs a strictly positive value.
+        if self.scheduler_type == "onecycle" and self.min_lr_ratio <= 0:
+            raise ValueError(
+                "min_lr_ratio must be > 0 when scheduler_type is 'onecycle'."
+            )
+        return self
 
 
 class TrainingStatusResponse(BaseModel):
