@@ -356,3 +356,14 @@ class TestTrainingRequestValidation:
 
         with pytest.raises(ValidationError):
             self._req(batch_size=2049)
+
+    # -- WS6: seed constrained to numpy's [0, 2**32 - 1] -----------------------
+    def test_seed_zero_and_max_accepted(self):
+        assert self._req(seed=0).seed == 0
+        assert self._req(seed=2**32 - 1).seed == 2**32 - 1
+
+    def test_seed_over_numpy_max_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._req(seed=2**32)

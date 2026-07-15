@@ -55,7 +55,7 @@ class TrainingStartRequest(BaseModel):
     conv_type: str = Field(default="gat", description="GNN convolution type")
     device: str = Field(default="auto", description="Device: auto, cuda, cpu")
     resume_from: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
-    seed: int = Field(default=42, ge=0, description="Random seed")
+    seed: int = Field(default=42, ge=0, le=2**32 - 1, description="Random seed")
 
     # Tier 2 — Advanced
     hidden_dim: int = Field(default=256, ge=32, description="Hidden dimension size")

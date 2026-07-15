@@ -444,6 +444,9 @@ class Trainer:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+        # Logged only after every RNG above is seeded successfully — an
+        # out-of-range seed raises in np.random.seed before reaching here.
+        logger.info("Random seed set to %s", seed)
 
     # =========================================================================
     # Training Loop

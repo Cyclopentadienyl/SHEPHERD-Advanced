@@ -33,6 +33,7 @@ import json
 import logging
 import math
 import os
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -48,6 +49,27 @@ logger = logging.getLogger(__name__)
 TRAINING_CONFIG_FILE = Path(".shepherd_training_config.json")
 DEFAULT_WORKSPACE = "data/workspaces/default"
 DISPLAY_PREFIX = "SHEPHERD-Advanced/"
+
+# Max seed value. trainer._set_seed calls np.random.seed(), whose legal range is
+# [0, 2**32 - 1] (the binding limit; torch.manual_seed is wider). Generated and
+# accepted seeds stay in this range.
+_MAX_SEED = 2**32 - 1
+
+# Position of the `seed` widget in all_params / _on_start's *args. MUST match the
+# order of all_params (and _collect_config's signature) below — used by _on_start
+# to swap in a random seed when "Randomize seed" is on.
+SEED_PARAM_INDEX = 8
+
+
+def _random_seed() -> int:
+    """A fresh seed in NumPy's legal range [0, _MAX_SEED]."""
+    return random.randint(0, _MAX_SEED)
+
+
+def _seed_field_lock(randomize: bool):
+    """Lock (grey out) the seed field while "Randomize seed" is on; the random
+    seed is generated on Start and written back, so manual editing is disabled."""
+    return gr.update(interactive=not bool(randomize))
 
 
 def _load_training_config() -> Dict[str, str]:
@@ -185,7 +207,7 @@ def _collect_config(
         "batch_size": int(batch_size),
         "conv_type": conv_type,
         "device": device,
-        "seed": _num(seed, "Seed", int, errors, lo=0),
+        "seed": _num(seed, "Seed", int, errors, lo=0, hi=_MAX_SEED),
         # Tier 2
         "hidden_dim": int(hidden_dim),
         "num_layers": int(num_layers),
@@ -233,8 +255,15 @@ def _on_start(*args):
     """
     global _poll_cache_key
     _poll_cache_key = None  # force full refresh on next poll tick
+    # Last input is the "Randomize seed" checkbox; the rest are all_params.
+    randomize = bool(args[-1])
+    params = list(args[:-1])
+    if randomize:
+        # Swap in a fresh seed BEFORE validation so a locked/empty seed field
+        # still launches; the used seed is echoed back to the (locked) field.
+        params[SEED_PARAM_INDEX] = _random_seed()
     try:
-        config = _collect_config(*args)
+        config = _collect_config(*params)
     except ConfigValidationError as e:
         # Toast carries the detail (survives the ~1.5s status poll); the Status
         # field only shows a short marker.
@@ -245,6 +274,7 @@ def _on_start(*args):
             gr.update(interactive=True),    # keep start enabled
             gr.update(interactive=False),   # keep stop disabled
             gr.update(interactive=True),    # keep resume enabled
+            gr.update(),                    # seed: unchanged (nothing launched)
         )
     result = training_manager.start_training(config)
     if result.get("success"):
@@ -254,6 +284,7 @@ def _on_start(*args):
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
             gr.update(interactive=False),   # disable resume
+            gr.update(value=config["seed"]),  # echo the seed actually used
         )
     return (
         f"Failed: {result.get('error', 'Unknown error')}",
@@ -261,6 +292,7 @@ def _on_start(*args):
         gr.update(interactive=True),    # keep start enabled
         gr.update(interactive=False),   # keep stop disabled
         gr.update(interactive=True),    # keep resume enabled
+        gr.update(),                    # seed: unchanged (nothing launched)
     )
 
 
@@ -1121,6 +1153,14 @@ def create_training_tab() -> None:
                     precision=0,
                     elem_id="seed",
                 )
+                randomize_seed = gr.Checkbox(
+                    label="🎲 Randomize seed",
+                    info="On: the seed field is locked and a fresh random seed "
+                         "(0..2^32-1) is drawn on each Start and shown here. "
+                         "Off: the entered seed is used.",
+                    value=False,
+                    elem_id="randomize_seed",
+                )
 
             # -----------------------------------------------------------------
             # Tier 2 — Advanced Parameters (collapsible)
@@ -1468,8 +1508,15 @@ def create_training_tab() -> None:
 
     start_btn.click(
         fn=_on_start,
-        inputs=all_params,
-        outputs=btn_outputs,
+        inputs=all_params + [randomize_seed],
+        outputs=btn_outputs + [seed],
+    )
+    # Lock/grey the seed field while "Randomize seed" is on (Start draws + echoes
+    # the actual seed used).
+    randomize_seed.change(
+        fn=_seed_field_lock,
+        inputs=[randomize_seed],
+        outputs=[seed],
     )
     stop_btn.click(
         fn=_on_stop,

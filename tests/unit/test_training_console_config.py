@@ -59,6 +59,13 @@ def _args(**overrides):
     return tuple(vals[name] for name in _ORDER)
 
 
+def _ufield(update, key):
+    """Read a field from a gr.update(...) result, tolerant across Gradio versions."""
+    if isinstance(update, dict):
+        return update.get(key)
+    return getattr(update, key, None)
+
+
 def test_valid_config_returns_dict():
     cfg = tc._collect_config(*_args())
     assert cfg["num_epochs"] == 100
@@ -123,6 +130,70 @@ def test_multi_error_aggregation_lists_all():
         )
     msg = str(ei.value)
     assert "Epochs" in msg and "Learning Rate" in msg and "Max Subgraph Nodes" in msg
+
+
+# --------------------------------------------------------------- WS6: random seed
+def test_random_seed_in_numpy_range():
+    for _ in range(50):
+        s = tc._random_seed()
+        assert isinstance(s, int) and 0 <= s <= 2**32 - 1
+
+
+def test_seed_above_numpy_max_rejected():
+    with pytest.raises(tc.ConfigValidationError) as ei:
+        tc._collect_config(*_args(seed=2**32))
+    assert "Seed" in str(ei.value)
+
+
+def test_seed_boundaries_accepted():
+    assert tc._collect_config(*_args(seed=0))["seed"] == 0
+    assert tc._collect_config(*_args(seed=2**32 - 1))["seed"] == 2**32 - 1
+
+
+def test_seed_field_lock_toggles_interactive():
+    assert _ufield(tc._seed_field_lock(True), "interactive") is False
+    assert _ufield(tc._seed_field_lock(False), "interactive") is True
+
+
+def test_on_start_randomize_overrides_and_echoes_seed(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(tc, "_random_seed", lambda: 777)
+    monkeypatch.setattr(
+        tc.training_manager,
+        "start_training",
+        lambda config: (captured.update(config), {"success": True, "pid": 1})[1],
+    )
+    # randomize=True overrides a typed seed (999) with the generated one, and the
+    # seed field (last output) echoes the seed actually used.
+    out = tc._on_start(*_args(seed=999), True)
+    assert captured.get("seed") == 777
+    assert _ufield(out[-1], "value") == 777
+    assert len(out) == 9
+
+
+def test_on_start_randomize_empty_seed_still_launches(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(tc, "_random_seed", lambda: 4242)
+    monkeypatch.setattr(
+        tc.training_manager,
+        "start_training",
+        lambda config: (captured.update(config), {"success": True, "pid": 1})[1],
+    )
+    # An empty/locked seed field must still launch when randomize is on.
+    tc._on_start(*_args(seed=None), True)
+    assert captured.get("seed") == 4242
+
+
+def test_on_start_no_randomize_empty_seed_aborts(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tc.gr, "Warning", lambda *a, **k: None)
+    monkeypatch.setattr(
+        tc.training_manager, "start_training", lambda config: calls.append(config)
+    )
+    out = tc._on_start(*_args(seed=None), False)
+    assert calls == []  # validation aborted -> never launched
+    assert "Invalid configuration" in out[0]
+    assert len(out) == 9
 
 
 def test_nonnumeric_value_reports_friendly_error():
