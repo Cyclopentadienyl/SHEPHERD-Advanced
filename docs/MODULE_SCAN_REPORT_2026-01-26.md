@@ -31,7 +31,7 @@
 | **inference** | pipeline.py, input_validator.py | 1,305 | ✅ 核心完整 |
 | **reasoning** | path_reasoning.py, explanation_generator.py | 1,048 | ✅ 完整 |
 | **ontology** | hierarchy.py, loader.py, constraints.py | 1,322 | ✅ 完整 |
-| **config** | hyperparameters.py | 1,072 | ✅ 完整 |
+| **config** | hyperparameters.py | 1,072 | ✅ 完整（快照當時）— 已於 2026-07 移除，見 `docs/CONFIG_AUTHORITY.md` |
 | **api** | main.py, routes/* | 1,325 | ✅ 完整 |
 | **models** | shepherd_gnn.py, layers.py, encoders/*, decoders/* | 2,000+ | ✅ 框架完整 |
 | **utils** | metrics.py | 832 | ✅ 核心完整 |
