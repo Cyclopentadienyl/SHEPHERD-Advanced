@@ -1,72 +1,28 @@
 """
-SHEPHERD-Advanced Configuration Module
-======================================
-Centralized configuration management for all system components.
+SHEPHERD-Advanced Configuration Package
+=======================================
+Config-related constants and (reserved) deployment-config helpers.
+
+Config authority (decision record: docs/CONFIG_AUTHORITY.md):
+    Runtime configuration is owned by the dataclasses closest to each concern —
+    TrainerConfig (src/training/trainer.py), PipelineConfig (src/inference/pipeline.py),
+    and ShepherdGNNConfig (src/models/gnn/shepherd_gnn.py). There is intentionally NO
+    central HyperparameterManager: a single global config object would couple the
+    training, inference, model, API and UI layers together. The one genuinely shared
+    config concern — training-parameter metadata shared by the API request model and
+    the WebUI — will live in a small field-spec module (docs/CONFIG_AUTHORITY.md, B-lite).
+
+Contents:
+    - model_types.py       : torch-free conv-type constants
+                             (SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE).
+    - config_validator.py,
+      schema_loader.py     : RESERVED homes for committed-config validation
+                             (configs/deployment.yaml + configs/schemas/*.json).
+                             Empty by design until deployment validation is built.
 
 Module: src/config/__init__.py
-Absolute Path: /home/user/SHEPHERD-Advanced/src/config/__init__.py
-
-Purpose:
-    Provide unified configuration management including:
-    - Hyperparameter definitions with frontend API support
-    - Configuration validation
-    - Schema loading and validation
-    - Persistence to YAML/JSON
-
-Components (re-exported):
-    From hyperparameters:
-        - ParameterType: Enum for parameter types
-        - HyperparameterSpec: Single parameter specification
-        - TrainingHyperparameters: Training-phase parameters
-        - InferenceHyperparameters: Inference-phase parameters
-        - ModelHyperparameters: Model architecture parameters
-        - HyperparameterManager: Central parameter manager
-        - get_hyperparameter_manager: Get global manager instance
-
-Dependencies:
-    - pydantic: Validation
-    - yaml: Configuration files
-    - Internal: src.config.hyperparameters
-
-Usage:
-    # Get current hyperparameters
-    from src.config import get_hyperparameter_manager
-    manager = get_hyperparameter_manager()
-
-    # Get all specs for frontend
-    specs = manager.get_all_specs()
-
-    # Update a parameter
-    result = manager.update_parameter("learning_rate", 0.001)
-
-    # Save configuration
-    manager.save_to_yaml("configs/current.yaml")
-
-Version: 1.0.0
 """
 
-from src.config.hyperparameters import (
-    ParameterType,
-    HyperparameterSpec,
-    TrainingHyperparameters,
-    InferenceHyperparameters,
-    ModelHyperparameters,
-    HyperparameterManager,
-    get_hyperparameter_manager,
-    reset_hyperparameter_manager,
-)
-
-
-__all__ = [
-    # Parameter types
-    "ParameterType",
-    "HyperparameterSpec",
-    # Parameter classes
-    "TrainingHyperparameters",
-    "InferenceHyperparameters",
-    "ModelHyperparameters",
-    # Manager
-    "HyperparameterManager",
-    "get_hyperparameter_manager",
-    "reset_hyperparameter_manager",
-]
+# No package-level re-exports: import config submodules directly, e.g.
+#   from src.config.model_types import SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE
+__all__: list[str] = []
