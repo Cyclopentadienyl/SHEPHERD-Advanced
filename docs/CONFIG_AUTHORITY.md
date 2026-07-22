@@ -54,5 +54,5 @@ concern — a modularity violation. Removing it **serves** the principle.
 |---|---|
 | PR-1 ✅ | Remove `hyperparameters.py` (+ update `config/__init__.py`, `run_local_tests.py`, this record) |
 | PR-2 ✅ | Move `runtime_presets.py` → `src/config/runtime_presets.py` |
-| PR-3 | Docstring the reserved `config_validator.py` / `schema_loader.py` |
+| PR-3 ✅ | Docstring the reserved `config_validator.py` / `schema_loader.py` |
 | PR-4 | B-lite shared training field-spec (with API/WebUI/`TrainerConfig` parity tests) |
