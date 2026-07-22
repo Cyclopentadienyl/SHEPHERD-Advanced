@@ -20,7 +20,7 @@ UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
 # module loads regardless of how the launcher is invoked.
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from src.runtime_presets import effective_allocator, load_runtime_settings  # noqa: E402
+from src.config.runtime_presets import effective_allocator, load_runtime_settings  # noqa: E402
 
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
@@ -277,7 +277,7 @@ def main() -> int:
     # here so both this server's in-process CUDA and the training subprocesses it
     # spawns inherit the same allocator. An explicit PYTORCH_ALLOC_CONF /
     # PYTORCH_CUDA_ALLOC_CONF in the environment always wins (e.g. A/B tests).
-    # Presets + resolution live in src/runtime_presets.py (single source of truth);
+    # Presets + resolution live in src/config/runtime_presets.py (single source of truth);
     # a malformed settings file falls back to {} and an unknown preset to the default.
     raw_preset = load_runtime_settings().get("allocator_preset")
     preset, conf = effective_allocator(os.environ, {"allocator_preset": raw_preset})

@@ -28,7 +28,7 @@ Allocator re-resolution:
 
 Dependencies:
     - src.api.services.training_manager: training status (the restart lock)
-    - src.runtime_presets: allocator preset resolution (gradio-free)
+    - src.config.runtime_presets: allocator preset resolution (gradio-free)
 
 Called by:
     - src/webui/components/runtime_settings.py (Restart Backend button + poll)
@@ -45,7 +45,7 @@ import time
 from typing import Callable, Dict, List
 
 from src.api.services.training_manager import training_manager
-from src.runtime_presets import load_runtime_settings, resolve_allocator
+from src.config.runtime_presets import load_runtime_settings, resolve_allocator
 
 logger = logging.getLogger(__name__)
 

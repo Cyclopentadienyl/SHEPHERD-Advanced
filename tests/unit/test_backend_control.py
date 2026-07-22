@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 import src.api.services.backend_control as bc
-from src.runtime_presets import ALLOCATOR_PRESETS, DEFAULT_ALLOCATOR
+from src.config.runtime_presets import ALLOCATOR_PRESETS, DEFAULT_ALLOCATOR
 
 
 # --------------------------------------------------------------------------- lock

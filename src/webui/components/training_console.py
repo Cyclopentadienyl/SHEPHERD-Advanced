@@ -41,7 +41,7 @@ import gradio as gr
 import pandas as pd
 
 from src.api.services.training_manager import training_manager
-from src.runtime_presets import load_runtime_settings
+from src.config.runtime_presets import load_runtime_settings
 
 logger = logging.getLogger(__name__)
 

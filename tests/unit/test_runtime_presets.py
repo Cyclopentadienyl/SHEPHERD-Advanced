@@ -7,7 +7,7 @@ exact logic shared by the WebUI Runtime Settings tab and the launcher.
 import importlib.util
 from pathlib import Path
 
-from src.runtime_presets import (
+from src.config.runtime_presets import (
     ALLOCATOR_PRESETS,
     DEFAULT_ALLOCATOR,
     effective_allocator,
