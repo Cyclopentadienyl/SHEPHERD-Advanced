@@ -153,7 +153,7 @@ All files empty (fhir_adapter, icd_mapper, snomed_mapper, hiss_adapter). Phase 2
 
 | Module | File | Lines | Status | Notes |
 |--------|------|-------|--------|-------|
-| Hyperparameters | `config/hyperparameters.py` | ~1072 | **KEEP** | Comprehensive parameter management |
+| Hyperparameters | `config/hyperparameters.py` | ~1072 | ~~KEEP~~ → **REMOVED (2026-07)** | Superseded by Model B — never on live runtime path; see `docs/CONFIG_AUTHORITY.md` |
 | Metrics | `utils/metrics.py` | ~832 | **KEEP** | Ranking, ontology, evidence, training metrics |
 | Config Validator | `config/config_validator.py` | 0 | **EMPTY** | Phase 2 stub |
 

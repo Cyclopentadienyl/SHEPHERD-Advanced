@@ -168,15 +168,8 @@ def test_training_imports() -> bool:
 
 def test_config_imports() -> bool:
     """Test config module imports"""
-    from src.config import (
-        HyperparameterManager,
-        get_hyperparameter_manager,
-        TrainingHyperparameters,
-        InferenceHyperparameters,
-    )
-    manager = get_hyperparameter_manager()
-    specs = manager.get_all_specs()
-    print(f"  - HyperparameterManager: {len(specs)} parameters")
+    from src.config.model_types import SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE
+    print(f"  - conv types: {SUPPORTED_CONV_TYPES} (default {DEFAULT_CONV_TYPE})")
     return True
 
 
@@ -208,34 +201,6 @@ def test_utils_imports() -> bool:
     from src.utils.metrics import DiagnosisMetrics, RankingMetrics
     metrics = RankingMetrics()
     print(f"  - RankingMetrics: {type(metrics)}")
-    return True
-
-
-def test_hyperparameter_manager() -> bool:
-    """Test hyperparameter manager functionality"""
-    from src.config import get_hyperparameter_manager, reset_hyperparameter_manager
-
-    reset_hyperparameter_manager()
-    manager = get_hyperparameter_manager()
-
-    # Test get specs
-    specs = manager.get_all_specs()
-    assert len(specs) > 30, f"Expected >30 specs, got {len(specs)}"
-
-    # Test update
-    result = manager.update_parameter("learning_rate", 0.001)
-    assert result["success"], f"Update failed: {result}"
-
-    # Test get values
-    values = manager.get_current_values()
-    assert values["training"]["learning_rate"] == 0.001
-
-    # Test JSON schema
-    schema = manager.get_json_schema()
-    assert "properties" in schema
-
-    print(f"  - {len(specs)} parameters defined")
-    print(f"  - Update/get/schema all working")
     return True
 
 
@@ -439,7 +404,6 @@ def run_training_tests(runner: LocalTestRunner):
 
 def run_functional_tests(runner: LocalTestRunner):
     """Run functional tests"""
-    runner.add_result(runner.run_test("Hyperparameter Manager", test_hyperparameter_manager))
     runner.add_result(runner.run_test("Input Validator", test_input_validator))
 
 

@@ -143,7 +143,7 @@ The two channels are processed independently inside the model and merged only at
 
 ```
 Layer 0 (Foundation):  src/core/          types, protocols, schema
-Layer 1 (Config):      src/config/        hyperparameters, validation
+Layer 1 (Config):      src/config/        model-type constants, reserved deployment validation
 Layer 2 (Data):        src/ontology/      HPO/MONDO/GO via pronto
                        src/data_sources/  ortholog, pubmed (Phase 2)
 Layer 3 (Knowledge):   src/kg/            graph, builder, data_loader
