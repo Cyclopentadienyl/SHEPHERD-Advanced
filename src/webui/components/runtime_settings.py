@@ -14,7 +14,7 @@ Module: src/webui/components/runtime_settings.py
 Apply model:
     Changes are staged in the UI and only persisted when the user clicks
     "Apply Settings". Persisted values live in ``.shepherd_runtime_settings.json``
-    at the repo root (path + presets defined in ``src.runtime_presets``) and are
+    at the repo root (path + presets defined in ``src.config.runtime_presets``) and are
     consumed at launch time by ``scripts/launch/shep_launch.py`` (allocator) and
     by the training subprocess it spawns (which inherits the environment).
 """
@@ -25,7 +25,7 @@ import os
 import gradio as gr
 
 from src.api.services.backend_control import is_training_active, restart_backend
-from src.runtime_presets import (
+from src.config.runtime_presets import (
     ALLOCATOR_PRESETS,
     DEFAULT_ALLOCATOR,
     load_runtime_settings,

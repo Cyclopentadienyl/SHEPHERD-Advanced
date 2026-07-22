@@ -18,8 +18,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# Repo root: src/runtime_presets.py -> parents[1] == repo root.
-REPO_ROOT = Path(__file__).resolve().parents[1]
+# Repo root: src/config/runtime_presets.py -> parents[2] == repo root.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_SETTINGS_FILE = REPO_ROOT / ".shepherd_runtime_settings.json"
 
 # Preset name -> PYTORCH_ALLOC_CONF value. Native presets state ``backend:native``
