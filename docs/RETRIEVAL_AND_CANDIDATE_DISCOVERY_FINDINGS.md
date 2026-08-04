@@ -18,15 +18,28 @@ becoming an architectural change, and lets the sequencing be decided deliberatel
 
 ### Status vocabulary
 
-Applied to capabilities throughout:
+A single label cannot express "the code exists and is correct, but nothing ever ran it", which is
+the actual state of several items here. Status is therefore recorded along four independent
+dimensions:
+
+| Dimension | Values |
+|---|---|
+| **Implementation** | `IMPLEMENTED` · `PARTIAL` (narrower than its documented design) · `ABSENT` |
+| **Wiring** | `WIRED` (on the runtime path) · `OPTIONAL` (behind config/flag) · `NOT WIRED` (nothing constructs it) |
+| **Deployment** | `OBSERVED` · `NOT OBSERVED` (in the audited environment) · `UNKNOWN` |
+| **Verification** | `EXERCISED` (covered by tests or observed runs) · `UNEXERCISED` |
+
+`PLANNED` marks a capability documented as intended but not built. `DEFECT` marks behaviour that is
+incorrect on its own terms, independent of roadmap intent.
+
+### Claim labels
 
 | Label | Meaning |
 |---|---|
-| `IMPLEMENTED` | Built, wired into the runtime path, exercised |
-| `PARTIAL` | Built, wired, but narrower than the documented design |
-| `NOT WIRED` | Code exists; nothing constructs or calls it |
-| `PLANNED` | Documented as intended; not built |
-| `DEFECT` | Implemented behaviour is incorrect on its own terms |
+| **[FACT]** | Read directly from the cited source |
+| **[MEASURED]** | Reproduced by running code, method stated |
+| **[INFERENCE]** | The author's interpretation of the evidence — weigh accordingly |
+| **[OPEN]** | A design question with no answer taken here |
 
 ### Project context (governs how gaps below should be read)
 
@@ -59,9 +72,17 @@ original SHEPHERD paper:
 > blocked.
 
 The stated purpose is explicit: the GNN's advantage over path-based methods is **inductive
-generalization** — inferring relationships for diseases never seen in training (the doc notes 83% of
-the paper's test diseases were unseen), tolerating missing KG edges, and generalizing to novel
-phenotype combinations. Gating on graph reachability removes exactly that advantage.
+generalization** — inferring relationships for diseases never seen in training, tolerating missing
+KG edges, and generalizing to novel phenotype combinations. Gating on graph reachability removes
+exactly that advantage. **[FACT]**
+
+> **Source-attribution caveat.** `docs/ARCHITECTURE.md:31` supports this with the claim that "83% of
+> test diseases were unseen" in the paper. A review of this report flagged that as a misattribution:
+> the paper's 83% figure reportedly refers to diseases represented by only a single UDN patient, not
+> to the proportion of unseen test diseases. **Neither figure has been checked against the primary
+> source by this report.** The statistic is therefore not repeated here as paper evidence, and
+> `docs/ARCHITECTURE.md` should be corrected once someone verifies the paper directly. The design
+> principle itself does not depend on that number.
 
 ### 1.2 What the implementation does — `PARTIAL`
 
@@ -87,18 +108,24 @@ never scored, regardless of what the GNN embedding would say — which is the si
 
 ### 1.3 Interpretation
 
-Read against the staged-build context, this is most plausibly a Phase-1 implementation that started
-from the tractable path-based flow and has not yet been inverted to the GNN-primary flow the
-architecture specifies. It is a **roadmap gap**, not a coding error — but it is a gap in a
-*documented core principle*, not a peripheral feature, and the doc currently describes behaviour the
-runtime does not have.
+**[INFERENCE]** Read against the staged-build context, this is most plausibly a Phase-1
+implementation that started from the tractable path-based flow and has not yet been inverted to the
+GNN-primary flow the architecture specifies. On that reading it is a **roadmap gap**, not a coding
+error — but it is a gap in a *documented core principle*, not a peripheral feature, and the doc
+currently describes behaviour the runtime does not have.
 
-**Scope note (to prevent over-reading):** the divergence is confined to *which candidates get
-scored*. Everything downstream — GNN scoring, SP scoring, the η fusion
-(`final = η·emb + (1-η)·sp`, η=0.7, `:297,309`), explanation generation, and the evidence panel — is
-independent of candidate provenance and unaffected. Changing the candidate source changes the input
-set to the scoring stage; it does not require reworking the scoring stage. `_find_ann_candidates`
-already demonstrates that a non-BFS candidate source can feed the same scorer.
+**Scope note (to prevent over-reading in either direction).** The immediate control-flow divergence
+is at candidate discovery. The existing scorer can technically accept non-BFS candidates —
+`_find_ann_candidates` already feeds it one — so candidate-source work does **not** automatically
+require a full scorer rewrite, and this finding should not be read as "the pipeline must be
+rebuilt".
+
+Equally, it should not be read as "only one function changes". Changing the candidate source can
+affect SP lookups, the per-candidate fallback path search (§3.2), Mode B workload, explanation cost,
+top-k displacement, latency, and clinician-facing output. A paper-parity review may additionally
+require changes to patient aggregation and scoring semantics, since the authoritative patient
+encoder/scorer is itself unresolved (§4). The η fusion (`final = η·emb + (1-η)·sp`, η=0.7,
+`:297,309`) is paper-derived and settled, and is not in question here.
 
 ### 1.4 Open questions (not decided here)
 
@@ -118,11 +145,14 @@ already demonstrates that a non-BFS candidate source can feed the same scorer.
 original design — *original: none; this project: Voyager/cuVS ANN index; rationale: "加速大規模推理"
 (accelerate large-scale inference)*.
 
-**Deployment audit result:** on the maintainer's development machine, `*.voyager` / `*.cuvs`
-artifacts, `vector_index_path` in `configs/`, and `SHEPHERD_VECTOR_INDEX_PATH` are **all absent**.
-Combined with the default `vector_index_path: Optional[str] = None`
-(`src/inference/pipeline.py:336`) and the early return when it is unset (`:937-938`), the subsystem
-has **never been active** in that environment. `IMPLEMENTED` as code; not exercised.
+**Deployment audit result [FACT, one machine]:** on the maintainer's development machine,
+`*.voyager` / `*.cuvs` artifacts, `vector_index_path` in `configs/`, and
+`SHEPHERD_VECTOR_INDEX_PATH` are **all absent**. Combined with the default
+`vector_index_path: Optional[str] = None` (`src/inference/pipeline.py:336`) and the early return
+when it is unset (`:937-938`), the subsystem was **not active in that environment**.
+
+Status: Implementation `IMPLEMENTED` · Wiring `OPTIONAL` · Deployment `NOT OBSERVED` (audited
+machine) / `UNKNOWN` (elsewhere) · Verification `UNEXERCISED`.
 
 Note that "off by default" alone would not establish this: `docs/TRAINING_PIPELINE_PLAYBOOK.md:20,154,163`
 instructs operators to run `scripts/build_index.py` and point `vector_index_path` at
@@ -166,8 +196,11 @@ Voyager's InnerProduct space returns `distance = 1 − dot`. Consequences, state
 **Blast radius is bounded:** the faulty score governs **candidate admission only**.
 `_score_and_rank_candidates` discards `ann_score` and recomputes confidence via
 `_calculate_combined_score` (`:1414-1420`). The paper-derived η fusion and final ranking are **not**
-affected by this defect. Because the subsystem was never active (§2.1), no diagnosis result has been
-affected either.
+affected by this defect.
+
+Because the subsystem was not active on the audited machine (§2.1), **diagnosis runs from that
+audited environment were not affected by this admission defect. Impact on other or historical
+deployments remains unverified.**
 
 Follow-on observation: since the mapping's values are discarded after admission,
 `ann_only_candidates` is arguably better modelled as a set of IDs than a dict.
@@ -214,14 +247,38 @@ declare as a dependency and `deploy.sh` does not install. On the DGX Spark machi
 imports but cannot construct. Reporting a backend as available should require a construct/build/search
 probe, not a module import.
 
-### 2.6 Measured performance (context only — not decision-grade)
+### 2.6 Global indexing config is never merged into the backend call — `DEFECT`
+
+`scripts/build_index.py:305-311` builds the backend arguments from the **backend-specific
+subsection only**:
+
+```python
+indexing_cfg = deploy_config.get("indexing", {})
+backend_config = indexing_cfg.get(resolved, {})     # e.g. indexing.voyager
+...
+index = create_index(backend=backend, dim=hidden_dim, **backend_config)   # :338
+```
+
+The **parent-level** `indexing.metric` and `indexing.dim` in `configs/deployment.yaml:113-117` are
+never merged into that call. Consequences:
+
+- `metric` is currently `"ip"` at runtime **because `create_index()` defaults to `"ip"`**, not
+  because the YAML value was consumed. Changing the YAML to `cosine` or `l2` would have **no
+  effect** — a silently ignored configuration knob.
+- `dim` likewise comes from the checkpoint's `hidden_dim`, not from `indexing.dim: 768`.
+
+This is the same failure class as §2.4: a setting that appears to work only because two independent
+defaults happen to agree.
+
+### 2.7 Measured performance (context only — not decision-grade)
 
 27,990 × 256, top-50, CPU, mean of 20 runs; NumPy exact search with the normalised matrix cached vs
 Voyager HNSW (`M=32, ef_construction=200, ef_search=64`): exact **0.958 ms/query**, Voyager
 **0.514 ms/query**, Voyager build 10.36 s.
 
-**Voyager is ~1.9× faster at this scale.** Recorded to correct an earlier assumption that exact
-search would win here — it does not.
+**[MEASURED]** In this specific uncontrolled synthetic run, Voyager measured **~1.9× faster**. This
+**falsifies the earlier universal assumption** that exact search must always win below ~10⁶ vectors;
+it does **not** establish production superiority.
 
 This measurement is **not sufficient to decide anything**. Missing: recall@k against exact ground
 truth (an ANN latency without recall is uninterpretable), a latency-vs-recall curve over `ef_search`,
@@ -340,23 +397,40 @@ disease-GNN artifacts.
 
 Separated deliberately, because the two require different responses.
 
-**Concrete defects** (incorrect on their own terms, independent of roadmap):
+**A. Concrete defects** (incorrect on their own terms, independent of roadmap):
 1. Voyager distance interpreted as similarity — inverted score, unbounded range, wrong threshold
    rejection (§2.2).
 2. Backend score contract underspecified — no defined direction/range/normalisation (§2.3).
-3. Disease IDs stored in `similar_gene_*` fields (§3.2).
-4. Deployment reports cuVS "available" after an import check the backend does not actually satisfy
+3. Global `indexing.metric` / `indexing.dim` never merged into `create_index()`; the metric appears
+   correct only because two defaults coincide (§2.6).
+4. Disease IDs stored in `similar_gene_*` fields (§3.2).
+5. Deployment reports cuVS "available" after an import check the backend does not actually satisfy
    (§2.5).
-5. Runtime documentation describing planned rather than current behaviour, without status markers
+6. Runtime documentation describing planned rather than current behaviour, without status markers
    (§1.1 vs §1.2; §3.1 vs §3.2).
-6. No tests covering candidate-admission semantics (§2.4).
+7. `docs/ARCHITECTURE.md:31`'s "83% of test diseases were unseen" attribution, pending primary-source
+   verification (§1.1 caveat).
+8. No tests covering candidate-admission semantics (§2.4).
 
-**Roadmap gaps** (Phase-1 scope not yet reached; not errors):
+**B. Phase-1 paper-parity gaps** (in scope for reproducing the original design; not yet reached):
 1. GNN-primary candidate discovery (§1).
-2. Gene / cross-species analogy bridge (§3.2, §3.4).
-3. Progressive path-qualified analogy search (§3.2).
-4. Patients-Like-Me and Novel Disease Characterization (§5).
-5. Learned patient aggregation via `PhenotypeDiseaseMatcher` (§4).
+2. Authoritative patient encoder/scorer — learned aggregation via `PhenotypeDiseaseMatcher` (§4).
+3. Patients-Like-Me retrieval (§5).
+4. Novel Disease Characterization (§5).
+
+**C. Future hospital-driven extensions** (explicitly beyond Phase 1; must not be treated as
+immediate work):
+1. Gene / cross-species analogy bridge (§3.2, §3.4).
+2. Convergent-pathway reasoning across species.
+3. Free-text → HPO mapping (§5).
+
+**D. Experimental / unratified** (exists or proposed, but no approved product requirement):
+1. Current Mode B same-node-type disease analogy (§3.2) — useful, but its provenance and product
+   requirement are undocumented; it should not drive Phase-1 architecture.
+2. Progressive path-qualified analogy search (§3.2).
+
+The B/C/D split matters operationally: a later session reading only the defect list could otherwise
+treat cross-species reasoning as immediate Phase-1 work. It is not.
 
 ## 7. Open questions requiring a decision (none taken here)
 
@@ -380,8 +454,19 @@ shadow mode that logs without affecting clinician-facing ranking.
 
 ## 8. Method
 
-Claims were verified by reading the cited source. Two claims are measurements, reproducible as
-described: the Voyager distance semantics (§2.2, 2-D vectors with known dot products) and the
-latency comparison (§2.6, synthetic Gaussian vectors at the production shape). The deployment audit
-(§2.1) covers one development machine. Everything else in this document is a source citation, not an
-inference.
+**Source-derived facts are cited; interpretations, hypotheses and design implications are labelled
+or phrased explicitly as such.** This report does contain judgements — for example that the candidate
+divergence is "most plausibly" a staged-build artefact (§1.3), that Mode B's purpose "is sound"
+(§3.1), and that `PhenotypeDiseaseMatcher` "may be the intended home" for learned aggregation (§4).
+These are marked **[INFERENCE]** or worded to signal uncertainty; they should be weighed as opinion,
+not treated as established fact.
+
+Two claims are **[MEASURED]** and reproducible as described: the Voyager distance semantics (§2.2,
+2-D vectors of known dot product) and the latency comparison (§2.7, synthetic Gaussian vectors at the
+production shape, threads uncontrolled, recall unmeasured).
+
+The deployment audit (§2.1) covers **one development machine** and does not generalise to other or
+historical environments.
+
+The paper-attribution question in §1.1 is unresolved: neither the architecture document's claim nor
+the reviewer's correction has been checked against the primary source by this report.
