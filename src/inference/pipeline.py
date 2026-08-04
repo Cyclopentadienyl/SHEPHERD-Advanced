@@ -641,9 +641,11 @@ class DiagnosisPipeline:
                 distance:      int8  tensor (N,)
             shortest_paths.meta.json: {"max_hops": int, ...}
 
-        Builds an in-memory dict for O(1) lookup keyed by
-        (phenotype_idx, target_idx, target_type) → distance. This trades
-        a one-time init cost for fast per-query access during inference.
+        Builds a CSR-style lookup: the four columns are sorted by phenotype_idx into the flat
+        tensors ``_sp_ph`` / ``_sp_tg`` / ``_sp_ty`` / ``_sp_di``, and ``_sp_offsets`` maps
+        phenotype_idx → (start, end) so each phenotype's entries are one contiguous slice.
+        This keeps the table compact (int32/int8, no per-pair Python objects) while giving
+        per-query access without scanning the whole table.
 
         If the file is missing and sp_optional=True, the pipeline silently
         falls back to pure GNN scoring (eta is ignored, treated as 1.0).

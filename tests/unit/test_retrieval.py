@@ -162,15 +162,26 @@ class TestCuVSIndex:
 
     @pytest.fixture
     def cuvs_available(self):
-        """Check if cuVS is available."""
-        try:
-            import cuvs
-            import torch
-            if not torch.cuda.is_available():
-                pytest.skip("CUDA not available")
-            return True
-        except ImportError:
-            pytest.skip("cuVS not installed")
+        """Skip unless the cuVS backend can actually be constructed.
+
+        The gate must check everything ``CuVSIndex._validate_cuvs`` imports, not just ``cuvs``:
+        the backend also needs ``cupy``, which ``cuvs-cu13`` does not declare as a dependency.
+        Checking only ``cuvs`` let a cuVS-without-cupy machine past the gate and turned a
+        missing optional GPU dependency into a hard test error instead of a skip.
+        """
+        for module, hint in (
+            ("cuvs", "cuVS not installed"),
+            ("cupy", "cupy not installed — the cuVS backend imports it, but cuvs-cu13 does not "
+                     "pull it in; install it to exercise the GPU vector index"),
+        ):
+            try:
+                __import__(module)
+            except ImportError:
+                pytest.skip(hint)
+        import torch
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        return True
 
     @pytest.fixture
     def sample_embeddings(self) -> Dict[str, np.ndarray]:
