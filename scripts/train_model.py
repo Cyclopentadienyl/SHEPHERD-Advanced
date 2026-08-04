@@ -49,6 +49,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -138,6 +139,15 @@ class TrainConfig:
     contrastive_weight: float = 0.3
     ortholog_weight: float = 0.2
 
+    # Loss shape knobs. These are accepted by the API and the WebUI, so they must
+    # exist here: load_config() only copies a YAML key when TrainConfig has the
+    # attribute, and until they were added the user's values were silently dropped
+    # and LossConfig always used its own defaults. Defaults below match LossConfig
+    # exactly, so a run that does not set them behaves identically.
+    margin: float = 1.0
+    label_smoothing: float = 0.1
+    temperature: float = 0.07
+
     # Device
     device: str = "auto"  # "auto", "cuda", "cpu"
 
@@ -153,6 +163,24 @@ class TrainConfig:
 
     # Resume training
     resume_from: Optional[str] = None
+
+
+# PyTorch device grammar, kept in step with the API (src/api/routes/training.py::_DEVICE_RE) and
+# the field spec (src/config/training_fields.py, field "device", valid_pattern). The CLI used to
+# restrict --device to {auto,cuda,cpu}, which made it impossible to target a specific GPU on a
+# multi-GPU host even though torch.device() and the rest of the pipeline accept "cuda:N".
+_DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
+
+
+def _device_arg(value: str) -> str:
+    """argparse type for --device: validate against the PyTorch device grammar."""
+    # fullmatch, not match: Python's ``$`` also matches just before a trailing newline, so
+    # ``match()`` would accept "cuda\n" (e.g. from a file-fed argument).
+    if not _DEVICE_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {value!r})."
+        )
+    return value
 
 
 def parse_args() -> argparse.Namespace:
@@ -239,10 +267,9 @@ def parse_args() -> argparse.Namespace:
     # Device
     parser.add_argument(
         "--device",
-        type=str,
+        type=_device_arg,
         default=None,
-        choices=["auto", "cuda", "cpu"],
-        help="Device to use for training",
+        help="Device: auto, cpu, mps, cuda, or cuda:N (e.g. cuda:1 to pick a specific GPU)",
     )
     parser.add_argument(
         "--no-amp",
@@ -610,6 +637,9 @@ def train(config: TrainConfig) -> Dict[str, float]:
             link_prediction_weight=config.link_prediction_weight,
             contrastive_weight=config.contrastive_weight,
             ortholog_weight=config.ortholog_weight,
+            margin=config.margin,
+            label_smoothing=config.label_smoothing,
+            temperature=config.temperature,
         ),
     )
 
