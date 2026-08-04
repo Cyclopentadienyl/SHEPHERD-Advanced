@@ -632,8 +632,11 @@ class TestShortestPathIntegration:
         )
         assert pipeline._gnn_ready
         assert pipeline._sp_ready
-        assert pipeline._sp_index is not None
-        assert len(pipeline._sp_index) > 0
+        # CSR-style lookup: _sp_offsets maps phenotype_idx -> (start, end) into the flat
+        # _sp_tg/_sp_ty/_sp_di tensors (see DiagnosisPipeline._load_shortest_paths).
+        assert pipeline._sp_offsets is not None
+        assert len(pipeline._sp_offsets) > 0
+        assert len(pipeline._sp_di) > 0
 
     def test_sp_optional_fallback_when_missing(
         self, medium_kg, gnn_model_and_data, tmp_path
@@ -788,14 +791,17 @@ class TestShortestPathIntegration:
             # SP score should be in [0, 1]
             assert 0.0 <= c.sp_score <= 1.0
 
-    def test_sp_score_higher_for_closer_phenotypes(self, medium_kg):
+    def test_sp_score_higher_for_closer_phenotypes(self, medium_kg, tmp_path):
         """Direct test of _calculate_sp_score: closer phenotypes should
         produce higher SP similarity than farther ones."""
         # Pipeline with no model (just enough state for SP lookup)
         pipeline = DiagnosisPipeline(kg=medium_kg)
         pipeline._node_id_to_idx = medium_kg.get_node_id_mapping()
 
-        # Build SP table directly
+        # Build SP table with the production script, then load it through the pipeline's OWN
+        # loader. Hand-building the lookup state here is what let this test rot when the table
+        # moved from a per-pair dict to the CSR-style _sp_offsets layout; going through
+        # _load_shortest_paths keeps it honest against future changes to that structure.
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "compute_shortest_paths",
@@ -804,19 +810,14 @@ class TestShortestPathIntegration:
         sp_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sp_module)
         sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=5)
+        sp_module.save_shortest_paths(
+            sp_data,
+            tmp_path / "shortest_paths.pt",
+            {"max_hops": 5, "num_pairs": int(sp_data["distance"].numel())},
+        )
 
-        # Manually populate the SP state
-        ph_arr = sp_data["phenotype_idx"].tolist()
-        tg_arr = sp_data["target_idx"].tolist()
-        ty_arr = sp_data["target_type"].tolist()
-        di_arr = sp_data["distance"].tolist()
-        pipeline._sp_index = {
-            (ph_arr[i], tg_arr[i], ty_arr[i]): di_arr[i]
-            for i in range(len(ph_arr))
-        }
-        pipeline._sp_lookup = sp_data
-        pipeline._sp_max_hops = 5
-        pipeline._sp_ready = True
+        pipeline._load_shortest_paths(tmp_path)
+        assert pipeline._sp_ready, "SP table should have loaded from the temp workspace"
 
         # Patient with phenotypes directly connected to GeneA→Disease1
         from src.core.types import NodeID, DataSource
