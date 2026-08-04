@@ -10,14 +10,16 @@ Groups:
 Parity groups are importorskip-guarded so they skip where fastapi/pydantic/gradio/torch are
 absent and pin reality where those are installed.
 """
+import ast
 import dataclasses
 import inspect
+from pathlib import Path
 
 import pytest
 
 from src.config import training_fields as tf
 
-NOOP = {"temperature", "label_smoothing", "margin"}
+WIRED_IN_PR4B = ("temperature", "label_smoothing", "margin")  # were no-ops until PR-4b
 STR_PARAMS = {"batch_size", "hidden_dim", "num_heads"}  # passed to _collect_config as strings
 NUM_GUARDED = tuple(f for f in tf.FIELDS if f.webui_num_guarded)
 
@@ -90,14 +92,71 @@ def test_declared_ui_wider_than_valid_entries_are_real():
                 )
 
 
-def test_noop_fields_are_exactly_the_effective_false_set():
-    assert {f.name for f in tf.FIELDS if not f.effective} == NOOP
+def test_no_field_is_marked_ineffective():
+    """PR-4b wired the last three no-op knobs; nothing should be accepted-but-ineffective now."""
+    assert {f.name for f in tf.FIELDS if not f.effective} == set()
 
 
-def test_noop_fields_are_not_projected():
+def test_ineffective_fields_would_not_be_projected():
+    """Invariant kept for the future: an effective=False field must not declare a projection."""
     for f in tf.FIELDS:
         if not f.effective:
             assert f.projects_to is None, f"{f.name}: no-op field must not declare a projection"
+
+
+def test_pr4b_loss_knobs_are_effective_and_projected():
+    for name in WIRED_IN_PR4B:
+        f = tf.by_name(name)
+        assert f.effective, f"{name} must be effective after PR-4b"
+        assert f.projects_to == f"LossConfig.{name}", f"{name} must project into LossConfig"
+
+
+# ------------------------------------------------- wiring parity (source-level, torch-free)
+def _train_model_source() -> ast.Module:
+    path = Path(__file__).resolve().parents[2] / "scripts" / "train_model.py"
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _call_kwargs(tree: ast.Module, func_name: str) -> dict:
+    """Return {kwarg: source-expression} for the first call to func_name in the module."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == func_name:
+            return {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
+    return {}
+
+
+def test_trainconfig_declares_every_projected_field():
+    """Source-level: a field only has runtime effect if TrainConfig has the attribute
+    (load_config copies YAML keys behind a hasattr gate)."""
+    tree = _train_model_source()
+    declared = {
+        t.target.id
+        for cls in ast.walk(tree)
+        if isinstance(cls, ast.ClassDef) and cls.name == "TrainConfig"
+        for t in cls.body
+        if isinstance(t, ast.AnnAssign) and isinstance(t.target, ast.Name)
+    }
+    assert declared, "could not locate TrainConfig field declarations"
+    for f in tf.FIELDS:
+        if f.projects_to:
+            assert f.name in declared, (
+                f"{f.name} projects to {f.projects_to} but TrainConfig does not declare it — "
+                f"load_config's hasattr gate would silently drop it"
+            )
+
+
+def test_projected_loss_fields_reach_the_lossconfig_call():
+    """Declaring the field on TrainConfig is not enough: it must also be passed into
+    LossConfig(...), otherwise the value is carried and then ignored (the PR-4b bug)."""
+    kwargs = _call_kwargs(_train_model_source(), "LossConfig")
+    assert kwargs, "could not locate the LossConfig(...) construction in train_model.py"
+    for f in tf.FIELDS:
+        if f.projects_to and f.projects_to.startswith("LossConfig."):
+            attr = f.projects_to.split(".", 1)[1]
+            assert attr in kwargs, f"{f.name}: LossConfig(...) never receives {attr}"
+            assert kwargs[attr] == f"config.{f.name}", (
+                f"{f.name}: LossConfig({attr}=...) is wired to {kwargs[attr]!r}, expected config.{f.name}"
+            )
 
 
 def test_projection_rule_is_exception_based():
@@ -151,7 +210,7 @@ def test_divisibility_rule_is_conditional_on_conv_type():
 def test_accessors_and_bounds_helper():
     assert tf.by_name("seed").default == 42
     assert len(tf.names()) == len(tf.FIELDS)
-    assert NOOP.isdisjoint({f.name for f in tf.effective_fields()})
+    assert len(tf.effective_fields()) == len(tf.FIELDS)
     assert tf.bounds({"gt": 0, "le": 1.0}) == (0, True, 1.0, False)
     assert tf.bounds(None) == (None, False, None, False)
     with pytest.raises(KeyError):
@@ -340,7 +399,7 @@ def test_projection_targets_exist_in_real_source():
         )
 
 
-def test_trainconfig_defaults_match_spec_and_noop_absent():
+def test_trainconfig_defaults_match_spec():
     TrainConfig = _load_trainconfig()
     ALLOW_NON_SPEC = {"config_file"}  # TrainConfig-internal, not a user-facing training field
     fields = {f.name: f for f in dataclasses.fields(TrainConfig)}
@@ -356,5 +415,6 @@ def test_trainconfig_defaults_match_spec_and_noop_absent():
         got = list(tc_default) if isinstance(tc_default, (list, tuple)) else tc_default
         assert got == spec_default, f"{name}: TrainConfig default {got} != spec default {spec_default}"
 
-    for n in NOOP:
-        assert n not in fields, f"{n} unexpectedly present in TrainConfig — no-op pin is stale (PR-4b landed?)"
+    # PR-4b: the formerly-dropped loss knobs must now exist here, with LossConfig's defaults.
+    for n in WIRED_IN_PR4B:
+        assert n in fields, f"{n} missing from TrainConfig — PR-4b wiring regressed"

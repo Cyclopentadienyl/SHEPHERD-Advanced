@@ -138,6 +138,15 @@ class TrainConfig:
     contrastive_weight: float = 0.3
     ortholog_weight: float = 0.2
 
+    # Loss shape knobs. These are accepted by the API and the WebUI, so they must
+    # exist here: load_config() only copies a YAML key when TrainConfig has the
+    # attribute, and until they were added the user's values were silently dropped
+    # and LossConfig always used its own defaults. Defaults below match LossConfig
+    # exactly, so a run that does not set them behaves identically.
+    margin: float = 1.0
+    label_smoothing: float = 0.1
+    temperature: float = 0.07
+
     # Device
     device: str = "auto"  # "auto", "cuda", "cpu"
 
@@ -610,6 +619,9 @@ def train(config: TrainConfig) -> Dict[str, float]:
             link_prediction_weight=config.link_prediction_weight,
             contrastive_weight=config.contrastive_weight,
             ortholog_weight=config.ortholog_weight,
+            margin=config.margin,
+            label_smoothing=config.label_smoothing,
+            temperature=config.temperature,
         ),
     )
 

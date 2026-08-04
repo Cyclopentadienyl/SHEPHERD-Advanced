@@ -42,8 +42,15 @@ What PR-4a's parity tests mechanically pin — and what is deliberately deferred
       PR-4a must not do. They are recorded here as ``ui`` / ``ui_choices`` / ``ui_step`` (the
       source of truth) and become pinned-by-construction when PR-4d derives the widgets.
 
+Phase status:
+    - PR-4b (done): ``temperature`` / ``label_smoothing`` / ``margin`` are wired through
+      ``TrainConfig`` into ``LossConfig``. They were previously accepted and validated by both
+      surfaces but silently dropped by ``load_config``'s ``hasattr`` gate, so LossConfig always
+      used its own defaults. The TrainConfig defaults added there match LossConfig exactly, so
+      runs that do not set them are unchanged; runs that do now get the advertised effect.
+      No field is ``effective=False`` any more.
+
 Later phases:
-    - PR-4b: wire the three ``effective=False`` no-op fields through TrainConfig -> LossConfig.
     - PR-4c: enforce ``valid`` / ``choices`` / ``item_valid`` / ``CROSS_FIELD_RULES`` on the API
       (+ relax the CLI ``--device`` choices); WebUI keeps its conservative ``ui`` ranges.
     - PR-4d: derive WebUI widgets from this spec (removing SEED_PARAM_INDEX / positional coupling).
@@ -368,26 +375,25 @@ FIELDS: Tuple[FieldSpec, ...] = (
               known_divergence=True, divergence_note="WebUI caps at 2.0.",
               description="Ortholog loss weight."),
 
-    # ---- loss knobs that are ACCEPTED-BUT-NOT-EFFECTIVE (no-op; PR-4b wires them) ------------
-    FieldSpec("temperature", "float", 0.07, "loss", projects_to=None,
+    # ---- loss shape knobs (wired through TrainConfig -> LossConfig in PR-4b) -----------------
+    FieldSpec("temperature", "float", 0.07, "loss", projects_to="LossConfig.temperature",
               valid={"gt": 0}, ui={"ge": 0.01, "le": 1.0}, ui_step=0.01, ui_widget="Slider",
               current_api={"gt": 0.0}, current_webui="Slider 0.01-1.0",
-              effective=False, known_divergence=True,
-              divergence_note="No-op today: dropped by TrainConfig.hasattr gate; LossConfig default 0.07 "
-                              "always used. PR-4b (R1) wires it through -> effective=True.",
-              description="Contrastive temperature (LossConfig default 0.07 until PR-4b)."),
-    FieldSpec("label_smoothing", "float", 0.1, "loss", projects_to=None,
+              known_divergence=True,
+              divergence_note="WebUI caps at 1.0; API unbounded above.",
+              description="Contrastive temperature."),
+    FieldSpec("label_smoothing", "float", 0.1, "loss", projects_to="LossConfig.label_smoothing",
               valid={"ge": 0.0, "le": 1.0}, ui={"ge": 0.0, "le": 0.3}, ui_step=0.01, ui_widget="Slider",
               current_api={"ge": 0.0, "le": 1.0}, current_webui="Slider 0.0-0.3",
-              effective=False, known_divergence=True,
-              divergence_note="No-op today: dropped by TrainConfig.hasattr gate; default 0.1 used. PR-4b wires it.",
-              description="Diagnosis-loss label smoothing (LossConfig default 0.1 until PR-4b)."),
-    FieldSpec("margin", "float", 1.0, "loss", projects_to=None,
+              known_divergence=True,
+              divergence_note="WebUI caps at 0.3 vs API 1.0.",
+              description="Diagnosis-loss label smoothing."),
+    FieldSpec("margin", "float", 1.0, "loss", projects_to="LossConfig.margin",
               valid={"gt": 0}, ui={"ge": 0.1, "le": 3.0}, ui_step=0.1, ui_widget="Slider",
               current_api={"gt": 0.0}, current_webui="Slider 0.1-3.0",
-              effective=False, known_divergence=True,
-              divergence_note="No-op today: dropped by TrainConfig.hasattr gate; default 1.0 used. PR-4b wires it.",
-              description="Ranking-loss margin (LossConfig default 1.0 until PR-4b)."),
+              known_divergence=True,
+              divergence_note="WebUI clamps to 0.1-3.0; API unbounded above.",
+              description="Ranking-loss margin."),
 
     # ---- runtime setting (exempt from the projection requirement) ----------------------------
     FieldSpec("compile", "bool", False, "runtime_setting", projects_to="TrainConfig.compile",
