@@ -124,11 +124,16 @@ def test_spec_covers_every_api_field():
 def _load_trainconfig():
     """Load scripts/train_model.py::TrainConfig by path (scripts/ is not an importable package)."""
     import importlib.util
+    import sys
     from pathlib import Path
 
     path = Path(__file__).resolve().parents[2] / "scripts" / "train_model.py"
     spec = importlib.util.spec_from_file_location("train_model_for_test", path)
     mod = importlib.util.module_from_spec(spec)
+    # Register before exec: train_model.py uses `from __future__ import annotations`, so
+    # @dataclass resolves TrainConfig's string annotations via sys.modules[cls.__module__].
+    # Without this the module is absent from sys.modules mid-exec and dataclasses raises.
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod.TrainConfig
 
