@@ -27,7 +27,12 @@ dimensions:
 | **Implementation** | `IMPLEMENTED` · `PARTIAL` (narrower than its documented design) · `ABSENT` |
 | **Wiring** | `WIRED` (on the runtime path) · `OPTIONAL` (behind config/flag) · `NOT WIRED` (nothing constructs it) |
 | **Deployment** | `OBSERVED` · `NOT OBSERVED` (in the audited environment) · `UNKNOWN` |
-| **Verification** | `EXERCISED` (covered by tests or observed runs) · `UNEXERCISED` |
+| **Test coverage** | `EXERCISED` (build/load/plumbing covered by tests or observed runs) · `UNEXERCISED` |
+| **Semantic verification** | `VERIFIED` (tests assert that the behaviour is *correct*) · `INCOMPLETE` |
+
+Test coverage and semantic verification are kept apart deliberately: the central failure in this
+report is code that was **exercised but never semantically verified** — tests ran and passed while
+asserting the wrong properties (§2.4). A single "verification" axis would hide exactly that.
 
 `PLANNED` marks a capability documented as intended but not built. `DEFECT` marks behaviour that is
 incorrect on its own terms, independent of roadmap intent.
@@ -76,13 +81,15 @@ generalization** — inferring relationships for diseases never seen in training
 KG edges, and generalizing to novel phenotype combinations. Gating on graph reachability removes
 exactly that advantage. **[FACT]**
 
-> **Source-attribution caveat.** `docs/ARCHITECTURE.md:31` supports this with the claim that "83% of
-> test diseases were unseen" in the paper. A review of this report flagged that as a misattribution:
-> the paper's 83% figure reportedly refers to diseases represented by only a single UDN patient, not
-> to the proportion of unseen test diseases. **Neither figure has been checked against the primary
-> source by this report.** The statistic is therefore not repeated here as paper evidence, and
-> `docs/ARCHITECTURE.md` should be corrected once someone verifies the paper directly. The design
-> principle itself does not depend on that number.
+> **Source-attribution error in `ARCHITECTURE.md` — `DEFECT`.** The architecture document supports
+> this principle with the claim that "83% of test diseases were unseen" in the paper
+> (`docs/ARCHITECTURE.md:32`, repeated as "Disease split: 83% of test diseases never seen in
+> training" at `:132`). **Primary-source verification performed during review of this report
+> confirms that the paper's 83% statistic refers to diseases represented by only one UDN patient,
+> not to the percentage of test diseases unseen during training.** The paper does separately discuss
+> disease-stratified generalization and novel or sparsely represented conditions, but that is a
+> different claim. Both lines in `docs/ARCHITECTURE.md` should be corrected separately; the design
+> principle itself does not depend on the number.
 
 ### 1.2 What the implementation does — `PARTIAL`
 
@@ -124,8 +131,13 @@ Equally, it should not be read as "only one function changes". Changing the cand
 affect SP lookups, the per-candidate fallback path search (§3.2), Mode B workload, explanation cost,
 top-k displacement, latency, and clinician-facing output. A paper-parity review may additionally
 require changes to patient aggregation and scoring semantics, since the authoritative patient
-encoder/scorer is itself unresolved (§4). The η fusion (`final = η·emb + (1-η)·sp`, η=0.7,
-`:297,309`) is paper-derived and settled, and is not in question here.
+encoder/scorer is itself unresolved (§4).
+
+The η fusion (`final = η·emb + (1-η)·sp`, η=0.7, `:297,309`) is derived from the paper and is **not
+implicated by the candidate-admission defect described here**. Its task-specific calibration and
+paper parity are outside this report's scope — noting only that the paper presents the formula for
+patient–candidate-gene scoring while the pipeline applies it to disease ranking, score ranges and
+calibration differ, and η=0.7 is the project default rather than a demonstrated universal constant.
 
 ### 1.4 Open questions (not decided here)
 
@@ -152,7 +164,12 @@ original design — *original: none; this project: Voyager/cuVS ANN index; ratio
 when it is unset (`:937-938`), the subsystem was **not active in that environment**.
 
 Status: Implementation `IMPLEMENTED` · Wiring `OPTIONAL` · Deployment `NOT OBSERVED` (audited
-machine) / `UNKNOWN` (elsewhere) · Verification `UNEXERCISED`.
+machine) / `UNKNOWN` (elsewhere) · Test coverage `EXERCISED` · Semantic verification `INCOMPLETE`.
+
+The last two matter together: the subsystem *does* have unit build/search tests, an integration load
+test, end-to-end ANN plumbing tests, a measured Voyager run (§2.7) and observed cuVS initialisation
+failures on DGX. It was exercised. What no test asserted is whether the results *mean* what the
+pipeline assumes (§2.2, §2.4).
 
 Note that "off by default" alone would not establish this: `docs/TRAINING_PIPELINE_PLAYBOOK.md:20,154,163`
 instructs operators to run `scripts/build_index.py` and point `vector_index_path` at
@@ -408,8 +425,8 @@ Separated deliberately, because the two require different responses.
    (§2.5).
 6. Runtime documentation describing planned rather than current behaviour, without status markers
    (§1.1 vs §1.2; §3.1 vs §3.2).
-7. `docs/ARCHITECTURE.md:31`'s "83% of test diseases were unseen" attribution, pending primary-source
-   verification (§1.1 caveat).
+7. `docs/ARCHITECTURE.md:32` and `:132` misattribute the paper's 83% statistic — it refers to
+   diseases with a single UDN patient, not to unseen test diseases (§1.1).
 8. No tests covering candidate-admission semantics (§2.4).
 
 **B. Phase-1 paper-parity gaps** (in scope for reproducing the original design; not yet reached):
@@ -468,5 +485,5 @@ production shape, threads uncontrolled, recall unmeasured).
 The deployment audit (§2.1) covers **one development machine** and does not generalise to other or
 historical environments.
 
-The paper-attribution question in §1.1 is unresolved: neither the architecture document's claim nor
-the reviewer's correction has been checked against the primary source by this report.
+The paper-attribution finding in §1.1 rests on primary-source verification performed during review of
+this report, not on a reading by this report's author.
