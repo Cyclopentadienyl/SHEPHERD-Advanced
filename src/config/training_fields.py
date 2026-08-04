@@ -50,9 +50,16 @@ Phase status:
       runs that do not set them are unchanged; runs that do now get the advertised effect.
       No field is ``effective=False`` any more.
 
+    - PR-4c (done): the API now enforces the target policy — closed enums for ``conv_type`` /
+      ``scheduler_type`` / ``amp_dtype``, the PyTorch device grammar for ``device`` (so ``cuda:N``
+      stays available on multi-GPU hosts), ``min_lr_ratio <= 1.0``, the ``num_neighbors``
+      non-empty/element policy, and the conv-type-conditional divisibility rule. The CLI
+      ``--device`` follows the same grammar. The WebUI keeps its conservative ``ui`` ranges; its
+      only change was replacing the silent ``num_neighbors`` fallback with a validation error.
+      The surfaces still hand-write their constraints — the spec is the authority and the tests
+      assert the two agree (guard, not derive).
+
 Later phases:
-    - PR-4c: enforce ``valid`` / ``choices`` / ``item_valid`` / ``CROSS_FIELD_RULES`` on the API
-      (+ relax the CLI ``--device`` choices); WebUI keeps its conservative ``ui`` ranges.
     - PR-4d: derive WebUI widgets from this spec (removing SEED_PARAM_INDEX / positional coupling).
 
 Dependency-light (no torch / pydantic / gradio): any surface can read it and torch-free unit tests
@@ -97,7 +104,7 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="hidden_dim",
         operand="num_heads",
         when={"conv_type": ("hgt", "gat")},
-        enforced_in="PR-4c (API model_validator)",
+        enforced_in="current (API _validate_head_divisibility)",
         description=(
             "hidden_dim % num_heads == 0. Required for hgt (HGTConv splits out_channels across "
             "heads) and gat (GATConv uses hidden_dim // num_heads with concat=True, so a "
@@ -153,8 +160,12 @@ class FieldSpec:
     webui_num_guarded: bool = False               # _collect_config routes it through _num
     ui_wider_than_valid: Tuple[str, ...] = ()     # bound keys where current UI is looser than valid
 
-    # current API behavior pinned by PR-4a:
+    # current API behavior pinned by PR-4a (numeric), extended by PR-4c (enum/pattern/list):
     current_api: Optional[Dict[str, Any]] = None
+    current_api_choices: Optional[Tuple[Any, ...]] = None   # enum the API rejects outside of
+    current_api_pattern: Optional[str] = None               # regex the API enforces
+    current_api_item: Optional[Dict[str, Any]] = None       # list element constraint enforced
+    current_api_min_length: Optional[int] = None            # list min length enforced
 
     current_webui: str = ""
     known_divergence: bool = False
@@ -168,7 +179,7 @@ class FieldSpec:
             raise ValueError(f"{self.name}: unknown kind {self.kind!r}")
         if self.scope not in SCOPES:
             raise ValueError(f"{self.name}: unknown scope {self.scope!r}")
-        for label in ("valid", "ui", "current_api", "item_valid"):
+        for label in ("valid", "ui", "current_api", "item_valid", "current_api_item"):
             d = getattr(self, label)
             if d is None:
                 continue
@@ -212,8 +223,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
     # ---- model (ShepherdGNNConfig) ----------------------------------------------------------
     FieldSpec("conv_type", "str", "gat", "model", projects_to="ShepherdGNNConfig.conv_type",
               choices=("gat", "hgt", "sage"), ui_choices=("gat", "hgt", "sage"), ui_widget="Radio",
-              current_api={}, current_webui="Radio{gat,hgt,sage}",
-              known_divergence=True, divergence_note="API accepts any string today; enum enforced in PR-4c.",
+              current_api={}, current_api_choices=("gat", "hgt", "sage"),
+              current_webui="Radio{gat,hgt,sage}",
               description="GNN convolution type."),
     FieldSpec("hidden_dim", "int", 256, "model", projects_to="ShepherdGNNConfig.hidden_dim",
               valid={"ge": 32}, ui_choices=(128, 256, 512), ui_widget="Dropdown",
@@ -251,11 +262,11 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("num_neighbors", "list[int]", (15, 10, 5), "dataloader",
               projects_to="DataLoaderConfig.num_neighbors",
               item_valid={"ge": 1}, min_length=1,
-              current_api={}, current_webui="Textbox parsed; silent fallback [15,10,5] on error",
+              current_api={}, current_api_item={"ge": 1}, current_api_min_length=1,
+              current_webui="Textbox parsed; unparseable/empty/<1 raises ConfigValidationError (toast)",
               known_divergence=True,
-              divergence_note="Target (PR-4c): API validates non-empty and each element >=1 "
-                              "(item_valid/min_length); WebUI toast-on-error instead of silent "
-                              "fallback. len vs num_layers deliberately left unlinked.",
+              divergence_note="len(num_neighbors) vs num_layers is deliberately left unlinked "
+                              "(documented non-constraint).",
               description="Neighbor fan-out per sampling hop."),
     FieldSpec("max_subgraph_nodes", "int", 5000, "dataloader", projects_to="DataLoaderConfig.max_subgraph_nodes",
               valid={"ge": 100}, ui={"ge": 100}, ui_widget="Number", webui_num_guarded=True,
@@ -292,8 +303,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("scheduler_type", "str", "cosine", "trainer", projects_to="TrainerConfig.scheduler_type",
               choices=("cosine", "onecycle", "linear", "none"),
               ui_choices=("cosine", "onecycle", "linear", "none"), ui_widget="Dropdown",
-              current_api={}, current_webui="Dropdown{cosine,onecycle,linear,none}",
-              known_divergence=True, divergence_note="API accepts any string today; enum enforced in PR-4c.",
+              current_api={}, current_api_choices=("cosine", "onecycle", "linear", "none"),
+              current_webui="Dropdown{cosine,onecycle,linear,none}",
               description="LR scheduler type."),
     FieldSpec("warmup_steps", "int", 500, "trainer", projects_to="TrainerConfig.warmup_steps",
               valid={"ge": 0}, ui={"ge": 0}, ui_widget="Number", webui_num_guarded=True,
@@ -302,10 +313,10 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("min_lr_ratio", "float", 0.01, "trainer", projects_to="TrainerConfig.min_lr_ratio",
               valid={"ge": 0.0, "le": 1.0}, ui={"ge": 1e-4, "le": 1.0}, ui_widget="Number",
               webui_num_guarded=True,
-              current_api={"ge": 0.0}, current_webui="Number 1e-4-1.0 (_num)",
+              current_api={"ge": 0.0, "le": 1.0}, current_webui="Number 1e-4-1.0 (_num)",
               known_divergence=True,
-              divergence_note="API allows 0 (decay-to-zero) and has no upper; WebUI clamps "
-                              "1e-4..1.0. onecycle needs >0 — see CROSS_FIELD_RULES.",
+              divergence_note="API allows 0 (decay-to-zero); WebUI's lower bound is 1e-4. "
+                              "onecycle needs >0 — see CROSS_FIELD_RULES.",
               description="Final LR as a fraction of peak."),
     FieldSpec("gradient_accumulation_steps", "int", 1, "trainer",
               projects_to="TrainerConfig.gradient_accumulation_steps",
@@ -323,9 +334,10 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="Enable automatic mixed precision."),
     FieldSpec("amp_dtype", "str", "float16", "trainer", projects_to="TrainerConfig.amp_dtype",
               choices=("float16", "bfloat16"), ui_choices=("Off", "float16", "bfloat16"), ui_widget="Radio",
-              current_api={}, current_webui="derived from amp_mode Radio{Off,float16,bfloat16}",
+              current_api={}, current_api_choices=("float16", "bfloat16"),
+              current_webui="derived from amp_mode Radio{Off,float16,bfloat16}",
               known_divergence=True,
-              divergence_note="API accepts any string (enum in PR-4c); WebUI models it as the amp_mode composite.",
+              divergence_note="WebUI models this as the amp_mode composite (Off collapses to use_amp=False).",
               description="AMP compute dtype."),
     FieldSpec("eval_every_n_epochs", "int", 1, "trainer", projects_to="TrainerConfig.eval_every_n_epochs",
               valid={"ge": 1}, current_api={"ge": 1}, current_webui="not-exposed", webui_exposed=False,
@@ -342,10 +354,12 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("device", "str", "auto", "trainer", projects_to="TrainerConfig.device",
               valid_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
               ui_choices=("auto", "cuda", "cpu"), ui_widget="Radio",
-              current_api={}, current_webui="Radio{auto,cuda,cpu}",
+              current_api={}, current_api_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
+              current_webui="Radio{auto,cuda,cpu}",
               known_divergence=True,
-              divergence_note="NOT a closed enum: PR-4c validates PyTorch device grammar (cuda:N, mps); "
-                              "WebUI keeps {auto,cuda,cpu}. CLI --device choices to be relaxed too.",
+              divergence_note="Deliberately asymmetric: API (and CLI --device) accept the PyTorch device "
+                              "grammar incl. cuda:N for multi-GPU hosts; the WebUI stays conservative with "
+                              "{auto,cuda,cpu}.",
               description="Compute device."),
     FieldSpec("seed", "int", 42, "trainer", projects_to="TrainerConfig.seed",
               valid={"ge": 0, "le": 2**32 - 1}, ui={"ge": 0, "le": 2**32 - 1}, ui_widget="Number",

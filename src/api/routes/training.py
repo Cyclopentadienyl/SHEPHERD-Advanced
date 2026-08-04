@@ -24,16 +24,23 @@ Version: 1.0.0
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+import re
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.api.services.training_manager import training_manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# PyTorch device grammar. Deliberately NOT a closed {auto,cuda,cpu} enum: torch accepts an
+# ordinal (``cuda:1``) and ``mps``, and a multi-GPU host must be able to target a specific card.
+# The WebUI keeps its conservative three-choice Radio; see src/config/training_fields.py
+# (field "device", valid_pattern) which this must stay in step with.
+_DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 
 
 # =============================================================================
@@ -52,8 +59,8 @@ class TrainingStartRequest(BaseModel):
     num_epochs: int = Field(default=100, ge=1, le=10000, description="Number of epochs")
     learning_rate: float = Field(default=1e-4, gt=0, le=1.0, description="Learning rate")
     batch_size: int = Field(default=32, ge=1, le=2048, description="Batch size")
-    conv_type: str = Field(default="gat", description="GNN convolution type")
-    device: str = Field(default="auto", description="Device: auto, cuda, cpu")
+    conv_type: Literal["gat", "hgt", "sage"] = Field(default="gat", description="GNN convolution type")
+    device: str = Field(default="auto", description="Device: auto, cpu, mps, cuda, or cuda:N")
     resume_from: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
     seed: int = Field(default=42, ge=0, le=2**32 - 1, description="Random seed")
 
@@ -62,7 +69,9 @@ class TrainingStartRequest(BaseModel):
     num_layers: int = Field(default=4, ge=1, le=16, description="Number of GNN layers")
     dropout: float = Field(default=0.1, ge=0.0, le=0.9, description="Dropout rate")
     weight_decay: float = Field(default=0.01, ge=0.0, description="Weight decay")
-    scheduler_type: str = Field(default="cosine", description="LR scheduler type")
+    scheduler_type: Literal["cosine", "onecycle", "linear", "none"] = Field(
+        default="cosine", description="LR scheduler type"
+    )
     warmup_steps: int = Field(default=500, ge=0, description="Warmup steps")
     early_stopping_patience: int = Field(default=10, ge=1, description="Early stopping patience")
     diagnosis_weight: float = Field(default=1.0, ge=0.0, description="Diagnosis loss weight")
@@ -76,19 +85,48 @@ class TrainingStartRequest(BaseModel):
     num_heads: int = Field(default=8, ge=1, description="Number of attention heads")
     use_ortholog_gate: bool = Field(default=True, description="Use ortholog gate")
     use_amp: bool = Field(default=True, description="Use automatic mixed precision")
-    amp_dtype: str = Field(default="float16", description="AMP dtype: float16 or bfloat16")
+    amp_dtype: Literal["float16", "bfloat16"] = Field(
+        default="float16", description="AMP dtype: float16 or bfloat16"
+    )
     temperature: float = Field(default=0.07, gt=0.0, description="Contrastive temperature")
     label_smoothing: float = Field(default=0.1, ge=0.0, le=1.0, description="Label smoothing")
     margin: float = Field(default=1.0, gt=0.0, description="Margin for ranking loss")
-    num_neighbors: List[int] = Field(
-        default=[15, 10, 5], description="Neighbor sampling per layer"
+    num_neighbors: List[Annotated[int, Field(ge=1)]] = Field(
+        default=[15, 10, 5], min_length=1,
+        description="Neighbor fan-out per sampling hop (non-empty; each entry >= 1)",
     )
     max_subgraph_nodes: int = Field(default=5000, ge=100, description="Max subgraph nodes")
-    min_lr_ratio: float = Field(default=0.01, ge=0.0, description="Min LR ratio for scheduler")
+    min_lr_ratio: float = Field(
+        default=0.01, ge=0.0, le=1.0,
+        description="Final LR as a fraction of peak (a ratio above 1.0 would raise the final LR "
+                    "above the peak, which no scheduler here supports)",
+    )
     num_workers: int = Field(default=4, ge=0, description="Data loader workers")
     num_negative_samples: int = Field(default=5, ge=1, description="Negative samples")
     eval_every_n_epochs: int = Field(default=1, ge=1, description="Evaluate every N epochs")
     save_top_k: int = Field(default=3, ge=1, description="Save top K checkpoints")
+
+    @field_validator("device")
+    @classmethod
+    def _validate_device(cls, v: str) -> str:
+        if not _DEVICE_RE.match(v):
+            raise ValueError(
+                f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {v!r})."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_head_divisibility(self) -> "TrainingStartRequest":
+        # Only the attention convolutions split hidden_dim across heads: HGTConv divides
+        # out_channels by heads, and GATConv is built as (hidden_dim // num_heads) * heads with
+        # concat=True, so a non-divisible pair silently truncates and breaks the residual add /
+        # LayerNorm(hidden_dim). SAGEConv takes no heads, so it is deliberately exempt.
+        if self.conv_type in ("hgt", "gat") and self.hidden_dim % self.num_heads != 0:
+            raise ValueError(
+                f"hidden_dim ({self.hidden_dim}) must be divisible by num_heads "
+                f"({self.num_heads}) when conv_type is '{self.conv_type}'."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":

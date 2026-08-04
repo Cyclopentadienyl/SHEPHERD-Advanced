@@ -177,11 +177,22 @@ def _collect_config(
     max_subgraph_nodes: int,
 ) -> Dict[str, Any]:
     """Collect all parameter widgets into a config dict."""
-    # Parse comma-separated neighbors
+    errors: List[str] = []
+
+    # Parse comma-separated neighbors. An unparseable, empty or illegal entry surfaces as a
+    # validation error rather than silently falling back to the default — a silent fallback
+    # would start a run with a fan-out the user never asked for. Mirrors the API policy
+    # (non-empty, each entry >= 1).
+    num_neighbors: List[int] = []
     try:
-        num_neighbors = [int(x.strip()) for x in num_neighbors_str.split(",")]
+        num_neighbors = [int(x.strip()) for x in num_neighbors_str.split(",") if x.strip()]
     except (ValueError, AttributeError):
-        num_neighbors = [15, 10, 5]
+        errors.append('Num Neighbors must be comma-separated integers (e.g. "15, 10, 5").')
+    else:
+        if not num_neighbors:
+            errors.append('Num Neighbors must not be empty (e.g. "15, 10, 5").')
+        elif any(n < 1 for n in num_neighbors):
+            errors.append("Num Neighbors entries must each be >= 1.")
 
     # Strip the display prefix — training subprocess uses paths relative to project root
     def _strip_prefix(path: str) -> str:
@@ -195,7 +206,6 @@ def _collect_config(
     # of a raw TypeError. Sliders and (string-choice) dropdowns can't be None, so
     # they keep their bare casts. learning_rate is the one Number with no widget
     # minimum, so it also gets a >0 check (aligns with the API's Field(gt=0)).
-    errors: List[str] = []
     config: Dict[str, Any] = {
         # Paths (strip display prefix so backend receives relative-to-project-root paths)
         "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",

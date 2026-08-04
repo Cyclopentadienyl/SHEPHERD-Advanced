@@ -49,6 +49,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -164,6 +165,22 @@ class TrainConfig:
     resume_from: Optional[str] = None
 
 
+# PyTorch device grammar, kept in step with the API (src/api/routes/training.py::_DEVICE_RE) and
+# the field spec (src/config/training_fields.py, field "device", valid_pattern). The CLI used to
+# restrict --device to {auto,cuda,cpu}, which made it impossible to target a specific GPU on a
+# multi-GPU host even though torch.device() and the rest of the pipeline accept "cuda:N".
+_DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
+
+
+def _device_arg(value: str) -> str:
+    """argparse type for --device: validate against the PyTorch device grammar."""
+    if not _DEVICE_RE.match(value):
+        raise argparse.ArgumentTypeError(
+            f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {value!r})."
+        )
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments"""
     parser = argparse.ArgumentParser(
@@ -248,10 +265,9 @@ def parse_args() -> argparse.Namespace:
     # Device
     parser.add_argument(
         "--device",
-        type=str,
+        type=_device_arg,
         default=None,
-        choices=["auto", "cuda", "cpu"],
-        help="Device to use for training",
+        help="Device: auto, cpu, mps, cuda, or cuda:N (e.g. cuda:1 to pick a specific GPU)",
     )
     parser.add_argument(
         "--no-amp",

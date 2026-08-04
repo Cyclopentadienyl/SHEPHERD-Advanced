@@ -273,6 +273,87 @@ def test_spec_covers_every_api_field():
     assert api_names <= set(tf.names()), f"API fields not in spec: {api_names - set(tf.names())}"
 
 
+# ------------------------------------------------- PR-4c: API enforcement (behavioural pins)
+def _validation_error():
+    pytest.importorskip("pydantic")
+    from pydantic import ValidationError
+    return ValidationError
+
+
+def test_api_enforces_declared_choices():
+    """Every field declaring current_api_choices must reject a value outside the enum."""
+    Model, VE = _api_model(), _validation_error()
+    enforced = [f for f in tf.FIELDS if f.current_api_choices]
+    assert {f.name for f in enforced} == {"conv_type", "scheduler_type", "amp_dtype"}
+    for f in enforced:
+        for good in f.current_api_choices:
+            Model(**{f.name: good})                       # every declared choice is accepted
+        with pytest.raises(VE):
+            Model(**{f.name: "definitely-not-a-valid-choice"})
+
+
+def test_api_enforces_device_grammar_and_keeps_multi_gpu():
+    """device is a PyTorch grammar, not a 3-value enum: cuda:N must stay available."""
+    Model, VE = _api_model(), _validation_error()
+    spec = tf.by_name("device")
+    assert spec.current_api_pattern == spec.valid_pattern
+    for good in ("auto", "cpu", "mps", "cuda", "cuda:0", "cuda:1", "cuda:7"):
+        assert Model(device=good).device == good
+    for bad in ("gpu0", "cuda:", "cuda:x", "CUDA", "", "cuda:1:2"):
+        with pytest.raises(VE):
+            Model(device=bad)
+
+
+def test_api_head_divisibility_is_conditional_on_conv_type():
+    """hgt/gat require hidden_dim % num_heads == 0; sage must remain exempt."""
+    Model, VE = _api_model(), _validation_error()
+    for conv in ("hgt", "gat"):
+        with pytest.raises(VE):
+            Model(conv_type=conv, hidden_dim=100, num_heads=8)
+        Model(conv_type=conv, hidden_dim=256, num_heads=8)      # divisible -> fine
+    # SAGEConv takes no heads, so a non-divisible pair is legitimate:
+    assert Model(conv_type="sage", hidden_dim=100, num_heads=8).hidden_dim == 100
+
+
+def test_api_enforces_num_neighbors_policy():
+    Model, VE = _api_model(), _validation_error()
+    spec = tf.by_name("num_neighbors")
+    assert spec.current_api_item == spec.item_valid
+    assert spec.current_api_min_length == spec.min_length
+    assert Model(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
+    with pytest.raises(VE):
+        Model(num_neighbors=[])          # min_length
+    with pytest.raises(VE):
+        Model(num_neighbors=[15, 0])     # element >= 1
+    with pytest.raises(VE):
+        Model(num_neighbors=[-1])
+
+
+def test_api_onecycle_rule_still_enforced():
+    """The pre-existing cross-field rule must survive the PR-4c changes."""
+    Model, VE = _api_model(), _validation_error()
+    with pytest.raises(VE):
+        Model(scheduler_type="onecycle", min_lr_ratio=0.0)
+    Model(scheduler_type="cosine", min_lr_ratio=0.0)             # decay-to-zero stays legal
+    Model(scheduler_type="onecycle", min_lr_ratio=0.01)
+
+
+def test_cross_field_rules_report_where_they_are_enforced():
+    """After PR-4c no rule may still be marked as merely planned."""
+    for rule in tf.CROSS_FIELD_RULES:
+        assert rule.enforced_in.startswith("current"), (
+            f"{rule.name}: still marked '{rule.enforced_in}' — PR-4c should have enforced it"
+        )
+
+
+def test_cli_device_accepts_pytorch_grammar():
+    """The CLI was restricted to {auto,cuda,cpu}; it must now follow the same grammar as the API."""
+    tree = _train_model_source()
+    src = ast.unparse(tree)
+    assert 'choices=[\'auto\', \'cuda\', \'cpu\']' not in src, "CLI --device still hard-limited to 3 values"
+    assert "_DEVICE_RE" in src, "CLI should validate --device against the device grammar"
+
+
 # --------------------------------------------------------------------- WebUI collect parity (pin)
 def _training_console():
     pytest.importorskip("gradio")
@@ -330,6 +411,20 @@ def test_every_num_guarded_field_is_actually_guarded(monkeypatch):
                 tc._collect_config(**{**base, f.name: bad})
             checked += 1
     assert checked >= len(NUM_GUARDED), "every guarded field must be exercised at least once"
+
+
+def test_webui_num_neighbors_fails_loud_instead_of_silent_fallback(monkeypatch):
+    """PR-4c: an unparseable/empty/illegal fan-out must raise (toast), not silently become
+    the default — starting a run with a fan-out the user never asked for is worse than a toast."""
+    tc = _training_console()
+    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
+    base = _default_collect_kwargs(tc)
+    for bad in ("not-numbers", "", "   ", "15, x, 5", "0, 10", "-1"):
+        with pytest.raises(tc.ConfigValidationError):
+            tc._collect_config(**{**base, "num_neighbors_str": bad})
+    # a valid list still parses
+    cfg = tc._collect_config(**{**base, "num_neighbors_str": "20, 10"})
+    assert cfg["num_neighbors"] == [20, 10]
 
 
 def test_num_guarded_fields_accept_their_boundary_values(monkeypatch):
