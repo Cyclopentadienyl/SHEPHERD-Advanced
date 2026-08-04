@@ -2,9 +2,10 @@
 Tests for the training field-spec (PR-4a).
 
 Groups:
-  * self-consistency — torch-free, always run: the spec is well-formed.
+  * self-consistency — torch-free, always run: the spec (incl. target policy and cross-field
+    rules) is well-formed and self-validating.
   * API parity — pin CURRENT Pydantic behavior mechanically (defaults + ge/gt/le/lt + coverage).
-  * WebUI collect parity — drive _collect_config and pin exposure, defaults, and _num ranges.
+  * WebUI collect parity — drive _collect_config and pin exposure, defaults, and EVERY _num guard.
   * projection parity — every projects_to target attribute exists on the real config class.
 Parity groups are importorskip-guarded so they skip where fastapi/pydantic/gradio/torch are
 absent and pin reality where those are installed.
@@ -17,9 +18,8 @@ import pytest
 from src.config import training_fields as tf
 
 NOOP = {"temperature", "label_smoothing", "margin"}
-# _collect_config params that are WebUI composites, not 1:1 spec fields:
-COMPOSITE_PARAMS = {"amp_mode", "num_neighbors_str"}
 STR_PARAMS = {"batch_size", "hidden_dim", "num_heads"}  # passed to _collect_config as strings
+NUM_GUARDED = tuple(f for f in tf.FIELDS if f.webui_num_guarded)
 
 
 # --------------------------------------------------------------------------- self-consistency
@@ -28,29 +28,66 @@ def test_no_duplicate_names():
     assert len(n) == len(set(n))
 
 
-def test_kinds_scopes_and_current_api_types():
+def test_kinds_and_scopes_valid():
     for f in tf.FIELDS:
         assert f.kind in tf.KINDS
         assert f.scope in tf.SCOPES
-        assert f.current_api is None or isinstance(f.current_api, dict)
+
+
+def test_constraint_dicts_are_well_formed():
+    """Bound dicts use only ge/gt/le/lt and never mix inclusive with exclusive on a side."""
+    for f in tf.FIELDS:
+        for label in ("valid", "ui", "current_api", "item_valid"):
+            d = getattr(f, label)
+            if d is None:
+                continue
+            assert set(d) <= set(tf.BOUND_KEYS), f"{f.name}.{label}: bad keys {set(d)}"
+            assert not ("ge" in d and "gt" in d), f"{f.name}.{label}: both ge and gt"
+            assert not ("le" in d and "lt" in d), f"{f.name}.{label}: both le and lt"
+        lo, _, hi, _ = tf.bounds(f.valid)
+        if lo is not None and hi is not None:
+            assert lo <= hi, f"{f.name}: valid lo {lo} > hi {hi}"
 
 
 def test_ui_within_valid():
+    """ui ⊆ valid, honouring exclusive bounds — except bound keys declared ui_wider_than_valid."""
     for f in tf.FIELDS:
-        vlo, vhi = (f.valid if f.valid else (None, None))
-        if f.ui:
-            ulo, uhi = f.ui[0], (f.ui[1] if len(f.ui) > 1 else None)
-            if vlo is not None and ulo is not None:
-                assert ulo >= vlo, f"{f.name}: ui lo {ulo} < valid lo {vlo}"
-            if vhi is not None and uhi is not None:
+        vlo, vlo_x, vhi, vhi_x = tf.bounds(f.valid)
+        ulo, ulo_x, uhi, uhi_x = tf.bounds(f.ui)
+        if vlo is not None and ulo is not None and "ge" not in f.ui_wider_than_valid \
+                and "gt" not in f.ui_wider_than_valid:
+            assert ulo >= vlo, f"{f.name}: ui lo {ulo} < valid lo {vlo}"
+            if ulo == vlo and vlo_x:
+                assert ulo_x, f"{f.name}: valid excludes {vlo} but ui includes it"
+        if vhi is not None and "le" not in f.ui_wider_than_valid and "lt" not in f.ui_wider_than_valid:
+            if f.ui is not None:
+                assert uhi is not None, f"{f.name}: valid caps at {vhi} but ui has no upper bound"
                 assert uhi <= vhi, f"{f.name}: ui hi {uhi} > valid hi {vhi}"
-        if f.ui_choices and f.valid:
-            for c in f.ui_choices:
-                if isinstance(c, (int, float)):
-                    if vlo is not None:
-                        assert c >= vlo, f"{f.name}: ui choice {c} < valid lo {vlo}"
-                    if vhi is not None:
-                        assert c <= vhi, f"{f.name}: ui choice {c} > valid hi {vhi}"
+                if uhi == vhi and vhi_x:
+                    assert uhi_x, f"{f.name}: valid excludes {vhi} but ui includes it"
+        for c in (f.ui_choices or ()):
+            if isinstance(c, (int, float)) and not isinstance(c, bool):
+                if vlo is not None:
+                    assert c > vlo if vlo_x else c >= vlo, f"{f.name}: ui choice {c} below valid"
+                if vhi is not None:
+                    assert c < vhi if vhi_x else c <= vhi, f"{f.name}: ui choice {c} above valid"
+
+
+def test_declared_ui_wider_than_valid_entries_are_real():
+    """The escape hatch cannot be stale: each declared key must actually be looser than valid."""
+    for f in tf.FIELDS:
+        for key in f.ui_wider_than_valid:
+            assert key in tf.BOUND_KEYS, f"{f.name}: bad ui_wider_than_valid key {key}"
+            vlo, _, vhi, _ = tf.bounds(f.valid)
+            ulo, _, uhi, _ = tf.bounds(f.ui)
+            if key in ("le", "lt"):
+                assert vhi is not None and uhi is None or (uhi is not None and vhi is not None and uhi > vhi), (
+                    f"{f.name}: declared ui wider on {key} but it is not"
+                )
+            else:
+                assert vlo is not None and ulo is None or (ulo is not None and vlo is not None and ulo < vlo), (
+                    f"{f.name}: declared ui wider on {key} but it is not"
+                )
 
 
 def test_noop_fields_are_exactly_the_effective_false_set():
@@ -64,12 +101,9 @@ def test_noop_fields_are_not_projected():
 
 
 def test_projection_rule_is_exception_based():
-    """Every field that must_project() declares a target; the only exceptions are runtime
-    settings and effective=False no-ops (which must NOT project)."""
     for f in tf.FIELDS:
         if tf.must_project(f):
             assert f.projects_to, f"{f.name}: effective non-runtime field must declare projects_to"
-    # paths are NOT an exception — confirm they now project:
     for name in ("data_dir", "output_dir", "checkpoint_dir", "log_dir", "resume_from"):
         assert tf.by_name(name).projects_to == f"TrainConfig.{name}"
 
@@ -82,21 +116,53 @@ def test_closed_enums_have_choices_and_device_has_a_pattern():
     assert dev.valid_pattern is not None and dev.choices is None
 
 
-def test_accessors():
+def test_num_neighbors_item_policy_is_structured():
+    """The list policy must be machine-readable, not prose (PR-4c consumes it)."""
+    f = tf.by_name("num_neighbors")
+    assert f.kind == "list[int]"
+    assert f.item_valid == {"ge": 1}, "each element must be declared int >= 1"
+    assert f.min_length == 1, "non-empty must be declared structurally"
+
+
+def test_cross_field_rules_are_structured_and_reference_real_fields():
+    assert tf.CROSS_FIELD_RULES, "cross-field rules must be represented structurally"
+    names = set(tf.names())
+    for rule in tf.CROSS_FIELD_RULES:
+        assert rule.subject in names, f"{rule.name}: unknown subject {rule.subject}"
+        if rule.operand:
+            assert rule.operand in names, f"{rule.name}: unknown operand {rule.operand}"
+        for guard_field, allowed in (rule.when or {}).items():
+            assert guard_field in names, f"{rule.name}: unknown guard field {guard_field}"
+            spec_choices = tf.by_name(guard_field).choices
+            if spec_choices:
+                assert set(allowed) <= set(spec_choices), (
+                    f"{rule.name}: guard values {allowed} not in {guard_field} choices {spec_choices}"
+                )
+        assert rule.enforced_in, f"{rule.name}: must record where it is enforced"
+
+
+def test_divisibility_rule_is_conditional_on_conv_type():
+    """Regression guard for the approved refinement: sage must NOT be subject to divisibility."""
+    rule = next(r for r in tf.CROSS_FIELD_RULES if r.name == "hidden_dim_divisible_by_num_heads")
+    assert rule.kind == "divisible_by"
+    assert set(rule.when["conv_type"]) == {"hgt", "gat"}, "sage takes no heads — must be excluded"
+
+
+def test_accessors_and_bounds_helper():
     assert tf.by_name("seed").default == 42
     assert len(tf.names()) == len(tf.FIELDS)
-    assert "temperature" in {f.name for f in tf.in_scope("loss")}
     assert NOOP.isdisjoint({f.name for f in tf.effective_fields()})
+    assert tf.bounds({"gt": 0, "le": 1.0}) == (0, True, 1.0, False)
+    assert tf.bounds(None) == (None, False, None, False)
     with pytest.raises(KeyError):
         tf.by_name("does_not_exist")
 
 
 # --------------------------------------------------------------------------- API parity (pin)
 def _pyd_constraints(field_info) -> dict:
-    """Extract ge/gt/le/lt from a Pydantic v2 FieldInfo's metadata (annotated_types objects)."""
     out = {}
     for m in field_info.metadata:
-        for k in ("ge", "gt", "le", "lt"):
+        for k in tf.BOUND_KEYS:
             v = getattr(m, k, None)
             if v is not None:
                 out[k] = v
@@ -122,7 +188,7 @@ def _api_model():
 def test_api_defaults_match_spec():
     mf = _api_model().model_fields
     for f in tf.FIELDS:
-        if f.current_api is None:  # not an API field (compile)
+        if f.current_api is None:
             assert f.name not in mf, f"{f.name} should not be an API field"
             continue
         assert f.name in mf, f"{f.name} missing from TrainingStartRequest"
@@ -157,10 +223,9 @@ def _training_console():
 
 
 def _default_collect_kwargs(tc):
-    """Build _collect_config kwargs from the spec (composites hard-coded to their widget defaults)."""
-    params = list(inspect.signature(tc._collect_config).parameters)
+    """Build _collect_config kwargs from the spec (composites use their widget defaults)."""
     kw = {}
-    for p in params:
+    for p in inspect.signature(tc._collect_config).parameters:
         if p == "amp_mode":
             kw[p] = "float16"
         elif p == "num_neighbors_str":
@@ -174,34 +239,58 @@ def _default_collect_kwargs(tc):
 
 def test_webui_collect_exposure_and_defaults(monkeypatch):
     tc = _training_console()
-    # compile is sourced from the runtime-settings file; pin it deterministically for the test:
     monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
     cfg = tc._collect_config(**_default_collect_kwargs(tc))
 
-    # exposure: the emitted keys are exactly the webui_exposed fields
     assert set(cfg) == {f.name for f in tf.FIELDS if f.webui_exposed}
-
-    # defaults: every emitted value matches the spec default
     for key, val in cfg.items():
         expected = _spec_default(tf.by_name(key))
         got = list(val) if isinstance(val, (list, tuple)) else val
         assert got == expected, f"{key}: collect default {got} != spec default {expected}"
 
 
-def test_webui_collect_enforces_num_ranges(monkeypatch):
+def test_every_num_guarded_field_is_actually_guarded(monkeypatch):
+    """The spec claims _collect_config routes these through _num — verify all of them, both sides."""
     tc = _training_console()
     monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
     base = _default_collect_kwargs(tc)
-    # each of these is guarded by _num in _collect_config; out-of-range must raise:
-    for param, bad in (("num_epochs", 0), ("min_lr_ratio", 2.0), ("max_grad_norm", 0.0), ("seed", -1)):
-        with pytest.raises(tc.ConfigValidationError):
-            tc._collect_config(**{**base, param: bad})
+    assert len(NUM_GUARDED) == 9, "expected 9 _num-guarded fields"
+
+    checked = 0
+    for f in NUM_GUARDED:
+        lo, lo_x, hi, hi_x = tf.bounds(f.ui)
+        assert lo is not None or hi is not None, f"{f.name}: num-guarded but no ui bound declared"
+        cast = int if f.kind == "int" else float
+        cases = []
+        if lo is not None:
+            cases.append(cast(lo) if lo_x else cast(lo - 1))       # exclusive -> the bound itself
+        if hi is not None:
+            cases.append(cast(hi) if hi_x else cast(hi + 1))
+        for bad in cases:
+            with pytest.raises(tc.ConfigValidationError):
+                tc._collect_config(**{**base, f.name: bad})
+            checked += 1
+    assert checked >= len(NUM_GUARDED), "every guarded field must be exercised at least once"
+
+
+def test_num_guarded_fields_accept_their_boundary_values(monkeypatch):
+    """Guards must not be over-strict: the declared ui bounds themselves are accepted."""
+    tc = _training_console()
+    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
+    base = _default_collect_kwargs(tc)
+    for f in NUM_GUARDED:
+        lo, lo_x, hi, _ = tf.bounds(f.ui)
+        if lo is None or lo_x:      # exclusive lower bound has no inclusive edge to test
+            continue
+        cast = int if f.kind == "int" else float
+        cfg = tc._collect_config(**{**base, f.name: cast(lo)})
+        assert cfg[f.name] == cast(lo), f"{f.name}: boundary value {lo} should be accepted"
 
 
 # ------------------------------------------------------------------- projection parity (pin)
 def _load_trainconfig():
     """Load scripts/train_model.py::TrainConfig by path (scripts/ is not an importable package)."""
-    pytest.importorskip("torch")            # train_model.py imports torch / torch_geometric at module load
+    pytest.importorskip("torch")
     pytest.importorskip("torch_geometric")
     import importlib.util
     import sys
