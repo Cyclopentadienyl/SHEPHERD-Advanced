@@ -109,7 +109,10 @@ class TrainingStartRequest(BaseModel):
     @field_validator("device")
     @classmethod
     def _validate_device(cls, v: str) -> str:
-        if not _DEVICE_RE.match(v):
+        # fullmatch, not match: Python's ``$`` also matches just before a trailing newline, so
+        # ``match()`` would accept "cuda\n" — not a valid torch device string, and it would then
+        # travel into the YAML and the training subprocess before failing.
+        if not _DEVICE_RE.fullmatch(v):
             raise ValueError(
                 f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {v!r})."
             )

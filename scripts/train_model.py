@@ -174,7 +174,9 @@ _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 
 def _device_arg(value: str) -> str:
     """argparse type for --device: validate against the PyTorch device grammar."""
-    if not _DEVICE_RE.match(value):
+    # fullmatch, not match: Python's ``$`` also matches just before a trailing newline, so
+    # ``match()`` would accept "cuda\n" (e.g. from a file-fed argument).
+    if not _DEVICE_RE.fullmatch(value):
         raise argparse.ArgumentTypeError(
             f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {value!r})."
         )

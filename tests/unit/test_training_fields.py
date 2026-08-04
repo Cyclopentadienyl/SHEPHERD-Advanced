@@ -20,6 +20,13 @@ import pytest
 from src.config import training_fields as tf
 
 WIRED_IN_PR4B = ("temperature", "label_smoothing", "margin")  # were no-ops until PR-4b
+DEVICE_ACCEPTS = ("auto", "cpu", "mps", "cuda", "cuda:0", "cuda:1", "cuda:7")
+# Trailing-newline cases matter: Python's ``$`` matches just before a final newline, so a
+# ``re.match`` guard would let "cuda\n" through and it would only fail deep in the subprocess.
+DEVICE_REJECTS = (
+    "gpu0", "cuda:", "cuda:x", "CUDA", "", "cuda:1:2",
+    "cuda\n", "cuda:1\n", "cpu\n", " mps", "cuda ",
+)
 STR_PARAMS = {"batch_size", "hidden_dim", "num_heads"}  # passed to _collect_config as strings
 NUM_GUARDED = tuple(f for f in tf.FIELDS if f.webui_num_guarded)
 
@@ -292,14 +299,30 @@ def test_api_enforces_declared_choices():
             Model(**{f.name: "definitely-not-a-valid-choice"})
 
 
+def test_api_enum_sets_exactly_equal_the_spec():
+    """guard-not-derive: the live Literal must be exactly current_api_choices — not merely a
+    superset that happens to accept the declared values."""
+    from typing import get_args
+
+    mf = _api_model().model_fields
+    for f in tf.FIELDS:
+        if not f.current_api_choices:
+            continue
+        live = get_args(mf[f.name].annotation)
+        assert live, f"{f.name}: API annotation is not a Literal enum"
+        assert set(live) == set(f.current_api_choices), (
+            f"{f.name} enum drift: API {sorted(live)} != spec {sorted(f.current_api_choices)}"
+        )
+
+
 def test_api_enforces_device_grammar_and_keeps_multi_gpu():
     """device is a PyTorch grammar, not a 3-value enum: cuda:N must stay available."""
     Model, VE = _api_model(), _validation_error()
     spec = tf.by_name("device")
     assert spec.current_api_pattern == spec.valid_pattern
-    for good in ("auto", "cpu", "mps", "cuda", "cuda:0", "cuda:1", "cuda:7"):
+    for good in DEVICE_ACCEPTS:
         assert Model(device=good).device == good
-    for bad in ("gpu0", "cuda:", "cuda:x", "CUDA", "", "cuda:1:2"):
+    for bad in DEVICE_REJECTS:
         with pytest.raises(VE):
             Model(device=bad)
 
@@ -352,6 +375,19 @@ def test_cli_device_accepts_pytorch_grammar():
     src = ast.unparse(tree)
     assert 'choices=[\'auto\', \'cuda\', \'cpu\']' not in src, "CLI --device still hard-limited to 3 values"
     assert "_DEVICE_RE" in src, "CLI should validate --device against the device grammar"
+
+
+def test_cli_device_arg_matches_the_api_grammar():
+    """The CLI validator is a second input surface into TrainConfig — it must accept and reject
+    exactly what the API does (including the trailing-newline cases)."""
+    import argparse
+
+    mod = _load_train_model()
+    for good in DEVICE_ACCEPTS:
+        assert mod._device_arg(good) == good
+    for bad in DEVICE_REJECTS:
+        with pytest.raises(argparse.ArgumentTypeError):
+            mod._device_arg(bad)
 
 
 # --------------------------------------------------------------------- WebUI collect parity (pin)
@@ -442,13 +478,12 @@ def test_num_guarded_fields_accept_their_boundary_values(monkeypatch):
 
 
 # ------------------------------------------------------------------- projection parity (pin)
-def _load_trainconfig():
-    """Load scripts/train_model.py::TrainConfig by path (scripts/ is not an importable package)."""
+def _load_train_model():
+    """Load scripts/train_model.py by path (scripts/ is not an importable package)."""
     pytest.importorskip("torch")
     pytest.importorskip("torch_geometric")
     import importlib.util
     import sys
-    from pathlib import Path
 
     path = Path(__file__).resolve().parents[2] / "scripts" / "train_model.py"
     spec = importlib.util.spec_from_file_location("train_model_for_test", path)
@@ -457,7 +492,11 @@ def _load_trainconfig():
     # resolves TrainConfig's string annotations via sys.modules[cls.__module__] during exec.
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
-    return mod.TrainConfig
+    return mod
+
+
+def _load_trainconfig():
+    return _load_train_model().TrainConfig
 
 
 def _field_names(cls) -> set:
