@@ -683,17 +683,40 @@ import shutil
 _HAS_CPP_COMPILER = shutil.which("cl") is not None or shutil.which("g++") is not None
 
 
+def _has_python_headers() -> bool:
+    """Whether Python.h is present.
+
+    torch.compile's inductor backend has Triton build a small C extension at runtime, which
+    #includes <Python.h>. A machine can have a working compiler and CUDA yet still lack the
+    development headers (python3-dev / python3.12-dev), in which case compilation fails with
+    "fatal error: Python.h: No such file or directory" — a missing build dependency surfacing
+    as a test failure rather than a skip.
+    """
+    import sysconfig
+    from pathlib import Path
+
+    include_dir = sysconfig.get_paths().get("include")
+    return bool(include_dir) and Path(include_dir, "Python.h").exists()
+
+
+# torch.compile needs a compiler AND the Python development headers. Gating on only the
+# former lets an incomplete toolchain through, and the failure then appears deep inside
+# Triton rather than as a clean skip.
+_CAN_TORCH_COMPILE = (
+    hasattr(torch, "compile")
+    and _HAS_CPP_COMPILER
+    and _has_python_headers()
+)
+_TORCH_COMPILE_SKIP_REASON = (
+    "torch.compile requires a C compiler and the Python development headers "
+    "(install python3-dev / python3.12-dev; on Windows, MSVC)"
+)
+
+
 class TestTorchCompile:
     """Tests for torch.compile compatibility"""
 
-    @pytest.mark.skipif(
-        not hasattr(torch, "compile"),
-        reason="torch.compile not available"
-    )
-    @pytest.mark.skipif(
-        sys.platform == "win32" and not _HAS_CPP_COMPILER,
-        reason="torch.compile requires MSVC (cl.exe) on Windows"
-    )
+    @pytest.mark.skipif(not _CAN_TORCH_COMPILE, reason=_TORCH_COMPILE_SKIP_REASON)
     def test_compile_encoder(self, hidden_dim):
         encoder = NodeTypeEncoder(num_types=5, hidden_dim=hidden_dim)
         compiled = torch.compile(encoder, dynamic=True)
@@ -703,14 +726,7 @@ class TestTorchCompile:
 
         assert output.shape == (3, hidden_dim)
 
-    @pytest.mark.skipif(
-        not hasattr(torch, "compile"),
-        reason="torch.compile not available"
-    )
-    @pytest.mark.skipif(
-        sys.platform == "win32" and not _HAS_CPP_COMPILER,
-        reason="torch.compile requires MSVC (cl.exe) on Windows"
-    )
+    @pytest.mark.skipif(not _CAN_TORCH_COMPILE, reason=_TORCH_COMPILE_SKIP_REASON)
     def test_compile_diagnosis_head(self, hidden_dim):
         head = DiagnosisHead(hidden_dim=hidden_dim)
         compiled = torch.compile(head, dynamic=True)
