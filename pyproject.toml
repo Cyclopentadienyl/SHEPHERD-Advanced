@@ -70,6 +70,7 @@ dependencies = [
 # Development tools
 dev = [
     "pre-commit>=3.7",
+    "import-linter>=2.0",  # enforces the layered architecture in .import-linter.ini
     "ruff>=0.5",
     "black>=24.8",
     "mypy>=1.10",
@@ -147,11 +148,11 @@ explicit = true
 
 [tool.black]
 line-length = 100
-target-version = ['py310', 'py311', 'py312', 'py313']
+target-version = ['py312']
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
@@ -162,7 +163,7 @@ ignore = ["E501", "B008"]
 "tests/**/*.py" = ["N802", "N803"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 ignore_missing_imports = true
 

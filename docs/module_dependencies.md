@@ -432,31 +432,33 @@ EdgeType.MOUSE_GENE_HAS_PHENOTYPE   # 小鼠基因 -> 表型
 
 ## Import 規則 (.import-linter.ini)
 
-```ini
-[importlinter]
-root_package = src
+實際內容見 repo 根目錄的 `.import-linter.ini`,執行方式:
 
-[importlinter:contract:layers]
-name = Enforce layered architecture
-type = layers
-layers =
-    src.core          # Layer 0: 基礎類型 (無依賴)
-    src.config        # Layer 1: 配置
-    src.utils         # Layer 1: 工具
-    src.ontology      # Layer 2: 本體
-    src.data_sources  # Layer 2: 資料來源
-    src.kg            # Layer 3: 知識圖譜
-    src.nlp           # Layer 3: NLP
-    src.medical_standards  # Layer 3: 醫療標準
-    src.models        # Layer 4: 模型
-    src.retrieval     # Layer 4: 檢索
-    src.reasoning     # Layer 5: 推理
-    src.llm           # Layer 5: LLM
-    src.training      # Layer 6: 訓練
-    src.inference     # Layer 7: 推理管線
-    src.api           # Layer 8: API
-    src.webui         # Layer 8: Web UI
+```bash
+make lint-imports
 ```
+
+契約層級由**高至低**列出(import-linter 的順序要求),分隔符號 `|` 表示「不可互相 import 的同層模組」,
+`:` 表示「可互相 import 的同層模組」:
+
+```ini
+layers =
+    src.api : src.webui                      # Layer 8 — API 掛載 Gradio app;WebUI 呼叫 API service
+    src.inference                            # Layer 7
+    src.training                             # Layer 6
+    src.reasoning | src.llm                  # Layer 5
+    src.models | src.retrieval               # Layer 4
+    src.kg | src.nlp | src.medical_standards # Layer 3
+    src.ontology | src.data_sources          # Layer 2
+    src.utils                                # Layer 1 — utils 依賴 config
+    src.config                               # Layer 1
+    src.core                                 # Layer 0
+```
+
+> **修訂註記(2026-08)**:此處先前的片段是**由低至高**列出,且把 `src.api` / `src.webui`
+> 標為不可互相 import、`src.config` / `src.utils` 同層獨立 —— 三者皆與實際程式碼不符,
+> 契約因此從未通過過。實測後已更正:`api` ↔ `webui` 的互相依賴是刻意設計,
+> `utils.checkpoint_paths` 依賴 `config.model_types`。
 
 ---
 
