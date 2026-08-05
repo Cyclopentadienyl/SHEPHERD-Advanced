@@ -1,7 +1,11 @@
 # Documentation index
 
-Every Markdown document under `docs/`, with a status label. Images under `docs/images/` are not
-listed — they are embedded by the documents that use them.
+Every Markdown document tracked in this repository — those under `docs/` and the ones deliberately
+kept elsewhere — each with a status label. Two things are deliberately absent: this index itself,
+and the images under `docs/images/`, which are embedded by the documents that use them.
+
+Completeness is checked by `tests/unit/test_docs_index.py`, so a document added without an entry
+here fails `make check` rather than quietly going missing.
 
 **Status labels**
 

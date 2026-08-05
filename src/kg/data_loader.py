@@ -46,9 +46,13 @@ Called by:
     - scripts/train_model.py (data pipeline setup)
 
 Note:
-    This module handles TRAINING-TIME mini-batch sampling. For INFERENCE-TIME
-    subgraph extraction, see src/retrieval/subgraph_sampler.py which implements
-    the SubgraphSamplerProtocol from src/core/protocols.py.
+    This module handles TRAINING-TIME mini-batch sampling, and `SubgraphSampler`
+    below is the only implemented sampler in the codebase.
+
+    A separate INFERENCE-TIME home, src/retrieval/subgraph_sampler.py, is named by
+    SubgraphSamplerProtocol in src/core/protocols.py but has never been created —
+    that pointer is labelled PLANNED there. This docstring previously said the
+    module "implements" the Protocol, which was never true.
 
 Version: 1.0.0
 """
