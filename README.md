@@ -87,17 +87,31 @@ the KG-independent models in `models/pretrained/`. See
 ## Development
 
 ```bash
-make test           # full test suite     make lint          # ruff
-make test-unit      # unit tests only     make format        # black + ruff --fix
-make typecheck      # mypy                make lint-imports  # layered-architecture check
-make check          # lint + lint-imports + typecheck + test
+make check          # the gate: lint-imports + test-unit
+make test           # full suite      make test-unit / make test-integration
+make lint-imports   # layered-architecture check
 ```
 
 Run `make help` for every target. Optional local hooks: `uv run pre-commit install`.
 
+**`make check` is the gate** and is expected to pass. It contains only checks that are green on the
+current tree, so a red result means something you changed.
+
 `make lint-imports` enforces the layered architecture mechanically (`.import-linter.ini`): a lower
-layer may never import a higher one, and the WebUI may not import the training stack directly. The
-rules were previously documented as "enforced" but nothing ran them — they are now checked.
+layer may never import a higher one, and the WebUI may not import the training stack directly. These
+rules were documented as "enforced" long before anything ran them; they are now actually checked.
+
+**Known-red commands.** These are useful for measuring debt, but they do **not** pass today and are
+deliberately excluded from `make check`:
+
+| Command | Current state |
+|---|---|
+| `make lint` (ruff) | large pre-existing backlog; most findings are auto-fixable via `make format`, but that rewrites annotations across `src/` and needs its own reviewed change |
+| `make typecheck` (mypy `--strict`) | large pre-existing backlog; the codebase predates any type gate |
+| `make test-integration` | one known failure in the vector-index end-to-end test — a real signal about a subsystem under review, left red on purpose rather than skipped (see the findings doc) |
+
+Clearing these backlogs is tracked as separate work. They were not silenced with blanket ignores:
+a check that passes without checking anything is worse than one that honestly reports debt.
 
 Tests are invoked as `python -m pytest` so the repository root stays on `sys.path` and
 `import src...` resolves without an editable install. Tests that need optional dependencies
