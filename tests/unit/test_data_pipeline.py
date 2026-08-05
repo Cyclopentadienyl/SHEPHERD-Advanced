@@ -435,10 +435,16 @@ class TestBuildScriptValidation:
     def test_missing_files_exits_with_error(self, tmp_dir):
         """Script should exit with code 1 when required files are missing."""
         import subprocess
+        import sys
 
+        # sys.executable, not "python": the latter resolves against PATH, which is
+        # only the environment running the suite when a venv happens to be active.
+        # Otherwise the subprocess runs a different interpreter without the
+        # project's dependencies, and the script dies on an unrelated ImportError
+        # before it can report the missing input files this test is about.
         result = subprocess.run(
             [
-                "python", "scripts/build_knowledge_graph.py",
+                sys.executable, "scripts/build_knowledge_graph.py",
                 "--workspace", str(tmp_dir / "output"),
                 "--external-dir", str(tmp_dir / "nonexistent"),
             ],

@@ -1,5 +1,8 @@
 .PHONY: help validate test test-unit test-integration lint lint-imports format typecheck check index deploy-linux deploy-win clean
-PY?=python
+# Prefer the project venv when it exists, so the targets below work from a plain
+# shell without `source .venv/bin/activate` first. Falls back to whatever `python`
+# is on PATH. Override explicitly with e.g. `make check PY=python3.12`.
+PY?=$(firstword $(wildcard .venv/bin/python .venv/Scripts/python.exe) python)
 
 help:
 	@echo "SHEPHERD-Advanced Makefile targets:"
@@ -50,11 +53,26 @@ test-integration:
 # rather than skipped, so `check` routes around it instead of hiding it.
 check: lint-imports test-unit
 
-# import-linter ships a console script rather than a runnable module, and
-# .import-linter.ini is not one of its auto-discovered filenames
+# .import-linter.ini is not one of import-linter's auto-discovered filenames
 # (.importlinter / setup.cfg / pyproject.toml), so the config path is explicit.
+#
+# Invoked through $(PY) rather than the bare `lint-imports` console script: a bare
+# script name resolves against PATH, so this target failed with "No such file or
+# directory" whenever the venv was not activated — and `PY=` could not fix it,
+# because the target did not use $(PY) at all.
+#
+# `$(PY) -m importlinter` is not an option: the package has no __main__, and
+# `-m importlinter.cli` exits 0 without running anything, which would leave this
+# gate green while checking nothing. Calling the click command directly with
+# standalone_mode=False returns its exit status, verified to be 1 on a broken
+# contract — the same as the console script.
 lint-imports:
-	lint-imports --config .import-linter.ini
+	@$(PY) -c "import importlinter" 2>/dev/null || { \
+		echo "import-linter is not installed for $(PY)."; \
+		echo "Run 'uv sync --extra dev', or point PY at the right interpreter:"; \
+		echo "  make check PY=.venv/bin/python"; \
+		exit 1; }
+	$(PY) -c "import sys; from importlinter.cli import lint_imports_command as c; sys.exit(c(standalone_mode=False))" --config .import-linter.ini
 
 # --- debt reports: these currently FAIL, by design ----------------------------
 # The repository predates any lint/type gate, so `lint` and `typecheck` report a

@@ -8,6 +8,19 @@ SHEPHERD-Advanced Protocol Definitions
 2. Protocol 定義輸入/輸出類型，確保模組間相容
 3. 使用 typing.Protocol 實現結構性子類型 (structural subtyping)
 
+每個 Protocol 的 `實現模組:` 標註其預定實作位置，並附狀態標籤。標籤是必要的：
+路徑本身無法區分「已實作」「保留位」「尚未建立」，而三種情況都存在於本檔案中。
+
+  IMPLEMENTED  該路徑存在，且含實作程式碼
+  RESERVED     該路徑存在，但為空白或僅有 docstring；保留範圍記於該模組/套件的 docstring
+  PLANNED      該路徑尚未建立
+
+這三個標籤由 tests/unit/test_protocol_pointers.py 對照檔案樹強制檢查；新增 Protocol
+而未附標籤指標，或標籤與實際檔案狀態不符，都會使該測試失敗。
+
+標籤描述的是**檔案樹狀態**，不是行為：該模組是否真的符合此 Protocol 的方法簽章，
+不在該測試的檢查範圍內，也不由標籤宣稱。
+
 版本: 1.0.0
 """
 from __future__ import annotations
@@ -69,7 +82,7 @@ class OntologyLoaderProtocol(Protocol):
     """
     本體載入器協議
 
-    實現模組: src/ontology/loader.py
+    實現模組: src/ontology/loader.py (IMPLEMENTED)
     """
 
     def load(self, path: Path) -> "OntologyProtocol":
@@ -98,7 +111,7 @@ class OntologyProtocol(Protocol):
     """
     本體操作協議
 
-    實現模組: src/ontology/hierarchy.py
+    實現模組: src/ontology/hierarchy.py (IMPLEMENTED)
     """
 
     @property
@@ -171,7 +184,7 @@ class OntologyConstraintProtocol(Protocol):
 
     用於約束推理輸出，防止本體違規
 
-    實現模組: src/ontology/constraints.py
+    實現模組: src/ontology/constraints.py (IMPLEMENTED)
     """
 
     def validate_phenotype_set(
@@ -209,7 +222,7 @@ class KnowledgeGraphProtocol(Protocol):
     """
     知識圖譜操作協議
 
-    實現模組: src/kg/
+    實現模組: src/kg/ (IMPLEMENTED)
     """
 
     @property
@@ -270,7 +283,7 @@ class KnowledgeGraphBuilderProtocol(Protocol):
     """
     知識圖譜建構協議
 
-    實現模組: src/kg/builder.py
+    實現模組: src/kg/builder.py (IMPLEMENTED)
     """
 
     def add_ontology(
@@ -329,7 +342,7 @@ class DataSourceProtocol(Protocol):
     """
     資料來源協議 (基類)
 
-    實現模組: src/data_sources/
+    實現模組: src/data_sources/ (IMPLEMENTED)
     """
 
     @property
@@ -367,7 +380,7 @@ class PubMedDataSourceProtocol(Protocol):
 
     用於文獻資料整合
 
-    實現模組: src/data_sources/pubmed.py
+    實現模組: src/data_sources/pubmed.py (IMPLEMENTED)
     """
 
     def search(
@@ -429,7 +442,7 @@ class PubtatorLocalDBProtocol(Protocol):
     """
     Pubtator 本地資料庫協議 (離線模式)
 
-    實現模組: src/data_sources/pubtator_local.py
+    實現模組: src/data_sources/pubtator_local.py (PLANNED)
     """
 
     def load_database(self, db_path: Path) -> None:
@@ -458,7 +471,7 @@ class OrthologDataSourceProtocol(Protocol):
     """
     同源基因資料來源協議
 
-    實現模組: src/data_sources/ortholog.py
+    實現模組: src/data_sources/ortholog.py (IMPLEMENTED)
     """
 
     def get_orthologs(
@@ -516,7 +529,7 @@ class NodeEncoderProtocol(Protocol):
     """
     節點編碼器協議
 
-    實現模組: src/models/encoders/
+    實現模組: src/models/encoders/ (IMPLEMENTED)
     """
 
     def encode(
@@ -545,7 +558,7 @@ class GNNProtocol(Protocol):
     """
     圖神經網路協議
 
-    實現模組: src/models/gnn/
+    實現模組: src/models/gnn/ (IMPLEMENTED)
     """
 
     def forward(
@@ -583,7 +596,7 @@ class AttentionBackendProtocol(Protocol):
     """
     注意力機制後端協議
 
-    實現模組: src/models/attention/adaptive_backend.py
+    實現模組: src/models/attention/adaptive_backend.py (IMPLEMENTED)
     """
 
     def compute_attention(
@@ -611,7 +624,7 @@ class DecoderProtocol(Protocol):
     """
     解碼器協議
 
-    實現模組: src/models/decoders/
+    實現模組: src/models/decoders/ (IMPLEMENTED)
     """
 
     def decode(
@@ -635,7 +648,8 @@ class DiagnosisModelProtocol(Protocol):
 
     整合 Encoder + GNN + Decoder
 
-    實現模組: src/models/tasks/diagnosis.py
+    實現模組: src/models/tasks/diagnosis.py (PLANNED)
+      ↳ 該檔案尚未建立；目前的 encoder+GNN+decoder 組合實作於 src/models/gnn/shepherd_gnn.py
     """
 
     def predict(
@@ -682,7 +696,7 @@ class PathReasonerProtocol(Protocol):
     """
     路徑推理協議 (DR.KNOWS style)
 
-    實現模組: src/reasoning/path_reasoning.py
+    實現模組: src/reasoning/path_reasoning.py (IMPLEMENTED)
     """
 
     def find_paths(
@@ -740,7 +754,7 @@ class OrthologReasonerProtocol(Protocol):
 
     用於跨物種的疾病關聯推理
 
-    實現模組: src/reasoning/ortholog_reasoning.py
+    實現模組: src/reasoning/ortholog_reasoning.py (PLANNED)
     """
 
     def infer_from_orthologs(
@@ -786,7 +800,7 @@ class ConstraintCheckerProtocol(Protocol):
 
     用於驗證推理結果是否符合本體約束
 
-    實現模組: src/reasoning/constraint_checker.py
+    實現模組: src/reasoning/constraint_checker.py (RESERVED)
     """
 
     def check_prediction(
@@ -820,7 +834,7 @@ class ExplanationGeneratorProtocol(Protocol):
     """
     解釋生成協議
 
-    實現模組: src/reasoning/explanation_generator.py
+    實現模組: src/reasoning/explanation_generator.py (IMPLEMENTED)
     """
 
     def generate_explanation(
@@ -866,7 +880,8 @@ class VectorIndexProtocol(Protocol):
     """
     向量索引協議
 
-    實現模組: src/retrieval/vector_index.py
+    實現模組: src/retrieval/vector_index.py (IMPLEMENTED)
+      ↳ 該子系統審查中，見 docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md
     """
 
     def build_index(
@@ -916,7 +931,8 @@ class SubgraphSamplerProtocol(Protocol):
     """
     子圖採樣協議
 
-    實現模組: src/retrieval/subgraph_sampler.py
+    實現模組: src/retrieval/subgraph_sampler.py (PLANNED)
+      ↳ 該路徑不存在。實際實作為 src/kg/data_loader.py 的 SubgraphSampler (IMPLEMENTED)
     """
 
     def sample_subgraph(
@@ -938,7 +954,7 @@ class LLMProtocol(Protocol):
     """
     LLM 協議
 
-    實現模組: src/llm/
+    實現模組: src/llm/ (RESERVED)
     """
 
     def generate(
@@ -974,7 +990,7 @@ class MedicalLLMProtocol(LLMProtocol, Protocol):
     """
     醫療 LLM 協議 (擴展基礎 LLM)
 
-    實現模組: src/llm/medical_llm.py
+    實現模組: src/llm/medical_llm.py (PLANNED)
     """
 
     def generate_clinical_explanation(
@@ -1008,7 +1024,7 @@ class SymptomExtractorProtocol(Protocol):
     """
     症狀提取協議
 
-    實現模組: src/nlp/symptom_extractor.py
+    實現模組: src/nlp/symptom_extractor.py (RESERVED)
     """
 
     def extract(
@@ -1038,7 +1054,7 @@ class HPOMatcherProtocol(Protocol):
     """
     HPO 術語匹配協議
 
-    實現模組: src/nlp/hpo_matcher.py
+    實現模組: src/nlp/hpo_matcher.py (RESERVED)
     """
 
     def match(
@@ -1073,7 +1089,7 @@ class InferencePipelineProtocol(Protocol):
 
     整合所有模組的完整推理流程
 
-    實現模組: src/inference/pipeline.py
+    實現模組: src/inference/pipeline.py (IMPLEMENTED)
     """
 
     def run(
@@ -1116,7 +1132,7 @@ class InputValidatorProtocol(Protocol):
     """
     輸入驗證協議
 
-    實現模組: src/inference/input_validator.py
+    實現模組: src/inference/input_validator.py (IMPLEMENTED)
     """
 
     def validate_phenotypes(
@@ -1140,7 +1156,7 @@ class OutputFormatterProtocol(Protocol):
     """
     輸出格式化協議
 
-    實現模組: src/inference/output_formatter.py
+    實現模組: src/inference/output_formatter.py (PLANNED)
     """
 
     def format_result(
@@ -1167,7 +1183,7 @@ class TrainerProtocol(Protocol):
     """
     訓練器協議
 
-    實現模組: src/training/trainer.py
+    實現模組: src/training/trainer.py (IMPLEMENTED)
     """
 
     def train(
@@ -1223,7 +1239,7 @@ class APIServiceProtocol(Protocol):
     """
     API 服務協議
 
-    實現模組: src/api/
+    實現模組: src/api/ (IMPLEMENTED)
     """
 
     async def diagnose(
@@ -1261,7 +1277,7 @@ class FHIRAdapterProtocol(Protocol):
     """
     FHIR 適配器協議
 
-    實現模組: src/medical_standards/fhir_adapter.py
+    實現模組: src/medical_standards/fhir_adapter.py (RESERVED)
     """
 
     def parse_bundle(
@@ -1284,7 +1300,7 @@ class MedicalCodeMapperProtocol(Protocol):
     """
     醫療編碼映射協議
 
-    實現模組: src/medical_standards/icd_mapper.py
+    實現模組: src/medical_standards/icd_mapper.py (RESERVED)
     """
 
     def map_to_hpo(
@@ -1329,7 +1345,7 @@ class ConfigLoaderProtocol(Protocol):
     """
     配置載入協議
 
-    實現模組: src/config/
+    實現模組: src/config/ (IMPLEMENTED)
     """
 
     def load(self, config_path: Path) -> Dict[str, Any]:
