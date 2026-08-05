@@ -78,6 +78,6 @@ that "no automated caller" is not mistaken for "unused".
 
 | Script | What it answers | When to run |
 |---|---|---|
-| `scripts/spikes/validate_fast_subgraph.py` | Is `SubgraphSampler._build_subgraph`'s vectorized path bit-identical to the legacy Python loop, and how much faster? Compares nodes, edges and local index mappings, then times both. | Whenever either path in `src/kg/data_loader.py` changes. The equivalence claim in that module's docstring rests on this script; there is no formal test covering it. |
+| `scripts/spikes/validate_fast_subgraph.py` | How much faster is `SubgraphSampler._build_subgraph`'s vectorized path than the legacy Python loop, on a real workspace? Also re-checks equivalence there. | When the speedup on real data matters. Correctness is covered by `tests/unit/test_subgraph_equivalence.py` in `make check`; this script measures, on data the test does not have. |
 | `scripts/post_install_verify.py` | What CUDA driver and toolkit does the *host* have? Runs `nvidia-smi` and `nvcc --version`, prints JSON. | Diagnosing a mismatched or doubled CUDA install. `scripts/validate_installation.py` — the one `deploy.sh` runs — only reports the in-process view (`torch.version.cuda`), so it cannot see this. |
 | `scripts/debug_voyager_windows.py` | Why does the Voyager backend misbehave on a given host? | Only while the vector-index subsystem is under review; see the retrieval findings document. |

@@ -6,8 +6,8 @@ FHIR bundles in and out, and mapping between MONDO and the coding systems a
 hospital actually stores (ICD, SNOMED CT). Nothing imports this package.
 
 Named by two Protocols in ``src/core/protocols.py``:
-  - ``FHIRAdapterProtocol`` (:1260)      — ``fhir_adapter.py``
-  - ``MedicalCodeMapperProtocol`` (:1282) — ``icd_mapper.py``
+  - ``FHIRAdapterProtocol``       — ``fhir_adapter.py``
+  - ``MedicalCodeMapperProtocol`` — ``icd_mapper.py``
 
 Reserved module names (all empty):
   - ``fhir_adapter.py``  — FHIR Bundle <-> internal representation

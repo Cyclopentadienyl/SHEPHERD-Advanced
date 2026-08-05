@@ -315,10 +315,15 @@ class SubgraphSampler:
         is a pure speedup. `config.fast_subgraph_build=False` forces the legacy
         Python loop.
 
-        That equivalence is checked by `scripts/spikes/validate_fast_subgraph.py`,
-        which runs both paths over a real workspace and compares nodes, edges and
-        local index mappings. It is a manual script, not a test: nothing in
-        `make check` covers this claim today.
+        That equivalence is asserted by `tests/unit/test_subgraph_equivalence.py`,
+        which runs both paths over a synthetic graph and compares nodes, edges and
+        local index mappings — including the empty-node-type case, where the two
+        implementations reach the empty `(2, 0)` result by different routes. Note
+        the fallback below: those tests also assert it did not fire, since a silent
+        fallback would otherwise make the comparison legacy-vs-legacy.
+
+        `scripts/spikes/validate_fast_subgraph.py` remains the manual check over a
+        real workspace, and is where the speedup is measured.
         """
         # 建立節點映射 (原始索引 -> 子圖索引) — cheap, unchanged
         node_mapping: Dict[str, Dict[int, int]] = {}

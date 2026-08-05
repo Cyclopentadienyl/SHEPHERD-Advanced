@@ -1,7 +1,7 @@
 """
 Diagnostic constraint checking — RESERVED home (not yet implemented).
 =====================================================================
-Reserved home for ``ConstraintCheckerProtocol`` (``src/core/protocols.py:783``):
+Reserved home for ``ConstraintCheckerProtocol`` (``src.core.protocols``):
 validating a *prediction* against ontology constraints and adjusting candidate
 scores accordingly —
 
@@ -11,9 +11,9 @@ scores accordingly —
     -> re-scored candidates
 
 Not the same concern as ``src/ontology/constraints.py``, despite the similar
-name. That module implements ``OntologyConstraintProtocol``
-(``src/core/protocols.py:169``) and operates on a *phenotype set* against
-ontology structure — ``validate_phenotype_set``, ``remove_redundant_ancestors``,
+name. That module implements ``OntologyConstraintProtocol`` (also in
+``src.core.protocols``) and operates on a *phenotype set* against ontology
+structure — ``validate_phenotype_set``, ``remove_redundant_ancestors``,
 ``get_implied_phenotypes``. It never sees a prediction. The names collide; the
 concerns do not.
 

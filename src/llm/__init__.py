@@ -8,8 +8,8 @@ pipeline does not depend on it — the ranking and its evidence chains come from
 the GNN and the PathReasoner.
 
 Named by two Protocols in ``src/core/protocols.py``:
-  - ``LLMProtocol`` (:937) — the package as a whole
-  - ``MedicalLLMProtocol`` (:973) — ``src/llm/medical_llm.py``, not yet created
+  - ``LLMProtocol`` — the package as a whole
+  - ``MedicalLLMProtocol`` — ``src/llm/medical_llm.py``, not yet created
 
 Reserved module names (all empty):
   - ``interface.py``        — the boundary the rest of the codebase would call

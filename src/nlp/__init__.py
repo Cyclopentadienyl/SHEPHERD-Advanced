@@ -7,8 +7,8 @@ input contract is HPO terms supplied directly, so this is an input-convenience
 layer, not a prerequisite.
 
 Named by two Protocols in ``src/core/protocols.py``:
-  - ``SymptomExtractorProtocol`` (:1007) — ``symptom_extractor.py``
-  - ``HPOMatcherProtocol`` (:1037)       — ``hpo_matcher.py``
+  - ``SymptomExtractorProtocol`` — ``symptom_extractor.py``
+  - ``HPOMatcherProtocol``       — ``hpo_matcher.py``
 
 Reserved module names (all empty):
   - ``symptom_extractor.py`` — free text -> candidate symptom spans
