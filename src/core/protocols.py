@@ -11,9 +11,15 @@ SHEPHERD-Advanced Protocol Definitions
 每個 Protocol 的 `實現模組:` 標註其預定實作位置，並附狀態標籤。標籤是必要的：
 路徑本身無法區分「已實作」「保留位」「尚未建立」，而三種情況都存在於本檔案中。
 
-  IMPLEMENTED  該模組存在且已實作此 Protocol
-  RESERVED     檔案存在但為空白的保留位；模組 docstring 說明其範圍與現況
-  PLANNED      檔案尚未建立
+  IMPLEMENTED  該路徑存在，且含實作程式碼
+  RESERVED     該路徑存在，但為空白或僅有 docstring；保留範圍記於該模組/套件的 docstring
+  PLANNED      該路徑尚未建立
+
+這三個標籤由 tests/unit/test_protocol_pointers.py 對照檔案樹強制檢查；新增 Protocol
+而未附標籤指標，或標籤與實際檔案狀態不符，都會使該測試失敗。
+
+標籤描述的是**檔案樹狀態**，不是行為：該模組是否真的符合此 Protocol 的方法簽章，
+不在該測試的檢查範圍內，也不由標籤宣稱。
 
 版本: 1.0.0
 """
