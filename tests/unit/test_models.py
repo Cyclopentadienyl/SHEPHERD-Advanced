@@ -676,7 +676,6 @@ class TestExplanationHead:
 # ==============================================================================
 # Test torch.compile Compatibility
 # ==============================================================================
-import sys
 import shutil
 
 # Check if C++ compiler is available (required for torch.compile on CPU)
