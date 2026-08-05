@@ -29,7 +29,7 @@ SHEPHERD-Advanced is a rare disease diagnosis system that:
 > **PathReasoner NEVER gates candidate discovery or drives scoring when GNN is available.**
 
 This is the fundamental design principle derived from the original SHEPHERD paper. The GNN's key advantage over traditional path-based methods is **inductive generalization** — the ability to:
-- Infer relationships for diseases never seen in training (83% of test diseases were unseen)
+- Infer relationships for diseases never seen in training
 - Handle missing edges in the knowledge graph via learned neighborhood structure
 - Automatically learn which edge types and multi-hop signals are diagnostically relevant
 - Generalize to novel phenotype combinations
@@ -129,7 +129,7 @@ The two channels are processed independently inside the model and merged only at
 - **Task**: Train patient embeddings to be close to causal genes/diseases, far from others
 - **Data**: ~40K simulated patients (zero real patient data required)
 - **Loss**: DiagnosisLoss (weight 1.0) + ContrastiveLoss (0.3) + LinkPrediction (0.5) + OrthologConsistency (0.2)
-- **Disease split**: 83% of test diseases never seen in training
+- **Disease split**: held-out diseases are unseen during training (disease-stratified evaluation)
 
 ### Training → Inference Bridge
 1. Training produces model checkpoint
