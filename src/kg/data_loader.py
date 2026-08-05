@@ -310,10 +310,15 @@ class SubgraphSampler:
         construction can use vectorized tensor ops (native, GIL-releasing)
         instead of a per-edge Python loop. Boolean masking preserves the
         original edge order and local indices follow the same sorted-node order,
-        so the output is bit-identical to the legacy loop (verified by the
-        feasibility spike). Node selection upstream is unchanged, so the model
-        sees exactly the same inputs — this is a pure speedup.
-        `config.fast_subgraph_build=False` forces the legacy Python loop.
+        so the output is bit-identical to the legacy loop. Node selection
+        upstream is unchanged, so the model sees exactly the same inputs — this
+        is a pure speedup. `config.fast_subgraph_build=False` forces the legacy
+        Python loop.
+
+        That equivalence is checked by `scripts/spikes/validate_fast_subgraph.py`,
+        which runs both paths over a real workspace and compares nodes, edges and
+        local index mappings. It is a manual script, not a test: nothing in
+        `make check` covers this claim today.
         """
         # 建立節點映射 (原始索引 -> 子圖索引) — cheap, unchanged
         node_mapping: Dict[str, Dict[int, int]] = {}

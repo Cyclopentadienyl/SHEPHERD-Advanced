@@ -119,6 +119,8 @@ Tests are invoked as `python -m pytest` so the repository root stays on `sys.pat
 
 ## Documentation
 
+Start here for the living documents:
+
 | Document | Contents |
 |---|---|
 | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Layered design, scoring model, design principles |
@@ -128,6 +130,11 @@ Tests are invoked as `python -m pytest` so the repository root stays on `sys.pat
 | [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) | Open architecture findings under review |
 | [`GNN_ARCHITECTURE_NOTES.md`](docs/GNN_ARCHITECTURE_NOTES.md) | Model design notes |
 | [`module_dependencies.md`](docs/module_dependencies.md) | Inter-module dependency map |
+
+[`docs/README.md`](docs/README.md) indexes **every** Markdown document in the repository and labels
+each one **Living**, **Dated snapshot**, or **Archived** — several documents under `docs/` are
+point-in-time reports that are deliberately not kept current, and the index is how you tell which
+is which. It also lists the validation and diagnostic scripts that nothing runs automatically.
 
 Project-level planning documents (`medical-kg-blueprint.md`, `medical-kg-todo.md`,
 `deployment-guide.md`) stay at the repository root and are referenced from several documents by
