@@ -329,14 +329,6 @@ class PipelineConfig:
     # Performance
     use_direct_path_optimization: bool = True
 
-    # Vector index for ANN-based candidate pre-filtering
-    # When set, the pipeline uses the vector index to discover additional
-    # disease candidates that may not be reachable via BFS paths, enabling
-    # discovery of latent associations captured by GNN embeddings.
-    vector_index_path: Optional[str] = None
-    ann_top_k: int = 50  # Number of ANN candidates to retrieve
-    ann_score_threshold: float = 0.3  # Min normalized score to include ANN candidate
-
     # P1 Ortholog Configuration
     ortholog_species: List[str] = field(
         default_factory=lambda: ["mouse", "zebrafish", "rat"]
@@ -447,10 +439,6 @@ class DiagnosisPipeline:
         self._fingerprint_warnings: List[str] = []
         self._checkpoint_meta: Dict[str, Any] = {}
 
-        # Vector index state (populated by _init_vector_index)
-        self._vector_index = None
-        self._vector_index_ready = False
-
         # Initialize reasoning components
         self._init_reasoning_components()
         self._init_explanation_generator()
@@ -462,9 +450,6 @@ class DiagnosisPipeline:
             data_dir=data_dir,
             device=device,
         )
-
-        # Initialize vector index if configured
-        self._init_vector_index()
 
         logger.info(
             f"DiagnosisPipeline initialized: "
@@ -922,117 +907,6 @@ class DiagnosisPipeline:
         emb_info = {k: v.shape for k, v in self._node_embeddings.items()}
         logger.info(f"Node embeddings cached: {emb_info}")
 
-    def _init_vector_index(self) -> None:
-        """
-        Load pre-built vector index for ANN candidate retrieval.
-
-        The vector index enables discovery of disease candidates that may not
-        be reachable via BFS paths in the knowledge graph, allowing the GNN's
-        latent knowledge to surface novel associations.
-
-        Requires:
-        - config.vector_index_path to be set
-        - GNN to be ready (for query embedding computation)
-        """
-        if not self.config.vector_index_path:
-            return
-
-        try:
-            from src.retrieval import create_index
-
-            index_path = Path(self.config.vector_index_path)
-
-            # Look for disease index file specifically
-            disease_index_path = index_path.parent / f"{index_path.name}_disease"
-
-            # Determine dimension from GNN embeddings if available
-            dim = 256  # default
-            if self._node_embeddings is not None:
-                disease_emb = self._node_embeddings.get(NodeType.DISEASE.value)
-                if disease_emb is not None:
-                    dim = disease_emb.shape[1]
-
-            index = create_index(backend="auto", dim=dim)
-            index.load(disease_index_path)
-
-            self._vector_index = index
-            self._vector_index_ready = True
-            logger.info(
-                f"Vector index loaded: {len(index)} disease entities, "
-                f"dim={index.dim}, backend={index.backend_name}"
-            )
-
-        except FileNotFoundError as e:
-            logger.warning(f"Vector index files not found: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to load vector index: {e}")
-
-    def _find_ann_candidates(
-        self,
-        source_ids: List[NodeID],
-    ) -> Dict[str, float]:
-        """
-        Use vector index to find disease candidates by ANN search.
-
-        Aggregates patient phenotype embeddings (mean pooling) and queries
-        the disease vector index for nearest neighbors.
-
-        Args:
-            source_ids: Patient phenotype NodeIDs
-
-        Returns:
-            {disease_id_str: ann_score} for candidates above threshold
-        """
-        if not self._vector_index_ready or self._node_embeddings is None:
-            return {}
-
-        import numpy as np
-
-        node_mapping = self._node_id_to_idx
-        phenotype_type = NodeType.PHENOTYPE.value
-
-        # Aggregate patient phenotype embeddings
-        phenotype_emb = self._node_embeddings.get(phenotype_type)
-        if phenotype_emb is None:
-            return {}
-
-        phenotype_mapping = node_mapping.get(phenotype_type, {})
-        indices = []
-        for nid in source_ids:
-            idx = phenotype_mapping.get(str(nid))
-            if idx is not None:
-                indices.append(idx)
-
-        if not indices:
-            return {}
-
-        # Mean pooling of phenotype embeddings
-        indices_tensor = torch.tensor(indices, dtype=torch.long)
-        indices_tensor = indices_tensor.clamp(min=0, max=phenotype_emb.size(0) - 1)
-        selected = phenotype_emb[indices_tensor]  # (N, H)
-        patient_emb = selected.mean(dim=0)  # (H,)
-
-        # Normalize for cosine similarity (inner product on normalized = cosine)
-        patient_emb = F.normalize(patient_emb, dim=0)
-        query = patient_emb.numpy().astype(np.float32)
-
-        # ANN search
-        results = self._vector_index.search(query, top_k=self.config.ann_top_k)
-
-        # Normalize scores to [0, 1] and filter by threshold
-        candidates = {}
-        for entity_id, distance in results:
-            # Inner product similarity: higher is better, normalize to [0, 1]
-            score = (distance + 1.0) / 2.0
-            if score >= self.config.ann_score_threshold:
-                candidates[entity_id] = score
-
-        logger.info(
-            f"ANN search returned {len(results)} results, "
-            f"{len(candidates)} above threshold {self.config.ann_score_threshold}"
-        )
-        return candidates
-
     def run(
         self,
         patient_input: PatientPhenotypes,
@@ -1098,23 +972,7 @@ class DiagnosisPipeline:
         logger.debug("Finding reasoning paths...")
         all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
 
-        # Step 3b: ANN candidate discovery (vector index)
-        # Finds disease candidates via embedding similarity that may lack
-        # explicit KG paths. These represent potential novel associations.
-        ann_only_candidates: Dict[str, float] = {}
-        if self._vector_index_ready and self._gnn_ready:
-            ann_candidates = self._find_ann_candidates(source_ids)
-            for disease_id_str, ann_score in ann_candidates.items():
-                if disease_id_str not in all_paths:
-                    # This candidate has no BFS path — novel association
-                    ann_only_candidates[disease_id_str] = ann_score
-            if ann_only_candidates:
-                logger.info(
-                    f"ANN discovered {len(ann_only_candidates)} candidates "
-                    f"without explicit KG paths (potential novel associations)"
-                )
-
-        if not all_paths and not ann_only_candidates:
+        if not all_paths:
             logger.warning("No paths found from phenotypes to diseases")
             return self._create_empty_result(
                 patient_input.patient_id,
@@ -1130,7 +988,6 @@ class DiagnosisPipeline:
             patient_input=patient_input,
             top_k=top_k,
             include_ortholog_evidence=include_ortholog_evidence,
-            ann_only_candidates=ann_only_candidates,
         )
 
         # Step 5: Generate explanations + Step C evidence packages
@@ -1320,7 +1177,6 @@ class DiagnosisPipeline:
         patient_input: PatientPhenotypes,
         top_k: int,
         include_ortholog_evidence: bool,
-        ann_only_candidates: Optional[Dict[str, float]] = None,
     ) -> List[DiagnosisCandidate]:
         """
         Score and rank disease candidates.
@@ -1331,9 +1187,7 @@ class DiagnosisPipeline:
             patient_input: Patient phenotype data
             top_k: Number of top candidates to return
             include_ortholog_evidence: Include ortholog evidence
-            ann_only_candidates: Disease candidates from ANN that have no
-                                BFS paths (potential novel associations)
-
+    
         Returns:
             List of DiagnosisCandidate sorted by score
         """
@@ -1392,57 +1246,6 @@ class DiagnosisPipeline:
                 evidence_sources=evidence_sources,
             )
             candidates.append(candidate)
-
-        # --- Score ANN-only candidates (no BFS paths — potential novel associations) ---
-        if ann_only_candidates and self._gnn_ready:
-            for disease_id_str, ann_score in ann_only_candidates.items():
-                # Try to resolve the NodeID from KG
-                disease_node = None
-                disease_id = None
-                for node_id_str, node in self.kg._nodes.items():
-                    if node_id_str == disease_id_str:
-                        disease_id = node.id
-                        disease_node = node
-                        break
-
-                if disease_id is None:
-                    continue
-
-                disease_name = disease_node.name if disease_node else disease_id_str
-
-                # Combined score for ANN-only candidate. SP signal still
-                # applies if the lookup table is loaded — even ANN-discovered
-                # candidates without explicit BFS paths can have shortest
-                # path connectivity in the underlying KG.
-                confidence_score, gnn_score, sp_score = (
-                    self._calculate_combined_score(
-                        source_ids, disease_id, patient_input,
-                        target_type_idx=1,  # disease
-                    )
-                )
-
-                candidate = DiagnosisCandidate(
-                    rank=0,
-                    disease_id=disease_id,
-                    disease_name=disease_name,
-                    confidence_score=confidence_score,
-                    gnn_score=gnn_score,
-                    reasoning_score=0.0,  # No paths found
-                    sp_score=sp_score,
-                    supporting_genes=[],
-                    reasoning_paths=[],
-                    evidence_sources=[],
-                )
-
-                # Flag as potential novel association in explanation
-                candidate.explanation = (
-                    "Note: GNN confidence is significantly higher than "
-                    "path-based evidence suggests, indicating potential "
-                    "novel associations. No direct reasoning paths were "
-                    "found in the knowledge graph for this candidate."
-                )
-
-                candidates.append(candidate)
 
         # Sort by confidence score
         candidates.sort(key=lambda c: c.confidence_score, reverse=True)
@@ -1822,8 +1625,6 @@ class DiagnosisPipeline:
             "has_model": self.model is not None,
             "gnn_ready": self._gnn_ready,
             "sp_ready": self._sp_ready,
-            "vector_index_ready": self._vector_index_ready,
-            "vector_index_size": len(self._vector_index) if self._vector_index else 0,
             "fingerprint_warnings": getattr(self, "_fingerprint_warnings", []),
             "checkpoint_meta": getattr(self, "_checkpoint_meta", {}),
             "kg_nodes": len(self.kg._nodes) if self.kg else 0,
@@ -1842,7 +1643,6 @@ def create_diagnosis_pipeline(
     graph_data: Optional[Dict[str, Any]] = None,
     data_dir: Optional[str] = None,
     device: Optional[str] = None,
-    vector_index_path: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
     Factory function to create a diagnosis pipeline.
@@ -1855,16 +1655,10 @@ def create_diagnosis_pipeline(
         graph_data: Pre-loaded graph data dict
         data_dir: Path to processed data directory
         device: Device for GNN inference
-        vector_index_path: Path to pre-built vector index for ANN search
 
     Returns:
         Configured DiagnosisPipeline instance
     """
-    if vector_index_path and config is None:
-        config = PipelineConfig(vector_index_path=vector_index_path)
-    elif vector_index_path and config is not None:
-        config.vector_index_path = vector_index_path
-
     return DiagnosisPipeline(
         kg=kg,
         config=config,
