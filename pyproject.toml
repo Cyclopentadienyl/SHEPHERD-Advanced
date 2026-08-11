@@ -7,7 +7,11 @@ authors = [
     {name = "Your Name", email = "your.email@example.com"}
 ]
 readme = "README.md"
-license = {text = "MIT"}
+
+# No `license` key, deliberately. No open-source licence is granted at this
+# time — see LICENSE. This previously declared MIT while the LICENSE file was
+# empty, i.e. it announced a grant the project had never made. Do not re-add a
+# licence key without a decision from the deploying institution.
 
 # Core dependencies
 #

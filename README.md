@@ -142,6 +142,13 @@ path.
 
 ## Licence
 
-`pyproject.toml` declares MIT, but the `LICENSE` file is currently empty — the licence is **still
-being confirmed** with the deploying institution. Treat the licensing status as unresolved until
-that file is populated.
+**No open-source licence is granted.** The repository is public for transparency and review, not
+for redistribution — see [`LICENSE`](LICENSE).
+
+This is a decision, not a gap. The project is built for one deploying institution and tailored to
+that deployment, so attaching an open-source licence to it before anyone has asked to use it would
+grant rights nobody requested. If you want to use or collaborate on this project, open an issue —
+the licence will be chosen then.
+
+`pyproject.toml` previously declared MIT while `LICENSE` was empty, announcing a grant that had
+never been made. It now declares no licence at all.

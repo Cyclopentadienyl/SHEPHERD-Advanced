@@ -1,0 +1,30 @@
+SHEPHERD-Advanced — licence status
+==================================
+
+Copyright (c) 2026 the SHEPHERD-Advanced authors. All rights reserved.
+
+No open-source licence is granted at this time.
+
+This repository is public for transparency and review, not for redistribution.
+No permission is given to use, copy, modify, merge, publish, distribute,
+sublicense, or sell copies of this software or substantial portions of it.
+
+Why there is no licence yet
+---------------------------
+The project is built for one deploying institution and is currently tailored to
+that deployment. Rather than attach an open-source licence to software that no
+third party has asked to use, the decision has been deferred until there is a
+concrete request. This is a deliberate position, not an oversight — the file is
+not empty and the packaging metadata declares no licence.
+
+If you want to use or collaborate on this project
+--------------------------------------------------
+Open an issue, or contact the maintainers. A licence will be chosen when there
+is a real request to answer, and the choice will be made together with the
+deploying institution.
+
+No warranty
+-----------
+This software is research and engineering work. It is not a certified medical
+device and is not for autonomous clinical decision-making. It is provided
+without warranty of any kind.
