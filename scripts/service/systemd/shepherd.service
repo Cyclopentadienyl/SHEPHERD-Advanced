@@ -1,3 +1,18 @@
+# SHEPHERD-Advanced API service.
+#
+# UNVERIFIED: this unit has never been exercised by any test or deployment in
+# this repository, and until now it named an entry point that has never existed
+# (`app.main:app`; the application object is `src.api.main:app`). It also
+# hardcoded /usr/bin/python, which is not the project venv, and a port that
+# matches nothing else in the repository — the documented port is 8000.
+#
+# The corrections below are made from the repository's own facts, not from a
+# working deployment. Treat this as a starting point to adapt, not as a tested
+# artifact: %h and the venv path in particular depend on where the project is
+# installed.
+#
+# Install:  cp shepherd.service ~/.config/systemd/user/
+#           systemctl --user daemon-reload && systemctl --user enable --now shepherd
 [Unit]
 Description=SHEPHERD-Advanced API Service
 After=network.target
@@ -6,7 +21,9 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/SHEPHERD-Advanced
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8264
+# The project venv, not the system interpreter — the system python has none of
+# the project's dependencies.
+ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
 

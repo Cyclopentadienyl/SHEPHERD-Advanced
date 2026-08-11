@@ -81,14 +81,33 @@ def check_vector_backends() -> None:
         add("errors", "Voyager not installed - required for vector search")
         add("info", "Install with: pip install voyager>=2.0")
 
-    # cuVS is optional (Linux GPU only)
+    # cuVS is optional (Linux GPU only).
+    #
+    # Three distinct states, reported distinctly. This previously printed
+    # "GPU-accelerated vector search available" on the strength of `import cuvs`
+    # alone — which is false on any host where cuvs imports but cupy does not, a
+    # combination observed on a real deployment machine. Importability of the
+    # Python prerequisites is not usability of the backend: constructing and
+    # searching an index is never attempted here, so it is never claimed.
     if sys.platform != "win32":
         try:
-            importlib.import_module("cuvs")
-            add("info", "cuVS: GPU-accelerated vector search available")
+            importlib.import_module("cuvs.neighbors")
         except ImportError:
-            # cuVS is optional, just note it's not installed (not a warning)
             add("info", "cuVS: not installed (optional, Linux GPU only)")
+        else:
+            try:
+                importlib.import_module("cupy")
+            except ImportError:
+                add(
+                    "warnings",
+                    "cuVS installed but cupy is missing — the GPU backend cannot be "
+                    "constructed. Install cupy, or use Voyager (CPU).",
+                )
+            else:
+                add(
+                    "info",
+                    "cuVS and cupy importable; functional GPU search not tested",
+                )
     else:
         add("info", "cuVS: skipped (not supported on Windows)")
 
