@@ -87,6 +87,15 @@ the KG-independent models in `models/pretrained/`. See
 
 ## Development
 
+The development tooling — pytest, ruff, mypy, import-linter — is in the `dev` extra, which
+`deploy.sh` does **not** install: it syncs runtime dependencies only. On a machine that has only
+been deployed, install them first, or `make check` stops at `lint-imports` with `import-linter is
+not installed`:
+
+```bash
+uv sync --extra dev
+```
+
 ```bash
 make check          # the gate: lint-imports + test-unit
 make test           # full suite      make test-unit / make test-integration
