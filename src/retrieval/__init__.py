@@ -20,7 +20,8 @@ STATUS — read this before wiring anything to this package.
 
 **Implemented, but detached from the diagnosis pipeline.** This is
 not an unimplemented placeholder: the backend implementations exist and have
-dedicated tests. Voyager's build/search/persistence path is covered on every host
+dedicated tests. Voyager's build/search/persistence path is covered on supported
+installations where the required Voyager dependency is present
 (``tests/unit/test_retrieval.py``, ``tests/integration/test_retrieval_integration.py``,
 ``tests/integration/test_build_index.py``); cuVS's coverage is platform-gated and
 skips wherever the package is absent, so its functional behaviour is *not*

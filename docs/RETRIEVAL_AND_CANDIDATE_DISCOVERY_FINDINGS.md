@@ -30,8 +30,18 @@ already the priority because the live pipeline contradicts `docs/ARCHITECTURE.md
 
 ### Breaking changes
 
-Removed from the public surface. Nothing in this repository consumed them, and nothing set the
-environment variable:
+Removed from the public surface, with **no deprecation window**. Two things justify that, and the
+second is the one that mattered:
+
+1. Nothing in this repository consumed them — the status fields were produced, relayed and logged,
+   never read for any decision — and nothing set the environment variable.
+2. The deploying institution confirmed that **no external dashboard, monitor, script, API client or
+   deployment configuration reads them**. At this stage the system is reached only through the
+   Gradio UI and the API; no other access path has been designed. Should one be built later, it
+   will be built against the current surface.
+
+Retaining the fields with permanently false values was rejected: a field that always reports
+`false` is another claim nothing checks, which is the defect class this work exists to remove.
 
 | Removed | Was |
 |---|---|
