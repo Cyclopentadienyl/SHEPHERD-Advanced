@@ -70,7 +70,7 @@ check: lint-imports test-unit
 lint-imports:
 	@$(PY) -c "import importlinter" 2>/dev/null || { \
 		echo "import-linter is not installed for $(PY)."; \
-		echo "Run 'uv sync --extra dev', or point PY at the right interpreter:"; \
+		echo "Run 'uv sync --inexact --extra dev', or point PY at the right interpreter:"; \
 		echo "  make check PY=.venv/bin/python"; \
 		exit 1; }
 	$(PY) -c "import sys; from importlinter.cli import lint_imports_command as c; sys.exit(c(standalone_mode=False))" --config .import-linter.ini

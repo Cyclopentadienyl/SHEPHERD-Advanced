@@ -96,9 +96,10 @@ not installed`:
 uv sync --inexact --extra dev
 ```
 
-`--inexact` matters: plain `uv sync` removes packages that are not in `uv.lock`, and `deploy.sh`
-installs the PyG native extensions and `cuvs-cu13` outside it. `deploy.sh` syncs with `--inexact`
-for the same reason.
+`--inexact` matters: it stops uv removing the out-of-lock PyG native extensions and `cuvs-cu13`
+simply for being extraneous, which is how `deploy.sh` installs them. (It is not an unconditional
+guarantee — a package that conflicts with a project dependency can still be replaced.) `deploy.sh`
+and `deploy.cmd` sync with `--inexact` for the same reason.
 
 ```bash
 make check          # the gate: lint-imports + test-unit

@@ -237,7 +237,6 @@ echo      see data\external\README.md for the required annotation files):
 echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py
 echo      .venv\Scripts\python.exe scripts\compute_shortest_paths.py
 echo      .venv\Scripts\python.exe scripts\train_model.py
-echo      .venv\Scripts\python.exe scripts\build_index.py
 echo.
 echo   4. Launch the system:
 echo      launch_shepherd.cmd
@@ -253,7 +252,9 @@ echo         launch_shepherd.cmd --sage-attn     (SageAttention)
 echo       Compatibility not guaranteed; fallback to PyTorch SDPA is always available.
 echo.
 echo [TIP] For development (pytest, linting, etc.):
-echo       uv sync --extra dev
+echo       uv sync --inexact --extra dev
+echo       (--inexact stops uv removing the Stage 3 packages simply for being
+echo        outside uv.lock; plain 'uv sync' would drop them.)
 echo.
 echo [TIP] To regenerate uv.lock after editing pyproject.toml:
 echo       uv lock
