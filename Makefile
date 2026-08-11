@@ -1,4 +1,4 @@
-.PHONY: help validate test test-unit test-integration lint lint-imports format typecheck check index deploy-linux deploy-win clean
+.PHONY: help validate test test-unit test-integration lint lint-imports format typecheck check vector-index deploy-linux deploy-win clean
 # Prefer the project venv when it exists, so the targets below work from a plain
 # shell without `source .venv/bin/activate` first. Falls back to whatever `python`
 # is on PATH. Override explicitly with e.g. `make check PY=python3.12`.
@@ -10,7 +10,7 @@ help:
 	@echo "  Testing"
 	@echo "    make test             - Run the full test suite"
 	@echo "    make test-unit        - Run unit tests only (part of 'check')"
-	@echo "    make test-integration - Run integration tests (1 known failure, see docs)"
+	@echo "    make test-integration - Run integration tests (not in 'check'; see the note below)"
 	@echo ""
 	@echo "  Gates (baseline-green — these must pass)"
 	@echo "    make check            - lint-imports + test-unit"
@@ -23,10 +23,12 @@ help:
 	@echo ""
 	@echo "  Environment & deployment"
 	@echo "    make validate         - Validate the Python/PyTorch installation"
-	@echo "    make index CFG=..     - Build a vector index from a config file"
 	@echo "    make deploy-linux     - Deploy on Linux x86/ARM (calls deploy.sh)"
 	@echo "    make deploy-win       - Deploy on Windows x86 (calls deploy.cmd)"
 	@echo "    make clean            - Remove caches and build artifacts"
+	@echo ""
+	@echo "  Detached standalone subsystem (NOT part of building a model)"
+	@echo "    make vector-index ARGS=.. - Build a vector index; run with no ARGS for usage"
 
 # --- testing -----------------------------------------------------------------
 # Note: pytest is invoked as `$(PY) -m pytest` so the repo root stays on sys.path
@@ -45,12 +47,11 @@ test-integration:
 # known-failing check here would make the gate meaningless — contributors would
 # learn to ignore a red `make check`, which is worse than not having one.
 #
-# `test-integration` is excluded: TestVectorIndexE2E::test_pipeline_with_vector_index
-# fails on hosts where the cuVS backend cannot initialise, and the persisted index
-# format does not match the backend chosen at load time. That failure is a real
-# signal about the vector-index subsystem, which is under review — see
-# docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md. It is left red on purpose
-# rather than skipped, so `check` routes around it instead of hiding it.
+# `test-integration` was excluded because TestVectorIndexE2E failed on hosts where
+# the cuVS backend could not initialise. That test was removed with the vector
+# index's detachment from diagnosis, so the failure cannot recur. The suite is
+# still outside `check` only because it has not yet been demonstrated green across
+# the supported platforms; promoting it is a separate, measured decision.
 check: lint-imports test-unit
 
 # .import-linter.ini is not one of import-linter's auto-discovered filenames
@@ -100,8 +101,28 @@ format:
 validate:
 	$(PY) scripts/validate_installation.py
 
-index:
-	$(PY) scripts/build_index.py --config $(CFG)
+# Retained standalone vector-index subsystem, detached from diagnosis by decision
+# — see src/retrieval/__init__.py and the findings document. NOT a step in building
+# a model.
+#
+# The previous `index` target passed only `--config` and therefore failed argument
+# validation on every invocation: build_index.py also requires a source
+# (--checkpoint or --embeddings) and a destination (--output or
+# --export-embeddings). It had never worked. ARGS is a passthrough so both flows
+# are expressible, and an empty ARGS prints usage instead of an argparse error.
+vector-index:
+	@[ -n "$(ARGS)" ] || { \
+	  echo "usage: make vector-index ARGS=\"<build_index.py arguments>\""; \
+	  echo ""; \
+	  echo "  from a checkpoint:"; \
+	  echo "    ARGS=\"--checkpoint <ckpt> --data-dir <workspace> --output <ws>/vector_index\""; \
+	  echo "  from pre-exported embeddings:"; \
+	  echo "    ARGS=\"--embeddings <file.npz> --output <ws>/vector_index\""; \
+	  echo ""; \
+	  echo "  Detached standalone subsystem; not part of the diagnosis pipeline."; \
+	  echo "  See docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md"; \
+	  exit 2; }
+	$(PY) scripts/build_index.py $(ARGS)
 
 deploy-linux:
 	bash deploy.sh

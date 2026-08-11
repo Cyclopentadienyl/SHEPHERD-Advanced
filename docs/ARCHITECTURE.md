@@ -175,7 +175,7 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints
 | Inference Pipeline | `src/inference/pipeline.py` | GNN-primary scoring, PathReasoner explanation |
 | PathReasoner | `src/reasoning/path_reasoning.py` | BFS evidence path enumeration |
 | Knowledge Graph | `src/kg/graph.py` | KG data structure with PyG export |
-| Vector Index | `src/retrieval/vector_index.py` | ANN search for novel candidate discovery |
+| Vector Index | `src/retrieval/vector_index.py` | Standalone ANN index. **Detached from diagnosis** — retained for planned vector-mapping work, not on any inference path |
 
 ---
 

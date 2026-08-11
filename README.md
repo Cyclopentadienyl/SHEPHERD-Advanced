@@ -66,7 +66,7 @@ Both start the FastAPI service with the Gradio dashboard mounted on it:
 
 ## Build a model
 
-Four steps, in order. Full walkthrough with data sources and expected artifacts:
+Three steps, in order. Full walkthrough with data sources and expected artifacts:
 [`docs/TRAINING_PIPELINE_PLAYBOOK.md`](docs/TRAINING_PIPELINE_PLAYBOOK.md).
 
 | Step | Command | Produces |
@@ -74,14 +74,15 @@ Four steps, in order. Full walkthrough with data sources and expected artifacts:
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
 | 2. Shortest paths | `scripts/compute_shortest_paths.py` | `shortest_paths.pt` |
 | 3. Train | dashboard training console, or `scripts/train_model.py` | `checkpoints/*.pt` |
-| 4. Vector index *(optional)* | `scripts/build_index.py` | ANN index — see the caveat below |
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See
 [`docs/DIRECTORY_STRUCTURE.md`](docs/DIRECTORY_STRUCTURE.md).
 
-> **Step 4 caveat.** The vector-index subsystem is under review: it has never been active in the
-> audited environment and has known defects. Do not rely on it. See
+> **There is no step 4.** Building a vector index used to be listed here. The vector-index
+> subsystem has been detached from diagnosis — it is kept, implemented and tested, for planned
+> natural-language and vector-mapping work, and is built with `make vector-index` when that work
+> needs it. It is not part of building a model. See
 > [`docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md).
 
 ## Development
@@ -108,7 +109,7 @@ deliberately excluded from `make check`:
 |---|---|
 | `make lint` (ruff) | large pre-existing backlog; most findings are auto-fixable via `make format`, but that rewrites annotations across `src/` and needs its own reviewed change |
 | `make typecheck` (mypy `--strict`) | large pre-existing backlog; the codebase predates any type gate |
-| `make test-integration` | one known failure in the vector-index end-to-end test — a real signal about a subsystem under review, left red on purpose rather than skipped (see the findings doc) |
+| `make test-integration` | passes on the development container, but has not been demonstrated green across all supported platforms; promoting it into `check` is a separate, measured decision |
 
 Clearing these backlogs is tracked as separate work. They were not silenced with blanket ignores:
 a check that passes without checking anything is worse than one that honestly reports debt.

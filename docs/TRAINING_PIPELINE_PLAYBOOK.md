@@ -16,21 +16,21 @@
 ## The pipeline at a glance
 
 ```
- (manual)            Step 1                 Step 2                Step 3              Step 4
-HPO download  →  build_knowledge_graph  →  compute_shortest_  →  train_model    →  build_index
+ (manual)            Step 1                 Step 2                Step 3
+HPO download  →  build_knowledge_graph  →  compute_shortest_  →  train_model
                                             paths                 (WebUI)
-   │                    │                      │                    │                  │
-phenotype.hpoa     kg.json                shortest_paths.pt    checkpoints/*.pt   vector_index.*
-genes_to_           node_features.pt                           (fingerprint        (ANN for
- phenotype.txt      edge_indices.pt                             embedded)           inference)
+   │                    │                      │                    │
+phenotype.hpoa     kg.json                shortest_paths.pt    checkpoints/*.pt
+genes_to_           node_features.pt                           (fingerprint
+ phenotype.txt      edge_indices.pt                             embedded)
                     num_nodes.json
                     train/val_samples.json
                               ↓
-                         Step 5: launch_shepherd.sh → /ui diagnosis
+                         Step 4: launch_shepherd.sh → /ui diagnosis
 ```
 
 Steps 1, 2, 4 are **CLI prerequisites** run once per dataset version. Step 3
-(training) is driven from the **WebUI Training Console**. Step 5 serves inference.
+(training) is driven from the **WebUI Training Console**. Step 4 serves inference.
 
 ---
 
@@ -123,7 +123,7 @@ On Spark's 128 GB unified memory this is comfortable.
 
 ## Step 3 — Train (WebUI Training Console)
 
-1. Launch the app (see Step 5) and open `/ui` → **Training Console**.
+1. Launch the app (see Step 4) and open `/ui` → **Training Console**.
 2. Set **Data Dir** to your workspace (`$WS`).
 3. Recommended first run — validate the whole pipeline cheaply:
    - **Conv Type = `gat`** (AMP works, fastest, lowest memory). Get a clean
@@ -145,26 +145,22 @@ Checkpoints (with the data fingerprint embedded) are saved under
 
 ---
 
-## Step 4 — Build the vector index (for inference ANN)
+## There is no step 4 — building a vector index is not part of this pipeline
 
-Enables ANN candidate discovery so high-GNN-similarity diseases surface even
-without an explicit KG path.
+This step used to build an ANN index and point the inference pipeline at it. The
+vector-index subsystem has been **detached from diagnosis**: nothing on the
+inference path reads an index, and `vector_index_path` no longer exists. Building
+one has no effect on diagnosis.
 
-```bash
-.venv/bin/python scripts/build_index.py \
-    --checkpoint "$WS/checkpoints/last.pt" \
-    --data-dir "$WS" \
-    --output "$WS/vector_index" \
-    --node-types disease \
-    --backend auto
-```
-
-`--backend auto` picks cuVS (Linux GPU) or Voyager (cross-platform CPU). Point the
-inference pipeline's `vector_index_path` at `$WS/vector_index`.
+The subsystem itself is kept — implemented, tested, and retained for planned
+natural-language and vector-mapping work. Build one with `make vector-index` when
+that work needs it, and read
+[`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md)
+first: the similarity contract must be defined before the interface is reused.
 
 ---
 
-## Step 5 — Launch & run inference
+## Step 4 — Launch & run inference
 
 ```bash
 ./launch_shepherd.sh          # uvicorn src.api.main:app on :8000
