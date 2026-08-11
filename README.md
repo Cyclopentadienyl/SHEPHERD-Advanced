@@ -96,21 +96,9 @@ not installed`:
 uv sync --inexact --extra dev
 ```
 
-> **`--inexact` is not optional — plain `uv sync` has been observed to break a working GPU
-> machine.** It removes packages that are not in `uv.lock`, and `deploy.sh` stage 3 deliberately
-> installs several outside it: the PyG native extensions (`pyg-lib`, `torch-scatter`,
-> `torch-sparse`, `torch-cluster`), `torch-geometric`, and `cuvs-cu13`. Their wheel index is
-> torch-version-coupled and, on ARM, they may be compiled from source.
->
-> The damage is not limited to those packages. On one aarch64 host, a plain `uv sync --extra dev`
-> also left `libnccl.so.2` missing, so `import torch` itself failed — even though
-> `nvidia-nccl-cu13` *is* in the lock. Everything downstream then failed quietly rather than
-> loudly: `gnn_ready=False`, and the service served diagnoses in `path_reasoning_fallback` mode.
->
-> `deploy.sh` uses `uv sync --inexact` for exactly this reason (see its comment at the sync step).
-> To repair a machine in this state: `uv sync --inexact --extra dev`, confirm
-> `torch.cuda.is_available()`, then rebuild the native extensions with
-> `PYG_ARM_STRATEGY=compile bash deploy.sh`.
+`--inexact` matters: plain `uv sync` removes packages that are not in `uv.lock`, and `deploy.sh`
+installs the PyG native extensions and `cuvs-cu13` outside it. `deploy.sh` syncs with `--inexact`
+for the same reason.
 
 ```bash
 make check          # the gate: lint-imports + test-unit
