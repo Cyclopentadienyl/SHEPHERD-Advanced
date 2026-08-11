@@ -93,8 +93,15 @@ been deployed, install them first, or `make check` stops at `lint-imports` with 
 not installed`:
 
 ```bash
-uv sync --extra dev
+uv sync --inexact --extra dev
 ```
+
+> **`--inexact` is not optional.** Plain `uv sync` removes every package that is not in
+> `uv.lock`, and the PyG native extensions (`pyg-lib`, `torch-scatter`, `torch-sparse`,
+> `torch-cluster`), `torch-geometric` and `cuvs-cu13` are deliberately installed **outside** the
+> lock by `deploy.sh` stage 3 — their wheel index is torch-version-coupled and, on ARM, they may be
+> compiled from source. Running plain `uv sync` purges them, silently disabling GNN inference.
+> `deploy.sh` uses `uv sync --inexact` for exactly this reason.
 
 ```bash
 make check          # the gate: lint-imports + test-unit
