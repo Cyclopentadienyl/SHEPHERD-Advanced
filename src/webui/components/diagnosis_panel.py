@@ -44,6 +44,24 @@ logger = logging.getLogger(__name__)
 API_BASE = "http://127.0.0.1:8000"
 PIPELINE_API = f"{API_BASE}/api/v1"
 
+# Shown when the pipeline loads but the GNN did not. This is not cosmetic: the
+# ranking then comes from path reasoning over the knowledge graph alone, so a
+# disease with no qualifying path cannot appear at all, and the confidence
+# figures are on a different footing from the GNN-fused ones. The system has
+# previously served in this state for a whole session without anyone noticing,
+# because the only signals were a tick turning into a cross and one INFO line.
+GNN_UNAVAILABLE_TOAST = (
+    "GNN not loaded — running in path-reasoning mode. Rankings come from "
+    "knowledge-graph paths only, without GNN embedding scores. Check the "
+    "checkpoint path, and the runtime status at the bottom of the page."
+)
+GNN_UNAVAILABLE_BANNER = (
+    "🔴 **Running WITHOUT the GNN — path-reasoning mode.** Rankings come from "
+    "knowledge-graph paths only; diseases with no qualifying path are not scored, "
+    "and confidence values are not comparable with GNN-fused ones. "
+    "Check the checkpoint path and the runtime line at the bottom of the page.\n"
+)
+
 # Canonical HPO term id, e.g. HP:0001250. Tolerant of case, an optional / missing
 # colon, and surrounding whitespace ("hp 0001250", "HP:0001250", "HP_0001250"),
 # and a trailing non-digit so it won't grab 7 digits out of a longer number. The
@@ -175,13 +193,22 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     if not status_data.get("initialized", False):
         return "⚪ **Pipeline not loaded.** Configure paths below and click Load / Reload Pipeline."
 
-    gnn = "✅" if status_data.get("gnn_ready") else "❌"
+    gnn_ready = bool(status_data.get("gnn_ready"))
+    gnn = "✅" if gnn_ready else "❌"
     sp = "✅" if status_data.get("sp_ready") else "❌"
     mode = status_data.get("scoring_mode", "unknown")
     kg_n = status_data.get("kg_nodes", 0)
     kg_e = status_data.get("kg_edges", 0)
 
-    lines = [
+    lines = []
+    if not gnn_ready:
+        # A tick that has turned into a cross is too quiet for this: without the
+        # GNN the ranking comes from path reasoning alone, which is a different
+        # and narrower answer. The toast on load says so once; this says so for
+        # as long as it is true, so it survives a tab change, a refresh, or a
+        # screenshot pasted into a note.
+        lines.append(GNN_UNAVAILABLE_BANNER)
+    lines += [
         f"🟢 **Pipeline loaded** | Mode: `{mode}`",
         f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
     ]
@@ -647,7 +674,13 @@ def _on_reload_pipeline(
 
     status_md = ""
     if result.get("success"):
-        status_md = _format_pipeline_status(result.get("status", {}))
+        status = result.get("status", {})
+        status_md = _format_pipeline_status(status)
+        if status.get("initialized") and not status.get("gnn_ready"):
+            # Attached to the load action rather than to the status renderer:
+            # the renderer also runs on the initial page render, and a toast that
+            # repeats is a toast people learn to dismiss unread.
+            gr.Warning(GNN_UNAVAILABLE_TOAST, duration=20)
     else:
         status_md = f"❌ {result.get('message', 'Unknown error')}"
 

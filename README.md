@@ -66,7 +66,7 @@ Both start the FastAPI service with the Gradio dashboard mounted on it:
 
 ## Build a model
 
-Four steps, in order. Full walkthrough with data sources and expected artifacts:
+Three steps, in order. Full walkthrough with data sources and expected artifacts:
 [`docs/TRAINING_PIPELINE_PLAYBOOK.md`](docs/TRAINING_PIPELINE_PLAYBOOK.md).
 
 | Step | Command | Produces |
@@ -74,17 +74,32 @@ Four steps, in order. Full walkthrough with data sources and expected artifacts:
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
 | 2. Shortest paths | `scripts/compute_shortest_paths.py` | `shortest_paths.pt` |
 | 3. Train | dashboard training console, or `scripts/train_model.py` | `checkpoints/*.pt` |
-| 4. Vector index *(optional)* | `scripts/build_index.py` | ANN index — see the caveat below |
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See
 [`docs/DIRECTORY_STRUCTURE.md`](docs/DIRECTORY_STRUCTURE.md).
 
-> **Step 4 caveat.** The vector-index subsystem is under review: it has never been active in the
-> audited environment and has known defects. Do not rely on it. See
+> **There is no step 4.** Building a vector index used to be listed here. The vector-index
+> subsystem has been detached from diagnosis — it is kept, implemented and tested, for planned
+> natural-language and vector-mapping work, and is built with `make vector-index` when that work
+> needs it. It is not part of building a model. See
 > [`docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md).
 
 ## Development
+
+The development tooling — pytest, ruff, mypy, import-linter — is in the `dev` extra, which
+`deploy.sh` does **not** install: it syncs runtime dependencies only. On a machine that has only
+been deployed, install them first, or `make check` stops at `lint-imports` with `import-linter is
+not installed`:
+
+```bash
+uv sync --inexact --extra dev
+```
+
+`--inexact` matters: it stops uv removing the out-of-lock PyG native extensions and `cuvs-cu13`
+simply for being extraneous, which is how `deploy.sh` installs them. (It is not an unconditional
+guarantee — a package that conflicts with a project dependency can still be replaced.) `deploy.sh`
+and `deploy.cmd` sync with `--inexact` for the same reason.
 
 ```bash
 make check          # the gate: lint-imports + test-unit
@@ -108,7 +123,7 @@ deliberately excluded from `make check`:
 |---|---|
 | `make lint` (ruff) | large pre-existing backlog; most findings are auto-fixable via `make format`, but that rewrites annotations across `src/` and needs its own reviewed change |
 | `make typecheck` (mypy `--strict`) | large pre-existing backlog; the codebase predates any type gate |
-| `make test-integration` | one known failure in the vector-index end-to-end test — a real signal about a subsystem under review, left red on purpose rather than skipped (see the findings doc) |
+| `make test-integration` | passes on the development container, but has not been demonstrated green across all supported platforms; promoting it into `check` is a separate, measured decision |
 
 Clearing these backlogs is tracked as separate work. They were not silenced with blanket ignores:
 a check that passes without checking anything is worse than one that honestly reports debt.
@@ -142,6 +157,13 @@ path.
 
 ## Licence
 
-`pyproject.toml` declares MIT, but the `LICENSE` file is currently empty — the licence is **still
-being confirmed** with the deploying institution. Treat the licensing status as unresolved until
-that file is populated.
+**No open-source licence is granted.** The repository is public for transparency and review, not
+for redistribution — see [`LICENSE`](LICENSE).
+
+This is a decision, not a gap. The project is built for one deploying institution and tailored to
+that deployment, so attaching an open-source licence to it before anyone has asked to use it would
+grant rights nobody requested. If you want to use or collaborate on this project, open an issue —
+the licence will be chosen then.
+
+`pyproject.toml` previously declared MIT while `LICENSE` was empty, announcing a grant that had
+never been made. It now declares no licence at all.

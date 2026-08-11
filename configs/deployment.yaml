@@ -5,7 +5,7 @@
 # Structure:
 #   - defaults: shared settings across all platforms
 #   - platforms: platform-specific overrides
-#   - indexing: vector index configuration
+#   - indexing: vector index configuration (DETACHED subsystem — see below)
 #   - paths: directory structure
 #
 # Platform detection: OS + arch (e.g., linux_x86_64, linux_aarch64, windows_x86_64)
@@ -14,6 +14,13 @@
 # Vector Retrieval Backend Strategy (v3.2):
 #   - Linux (x86/ARM): cuVS (GPU) → Voyager (CPU fallback)
 #   - Windows: Voyager (CPU only, cuVS not supported on Windows)
+#
+# NOTE — the vector-index subsystem is DETACHED from diagnosis. Nothing on the
+# inference path reads an index, and changing `retrieval_backend` or `indexing`
+# has NO effect on diagnosis results. These keys configure the standalone
+# subsystem (`make vector-index`), which is retained for planned
+# natural-language / vector-mapping work. Background and the decision record:
+# docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md
 
 version: "3.2"
 
@@ -41,6 +48,7 @@ defaults:
     force_disable_env_var: FLASHATTN_FORCE_DISABLE
 
   retrieval_backend:
+    # Standalone vector-index subsystem only — not read by the diagnosis pipeline.
     # Default: Voyager (cross-platform CPU, always available)
     # Linux platforms will override to use cuVS (GPU) as primary
     default: voyager

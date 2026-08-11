@@ -351,9 +351,13 @@ print(f"Avg time: {(end - start) / 100 * 1000:.2f} ms")
 - PyTorch SDPA (ARM): **0.45-0.55x**
 - Manual (ARM): **0.25-0.35x** (不推薦)
 
-### 🟢 **Vector Index: Voyager + cuVS (v3.2)**
+### 🟢 **Vector Index: Voyager + cuVS (v3.2)** — 已自診斷剝離
 
 > **Note**: FAISS 和 hnswlib 已棄用。新架構使用 Voyager (跨平台) + cuVS (Linux GPU)。
+>
+> **狀態**: 此子系統**不在診斷路徑上**。它已依決策自推理管線剝離，實作與測試保留，
+> 供規劃中的自然語言輸入／向量映射使用。部署時無需建立索引，建立了也不影響診斷結果。
+> 背景見 `docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`。
 
 **後端選擇策略**:
 - Linux (x86/ARM): cuVS (GPU) → Voyager (CPU fallback)
@@ -754,12 +758,13 @@ echo -e "========================================${NC}"
 echo ""
 echo -e "下一步："
 echo -e "  1. 構建知識圖譜: python scripts/build_knowledge_graph.py"
-echo -e "  2. 構建向量索引: python scripts/build_index.py"
+echo -e "  2. 計算最短路徑: python scripts/compute_shortest_paths.py"
 echo -e "  3. 訓練模型:     python scripts/train_model.py  (可選 --config <hyperparameters.yaml>)"
+echo -e "  4. 啟動系統:     ./launch_shepherd.sh"
 echo ""
 echo -e "${YELLOW}注意事項：${NC}"
 echo -e "  - FlashAttention-2 在 ARM 上不可用，已自動降級"
-echo -e "  - Vector Index 使用 cuVS (GPU) 或 Voyager (CPU fallback)"
+echo -e "  - Vector Index 已自診斷管線剝離，不影響診斷；保留供未來向量映射使用"
 echo -e "  - 已針對128GB記憶體優化配置"
 ```
 

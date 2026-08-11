@@ -1,6 +1,62 @@
 # Findings — candidate discovery, retrieval, and the vector-index subsystem
 
-**Date:** 2026-08 · **Type:** findings report (descriptive) · **Status:** open — no decisions taken
+**Date:** 2026-08 · **Type:** findings report (descriptive) · **Status:** §2 resolved, §1 open
+
+---
+
+## Resolution — vector-index detachment
+
+The findings below were presented to the deploying institution, which decided:
+
+> The vector-index subsystem serves no purpose in the current pipeline and is to be **completely
+> detached** from it. It should **remain installed**, as the basis for planned natural-language
+> input and vector-mapping work.
+
+**Done.** Nothing on the diagnosis path reads a vector index. `src/retrieval/` is kept, implemented
+and tested; its package docstring carries the status and the precondition for reuse. Detachment is
+enforced by a `forbidden` contract in `.import-linter.ini` and by
+`tests/unit/test_vector_index_detachment.py`, so it cannot be undone by an import *or* by
+configuration without that being a deliberate change.
+
+**§2's defects are therefore no longer reachable from diagnosis.** They are left described as they
+were found, because §2.3 — the interface exposes a raw backend distance with no defined direction,
+range or normalisation, so no single caller-side conversion can be correct for both Voyager and
+cuVS — is the **precondition for any future reuse**, not a closed bug. Read it before wiring this
+subsystem to anything.
+
+**§1 (candidate discovery is BFS-gated) remains open** and is unaffected by the detachment. Removing
+an inactive compensation changes no clinical behaviour and no urgency; it changes visibility. §1 was
+already the priority because the live pipeline contradicts `docs/ARCHITECTURE.md:26-37`.
+
+### Breaking changes
+
+Removed from the public surface, with **no deprecation window**. Two things justify that, and the
+second is the one that mattered:
+
+1. Nothing in this repository consumed them — the status fields were produced, relayed and logged,
+   never read for any decision — and nothing set the environment variable.
+2. The deploying institution confirmed that **no external dashboard, monitor, script, API client or
+   deployment configuration reads them**. At this stage the system is reached only through the
+   Gradio UI and the API; no other access path has been designed. Should one be built later, it
+   will be built against the current surface.
+
+Retaining the fields with permanently false values was rejected: a field that always reports
+`false` is another claim nothing checks, which is the defect class this work exists to remove.
+
+| Removed | Was |
+|---|---|
+| `vector_index_ready` | field in `GET /pipeline/status` |
+| `vector_index_size` | key in the pipeline status payload |
+| `SHEPHERD_VECTOR_INDEX_PATH` | environment variable read at API start-up |
+| `PipelineConfig.vector_index_path` | pipeline configuration field |
+| `ann_top_k` | pipeline configuration field |
+| `ann_score_threshold` | pipeline configuration field |
+
+`scripts/build_index.py` still exists and still works; its Make entry point is now
+`make vector-index ARGS="..."` (the previous `make index` passed only `--config` and had never
+worked).
+
+---
 
 ## 0. What this document is, and is not
 

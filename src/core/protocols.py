@@ -881,7 +881,8 @@ class VectorIndexProtocol(Protocol):
     向量索引協議
 
     實現模組: src/retrieval/vector_index.py (IMPLEMENTED)
-      ↳ 該子系統審查中，見 docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md
+      ↳ 已實作，但依決策自診斷管線剝離；保留供規劃中的向量映射使用。
+      ↳ 重新使用前必須先定義相似度契約，見 docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md
     """
 
     def build_index(

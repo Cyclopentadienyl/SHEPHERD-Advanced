@@ -48,7 +48,6 @@ class PipelineStatusResponse(BaseModel):
     kg_nodes: int = 0
     kg_edges: int = 0
     has_model: bool = False
-    vector_index_ready: bool = False
     fingerprint_warnings: List[str] = Field(default_factory=list)
     checkpoint_meta: Dict[str, Any] = Field(default_factory=dict)
     current_data_dir: Optional[str] = None
@@ -174,7 +173,6 @@ async def get_pipeline_status() -> PipelineStatusResponse:
         kg_nodes=config.get("kg_nodes", 0),
         kg_edges=config.get("kg_edges", 0),
         has_model=config.get("has_model", False),
-        vector_index_ready=config.get("vector_index_ready", False),
         fingerprint_warnings=config.get("fingerprint_warnings", []),
         checkpoint_meta=config.get("checkpoint_meta", {}),
         current_data_dir=getattr(app_state, "_current_data_dir", None),
@@ -353,7 +351,6 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         kg_nodes=config.get("kg_nodes", 0),
         kg_edges=config.get("kg_edges", 0),
         has_model=config.get("has_model", False),
-        vector_index_ready=config.get("vector_index_ready", False),
         fingerprint_warnings=fp_warns,
         checkpoint_meta=config.get("checkpoint_meta", {}),
         current_data_dir=data_dir,

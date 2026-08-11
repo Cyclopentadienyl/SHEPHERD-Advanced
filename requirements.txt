@@ -15,8 +15,14 @@
 #   Windows:  deploy.cmd
 #
 # To manually install everything in an existing uv-aware shell:
-#   uv sync                   # production deps only
-#   uv sync --extra dev       # + dev tools (pytest, ruff, black, ...)
+#   uv sync --inexact               # production deps only
+#   uv sync --inexact --extra dev   # + dev tools (pytest, ruff, black, ...)
+#
+# --inexact is not decoration. Without it uv removes packages that are not in
+# uv.lock, and both deploy scripts install packages outside the lock on purpose:
+#   - deploy.sh and deploy.cmd : the PyG native extensions
+#   - deploy.sh only           : cuvs-cu13 (Linux GPU; cuVS has no Windows build)
+# Both scripts sync with --inexact for this reason.
 #
 # To regenerate uv.lock after editing pyproject.toml:
 #   uv lock

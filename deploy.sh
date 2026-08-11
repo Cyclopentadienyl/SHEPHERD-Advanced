@@ -317,7 +317,15 @@ CUVS_CONSTRAINTS="$(mktemp)"
 uv export --format requirements-txt --no-hashes --no-emit-project -o "$CUVS_CONSTRAINTS" >/dev/null 2>&1
 if uv pip install --extra-index-url https://pypi.nvidia.com \
        -c "$CUVS_CONSTRAINTS" "cuvs-cu13>=24.12" 2>/dev/null; then
-    echo -e "${GREEN}[OK] cuVS installed (GPU vector backend available)${NC}"
+    # Installed is not usable: constructing the backend also needs cupy, and this
+    # script never builds or searches an index. Say only what was established.
+    if "$PY" -c "import cuvs.neighbors, cupy" >/dev/null 2>&1; then
+        echo -e "${GREEN}[OK] cuVS and cupy importable; functional GPU search not tested${NC}"
+    else
+        echo -e "${YELLOW}[WARN] cuVS installed but its prerequisites are not importable${NC}"
+        echo -e "${YELLOW}       (cupy missing?) — the GPU backend cannot be constructed.${NC}"
+        echo -e "${YELLOW}       Voyager (CPU) remains the primary backend.${NC}"
+    fi
 else
     echo -e "${YELLOW}[INFO] cuVS not available; Voyager (CPU) remains the primary backend${NC}"
     echo -e "${YELLOW}[HINT] For GPU acceleration, manually try:${NC}"
@@ -379,7 +387,6 @@ echo -e "      see data/external/README.md for the required annotation files):"
 echo -e "      ${YELLOW}$PY scripts/build_knowledge_graph.py${NC}"
 echo -e "      ${YELLOW}$PY scripts/compute_shortest_paths.py${NC}"
 echo -e "      ${YELLOW}$PY scripts/train_model.py${NC}"
-echo -e "      ${YELLOW}$PY scripts/build_index.py${NC}"
 echo -e ""
 echo -e "   4. Launch the system:"
 echo -e "      ${YELLOW}./launch_shepherd.sh${NC}"
@@ -400,7 +407,9 @@ echo -e "      correctly on your GPU (not just that they import):"
 echo -e "        ${YELLOW}$PY scripts/validate_pyg_ext.py${NC}"
 echo -e ""
 echo -e "[TIP] For development (pytest, linting, etc.):"
-echo -e "      ${YELLOW}uv sync --extra dev${NC}"
+echo -e "      ${YELLOW}uv sync --inexact --extra dev${NC}"
+echo -e "      (--inexact stops uv removing the PyG native ext and cuVS installed"
+echo -e "       above simply for being outside uv.lock.)"
 echo -e ""
 echo -e "[TIP] To regenerate uv.lock after editing pyproject.toml:"
 echo -e "      ${YELLOW}uv lock${NC}"

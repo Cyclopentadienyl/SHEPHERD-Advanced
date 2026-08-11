@@ -31,6 +31,44 @@ import gradio as gr
 from src.webui.components.training_console import create_training_tab
 from src.webui.components.diagnosis_panel import create_diagnosis_tab
 from src.webui.components.runtime_settings import create_runtime_settings_tab
+from src.utils.version_checker import DEGRADED, NOTICE, format_runtime_line, probe_runtime
+
+
+def _runtime_footer() -> str:
+    """Markdown for the always-visible runtime line.
+
+    Colour carries the severity so it reads at a glance: red when a capability
+    is gone (torch or PyG will not import — GNN scoring cannot run), amber for
+    performance-only or optional gaps, plain grey when everything is present.
+
+    Wrapped: this footer exists to report a broken environment, so it must not
+    itself break in one. Its own failure is rendered rather than raised.
+    """
+    try:
+        report = probe_runtime()
+        line = format_runtime_line(report)
+        status = report.get("status")
+        issues = report.get("issues", [])
+    except Exception as exc:  # noqa: BLE001 — a footer that raises reports nothing
+        return (
+            '<span style="color:#d32f2f"><b>Runtime status unavailable</b> — '
+            f"could not probe the environment: {exc}</span>"
+        )
+
+    if status == DEGRADED:
+        detail = " ".join(issues)
+        return (
+            f'<span style="color:#d32f2f"><b>⛔ Degraded runtime</b> — {line}<br>'
+            f"{detail}</span>"
+        )
+    if status == NOTICE:
+        detail = " ".join(issues)
+        return (
+            f'<span style="color:#e65100"><b>⚠️ {line}</b><br>'
+            f'<span style="font-size:0.9em">{detail}</span></span>'
+        )
+    return f'<span style="color:#888">{line}</span>'
+
 
 
 def create_gradio_app() -> gr.Blocks:
@@ -165,6 +203,12 @@ def create_gradio_app() -> gr.Blocks:
                     "### Model Management\n"
                     "*Coming soon — will provide checkpoint listing and metrics comparison.*"
                 )
+
+        # Runtime stack, always visible. Two jobs: say which torch/CUDA/PyG
+        # combination is actually running, and make a degraded environment
+        # impossible to miss. A deployment can lose its GNN without any error
+        # appearing here, so absence has to be shown, not merely not-shown.
+        gr.Markdown(_runtime_footer(), elem_id="runtime_footer")
 
     return app
 
