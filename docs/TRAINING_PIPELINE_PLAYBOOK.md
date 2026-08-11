@@ -29,7 +29,7 @@ genes_to_           node_features.pt                           (fingerprint
                          Step 4: launch_shepherd.sh → /ui diagnosis
 ```
 
-Steps 1, 2, 4 are **CLI prerequisites** run once per dataset version. Step 3
+Steps 1 and 2 are **CLI prerequisites** run once per dataset version. Step 3
 (training) is driven from the **WebUI Training Console**. Step 4 serves inference.
 
 ---
@@ -216,5 +216,5 @@ before it silently produces garbage rankings.
 | Training crashed | Red error banner in the Training Console (filtered traceback tail); full run output in the console where uvicorn runs |
 | "Running slow" / HGT sluggish | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
 | Inference rankings look wrong after a rebuild | Fingerprint warnings in the Diagnosis Panel — likely a checkpoint/data version mismatch |
-| `No paths found` / empty results at inference | Confirm `shortest_paths.pt` and the vector index exist in the workspace, and the pipeline points at the right `$WS` |
+| `No paths found` / empty results at inference | Check, in order: the pipeline is pointed at the intended `$WS`; `kg.json` and `shortest_paths.pt` are present there; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring); at least one phenotype has a KG path to a disease — candidate discovery is BFS-gated, so a phenotype with no qualifying path yields nothing |
 | Build/SP killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |

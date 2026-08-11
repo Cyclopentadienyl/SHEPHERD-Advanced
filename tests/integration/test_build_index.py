@@ -134,6 +134,14 @@ def test_builder_honours_node_type_selection(npz_embeddings, tmp_path):
         "--backend", "voyager",
     )
 
+    # Both halves matter. Without the exit-status assertion a regression could
+    # quietly write nothing, exit 0, and still satisfy the artifact check.
+    assert result.returncode != 0, (
+        f"builder reported success for a node type with no embeddings\n{result.stdout}"
+    )
+    assert "No embeddings extracted" in (result.stdout + result.stderr), (
+        f"expected a diagnostic naming the cause, got:\n{result.stdout}\n{result.stderr}"
+    )
     gene_artifact = (out_base.parent / f"{out_base.name}_gene").with_suffix(".voyager")
     assert not gene_artifact.exists(), (
         "builder wrote an artifact for a node type that has no embeddings"

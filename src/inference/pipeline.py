@@ -1187,7 +1187,7 @@ class DiagnosisPipeline:
             patient_input: Patient phenotype data
             top_k: Number of top candidates to return
             include_ortholog_evidence: Include ortholog evidence
-    
+
         Returns:
             List of DiagnosisCandidate sorted by score
         """

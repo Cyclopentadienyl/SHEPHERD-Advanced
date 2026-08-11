@@ -18,12 +18,14 @@ SHEPHERD-Advanced Retrieval Module — IMPLEMENTED, detached from diagnosis.
 --------------------------------------------------------------------------
 STATUS — read this before wiring anything to this package.
 
-**Implemented and tested, but detached from the diagnosis pipeline.** This is
-not an unimplemented placeholder: the backends work and have their own tests
+**Implemented, but detached from the diagnosis pipeline.** This is
+not an unimplemented placeholder: the backend implementations exist and have
+dedicated tests. Voyager's build/search/persistence path is covered on every host
 (``tests/unit/test_retrieval.py``, ``tests/integration/test_retrieval_integration.py``,
-``tests/integration/test_build_index.py``, and the platform benchmarks). What is
-*reserved* here is the future natural-language / vector-mapping integration, not
-the backend implementation.
+``tests/integration/test_build_index.py``); cuVS's coverage is platform-gated and
+skips wherever the package is absent, so its functional behaviour is *not*
+established by a green suite. What is *reserved* here is the future
+natural-language / vector-mapping integration, not the backend implementation.
 
 Nothing under ``src/inference/`` depends on this package, and that is enforced:
 ``.import-linter.ini`` forbids ``src.inference``, ``src.api.routes.diagnose`` and

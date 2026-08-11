@@ -261,17 +261,23 @@ core/
 
 ---
 
-### 10. `retrieval/` - 向量檢索
+### 10. `retrieval/` - 向量檢索（已自診斷剝離）
 
-**Protocol**: `VectorIndexProtocol`, `SubgraphSamplerProtocol`
+**Protocol**: `VectorIndexProtocol`
 
 **依賴**:
-- `core/` (types, protocols)
-- `kg/` (知識圖譜)
+- `core/` (types)
 
 **提供**:
 - cuVS/Voyager 向量索引 (auto-select)
-- 子圖採樣
+
+**狀態**: 已實作，但依決策自診斷管線剝離，保留供規劃中的自然語言／向量映射使用。
+`.import-linter.ini` 的 `diagnosis-retrieval-detachment` 契約禁止 `src.inference`、
+`src.api.routes.diagnose`、`src.webui` 匯入本套件。
+
+**注意**: 子圖採樣**不在**這裡。`SubgraphSamplerProtocol` 指向的
+`src/retrieval/subgraph_sampler.py` 從未建立（`protocols.py` 標為 PLANNED）；
+實際實作是 `src/kg/data_loader.py` 的 `SubgraphSampler`。
 
 ---
 
