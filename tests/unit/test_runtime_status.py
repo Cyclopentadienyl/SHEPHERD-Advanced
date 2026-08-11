@@ -106,25 +106,82 @@ def test_missing_torch_geometric_alone_is_degraded(monkeypatch):
     assert any("torch_geometric" in i for i in report["issues"])
 
 
+def _fake_probes(monkeypatch, overrides):
+    """Replace specific probe targets, leaving the rest real.
+
+    Keyed by the *import target*, not the report key — which is the distinction
+    the cuVS probe got wrong: `import cuvs` succeeding says nothing about
+    `cuvs.neighbors`, and it is the latter the backend needs.
+    """
+    real = version_checker._probe_module
+    monkeypatch.setattr(
+        version_checker, "_probe_module", lambda name: overrides.get(name) or real(name)
+    )
+
+
+_PRESENT = {"available": True, "version": "25.2", "error": None}
+
+
+def _absent(msg):
+    return {"available": False, "version": None, "error": msg}
+
+
 def test_cuvs_without_cupy_is_a_notice_not_a_failure(monkeypatch):
     """The state observed on a real deployment: importable, unusable, not fatal."""
     pytest.importorskip("torch")
     pytest.importorskip("torch_geometric")
-    real = version_checker._probe_module
-
-    def fake(name):
-        if name == "cuvs":
-            return {"available": True, "version": "25.2", "error": None}
-        if name == "cupy":
-            return {"available": False, "version": None, "error": "No module named 'cupy'"}
-        return real(name)
-
-    monkeypatch.setattr(version_checker, "_probe_module", fake)
+    _fake_probes(monkeypatch, {
+        "cuvs": _PRESENT,
+        "cuvs.neighbors": _PRESENT,
+        "cupy": _absent("No module named 'cupy'"),
+    })
 
     report = probe_runtime(force=True)
 
     assert report["status"] == NOTICE
     assert any("cupy is missing" in i for i in report["issues"])
+
+
+def test_cuvs_installed_but_neighbors_broken_is_not_silent(monkeypatch):
+    """`import cuvs` succeeding is not evidence the backend can be constructed.
+
+    CuVSIndex needs `from cuvs.neighbors import ivf_flat, ivf_pq`
+    (cuvs_backend.py:126). Probing the top-level package and reporting the deeper
+    capability is precisely the defect this reporter exists to expose, so it must
+    not commit it.
+    """
+    pytest.importorskip("torch")
+    pytest.importorskip("torch_geometric")
+    _fake_probes(monkeypatch, {
+        "cuvs": _PRESENT,
+        "cuvs.neighbors": _absent("libcuvs.so: cannot open shared object file"),
+        "cupy": _PRESENT,
+    })
+
+    report = probe_runtime(force=True)
+
+    assert report["retrieval"]["cuvs"]["available"] is False
+    assert report["status"] in (NOTICE, DEGRADED)
+    assert any("cuvs.neighbors is not importable" in i for i in report["issues"])
+    # And it must not be presented as a working backend.
+    line = format_runtime_line(report)
+    assert "cuVS" not in line
+
+
+def test_missing_voyager_is_named_not_omitted(monkeypatch):
+    """Voyager is a hard dependency; validate_installation treats its absence as
+    an error. It is detached from diagnosis, so this is a notice rather than
+    degraded — but silence would break this module's own rule that a missing
+    piece is named rather than left out."""
+    pytest.importorskip("torch")
+    pytest.importorskip("torch_geometric")
+    _fake_probes(monkeypatch, {"voyager": _absent("No module named 'voyager'")})
+
+    report = probe_runtime(force=True)
+
+    assert report["status"] == NOTICE, "retrieval is detached — it must not mark diagnosis degraded"
+    assert any("Voyager is not importable" in i for i in report["issues"])
+    assert "Voyager MISSING" in format_runtime_line(report)
 
 
 def test_line_names_what_is_missing_rather_than_omitting_it(monkeypatch):

@@ -33,10 +33,13 @@ the seven sites that inspect versions their own way — among them
 ``scripts/validate_installation.py`` and ``scripts/validate_pyg_ext.py`` — are
 untouched. Consolidating them is separate work.
 
-Deliberate boundary with ``pyg_native_check``: that module answers "do the
-compiled extensions load and produce correct results here", a functional check.
-This one reports presence and version, and delegates to it rather than
-duplicating it.
+Three layers of check, kept distinct because conflating them is how "installed"
+gets mistaken for "works":
+  - this module and ``src/utils/pyg_native_check.py`` — import/presence only,
+    cheap enough to run on every page load;
+  - ``scripts/validate_pyg_ext.py`` — functional: it executes each compiled
+    kernel and verifies the numbers.
+Nothing here claims native-kernel correctness; only that the modules import.
 
 Module: src/utils/version_checker.py
 """
@@ -49,10 +52,17 @@ from typing import Any, Dict, List, Optional
 
 from src.utils.pyg_native_check import check_pyg_native_extensions
 
-# Optional retrieval-side packages. cuVS additionally needs cupy to construct a
-# backend — importing cuvs alone has, in this project's history, been mistaken
-# for "GPU vector search works".
-_RETRIEVAL_PACKAGES = ("voyager", "cuvs", "cupy")
+# Retrieval-side packages, mapped to what the *backend* actually imports rather
+# than to the package name. CuVSIndex construction needs
+# ``from cuvs.neighbors import ivf_flat, ivf_pq`` plus cupy
+# (``src/retrieval/backends/cuvs_backend.py:126-127``); a top-level ``import
+# cuvs`` succeeding proves neither. Probing the shallower thing and reporting the
+# deeper capability is the exact defect this reporter exists to expose.
+_RETRIEVAL_PROBES = {
+    "voyager": "voyager",
+    "cuvs": "cuvs.neighbors",
+    "cupy": "cupy",
+}
 
 OK = "ok"
 NOTICE = "notice"
@@ -137,7 +147,11 @@ def _build_report(force: bool = False) -> Dict[str, Any]:
         }
         for name, status in check_pyg_native_extensions(force=force).items()
     }
-    retrieval = {name: _probe_module(name) for name in _RETRIEVAL_PACKAGES}
+    retrieval = {key: _probe_module(target) for key, target in _RETRIEVAL_PROBES.items()}
+    # Separately: is cuVS installed at all? Distinguishes "not installed"
+    # (optional, silent) from "installed but its neighbors module is broken"
+    # (worth saying, because the operator believes they have a GPU backend).
+    cuvs_package = _probe_module("cuvs")
 
     issues: List[str] = []
     status = OK
@@ -162,12 +176,36 @@ def _build_report(force: bool = False) -> Dict[str, Any]:
                 f"torch is built for CUDA {torch_info['cuda_build']} but no device is "
                 "visible — check the driver and CUDA libraries"
             )
-        if retrieval["cuvs"]["available"] and not retrieval["cupy"]["available"]:
+
+    # Retrieval backends do not depend on torch, and the subsystem is detached
+    # from diagnosis — so these never make the runtime DEGRADED, but they must
+    # still be said. They are checked outside the torch branch above because a
+    # broken torch tells you nothing about whether Voyager imports.
+    def _note(message: str) -> None:
+        nonlocal status
+        if status == OK:
             status = NOTICE
-            issues.append(
-                "cuVS is installed but cupy is missing — the GPU vector backend "
-                "cannot be constructed (Voyager/CPU is unaffected)"
-            )
+        issues.append(message)
+
+    if not retrieval["voyager"]["available"]:
+        # A hard project dependency: validate_installation treats its absence as
+        # an error. Detached from diagnosis, so a notice rather than degraded —
+        # but never silence, which is what omitting it from the line amounted to.
+        _note(
+            "Voyager is not importable — the retained CPU vector-index backend is "
+            f"unavailable ({retrieval['voyager']['error']})"
+        )
+    if cuvs_package["available"] and not retrieval["cuvs"]["available"]:
+        _note(
+            "cuVS is installed but cuvs.neighbors is not importable — the GPU "
+            "vector backend cannot be constructed "
+            f"({retrieval['cuvs']['error']})"
+        )
+    elif retrieval["cuvs"]["available"] and not retrieval["cupy"]["available"]:
+        _note(
+            "cuVS is installed but cupy is missing — the GPU vector backend "
+            "cannot be constructed (Voyager/CPU is unaffected)"
+        )
 
     return {
         "status": status,
@@ -217,6 +255,8 @@ def format_runtime_line(report: Optional[Dict[str, Any]] = None) -> str:
     retrieval = report.get("retrieval", {})
     if retrieval.get("voyager", {}).get("available"):
         parts.append("Voyager")
+    elif "voyager" in retrieval:
+        parts.append("Voyager MISSING")
     if retrieval.get("cuvs", {}).get("available"):
         parts.append("cuVS" if retrieval.get("cupy", {}).get("available") else "cuVS (no cupy)")
 
