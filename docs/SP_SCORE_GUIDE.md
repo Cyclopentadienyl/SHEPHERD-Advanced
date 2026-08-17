@@ -286,11 +286,20 @@ gating by another route.
 already-fixed candidate list. It may not hide, reorder, regroup, rescore, filter, or remove
 candidates.**
 
-A dedicated SP field, panel or page is therefore permitted — provided it presents candidates in
-their canonical rank order. If the institution later wishes to permit a user-controlled sort or
-filter, that requires a separate explicit policy covering canonical-rank visibility, reversibility,
-behaviour on export, audit provenance, and how the view state is labelled. It is forbidden under the
-current statement.
+**A clinician may sort and filter the view by SP inside a dedicated SP analysis surface** — this was
+permitted by amendment after the institution asked for it. What that permission does *not* include
+is any change to the result itself: the candidate set, the scores and the canonical rank order are
+produced by the disease scorer and are immutable. A view operation is a projection over them.
+
+Ten conditions govern that permission — canonical rank stays visible, one action restores the
+canonical view, the view says on screen that it is not canonical, exports default to the full
+canonical result, the view state is recorded with any action taken from it, a filter permanently
+shows how many candidates it is hiding, and the SP values themselves never change with paging,
+sorting or filtering. They are set out in
+[`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md) §1.1 and are binding.
+
+The one asymmetry worth knowing as a reader: **a sort hides nothing, so it need not report an
+exclusion; a filter does, so it must — always, and before you apply it.**
 
 ---
 

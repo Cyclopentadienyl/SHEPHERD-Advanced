@@ -3,6 +3,12 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision:** rev 3. Amended to permit clinician-controlled view operations over an immutable
+canonical result (statement 4a/4b, §1.1), to record the eager-SP / lazy-evidence computation
+schedule (§1.2), and to separate the three limits previously conflated as `top_k` (§1.3). The
+amendment follows an institutional requirement to raise the candidate list to 200+ with pagination
+and SP sorting and filtering.
+
 **Revision:** rev 2. Corrections applied after review: the top-k analysis set no longer claims to
 reconstruct the paper's short-list condition (§5); the rollout uses a versioned discriminated union
 rather than a flat envelope (§7); the deployed-checkpoint claim is split into repository fact and
@@ -26,7 +32,12 @@ Seven normative statements. Each is binding on the target design; none describes
 2. **The current checkpoint's interim disease score is raw cosine** between the pooled patient
    phenotype embedding and the disease embedding.
 3. **Every disease in the configured KG universe is scored before selection.**
-4. **SP cannot admit, exclude, filter, reorder, or rescore disease candidates.**
+4. **4a — The scoring pipeline may not use SP to admit, exclude, filter, reorder or rescore disease
+   candidates.** The canonical candidate set and its canonical rank order are produced by the
+   disease scorer alone, and are immutable once produced.
+   **4b — A clinician may sort or filter *the view* by SP within a dedicated SP analysis surface**,
+   subject to every condition in §1.1. A view operation is a **projection over an immutable
+   canonical result**: it never alters that result, and never affects any other surface.
 5. **SP may be exposed only as an optional post-ranking contextual analysis** over candidates
    already selected by the disease scorer.
 6. **Numeric SP analysis and typed evidence-path traversal are separate concerns** and must not be
@@ -37,6 +48,60 @@ Seven normative statements. Each is binding on the target design; none describes
 Statement 2 is explicitly **interim**. It reflects what the deployed checkpoint's training objective
 optimised, not the reference paper's disease scorer (§3.1). It is expected to change if and when the
 paper-parity retraining track is undertaken, which is outside work item B.
+
+### 1.1 Conditions on clinician-controlled view operations
+
+Statement 4b is permitted **only** under all of the following. C1–C5 apply to both sorting and
+filtering; C6 applies to filtering alone; C7–C10 govern the data the view is built on.
+
+| # | Condition | Applies to |
+|---|---|---|
+| **C1** | **Canonical rank stays visible.** Every row shows its canonical rank (e.g. `#7`) regardless of the current view order | sort, filter |
+| **C2** | **Reversible.** Canonical order with no filter is the state on entry; one action restores it | sort, filter |
+| **C3** | **View state is labelled on screen.** The view states plainly that it is not the canonical presentation | sort, filter |
+| **C4** | **Export defaults to the truth.** The default export is the **full canonical result in canonical order**. "Export current view" is a **separate, explicit** action whose artifact carries a prominent filtered-view label, the hidden count, the full view state, the canonical rank of every row, the result ID, actor and time, and the scorer / KG / SP artifact fingerprints | sort, filter |
+| **C5** | **Audit provenance.** The view state at the time of any action taken from the view is recorded with that action | sort, filter |
+| **C6** | **The exclusion is always countable and visible.** A filtered view permanently displays how many candidates it is hiding (`showing 47 of 200`), and facet counts show the effect of a filter **before** it is applied | **filter only** |
+| **C7** | **Fixed SP semantics and reference set.** Which SP quantity is displayed and filtered — and, if any candidate-relative normalisation is used, its reference set — are fixed when the canonical result is produced. They are **never** recomputed from a page or from a filtered subset | all |
+| **C8** | **Whole-set before pagination.** Filtering and sorting apply to the whole selected set, and facet counts are computed over the whole selected set. **Pagination never affects candidate values, counts, or which candidates a filter matches** | all |
+| **C9** | **Unavailable SP is a distinct state, not a number.** A value that could not be computed (no table loaded, unmapped node, lookup failure) is represented as unavailable, never as numeric zero. It carries its own facet and is never ordered as though it were a low score | all |
+| **C10** | **Every view is bound to provenance.** A view is addressed by an immutable result ID and carries the scorer, KG and SP artifact fingerprints of the result it projects | all |
+
+**Why C9 is a condition and not a detail.** `_calculate_sp_score` currently returns `0.0` on four
+distinct failure paths (`src/inference/pipeline.py:1333, 1337, 1347, 1358`), and `0.0` is **below**
+the value a genuine "no path found" produces (`1/7`). Under a numeric sort, a mapping failure would
+therefore rank below a real negative and be indistinguishable from a very poor score.
+
+### 1.2 Computation schedule — decided
+
+**SP is computed eagerly for the entire selected set, once, when the canonical result is produced.**
+Path evidence is **not**: it is computed lazily for the visible page, as a separately versioned
+subresource (§7).
+
+The two differ because their costs differ by orders of magnitude — SP is one lookup per
+(phenotype, candidate) pair, while evidence is a bounded graph traversal — and because statement 6
+requires them to remain separate concerns.
+
+Eager SP has a consequence worth stating: **it makes C7 and C8 true by construction** rather than by
+careful implementation, and it removes any need for request identity, stale-response rejection or
+cache invalidation on the SP path. The clinician waits once, at inference, and then browses, sorts
+and filters with no further computation.
+
+### 1.3 Three limits, previously conflated as `top_k`
+
+`top_k` (`src/inference/pipeline.py:913`, `src/webui/components/diagnosis_panel.py:105`, default 10)
+currently means "how many to produce" and "how many to show" at once. The target design separates
+them:
+
+| Parameter | Meaning | Authority | Where it is set |
+|---|---|---|---|
+| `selection_limit` | how many candidates the scorer selects, and therefore how many receive eager SP enrichment | clinician, within deployment bounds | inference settings |
+| `summary_limit` | how many appear in the inference page's concise summary | deployment | configuration |
+| `page_size` | how many rows the analysis workspace shows at once | clinician | view control |
+
+Only `selection_limit` is an inference-time parameter. Its default, minimum and maximum, the
+storage and export bounds, and the interaction latency target are **[OPEN]** and require
+institutional values.
 
 ---
 
