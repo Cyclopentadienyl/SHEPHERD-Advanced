@@ -76,7 +76,6 @@ from src.reasoning import (
 # Optional torch dependency for GNN inference
 try:
     import torch
-    import torch.nn.functional as F
     from torch import Tensor
     HAS_TORCH = True
 except ImportError:
@@ -433,6 +432,7 @@ class DiagnosisPipeline:
         self._sp_di: Optional["torch.Tensor"] = None
         self._sp_offsets: Optional[Dict[int, Tuple[int, int]]] = None
         self._sp_max_hops: int = 5
+        self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
         # Fingerprint verification warnings (populated by _load_model_from_checkpoint)
@@ -706,6 +706,20 @@ class DiagnosisPipeline:
                 self._sp_max_hops = int(meta.get("max_hops", 5))
             except Exception:
                 pass
+
+        # Bundle the same tensors for the shared scoring primitives. The
+        # individual attributes stay exactly as they were — they are part of this
+        # class's observable surface — and this is a view over them, built once
+        # after max_hops is known.
+        from src.inference.scoring import SPLookup
+
+        self._sp_lookup = SPLookup(
+            target=self._sp_tg,
+            target_type=self._sp_ty,
+            distance=self._sp_di,
+            offsets=self._sp_offsets,
+            max_hops=self._sp_max_hops,
+        )
 
         logger.info(
             f"Loaded shortest paths: {n_pairs:,} pairs, "
@@ -1306,8 +1320,15 @@ class DiagnosisPipeline:
             source_ids, target_id, target_type_idx
         )
 
-        eta = self.config.eta
-        combined = eta * emb_score + (1.0 - eta) * sp_score
+        from src.inference.scoring import mix_embedding_and_sp_scores
+
+        combined = float(
+            mix_embedding_and_sp_scores(
+                torch.tensor([emb_score]),
+                torch.tensor([sp_score]),
+                self.config.eta,
+            )[0]
+        )
         return combined, emb_score, sp_score
 
     def _calculate_sp_score(
@@ -1329,7 +1350,12 @@ class DiagnosisPipeline:
         Returns 0.0 if the SP table is not loaded or no phenotypes can be
         looked up.
         """
-        if not self._sp_ready:
+        from src.inference.scoring import (
+            sp_mean_distances,
+            sp_scores_from_distances,
+        )
+
+        if not self._sp_ready or self._sp_lookup is None:
             return 0.0
 
         node_mapping = self._node_id_to_idx
@@ -1357,27 +1383,17 @@ class DiagnosisPipeline:
         if not phenotype_indices:
             return 0.0
 
-        # Look up distances from per-phenotype sorted index.
-        unreachable_distance = float(self._sp_max_hops + 1)
-        total = 0.0
-        for ph_idx in phenotype_indices:
-            offsets = self._sp_offsets.get(ph_idx)
-            if offsets is None:
-                total += unreachable_distance
-                continue
-            s, e = offsets
-            tg_slice = self._sp_tg[s:e]
-            ty_slice = self._sp_ty[s:e]
-            di_slice = self._sp_di[s:e]
-            mask = (tg_slice == target_idx) & (ty_slice == target_type_idx)
-            matches = di_slice[mask]
-            if len(matches) > 0:
-                total += float(matches[0])
-            else:
-                total += unreachable_distance
-
-        avg_distance = total / len(phenotype_indices)
-        return 1.0 / (1.0 + avg_distance)
+        # One candidate is a batch of one. The primitive returns the measured
+        # quantity (mean hop distance) plus an availability mask; this wrapper
+        # keeps the historical contract of a bare float, collapsing unavailable
+        # to 0.0. That collapse is lossy — 0.0 is below the value a genuine
+        # "no path found" produces — which is why the mask exists upstream.
+        distances, available = sp_mean_distances(
+            self._sp_lookup, phenotype_indices, [target_idx], target_type_idx
+        )
+        if not bool(available[0]):
+            return 0.0
+        return float(sp_scores_from_distances(distances)[0])
 
     def _calculate_gnn_score(
         self,
@@ -1402,6 +1418,12 @@ class DiagnosisPipeline:
 
         Returns 0.0 if GNN inference is not available.
         """
+        from src.inference.scoring import (
+            cosine_scores,
+            normalise_cosine_to_unit_interval,
+            pool_patient_embeddings,
+        )
+
         if not self._gnn_ready or self._node_embeddings is None:
             return 0.0
 
@@ -1425,13 +1447,7 @@ class DiagnosisPipeline:
         if phenotype_emb is None:
             return 0.0
 
-        indices_tensor = torch.tensor(phenotype_indices, dtype=torch.long)
-        # Clamp indices to valid range
-        indices_tensor = indices_tensor.clamp(
-            min=0, max=phenotype_emb.size(0) - 1
-        )
-        selected_emb = phenotype_emb[indices_tensor]  # (N, hidden_dim)
-        patient_embedding = selected_emb.mean(dim=0, keepdim=True)  # (1, H)
+        patient_embedding = pool_patient_embeddings(phenotype_emb, phenotype_indices)
 
         # 3. Map disease NodeID to integer index
         disease_type = NodeType.DISEASE.value  # "disease"
@@ -1445,17 +1461,12 @@ class DiagnosisPipeline:
             return 0.0
 
         disease_idx = min(disease_idx, disease_emb.size(0) - 1)
-        disease_embedding = disease_emb[disease_idx].unsqueeze(0)  # (1, H)
 
-        # 4. Cosine similarity (matches training: Trainer._compute_model_outputs)
-        patient_norm = F.normalize(patient_embedding, dim=-1)
-        disease_norm = F.normalize(disease_embedding, dim=-1)
-        cosine_sim = torch.mm(patient_norm, disease_norm.t()).item()
-
-        # 5. Normalize from [-1, 1] to [0, 1]
-        score = (cosine_sim + 1.0) / 2.0
-
-        return score
+        # 4. Cosine similarity, then [-1,1] -> [0,1]. One candidate is a batch of
+        #    one; scoring the whole disease universe is the same call with a
+        #    taller candidate matrix.
+        cosine = cosine_scores(patient_embedding, disease_emb[disease_idx].unsqueeze(0))
+        return float(normalise_cosine_to_unit_interval(cosine)[0])
 
     def _extract_supporting_genes(
         self, paths: List[ReasoningPath]
