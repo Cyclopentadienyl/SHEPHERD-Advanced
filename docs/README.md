@@ -31,6 +31,8 @@ editing history to match the present.
 | [`GNN_ARCHITECTURE_NOTES.md`](GNN_ARCHITECTURE_NOTES.md) | Model design notes — conv types, fusion, head configuration |
 | [`module_dependencies.md`](module_dependencies.md) | Inter-module dependency map. The layer rules it describes are enforced by `.import-linter.ini` (`make lint-imports`) |
 | [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) | Open architecture findings under review: candidate discovery, retrieval, and the vector-index subsystem. Claims are individually labelled FACT / MEASURED / INFERENCE / OPEN |
+| [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md) | Decision record: what ranks disease candidates, what role the shortest-path signal may play, the evidence for it, and a table separating current behaviour from the approved target |
+| [`SP_SCORE_GUIDE.md`](SP_SCORE_GUIDE.md) | The shortest-path score explained for clinicians (§1 meaning, §2 use) and for developers (§3 formulas, code, and where this implementation diverges from the reference paper) |
 
 ## Dated snapshots
 

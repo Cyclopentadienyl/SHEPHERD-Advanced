@@ -143,6 +143,8 @@ Start here for the living documents:
 | [`TRAINING_PIPELINE_PLAYBOOK.md`](docs/TRAINING_PIPELINE_PLAYBOOK.md) | End-to-end build walkthrough |
 | [`CONFIG_AUTHORITY.md`](docs/CONFIG_AUTHORITY.md) | Which module owns which configuration, and why |
 | [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) | Open architecture findings under review |
+| [`DISEASE_SCORER_POLICY.md`](docs/DISEASE_SCORER_POLICY.md) | Decision record: what ranks disease candidates, and the role of the shortest-path signal |
+| [`SP_SCORE_GUIDE.md`](docs/SP_SCORE_GUIDE.md) | **For clinicians:** what the shortest-path score means, and when it should and should not be consulted |
 | [`GNN_ARCHITECTURE_NOTES.md`](docs/GNN_ARCHITECTURE_NOTES.md) | Model design notes |
 | [`module_dependencies.md`](docs/module_dependencies.md) | Inter-module dependency map |
 
