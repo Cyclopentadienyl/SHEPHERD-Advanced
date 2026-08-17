@@ -243,7 +243,7 @@ Specifically, it helps with:
 
 | Situation | Why |
 |---|---|
-| **Ranking the full disease universe** | Most candidates are unreachable and receive the same floor value. The number stops discriminating and becomes little more than a reachability flag. |
+| **Ranking the full disease universe** | Candidates beyond the five-step limit all receive the same floor value, so the number stops discriminating and becomes little more than a reachability flag. Over ~27,990 diseases this is the expected condition, but **how large that group actually is has not been measured on this deployment**. |
 | **Looking for undocumented or atypical presentations** | The score penalises exactly what you are looking for. |
 | **As evidence that a diagnosis is wrong** | No path found is not evidence of no relationship. See §1. |
 | **As an explanation of mechanism** | The score does not know what kinds of steps it counted. Use the reasoning paths instead. |
@@ -280,10 +280,17 @@ criterion — and never a filter.
 [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md) statement 4, SP **cannot change which
 candidates are returned or displayed, cannot hide any of them, and cannot alter their order or their
 score**. A post-ranking filter would still be able to hide a candidate, which would recreate SP
-gating by another route. SP may colour, group, sort *within a view*, or annotate — it may not
-remove. (If the institution later wishes to permit a user-controlled, temporary, clearly-reversible
-view filter, that is a different policy and must be defined explicitly in the decision record; it is
-forbidden under the current statement.)
+gating by another route.
+
+**SP may be shown as an annotation, colour, badge, separate column, or detail panel attached to the
+already-fixed candidate list. It may not hide, reorder, regroup, rescore, filter, or remove
+candidates.**
+
+A dedicated SP field, panel or page is therefore permitted — provided it presents candidates in
+their canonical rank order. If the institution later wishes to permit a user-controlled sort or
+filter, that requires a separate explicit policy covering canonical-rank visibility, reversibility,
+behaviour on export, audit provenance, and how the view state is labelled. It is forbidden under the
+current statement.
 
 ---
 
