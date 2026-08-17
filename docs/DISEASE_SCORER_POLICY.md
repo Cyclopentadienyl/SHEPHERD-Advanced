@@ -3,6 +3,13 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision:** rev 2. Corrections applied after review: the top-k analysis set no longer claims to
+reconstruct the paper's short-list condition (§5); the rollout uses a versioned discriminated union
+rather than a flat envelope (§7); the deployed-checkpoint claim is split into repository fact and
+reported observation (§3.2, §3.3); the full-universe objection is restated as unvalidated meaning
+and outlier sensitivity rather than an absent reference set (§4); and the C-vs-E′ revisit condition
+is conditional on that optional audit being run (§8).
+
 **Scope.** How disease candidates are discovered, scored and ranked, and what role the
 shortest-path (SP) signal and path reasoning may play. This record is the **authority** for that
 policy. [`SP_SCORE_GUIDE.md`](SP_SCORE_GUIDE.md) explains what the SP score *means* to a clinician
@@ -42,7 +49,7 @@ column is implemented.
 |---|---|---|---|
 | **Candidate universe** | BFS path discovery gates scoring. Two order-dependent caps truncate it: `max_paths_per_source = 100` (`src/reasoning/path_reasoning.py:105`) and `max_genes = 100` per phenotype (`:507`), both applied to unordered neighbour lists | Every disease in the configured KG universe is scored; no discovery gate | **Not implemented** — work item B-1, gated |
 | **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`src/inference/pipeline.py:1310`) | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
-| **SP role** | 30% of the ranking score, and therefore able to reorder candidates | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
+| **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
 | **GNN-unavailable fallback** | `confidence_score = reasoning_score` (`src/inference/pipeline.py:1224`) — a different quantity written into the same field with no per-result discriminator | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Not implemented** — work item B-2 |
 
@@ -58,8 +65,9 @@ Two further current behaviours, for completeness:
 
 ## 3. Evidence
 
-Classified by kind, because the four kinds carry different weight and are verifiable in different
-ways.
+Classified by kind, because the five kinds carry different weight and are verifiable in different
+ways: what the paper states, what the source tree shows, what the deployment reports, what the
+institution decided, and what the author inferred.
 
 ### 3.1 Primary-source evidence — the reference paper
 
@@ -98,12 +106,25 @@ and the decision does not rest on them:
 | Fact | Source |
 |---|---|
 | Training optimises cosine over mean-pooled phenotype embeddings; no learned task head participates | `src/training/trainer.py:744-766`; `src/training/loss_functions.py:513-517` |
-| The deployed checkpoint contains no task-head parameters — `load_state_dict` is strict and the load succeeds | `src/inference/pipeline.py:831`; `src/models/gnn/shepherd_gnn.py:96-173` |
+| `ShepherdGNN` constructs no task head, and checkpoint loading uses strict `load_state_dict` semantics | `src/models/gnn/shepherd_gnn.py:96-173`; `src/inference/pipeline.py:831` |
 | η defaults to 0.7 and is a project choice, not a paper value | `src/inference/pipeline.py:296-309` |
 | The SP transform is absolute, `1/(1 + mean(d))`, with range `[1/7, 1/2]` under `max_hops = 5` | `src/inference/pipeline.py:1361, 1380` |
 | Candidate discovery is BFS-gated and truncated in traversal order | `src/reasoning/path_reasoning.py:105, 275-276, 507` |
 
-### 3.3 Institutional decision
+### 3.3 Reported deployment observation, and what it supports
+
+Kept separate from §3.2 because it is not readable from source. **Reported by the institution:** the
+deployed checkpoint `model-39-0.7004.pt` loads successfully and the pipeline reports the GNN as
+ready.
+
+**[INFERENCE]** Combined with the repository facts above — `ShepherdGNN` builds no task head, and
+`load_state_dict` is strict — a successful load implies that this checkpoint's key set matches the
+model's exactly, and therefore that it carries no task-head parameters. The inference is sound but
+depends on the report; it is not a source-code fact and is not a claim about any other checkpoint
+file. Its practical bound is that a checkpoint which cannot pass a strict load is not deployable at
+all.
+
+### 3.4 Institutional decision
 
 The deploying institution decided (2026-08) that the pipeline should reproduce the original
 SHEPHERD design as the primary direction, deviating only where a design is demonstrably better and
@@ -116,7 +137,7 @@ the default and that η must *earn* adoption with evidence. It was not derived f
 A future reader should not mistake it for an empirical finding, nor reopen it as though it were an
 unexamined default.
 
-### 3.4 Engineering inference — weigh accordingly, none is measured
+### 3.5 Engineering inference — weigh accordingly, none is measured
 
 - Over the full disease universe most candidates fall outside the 5-hop table and receive the same
   floor value, so the SP term degenerates towards a binary reachability indicator. That
@@ -135,9 +156,9 @@ unexamined default.
 
 | Alternative | Why not chosen |
 |---|---|
-| **Keep η in ranking, applied to the full universe** | Requires SP over ~27,990 candidates, where the term degenerates (§3.4) and the paper's candidate-relative normalisation has no meaningful reference set. No paper support for the disease task. |
+| **Keep η in ranking, applied to the full universe** | Requires SP over ~27,990 candidates, where the term degenerates towards a reachability indicator (§3.5). Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so almost every value would be compressed into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
-| **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives — it reconstructs the paper's short-list condition. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold, and it is a deviation from the paper requiring its own evidence. It can be evaluated offline from B-0's recorded per-candidate score components without a further run. |
+| **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It can be evaluated offline from B-0's recorded per-candidate score components without a further run. |
 | **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. |
 
 ---
@@ -151,12 +172,17 @@ unexamined default.
   must be visible to the institution, not silent, and is gated accordingly (§6).
 - **The candidate list a clinician sees will change**: composition, ordering, and which candidates
   carry supporting paths. Some candidates will appear with no path at all, labelled.
-- **A separate SP analysis over the displayed top-k reconstructs the paper's short-list condition**,
-  and makes candidate-relative normalisation well defined on that set — which the current absolute
-  transform is not. How to implement that normalisation is deferred to the implementation stage.
+- **A separate SP analysis over the displayed top-k creates a bounded, candidate-relative analysis
+  set.** This resembles the paper's short-list setting in one limited respect — bounded size — but
+  **does not reproduce the paper's candidate-gene task and does not validate SP fusion for disease
+  scoring**. The paper's list contains candidate genes supplied by variant filtering or expert
+  curation; this list contains model-ranked diseases. What the bounded set does provide is a
+  well-defined reference set for candidate-relative normalisation, which the current absolute
+  transform does not perform. How to implement that normalisation is deferred to the implementation
+  stage.
 - **Two implementation defects are recorded and deferred**, not fixed by this decision: the range
   mismatch between the two score terms, and the absence of candidate-relative normalisation
-  (§3.4, and `SP_SCORE_GUIDE.md` §3).
+  (§3.5, and `SP_SCORE_GUIDE.md` §3).
 
 ---
 
@@ -177,9 +203,13 @@ B-1 implementation may not begin until all three clear:
 - The change ships behind a configuration switch. **Its default value is an explicit
   pre-implementation decision**, not an implementation detail, because it determines whether the
   live system changes behaviour on deploy or on a later deliberate switch. Recorded as open.
-- B-1 and B-2 both modify the candidate and result types. **One discriminated result envelope is
-  agreed before either lands**; whichever lands first carries the whole envelope with the other's
-  fields present and unpopulated.
+- B-1 and B-2 both modify the candidate and result types. **One versioned discriminated result
+  union is agreed before either lands.** Each result variant defines its own **required** and
+  **forbidden** fields, selected by the mode discriminator. This explicitly rules out a flat
+  envelope carrying every field with nulls where irrelevant — that shape is how `confidence_score`
+  came to hold two incompatible quantities, and repeating it with more fields would scale the defect
+  rather than fix it. Whichever work item lands first defines the union and its first variants; the
+  second adds variants rather than widening a shared record.
 - The clinician-facing guide's status box and the SP presentation change together with the code, not
   before it.
 
@@ -189,10 +219,12 @@ B-1 implementation may not begin until all three clear:
 
 This record should be reopened if any of the following occurs:
 
-1. **B-0's C-vs-E′ comparison shows the η mixture beating raw cosine** by a clinically meaningful
-   margin that holds across disease-area strata. Note that comparison tests *this repository's* SP
-   term, `1/(1+mean(d))`, which is not the paper's Eq 13 — so a result in either direction is a
-   statement about this implementation, not about the paper's formula.
+1. **If the optional C-vs-E′ audit is run and shows the η mixture beating raw cosine** by a
+   clinically meaningful margin that holds across disease-area strata. E′ is optional and
+   non-gating under the agreed B-0 scope, so this condition may simply never be evaluated. Note also
+   that the comparison tests *this repository's* SP term, `1/(1+mean(d))`, which is not the paper's
+   Eq 13 — so a result in either direction is a statement about this implementation, not about the
+   paper's formula.
 2. **The paper-parity retraining track is undertaken**, changing the trained scorer. Statement 2 is
    interim precisely because of this.
 3. **The knowledge graph changes materially** in coverage or connectivity, altering what SP measures.

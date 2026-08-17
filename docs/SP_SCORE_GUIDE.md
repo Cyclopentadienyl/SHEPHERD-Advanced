@@ -104,8 +104,16 @@ in the 1–3 string range.
 
 **A low SP score does not mean the patient does not have the disease.**
 
-A low score means only this: **no path was found in the current knowledge graph within five steps.**
-That single observation is consistent with several very different situations:
+A low SP score means that the candidate is, on average, connected to the patient's recorded
+phenotypes only through **long paths, missing paths within the five-step limit, or a mixture of
+both**. The score averages across phenotypes, so it does not by itself tell you which.
+
+**Only the minimum computable value — 0.143 (1/7) under the default five-step configuration — means
+that no path was found within five steps for *any* phenotype included in the calculation.** A score
+of 0.17 is equally consistent with every phenotype being genuinely connected at five steps.
+
+Where a phenotype-candidate pair does have no path found, that single observation is consistent with
+several very different situations:
 
 - the disease is genuinely unrelated to this patient;
 - the presentation is real but has not been reported;
@@ -118,9 +126,7 @@ That single observation is consistent with several very different situations:
 **The SP score cannot distinguish any of these from one another.**
 
 Rare-disease diagnosis often involves atypical or incompletely represented presentations, so the
-second possibility must not be dismissed. Some sense of how sparse this domain is: in the
-Undiagnosed Diseases Network cohort described by the reference paper, **83% of diseases and 79% of
-genes were represented by only a single patient**, and 48% of phenotype terms likewise.
+second possibility must not be dismissed.
 
 A useful one-line summary:
 
@@ -132,14 +138,14 @@ A useful one-line summary:
 **1. It cannot tell you what kind of connection it found.** Every relationship in the graph counts
 as one string, regardless of type. "Two strings" might be:
 
-- symptom → *is a broader category of* → symptom → *is a broader category of* → symptom
-  (**movement within a classification hierarchy — no biological link to the disease at all**), or
-- symptom → *associated with* → gene → *causes* → disease (**a mechanistic chain**).
+- symptom → *is a subtype of* → broader symptom → *occurs in* → disease — where the first step is
+  **movement within a classification hierarchy** and only the second says anything clinical; or
+- symptom → *associated with* → gene → *causes* → disease — **a mechanistic chain throughout**.
 
-Both appear in the score as the number `2`. A high SP score can therefore arise from classification
-proximity rather than from any mechanism. **This is the main source of false confidence in this
-number.** To see what the steps actually are, use the reasoning-path evidence, which preserves
-relationship types; the SP score does not.
+Both appear in the score as the number `2`. A high SP score can therefore rest largely on
+classification proximity rather than on mechanism. **This is an important possible source of false
+confidence in this number.** To see what the steps actually are, use the reasoning-path evidence,
+which preserves relationship types; the SP score does not.
 
 **2. It cannot tell you how strong the evidence is.** A single case report and a large cohort study
 are both "one string", weighted identically.
@@ -152,10 +158,21 @@ these sources record a connection — not that the connection is causal, current
 meaningful, or relevant to this patient.
 
 **5. It is dragged down by the patient's least-connected symptom.** The score averages distances
-across all of the patient's recorded symptoms. A patient with nine well-connected features and one
-unconnected feature scores lower than one with the nine alone — and **the fewer symptoms recorded,
-the more heavily a single unconnected one counts**. With three symptoms, one unreachable symptom
-removes roughly 30% of the usable score range.
+across all of the patient's recorded symptoms, so one unconnected feature pulls the whole value
+down — and **the fewer symptoms recorded, the more heavily a single unconnected one counts**.
+
+Worked example, with every number shown so the effect can be checked rather than taken on trust.
+Take a candidate two steps from each connected symptom:
+
+| Patient | Distances | Average | Score |
+|---|---|---|---|
+| 3 symptoms, all connected | 2, 2, 2 | 2.00 | 0.333 |
+| 3 symptoms, one with no path found | 2, 2, 6 | 3.33 | **0.231** |
+| 10 symptoms, all connected | 2 × 10 | 2.00 | 0.333 |
+| 10 symptoms, one with no path found | 2 × 9, 6 | 2.40 | **0.294** |
+
+The size of the drop depends entirely on how close the other symptoms are, so no single percentage
+describes it.
 
 Clinically this cuts both ways. An atypical feature *should* sometimes argue against a diagnosis.
 But rare diseases frequently present as "mostly consistent, plus one feature nobody can explain",
@@ -185,7 +202,7 @@ system currently does — hides which one is speaking.
 |  | **High SP** (closely connected in the graph) | **Low SP** (weakly or not connected) |
 |---|---|---|
 | **High model score** | **Expected.** Model agreement plus a short recorded connection. Usually quick to check against known criteria. | **Model-supported, weakly connected in the current graph.** May warrant review for a novel presentation, a source-coverage gap, a mapping problem, or model error. |
-| **Low model score** | Recorded connection, but the pattern does not fit this patient. | **No signal.** This is the great majority of the ~27,990 diseases. |
+| **Low model score** | Recorded connection, but the pattern does not fit this patient. | **Neither score provides positive support.** This is the great majority of the ~27,990 diseases. |
 
 **The bottom-right cell is why a low SP score alone is useless.** Most diseases have no path to any
 given patient simply because they are unrelated. Selecting on "low SP" returns an enormous and
@@ -200,9 +217,11 @@ Disagreement is worth a clinician's attention because *something* is unusual —
 may be a genuinely novel presentation, a gap in what we loaded, an identifier-mapping error, or the
 model being wrong. **The SP score cannot tell you which.**
 
-On average, candidates that are both model-supported and well connected are probably *more* often
-correct — they are well connected because they are well characterised. Reading "the signals
-disagree" as "this is more likely" would be a serious error.
+A candidate that is both model-supported and well connected is **corroborated by two sources**; one
+that is model-supported but weakly connected has support from one. Corroboration is not the same as
+correctness, and this document makes no claim about how often either group turns out to be right —
+that has not been measured here. But reading "the signals disagree" as "this is more likely to be
+correct" would be a serious error.
 
 ## When to consult the SP score
 
@@ -239,7 +258,8 @@ how can rare diseases and hidden associations be surfaced?*
 1. **Candidate discovery is gated by path search**, which stops after a fixed number of paths per
    symptom, in traversal order. Diseases with shorter or denser graph connections are reached first
    and reached more often.
-2. **The SP term in the ranking score** directly rewards short graph connections, at 30% weight.
+2. **The SP term in the ranking score** directly rewards short graph connections, with a nominal
+   coefficient of 0.3. That coefficient is not the term's effective contribution — see §3.
 
 Both are being addressed: the first by scoring every disease whether or not a path exists, the
 second by removing SP from the ranking
@@ -253,7 +273,17 @@ as part of the candidate-discovery work, using graph connectivity as a proxy.
 Second — **the natural-seeming fix, "rank by low SP to find the rare ones", does not work**, for the
 reason given above: low SP selects mostly unrelated diseases. The usable instrument is the 2×2:
 **among candidates the model already ranks highly, low SP marks those whose ranking is not explained
-by a recorded connection.** That is a filter applied *after* ranking, never a ranking criterion.
+by a recorded connection.** That is an **annotation** on an already-fixed list, never a ranking
+criterion — and never a filter.
+
+**This distinction is normative, not stylistic.** Under
+[`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md) statement 4, SP **cannot change which
+candidates are returned or displayed, cannot hide any of them, and cannot alter their order or their
+score**. A post-ranking filter would still be able to hide a candidate, which would recreate SP
+gating by another route. SP may colour, group, sort *within a view*, or annotate — it may not
+remove. (If the institution later wishes to permit a user-controlled, temporary, clearly-reversible
+view filter, that is a different policy and must be defined explicitly in the decision record; it is
+forbidden under the current statement.)
 
 ---
 
@@ -373,8 +403,9 @@ The transform difference has two consequences:
   is *equally* distant from every candidate — for example when it is unreachable from all of them,
   so every candidate receives the same `UNREACHABLE` value. It is **not** generally cancelled merely
   because all its distances are large: distances of 5 to one candidate and 6 to another still
-  contribute to the spread. The absolute transform used here performs no such cancellation in any
-  case, so §1's "least-connected symptom" effect is stronger here than in the paper.
+  contribute to the spread. **The transform used here performs no explicit candidate-relative
+  cancellation at all**, so §1's "least-connected symptom" effect is not attenuated as it can be in
+  the paper's formulation.
 
 **Unverified equivalence.** This implementation traverses an undirected, type-erased graph
 (`build_undirected_adjacency`, above). The paper states only that `d(p, g)` is "the minimum number
