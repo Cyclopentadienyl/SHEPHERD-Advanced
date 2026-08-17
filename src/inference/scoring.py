@@ -181,16 +181,28 @@ def sp_mean_distances(
     of whose phenotypes are unreachable is still *computed*: it has a real value,
     the largest one.
 
+    **The result is float64, and that is a contract rather than a default.** The
+    code this replaces accumulated the total and divided in Python doubles
+    (`_calculate_sp_score` before commit `337266f`), so a float32 result would not
+    be behaviour-preserving: a mean such as 83/24 differs between the two at the
+    eighth significant digit. That difference cannot reorder candidates — the
+    smallest gap between two achievable means at 64 phenotypes is 2.5e-4, some 500
+    times the float32 spacing near the unreachable end — but B-0 exists to make
+    the offline measurement describe the deployed system exactly, and "too small
+    to matter" is the argument that lets drift in. The tensor is one value per
+    candidate, so the memory cost of the wider type is nothing worth trading for.
+
     **The interface is batched; this implementation is not yet vectorised.** It
     scans each phenotype's slice once per candidate, so the cost is
     ``O(candidates x phenotypes x slice length)`` — about 4,000 slice scans at 200
     candidates and 20 phenotypes, and over 550,000 at full-universe scale. A
     batched representation (sorted composite keys with ``torch.searchsorted``, or
     a sparse index) replaces this next; the signature is already the one it will
-    have, so callers do not change.
+    have, so callers do not change. **That replacement inherits the float64
+    contract**; it is not free to widen the type back for memory.
     """
     n_candidates = len(target_indices)
-    distances = torch.zeros(n_candidates, dtype=torch.float32)
+    distances = torch.zeros(n_candidates, dtype=torch.float64)
     available = torch.zeros(n_candidates, dtype=torch.bool)
 
     if not phenotype_indices or n_candidates == 0:
@@ -227,6 +239,10 @@ def sp_scores_from_distances(mean_distances: Tensor) -> Tensor:
     unreachable — so nearly all of its discriminating power sits at short
     distances. Prefer the distance itself where a caller needs a quantity to
     reason about.
+
+    The output dtype follows the input's. Precision is therefore decided where the
+    distance is measured, not here; `sp_mean_distances` produces float64 for the
+    reason given there.
     """
     return 1.0 / (1.0 + mean_distances)
 

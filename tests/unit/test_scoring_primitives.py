@@ -477,6 +477,14 @@ def test_pipeline_sp_score_honours_the_availability_mask(monkeypatch, lookup):
 
 
 def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup):
+    """Routing, and the dtype the wrapper hands over.
+
+    The dtype assertion pins the *mechanism* of the float32 fix: the wrapper is
+    the only place that chooses how the two Python doubles are widened into
+    tensors, and a `torch.tensor([x])` without a dtype gives float32. On its own
+    it is a white-box check and would not notice a value rounded before the
+    tensor was built — the two tests after this one cover that.
+    """
     import src.inference.scoring as scoring
     from src.inference.pipeline import DiagnosisPipeline
 
@@ -485,9 +493,13 @@ def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup)
     stub._calculate_gnn_score = lambda *a, **k: 0.8
     stub._calculate_sp_score = lambda *a, **k: 0.2
 
-    monkeypatch.setattr(
-        scoring, "mix_embedding_and_sp_scores", lambda e, s, eta: torch.tensor([42.0])
-    )
+    seen = {}
+
+    def fake_mixture(embedding_scores, sp_scores, eta):
+        seen["dtypes"] = (embedding_scores.dtype, sp_scores.dtype)
+        return torch.tensor([42.0])
+
+    monkeypatch.setattr(scoring, "mix_embedding_and_sp_scores", fake_mixture)
 
     source, target = _ids()
     combined, emb, sp = DiagnosisPipeline._calculate_combined_score(
@@ -496,6 +508,182 @@ def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup)
 
     assert combined == pytest.approx(42.0), "the wrapper must use the primitive"
     assert (emb, sp) == (0.8, 0.2), "and must report the components unchanged"
+    assert seen["dtypes"] == (torch.float64, torch.float64), (
+        "the wrapper must widen to float64; float32 would round the incoming "
+        "doubles to ~7 significant digits"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Precision, at the place the defect actually occurred
+# ---------------------------------------------------------------------------
+# The tests in the previous section exercise `mix_embedding_and_sp_scores` with
+# tensors they construct themselves as float64. They therefore say nothing about
+# the production wrapper, which is where the float32 regression lived: reverting
+# `pipeline.py` to `torch.tensor([emb_score])` left every one of them passing.
+# The three tests below drive the wrapper itself.
+def _combined_score_stub(lookup, eta, emb, sp):
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub.config = type("C", (), {"eta": eta})()
+    stub._calculate_gnn_score = lambda *a, **k: emb
+    stub._calculate_sp_score = lambda *a, **k: sp
+    return stub
+
+
+@pytest.mark.parametrize("eta", [0.0, 0.3, 0.7, 1.0, 0.123456789])
+def test_combined_score_wrapper_is_exactly_the_legacy_arithmetic(lookup, eta):
+    """`_calculate_combined_score` must return the Python-double result, bit for
+    bit — not a value within tolerance of it.
+
+    This is the black-box form of the dtype check above: it fails for any loss of
+    precision inside the wrapper, whether from the tensor dtype or from anything
+    else introduced later.
+    """
+    import random
+
+    from src.inference.pipeline import DiagnosisPipeline
+
+    source, target = _ids()
+    random.seed(20260818)
+    for _ in range(2000):
+        emb, sp = random.random(), random.random()
+
+        combined, _, _ = DiagnosisPipeline._calculate_combined_score(
+            _combined_score_stub(lookup, eta, emb, sp), [source], target, None
+        )
+
+        assert combined == _legacy_mixture(eta, emb, sp)
+
+
+def test_combined_score_wrapper_keeps_a_sub_float32_distinction(lookup):
+    """Two candidates closer together than a float32 step stay distinct through
+    the wrapper. Under the regression they became an exact tie."""
+    from src.inference.pipeline import DiagnosisPipeline
+
+    source, target = _ids()
+    scores = [
+        DiagnosisPipeline._calculate_combined_score(
+            _combined_score_stub(lookup, 0.7, emb, 0.3), [source], target, None
+        )[0]
+        for emb in (NEAR_TIE_A, NEAR_TIE_B)
+    ]
+
+    assert scores[0] != scores[1], (
+        "the wrapper collapsed a real difference — this is the regression"
+    )
+    assert scores[1] > scores[0]
+
+
+def test_sp_score_wrapper_is_exactly_the_legacy_arithmetic(lookup):
+    """The same contract, one function away — and it was broken by the extraction.
+
+    Before `337266f` the pipeline accumulated the total and computed
+    `1 / (1 + total / n)` in Python doubles. The extracted `sp_mean_distances`
+    first stored the mean in a float32 tensor, so the returned score differed from
+    the legacy value at the eighth significant digit — 83/24 gives 0.22429906542056072
+    as a double and 0.2242990881204605 through float32.
+
+    The drift could not reorder candidates: at 64 phenotypes the smallest gap
+    between two achievable mean distances is 2.5e-4, against a float32 spacing near
+    the unreachable end of 4.8e-7. But B-0's contract is that the extraction
+    preserves behaviour, and "the error is too small to matter" is the argument
+    that lets drift accumulate. The distance tensor is float64 and this pins it.
+    """
+    from src.inference.pipeline import DiagnosisPipeline
+
+    source, target = _ids()
+    for target_idx, phenotype_idx in ((5, 0), (7, 0), (99, 0)):
+        stub = _sp_ready_pipeline_stub(lookup)
+        stub._node_id_to_idx = {
+            "phenotype": {str(source): phenotype_idx},
+            "disease": {str(target): target_idx},
+        }
+
+        got = DiagnosisPipeline._calculate_sp_score(stub, [source], target, 1)
+
+        assert got == _legacy_sp_score(lookup, [phenotype_idx], target_idx, 1)
+
+
+def test_sp_mean_distances_are_float64(lookup):
+    """The dtype is the mechanism behind the test above; pin it directly so a
+    vectorised reimplementation cannot quietly narrow it for memory."""
+    distances, _ = sp_mean_distances(lookup, [0, 1], [5, 7, 99], 1)
+
+    assert distances.dtype == torch.float64
+
+
+def test_ranking_path_keeps_a_sub_float32_distinction(lookup):
+    """The clinical consequence, through the real ranking code.
+
+    Two candidates are separated by less than a float32 step. They are scored by
+    the real `_calculate_combined_score` and ordered by the real
+    `_score_and_rank_candidates`, whose `list.sort` is stable — so under the
+    regression the tie resolves by insertion order and the weaker candidate keeps
+    the slot. `top_k = 2` puts that tie exactly on the boundary a clinician sees.
+    """
+    from src.core.types import DataSource, NodeID
+    from src.inference.pipeline import DiagnosisPipeline
+    from src.reasoning.path_reasoning import ReasoningPath
+
+    phenotype, _ = _ids()
+    strong = NodeID(source=DataSource.MONDO, local_id="STRONG")
+    lower = NodeID(source=DataSource.MONDO, local_id="LOWER")
+    higher = NodeID(source=DataSource.MONDO, local_id="HIGHER")
+
+    # Insertion order puts the *lower* candidate first, so a tie would keep it
+    # ahead of the higher one. Python's sort is stable and `reverse=True` does
+    # not reverse equal elements.
+    embeddings = {strong: 0.9, lower: NEAR_TIE_A, higher: NEAR_TIE_B}
+    all_paths = {
+        str(disease): [ReasoningPath(nodes=[phenotype, disease], edges=[])]
+        for disease in (strong, lower, higher)
+    }
+
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub.config = type("C", (), {"eta": 0.7})()
+    stub.kg = type("KG", (), {"get_node": staticmethod(lambda _id: None)})()
+    stub._gnn_ready = True
+    stub._calculate_gnn_score = lambda sources, disease_id, patient: embeddings[disease_id]
+    stub._calculate_sp_score = lambda *a, **k: 0.3
+    stub._calculate_combined_score = lambda *a, **k: (
+        DiagnosisPipeline._calculate_combined_score(stub, *a, **k)
+    )
+    stub._calculate_reasoning_score = lambda paths: 0.0
+    stub._extract_supporting_genes = lambda paths: []
+    stub._determine_evidence_sources = lambda paths: []
+
+    shown = DiagnosisPipeline._score_and_rank_candidates(
+        stub, all_paths, [phenotype], None, top_k=2, include_ortholog_evidence=False
+    )
+
+    assert [c.disease_id for c in shown] == [strong, higher], (
+        "the higher candidate must hold the second slot; under the float32 "
+        "regression the tie hands it to the lower one"
+    )
+    assert [c.rank for c in shown] == [1, 2]
+
+
+def test_the_ranking_fixture_would_actually_catch_the_regression():
+    """Pins the premise of the test above.
+
+    The two candidates only sit on the top-k boundary if their combined scores
+    genuinely collapse under float32. If a future change to eta, the SP component
+    or the near-tie constants broke that, the ranking test would keep passing
+    while testing nothing.
+    """
+    eta, sp = 0.7, 0.3
+    as_f32 = [
+        float(
+            mix_embedding_and_sp_scores(
+                torch.tensor([emb], dtype=torch.float32),
+                torch.tensor([sp], dtype=torch.float32),
+                eta,
+            )[0]
+        )
+        for emb in (NEAR_TIE_A, NEAR_TIE_B)
+    ]
+
+    assert as_f32[0] == as_f32[1], "the fixture no longer exercises the regression"
 
 
 def test_combined_score_without_sp_is_pure_gnn(lookup):
