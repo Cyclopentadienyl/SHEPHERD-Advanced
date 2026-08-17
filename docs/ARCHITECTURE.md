@@ -22,6 +22,14 @@ SHEPHERD-Advanced is a rare disease diagnosis system that:
 
 ## 2. Core Architectural Principle: GNN-Primary
 
+> **Status note (2026-08).** The disease scorer policy — what ranks disease candidates, the role of
+> the shortest-path signal, and the role of path reasoning — is owned by
+> [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md), which also records **which parts of this
+> section the runtime does not yet implement**. In particular, candidate discovery is currently
+> gated by path search and the ranking score currently includes a shortest-path term; §2.1 below
+> describes the approved target, not present behaviour. This section will be reconciled with the
+> implementation when work item B-1 lands.
+
 ### 2.1 The Non-Negotiable Rule
 
 > **GNN generates embeddings and drives all scoring/ranking.**

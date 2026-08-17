@@ -3,25 +3,40 @@
 **Audience.** §1 and §2 are written for clinicians and require no engineering or mathematical
 background. §3 is for developers, bioinformaticians and reviewers who need the exact definition.
 
-**Why this document exists.** The SP score is easy to misread, and one particular misreading is
-clinically dangerous: treating a low score as evidence *against* a diagnosis. It is not. This
-document exists so that anyone who sees an SP number knows precisely what it does and does not say.
+**What this document is not.** It explains what the SP score means and how to read it safely. **It
+does not define ranking policy.** That authority belongs to
+[`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md), which records what the disease scorer is,
+what role SP may play, and why.
+
+**Why this document exists.** The SP score is easy to misread, and one misreading is clinically
+consequential: treating a low score as evidence *against* a diagnosis. It is not. This document
+exists so that anyone who sees an SP number knows precisely what it does and does not say.
 
 ---
 
 > ## Status — read this before anything else
 >
-> **Today (as of this document's date), the SP score is part of the ranking.** The pipeline computes
-> `confidence = 0.7 × GNN + 0.3 × SP` whenever a trained model and a shortest-path table are both
-> loaded (`src/inference/pipeline.py:1310`). It therefore influences the order of the candidate list
-> a clinician sees.
+> **Today, the SP score is part of the ranking.** How a candidate is scored depends on which
+> artifacts are loaded:
 >
-> **This is a deliberate divergence from the reference paper, and it is being changed.** The
-> approved direction is to remove SP from the ranking entirely and expose it as a **separate,
-> opt-in analysis over the already-ranked candidates**, with its own field or panel. Until that work
-> lands, §2's usage guidance describes how to *interpret* the SP column, not a switch that exists.
+> | Loaded | Score used for ranking |
+> |---|---|
+> | Trained model **and** shortest-path table | `0.7 × model score + 0.3 × SP` (`src/inference/pipeline.py:1310`) |
+> | Trained model only | Model score alone |
+> | No trained model | Path-reasoning score — **a different quantity written into the same field** |
 >
-> Sections §1 and §3 describe the score itself and are unaffected by that change.
+> **Also today: candidates are discovered by path search before any scoring happens.** A disease
+> with no qualifying path from the patient's phenotypes is never scored at all, whatever the model
+> would have said about it.
+>
+> **Both of these are being changed.** The approved target is that every disease is scored by the
+> model, that SP is removed from the ranking entirely, and that SP is re-exposed as a separate,
+> opt-in analysis over candidates that have already been ranked. Until that work lands, §2's
+> guidance describes how to *interpret* an SP value, not a switch that exists.
+>
+> The decision, its evidence and its current implementation status are in
+> [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md). Sections §1 and §3 describe the score
+> itself and are unaffected by that change.
 
 ---
 
@@ -30,105 +45,120 @@ document exists so that anyone who sees an SP number knows precisely what it doe
 ## The short version
 
 > **The SP score does not measure how likely the patient has the disease.**
-> **It measures how thoroughly medicine has already written down a connection between the patient's
-> symptoms and that disease.**
+>
+> **It measures how closely the patient's recorded phenotypes and a candidate disease are connected
+> in the knowledge graph this system currently has loaded, within a limit of five steps.**
 
-Everything else in this section follows from that sentence.
+Everything else in this section follows from that sentence — including, importantly, what the
+knowledge graph is and is not.
 
-## A picture
+## A picture, and where the picture ends
 
-Imagine every fact medicine has established is written on a card:
+Imagine a wall of cards. There is a card for each symptom, each gene, each disease. Wherever the
+system's source databases record a relationship — *this symptom occurs in this disease*, *this gene
+causes this disease*, *this symptom is a subtype of that symptom* — a string is tied between two
+cards.
 
-- a card for each symptom
-- a card for each gene
-- a card for each disease
-
-Whenever someone has published a relationship — *this symptom occurs in this disease*, *this gene
-causes this disease*, *this symptom is a subtype of that symptom* — a string is tied between the two
-cards. Our knowledge graph is that wall of cards and strings: roughly 27,990 disease cards, 19,389
-symptom cards, plus genes and other entities.
+**The wall is not "everything medicine knows".** It is what has been loaded into this system, from a
+specific set of curated sources, on a specific date. The sources this system is built to ingest
+include HPO, MONDO, Orphanet, OMIM, ClinVar, DisGeNET, GO, Reactome, PubMed/PubTator and the
+model-organism databases MGI and ZFIN (`src/core/types.py:145-168`) — but **which of them a
+particular deployment actually contains depends on how its graph was built**, and that is a question
+for whoever built it, not something the score reveals. The wall is finite, assembled by other people
+for other purposes, and certainly incomplete.
 
 A patient arrives with several symptoms. For one candidate disease, the SP score asks:
 
 > **Starting from each of the patient's symptom cards, how many strings must I follow to reach this
 > disease card?**
 
-| Strings to follow | What that means in practice |
+| Strings to follow | What that means |
 |---|---|
-| **1** | Someone has written directly that this disease presents with this symptom. Textbook. |
-| **2** | No one wrote it directly, but the symptom is linked to a gene, and that gene to the disease. |
-| **3–5** | Connected only through a long chain of separate facts. Very indirect. |
-| **Cannot reach within 5** | **Nobody has published anything connecting them, even indirectly.** |
+| **1** | The graph records a direct relationship between this symptom and this disease |
+| **2** | No direct relationship, but the symptom connects to a gene and that gene to the disease |
+| **3–5** | Connected only through a longer chain |
+| **Cannot reach within 5** | **No path was found in the current knowledge graph within five steps** |
 
-The system does this for every one of the patient's symptoms, takes the average number of strings,
-and converts it so that **fewer strings gives a higher score**.
+The system does this for each of the patient's symptoms, averages the number of strings, and
+converts it so that **fewer strings gives a higher score**.
 
-*Illustration:* lens dislocation → *FBN1* → Marfan syndrome is two strings. A textbook association
-of this kind scores high.
+*Illustration:* lens dislocation → *FBN1* → Marfan syndrome is two strings. A well-recorded
+association of this kind scores high.
 
 ## The score scale
 
 | Score | Average strings | Plain reading |
 |---|---|---|
-| 0.50 | 1 | "The textbook says this directly" |
-| 0.33 | 2 | "Connected through one gene" |
-| 0.25 | 3 | "Connected, but indirectly" |
-| 0.17 | 5 | "Barely connected at all" |
-| **0.14** | cannot reach | **"No published connection"** |
+| 0.50 | 1 | Directly connected in the graph |
+| 0.33 | 2 | Connected through one intermediate |
+| 0.25 | 3 | Connected, but indirectly |
+| 0.17 | 5 | At the edge of the search limit |
+| **0.14** | not reachable within 5 | **No path found in the current graph** |
 
-The scale is compressed at the far end on purpose and by consequence: the gap between 1 string and
-2 strings (0.167) is **seven times** the gap between 5 strings and no connection at all (0.024).
-Nearly all of the score's discriminating power sits in the 1–3 string range.
+The scale is compressed at the far end — not by design, but as a mathematical consequence of the
+`1/(1+distance)` transform. The gap between 1 string and 2 strings (0.167) is **seven times** the
+gap between 5 strings and no path found (0.024). Nearly all of the score's discriminating power sits
+in the 1–3 string range.
 
 ## The single most important point
 
 **A low SP score does not mean the patient does not have the disease.**
 
-A low score means only that **medicine has not written this connection down**. That can happen for
-two completely different reasons:
+A low score means only this: **no path was found in the current knowledge graph within five steps.**
+That single observation is consistent with several very different situations:
 
-- **(a)** the disease genuinely has nothing to do with this patient, **or**
-- **(b)** the patient really does have it, and this presentation has simply never been reported.
+- the disease is genuinely unrelated to this patient;
+- the presentation is real but has not been reported;
+- the relevant association exists in the literature but has not been curated into any of our source
+  databases;
+- it was curated, but our ingestion or identifier mapping missed it;
+- our copy of the graph is out of date;
+- the connection exists but requires more than five steps.
 
-**The SP score cannot tell these apart. To it, they look identical.**
+**The SP score cannot distinguish any of these from one another.**
 
-Rare-disease diagnosis is largely the business of case **(b)**. A patient who has seen many
-specialists without an answer very often has a presentation that is not in any textbook — which is
-precisely the situation in which the SP score is least informative and most likely to mislead.
+Rare-disease diagnosis often involves atypical or incompletely represented presentations, so the
+second possibility must not be dismissed. Some sense of how sparse this domain is: in the
+Undiagnosed Diseases Network cohort described by the reference paper, **83% of diseases and 79% of
+genes were represented by only a single patient**, and 48% of phenotype terms likewise.
 
-A useful one-line summary to keep in mind:
+A useful one-line summary:
 
-> **The SP score measures how *unsurprising* a diagnosis would be.**
-> In rare disease, the correct answer is frequently the surprising one.
+> **The SP score measures how *unsurprising* a candidate would be, given what this system currently
+> has loaded.**
 
-## Four things the score cannot tell you
+## Five things the score cannot tell you
 
-**1. It cannot tell you what kind of connection it found.** Every relationship in the graph is
-treated as one string, regardless of type. "Two strings" might be:
+**1. It cannot tell you what kind of connection it found.** Every relationship in the graph counts
+as one string, regardless of type. "Two strings" might be:
 
 - symptom → *is a broader category of* → symptom → *is a broader category of* → symptom
-  (**pure classification hierarchy — no biological link to the disease at all**), or
-- symptom → *associated with* → gene → *causes* → disease (**a real causal chain**).
+  (**movement within a classification hierarchy — no biological link to the disease at all**), or
+- symptom → *associated with* → gene → *causes* → disease (**a mechanistic chain**).
 
-Both appear in the score as the number `2`. A high SP score can therefore come from mere
-classification proximity rather than from any mechanism. **This is the main source of false
-confidence in this number.** To see what the steps actually are, use the reasoning-path evidence,
-which preserves the relationship types; the SP score does not.
+Both appear in the score as the number `2`. A high SP score can therefore arise from classification
+proximity rather than from any mechanism. **This is the main source of false confidence in this
+number.** To see what the steps actually are, use the reasoning-path evidence, which preserves
+relationship types; the SP score does not.
 
-**2. It cannot tell you how strong the evidence is.** A single 1987 case report and a
-10,000-patient cohort study are both "one string", weighted identically.
+**2. It cannot tell you how strong the evidence is.** A single case report and a large cohort study
+are both "one string", weighted identically.
 
 **3. It cannot distinguish "never studied" from "studied and refuted".** The graph records that a
-connection exists, not whether it has held up.
+relationship was asserted, not whether it has held up.
 
-**4. It is dragged down by the patient's least-connected symptom.** The score averages the distances
-across all of the patient's symptoms. So a patient with nine textbook features and one unexplained
-feature scores lower than a patient with nine textbook features alone — and **the fewer symptoms
-recorded, the more heavily a single unexplained one counts**. With three symptoms, one unreachable
-symptom removes roughly 30% of the usable score range.
+**4. A high score is not proof either.** The limits above are symmetric. A short path shows that
+these sources record a connection — not that the connection is causal, current, clinically
+meaningful, or relevant to this patient.
+
+**5. It is dragged down by the patient's least-connected symptom.** The score averages distances
+across all of the patient's recorded symptoms. A patient with nine well-connected features and one
+unconnected feature scores lower than one with the nine alone — and **the fewer symptoms recorded,
+the more heavily a single unconnected one counts**. With three symptoms, one unreachable symptom
+removes roughly 30% of the usable score range.
 
 Clinically this cuts both ways. An atypical feature *should* sometimes argue against a diagnosis.
-But rare diseases frequently present as "mostly consistent, plus one feature nobody can explain" —
+But rare diseases frequently present as "mostly consistent, plus one feature nobody can explain",
 and that unexplained feature is often the one that eventually solves the case. **The SP score
 penalises it.**
 
@@ -136,96 +166,94 @@ penalises it.**
 
 # §2. How to use the score
 
-## It answers a different question from the model's own score
+## It answers a different question from the model's score
 
-The system produces two independent numbers, and confusing them is the main risk.
+The system produces two scores with **different intended interpretations**. They are not
+independent — both are derived from the same knowledge graph, and the model is trained on it — but
+they are asking different things, and confusing them is the main risk.
 
-| | Question it answers | Clinical analogue |
+| | Question it addresses | Clinical analogue |
 |---|---|---|
-| **GNN score** | *Does this patient's pattern resemble this disease?* | The physician who recognises a gestalt: "I have not seen this exact combination, but it looks like D" |
-| **SP score** | *Has anyone connected these dots before?* | The well-read physician: "I recall this combination from the literature" |
+| **Model score** | *Does this patient's pattern resemble this disease?* | The physician who recognises a gestalt: "I have not seen this exact combination, but it looks like D" |
+| **SP score** | *Is this connection already recorded in what we loaded?* | The physician checking a reference: "this combination appears in our sources" |
 
-Both are legitimate clinical faculties. They are not the same faculty, and averaging them into one
-number — which the system currently does — hides which one is speaking.
+Both are legitimate. They are not the same question, and averaging them into one number — which the
+system currently does — hides which one is speaking.
 
-## Read the two scores together, never the SP score alone
+## Read the two scores together, never SP alone
 
-|  | **High SP** (well documented) | **Low SP** (no published link) |
+|  | **High SP** (closely connected in the graph) | **Low SP** (weakly or not connected) |
 |---|---|---|
-| **High GNN** | **Textbook match.** Expected; confirmatory. Low review effort. | **Novel hypothesis.** The model sees a resemblance the literature has not recorded. **Highest review value.** |
-| **Low GNN** | Documented disease that does not fit this patient. | **No signal.** This is the great majority of the 27,990 diseases. |
+| **High model score** | **Expected.** Model agreement plus a short recorded connection. Usually quick to check against known criteria. | **Model-supported, weakly connected in the current graph.** May warrant review for a novel presentation, a source-coverage gap, a mapping problem, or model error. |
+| **Low model score** | Recorded connection, but the pattern does not fit this patient. | **No signal.** This is the great majority of the ~27,990 diseases. |
 
-**The bottom-right cell is the reason a low SP score alone is useless.** Most diseases have no
-published connection to any given patient, simply because they are unrelated. Selecting on "low SP"
-returns an enormous and overwhelmingly wrong set.
+**The bottom-right cell is why a low SP score alone is useless.** Most diseases have no path to any
+given patient simply because they are unrelated. Selecting on "low SP" returns an enormous and
+overwhelmingly wrong set.
 
 ## A warning that must not be softened
 
-> **High GNN + low SP means the candidate is *novel*. It does not mean it is *more likely to be
-> correct*.**
+> **High model score with low SP means the two signals disagree. It does not mean the candidate is
+> more likely to be correct.**
 
-These are different properties. On average, textbook matches are probably *more* often correct —
-they are textbook because they are common and well characterised.
+Disagreement is worth a clinician's attention because *something* is unusual — but that something
+may be a genuinely novel presentation, a gap in what we loaded, an identifier-mapping error, or the
+model being wrong. **The SP score cannot tell you which.**
 
-The value of a high-GNN/low-SP candidate is different: **it is the kind of candidate that no
-literature-based method could ever surface.** It is where this system contributes something a
-literature search cannot. That makes it worth a clinician's attention — not because the odds are
-better, but because nobody else will raise it.
-
-Reading "novel" as "more likely" would be a serious error.
+On average, candidates that are both model-supported and well connected are probably *more* often
+correct — they are well connected because they are well characterised. Reading "the signals
+disagree" as "this is more likely" would be a serious error.
 
 ## When to consult the SP score
 
 **Consult it when you already have a short list of plausible candidates** — the model's top 10 or
-20, or a set of genes or diseases you are actively weighing. In that setting all candidates are
-already reasonable, and "which of these is best supported by existing literature" is a genuine
-discriminator. This is exactly the setting the reference paper designed it for (§3).
+20, or a set you are actively weighing. In that setting all candidates are already reasonable, and
+"which of these is best supported by what we have loaded" is a genuine discriminator. This is the
+setting the reference paper designed the signal for (§3).
 
-Concretely, it is useful for:
+Specifically, it helps with:
 
-- **separating confirmation from discovery** — which of these high-ranked candidates would a
-  literature search also have found, and which would it have missed;
+- **separating confirmation from discovery** — which high-ranked candidates would a conventional
+  reference check also have surfaced, and which would it have missed;
 - **triaging review effort** — a high-SP candidate can often be checked against known criteria
   quickly; a low-SP one needs primary reasoning;
-- **explaining a ranking to a colleague** — "the model ranks this first, and there is a documented
-  two-step link" is a different statement from "the model ranks this first and nothing in the
-  literature connects them".
+- **framing a discussion** — "the model ranks this first and there is a recorded two-step
+  connection" is a different statement from "the model ranks this first and our graph has no path".
 
 ## When **not** to consult it
 
 | Situation | Why |
 |---|---|
-| **Ranking the full disease universe** | Most candidates are unreachable and receive the same floor score. The number stops discriminating and becomes little more than a reachability flag. |
-| **Looking specifically for undocumented or novel presentations** | The score systematically penalises exactly what you are looking for. |
-| **As evidence that a diagnosis is wrong** | Absence of a published link is not evidence of absence. See §1. |
-| **As an explanation of mechanism** | The score does not know what kind of steps it counted. Use the reasoning paths instead. |
+| **Ranking the full disease universe** | Most candidates are unreachable and receive the same floor value. The number stops discriminating and becomes little more than a reachability flag. |
+| **Looking for undocumented or atypical presentations** | The score penalises exactly what you are looking for. |
+| **As evidence that a diagnosis is wrong** | No path found is not evidence of no relationship. See §1. |
+| **As an explanation of mechanism** | The score does not know what kinds of steps it counted. Use the reasoning paths instead. |
 
 ## On the question of rare diseases ranking too low
 
 A question raised during clinical review: *the candidate list tends to put common diseases first;
 how can rare diseases and hidden associations be surfaced?*
 
-**The concern is well founded.** Two mechanisms in the current system push well-studied — and
-therefore usually more common — diseases upward:
+**Two mechanisms in the current system plausibly push some candidates upward:**
 
-1. **Candidate discovery is currently gated by graph paths**, and the path search stops after a
-   fixed number of paths per symptom. Densely connected diseases are reached first and reached more
-   often. Dense connection correlates with being well studied.
-2. **The SP term in the ranking score** directly rewards documented proximity, at 30% weight.
+1. **Candidate discovery is gated by path search**, which stops after a fixed number of paths per
+   symptom, in traversal order. Diseases with shorter or denser graph connections are reached first
+   and reached more often.
+2. **The SP term in the ranking score** directly rewards short graph connections, at 30% weight.
 
-Both are being addressed: the first by moving candidate discovery to the model (so every disease is
-scored, whether or not a path exists), the second by removing SP from the ranking.
+Both are being addressed: the first by scoring every disease whether or not a path exists, the
+second by removing SP from the ranking
+([`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md)).
 
-**But the natural-seeming fix — "rank by low SP to find the rare ones" — is wrong**, for the reason
-given above: low SP selects mostly unrelated diseases. The correct instrument is the 2×2 above:
-**among candidates the model already ranks highly, low SP marks those whose high ranking is not
-explained by existing literature.** That is a filter applied *after* ranking, never a ranking
-criterion itself.
+**Two honest qualifications.** First, what the code establishes is a possible bias towards **shorter
+or denser graph connections**. Whether denser connection tracks *commonness* of disease is a further
+step that the code does not establish and that has not been measured here; a measurement is planned
+as part of the candidate-discovery work, using graph connectivity as a proxy.
 
-**Honest limitation.** The two mechanisms above are derived from how the code works, not from
-measurement — no study has yet been run on this deployment to quantify how strongly ranking favours
-well-studied diseases. Such a measurement is planned as part of the candidate-discovery work, using
-knowledge-graph connectivity as a proxy for how well studied a disease is.
+Second — **the natural-seeming fix, "rank by low SP to find the rare ones", does not work**, for the
+reason given above: low SP selects mostly unrelated diseases. The usable instrument is the 2×2:
+**among candidates the model already ranks highly, low SP marks those whose ranking is not explained
+by a recorded connection.** That is a filter applied *after* ranking, never a ranking criterion.
 
 ---
 
@@ -258,9 +286,10 @@ The paper's stated rationale, quoted:
 > candidate genes**."
 
 That observation is cited to a survey of gene-prioritisation tools (Zolotareva & Kleine,
-*J. Integr. Bioinform.* 16, 20180069, 2019), not to an experiment within the paper. **No ablation of
-SPLSIM appears in the paper**, and the selected value of η is published in the authors' repository
-rather than in the article.
+*J. Integr. Bioinform.* 16, 20180069, 2019) rather than to an experiment within the paper. **No
+ablation of SPLSIM appears in the main article as reviewed**; supplementary materials were not
+examined. The selected value of η is published in the authors' repository rather than in the
+article.
 
 ### Where the paper uses it — and where it does not
 
@@ -301,7 +330,7 @@ while queue:
 #    target_type, distance) as four parallel tensors in shortest_paths.pt.
 ```
 
-Pairs absent from the table mean "not reachable within `max_hops`".
+Pairs absent from the table mean "no path found within `max_hops`".
 
 Online (`src/inference/pipeline.py:_calculate_sp_score`), per candidate:
 
@@ -314,36 +343,62 @@ for ph_idx in patient_phenotype_indices:
     total += d if d is not None else UNREACHABLE
 
 avg_distance = total / len(patient_phenotype_indices)
-return 1.0 / (1.0 + avg_distance)                # → [0.143, 0.5]
+return 1.0 / (1.0 + avg_distance)                # → [1/7, 1/2]
 ```
+
+**Two distinct return regimes, currently indistinguishable to a caller.** The computation above
+yields a value in `[1/7, 1/2]`. Separately, the function returns **`0.0`** when it cannot compute at
+all — no shortest-path table loaded, no node mapping, the target absent from the mapping, or none of
+the patient's phenotypes resolvable (`src/inference/pipeline.py:1333, 1337, 1347, 1358`). Because
+`0.0 < 1/7`, **a lookup or mapping failure produces a lower value than a genuine "no path found"**,
+and nothing currently distinguishes the two. Any surface that displays SP should treat `0.0` as
+*unavailable*, not as a distance.
 
 ## Three ways this differs from the paper — all of them material
 
 | | Paper | This implementation | Consequence |
 |---|---|---|---|
 | **Task** | candidate **gene** ranking, with a short list | **disease** ranking, over whatever the path search admits | The condition the paper's rationale depends on — a short candidate list — does not hold |
-| **Transform** | `NORM(mean(−d))`, min–max rescaled **across the candidate set**, giving `[−1, 1]` | `1/(1 + mean(d))`, an **absolute** transform giving `[0.143, 0.5]` | Two effects. (a) Because the range is not `[−1,1]`, `η` is not the effective weight: with `η = 0.7` the GNN term spans 0.7 while the SP term spans only 0.107 — nominally 70/30, structurally closer to 87/13, and the true balance depends on how widely each term actually varies, which has not been measured here. (b) The paper's candidate-relative normalisation cancels a phenotype that is far from *every* candidate; the absolute transform does not, so §1's "least-connected symptom" effect is stronger here than in the paper. |
+| **Transform** | `NORM(mean(−d))`, min–max rescaled **across the candidate set**, giving `[−1, 1]` | `1/(1 + mean(d))`, an **absolute** transform giving `[1/7, 1/2]` | See below |
 | **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task; chosen value not published in the article | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
 
-A fourth difference is worth noting for interpretation rather than as a defect: the paper's
-`d(p, g)` and this implementation's `d(p, d)` are both computed on an undirected, type-erased graph,
-so §1's caveat about hop types applies to the paper as well.
+The transform difference has two consequences:
 
-## Cost, and why it currently constrains the design
+- **η is not the effective weight.** Comparing *maximum theoretical spans*: with `η = 0.7` the model
+  term spans 0.7 while the SP term spans 0.107 — nominally 70/30, but 87/13 by span. This is a
+  statement about the ranges the two terms can occupy, **not** a measurement of their actual
+  contribution, which depends on how widely each varies in practice and has not been measured here.
+- **Candidate-relative normalisation removes a patient-level additive offset only when that offset
+  is constant across all candidates.** A phenotype contributes little or no discrimination when it
+  is *equally* distant from every candidate — for example when it is unreachable from all of them,
+  so every candidate receives the same `UNREACHABLE` value. It is **not** generally cancelled merely
+  because all its distances are large: distances of 5 to one candidate and 6 to another still
+  contribute to the spread. The absolute transform used here performs no such cancellation in any
+  case, so §1's "least-connected symptom" effect is stronger here than in the paper.
+
+**Unverified equivalence.** This implementation traverses an undirected, type-erased graph
+(`build_undirected_adjacency`, above). The paper states only that `d(p, g)` is "the minimum number
+of hops between p and g in the KG" and does not specify directionality or type handling. Whether the
+paper's traversal is equivalent is **not established here**; §1's caveat about hop types is
+demonstrated for this implementation and assumed, not verified, for the paper.
+
+## Cost, and why it does not constrain the design
 
 The lookup is a linear scan of one phenotype's slice per candidate per phenotype. With a few hundred
-candidates this is unnoticeable. Over all 27,990 diseases and ~10 phenotypes it becomes roughly
+candidates this is unnoticeable. Over all ~27,990 diseases and ~10 phenotypes it becomes roughly
 280,000 loop iterations, each launching several small tensor operations.
 
 **This is a property of the current lookup structure, not of shortest-path scoring itself.** Sorting
-each phenotype's slice by target and using a binary search — or storing the table as a sparse matrix
-— would make the whole computation a single vectorised operation, in the same cost class as the
-model's own scoring step. The constraint is therefore an implementation artifact and should not be
-cited as a reason to prefer one scoring design over another.
+each phenotype's slice by target and using binary search — or storing the table as a sparse matrix —
+would make the whole computation a single vectorised operation, in the same cost class as the
+model's own scoring step. The constraint is an implementation artifact and should not be cited as a
+reason to prefer one scoring design over another.
 
 ## Related documents
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the layered design and the scoring model
+- [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md) — **the authority for scorer policy**: what
+  ranks disease candidates, what role SP may play, the evidence, and implementation status
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the layered design
 - [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) —
   open findings on candidate discovery, including the path-gating described in §2
 - [`TRAINING_PIPELINE_PLAYBOOK.md`](TRAINING_PIPELINE_PLAYBOOK.md) — how `shortest_paths.pt` is built
