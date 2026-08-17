@@ -1322,10 +1322,17 @@ class DiagnosisPipeline:
 
         from src.inference.scoring import mix_embedding_and_sp_scores
 
+        # float64 is required, not incidental. The scores arriving here are Python
+        # doubles; constructing float32 tensors would round them to ~7 significant
+        # digits, and two candidates whose true scores differ below that threshold
+        # would collapse to an exact tie. A tie is then resolved by sort stability
+        # — that is, by input order — which can move a candidate across the top-k
+        # boundary a clinician sees. The extraction is only behaviour-preserving in
+        # double precision.
         combined = float(
             mix_embedding_and_sp_scores(
-                torch.tensor([emb_score]),
-                torch.tensor([sp_score]),
+                torch.tensor([emb_score], dtype=torch.float64),
+                torch.tensor([sp_score], dtype=torch.float64),
                 self.config.eta,
             )[0]
         )

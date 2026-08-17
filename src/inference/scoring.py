@@ -1,8 +1,17 @@
 """
-Scoring primitives — the single authority for how a candidate is scored.
-========================================================================
-Every surface that produces or reproduces a disease score composes these
-functions. Nothing re-implements the arithmetic.
+Shared scoring primitives for served inference and offline evaluation.
+======================================================================
+**Migration status: in progress.** `DiagnosisPipeline` composes these functions;
+`scripts/evaluate_model.py` does not yet and is migrated later in B-0. Until it
+is, two implementations of these formulas still exist, which is the condition
+this module is being built to end — not one it has already ended.
+
+Scope, and a boundary that is mechanically enforced. This module covers the
+**served inference** and **offline evaluation** paths. It deliberately does not
+cover training: `.import-linter.ini` places `src.inference` above `src.training`,
+so a training module importing this one would invert the layering. Training keeps
+its own implementation, and the correspondence between the two is a property to
+be held by equivalence tests rather than by shared code.
 
 Module: src/inference/scoring.py
 
@@ -32,11 +41,16 @@ the distance: it is the quantity a clinician can reason about ("within three
 steps"), whereas the score compresses the far end so heavily that most of its
 range is spent on the first two steps.
 
-Availability is a mask, not a sentinel. The legacy scalar wrapper collapses
-unavailable to `0.0` to preserve existing behaviour, but that collapse is lossy
-in a way that matters — `0.0` is *below* the value a genuine "no path found"
-produces — so the information is kept here even though today's caller discards
-it.
+Availability is a mask, not a sentinel — but a narrow one at this stage. It
+currently separates only "there was nothing to measure from" (no phenotypes, or
+no candidates) from "a distance was produced". The other unavailable states —
+no table loaded, target unmapped, no phenotype mapped — are still detected by the
+caller before this module is reached, and the legacy wrapper collapses them to
+`0.0`. That collapse is lossy in a way that matters, since `0.0` is *below* the
+value a genuine "no path found" produces. **The full typed status
+(`COMPUTED` / `COMPUTED_PARTIAL` / `NO_TABLE` / `TARGET_UNMAPPED` /
+`NO_PHENOTYPE_MAPPED`) belongs to the B-1 analysis record; no caller should read
+this Boolean as though it already carried those semantics.**
 
 Dependencies: torch. Import this module lazily from anywhere that must remain
 importable without torch.
@@ -113,7 +127,9 @@ def pool_patient_embeddings(
     if len(phenotype_indices) == 0:
         raise ValueError("pool_patient_embeddings requires at least one phenotype index")
 
-    idx = torch.as_tensor(list(phenotype_indices), dtype=torch.long)
+    idx = torch.as_tensor(
+        phenotype_indices, dtype=torch.long, device=phenotype_embeddings.device
+    )
     idx = idx.clamp(min=0, max=phenotype_embeddings.size(0) - 1)
     return phenotype_embeddings[idx].mean(dim=0)
 
@@ -154,13 +170,24 @@ def sp_mean_distances(
     """Mean hop distance from the patient's phenotypes to each candidate.
 
     Returns ``(mean_distance, available)``, both ``(C,)``. ``available`` is False
-    for a candidate whose distance could not be computed at all — distinct from a
-    candidate that is simply far away, which is available with a large distance.
+    only when there was nothing to measure from — no phenotype indices, or no
+    candidates. It is **not** the full unavailability contract: a missing table,
+    an unmapped target or an unmapped phenotype set are detected by the caller
+    before this function is reached. A candidate that is simply far away *is*
+    available, with a large distance.
 
     A phenotype with no path to a candidate contributes
     ``lookup.unreachable_distance`` rather than being dropped, so a candidate all
     of whose phenotypes are unreachable is still *computed*: it has a real value,
     the largest one.
+
+    **The interface is batched; this implementation is not yet vectorised.** It
+    scans each phenotype's slice once per candidate, so the cost is
+    ``O(candidates x phenotypes x slice length)`` — about 4,000 slice scans at 200
+    candidates and 20 phenotypes, and over 550,000 at full-universe scale. A
+    batched representation (sorted composite keys with ``torch.searchsorted``, or
+    a sparse index) replaces this next; the signature is already the one it will
+    have, so callers do not change.
     """
     n_candidates = len(target_indices)
     distances = torch.zeros(n_candidates, dtype=torch.float32)

@@ -1,26 +1,35 @@
 """
-The scoring primitives are the single authority, and they must agree with what
-they replaced.
+The scoring primitives must agree with what they replaced, and the pipeline must
+actually route through them.
 =============================================================================
 `src/inference/scoring.py` exists because the score a clinician sees and the
 score an offline evaluation reports were computed by two separate
 implementations of the same formulas. Two implementations drift; when they
 drift, the evaluation stops describing the thing being evaluated.
 
-That makes two properties worth testing, and they are different:
+**That condition is not yet ended.** The pipeline composes the primitives;
+`scripts/evaluate_model.py` does not yet. These tests cover the migrated half.
+
+Three properties worth testing, and they are different:
 
   - **Agreement.** The primitives compute what the previous inline code
     computed. Each test below reimplements the legacy formula *independently*
     rather than calling the primitive twice — a test that calls the thing it is
     testing to produce its own expectation cannot detect a wrong formula.
   - **Authority.** The pipeline actually routes through the primitives. A
-    correct primitive that nobody calls prevents nothing, so the last test
-    replaces a primitive and asserts the pipeline's answer follows it.
+    correct primitive that nobody calls prevents nothing, so each wrapper has a
+    test that replaces its primitive and asserts the pipeline's answer follows.
+  - **Precision.** The scalar wrappers must reproduce the legacy Python-double
+    arithmetic *exactly*. Rounding the mixture to float32 would let two
+    candidates whose true scores differ below its resolution become an exact
+    tie, resolved thereafter by input order — which can move a candidate across
+    the top-k boundary a clinician sees.
 
-Tolerances are declared rather than assumed: floating-point summation order
-differs between a scalar loop and a batched reduction, so bit-identity is not
-achievable and asserting it would produce a flaky test or a disabled one.
-Ranking, unlike arithmetic, must match exactly.
+Tolerances are declared where they belong and refused where they do not.
+Comparing a batched reduction with a scalar loop needs one, because summation
+order differs. The scalar mixture does not get one: its contract is behaviour
+preservation, and a tolerance there would permit the very rounding these tests
+forbid. Ranking is always asserted exactly.
 """
 import pytest
 
@@ -302,3 +311,238 @@ def test_pipeline_gnn_score_routes_through_the_primitive(monkeypatch):
 
     # (0.5 + 1) / 2 — the patched cosine, carried through the normalisation.
     assert score == pytest.approx(0.75, abs=ATOL)
+
+
+# ---------------------------------------------------------------------------
+# Precision — the extraction is only behaviour-preserving in double precision
+# ---------------------------------------------------------------------------
+# Two scores a fifth of a float32 step apart near 0.5. Distinct as Python
+# doubles, identical once rounded to float32. Constructed rather than borrowed:
+# a pair that does *not* collapse would let these tests pass with the bug
+# present, which is the failure mode a regression test exists to prevent.
+_F32_STEP_NEAR_HALF = 2.0**-24
+NEAR_TIE_A = 0.5 + _F32_STEP_NEAR_HALF * 0.2
+NEAR_TIE_B = 0.5 + _F32_STEP_NEAR_HALF * 0.4
+
+
+def test_the_near_tie_pair_really_does_collapse_in_float32():
+    """Pins the premise of the tests below. If a future torch changes rounding
+    such that these no longer collapse, the regression tests would silently stop
+    testing anything, and this fails first to say so."""
+    assert NEAR_TIE_A != NEAR_TIE_B
+    assert (
+        torch.tensor([NEAR_TIE_A], dtype=torch.float32).item()
+        == torch.tensor([NEAR_TIE_B], dtype=torch.float32).item()
+    )
+
+
+def _legacy_mixture(eta, emb, sp):
+    """The η mixture as the pipeline computed it before extraction: Python
+    doubles throughout."""
+    return eta * emb + (1.0 - eta) * sp
+
+
+@pytest.mark.parametrize("eta", [0.0, 0.3, 0.7, 1.0, 0.123456789])
+def test_float64_mixture_is_exactly_the_legacy_arithmetic(eta):
+    """Not "within tolerance" — exactly equal. The scalar wrapper's contract is
+    behaviour preservation, and a tolerance here would permit precisely the
+    rounding this test exists to forbid."""
+    import random
+
+    random.seed(20260817)
+    for _ in range(2000):
+        emb, sp = random.random(), random.random()
+        got = float(
+            mix_embedding_and_sp_scores(
+                torch.tensor([emb], dtype=torch.float64),
+                torch.tensor([sp], dtype=torch.float64),
+                eta,
+            )[0]
+        )
+        assert got == _legacy_mixture(eta, emb, sp)
+
+
+def test_float32_mixture_would_have_lost_the_distinction():
+    """Why the dtype is specified rather than left to default.
+
+    This documents the defect the float64 requirement prevents: constructing the
+    tensors without a dtype gives float32, and two candidates whose true scores
+    differ below its resolution become an exact tie.
+    """
+    as_f32 = [
+        float(mix_embedding_and_sp_scores(
+            torch.tensor([v], dtype=torch.float32),
+            torch.tensor([0.0], dtype=torch.float32),
+            1.0,
+        )[0])
+        for v in (NEAR_TIE_A, NEAR_TIE_B)
+    ]
+    as_f64 = [
+        float(mix_embedding_and_sp_scores(
+            torch.tensor([v], dtype=torch.float64),
+            torch.tensor([0.0], dtype=torch.float64),
+            1.0,
+        )[0])
+        for v in (NEAR_TIE_A, NEAR_TIE_B)
+    ]
+
+    assert as_f32[0] == as_f32[1], "float32 collapses them — the regression"
+    assert as_f64[0] != as_f64[1], "float64 keeps them apart — the fix"
+
+
+def test_near_tie_candidate_order_survives_the_mixture():
+    """Ordering, not just arithmetic. Candidate B outranks A by less than a
+    float32 step; the ranking must still put B first."""
+    scores = torch.tensor([NEAR_TIE_A, NEAR_TIE_B], dtype=torch.float64)
+
+    mixed = mix_embedding_and_sp_scores(scores, torch.zeros(2, dtype=torch.float64), 1.0)
+
+    assert mixed.argsort(descending=True, stable=True).tolist() == [1, 0]
+
+
+def test_top_k_boundary_is_not_moved_by_the_mixture():
+    """The clinical consequence of a lost distinction: a candidate crossing the
+    edge of what a clinician is shown."""
+    top_k = 2
+    emb = torch.tensor([0.9, NEAR_TIE_B, NEAR_TIE_A, 0.1], dtype=torch.float64)
+
+    mixed = mix_embedding_and_sp_scores(emb, torch.zeros(4, dtype=torch.float64), 1.0)
+    shown = mixed.argsort(descending=True, stable=True)[:top_k].tolist()
+
+    assert shown == [0, 1], "candidate 1 must hold the second slot, not candidate 2"
+
+
+# ---------------------------------------------------------------------------
+# Authority — every primitive the pipeline claims to route through
+# ---------------------------------------------------------------------------
+def _sp_ready_pipeline_stub(lookup):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        _sp_ready=True,
+        _sp_lookup=lookup,
+        _sp_max_hops=lookup.max_hops,
+        _node_id_to_idx={"phenotype": {"hpo:HP:0000001": 0}, "disease": {"mondo:D1": 5}},
+    )
+
+
+def _ids():
+    from src.core.types import DataSource, NodeID
+
+    return (
+        NodeID(source=DataSource.HPO, local_id="HP:0000001"),
+        NodeID(source=DataSource.MONDO, local_id="D1"),
+    )
+
+
+def test_pipeline_sp_score_routes_through_both_sp_primitives(monkeypatch, lookup):
+    import src.inference.scoring as scoring
+    from src.inference.pipeline import DiagnosisPipeline
+
+    seen = {}
+
+    def fake_distances(lk, phenotypes, targets, target_type):
+        seen["called"] = (list(phenotypes), list(targets), target_type)
+        return torch.tensor([3.0]), torch.tensor([True])
+
+    monkeypatch.setattr(scoring, "sp_mean_distances", fake_distances)
+    monkeypatch.setattr(scoring, "sp_scores_from_distances", lambda d: d * 100.0)
+
+    source, target = _ids()
+    got = DiagnosisPipeline._calculate_sp_score(
+        _sp_ready_pipeline_stub(lookup), [source], target, 1
+    )
+
+    assert seen["called"] == ([0], [5], 1), "the pipeline must pass resolved indices"
+    assert got == pytest.approx(300.0), "and must return what the transform gave it"
+
+
+def test_pipeline_sp_score_honours_the_availability_mask(monkeypatch, lookup):
+    """Unavailable collapses to 0.0 in this legacy wrapper. That is the behaviour
+    being preserved, not the behaviour being endorsed — see the module docstring."""
+    import src.inference.scoring as scoring
+    from src.inference.pipeline import DiagnosisPipeline
+
+    monkeypatch.setattr(
+        scoring, "sp_mean_distances",
+        lambda *a, **k: (torch.tensor([3.0]), torch.tensor([False])),
+    )
+
+    source, target = _ids()
+    got = DiagnosisPipeline._calculate_sp_score(
+        _sp_ready_pipeline_stub(lookup), [source], target, 1
+    )
+
+    assert got == 0.0
+
+
+def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup):
+    import src.inference.scoring as scoring
+    from src.inference.pipeline import DiagnosisPipeline
+
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub.config = type("C", (), {"eta": 0.7})()
+    stub._calculate_gnn_score = lambda *a, **k: 0.8
+    stub._calculate_sp_score = lambda *a, **k: 0.2
+
+    monkeypatch.setattr(
+        scoring, "mix_embedding_and_sp_scores", lambda e, s, eta: torch.tensor([42.0])
+    )
+
+    source, target = _ids()
+    combined, emb, sp = DiagnosisPipeline._calculate_combined_score(
+        stub, [source], target, None
+    )
+
+    assert combined == pytest.approx(42.0), "the wrapper must use the primitive"
+    assert (emb, sp) == (0.8, 0.2), "and must report the components unchanged"
+
+
+def test_combined_score_without_sp_is_pure_gnn(lookup):
+    """The documented degradation: no shortest-path table means effective eta=1,
+    and the SP component is reported as 0.0 rather than invented."""
+    from src.inference.pipeline import DiagnosisPipeline
+
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub._sp_ready = False
+    stub.config = type("C", (), {"eta": 0.7})()
+    stub._calculate_gnn_score = lambda *a, **k: 0.8
+
+    source, target = _ids()
+
+    assert DiagnosisPipeline._calculate_combined_score(
+        stub, [source], target, None
+    ) == (0.8, 0.8, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Device placement
+# ---------------------------------------------------------------------------
+def test_pooling_places_its_index_on_the_embedding_device(embeddings):
+    """The index tensor follows the embeddings rather than defaulting to CPU.
+
+    On CPU this is invisible; the full-universe evaluator will hold embeddings on
+    an accelerator, where a CPU index tensor is at best an implicit conversion and
+    at worst an error. Pinning it here means the deployed path is not relying on
+    an undocumented indexing convenience.
+    """
+    out = pool_patient_embeddings(embeddings, [1, 2, 3])
+
+    assert out.device == embeddings.device
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
+def test_pooling_and_cosine_work_on_an_accelerator(embeddings):
+    device = torch.device("cuda")
+    on_device = embeddings.to(device)
+
+    patient = pool_patient_embeddings(on_device, [1, 2, 3])
+    scores = cosine_scores(patient, on_device)
+
+    assert patient.device.type == "cuda"
+    assert scores.device.type == "cuda"
+    assert torch.allclose(
+        scores.cpu(),
+        cosine_scores(pool_patient_embeddings(embeddings, [1, 2, 3]), embeddings),
+        atol=1e-5,
+    )
