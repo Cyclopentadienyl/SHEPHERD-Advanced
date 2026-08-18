@@ -254,15 +254,19 @@ def build_loader_config(args: argparse.Namespace) -> Any:
 
 def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    n_samples: int, device: torch.device, loader_config: Any,
-                   cuda_executed: Optional[bool] = None) -> Any:
+                   cuda_executed: Optional[bool] = None,
+                   mode: str = "A",
+                   candidate_construction: str =
+                   "per-batch 2-hop subgraph seeded from answers and negatives",
+                   model_construction: str = "frozen evaluator (legacy)") -> Any:
     from src.evaluation.measurement import LEGACY_TRUNCATION_K, MeasurementManifest
     from src.utils.fingerprint import compute_fingerprint
 
     return MeasurementManifest(
-        mode="A",
+        mode=mode,
         split=args.split,
         n_samples=n_samples,
-        candidate_construction="per-batch 2-hop subgraph seeded from answers and negatives",
+        candidate_construction=candidate_construction,
         negative_sampling_strategy=loader_config.negative_sampling_strategy,
         num_negative_samples=loader_config.num_negative_samples,
         subgraph_strategy=loader_config.sampling_strategy,
@@ -273,6 +277,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         shuffle=loader_config.shuffle,
         num_workers=loader_config.num_workers,
         score_semantics="raw cosine, no eta mixture and no shortest-path term",
+        model_construction=model_construction,
         legacy_truncation_k=LEGACY_TRUNCATION_K,
         legacy_tie_policy="Tensor.sort on subgraph-local columns (frozen evaluator behaviour)",
         canonical_tie_policy_version="score-desc-then-global-id-asc/v1",
@@ -329,7 +334,35 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "cuda_executed=false in the manifest")
     parser.add_argument("--seed", type=int, default=None,
                         help="Seeds Python, NumPy and torch. Recorded in the manifest")
+    parser.add_argument("--modes", default="A",
+                        help="Comma-separated: A, B, C. Default A, which is the "
+                             "calibration path and must stay the default. B rides "
+                             "A's traversal and is only meaningful beside it, so "
+                             "requesting B implies A")
     return parser.parse_args(argv)
+
+
+def parse_modes(spec: str) -> List[str]:
+    """Normalise `--modes`, and refuse the combinations that mean nothing.
+
+    B exists to be read against A — it is *the same candidates, a different
+    encoder* — so B without A is a number with nothing to compare it to. Rather
+    than silently adding A, that is an error: a caller who asked for B alone has
+    misunderstood what B is, and adding A quietly would leave them believing
+    otherwise.
+    """
+    modes = [m.strip().upper() for m in spec.split(",") if m.strip()]
+    unknown = sorted(set(modes) - {"A", "B", "C"})
+    if unknown:
+        raise SystemExit(f"unknown mode(s): {unknown}. Known modes are A, B and C")
+    if not modes:
+        raise SystemExit("--modes selected nothing")
+    if "B" in modes and "A" not in modes:
+        raise SystemExit(
+            "Mode B is defined as Mode A's candidates under a full-graph encoder, "
+            "so it is only meaningful beside A. Request --modes A,B"
+        )
+    return modes
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -349,59 +382,119 @@ def main(argv: Optional[List[str]] = None) -> int:
             "this is a development number, not one from the deployment hardware.", device
         )
 
-    from src.evaluation.measurement import run_mode_a
+    from src.evaluation.measurement import (
+        assert_constructions_agree,
+        encode_full_graph,
+        run_mode_c,
+        run_modes_ab,
+    )
     from src.kg.data_loader import create_diagnosis_dataloader
 
+    modes = parse_modes(args.modes)
     graph_data, samples = load_legacy_mode_a_inputs(args.data_dir, args.split)
     model = build_legacy_mode_a_model(args.checkpoint, device)
 
     # One config object, two consumers. Not two instances that happen to agree.
     loader_config = build_loader_config(args)
-    dataloader = create_diagnosis_dataloader(
-        samples=samples, graph_data=graph_data, config=loader_config
-    )
 
-    result = run_mode_a(
-        model=model,
-        dataloader=dataloader,
-        manifest=build_manifest(
-            args, graph_data, len(samples), device, loader_config, cuda_executed
-        ),
-        device=device,
-    )
-
-    predictions_path = args.predictions_output or args.output.with_name(
-        f"{args.output.stem}_predictions.json"
-    )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    predictions_path.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result.to_dict(), indent=2, allow_nan=False))
-    predictions_path.write_text(json.dumps(result.to_predictions(), indent=2, allow_nan=False))
-    logger.info("Wrote %s and %s", args.output, predictions_path)
-
-    print(f"\nMode A — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
-    for name, value in result.legacy_metrics.items():
-        print(f"  {name:38s} {value:.6f}")
-    for name, value in sorted(result.authoritative_metrics.items()):
-        print(f"  {name:38s} {value:.6f}")
-
-    candidates = result.sampler_evidence["candidate_columns"]
-    negatives = result.sampler_evidence["negative_sampling"]
-    print(
-        f"\n  candidate columns per batch          "
-        f"{candidates['min']}-{candidates['max']} (mean {candidates['mean']:.1f})"
-    )
-    print(f"  max subgraph nodes                   {result.sampler_evidence['max_subgraph_nodes']}")
-    if negatives["observed"]:
-        print(
-            f"  negatives drawn / unique / repeated  "
-            f"{negatives['total_drawn']} / {negatives['unique_global_ids']} / "
-            f"{negatives['repeat_draws_within_sample']} within-sample"
+    def manifest_for(mode: str, candidates: str, construction: str):
+        return build_manifest(
+            args, graph_data, len(samples), device, loader_config, cuda_executed,
+            mode=mode, candidate_construction=candidates,
+            model_construction=construction,
         )
+
+    embeddings = None
+    if {"B", "C"} & set(modes):
+        # Production semantics, through the builder the served pipeline uses.
+        from src.models.gnn.shepherd_gnn import build_shepherd_model
+
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=True)
+        production_model = build_shepherd_model(checkpoint, graph_data, device)
+        # Before A->B may be read as encoder scope, the two constructions have to
+        # be the same model. A difference is a finding, not a nuisance.
+        if "A" in modes:
+            assert_constructions_agree(model, production_model)
+        embeddings = encode_full_graph(production_model, graph_data, device)
+
+    results: Dict[str, Any] = {}
+    if "A" in modes:
+        results["A"], mode_b = run_modes_ab(
+            model=model,
+            dataloader=create_diagnosis_dataloader(
+                samples=samples, graph_data=graph_data, config=loader_config
+            ),
+            manifest_a=manifest_for(
+                "A", "per-batch 2-hop subgraph seeded from answers and negatives",
+                "frozen evaluator (legacy)",
+            ),
+            manifest_b=manifest_for(
+                "B", "per-batch 2-hop subgraph seeded from answers and negatives",
+                "production (build_shepherd_model)",
+            ) if "B" in modes else None,
+            full_graph_embeddings=embeddings,
+            device=device,
+        )
+        if mode_b is not None:
+            results["B"] = mode_b
+
+    if "C" in modes:
+        results["C"] = run_mode_c(
+            full_graph_embeddings=embeddings,
+            samples=samples,
+            manifest=manifest_for(
+                "C", "every disease in the knowledge graph",
+                "production (build_shepherd_model)",
+            ),
+            device=device,
+            batch_size=args.batch_size,
+        )
+
+    result = results.get("A")
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+
+    # Mode A keeps the filename the calibration launcher reads; the others sit
+    # beside it. One file per mode, because a mode is one measurement and merging
+    # them would put two manifests in one document.
+    for mode, mode_result in results.items():
+        path = (
+            args.output if mode == "A"
+            else args.output.with_name(f"{args.output.stem}_mode{mode}.json")
+        )
+        path.write_text(json.dumps(mode_result.to_dict(), indent=2, allow_nan=False))
+        ranks_path = path.with_name(f"{path.stem}_ranks.json")
+        ranks_path.write_text(json.dumps(mode_result.to_ranks(), indent=2, allow_nan=False))
+        logger.info("Mode %s -> %s, %s", mode, path, ranks_path)
+
+    if result is not None:
+        predictions_path = args.predictions_output or args.output.with_name(
+            f"{args.output.stem}_predictions.json"
+        )
+        predictions_path.parent.mkdir(parents=True, exist_ok=True)
+        predictions_path.write_text(
+            json.dumps(result.to_predictions(), indent=2, allow_nan=False)
+        )
+        logger.info("Frozen-oracle comparison artifact -> %s", predictions_path)
+
+    for mode, mode_result in results.items():
+        print(f"\nMode {mode} — {mode_result.n_ranked} ranked, "
+              f"{mode_result.n_ground_truth_absent} absent")
+        legacy = getattr(mode_result, "legacy_metrics", {})
+        for name, value in {**legacy, **mode_result.authoritative_metrics}.items():
+            print(f"  {name:38s} {value:.6f}")
+        candidates = mode_result.sampler_evidence["candidate_columns"]
+        print(f"  candidate columns per batch            "
+              f"{candidates['min']}-{candidates['max']} (mean {candidates['mean']:.1f})")
+
+    if len(results) > 1:
+        print("\n  Modes are comparable only because they share this cohort in this")
+        print("  order. A->B is encoder scope; B->C is the candidate universe.")
 
     if not cuda_executed:
         print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
-    print("\nNot calibrated. Institutional Mode A parity is a separate acceptance gate.\n")
+    print("\nNot calibrated. Institutional parity is a separate acceptance gate, and\n"
+          "no cross-mode conclusion may rest on a synthetic or CPU run.\n")
     return 0
 
 

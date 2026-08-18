@@ -7,10 +7,20 @@ same encoder, the batch's subgraph candidates replaced by every disease.
 
 Each of those claims is only true if the thing held constant really is constant,
 so that is what is tested here — not that the modes produce numbers, but that
-they produce numbers about what they say they are about. The synthetic fixture is
-built so sampling randomness cannot change the candidate set
-(`tests/fixtures/synthetic_workspace.py`), which is why a shared-traversal claim
-can be checked here at all.
+they produce numbers about what they say they are about.
+
+> **This fixture cannot tell the three modes apart, by construction.** It is
+> built so that sampling randomness cannot change the candidate set: every gene
+> links every phenotype to every disease, so the 2-hop subgraph *is* the whole
+> graph and all four diseases are always candidates. A, B and C therefore agree
+> on it exactly — the encoders coincide and the candidate universes coincide.
+> That is what makes the shared-traversal and cohort claims checkable here, and
+> it is also why **no number from this fixture is evidence about the scorer**.
+> Whether the modes actually differ is an institutional measurement on real data.
+
+The last test in this file asserts that agreement, so the property is recorded
+rather than discovered by someone reading three identical tables and concluding
+something about the model.
 """
 import json
 
@@ -237,3 +247,28 @@ def test_a_different_architecture_is_reported_not_tolerated(world):
 
     with pytest.raises(ValueError, match="parameter tensors differ|parameter names"):
         assert_constructions_agree(world["legacy_model"], other)
+
+
+# ---------------------------------------------------------------------------
+# What this fixture can and cannot show
+# ---------------------------------------------------------------------------
+def test_the_three_modes_agree_here_because_the_fixture_makes_them_agree(ab, mode_c, world):
+    """Not a result about the scorer — a property of the fixture, asserted so it
+    is not mistaken for one.
+
+    Every gene links every phenotype to every disease, so the 2-hop subgraph is
+    the whole graph and every disease is always a candidate. A's encoder scope
+    equals B's and A's candidate universe equals C's, so all three *must* match.
+    If this test ever fails, the fixture stopped being degenerate — and every
+    other test in this file that relies on the modes being comparable needs
+    re-reading before the failure is called a bug.
+    """
+    result_a, result_b = ab
+    n_diseases = world["graph_data"]["x_dict"]["disease"].size(0)
+
+    assert result_a.sampler_evidence["candidate_columns"]["max"] == n_diseases, (
+        "the subgraph no longer covers every disease, so A and C are no longer "
+        "comparable by construction"
+    )
+    assert result_a.canonical_ranks == result_b.canonical_ranks
+    assert result_a.canonical_ranks == mode_c.canonical_ranks

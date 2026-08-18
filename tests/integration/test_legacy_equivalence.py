@@ -270,3 +270,65 @@ def test_the_unperturbed_comparison_reports_no_digest_failure(calibration):
     )
 
     assert failures == []
+
+
+# ---------------------------------------------------------------------------
+# The CLI runs the ladder, and Mode A's artifacts are untouched by it
+# ---------------------------------------------------------------------------
+def test_the_cli_runs_all_three_modes_without_disturbing_the_calibration_artifact(
+    tmp_path,
+):
+    """Adding modes B and C must not change what the calibration reads.
+
+    Mode A keeps `--output`'s filename and the predictions artifact; B and C sit
+    beside them. If that ever stops being true, the launcher above is comparing
+    the frozen oracle against a file that is no longer Mode A.
+    """
+    from scripts.measure_scorer import main
+    from tests.fixtures.synthetic_workspace import build_workspace as build
+
+    data_dir, checkpoint = build(tmp_path / "ws")
+    output = tmp_path / "run" / "measurement.json"
+
+    exit_code = main([
+        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--split", "test", "--output", str(output),
+        "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
+        "--device", "cpu", "--modes", "A,B,C",
+    ])
+
+    assert exit_code == 0
+    written = {p.name for p in output.parent.iterdir()}
+    assert {"measurement.json", "measurement_predictions.json",
+            "measurement_modeB.json", "measurement_modeC.json"} <= written
+
+    modes = {}
+    for name, path in [("A", "measurement.json"), ("B", "measurement_modeB.json"),
+                       ("C", "measurement_modeC.json")]:
+        modes[name] = json.loads((output.parent / path).read_text())
+
+    assert [modes[m]["manifest"]["mode"] for m in "ABC"] == ["A", "B", "C"]
+    assert modes["A"]["manifest"]["model_construction"].startswith("frozen evaluator")
+    assert modes["B"]["manifest"]["model_construction"].startswith("production")
+    assert modes["C"]["manifest"]["candidate_construction"] == (
+        "every disease in the knowledge graph"
+    )
+    # Only Mode A has a frozen oracle to be compared against.
+    assert "legacy_metrics" in modes["A"] and "legacy_metrics" not in modes["B"]
+
+
+def test_mode_b_without_mode_a_is_refused(tmp_path):
+    """B is A's candidates under a different encoder, so B alone is a number with
+    nothing to compare it to. Adding A silently would leave the caller believing
+    otherwise."""
+    from scripts.measure_scorer import main
+    from tests.fixtures.synthetic_workspace import build_workspace as build
+
+    data_dir, checkpoint = build(tmp_path / "ws")
+
+    with pytest.raises(SystemExit, match="only meaningful beside A"):
+        main([
+            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--split", "test", "--output", str(tmp_path / "m.json"),
+            "--device", "cpu", "--modes", "B",
+        ])

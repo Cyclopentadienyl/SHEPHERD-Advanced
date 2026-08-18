@@ -31,11 +31,27 @@ designed or implemented in B-0.3.
 |---|---|---|
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
 | B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | **implementation complete**; institutional CUDA run pending |
-| B-0.3 | Modes B and C | [`PLAN_B03.md`](PLAN_B03.md) — three decisions, then implement |
+| B-0.3 | Modes B and C | **implementation complete**; institutional CUDA run pending. Plan: [`PLAN_B03.md`](PLAN_B03.md) |
 | B-0.4 | vectorised SP lookup in the pipeline | not started; smaller than it looks — a caller change, not a new primitive ([`PLAN_B03.md`](PLAN_B03.md) §5) |
 | B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem |
 
 [`PLAN_B02_shipped.md`](PLAN_B02_shipped.md) is the plan the shipped B-0.2 code
 was built from, kept as the reasoning behind it. History, not authority.
+
+## Running the ladder
+
+```
+python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
+    --split test --output reports/measurement.json --modes A,B,C
+```
+
+Mode A keeps `--output`'s name and its predictions artifact, so
+`scripts/calibrate_mode_a.py` reads the same file it always did; B and C are
+written beside it, one file per mode plus per-sample ranks.
+
+**No cross-mode conclusion may rest on the synthetic fixture.** It is built so
+the 2-hop subgraph *is* the whole graph, which is what makes the shared-cohort
+claims checkable — and which also means A, B and C agree on it by construction.
+A test asserts that agreement so it is not mistaken for a result.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.

@@ -291,6 +291,14 @@ class MeasurementManifest:
     num_workers: int
     # scoring and ranking
     score_semantics: str
+    model_construction: str
+    """Which loader built the model: the frozen evaluator's or production's.
+
+    Mode A mirrors the oracle deliberately; B, C and D use production semantics.
+    Recorded because a reader comparing two modes has to know whether the encoder
+    difference they are looking at is the only difference — and because
+    `assert_constructions_agree` passing is a fact about one checkpoint, not a
+    permanent property."""
     legacy_truncation_k: int
     legacy_tie_policy: str
     canonical_tie_policy_version: str
