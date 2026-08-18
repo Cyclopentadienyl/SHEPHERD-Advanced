@@ -1,6 +1,6 @@
 # B-0.3 — Modes B and C
 
-**Status:** proposal. Three decisions, then implement.
+**Status:** proposal, revised after review. Three decisions, then implement.
 
 Modes B and C need almost no new machinery. Nearly everything they run on was
 either built in B-0.2 or already exists in production, and the point of this
@@ -22,60 +22,118 @@ Verified in the tree at `0711441`, not assumed:
 | Manifest, artifact digests, CUDA gate, seeded launcher | `scripts/measure_scorer.py`, `scripts/calibrate_mode_a.py` (B-0.2) |
 | Candidate universe for Mode C | `arange(num_nodes_dict["disease"])`. No construction to design |
 
-**Memory is not an open question.** Production performs the full-graph forward at
-every startup on the same hardware, so the encoder B and C need is already known
-to fit.
+**What production startup proves, and what it does not.** The production
+full-graph forward is already known to fit on deployment hardware. **End-to-end
+B/C peak memory remains an institutional CUDA acceptance measurement** — a
+measurement run may hold graph inputs, full-graph embeddings, Mode A
+intermediates, candidate score matrices and ranking temporaries at once, which
+startup does not. No memory subsystem is designed unless that measurement fails:
+no chunking, no streaming, no CPU offload, no memory manager.
 
 ---
 
-## 2. Decision 1 — which model construction do B and C use?
+## 2. Decision 1 — one production model-construction boundary
 
-**The problem.** Mode A uses `build_legacy_mode_a_model`, which mirrors the frozen
-evaluator: architecture from `checkpoint["metadata"]` and `["in_channels_dict"]`,
-with hardcoded fallbacks. Production does something deliberately different
-(`pipeline.py:780-796`): it derives `metadata` from
-`graph_data["edge_index_dict"]`, with a comment stating that using the KG's own
-metadata instead would be wrong, because the loaded graph carries reverse edges
-the KG object does not.
+**The problem, in two parts.**
 
-Modes B/C/D may not import the legacy loader — it retires with the frozen oracle.
-So B uses production's resolution and A uses the oracle's. **If the two produce
-different models, A→B is not "encoder scope" — it is encoder scope confounded
-with architecture resolution**, and the ladder's first rung stops meaning
-anything.
+*Semantics.* Mode A uses `build_legacy_mode_a_model`, which mirrors the frozen
+evaluator: architecture from `checkpoint["metadata"]`, hardcoded fallbacks.
+Production does something deliberately different (`pipeline.py:780-830`): metadata
+derived from `graph_data["edge_index_dict"]`, in-channels from the feature
+tensors, and architecture recovered by a documented precedence
+(`_resolve_arch_params`) so an HGT checkpoint is never silently rebuilt as GAT.
+Modes B/C/D use production semantics; they may not import the legacy loader.
 
-**Proposed:** treat the equality as a *precondition to be checked*, not a
-property to be assumed. Before Mode B reports anything, assert that the two
-constructions produce the same architecture and identical parameter tensors for
-the checkpoint in hand; fail the run if they do not, naming the fields that
-differ. If they do differ on institutional data, that is itself a finding worth
-having before any B/C number is quoted, and the ladder gains an explicit extra
-rung rather than a silent confound.
+*Duplication.* Production construction currently lives inside
+`DiagnosisPipeline._load_model_from_checkpoint`, mixed with fingerprint warnings,
+`_checkpoint_meta` for the UI, logging and instance mutation. Writing B/C against
+"production semantics" without a shared boundary means copying state-dict variant
+selection, metadata derivation, in-channels resolution, arch resolution, config
+construction, weight loading and device placement — and the two copies would then
+drift, which invalidates B and C silently rather than loudly.
 
-*Alternative considered and rejected:* have B use the legacy loader "just for
-comparability". That keeps the confound and adds an import the reviewer has
-already ruled out.
+**Decided: one narrow shared builder, in `src/models/gnn/shepherd_gnn.py`.**
+
+```python
+def build_shepherd_model(checkpoint, graph_data, device=None) -> ShepherdGNN
+```
+
+Its whole responsibility is production-semantic construction and weight loading.
+`_resolve_arch_params` moves down beside it. What stays in `DiagnosisPipeline`:
+fingerprint verification and warnings, `_checkpoint_meta`, operator logging, and
+assignment to instance fields.
+
+*Why that module rather than a new one.* `src.models` sits below `src.inference`,
+`src.training` and `src.evaluation` in the layers contract, so all three may
+import it — and the trainer is a fourth caller that can adopt it later without a
+layer change. `shepherd_gnn.py` already owns `ShepherdGNN` and
+`ShepherdGNNConfig`; a builder returning one is at home there, and a new module
+holding a single function is a home nobody finds.
+
+*Why not a `ShepherdGNN.from_checkpoint` classmethod.* It would put knowledge of
+trainer checkpoint layouts — which key holds the state dict, which legacy fields
+carry architecture — onto the model class. The model should not know how it was
+persisted.
+
+*Known consequence, stated rather than discovered later:*
+`tests/unit/test_pipeline_arch_resolve.py` imports `_resolve_arch_params` from
+`src.inference.pipeline` and its import moves with the function. The pipeline
+keeps importing the model module lazily, so the torch-free constraint on
+`src/inference/pipeline.py` is unaffected.
+
+*Not in scope:* `scripts/build_index.py`, `scripts/setup_demo.py` and
+`scripts/test_gnn_inference.py` also construct models. They can adopt the builder
+later; migrating them here would put B-0.3 behind an unrelated sweep.
+
+**Architecture equality stays a reporting precondition.** The shared builder makes
+B and C use production semantics; it does not make them equal to A's legacy
+construction. Before A→B is interpreted as encoder scope, assert that the two
+constructions produce a compatible architecture and identical loaded parameter
+tensors for the checkpoint in hand, and fail the comparison naming the differing
+fields if they do not. A difference is itself a finding worth having before any
+number is quoted.
 
 ---
 
-## 3. Decision 2 — how does Mode B obtain Mode A's candidate sets?
+## 3. Decision 2 — A and B share one traversal
 
-Mode B is defined as *the same candidates as A, scored with full-graph
-embeddings*. `run_mode_a` does not persist per-sample candidate global ids: it
-writes the legacy top-20 and aggregate sampler evidence, neither of which
-reconstructs the universe.
+**Superseded by review.** The first draft proposed re-running the same seeded
+dataloader for B and taking the candidate sets from the batches, on the grounds
+that `calibrate_mode_a.py` has proven the batches reproduce across processes.
+**That claim was stronger than the evidence.** What the calibration compares is
+what the frozen oracle writes: the aggregate MRR and the per-sample local top-20.
+Two runs can agree on both, on the input digests and on the aggregate sampler
+evidence while their candidate sets differ **outside the top 20** — and Mode A
+persists no per-sample candidate universe that would catch it. A→B would then be
+described as isolating encoder scope while both sides had independently re-rolled
+a stochastic candidate construction.
 
-**Proposed:** re-run the same seeded dataloader and take the candidate sets from
-the batches, exactly as A did. The seeding machinery, worker-count discipline and
-digest checks already exist in `calibrate_mode_a.py` and are proven to reproduce
-the same batches across processes. A and B then differ only in what is done with
-each batch.
+**Decided:** one traversal of the dataloader, both modes consuming the same batch
+object.
 
-*Alternative considered:* have Mode A emit a per-sample candidate-id artifact. It
-grows Mode A's output by the candidate count for every sample and makes B depend
-on an artifact rather than on a procedure that is already tested. Rejected unless
-re-running proves too slow on institutional data, which is a measurement, not a
-guess.
+```
+for batch in dataloader:
+    candidates = batch_data["original_indices"]["disease"]   # one tensor
+    A: subgraph forward       -> score against candidates
+    B: full-graph embeddings  -> score against the same candidates
+```
+
+Equality is then a property of the code rather than of a comparison, and it costs
+no persisted candidate artifact and no extra RNG orchestration. **The identity is
+also asserted at the point of use** — both scorers are handed the same tensor
+object, and the driver checks it — because "shares a variable" is a structural
+claim, and structural claims decay under edits.
+
+*If A and B ever must be separate runs*, the fallback is a deterministic digest
+of the complete ordered global candidate ids per batch, compared between runs.
+Input-file digests, top-20 rows and aggregate sampler statistics are **not**
+sufficient evidence and must not be presented as such.
+
+**Mode C stays outside that traversal.** It needs the patient's phenotype ids and
+full-graph embeddings, and nothing else: the candidate universe is every disease,
+so the subgraph sampler contributes nothing and is not run. Phenotype ids come
+from the samples file, which is where the dataloader gets them too. C asserts that
+its cohort and ordering match A's rather than assuming it.
 
 ---
 
@@ -133,6 +191,10 @@ Same shape as B-0.2, and the same refusal to overclaim:
 - Modes B and C run over the synthetic fixture and produce both metric families,
   with the manifest recording which mode, which candidate universe and which
   model construction;
+- **A and B are shown to have scored the identical candidate ids**, by sharing the
+  tensor and asserting it, not by comparing summaries;
+- **production and B/C construct the model through the same builder**, so a change
+  to production semantics cannot leave the measurement behind;
 - the architecture-equality precondition (§2) is asserted, not assumed;
 - the offline-encoder equivalence (§4) is asserted against a constructed pipeline;
 - cohort integrity holds: in Mode C the ground truth is always in the universe, so
