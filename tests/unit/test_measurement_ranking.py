@@ -121,15 +121,30 @@ def test_canonical_rejects_malformed_input(scores, ids):
 # ---------------------------------------------------------------------------
 # Legacy ranking
 # ---------------------------------------------------------------------------
-def test_legacy_reproduces_tensor_sort_on_local_columns():
-    """It must be `Tensor.sort` on the local columns — that is what
-    `scripts/evaluate_model.py:295` calls — translated afterwards."""
+def test_legacy_returns_local_columns_not_global_ids():
+    """The frozen oracle writes subgraph-local column indices and does not persist
+    the mapping needed to translate them, so local space is the only space in
+    which the two can be compared. Returning global ids here would make the one
+    comparison this stream exists for impossible."""
     scores = torch.tensor([[0.1, 0.9, 0.5]])
-    ids = torch.tensor([70, 80, 90])
 
     _, expected_local = scores.sort(dim=-1, descending=True)
 
-    assert legacy_ranking(scores, ids).tolist() == ids[expected_local].tolist()
+    assert legacy_ranking(scores).tolist() == expected_local.tolist()
+    assert legacy_ranking(scores).tolist() == [[1, 2, 0]]
+
+
+def test_legacy_local_output_translates_without_a_second_sort():
+    """The documented two-step: rank locally for oracle comparison, translate for
+    persistence. One sort, two representations."""
+    scores = torch.tensor([[0.1, 0.9, 0.5]])
+    original = torch.tensor([70, 80, 90])
+
+    local = legacy_ranking(scores)
+    global_ids = to_global_disease_ids(original, local)
+
+    assert local.tolist() == [[1, 2, 0]]
+    assert global_ids.tolist() == [[80, 90, 70]]
 
 
 def test_the_two_streams_agree_when_no_scores_tie():
@@ -139,7 +154,52 @@ def test_the_two_streams_agree_when_no_scores_tie():
     scores = torch.randn(4, 9)
     ids = torch.tensor([31, 4, 77, 12, 90, 5, 68, 23, 51])
 
-    assert canonical_ranking(scores, ids).tolist() == legacy_ranking(scores, ids).tolist()
+    legacy_global = to_global_disease_ids(ids, legacy_ranking(scores))
+
+    assert canonical_ranking(scores, ids).tolist() == legacy_global.tolist()
+
+
+def test_legacy_does_not_reject_non_finite_scores():
+    """The deliberate asymmetry. Reproducing the oracle means reproducing what it
+    did, including with degenerate scores; the canonical stream refuses them."""
+    scores = torch.tensor([[0.5, float("nan"), 0.1]])
+
+    assert legacy_ranking(scores).shape == (1, 3)
+
+
+# ---------------------------------------------------------------------------
+# Input contracts
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("bad", [torch.float32, torch.float64, torch.bool])
+def test_identifier_tensors_must_be_integers(bad):
+    """`Tensor.long()` turns 1.7 into 1 and True into 1, so a float or boolean id
+    wired in by mistake becomes a plausible index rather than an error."""
+    original = torch.tensor([5, 11, 40])
+
+    with pytest.raises(ValueError, match="integer"):
+        to_global_disease_ids(original, torch.tensor([1]).to(bad))
+    with pytest.raises(ValueError, match="integer"):
+        to_global_disease_ids(original.to(bad), torch.tensor([1]))
+
+
+def test_canonical_rejects_non_integer_global_ids():
+    with pytest.raises(ValueError, match="integer"):
+        canonical_ranking(torch.tensor([[0.1, 0.2]]), torch.tensor([1.0, 2.0]))
+
+
+@pytest.mark.parametrize("bad_score", [float("nan"), float("inf"), float("-inf")])
+def test_canonical_rejects_non_finite_scores(bad_score):
+    """A NaN sorts unpredictably and would become a plausible rank, then a
+    plausible mean rank and MRR."""
+    scores = torch.tensor([[0.5, bad_score, 0.1]])
+
+    with pytest.raises(ValueError, match="NaN or infinity"):
+        canonical_ranking(scores, torch.tensor([70, 80, 90]))
+
+
+def test_rank_extraction_rejects_non_integer_ids():
+    with pytest.raises(ValueError, match="integer"):
+        ranks_of_truth(torch.tensor([[1.0, 2.0]]), torch.tensor([1]))
 
 
 # ---------------------------------------------------------------------------
@@ -198,4 +258,5 @@ def test_ranking_on_cuda():
 
     assert ranked.device.type == "cuda"
     assert ranked.cpu().tolist() == [[70, 90, 80]]
+    assert legacy_ranking(scores).device.type == "cuda"
     assert ranks_of_truth(ranked, torch.tensor([90], device=device)) == [2]

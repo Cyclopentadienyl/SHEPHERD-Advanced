@@ -38,6 +38,17 @@ __all__ = [
 ]
 
 
+def _require_integer_ids(ids: Tensor, name: str) -> None:
+    """Identifiers must be integer tensors, and `bool` is not an integer here.
+
+    ``Tensor.long()`` turns 1.7 into 1 and ``True`` into 1, so a float or boolean
+    tensor wired in by mistake becomes a plausible index rather than an error —
+    the same silent-wrong-answer shape as a float mask reaching `masked_mean_pool`.
+    """
+    if ids.dtype == torch.bool or torch.is_floating_point(ids) or torch.is_complex(ids):
+        raise ValueError(f"{name} must be an integer tensor, not {ids.dtype}")
+
+
 def to_global_disease_ids(original_disease_indices: Tensor, local_ids: Tensor) -> Tensor:
     """Translate subgraph-local disease indices into global knowledge-graph ids.
 
@@ -55,6 +66,8 @@ def to_global_disease_ids(original_disease_indices: Tensor, local_ids: Tensor) -
     Local indices are only comparable within the batch that produced them, so
     everything persisted or aggregated must be global.
     """
+    _require_integer_ids(original_disease_indices, "original_disease_indices")
+    _require_integer_ids(local_ids, "local_ids")
     if original_disease_indices.dim() != 1:
         raise ValueError(
             f"original_disease_indices must be 1-D; got {tuple(original_disease_indices.shape)}"
@@ -76,10 +89,18 @@ def canonical_ranking(scores: Tensor, global_disease_ids: Tensor) -> Tensor:
     ``scores`` is ``(B, D)``, ``global_disease_ids`` is ``(D,)``; returns
     ``(B, D)`` of global ids, best first.
 
-    **The authoritative stream.** Its order depends on the scores and the global
-    ids and on nothing else — not on the order candidates arrived in, not on batch
-    composition, not on the machine. That is what makes a number from Mode A
-    comparable with one from Mode C.
+    **The authoritative stream.** Given identical score values and global ids, its
+    order — including its tie rule — is independent of the order the candidates
+    arrived in and of batch composition. That is what makes a number from Mode A
+    comparable with one from Mode C. It is *not* a claim that different hardware
+    produces identical scores; if the scores differ the ranking may differ, and
+    that is a property of the scores, not of this function.
+
+    **Non-finite scores are rejected.** A ``NaN`` sorts unpredictably and would
+    turn an invalid score into a plausible rank, and from there into a plausible
+    mean rank and MRR. `legacy_ranking` deliberately does not reject them, because
+    its contract is to reproduce the oracle; this stream's contract is to be
+    correct.
 
     The tie rule is obtained from PyTorch's own stable sort rather than a custom
     comparator: order the candidates by global id first, then sort by score with
@@ -98,6 +119,9 @@ def canonical_ranking(scores: Tensor, global_disease_ids: Tensor) -> Tensor:
         )
     if global_disease_ids.unique().numel() != global_disease_ids.numel():
         raise ValueError("global_disease_ids contains duplicates; the ranking would be ambiguous")
+    _require_integer_ids(global_disease_ids, "global_disease_ids")
+    if not torch.isfinite(scores).all():
+        raise ValueError("scores contain NaN or infinity; the canonical ranking would be meaningless")
 
     id_order = torch.argsort(global_disease_ids)
     ordered_ids = global_disease_ids[id_order]
@@ -107,27 +131,42 @@ def canonical_ranking(scores: Tensor, global_disease_ids: Tensor) -> Tensor:
     return ordered_ids.to(rank_order.device)[rank_order]
 
 
-def legacy_ranking(scores: Tensor, global_disease_ids: Tensor) -> Tensor:
-    """Reproduce the frozen evaluator's order. ``(B, D)`` of global ids.
+def legacy_ranking(scores: Tensor) -> Tensor:
+    """Reproduce the frozen evaluator's order. ``(B, D)`` of **subgraph-local**
+    column indices.
 
     `scripts/evaluate_model.py:295` sorts with ``scores.sort(dim=-1,
     descending=True)`` over the subgraph-local columns, so this calls the same
-    thing on the same columns and translates the result. Tie behaviour is
-    therefore whatever that call does — **which is the point**: this stream exists
-    to match the historical number, not to be well-defined.
+    thing on the same columns. Tie behaviour is therefore whatever that call does
+    — **which is the point**: this stream exists to match the historical number,
+    not to be well defined. Non-finite scores are *not* rejected here for the same
+    reason: reproducing the oracle means reproducing whatever it did.
 
-    **Used only for the truncated legacy parity metric.** Anything compared across
-    modes uses `canonical_ranking`.
+    **Local, deliberately.** The only per-sample artifact the frozen oracle writes
+    is ``predictions[i][:20]`` — subgraph-local column indices as strings
+    (`scripts/evaluate_model.py:505-519`) — and it does **not** persist the
+    ``original_indices`` needed to translate them. Local space is therefore the
+    only space in which the two can be compared at all, and returning global ids
+    from here would make the one comparison this function exists for impossible.
+
+    Translate explicitly where global identity is wanted:
+
+        local_ids  = legacy_ranking(scores)
+        global_ids = to_global_disease_ids(original_disease_indices, local_ids)
+
+    The local order is for exact oracle calibration; the translated order is for
+    persistence and rank extraction. Neither requires a second sort.
+
+    **This function has a deletion date.** It exists solely so the institutional
+    Mode A calibration can be checked against the frozen oracle, and it is removed
+    together with `scripts/evaluate_model.py` once that calibration succeeds.
+    Nothing else may depend on legacy tie behaviour.
     """
     if scores.dim() != 2:
         raise ValueError(f"scores must be (B, D); got {tuple(scores.shape)}")
-    if global_disease_ids.numel() != scores.size(1):
-        raise ValueError(
-            f"{global_disease_ids.numel()} global ids for {scores.size(1)} score columns"
-        )
 
     _, local_order = scores.sort(dim=-1, descending=True)
-    return global_disease_ids.to(local_order.device)[local_order]
+    return local_order
 
 
 def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[Optional[int]]:
@@ -152,6 +191,8 @@ def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[
         raise ValueError(
             f"{truth_global_ids.numel()} truths for {ranked_global_ids.size(0)} ranked rows"
         )
+    _require_integer_ids(ranked_global_ids, "ranked_global_ids")
+    _require_integer_ids(truth_global_ids, "truth_global_ids")
 
     truth = truth_global_ids.to(ranked_global_ids.device).unsqueeze(-1)
     matches = ranked_global_ids == truth
