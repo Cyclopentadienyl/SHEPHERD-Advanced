@@ -791,3 +791,186 @@ def test_pooling_and_cosine_work_on_an_accelerator(embeddings):
         cosine_scores(pool_patient_embeddings(embeddings, [1, 2, 3]), embeddings),
         atol=1e-5,
     )
+
+
+# ---------------------------------------------------------------------------
+# Batched primitives — the offline-evaluation shapes (B-0.2 step 1)
+# ---------------------------------------------------------------------------
+# The served path scores one patient against a candidate matrix; the offline
+# evaluator scores a padded batch of patients. These are the batched forms, and
+# the tests below do two things: check each against an independent
+# reimplementation, and pin the served path to the batched one so the two cannot
+# drift.
+from src.inference.scoring import (  # noqa: E402
+    cosine_score_matrix,
+    masked_mean_pool,
+)
+
+
+def _legacy_masked_mean(embeddings, mask):
+    """`Trainer._compute_model_outputs` (trainer.py:744-751), reimplemented here so
+    this test does not depend on the code under test being right."""
+    weights = mask.unsqueeze(-1).float()
+    summed = (embeddings * weights).sum(dim=1)
+    counts = weights.sum(dim=1).clamp(min=1)
+    return summed / counts
+
+
+def test_masked_pool_matches_the_trainer_formula():
+    torch.manual_seed(1)
+    emb = torch.randn(4, 6, 8)
+    mask = torch.tensor(
+        [
+            [1, 1, 1, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0],
+            [1, 1, 1, 1, 1, 1],
+            [1, 1, 0, 0, 0, 0],
+        ],
+        dtype=torch.bool,
+    )
+
+    assert torch.equal(masked_mean_pool(emb, mask), _legacy_masked_mean(emb, mask))
+
+
+def test_masked_pool_ignores_padding():
+    """Padded positions must not reach the mean, whatever they contain. Filling
+    them with a large value makes a leak impossible to miss."""
+    emb = torch.zeros(1, 4, 3)
+    emb[0, :2] = 1.0
+    emb[0, 2:] = 1e6
+    mask = torch.tensor([[True, True, False, False]])
+
+    assert torch.equal(masked_mean_pool(emb, mask), torch.ones(1, 3))
+
+
+def test_masked_pool_all_true_equals_a_plain_mean():
+    torch.manual_seed(2)
+    emb = torch.randn(3, 5, 7)
+
+    got = masked_mean_pool(emb, torch.ones(3, 5, dtype=torch.bool))
+
+    assert torch.allclose(got, emb.mean(dim=1), atol=ATOL, rtol=RTOL)
+
+
+def test_masked_pool_all_false_is_a_zero_vector():
+    """Behaviour preserved, not endorsed. The trainer clamps the denominator to
+    one, so an empty row yields zeros rather than raising or producing NaN. Mode A
+    exists to reproduce the legacy control, and changing this would move it off
+    that control."""
+    emb = torch.randn(2, 4, 5)
+
+    got = masked_mean_pool(emb, torch.zeros(2, 4, dtype=torch.bool))
+
+    assert torch.equal(got, torch.zeros(2, 5))
+    assert torch.isfinite(got).all()
+
+
+@pytest.mark.parametrize(
+    "emb_shape, mask_shape",
+    [((2, 3, 4), (2, 4)), ((2, 3, 4), (3, 3)), ((2, 3, 4), (2,)), ((3, 4), (3, 4))],
+)
+def test_masked_pool_rejects_shape_mismatch(emb_shape, mask_shape):
+    with pytest.raises(ValueError):
+        masked_mean_pool(torch.randn(*emb_shape), torch.ones(*mask_shape, dtype=torch.bool))
+
+
+def test_masked_pool_keeps_its_device():
+    emb = torch.randn(2, 3, 4)
+
+    out = masked_mean_pool(emb, torch.ones(2, 3, dtype=torch.bool))
+
+    assert out.device == emb.device
+
+
+def test_masked_pool_and_served_pool_agree_on_one_unpadded_patient():
+    """The equivalence that lets the two implementations stay separate.
+
+    `pool_patient_embeddings` takes an index list over a node table;
+    `masked_mean_pool` takes a padded batch. Given the same phenotypes and no
+    padding they must produce the same vector — which is what makes keeping both
+    a clarity choice rather than a drift risk.
+    """
+    torch.manual_seed(3)
+    node_embeddings = torch.randn(20, 6)
+    indices = [4, 9, 17]
+
+    served = pool_patient_embeddings(node_embeddings, indices)
+    batched = masked_mean_pool(
+        node_embeddings[indices].unsqueeze(0), torch.ones(1, len(indices), dtype=torch.bool)
+    )
+
+    assert torch.allclose(served, batched[0], atol=ATOL, rtol=RTOL)
+
+
+def test_cosine_matrix_matches_an_independent_computation():
+    torch.manual_seed(4)
+    patients = torch.randn(3, 9)
+    candidates = torch.randn(5, 9)
+
+    got = cosine_score_matrix(patients, candidates)
+
+    assert got.shape == (3, 5)
+    for b in range(3):
+        for d in range(5):
+            expected = float(
+                torch.dot(patients[b], candidates[d])
+                / (patients[b].norm() * candidates[d].norm())
+            )
+            assert got[b, d].item() == pytest.approx(expected, abs=ATOL, rel=RTOL)
+
+
+def test_served_cosine_is_the_batch_of_one(embeddings):
+    """The served signature is unchanged and now delegates. This pins that the
+    delegation is exact, so the two shapes cannot diverge."""
+    patient = pool_patient_embeddings(embeddings, [0, 1, 2])
+    candidates = embeddings[10:20]
+
+    served = cosine_scores(patient, candidates)
+    batched = cosine_score_matrix(patient.unsqueeze(0), candidates)
+
+    assert torch.equal(served, batched[0])
+
+
+@pytest.mark.parametrize(
+    "patients, candidates",
+    [(torch.randn(4), torch.randn(3, 4)), (torch.randn(2, 4), torch.randn(4))],
+)
+def test_cosine_matrix_rejects_wrong_rank(patients, candidates):
+    with pytest.raises(ValueError):
+        cosine_score_matrix(patients, candidates)
+
+
+# --- Accelerator coverage -------------------------------------------------
+# CUDA is a hard requirement of every deployment, so these are the configurations
+# that actually run in the hospital. They cannot be exercised in this
+# environment; institutional calibration verifies the deployed device and dtype.
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
+def test_batched_primitives_on_cuda():
+    device = torch.device("cuda")
+    emb = torch.randn(2, 3, 8, device=device)
+    mask = torch.ones(2, 3, dtype=torch.bool, device=device)
+
+    pooled = masked_mean_pool(emb, mask)
+    scores = cosine_score_matrix(pooled, torch.randn(5, 8, device=device))
+
+    assert pooled.device.type == "cuda"
+    assert scores.shape == (2, 5)
+    assert torch.allclose(
+        pooled.cpu(), masked_mean_pool(emb.cpu(), mask.cpu()), atol=1e-5
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_masked_pool_under_reduced_precision(dtype):
+    """Dtype follows promotion, and the assertion is parity with the trainer's
+    formula — not an assumed preservation rule."""
+    device = torch.device("cuda")
+    emb = torch.randn(2, 4, 8, device=device, dtype=dtype)
+    mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 1]], dtype=torch.bool, device=device)
+
+    got = masked_mean_pool(emb, mask)
+    expected = _legacy_masked_mean(emb, mask)
+
+    assert got.dtype == expected.dtype
+    assert torch.equal(got, expected)

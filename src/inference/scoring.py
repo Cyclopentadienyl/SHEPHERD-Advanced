@@ -67,7 +67,9 @@ from torch import Tensor
 __all__ = [
     "SPLookup",
     "pool_patient_embeddings",
+    "masked_mean_pool",
     "cosine_scores",
+    "cosine_score_matrix",
     "sp_mean_distances",
     "sp_scores_from_distances",
     "mix_embedding_and_sp_scores",
@@ -134,18 +136,80 @@ def pool_patient_embeddings(
     return phenotype_embeddings[idx].mean(dim=0)
 
 
+def masked_mean_pool(embeddings: Tensor, mask: Tensor) -> Tensor:
+    """Mean over the valid entries of a padded batch. ``(B, N, H)`` -> ``(B, H)``.
+
+    The offline evaluation path's counterpart to `pool_patient_embeddings`. The two
+    are **deliberately not one implementation**: the served path holds an unpadded
+    ``(N, H)`` tensor and an index list, and manufacturing a mask and a batch
+    dimension for it would cost more clarity than sharing buys. An all-true-mask
+    equivalence test binds them instead.
+
+    **This mirrors `Trainer._compute_model_outputs` operation for operation**
+    (`src/training/trainer.py:744-751`), because Mode A's purpose is to reproduce
+    what that code measures:
+
+      - the mask is cast with ``.float()``, so the output dtype is whatever
+        promotion and autocast produce from that and ``embeddings`` — **not** an
+        assumed "preserve the input dtype" rule, and no cast is added to force one;
+      - the denominator is ``clamp(min=1)``, so an **all-false row yields a zero
+        vector** rather than a division by zero. That is behaviour to preserve, not
+        to improve: changing it would move Mode A off the control it exists to be.
+
+    Nothing is moved between devices. A mismatch raises from torch rather than
+    being silently repaired.
+    """
+    if embeddings.dim() != 3:
+        raise ValueError(f"embeddings must be (B, N, H); got {tuple(embeddings.shape)}")
+    if mask.dim() != 2:
+        raise ValueError(f"mask must be (B, N); got {tuple(mask.shape)}")
+    if mask.shape != embeddings.shape[:2]:
+        raise ValueError(
+            f"mask {tuple(mask.shape)} does not match embeddings "
+            f"{tuple(embeddings.shape[:2])}"
+        )
+
+    weights = mask.unsqueeze(-1).float()
+    summed = (embeddings * weights).sum(dim=1)
+    counts = weights.sum(dim=1).clamp(min=1)
+    return summed / counts
+
+
 # =============================================================================
 # Embedding similarity
 # =============================================================================
+def cosine_score_matrix(patient_matrix: Tensor, candidate_matrix: Tensor) -> Tensor:
+    """Cosine similarity of every patient against every candidate.
+
+    ``patient_matrix`` is ``(B, H)``, ``candidate_matrix`` is ``(D, H)``; returns
+    ``(B, D)`` with values in ``[-1, 1]``.
+
+    Built from ``F.normalize`` and a matrix multiply. There is no custom kernel and
+    no new dependency: the batched form is the same two library calls the scalar
+    form already made.
+    """
+    if patient_matrix.dim() != 2:
+        raise ValueError(f"patient_matrix must be (B, H); got {tuple(patient_matrix.shape)}")
+    if candidate_matrix.dim() != 2:
+        raise ValueError(
+            f"candidate_matrix must be (D, H); got {tuple(candidate_matrix.shape)}"
+        )
+
+    patients = F.normalize(patient_matrix, dim=-1)
+    candidates = F.normalize(candidate_matrix, dim=-1)
+    return torch.mm(patients, candidates.t())
+
+
 def cosine_scores(patient_vector: Tensor, candidate_matrix: Tensor) -> Tensor:
     """Cosine similarity of one patient against every candidate. Returns ``(C,)``.
 
     ``patient_vector`` is ``(H,)``; ``candidate_matrix`` is ``(C, H)``. Values lie
     in ``[-1, 1]``.
+
+    A batch of one, delegating to `cosine_score_matrix`. The served signature is
+    unchanged and is pinned by a ``B = 1`` equivalence test.
     """
-    patient = F.normalize(patient_vector.unsqueeze(0), dim=-1)
-    candidates = F.normalize(candidate_matrix, dim=-1)
-    return torch.mm(patient, candidates.t()).squeeze(0)
+    return cosine_score_matrix(patient_vector.unsqueeze(0), candidate_matrix).squeeze(0)
 
 
 def normalise_cosine_to_unit_interval(cosine: Tensor) -> Tensor:
