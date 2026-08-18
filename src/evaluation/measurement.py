@@ -16,16 +16,17 @@ an order that does not depend on which machine, which batch composition or which
 input ordering produced it. So there are two streams, named for what each is for,
 and neither is used for the other's purpose.
 
-What this module does **not** do: load data, run a model, or decide what to do
-about a ground truth that is absent from the candidate set. It ranks, and it maps
-identifiers. The Mode A driver that wires a dataloader and a model to these
-functions follows separately.
+What the ranking functions below do **not** do: load data, run a model, or decide
+what to do about a ground truth that is absent from the candidate set. They rank,
+and they map identifiers. Absence is a mode-level decision — Mode A treats it as
+a harness failure, because there the truth is one of the subgraph's own seeds —
+and it is made in the driver at the bottom of this file, not in the primitives.
 
 Dependencies: torch.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 import torch
@@ -183,7 +184,9 @@ def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[
     set has no rank, and encoding that as a large integer would let it flow into a
     mean as though it were a measurement. `RankingMetrics.compute_from_ranks`
     refuses to invent a value for an empty cohort for the same reason; this is the
-    same refusal one level up. The caller counts and reports absences separately.
+    same refusal one level up. What absence *means* is the caller's decision: in
+    Mode A it is impossible and therefore fatal, but a mode that scores a
+    restricted candidate universe may legitimately observe it.
 
     A Python list, not a tensor, because the value is genuinely optional and
     because the consumer accumulates across batches into a list anyway.
@@ -227,9 +230,19 @@ def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[
 # alongside it from the canonical ranking.
 
 LEGACY_TRUNCATION_K = 20
-"""The frozen CLI exposes no `--top-k-values` flag and hardcodes `[:20]` when it
-writes predictions (`scripts/evaluate_model.py:513`), so anything compared
-against it is compared at 20. This is not a tunable."""
+"""Twenty, from two independent places in the frozen evaluator that happen to agree.
+
+Its predictions file is hardcoded `predictions[i][:20]`
+(`scripts/evaluate_model.py:513`). Its **MRR** is computed over lists truncated at
+`max(top_k_values)` (`:324`), and `top_k_values` defaults to `[1, 3, 5, 10, 20]`
+(`:116`) — so 20 again, but by a default rather than a constant. There is no
+`--top-k-values` flag and no `--config` flag, so nothing on the command line can
+move it; only editing the frozen file could, which is forbidden.
+
+The distinction matters to calibration and is therefore checked rather than
+assumed: the oracle's report echoes its config, and `scripts/calibrate_mode_a.py`
+refuses to compare the two MRRs unless `max(top_k_values)` is this value. Two
+numbers truncated at different K are not the same quantity."""
 
 
 @dataclass(frozen=True)
@@ -267,6 +280,19 @@ class MeasurementManifest:
     checkpoint_path: str
     data_dir: str
     graph_fingerprint: Dict[str, Any]
+    artifact_digests: Dict[str, Optional[str]]
+    """Raw SHA-256 of every file the measurement consumed, keyed by role.
+
+    `graph_fingerprint` above is a **structural** identity — node types, counts,
+    feature dimensions. Two different checkpoints trained on the same graph share
+    it, and so do two different sample files of the same shape. A path is not an
+    identity either: `checkpoints/best.pt` names a different file every time
+    training improves. These digests are what let a number be traced back to the
+    exact bytes that produced it. `None` where the file was absent."""
+    calibration_eligible: bool
+    """False marks a run that may not be used to clear the parity gate — CPU
+    development runs, principally. Recorded in the manifest rather than decided by
+    a reader, so an ineligible number cannot be quoted as an eligible one."""
     # runtime
     software_revision: Optional[str]
     torch_version: str
@@ -296,36 +322,160 @@ class ModeAResult:
     authoritative_metrics: Dict[str, float]
     n_ranked: int
     n_ground_truth_absent: int
+    sampler_evidence: Dict[str, Any]
+    sample_ids: List[str]
+    truth_global_ids: List[int]
     legacy_top_k_local: List[List[int]]
     """Per sample, the frozen oracle's observable artifact: subgraph-local column
     indices, truncated to `LEGACY_TRUNCATION_K`. This is what a comparison against
     `--save-predictions` output is made of."""
 
     def to_dict(self) -> Dict[str, Any]:
+        """The measurement report. **Per-sample rows are deliberately not here** —
+        they are their own artifact (`to_predictions`), because one is a summary a
+        human reads and the other is a bulk list a comparison consumes."""
         return {
             "manifest": asdict(self.manifest),
             "legacy_metrics": self.legacy_metrics,
             "authoritative_metrics": self.authoritative_metrics,
             "n_ranked": self.n_ranked,
             "n_ground_truth_absent": self.n_ground_truth_absent,
+            "sampler_evidence": self.sampler_evidence,
+        }
+
+    def to_predictions(self) -> List[Dict[str, Any]]:
+        """Per-sample rows in the frozen oracle's own artifact shape.
+
+        `scripts/evaluate_model.py:508-519` writes `sample_id`, `ground_truth` and
+        `predictions` — and mixes spaces while doing it: `ground_truth` is the
+        **global** disease id straight from the samples file, while `predictions`
+        are **subgraph-local** column indices rendered as strings. That is
+        reproduced here rather than tidied, because the only purpose of this
+        artifact is to be diffed against that one, and a tidier shape would not
+        diff.
+        """
+        return [
+            {
+                "sample_id": sample_id,
+                "ground_truth": truth,
+                "predictions": [str(index) for index in row],
+            }
+            for sample_id, truth, row in zip(
+                self.sample_ids, self.truth_global_ids, self.legacy_top_k_local
+            )
+        ]
+
+
+@dataclass
+class _SamplerEvidence:
+    """What the sampler actually produced, as opposed to what the manifest claims.
+
+    The manifest records the **configuration** — negatives requested, hop count,
+    neighbour limits. That is a statement of intent. These are observations from
+    the batches that were really scored, and the pair is only worth anything
+    together: a manifest claiming 1000 negatives beside an observed universe of 40
+    disease columns says the run did not measure what it says it measured.
+
+    Counters and one summary method. Not telemetry: nothing is emitted, sampled or
+    aggregated over time, and the whole thing lives and dies inside one run.
+    """
+
+    n_batches: int = 0
+    candidate_counts: List[int] = field(default_factory=list)
+    max_subgraph_nodes: Dict[str, int] = field(default_factory=dict)
+    negatives_seen: bool = False
+    negatives_drawn: int = 0
+    negatives_within_sample_duplicates: int = 0
+    _negative_global_ids: set = field(default_factory=set)
+
+    def observe(self, batch_data: Dict[str, Any], n_candidates: int) -> None:
+        self.n_batches += 1
+        self.candidate_counts.append(int(n_candidates))
+
+        for node_type, features in batch_data["subgraph_x_dict"].items():
+            size = int(features.size(0))
+            if size > self.max_subgraph_nodes.get(node_type, 0):
+                self.max_subgraph_nodes[node_type] = size
+
+        negatives_local = batch_data["batch"].get("negative_disease_ids")
+        if negatives_local is None:
+            return
+        self.negatives_seen = True
+
+        # The batch dict is remapped to subgraph-local indices before it is
+        # handed over (`src/kg/data_loader.py:965-970`), so a global count has to
+        # translate first — with the same function the ranking path uses, not a
+        # second index expression.
+        globals_2d = to_global_disease_ids(
+            batch_data["original_indices"]["disease"].to(negatives_local.device),
+            negatives_local,
+        )
+        self.negatives_drawn += int(globals_2d.numel())
+        for row in globals_2d.tolist():
+            self.negatives_within_sample_duplicates += len(row) - len(set(row))
+            self._negative_global_ids.update(row)
+
+    def summary(self) -> Dict[str, Any]:
+        counts = self.candidate_counts
+        unique = len(self._negative_global_ids)
+        return {
+            "n_batches": self.n_batches,
+            "candidate_columns": {
+                "min": min(counts) if counts else None,
+                "max": max(counts) if counts else None,
+                "mean": sum(counts) / len(counts) if counts else None,
+            },
+            "max_subgraph_nodes": dict(self.max_subgraph_nodes),
+            "negative_sampling": {
+                "observed": self.negatives_seen,
+                "total_drawn": self.negatives_drawn,
+                "unique_global_ids": unique,
+                # Two different collisions, kept apart. A draw repeated inside one
+                # patient's negative set is the sampler failing to deduplicate
+                # (`data_loader.py:665-671` appends without checking); the same id
+                # reappearing across patients is expected and says nothing.
+                "repeat_draws_across_run": self.negatives_drawn - unique,
+                "repeat_draws_within_sample": self.negatives_within_sample_duplicates,
+            },
         }
 
 
-def _legacy_reciprocal_rank(local_order: Tensor, truth_local: Tensor, k: int) -> List[float]:
-    """The frozen evaluator's MRR contribution, per sample.
+def _assert_cohort_is_intact(
+    manifest: MeasurementManifest,
+    n_legacy_rows: int,
+    n_sample_ids: int,
+    n_canonical_ranks: int,
+    n_absent: int,
+) -> None:
+    """Refuse to report a number computed over a cohort nobody chose.
 
-    It takes the first `k` local indices, looks for the truth by list position,
-    and contributes `1/rank` or zero (`evaluate_model.py:186-193, 299`). Computed
-    from the ranking rather than from strings, which is the same arithmetic.
+    Every way a Mode A run can quietly measure fewer samples than it claims —
+    a skipped batch, a dropped last batch, a truth outside the candidate set —
+    ends here rather than in a plausible metric. The failures are separated
+    because they have different causes and a single "count mismatch" message
+    would send the reader to the wrong place.
     """
-    truncated = local_order[:, :k]
-    matches = truncated == truth_local.unsqueeze(-1)
-    found = matches.any(dim=-1)
-    positions = matches.to(torch.uint8).argmax(dim=-1)
-    return [
-        1.0 / (int(p) + 1) if bool(f) else 0.0
-        for p, f in zip(positions.tolist(), found.tolist())
-    ]
+    if manifest.n_samples <= 0:
+        raise ValueError(
+            f"manifest claims {manifest.n_samples} samples; there is nothing to "
+            "measure and every metric would be fabricated"
+        )
+    if n_absent:
+        raise ValueError(
+            f"{n_absent} ground truth(s) were absent from the candidate set. In "
+            "Mode A the truth is one of the subgraph's own seed nodes, so this is "
+            "impossible unless the harness is wrong — the candidate universe, the "
+            "id translation or the batch wiring. It is not a property of the model "
+            "and must not be reported as one"
+        )
+    if not (n_legacy_rows == n_sample_ids == n_canonical_ranks == manifest.n_samples):
+        raise ValueError(
+            "cohort shrinkage: the run produced "
+            f"{n_legacy_rows} legacy rows, {n_sample_ids} sample ids and "
+            f"{n_canonical_ranks} canonical ranks for {manifest.n_samples} declared "
+            "samples. A metric over a subset of the declared cohort is not the "
+            "metric the manifest describes"
+        )
 
 
 def run_mode_a(
@@ -349,9 +499,12 @@ def run_mode_a(
       - `canonical_ranking` in **global** space, untruncated, which is what modes
         A, B, C and D are compared with each other on.
 
-    A ground truth absent from the candidate set is **counted, not ranked**. In
-    Mode A it cannot happen — the truth is a subgraph seed — so a non-zero count
-    is a signal that the harness is wrong, not that the model is.
+    A ground truth absent from the candidate set is a **hard failure**, not a
+    reported statistic. In Mode A the truth is one of the subgraph's own seeds
+    (`src/kg/data_loader.py:916-926`), so absence is impossible unless the harness
+    is wrong — and a report that quietly drops the affected samples would answer a
+    question about a cohort nobody chose. The same applies to any shrinkage:
+    legacy rows, canonical ranks and `manifest.n_samples` must all agree.
     """
     import torch as _torch
 
@@ -361,9 +514,12 @@ def run_mode_a(
     device = _torch.device(device) if device is not None else _torch.device("cpu")
     model.eval()
 
-    legacy_contributions: List[float] = []
     legacy_top_k: List[List[int]] = []
+    legacy_truth_local: List[int] = []
+    sample_ids: List[str] = []
+    truth_global_ids: List[int] = []
     canonical_ranks: List[int] = []
+    evidence = _SamplerEvidence()
     absent = 0
 
     with _torch.no_grad():
@@ -397,32 +553,41 @@ def run_mode_a(
             scores = cosine_score_matrix(patients, disease_emb)
 
             global_ids = batch_data["original_indices"]["disease"].to(device)
+            evidence.observe(batch_data, n_candidates=scores.size(1))
 
             local_order = legacy_ranking(scores)
-            legacy_contributions.extend(
-                _legacy_reciprocal_rank(local_order, disease_ids_local, LEGACY_TRUNCATION_K)
-            )
             legacy_top_k.extend(local_order[:, :LEGACY_TRUNCATION_K].tolist())
+            legacy_truth_local.extend(disease_ids_local.tolist())
+            sample_ids.extend(batch["patient_ids"])
 
             canonical = canonical_ranking(scores, global_ids)
             truth_global = to_global_disease_ids(global_ids, disease_ids_local)
+            truth_global_ids.extend(truth_global.tolist())
             for rank in ranks_of_truth(canonical, truth_global):
                 if rank is None:
                     absent += 1
                 else:
                     canonical_ranks.append(rank)
 
-    if not canonical_ranks:
-        raise ValueError(
-            "no sample produced a rank; there is nothing to report and a zeroed "
-            "metric would be a fabricated one"
-        )
+    _assert_cohort_is_intact(
+        manifest=manifest,
+        n_legacy_rows=len(legacy_top_k),
+        n_sample_ids=len(sample_ids),
+        n_canonical_ranks=len(canonical_ranks),
+        n_absent=absent,
+    )
 
-    n = len(legacy_contributions)
     return ModeAResult(
         manifest=manifest,
         legacy_metrics={
-            f"legacy_mrr_truncated_at_{LEGACY_TRUNCATION_K}": sum(legacy_contributions) / n,
+            # Through `RankingMetrics.mean_reciprocal_rank` — the same call the
+            # frozen evaluator reaches via `compute_all` (`evaluate_model.py:285,
+            # 366`) — over the same truncated lists it builds, as ids rather than
+            # as the strings it renders them to. A second implementation of
+            # `1/rank` here would have to be trusted to agree with that one; this
+            # cannot disagree with it.
+            f"legacy_mrr_truncated_at_{LEGACY_TRUNCATION_K}":
+                RankingMetrics().mean_reciprocal_rank(legacy_top_k, legacy_truth_local),
         },
         authoritative_metrics={
             f"untruncated_{name}" if name == "mrr" else name: value
@@ -432,5 +597,8 @@ def run_mode_a(
         },
         n_ranked=len(canonical_ranks),
         n_ground_truth_absent=absent,
+        sampler_evidence=evidence.summary(),
+        sample_ids=sample_ids,
+        truth_global_ids=truth_global_ids,
         legacy_top_k_local=legacy_top_k,
     )

@@ -160,10 +160,10 @@ def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
     silently shrinks the cohort. Mode A refuses instead."""
     _, data_dir, checkpoint = workspace
 
-    from scripts.measure_scorer import build_manifest, build_model, load_graph_and_samples
-    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
-
     import argparse
+
+    from scripts.measure_scorer import build_manifest, load_graph_and_samples
+    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
 
     device = torch.device("cpu")
     graph_data, samples = load_graph_and_samples(data_dir, "test")
@@ -183,3 +183,188 @@ def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
             model=_Empty(), dataloader=loader,
             manifest=build_manifest(args, graph_data, len(samples), device), device=device,
         )
+
+
+def test_a_cohort_smaller_than_the_manifest_claims_is_an_error(workspace):
+    """Driven through the real call site rather than the helper: the manifest
+    declares one more sample than the dataloader can produce, which is what a
+    dropped last batch or a skipped batch would look like from the outside."""
+    _, data_dir, checkpoint = workspace
+
+    import argparse
+
+    from scripts.measure_scorer import build_manifest, build_model, load_graph_and_samples
+    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
+
+    device = torch.device("cpu")
+    graph_data, samples = load_graph_and_samples(data_dir, "test")
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data,
+        config=DataLoaderConfig(batch_size=3, num_workers=0, shuffle=False),
+    )
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+                              batch_size=3, num_workers=0, seed=None)
+
+    with pytest.raises(ValueError, match="cohort shrinkage"):
+        run_mode_a(
+            model=build_model(checkpoint, device), dataloader=loader,
+            manifest=build_manifest(args, graph_data, len(samples) + 1, device),
+            device=device,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({"n_absent": 1}, "absent from the candidate set"),
+        ({"n_canonical_ranks": 5}, "cohort shrinkage"),
+        ({"n_legacy_rows": 5}, "cohort shrinkage"),
+        ({"n_sample_ids": 5}, "cohort shrinkage"),
+        ({"declared": 0}, "nothing to measure"),
+    ],
+)
+def test_every_way_the_cohort_can_shrink_is_refused(workspace, kwargs, expected):
+    """Absence gets its own message because it has its own cause. `n_absent` is
+    checked before the count comparison so that a truth outside the candidate set
+    is reported as what it is — a harness fault — rather than as an arithmetic
+    mismatch pointing at the wrong place."""
+    _, data_dir, checkpoint = workspace
+
+    import argparse
+
+    from scripts.measure_scorer import build_manifest, load_graph_and_samples
+    from src.evaluation.measurement import _assert_cohort_is_intact
+
+    graph_data, _ = load_graph_and_samples(data_dir, "test")
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+                              batch_size=3, num_workers=0, seed=None)
+    declared = kwargs.pop("declared", 6)
+    manifest = build_manifest(args, graph_data, declared, torch.device("cpu"))
+
+    call = {"n_legacy_rows": 6, "n_sample_ids": 6, "n_canonical_ranks": 6, "n_absent": 0}
+    call.update(kwargs)
+
+    with pytest.raises(ValueError, match=expected):
+        _assert_cohort_is_intact(manifest=manifest, **call)
+
+
+# ---------------------------------------------------------------------------
+# The calibration artifact
+# ---------------------------------------------------------------------------
+def test_the_predictions_artifact_has_the_oracle_s_shape(workspace):
+    """Mixed spaces on purpose. `scripts/evaluate_model.py:508-519` writes the
+    **global** truth id beside **subgraph-local** prediction indices rendered as
+    strings; the only job of this artifact is to diff against that one, and a
+    tidier shape would not diff."""
+    _, data_dir, checkpoint = workspace
+
+    result = _run(data_dir, checkpoint)
+    rows = result.to_predictions()
+
+    assert len(rows) == result.manifest.n_samples
+    assert set(rows[0]) == {"sample_id", "ground_truth", "predictions"}
+    for row in rows:
+        assert isinstance(row["sample_id"], str)
+        assert isinstance(row["ground_truth"], int)
+        assert all(isinstance(p, str) for p in row["predictions"])
+        assert len(row["predictions"]) <= LEGACY_TRUNCATION_K
+
+
+def test_the_report_and_the_rows_are_separate_artifacts(workspace):
+    """The summary a human reads must not carry thousands of per-sample rows, and
+    the rows must not be reachable only through an object that never reaches
+    disk — which was the defect: `legacy_top_k_local` existed on the result and
+    no file ever contained it."""
+    _, data_dir, checkpoint = workspace
+
+    result = _run(data_dir, checkpoint)
+    report = result.to_dict()
+
+    assert "legacy_top_k_local" not in report
+    assert "sample_ids" not in report
+    assert "sampler_evidence" in report
+    assert result.to_predictions()
+
+
+# ---------------------------------------------------------------------------
+# Sampler evidence
+# ---------------------------------------------------------------------------
+def test_sampler_evidence_counts_negatives_in_global_space(workspace):
+    """The batch dict is remapped to subgraph-local indices before it is handed
+    over, so counting unique negatives without translating would count local
+    column numbers — which repeat across batches for unrelated diseases."""
+    _, data_dir, checkpoint = workspace
+
+    result = _run(data_dir, checkpoint)
+    negatives = result.sampler_evidence["negative_sampling"]
+
+    assert negatives["observed"] is True
+    assert negatives["total_drawn"] == (
+        result.manifest.n_samples * result.manifest.num_negative_samples
+    )
+    # The fixture has four diseases, so every drawn id must be one of them.
+    assert negatives["unique_global_ids"] <= 4
+    assert negatives["repeat_draws_across_run"] == (
+        negatives["total_drawn"] - negatives["unique_global_ids"]
+    )
+
+
+def test_sampler_evidence_records_what_was_scored_not_what_was_configured(workspace):
+    """The manifest's claim and the observation are separate fields so they can
+    disagree. A candidate universe far smaller than the configured negative count
+    is exactly the discrepancy this is here to make visible."""
+    _, data_dir, checkpoint = workspace
+
+    result = _run(data_dir, checkpoint, batch_size=3)
+    evidence = result.sampler_evidence
+
+    assert evidence["n_batches"] == 2  # six samples at batch size three
+    assert evidence["candidate_columns"]["min"] >= 1
+    assert evidence["candidate_columns"]["max"] >= evidence["candidate_columns"]["min"]
+    assert evidence["max_subgraph_nodes"]["disease"] >= evidence["candidate_columns"]["max"]
+
+
+# ---------------------------------------------------------------------------
+# The CLI's own guards — argument-level, not driver-level
+# ---------------------------------------------------------------------------
+def test_auto_device_refuses_to_fall_back_to_cpu(monkeypatch):
+    """CUDA is a hard project requirement. A silent CPU fallback would produce a
+    number that reads as institutional and is not."""
+    from scripts import measure_scorer
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    with pytest.raises(SystemExit, match="requires CUDA"):
+        measure_scorer._resolve_device("auto")
+
+
+def test_explicit_cpu_is_permitted_but_ineligible(monkeypatch):
+    """Development in a container without a GPU is real work; quoting its number
+    as an acceptance result is not."""
+    from scripts import measure_scorer
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    device, eligible = measure_scorer._resolve_device("cpu")
+
+    assert device.type == "cpu"
+    assert eligible is False
+
+
+def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
+    """Two files with identical content hash the same however they are named; a
+    one-byte change does not."""
+    import hashlib
+
+    from scripts.measure_scorer import _file_sha256
+
+    original = tmp_path / "a.bin"
+    copy = tmp_path / "b.bin"
+    altered = tmp_path / "c.bin"
+    original.write_bytes(b"shepherd")
+    copy.write_bytes(b"shepherd")
+    altered.write_bytes(b"shepherE")
+
+    assert _file_sha256(original) == hashlib.sha256(b"shepherd").hexdigest()
+    assert _file_sha256(original) == _file_sha256(copy)
+    assert _file_sha256(original) != _file_sha256(altered)
+    assert _file_sha256(tmp_path / "absent.bin") is None
