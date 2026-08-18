@@ -13,7 +13,7 @@ import pytest
 # pipeline.py imports torch / PyG at module load; skip where unavailable.
 pytest.importorskip("torch")
 
-from src.inference.pipeline import (  # noqa: E402
+from src.config.model_types import (  # noqa: E402
     _infer_conv_type_from_keys,
     _infer_num_layers_from_keys,
 )

@@ -104,183 +104,6 @@ PostProcessCallback = Callable[
 
 
 # ==============================================================================
-# Checkpoint architecture inference
-# ==============================================================================
-def _infer_conv_type_from_keys(state_keys) -> Optional[str]:
-    """Infer the GNN conv type from a checkpoint's parameter names.
-
-    Older checkpoints don't record ``conv_type`` in their config (the trainer
-    serialized only training hyperparameters), so we recover it from the weight
-    names — otherwise an HGT/SAGE checkpoint is silently rebuilt as the GAT
-    default and the state_dict load fails.
-
-    Distinguishing markers (params are under ``gnn_layers.<n>.conv...``):
-      - HGT (``HGTConv``): ``kqv_lin`` / ``k_rel`` / ``v_rel`` / ``p_rel`` / ``skip``
-      - GAT (``GATConv`` in ``HeteroConv``): ``att_src`` / ``att_dst``
-      - SAGE (``SAGEConv`` in ``HeteroConv``): ``lin_l`` / ``lin_r`` (no attention)
-    """
-    keys = state_keys if isinstance(state_keys, (set, frozenset)) else set(state_keys)
-    if any(
-        (".conv.kqv_lin." in k or ".conv.k_rel" in k or ".conv.v_rel" in k
-         or ".conv.p_rel." in k or ".conv.skip." in k)
-        for k in keys
-    ):
-        return "hgt"
-    if any(k.endswith(".att_src") or k.endswith(".att_dst") for k in keys):
-        return "gat"
-    if any((".conv.convs." in k) and (".lin_l." in k or ".lin_r." in k) for k in keys):
-        return "sage"
-    return None
-
-
-def _infer_num_layers_from_keys(state_keys) -> Optional[int]:
-    """Infer the number of GNN layers from the highest ``gnn_layers.<n>`` index."""
-    import re
-
-    indices = set()
-    for k in state_keys:
-        m = re.match(r"gnn_layers\.(\d+)\.", k)
-        if m:
-            indices.add(int(m.group(1)))
-    return (max(indices) + 1) if indices else None
-
-
-def _resolve_arch_params(
-    ckpt_config: dict,
-    state_keys,
-    *,
-    valid_fields,
-    supported_conv,
-    has_pos_encoder: bool = False,
-    has_ortholog_gate: bool = False,
-) -> dict:
-    """Resolve model-architecture kwargs from a checkpoint, by precedence.
-
-    This is the schema resolution the diagnosis pipeline uses to reconstruct a
-    model. It is deliberately free of torch/model imports so it can be unit
-    tested in isolation: the caller passes ``valid_fields`` (the current
-    ``ShepherdGNNConfig`` field names) and ``supported_conv`` (the conv types the
-    factory can build).
-
-    Precedence (highest first):
-      1. ``ckpt_config["model_config"]`` — the full, self-describing sub-dict
-         written by current trainers.
-      2. Legacy flat arch fields at the top level of ``ckpt_config`` (written by
-         the interim fix before ``model_config`` existed).
-      3. Inference from the parameter names (``conv_type`` / ``num_layers``) for
-         checkpoints that carry no architecture metadata at all.
-      4. ``ShepherdGNNConfig`` defaults (applied by the caller when a key is
-         simply absent from the returned dict).
-
-    Unknown keys are filtered against ``valid_fields`` to tolerate version drift
-    (and are logged). ``conv_type`` handling depends on where it came from, which
-    is tracked explicitly:
-
-      - ``model_config`` (tier 1) is the trainer's authoritative self-description
-        and is TRUSTED over the weight-key heuristic (only warned on conflict).
-        The heuristic is a legacy fallback that is not future-proof — a new
-        architecture may reuse PyG key patterns (e.g. ``att_src`` / ``lin_l``),
-        so it must not override an explicit model_config value.
-      - ``legacy_flat`` (tier 2) predates ``model_config``; here the weights are
-        treated as structural ground truth and override a conflicting value.
-      - ``inferred`` (tier 3) is derived from the weights, so it cannot conflict.
-
-    In all cases an explicit-but-unsupported ``conv_type`` raises rather than
-    silently degrading to GAT; only a truly absent/undetectable one defaults.
-    """
-    params: dict = {}
-    conv_source = None  # "model_config" | "legacy_flat" | "inferred"
-
-    # Tier 1: full self-describing model_config sub-dict.
-    model_config = ckpt_config.get("model_config")
-    if isinstance(model_config, dict):
-        ignored = []
-        for k, v in model_config.items():
-            if k in valid_fields:
-                params[k] = v
-            else:
-                ignored.append(k)
-        if ignored:
-            logger.warning(
-                "Ignoring unknown model_config field(s) not in the current "
-                "ShepherdGNNConfig schema: %s",
-                sorted(ignored),
-            )
-        if "conv_type" in params:
-            conv_source = "model_config"
-
-    # Tier 2: legacy flat arch fields (fill only what tier 1 didn't provide).
-    for key in (
-        "conv_type",
-        "hidden_dim",
-        "num_layers",
-        "num_heads",
-        "use_positional_encoding",
-        "use_ortholog_gate",
-    ):
-        if key not in params and key in valid_fields and ckpt_config.get(key) is not None:
-            params[key] = ckpt_config[key]
-            if key == "conv_type":
-                conv_source = "legacy_flat"
-
-    # Tier 3: infer structural fields from the parameter names when still absent.
-    detected_conv = _infer_conv_type_from_keys(state_keys)
-    if "conv_type" not in params and detected_conv:
-        params["conv_type"] = detected_conv
-        conv_source = "inferred"
-        logger.info(
-            "conv_type not in checkpoint config; detected %r from weights.",
-            detected_conv,
-        )
-    if "num_layers" not in params:
-        detected_layers = _infer_num_layers_from_keys(state_keys)
-        if detected_layers:
-            params["num_layers"] = detected_layers
-    if "use_positional_encoding" in valid_fields:
-        params.setdefault("use_positional_encoding", has_pos_encoder)
-    if "use_ortholog_gate" in valid_fields:
-        params.setdefault("use_ortholog_gate", has_ortholog_gate)
-
-    # Conflict handling depends on the SOURCE of conv_type:
-    #   - legacy_flat: weights are ground truth -> override on conflict.
-    #   - model_config: authoritative -> keep it, only warn (the key heuristic is
-    #     a legacy fallback that may misclassify future architectures).
-    conv_type = params.get("conv_type")
-    if conv_type is not None and detected_conv and conv_type != detected_conv:
-        if conv_source == "legacy_flat":
-            logger.warning(
-                "Legacy flat conv_type=%r disagrees with parameter names "
-                "(detected %r); trusting the weights.",
-                conv_type, detected_conv,
-            )
-            params["conv_type"] = detected_conv
-        else:  # model_config
-            logger.warning(
-                "model_config conv_type=%r disagrees with the weight-key "
-                "heuristic (detected %r); trusting model_config, as the heuristic "
-                "is a legacy fallback that may misclassify newer architectures.",
-                conv_type, detected_conv,
-            )
-
-    # Validate: an explicit-but-unsupported conv_type must fail loudly. Only a
-    # truly absent/undetectable conv_type falls back to the GAT default.
-    conv_type = params.get("conv_type")
-    if conv_type is None:
-        params["conv_type"] = "gat"
-    elif conv_type not in supported_conv:
-        raise ValueError(
-            f"Checkpoint specifies unsupported conv_type={conv_type!r}; "
-            f"supported types are {tuple(supported_conv)}."
-        )
-
-    # Inference-time override (never carry training dropout into eval).
-    if "dropout" in valid_fields:
-        params["dropout"] = 0.0
-
-    return params
-
-
-# ==============================================================================
 # Configuration
 # ==============================================================================
 @dataclass
@@ -738,7 +561,7 @@ class DiagnosisPipeline:
         - Trainer format: key "model_state_dict"
         - ModelCheckpoint callback format: key "state_dict"
         """
-        from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
+        from src.models.gnn.shepherd_gnn import build_shepherd_model
 
         ckpt_path = Path(checkpoint_path)
         if not ckpt_path.exists():
@@ -748,22 +571,9 @@ class DiagnosisPipeline:
         logger.info(f"Loading GNN model from checkpoint: {ckpt_path}")
         checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
-        # Extract state dict (handle both formats)
-        if "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
-        elif "state_dict" in checkpoint:
-            state_dict = checkpoint["state_dict"]
-        else:
-            logger.error(
-                f"Checkpoint has no recognized state dict key. "
-                f"Available keys: {list(checkpoint.keys())}"
-            )
-            return None
-
-        # Extract model config from checkpoint
-        ckpt_config = checkpoint.get("config", {})
-
-        # Verify data fingerprint compatibility (KG version check)
+        # Verify data fingerprint compatibility (KG version check). Pipeline
+        # business, not construction: it decides what an operator is warned
+        # about, and the measurement harness records its own manifest instead.
         from src.utils.fingerprint import verify_fingerprint
         fp_warnings = verify_fingerprint(
             checkpoint,
@@ -776,14 +586,6 @@ class DiagnosisPipeline:
                 logger.warning(f"[Fingerprint] {w}")
         self._fingerprint_warnings = fp_warnings
 
-        # Reconstruct model architecture.
-        # CRITICAL: metadata MUST be derived from graph_data["edge_index_dict"]
-        # to match how scripts/train_model.py builds the model. The trainer
-        # uses graph_data keys (which include rev_* reverse edges for
-        # bidirectional message passing), NOT kg.metadata() (which only has
-        # forward edges from the KG). Using kg.metadata() here would create a
-        # model with fewer conv layers than the checkpoint expects, causing
-        # state_dict load to fail.
         if self._graph_data is None:
             logger.error(
                 "Cannot reconstruct model: graph_data not loaded. "
@@ -791,70 +593,17 @@ class DiagnosisPipeline:
             )
             return None
 
-        node_types = list(self._graph_data["x_dict"].keys())
-        edge_types = list(self._graph_data["edge_index_dict"].keys())
-        metadata = (node_types, edge_types)
-
-        # Get in_channels_dict from graph data features
-        in_channels_dict = {}
-        for node_type, features in self._graph_data["x_dict"].items():
-            if features.dim() >= 2:
-                in_channels_dict[node_type] = features.size(-1)
-
-        # Reconstruct the model architecture from the checkpoint, by precedence:
-        #   1) model_config sub-dict (self-describing, current trainers)
-        #   2) legacy flat arch fields  3) inference from weight names  4) defaults
-        # (see _resolve_arch_params). This makes the loader deterministic for
-        # self-describing checkpoints while still recovering legacy ones, so an
-        # HGT/SAGE checkpoint is never silently rebuilt as GAT.
-        import dataclasses as _dc
-
-        from src.config.model_types import SUPPORTED_CONV_TYPES
-
-        state_keys = set(state_dict.keys())
-        has_pos_encoder = any(k.startswith("pos_encoder.") for k in state_keys)
-        has_ortholog_gate = any(k.startswith("ortholog_gate.") for k in state_keys)
-
-        valid_fields = {f.name for f in _dc.fields(ShepherdGNNConfig)}
-        arch_params = _resolve_arch_params(
-            ckpt_config,
-            state_keys,
-            valid_fields=valid_fields,
-            supported_conv=SUPPORTED_CONV_TYPES,
-            has_pos_encoder=has_pos_encoder,
-            has_ortholog_gate=has_ortholog_gate,
-        )
-        model_config = ShepherdGNNConfig(**arch_params)
-        hidden_dim = model_config.hidden_dim
-
-        # Provide default in_channels if not inferred from data
-        if not in_channels_dict:
-            for node_type in node_types:
-                in_channels_dict[node_type] = hidden_dim
-
-        model = ShepherdGNN(
-            metadata=metadata,
-            in_channels_dict=in_channels_dict,
-            config=model_config,
-        )
-
-        # Load trained weights. If this fails, log the SPECIFIC mismatch so
-        # operators can diagnose checkpoint compat issues (e.g., metadata
-        # source mismatch between trainer and inference paths).
+        # Construction is shared with the measurement harness
+        # (`src/models/gnn/shepherd_gnn.py:build_shepherd_model`), so modes B and
+        # C cannot encode with semantics that have drifted from the served model.
+        # Metadata derivation from graph_data keys, architecture recovery and
+        # weight loading all live there; what stays here is what only a running
+        # pipeline needs.
         try:
-            model.load_state_dict(state_dict)
-        except RuntimeError as e:
-            logger.error(
-                f"Failed to load state dict from {ckpt_path}: {e}\n"
-                f"Model expects {len(metadata[1])} edge types: "
-                f"{[f'{s}--{r}--{t}' for s, r, t in metadata[1]][:5]}...\n"
-                f"Checkpoint has {len(state_dict)} parameter tensors. "
-                f"Common cause: trainer and inference use different metadata "
-                f"sources (trainer uses graph_data keys, inference must too)."
-            )
+            model = build_shepherd_model(checkpoint, self._graph_data)
+        except (KeyError, ValueError, RuntimeError) as exc:
+            logger.error(f"Failed to build model from {ckpt_path}: {exc}")
             return None
-
-        model.eval()
 
         # Store checkpoint training metadata for UI display
         self._checkpoint_meta = {

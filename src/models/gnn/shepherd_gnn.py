@@ -498,3 +498,113 @@ def create_model(
         in_channels_dict=in_channels_dict,
         config=config,
     )
+
+
+# ==============================================================================
+# Construction from a training checkpoint — production semantics, one copy
+# ==============================================================================
+def build_shepherd_model(
+    checkpoint: Dict[str, Any],
+    graph_data: Dict[str, Any],
+    device: Optional[Any] = None,
+) -> ShepherdGNN:
+    """Rebuild a trained model the way the deployed pipeline does.
+
+    **One implementation, two callers.** `src/inference/pipeline.py` uses this to
+    load the served model, and `src/evaluation` uses it so measurement modes B and
+    C encode with production semantics. Written twice, the copies would drift, and
+    a measurement that quietly stopped describing the deployed scorer is the one
+    failure this work item cannot detect from its own output.
+
+    **Metadata comes from `graph_data`, never from the knowledge-graph object.**
+    `scripts/train_model.py` builds the model from `graph_data` keys, which include
+    the `rev_*` reverse edges added for bidirectional message passing;
+    `kg.metadata()` has only the forward edges. Using the latter produces a model
+    with fewer conv layers than the checkpoint expects, and `load_state_dict`
+    fails — which is the good case, because the alternative is a silently
+    different model.
+
+    Architecture is recovered by the documented precedence in
+    `src.config.model_types.resolve_arch_params` — self-describing `model_config`
+    first, then legacy flat fields, then inference from the weight names — so an
+    HGT or SAGE checkpoint is never rebuilt as the GAT default.
+
+    Args:
+        checkpoint: a loaded checkpoint dict. Either trainer format
+            (``model_state_dict``) or callback format (``state_dict``).
+        graph_data: ``x_dict`` and ``edge_index_dict`` of the graph the model will
+            run on. Its keys define the architecture, so this is not optional.
+        device: where to place the model. ``None`` leaves it where it was built.
+
+    Returns:
+        The model in eval mode, weights loaded.
+
+    Raises:
+        KeyError: no recognised state dict in the checkpoint.
+        ValueError: `graph_data` lacks the dicts the architecture is derived from.
+        RuntimeError: from `load_state_dict`, re-raised with the metadata detail
+            an operator needs to tell a compatibility problem from a bug.
+    """
+    import dataclasses as _dc
+
+    from src.config.model_types import SUPPORTED_CONV_TYPES, resolve_arch_params
+
+    state_dict = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+    if state_dict is None:
+        raise KeyError(
+            "checkpoint has neither 'model_state_dict' (trainer format) nor "
+            f"'state_dict' (callback format); keys are {sorted(checkpoint)[:10]}"
+        )
+
+    x_dict = graph_data.get("x_dict")
+    edge_index_dict = graph_data.get("edge_index_dict")
+    if not x_dict or not edge_index_dict:
+        raise ValueError(
+            "graph_data must carry both 'x_dict' and 'edge_index_dict'; the model's "
+            "architecture is derived from their keys, so an absent one would "
+            "silently build a different model"
+        )
+
+    metadata = (list(x_dict.keys()), list(edge_index_dict.keys()))
+    in_channels_dict = {
+        node_type: features.size(-1)
+        for node_type, features in x_dict.items()
+        if features.dim() >= 2
+    }
+
+    state_keys = set(state_dict.keys())
+    arch_params = resolve_arch_params(
+        checkpoint.get("config", {}) or {},
+        state_keys,
+        valid_fields={f.name for f in _dc.fields(ShepherdGNNConfig)},
+        supported_conv=SUPPORTED_CONV_TYPES,
+        has_pos_encoder=any(k.startswith("pos_encoder.") for k in state_keys),
+        has_ortholog_gate=any(k.startswith("ortholog_gate.") for k in state_keys),
+    )
+    model_config = ShepherdGNNConfig(**arch_params)
+
+    # A node type with no usable feature tensor still needs an input width.
+    for node_type in metadata[0]:
+        in_channels_dict.setdefault(node_type, model_config.hidden_dim)
+
+    model = ShepherdGNN(
+        metadata=metadata,
+        in_channels_dict=in_channels_dict,
+        config=model_config,
+    )
+
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{exc}\nModel expects {len(metadata[1])} edge types: "
+            f"{[f'{s}--{r}--{t}' for s, r, t in metadata[1]][:5]}...\n"
+            f"Checkpoint has {len(state_dict)} parameter tensors. Common cause: "
+            "trainer and inference derived metadata from different sources — the "
+            "trainer uses graph_data keys, and so must this."
+        ) from exc
+
+    model.eval()
+    if device is not None:
+        model = model.to(device)
+    return model
