@@ -14,6 +14,7 @@ here fails `make check` rather than quietly going missing.
 | **Living** | Kept current with the repository. If it disagrees with the code, that is a bug in the document. |
 | **Dated snapshot** | Accurate as of its date; deliberately *not* updated. Read it as history, not as a description of the current tree. |
 | **Archived** | Superseded. Kept for provenance under `docs/archive/`. |
+| **Working** | Design and review material for work in progress, under `docs/working/`. Not written for clinicians or the engineering team, and not authoritative: when the phase lands, its decisions move into a living document. |
 
 Snapshots are not corrected when the code moves on — the repository's rule is *correct living
 documents, annotate dated snapshots*. That is also why nothing here has been relocated: several
@@ -47,6 +48,24 @@ Still referenced, and useful — but each describes the tree as it was on its da
 | [`TORCH_COMPILE_EXPERIMENT_FINDINGS.md`](TORCH_COMPILE_EXPERIMENT_FINDINGS.md) | closed | Why `torch.compile` was evaluated and what was concluded. Self-marked 已封存 |
 | [`Repair/REPAIR_CHECKLIST.md`](Repair/REPAIR_CHECKLIST.md) | rolling | Repair checklist; unchecked boxes are proposals, not commitments |
 | [`Repair/SCAN_REPORT.md`](Repair/SCAN_REPORT.md) | 2026-07-22 | Repository scan that cross-checks the other snapshots against the tree |
+
+## Working documents
+
+Under `docs/working/`, one subfolder per work phase. These say things a finished document should
+not — open questions, rejected alternatives, disagreements between author and reviewer — which is
+why they are separated by folder from everything above. A phase folder that is still here after its
+work shipped is stale, not authoritative.
+
+| Document | Contents |
+|---|---|
+| [`working/README.md`](working/README.md) | The convention, and the list of live phases |
+| [`working/results-review/README.md`](working/results-review/README.md) | Results-review phase: what the specs cover, and how to run the closure audit |
+| [`working/results-review/SPEC_0_INDEX.md`](working/results-review/SPEC_0_INDEX.md) | Index, requirements traceability, gates, open institutional values, backlog |
+| [`working/results-review/SPEC_1_RESULTS_REVIEW.md`](working/results-review/SPEC_1_RESULTS_REVIEW.md) | Scorer/view authority, SP sort and filter policy, decomposition, two-surface UX, limits |
+| [`working/results-review/SPEC_2_SNAPSHOT_REPOSITORY.md`](working/results-review/SPEC_2_SNAPSHOT_REPOSITORY.md) | Snapshot payload, rotation, retention, atomic publication, access decision. §11 carries the normative invariants and reopen triggers |
+| [`working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md`](working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md) | Constraints any Gate 3 evidence design must satisfy |
+| [`working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`](working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md) | Route inventory, bind modes, authentication, CORS, risk acceptance |
+| [`working/results-review/ARCHIVE_rev1_6.md`](working/results-review/ARCHIVE_rev1_6.md) | Revisions 1–6 of the above, with the withdrawn claims and what the scope audit removed. History, not authority |
 
 ## Archived
 
