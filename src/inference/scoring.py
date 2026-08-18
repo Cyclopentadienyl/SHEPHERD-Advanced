@@ -156,9 +156,23 @@ def masked_mean_pool(embeddings: Tensor, mask: Tensor) -> Tensor:
         vector** rather than a division by zero. That is behaviour to preserve, not
         to improve: changing it would move Mode A off the control it exists to be.
 
+    **The mask must be boolean.** ``phenotype_confidences`` is a real ``(B, N)``
+    float sibling of the padding mask (`src/api/routes/diagnose.py:59`), and
+    `docs/DISEASE_SCORER_POLICY.md` forbids confidence from acting as a scoring
+    weight. Passing one here would make ``.float()`` turn it into exactly that
+    weighting vector — plausible numbers, wrong semantics, no error. The guard is
+    safe for parity because the production mask is already built as
+    ``torch.bool`` (`src/kg/data_loader.py:704-707`) and the dataloader itself
+    indexes with it (`:912`), which requires bool.
+
     Nothing is moved between devices. A mismatch raises from torch rather than
     being silently repaired.
     """
+    if mask.dtype != torch.bool:
+        raise ValueError(
+            f"mask must be a boolean validity mask, not {mask.dtype}. A float mask "
+            "would silently become a weighting vector"
+        )
     if embeddings.dim() != 3:
         raise ValueError(f"embeddings must be (B, N, H); got {tuple(embeddings.shape)}")
     if mask.dim() != 2:

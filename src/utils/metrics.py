@@ -76,11 +76,13 @@ class RankingMetrics:
     ) -> Dict[str, float]:
         """Rank-based metrics from ranks that were already determined elsewhere.
 
-        The prediction-list entry points above take truncated top-k lists, so a
-        ground truth outside the list is indistinguishable from one ranked last.
-        This entry point takes ranks directly and so can report an untruncated
-        MRR, a mean rank, and Hits@k for any k — including k larger than any list
-        a caller would carry.
+        The prediction-list entry points above take truncated top-k lists. A truth
+        at the last kept position still contributes ``1/K``; what a truncated list
+        loses is everything past it — **every true rank beyond K, and absence from
+        the candidate set entirely, all collapse to a contribution of zero and
+        become indistinguishable from each other.** This entry point takes ranks
+        directly and so can report an untruncated MRR, a mean rank, and Hits@k for
+        any k — including k larger than any list a caller would carry.
 
         **Ranking policy deliberately lives outside this module.** Score ordering,
         tie breaking, candidate identity and what to do about a ground truth that

@@ -2,8 +2,10 @@
 `RankingMetrics.compute_from_ranks` — rank-based metrics, and the input contract
 that keeps a fabricated number out of a report.
 ==============================================================================
-The prediction-list entry points take truncated top-k lists, so a ground truth
-outside the list is indistinguishable from one ranked last. That is why
+The prediction-list entry points take truncated top-k lists. A truth at the last
+kept position still contributes `1/K`; what truncation loses is everything past
+it — every true rank beyond K, and absence from the candidate set entirely, all
+collapse to zero and become indistinguishable from each other. That is why
 `scripts/evaluate_model.py` could not report a mean rank at all, and reported a
 fabricated `0.0` until commit `7dab728` removed it.
 

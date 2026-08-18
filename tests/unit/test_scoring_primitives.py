@@ -874,6 +874,30 @@ def test_masked_pool_rejects_shape_mismatch(emb_shape, mask_shape):
         masked_mean_pool(torch.randn(*emb_shape), torch.ones(*mask_shape, dtype=torch.bool))
 
 
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float16, torch.float64, torch.int64, torch.uint8]
+)
+def test_masked_pool_rejects_a_non_boolean_mask(dtype):
+    """A validity mask and a weighting vector are the same shape, and only the
+    dtype tells them apart.
+
+    `phenotype_confidences` is a real (B, N) float sibling of the padding mask
+    (`src/api/routes/diagnose.py:59`), and the scorer policy forbids confidence
+    from acting as a weight. Without this guard, wiring one in would make
+    `.float()` turn it into exactly that weighting vector: plausible numbers,
+    wrong semantics, no error anywhere. A silent wrong answer is worse than a
+    crash, and this is one of the few places the type system will not catch it.
+
+    Requiring bool costs no parity: the production mask is built as `torch.bool`
+    (`src/kg/data_loader.py:704-707`) and the dataloader indexes with it (`:912`),
+    which already requires bool.
+    """
+    mask = torch.ones(2, 3).to(dtype)
+
+    with pytest.raises(ValueError, match="boolean"):
+        masked_mean_pool(torch.randn(2, 3, 4), mask)
+
+
 def test_masked_pool_keeps_its_device():
     emb = torch.randn(2, 3, 4)
 
