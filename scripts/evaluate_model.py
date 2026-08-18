@@ -1,5 +1,30 @@
 #!/usr/bin/env python3
 """
+BEHAVIOURALLY FROZEN — non-authoritative, scheduled for deletion.
+=================================================================
+This script does not measure the deployed scorer. It is kept only so the new
+harness can be calibrated against it.
+
+  - it scores a **per-batch 2-hop subgraph** whose disease candidates are seeded
+    from the answers and their sampled negatives
+    (`src/kg/data_loader.py:916-926`), not the diseases the pipeline would
+    consider;
+  - it scores **pure cosine** — no eta mixture, no shortest-path term;
+  - it truncates predictions to twenty, so mean rank is not computable and every
+    true rank beyond twenty is indistinguishable from absence.
+
+`scripts/measure_scorer.py` replaces it. Mode A there reproduces this behaviour
+deliberately, as the control the other modes are read against.
+
+**Do not modify this file.** Its only value is being the unmodified artefact that
+produced the reference numbers; an edit makes it no longer the thing being
+compared against. **Delete it — together with `legacy_ranking` and the
+`LEGACY_TRUNCATION_K` path in `src/evaluation/measurement.py` — once
+institutional Mode A calibration succeeds.** Nothing else may depend on its
+behaviour.
+
+---
+
 SHEPHERD-Advanced Model Evaluation Script
 ==========================================
 Standalone evaluation script for trained ShepherdGNN models.

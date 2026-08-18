@@ -25,16 +25,21 @@ Dependencies: torch.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Iterable, List, Optional
 
 import torch
 from torch import Tensor
 
 __all__ = [
+    "LEGACY_TRUNCATION_K",
+    "MeasurementManifest",
+    "ModeAResult",
     "to_global_disease_ids",
     "canonical_ranking",
     "legacy_ranking",
     "ranks_of_truth",
+    "run_mode_a",
 ]
 
 
@@ -206,3 +211,226 @@ def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[
         int(position) + 1 if bool(is_found) else None
         for position, is_found in zip(positions.tolist(), found.tolist())
     ]
+
+
+# =============================================================================
+# Mode A — the calibration control
+# =============================================================================
+# Mode A reproduces what the legacy evaluator measures, deliberately including
+# what is wrong with it: a per-batch subgraph whose disease candidates are seeded
+# from the answers, and pure cosine with no shortest-path term. A control that has
+# been improved is not a control, so nothing here corrects the candidate
+# construction or the sampling policy.
+#
+# What it adds is honesty about the numbers: the legacy truncated metric is
+# reported as such, and the authoritative untruncated metrics are computed
+# alongside it from the canonical ranking.
+
+LEGACY_TRUNCATION_K = 20
+"""The frozen CLI exposes no `--top-k-values` flag and hardcodes `[:20]` when it
+writes predictions (`scripts/evaluate_model.py:513`), so anything compared
+against it is compared at 20. This is not a tunable."""
+
+
+@dataclass(frozen=True)
+class MeasurementManifest:
+    """What has to be recorded for a number to mean anything later.
+
+    Not a schema framework — a frozen dataclass and `dataclasses.asdict`. Every
+    field is something that changes what the measurement *is*, so omitting one
+    would make two runs incomparable without saying so.
+
+    `batch_size` is here as **semantics, not performance**: Mode A's candidate
+    universe is the batch's subgraph, so changing the batch size changes what was
+    measured.
+    """
+
+    mode: str
+    split: str
+    n_samples: int
+    # candidate construction
+    candidate_construction: str
+    negative_sampling_strategy: str
+    num_negative_samples: int
+    subgraph_strategy: str
+    subgraph_hops: int
+    num_neighbors: List[int]
+    batch_size: int
+    shuffle: bool
+    num_workers: int
+    # scoring and ranking
+    score_semantics: str
+    legacy_truncation_k: int
+    legacy_tie_policy: str
+    canonical_tie_policy_version: str
+    # artifacts
+    checkpoint_path: str
+    data_dir: str
+    graph_fingerprint: Dict[str, Any]
+    # runtime
+    software_revision: Optional[str]
+    torch_version: str
+    cuda_version: Optional[str]
+    device: str
+    dtype: str
+    amp_enabled: bool
+    deterministic_algorithms: bool
+    cudnn_deterministic: Optional[bool]
+    cudnn_benchmark: Optional[bool]
+    python_seed: Optional[int]
+    numpy_seed: Optional[int]
+    torch_seed: Optional[int]
+
+
+@dataclass(frozen=True)
+class ModeAResult:
+    """One Mode A run.
+
+    The two metric families are kept apart in the type, not merged into one dict,
+    because they answer different questions and only one of them is comparable
+    across modes.
+    """
+
+    manifest: MeasurementManifest
+    legacy_metrics: Dict[str, float]
+    authoritative_metrics: Dict[str, float]
+    n_ranked: int
+    n_ground_truth_absent: int
+    legacy_top_k_local: List[List[int]]
+    """Per sample, the frozen oracle's observable artifact: subgraph-local column
+    indices, truncated to `LEGACY_TRUNCATION_K`. This is what a comparison against
+    `--save-predictions` output is made of."""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "manifest": asdict(self.manifest),
+            "legacy_metrics": self.legacy_metrics,
+            "authoritative_metrics": self.authoritative_metrics,
+            "n_ranked": self.n_ranked,
+            "n_ground_truth_absent": self.n_ground_truth_absent,
+        }
+
+
+def _legacy_reciprocal_rank(local_order: Tensor, truth_local: Tensor, k: int) -> List[float]:
+    """The frozen evaluator's MRR contribution, per sample.
+
+    It takes the first `k` local indices, looks for the truth by list position,
+    and contributes `1/rank` or zero (`evaluate_model.py:186-193, 299`). Computed
+    from the ranking rather than from strings, which is the same arithmetic.
+    """
+    truncated = local_order[:, :k]
+    matches = truncated == truth_local.unsqueeze(-1)
+    found = matches.any(dim=-1)
+    positions = matches.to(torch.uint8).argmax(dim=-1)
+    return [
+        1.0 / (int(p) + 1) if bool(f) else 0.0
+        for p, f in zip(positions.tolist(), found.tolist())
+    ]
+
+
+def run_mode_a(
+    model: Any,
+    dataloader: Iterable[Dict[str, Any]],
+    manifest: MeasurementManifest,
+    device: Optional[Any] = None,
+) -> ModeAResult:
+    """Score a cohort exactly as the legacy evaluator does, and report honestly.
+
+    Per batch: forward the subgraph, pool the patient's phenotypes with the
+    padding mask, and cosine-score against the subgraph's disease embeddings —
+    the same three operations, through the shared primitives rather than a second
+    copy of them.
+
+    Then two rankings from the one score matrix:
+
+      - `legacy_ranking` in **local** space, truncated to `LEGACY_TRUNCATION_K`,
+        which is the only representation the frozen oracle emits and therefore the
+        only one a calibration can compare;
+      - `canonical_ranking` in **global** space, untruncated, which is what modes
+        A, B, C and D are compared with each other on.
+
+    A ground truth absent from the candidate set is **counted, not ranked**. In
+    Mode A it cannot happen — the truth is a subgraph seed — so a non-zero count
+    is a signal that the harness is wrong, not that the model is.
+    """
+    import torch as _torch
+
+    from src.inference.scoring import cosine_score_matrix, masked_mean_pool
+    from src.utils.metrics import RankingMetrics
+
+    device = _torch.device(device) if device is not None else _torch.device("cpu")
+    model.eval()
+
+    legacy_contributions: List[float] = []
+    legacy_top_k: List[List[int]] = []
+    canonical_ranks: List[int] = []
+    absent = 0
+
+    with _torch.no_grad():
+        for batch_data in dataloader:
+            batch = batch_data["batch"]
+            subgraph_x = {k: v.to(device) for k, v in batch_data["subgraph_x_dict"].items()}
+            subgraph_edges = {
+                k: v.to(device) for k, v in batch_data["subgraph_edge_index_dict"].items()
+            }
+
+            node_embeddings = model(subgraph_x, subgraph_edges)
+            disease_emb = node_embeddings.get("disease")
+            phenotype_emb = node_embeddings.get("phenotype")
+            if disease_emb is None or phenotype_emb is None:
+                raise ValueError(
+                    "the model produced no disease or phenotype embeddings; Mode A "
+                    "cannot score this batch and must not silently skip it"
+                )
+
+            phenotype_ids = batch["phenotype_ids"].to(device)
+            disease_ids_local = batch["disease_ids"].to(device)
+            mask = batch["phenotype_mask"].to(device)
+
+            # Index clamping mirrors the legacy path, which clamps rather than
+            # raising on a padded -1.
+            valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
+            patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
+                phenotype_ids.size(0), phenotype_ids.size(1), -1
+            )
+            patients = masked_mean_pool(patient_phenotypes, mask)
+            scores = cosine_score_matrix(patients, disease_emb)
+
+            global_ids = batch_data["original_indices"]["disease"].to(device)
+
+            local_order = legacy_ranking(scores)
+            legacy_contributions.extend(
+                _legacy_reciprocal_rank(local_order, disease_ids_local, LEGACY_TRUNCATION_K)
+            )
+            legacy_top_k.extend(local_order[:, :LEGACY_TRUNCATION_K].tolist())
+
+            canonical = canonical_ranking(scores, global_ids)
+            truth_global = to_global_disease_ids(global_ids, disease_ids_local)
+            for rank in ranks_of_truth(canonical, truth_global):
+                if rank is None:
+                    absent += 1
+                else:
+                    canonical_ranks.append(rank)
+
+    if not canonical_ranks:
+        raise ValueError(
+            "no sample produced a rank; there is nothing to report and a zeroed "
+            "metric would be a fabricated one"
+        )
+
+    n = len(legacy_contributions)
+    return ModeAResult(
+        manifest=manifest,
+        legacy_metrics={
+            f"legacy_mrr_truncated_at_{LEGACY_TRUNCATION_K}": sum(legacy_contributions) / n,
+        },
+        authoritative_metrics={
+            f"untruncated_{name}" if name == "mrr" else name: value
+            for name, value in RankingMetrics()
+            .compute_from_ranks(canonical_ranks, k_values=(1, 5, 10, 20, 50, 100))
+            .items()
+        },
+        n_ranked=len(canonical_ranks),
+        n_ground_truth_absent=absent,
+        legacy_top_k_local=legacy_top_k,
+    )
