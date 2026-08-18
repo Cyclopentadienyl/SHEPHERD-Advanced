@@ -154,11 +154,22 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
     filenames and the same serialisation format, so a format change breaks all
     seven at once and the duplication buys nothing.
 
-    **P1, out of B-0.2 scope:** a shared artifact loader in a layer below
-    `src.kg`, with the format knowledge in one place. Refactoring seven consumers
-    inside a calibration change would put the comparison behind an unrelated
-    migration. This copy is exempt from that P1 anyway, because it must keep
-    matching the frozen oracle until both are deleted together.
+    **P1, out of B-0.2 scope:** one shared reader, in a **KG-owned** module.
+    `src/kg/storage/file_storage.py` already exists, is empty, and is documented
+    as the reserved home for exactly this — "formalise the current on-disk layout
+    behind an interface" (`src/kg/storage/__init__.py`). That is the P1's home; a
+    new module would be a second home for a job already reserved.
+
+    **Not a layer below `src.kg`.** Both consumers that matter are above it —
+    `src.training` and `src.inference` may import `src.kg` under the layers
+    contract — so nothing forces the format knowledge downward, and pushing it
+    into `src.utils` or `src.core` would put knowledge of a KG file format in a
+    package that has no business knowing what a knowledge graph is.
+
+    Refactoring seven consumers inside a calibration change would put the
+    comparison behind an unrelated migration. This copy is exempt from the P1
+    regardless: it must keep matching the frozen oracle until both are deleted
+    together.
     """
     from src.kg.data_loader import DiagnosisSample
 
