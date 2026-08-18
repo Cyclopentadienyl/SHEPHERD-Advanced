@@ -33,11 +33,23 @@ patched, monkeypatched or edited.
     `measure_scorer.py`'s refuses to. Letting each resolve `auto` on its own is
     the one way they could end up on different hardware.
 
-**What this proves, and what it does not.** A PASS says the two produced identical
-per-sample rows and an identical aggregate on this data with this seed. It does
-not prove that seeding is sufficient in general — it *checks* it, and a divergent
-stream shows up as a row mismatch rather than as a quietly different number. A
-FAIL is therefore informative and is not a reason to retry with another seed.
+**What this proves, and what it does not.** `comparison_passed` says the two
+scorers produced identical per-sample rows and an identical aggregate on this
+input with this seed. `cuda_executed` says the run happened on CUDA. Both are
+machine-checkable, and both are named for exactly what they check.
+
+**Neither is institutional acceptance, and this file cannot establish it.** A
+synthetic workspace run on a CUDA machine satisfies both. Acceptance is a human
+confirming that the recorded `artifact_digests` are the institution's real
+checkpoint and cohort and that `deployment_host` is the deployment machine —
+facts no code in this repository has any way to verify. The verdict records what
+is needed for that confirmation and says in writing that it is external. **No
+registry of approved artifacts is built here**; that would be a claim about
+institutional process, which is not B-0.2's to make.
+
+Seeding sufficiency is likewise *checked*, not proven: a divergent stream shows
+up as a row mismatch rather than as a quietly different number. A FAIL is
+therefore informative and is not a reason to retry with another seed.
 
     python scripts/calibrate_mode_a.py \\
         --checkpoint checkpoints/best.pt \\
@@ -53,6 +65,7 @@ import argparse
 import json
 import logging
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +74,10 @@ from typing import Any, Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# One hashing implementation, shared. A second one here could differ from the
+# harness's in exactly the way the digests exist to detect.
+from scripts.measure_scorer import artifact_digests  # noqa: E402
 
 logger = logging.getLogger("calibrate_mode_a")
 
@@ -108,11 +125,15 @@ def _run(seed: int, script: Path, args: List[str], cwd: Path,
 
 
 def _resolve_device(requested: str) -> Tuple[str, bool]:
-    """One explicit device for both sides, plus whether it clears the gate.
+    """One explicit device for both sides, and whether it was CUDA.
 
     Resolved here rather than in each script, because the two resolve `auto`
     differently by design and a calibration run on two different devices compares
     nothing.
+
+    The boolean is `cuda_executed` and means only that: the run happened on CUDA.
+    It is not an eligibility verdict — see the note on `institutional_acceptance`
+    in `main`.
     """
     import torch
 
@@ -121,8 +142,8 @@ def _resolve_device(requested: str) -> Tuple[str, bool]:
     if torch.cuda.is_available():
         return "cuda", True
     logger.warning(
-        "No CUDA here. Running the procedure on CPU: it exercises the comparison "
-        "but CANNOT clear the parity gate."
+        "No CUDA here. Running the procedure on CPU: it exercises the comparison, "
+        "but the result will be recorded as cuda_executed=false."
     )
     return "cpu", False
 
@@ -184,6 +205,8 @@ def compare(
     measurement: dict,
     harness_predictions: list,
     args: argparse.Namespace,
+    digests_before: Dict[str, Optional[str]],
+    digests_after: Dict[str, Optional[str]],
 ) -> List[str]:
     """Return the list of failures. Empty means the two agree.
 
@@ -196,6 +219,28 @@ def compare(
 
     failures: List[str] = []
     config = oracle_report.get("config", {})
+
+    # --- did both runs consume the same bytes? ------------------------------
+    # Taken before the oracle starts and again after the harness finishes, so a
+    # checkpoint replaced or a samples file rewritten between the two runs is a
+    # failure rather than an unexplained disagreement further down. The harness
+    # hashes its own inputs *after* loading them, which is why its manifest is
+    # checked against the before-image rather than trusted on its own.
+    if digests_before != digests_after:
+        changed = sorted(
+            role for role in digests_before
+            if digests_before[role] != digests_after.get(role)
+        )
+        failures.append(
+            f"artifacts changed during the run: {', '.join(changed)}. The two runs "
+            "did not consume the same bytes, so nothing below is a comparison of "
+            "the same measurement"
+        )
+    if measurement["manifest"]["artifact_digests"] != digests_before:
+        failures.append(
+            "the harness manifest's digests do not match the artifacts as they "
+            "were before the oracle ran; the harness measured different bytes"
+        )
 
     # --- preconditions: is this comparison meaningful at all? ---------------
     oracle_k = max(config.get("top_k_values", [])) if config.get("top_k_values") else None
@@ -302,21 +347,40 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.workdir.mkdir(parents=True, exist_ok=True)
     workdir = args.workdir.resolve()
 
-    device, gate_eligible = _resolve_device(args.device)
+    device, cuda_executed = _resolve_device(args.device)
     logger.info("seed=%d device=%s batch_size=%d workers=%d",
                 args.seed, device, args.batch_size, ORACLE_NUM_WORKERS)
+
+    digests_before = artifact_digests(args.checkpoint, args.data_dir, args.split)
 
     logger.info("Running the frozen evaluator...")
     oracle_report, oracle_predictions = run_oracle(args.seed, workdir, args, device)
     logger.info("Running the Mode A harness...")
     measurement, harness_predictions = run_harness(args.seed, workdir, args, device)
 
-    failures = compare(oracle_report, oracle_predictions, measurement, harness_predictions, args)
-    passed = not failures
+    digests_after = artifact_digests(args.checkpoint, args.data_dir, args.split)
+
+    failures = compare(
+        oracle_report, oracle_predictions, measurement, harness_predictions, args,
+        digests_before, digests_after,
+    )
+    comparison_passed = not failures
 
     verdict: Dict[str, Any] = {
-        "passed": passed,
-        "gate_eligible": gate_eligible and measurement["manifest"]["calibration_eligible"],
+        # Named for exactly what each is evidence of. `comparison_passed` says the
+        # two scorers agreed on this input; `cuda_executed` says the run happened
+        # on CUDA. Neither is institutional acceptance, and the previous names
+        # (`passed`, `gate_eligible`) implied otherwise -- a synthetic workspace on
+        # a CUDA machine would have reported `gate_eligible: true`.
+        "comparison_passed": comparison_passed,
+        "cuda_executed": cuda_executed and measurement["manifest"]["cuda_executed"],
+        "institutional_acceptance": (
+            "EXTERNAL. This file cannot establish it. Acceptance is a human "
+            "confirming that artifact_digests below are the institution's real "
+            "checkpoint and cohort, and that deployment_host is the deployment "
+            "machine. Nothing in this repository can verify either."
+        ),
+        "deployment_host": platform.node(),
         "seed": args.seed,
         "device": device,
         "batch_size": args.batch_size,
@@ -324,7 +388,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "split": args.split,
         "n_samples": measurement["manifest"]["n_samples"],
         "oracle_mrr": oracle_report["metrics"]["mrr"],
-        "artifact_digests": measurement["manifest"]["artifact_digests"],
+        "artifact_digests": digests_before,
         "software_revision": measurement["manifest"]["software_revision"],
         "failures": failures,
     }
@@ -332,19 +396,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     verdict_path.write_text(json.dumps(verdict, indent=2, allow_nan=False))
 
     print("\n" + "=" * 68)
-    print(f"  Mode A calibration — {'PASS' if passed else 'FAIL'}")
+    print(f"  Mode A comparison — {'PASS' if comparison_passed else 'FAIL'}")
     print("=" * 68)
     for failure in failures:
         print(f"  - {failure}")
-    if passed and not verdict["gate_eligible"]:
-        print("  Agreement confirmed, but this run is NOT gate-eligible: it did not")
-        print("  run on CUDA. The procedure works; the acceptance claim needs the")
-        print("  institutional hardware.")
-    elif passed:
+    if comparison_passed and not verdict["cuda_executed"]:
+        print("  The two scorers agree, but this run did not execute on CUDA.")
+        print("  The procedure works; an acceptance claim needs the institutional")
+        print("  hardware as well.")
+    elif comparison_passed:
         print(f"  {verdict['n_samples']} samples, identical rows, MRR "
               f"{verdict['oracle_mrr']!r}.")
+    print("\n  Institutional acceptance is external to this file: a human must")
+    print("  confirm the recorded artifact digests and deployment host."),
     print(f"\n  Written to {verdict_path}\n")
-    return 0 if passed else 1
+    return 0 if comparison_passed else 1
 
 
 if __name__ == "__main__":

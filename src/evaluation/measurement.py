@@ -268,6 +268,13 @@ class MeasurementManifest:
     subgraph_strategy: str
     subgraph_hops: int
     num_neighbors: List[int]
+    max_subgraph_nodes: int
+    """The **configured** ceiling, from `DataLoaderConfig.max_subgraph_nodes`.
+
+    Distinct from `sampler_evidence["max_subgraph_nodes"]`, which is the per-type
+    maximum actually reached. A run that never approached the cap and a run that
+    was truncated by it look the same in the observation alone; only the pair says
+    which happened."""
     batch_size: int
     shuffle: bool
     num_workers: int
@@ -289,10 +296,15 @@ class MeasurementManifest:
     identity either: `checkpoints/best.pt` names a different file every time
     training improves. These digests are what let a number be traced back to the
     exact bytes that produced it. `None` where the file was absent."""
-    calibration_eligible: bool
-    """False marks a run that may not be used to clear the parity gate — CPU
-    development runs, principally. Recorded in the manifest rather than decided by
-    a reader, so an ineligible number cannot be quoted as an eligible one."""
+    cuda_executed: bool
+    """Whether this run executed on CUDA. **That is all it claims.**
+
+    It was called `calibration_eligible`, which overclaimed: a synthetic workspace
+    on a CUDA machine would have set it true. Eligibility for institutional
+    acceptance is not a property this process can observe — it depends on whether
+    `artifact_digests` are the institution's real checkpoint and cohort, which no
+    code here can verify. Recorded as the narrow, checkable fact, so the broad
+    claim has to be made by a person who can actually make it."""
     # runtime
     software_revision: Optional[str]
     torch_version: str

@@ -37,22 +37,28 @@ def _run(data_dir, checkpoint, batch_size=3):
     """Drive the harness the way the CLI does, without the subprocess."""
     import argparse
 
-    from scripts.measure_scorer import build_manifest, build_model, load_graph_and_samples
-    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
+    from scripts.measure_scorer import (
+        build_legacy_mode_a_model,
+        build_loader_config,
+        build_manifest,
+        load_legacy_mode_a_inputs,
+    )
+    from src.kg.data_loader import create_diagnosis_dataloader
 
     device = torch.device("cpu")
-    graph_data, samples = load_graph_and_samples(data_dir, "test")
-    model = build_model(checkpoint, device)
-    loader = create_diagnosis_dataloader(
-        samples=samples,
-        graph_data=graph_data,
-        config=DataLoaderConfig(batch_size=batch_size, num_workers=0, shuffle=False),
-    )
+    graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
+    model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
         checkpoint=checkpoint, data_dir=data_dir, split="test",
         batch_size=batch_size, num_workers=0, seed=None,
     )
-    manifest = build_manifest(args, graph_data, len(samples), device)
+    # One config object to both consumers, exactly as the CLI does it — otherwise
+    # this helper would be testing a wiring the CLI does not use.
+    loader_config = build_loader_config(args)
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data, config=loader_config
+    )
+    manifest = build_manifest(args, graph_data, len(samples), device, loader_config)
     return run_mode_a(model=model, dataloader=loader, manifest=manifest, device=device)
 
 
@@ -162,17 +168,21 @@ def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
 
     import argparse
 
-    from scripts.measure_scorer import build_manifest, load_graph_and_samples
-    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
+    from scripts.measure_scorer import (
+        build_loader_config,
+        build_manifest,
+        load_legacy_mode_a_inputs,
+    )
+    from src.kg.data_loader import create_diagnosis_dataloader
 
     device = torch.device("cpu")
-    graph_data, samples = load_graph_and_samples(data_dir, "test")
-    loader = create_diagnosis_dataloader(
-        samples=samples, graph_data=graph_data,
-        config=DataLoaderConfig(batch_size=3, num_workers=0, shuffle=False),
-    )
+    graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
     args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
                               batch_size=3, num_workers=0, seed=None)
+    loader_config = build_loader_config(args)
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data, config=loader_config
+    )
 
     class _Empty:
         def eval(self): return self
@@ -181,7 +191,8 @@ def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
     with pytest.raises(ValueError, match="no disease or phenotype embeddings"):
         run_mode_a(
             model=_Empty(), dataloader=loader,
-            manifest=build_manifest(args, graph_data, len(samples), device), device=device,
+            manifest=build_manifest(args, graph_data, len(samples), device, loader_config),
+            device=device,
         )
 
 
@@ -193,22 +204,27 @@ def test_a_cohort_smaller_than_the_manifest_claims_is_an_error(workspace):
 
     import argparse
 
-    from scripts.measure_scorer import build_manifest, build_model, load_graph_and_samples
-    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
+    from scripts.measure_scorer import (
+        build_legacy_mode_a_model,
+        build_loader_config,
+        build_manifest,
+        load_legacy_mode_a_inputs,
+    )
+    from src.kg.data_loader import create_diagnosis_dataloader
 
     device = torch.device("cpu")
-    graph_data, samples = load_graph_and_samples(data_dir, "test")
-    loader = create_diagnosis_dataloader(
-        samples=samples, graph_data=graph_data,
-        config=DataLoaderConfig(batch_size=3, num_workers=0, shuffle=False),
-    )
+    graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
     args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
                               batch_size=3, num_workers=0, seed=None)
+    loader_config = build_loader_config(args)
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data, config=loader_config
+    )
 
     with pytest.raises(ValueError, match="cohort shrinkage"):
         run_mode_a(
-            model=build_model(checkpoint, device), dataloader=loader,
-            manifest=build_manifest(args, graph_data, len(samples) + 1, device),
+            model=build_legacy_mode_a_model(checkpoint, device), dataloader=loader,
+            manifest=build_manifest(args, graph_data, len(samples) + 1, device, loader_config),
             device=device,
         )
 
@@ -232,14 +248,20 @@ def test_every_way_the_cohort_can_shrink_is_refused(workspace, kwargs, expected)
 
     import argparse
 
-    from scripts.measure_scorer import build_manifest, load_graph_and_samples
+    from scripts.measure_scorer import (
+        build_loader_config,
+        build_manifest,
+        load_legacy_mode_a_inputs,
+    )
     from src.evaluation.measurement import _assert_cohort_is_intact
 
-    graph_data, _ = load_graph_and_samples(data_dir, "test")
+    graph_data, _ = load_legacy_mode_a_inputs(data_dir, "test")
     args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
                               batch_size=3, num_workers=0, seed=None)
     declared = kwargs.pop("declared", 6)
-    manifest = build_manifest(args, graph_data, declared, torch.device("cpu"))
+    manifest = build_manifest(
+        args, graph_data, declared, torch.device("cpu"), build_loader_config(args)
+    )
 
     call = {"n_legacy_rows": 6, "n_sample_ids": 6, "n_canonical_ranks": 6, "n_absent": 0}
     call.update(kwargs)
@@ -355,7 +377,7 @@ def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
     one-byte change does not."""
     import hashlib
 
-    from scripts.measure_scorer import _file_sha256
+    from scripts.measure_scorer import file_sha256
 
     original = tmp_path / "a.bin"
     copy = tmp_path / "b.bin"
@@ -364,7 +386,7 @@ def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
     copy.write_bytes(b"shepherd")
     altered.write_bytes(b"shepherE")
 
-    assert _file_sha256(original) == hashlib.sha256(b"shepherd").hexdigest()
-    assert _file_sha256(original) == _file_sha256(copy)
-    assert _file_sha256(original) != _file_sha256(altered)
-    assert _file_sha256(tmp_path / "absent.bin") is None
+    assert file_sha256(original) == hashlib.sha256(b"shepherd").hexdigest()
+    assert file_sha256(original) == file_sha256(copy)
+    assert file_sha256(original) != file_sha256(altered)
+    assert file_sha256(tmp_path / "absent.bin") is None

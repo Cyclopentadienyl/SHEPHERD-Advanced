@@ -16,7 +16,8 @@ a defect this harness has already had.
 
 > **This is not institutional calibration and must never be reported as such.**
 > It shows the procedure runs and the two agree on a synthetic graph in this
-> container, on CPU. `calibration.json` says so itself: `gate_eligible` is false.
+> container, on CPU. `calibration.json` says so itself: `cuda_executed` is false, and
+> `institutional_acceptance` says in writing that no file here can establish it.
 > Mode A is calibrated only by the institutional run — real data, a real
 > checkpoint, CUDA hardware.
 
@@ -78,7 +79,7 @@ def calibration(tmp_path_factory):
 def test_the_calibration_procedure_passes(calibration):
     """The whole point: the launcher runs both CLIs and finds no disagreement."""
     assert calibration["exit_code"] == 0, calibration["verdict"]["failures"]
-    assert calibration["verdict"]["passed"] is True
+    assert calibration["verdict"]["comparison_passed"] is True
     assert calibration["verdict"]["failures"] == []
 
 
@@ -168,11 +169,104 @@ def test_this_run_is_not_calibration(calibration):
     verdict = calibration["verdict"]
     manifest = calibration["measurement"]["manifest"]
 
-    assert verdict["passed"] is True
-    assert verdict["gate_eligible"] is False, (
-        "a CPU run reported itself as gate-eligible; the acceptance claim would be "
-        "false while every assertion above still passes"
+    assert verdict["comparison_passed"] is True
+    assert verdict["cuda_executed"] is False, (
+        "a CPU run reported itself as having executed on CUDA; every assertion "
+        "above would still pass while the recorded claim was false"
     )
-    assert manifest["calibration_eligible"] is False
+    assert manifest["cuda_executed"] is False
     assert manifest["device"] == "cpu"
     assert manifest["n_samples"] < 100
+
+
+def test_the_verdict_claims_only_what_it_can_check(calibration):
+    """The two booleans are named for the narrow, machine-checkable facts they
+    are. Neither is institutional acceptance — a synthetic workspace on a CUDA
+    machine would satisfy both — so the verdict says in writing that acceptance is
+    external, and records the two things a person needs in order to give it."""
+    verdict = calibration["verdict"]
+
+    assert set(verdict) >= {
+        "comparison_passed", "cuda_executed", "institutional_acceptance",
+        "deployment_host", "artifact_digests",
+    }
+    assert "EXTERNAL" in verdict["institutional_acceptance"]
+    assert verdict["deployment_host"]
+    # The old names are gone, not aliased. An alias would let a stale reader keep
+    # reading the overclaiming field.
+    assert "passed" not in verdict and "gate_eligible" not in verdict
+
+
+def test_the_manifest_records_the_configured_ceiling_not_only_the_observed_one(calibration):
+    """A run that never approached the subgraph cap and a run truncated by it look
+    identical in the observation alone."""
+    manifest = calibration["measurement"]["manifest"]
+    observed = calibration["measurement"]["sampler_evidence"]["max_subgraph_nodes"]
+
+    assert manifest["max_subgraph_nodes"] == 5000  # DataLoaderConfig default
+    assert max(observed.values()) < manifest["max_subgraph_nodes"], (
+        "the fixture is supposed to sit far below the cap; if it does not, the two "
+        "fields no longer demonstrate anything different from each other"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Artifact identity across the two runs
+# ---------------------------------------------------------------------------
+def test_an_artifact_changing_between_the_runs_is_a_failure(calibration, tmp_path):
+    """The digests are taken before the oracle starts and again after the harness
+    finishes. A checkpoint swapped between the two runs would otherwise surface as
+    an unexplained row mismatch, pointing the reader at the scorer instead of at
+    the file that moved."""
+    import argparse
+
+    from scripts.calibrate_mode_a import compare
+
+    before = dict(calibration["verdict"]["artifact_digests"])
+    after = dict(before, checkpoint="0" * 64)
+    args = argparse.Namespace(batch_size=BATCH_SIZE)
+
+    failures = compare(
+        calibration["oracle_report"], calibration["oracle_predictions"],
+        calibration["measurement"], calibration["harness_predictions"],
+        args, before, after,
+    )
+
+    assert any("artifacts changed during the run" in f and "checkpoint" in f for f in failures)
+
+
+def test_a_harness_manifest_disagreeing_with_the_before_image_is_a_failure(calibration):
+    """The harness hashes its own inputs *after* loading them, so its manifest is
+    checked against the pre-run image rather than trusted on its own."""
+    import argparse
+
+    from scripts.calibrate_mode_a import compare
+
+    before = dict(calibration["verdict"]["artifact_digests"], samples="0" * 64)
+    args = argparse.Namespace(batch_size=BATCH_SIZE)
+
+    failures = compare(
+        calibration["oracle_report"], calibration["oracle_predictions"],
+        calibration["measurement"], calibration["harness_predictions"],
+        args, before, before,
+    )
+
+    assert any("harness manifest's digests do not match" in f for f in failures)
+
+
+def test_the_unperturbed_comparison_reports_no_digest_failure(calibration):
+    """The negative control for the two above: with the real digests on both
+    sides, neither check fires. Without this, a compare() that always complained
+    would satisfy both."""
+    import argparse
+
+    from scripts.calibrate_mode_a import compare
+
+    digests = calibration["verdict"]["artifact_digests"]
+    failures = compare(
+        calibration["oracle_report"], calibration["oracle_predictions"],
+        calibration["measurement"], calibration["harness_predictions"],
+        argparse.Namespace(batch_size=BATCH_SIZE), digests, digests,
+    )
+
+    assert failures == []

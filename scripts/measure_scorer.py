@@ -57,8 +57,12 @@ if str(PROJECT_ROOT) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-def _file_sha256(path: Path) -> Optional[str]:
+def file_sha256(path: Path) -> Optional[str]:
     """Raw content digest, or ``None`` if the file is not there.
+
+    **Public and shared.** `scripts/calibrate_mode_a.py` hashes the same artifacts
+    before and after the two runs, and a second implementation there could differ
+    from this one in exactly the way the digests exist to detect.
 
     `hashlib.file_digest` (stdlib, 3.11+) reads in chunks, so a multi-gigabyte
     checkpoint is not loaded into memory to be identified. This hashes **bytes**
@@ -72,7 +76,7 @@ def _file_sha256(path: Path) -> Optional[str]:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def _artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, Optional[str]]:
+def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, Optional[str]]:
     """Every file a Mode A number depends on, by role.
 
     Paths are recorded too, but a path is not an identity — `checkpoints/best.pt`
@@ -81,16 +85,16 @@ def _artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str,
     share it.
     """
     return {
-        "checkpoint": _file_sha256(checkpoint),
-        "samples": _file_sha256(data_dir / f"{split}_samples.json"),
-        "node_features": _file_sha256(data_dir / "node_features.pt"),
-        "edge_indices": _file_sha256(data_dir / "edge_indices.pt"),
-        "num_nodes": _file_sha256(data_dir / "num_nodes.json"),
+        "checkpoint": file_sha256(checkpoint),
+        "samples": file_sha256(data_dir / f"{split}_samples.json"),
+        "node_features": file_sha256(data_dir / "node_features.pt"),
+        "edge_indices": file_sha256(data_dir / "edge_indices.pt"),
+        "num_nodes": file_sha256(data_dir / "num_nodes.json"),
     }
 
 
 def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
-    """Return the device and whether a run on it may clear the parity gate.
+    """Return the device and whether it is CUDA.
 
     **CUDA is a hard project requirement**, so `auto` falling back to CPU would
     silently produce a number that looks institutional and is not: different
@@ -99,8 +103,13 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
     than substituting a device nobody asked for.
 
     Explicit `--device cpu` stays available, because development in a container
-    without a GPU is real work — but it is marked **calibration-ineligible** in the
-    manifest, so the number cannot later be quoted as one that cleared the gate.
+    without a GPU is real work — but the manifest records `cuda_executed: false`,
+    so a development number cannot later be quoted as one produced on the
+    deployment hardware.
+
+    The boolean means only "this ran on CUDA". Whether the run is acceptable to
+    the institution depends on which artifacts it consumed, which is checked by a
+    person against the recorded digests, not here.
     """
     if requested == "auto":
         if not torch.cuda.is_available():
@@ -110,7 +119,7 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
                 "environment has it, so a silent CPU fallback would produce a "
                 "number that reads as institutional but is not.\n"
                 "Pass --device cpu explicitly for development; the run is then "
-                "recorded as calibration-ineligible."
+                "recorded as cuda_executed=false."
             )
         return torch.device("cuda"), True
 
@@ -128,8 +137,29 @@ def _software_revision() -> Optional[str]:
         return None
 
 
-def load_graph_and_samples(data_dir: Path, split: str) -> Tuple[Dict[str, Any], List[Any]]:
-    """Read the same layout `scripts/evaluate_model.py:164-223` reads."""
+def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any], List[Any]]:
+    """Read the same layout `scripts/evaluate_model.py:164-223` reads.
+
+    **Named for its lifecycle, not its shape.** This is a deliberate duplicate of
+    the frozen evaluator's loader, kept only so Mode A consumes its inputs exactly
+    as the oracle does. **Modes B, C and D must not import it.** It retires with
+    `scripts/evaluate_model.py` once institutional parity succeeds.
+
+    *Known duplication, recorded rather than fixed here.* The
+    `node_features.pt` / `edge_indices.pt` / `num_nodes.json` read appears in
+    seven places: `src/inference/pipeline.py:579-606`, `scripts/train_model.py`,
+    `scripts/evaluate_model.py`, `scripts/build_index.py`, `scripts/setup_demo.py`,
+    `scripts/spikes/validate_fast_subgraph.py`, and here. This is **not a good
+    permanent decoupling boundary** — every copy still depends on the same
+    filenames and the same serialisation format, so a format change breaks all
+    seven at once and the duplication buys nothing.
+
+    **P1, out of B-0.2 scope:** a shared artifact loader in a layer below
+    `src.kg`, with the format knowledge in one place. Refactoring seven consumers
+    inside a calibration change would put the comparison behind an unrelated
+    migration. This copy is exempt from that P1 anyway, because it must keep
+    matching the frozen oracle until both are deleted together.
+    """
     from src.kg.data_loader import DiagnosisSample
 
     samples_path = data_dir / f"{split}_samples.json"
@@ -159,8 +189,17 @@ def load_graph_and_samples(data_dir: Path, split: str) -> Tuple[Dict[str, Any], 
     return graph_data, samples
 
 
-def build_model(checkpoint_path: Path, device: torch.device) -> Any:
-    """Rebuild the model from a checkpoint.
+def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> Any:
+    """Rebuild the model the way the frozen evaluator does.
+
+    **Named for its lifecycle.** This mirrors
+    `scripts/evaluate_model.py:create_model_from_checkpoint` on purpose, including
+    its hardcoded architecture fallbacks. Replacing it with the production
+    architecture resolver before parity is established would change the control
+    being measured, which is the one thing Mode A may not do.
+
+    **Modes B, C and D must not import it** — they resolve architecture the way the
+    deployed pipeline does. It retires with `scripts/evaluate_model.py`.
 
     `weights_only=True` — the safe loader. If a repository checkpoint proves
     incompatible with it, that is a checkpoint-format problem to fix explicitly,
@@ -185,27 +224,43 @@ def build_model(checkpoint_path: Path, device: torch.device) -> Any:
     return model
 
 
-def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
-                   n_samples: int, device: torch.device,
-                   calibration_eligible: Optional[bool] = None) -> Any:
-    from src.evaluation.measurement import LEGACY_TRUNCATION_K, MeasurementManifest
+def build_loader_config(args: argparse.Namespace) -> Any:
+    """The one `DataLoaderConfig` the run uses.
+
+    Built here and handed to **both** the dataloader and `build_manifest`, so the
+    manifest cannot describe a configuration different from the one that produced
+    the batches. Previously the manifest read a freshly constructed
+    `DataLoaderConfig()` while the loader got another instance: the values agreed
+    only because both were defaults, and a changed default would have silently
+    made the manifest describe a run that never happened.
+    """
     from src.kg.data_loader import DataLoaderConfig
+
+    return DataLoaderConfig(
+        batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False
+    )
+
+
+def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
+                   n_samples: int, device: torch.device, loader_config: Any,
+                   cuda_executed: Optional[bool] = None) -> Any:
+    from src.evaluation.measurement import LEGACY_TRUNCATION_K, MeasurementManifest
     from src.utils.fingerprint import compute_fingerprint
 
-    loader_defaults = DataLoaderConfig()
     return MeasurementManifest(
         mode="A",
         split=args.split,
         n_samples=n_samples,
         candidate_construction="per-batch 2-hop subgraph seeded from answers and negatives",
-        negative_sampling_strategy=loader_defaults.negative_sampling_strategy,
-        num_negative_samples=loader_defaults.num_negative_samples,
-        subgraph_strategy=loader_defaults.sampling_strategy,
+        negative_sampling_strategy=loader_config.negative_sampling_strategy,
+        num_negative_samples=loader_config.num_negative_samples,
+        subgraph_strategy=loader_config.sampling_strategy,
         subgraph_hops=2,
-        num_neighbors=list(loader_defaults.num_neighbors),
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
+        num_neighbors=list(loader_config.num_neighbors),
+        max_subgraph_nodes=loader_config.max_subgraph_nodes,
+        batch_size=loader_config.batch_size,
+        shuffle=loader_config.shuffle,
+        num_workers=loader_config.num_workers,
         score_semantics="raw cosine, no eta mixture and no shortest-path term",
         legacy_truncation_k=LEGACY_TRUNCATION_K,
         legacy_tie_policy="Tensor.sort on subgraph-local columns (frozen evaluator behaviour)",
@@ -213,9 +268,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
-        artifact_digests=_artifact_digests(args.checkpoint, args.data_dir, args.split),
-        calibration_eligible=(
-            device.type == "cuda" if calibration_eligible is None else calibration_eligible
+        artifact_digests=artifact_digests(args.checkpoint, args.data_dir, args.split),
+        cuda_executed=(
+            device.type == "cuda" if cuda_executed is None else cuda_executed
         ),
         software_revision=_software_revision(),
         torch_version=torch.__version__,
@@ -259,8 +314,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "hardcodes and exposes no flag for")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
-                             "is permitted for development and marks the run "
-                             "calibration-ineligible")
+                             "is permitted for development and records "
+                             "cuda_executed=false in the manifest")
     parser.add_argument("--seed", type=int, default=None,
                         help="Seeds Python, NumPy and torch. Recorded in the manifest")
     return parser.parse_args(argv)
@@ -275,31 +330,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
 
-    device, calibration_eligible = _resolve_device(args.device)
+    device, cuda_executed = _resolve_device(args.device)
     logger.info("Device: %s (%s)", device, platform.platform())
-    if not calibration_eligible:
+    if not cuda_executed:
         logger.warning(
-            "Calibration-ineligible run on %s. The result is a development number "
-            "and may not be used to clear the Mode A parity gate.", device
+            "Not running on CUDA (%s). The manifest will record cuda_executed=false; "
+            "this is a development number, not one from the deployment hardware.", device
         )
 
     from src.evaluation.measurement import run_mode_a
-    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
+    from src.kg.data_loader import create_diagnosis_dataloader
 
-    graph_data, samples = load_graph_and_samples(args.data_dir, args.split)
-    model = build_model(args.checkpoint, device)
+    graph_data, samples = load_legacy_mode_a_inputs(args.data_dir, args.split)
+    model = build_legacy_mode_a_model(args.checkpoint, device)
+
+    # One config object, two consumers. Not two instances that happen to agree.
+    loader_config = build_loader_config(args)
     dataloader = create_diagnosis_dataloader(
-        samples=samples,
-        graph_data=graph_data,
-        config=DataLoaderConfig(
-            batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False
-        ),
+        samples=samples, graph_data=graph_data, config=loader_config
     )
 
     result = run_mode_a(
         model=model,
         dataloader=dataloader,
-        manifest=build_manifest(args, graph_data, len(samples), device, calibration_eligible),
+        manifest=build_manifest(
+            args, graph_data, len(samples), device, loader_config, cuda_executed
+        ),
         device=device,
     )
 
@@ -332,8 +388,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"{negatives['repeat_draws_within_sample']} within-sample"
         )
 
-    if not calibration_eligible:
-        print("\nCALIBRATION-INELIGIBLE — development run, not on CUDA.")
+    if not cuda_executed:
+        print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
     print("\nNot calibrated. Institutional Mode A parity is a separate acceptance gate.\n")
     return 0
 
