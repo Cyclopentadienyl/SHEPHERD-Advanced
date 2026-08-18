@@ -574,34 +574,91 @@ def test_combined_score_wrapper_keeps_a_sub_float32_distinction(lookup):
     assert scores[1] > scores[0]
 
 
+def _multi_phenotype_ids():
+    """Three distinct phenotypes, mapping to lookup indices 0, 1 and 2.
+
+    Against target 5 as a disease they contribute 2, 3 and — phenotype 2 having
+    no slice at all — the unreachable 6. The mean is 11/3, which is the point:
+    a sum that does not divide by the count, so the mean is a fraction no binary
+    format represents exactly.
+    """
+    from src.core.types import DataSource, NodeID
+
+    return [
+        NodeID(source=DataSource.HPO, local_id=f"HP:000000{i + 1}") for i in range(3)
+    ]
+
+
 def test_sp_score_wrapper_is_exactly_the_legacy_arithmetic(lookup):
     """The same contract, one function away — and it was broken by the extraction.
 
     Before `337266f` the pipeline accumulated the total and computed
     `1 / (1 + total / n)` in Python doubles. The extracted `sp_mean_distances`
     first stored the mean in a float32 tensor, so the returned score differed from
-    the legacy value at the eighth significant digit — 83/24 gives 0.22429906542056072
-    as a double and 0.2242990881204605 through float32.
+    the legacy value at the eighth significant digit.
 
-    The drift could not reorder candidates: at 64 phenotypes the smallest gap
-    between two achievable mean distances is 2.5e-4, against a float32 spacing near
-    the unreachable end of 4.8e-7. But B-0's contract is that the extraction
-    preserves behaviour, and "the error is too small to matter" is the argument
-    that lets drift accumulate. The distance tensor is float64 and this pins it.
+    **The multi-phenotype case is the one that matters, and a single phenotype
+    does not exercise it.** With one phenotype the mean is an integer, exact in
+    both formats; only a fractional mean — 11/3 here, 83/24 in the documented
+    example — can be rounded by the accumulation itself. A single-phenotype test
+    would still fail against a float32 implementation, but only because the
+    reciprocal transform rounds, which is a different and weaker property.
     """
     from src.inference.pipeline import DiagnosisPipeline
 
+    phenotypes = _multi_phenotype_ids()
+    _, target = _ids()
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub._node_id_to_idx = {
+        "phenotype": {str(nid): i for i, nid in enumerate(phenotypes)},
+        "disease": {str(target): 5},
+    }
+
+    got = DiagnosisPipeline._calculate_sp_score(stub, phenotypes, target, 1)
+
+    assert got == _legacy_sp_score(lookup, [0, 1, 2], 5, 1)
+    # Named so a change to the fixture that made the mean integral would be
+    # visible rather than silently weakening the test.
+    assert _legacy_sp_score(lookup, [0, 1, 2], 5, 1) == 1.0 / (1.0 + 11.0 / 3.0)
+
+
+@pytest.mark.parametrize("target_idx", [5, 7, 99])
+def test_sp_score_wrapper_matches_legacy_for_a_single_phenotype(lookup, target_idx):
+    """The integral-mean case, kept as its own test rather than folded into the
+    fractional one — the two catch different failures."""
+    from src.inference.pipeline import DiagnosisPipeline
+
     source, target = _ids()
-    for target_idx, phenotype_idx in ((5, 0), (7, 0), (99, 0)):
-        stub = _sp_ready_pipeline_stub(lookup)
-        stub._node_id_to_idx = {
-            "phenotype": {str(source): phenotype_idx},
-            "disease": {str(target): target_idx},
-        }
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub._node_id_to_idx = {
+        "phenotype": {str(source): 0},
+        "disease": {str(target): target_idx},
+    }
 
-        got = DiagnosisPipeline._calculate_sp_score(stub, [source], target, 1)
+    got = DiagnosisPipeline._calculate_sp_score(stub, [source], target, 1)
 
-        assert got == _legacy_sp_score(lookup, [phenotype_idx], target_idx, 1)
+    assert got == _legacy_sp_score(lookup, [0], target_idx, 1)
+
+
+def test_reducing_in_float32_then_widening_loses_the_mean(lookup):
+    """Pins the premise, and names the failure mode the output dtype cannot see.
+
+    A vectorised implementation could sum and divide in float32 and then widen the
+    already-rounded mean into a float64 output tensor. `sp_mean_distances` would
+    still return float64, so `test_sp_mean_distances_are_float64` would pass, and
+    so would every test that only inspects the output type. This shows the value
+    is gone by then — which is why the contract in the docstring covers the whole
+    computation and not just the result.
+    """
+    total, n = 11.0, 3
+
+    in_double = total / n
+    reduced_in_f32_then_widened = float(
+        torch.tensor([total / n], dtype=torch.float32).to(torch.float64)[0]
+    )
+
+    assert reduced_in_f32_then_widened != in_double
+    assert 1.0 / (1.0 + reduced_in_f32_then_widened) != 1.0 / (1.0 + in_double)
 
 
 def test_sp_mean_distances_are_float64(lookup):

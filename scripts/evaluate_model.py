@@ -339,9 +339,20 @@ def generate_report(
             "split": config.split,
             "num_samples": results["num_samples"],
         },
+        # `mean_rank` is reported as null rather than as a number. Nothing
+        # computes it: `RankingMetrics.compute_all` returns mrr, hits@k and
+        # ndcg@k, and `mean_rank` exists only on `LinkPredictionMetrics`, a
+        # different class this script does not use. The previous
+        # `results.get("mean_rank", 0.0)` therefore printed a fabricated 0.00 on
+        # every run.
+        #
+        # It is not computed here rather than being quietly implemented, because
+        # a mean rank over a truncated prediction list has to decide what rank a
+        # ground truth outside the list receives, and that decision belongs to
+        # B-0's untruncated-metrics work rather than to a reporting function.
         "metrics": {
             "mrr": results.get("mrr", 0.0),
-            "mean_rank": results.get("mean_rank", 0.0),
+            "mean_rank": results.get("mean_rank"),
         },
         "hits_at_k": {},
         "config": asdict(config),
@@ -365,7 +376,11 @@ def print_results(results: Dict[str, Any], config: EvalConfig) -> None:
     print(f"Samples: {results['num_samples']}")
     print("-" * 60)
     print(f"MRR:        {results.get('mrr', 0.0):.4f}")
-    print(f"Mean Rank:  {results.get('mean_rank', 0.0):.2f}")
+    mean_rank = results.get("mean_rank")
+    if mean_rank is None:
+        print("Mean Rank:  not computed (see generate_report)")
+    else:
+        print(f"Mean Rank:  {mean_rank:.2f}")
     print("-" * 60)
     print("Hits@K:")
     for k in config.top_k_values:

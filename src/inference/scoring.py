@@ -185,11 +185,29 @@ def sp_mean_distances(
     code this replaces accumulated the total and divided in Python doubles
     (`_calculate_sp_score` before commit `337266f`), so a float32 result would not
     be behaviour-preserving: a mean such as 83/24 differs between the two at the
-    eighth significant digit. That difference cannot reorder candidates — the
-    smallest gap between two achievable means at 64 phenotypes is 2.5e-4, some 500
-    times the float32 spacing near the unreachable end — but B-0 exists to make
-    the offline measurement describe the deployed system exactly, and "too small
-    to matter" is the argument that lets drift in. The tensor is one value per
+    eighth significant digit.
+
+    That difference cannot reorder candidates, and the margin is worth stating in
+    one coordinate system at a time rather than mixing them. Within a single
+    result every candidate is scored against the same phenotype set, so ``N`` is
+    fixed and the achievable means are ``k / N``:
+
+      - **Raw distance.** Distinct means differ by at least ``1 / N``, so at the
+        contractual maximum of 100 phenotypes (`src/api/routes/diagnose.py:56`)
+        the smallest gap is 1e-2, against a float32 spacing near ``d = 6`` of
+        ``2**-21 = 4.8e-7`` — four orders of magnitude.
+      - **Transformed score.** The gap becomes about ``0.0204 / N``, so 2.0e-4 at
+        ``N = 100``, against a float32 spacing near ``1/7`` of ``2**-26 = 1.5e-8``
+        — again four orders of magnitude.
+
+    (Means with *different* denominators can come far closer — adjacent fractions
+    with denominators up to 64 differ by as little as ``1 / (63 * 64) = 2.5e-4``
+    — but that is a comparison across results with different phenotype counts,
+    which `docs/DISEASE_SCORER_POLICY.md` does not treat as commensurable anyway.)
+
+    The drift is corrected regardless of that margin: B-0 exists to make the
+    offline measurement describe the deployed system exactly, and "too small to
+    matter" is the argument that lets drift in. The tensor is one value per
     candidate, so the memory cost of the wider type is nothing worth trading for.
 
     **The interface is batched; this implementation is not yet vectorised.** It
@@ -199,7 +217,11 @@ def sp_mean_distances(
     batched representation (sorted composite keys with ``torch.searchsorted``, or
     a sparse index) replaces this next; the signature is already the one it will
     have, so callers do not change. **That replacement inherits the float64
-    contract**; it is not free to widen the type back for memory.
+    contract**, and inherits it for the *whole* computation: it is not free to
+    narrow the dtype back to float32 to save memory, and it may not reduce or
+    divide in float32 and then widen the rounded result into a float64 output.
+    Widening after the fact satisfies the output dtype while having already lost
+    the precision the contract is about.
     """
     n_candidates = len(target_indices)
     distances = torch.zeros(n_candidates, dtype=torch.float64)
