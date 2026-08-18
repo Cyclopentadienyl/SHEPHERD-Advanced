@@ -66,6 +66,9 @@ work shipped is stale, not authoritative.
 | [`working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md`](working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md) | Constraints any Gate 3 evidence design must satisfy |
 | [`working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`](working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md) | Route inventory, bind modes, authentication, CORS, risk acceptance |
 | [`working/results-review/ARCHIVE_rev1_6.md`](working/results-review/ARCHIVE_rev1_6.md) | Revisions 1–6 of the above, with the withdrawn claims and what the scope audit removed. History, not authority |
+| [`working/scorer-measurement/README.md`](working/scorer-measurement/README.md) | Scorer-measurement phase (work item B-0): the A/B/C/D mode ladder and the stage map |
+| [`working/scorer-measurement/PLAN_B03.md`](working/scorer-measurement/PLAN_B03.md) | B-0.3 proposal — Modes B and C, and the three decisions that keep the ladder interpretable |
+| [`working/scorer-measurement/PLAN_B02_shipped.md`](working/scorer-measurement/PLAN_B02_shipped.md) | The plan the shipped B-0.2 harness was built from. History, not authority |
 
 ## Archived
 

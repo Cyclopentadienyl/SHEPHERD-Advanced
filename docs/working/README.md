@@ -20,6 +20,7 @@ after its work shipped is stale, not authoritative.
 | Phase | Status |
 |---|---|
 | [`results-review/`](results-review/) | under review — snapshot repository, results-review UX, deployment security |
+| [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0, the A/B/C/D measurement ladder |
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md` and
 `docs/SP_SCORE_GUIDE.md`.
