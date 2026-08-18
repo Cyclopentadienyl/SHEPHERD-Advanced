@@ -11,7 +11,7 @@ notice.
 dropped that section's own subsections. The submitted freeze artefact contained
 §11's preamble and invariant table only; the reviewer read exactly what was sent
 and correctly reported the test-suite shape and reopen conditions as absent. They
-were in the spec. Comparing the two rules over all four specs afterwards found
+were in the spec. Comparing the two rules over all five specs afterwards found
 **13 sections** where they disagree, three of which would have been emitted as two
 lines.
 

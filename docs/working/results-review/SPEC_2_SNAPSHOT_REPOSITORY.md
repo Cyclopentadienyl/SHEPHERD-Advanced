@@ -463,12 +463,30 @@ Benchmark the synchronous path before considering anything else. Do not write a 
 unlink that itself fails is **reported through health status**, because the orphan now counts against
 the physical ceilings (§7.2) and will otherwise be invisible until writes start failing.
 
-**After `os.replace` — the directory `fsync` may fail, eviction may fail, or the process may die at
-any point between them.** In every case the new snapshot exists and is valid, and the result is *not*
-failed. But these are **not the same outcome**, and collapsing them loses the one fact an operator
-needs: whether the replacement is known to survive a reboot.
+**After `os.replace` there are three outcomes, and only two of them have a caller to report to.**
 
-**Over capacity is a separate question from either.** It is a property of the repository's actual
+*Control returns and the process is still running.* The replacement is visible under its final name
+and validates. If the directory `fsync` failed, **do not evict** and return
+`VISIBLE_DURABILITY_UNCONFIRMED` — visible now, survival across a crash **not claimed**. If eviction
+then fails, return `PUBLISHED_RETENTION_CLEANUP_FAILED`. Neither is a failed result: the snapshot
+exists in both.
+
+*The process or the system terminates before the directory `fsync` has returned.* **There is no
+caller result to classify at all.** After restart the repository may hold the previous ring alone or
+the visible replacement; which of the two is filesystem behaviour, and **this document does not claim
+the replacement survived** — that claim would require the `fsync` that did not return. What is
+claimed is the part that is ordered rather than probabilistic: **the planned victims are untouched**,
+because eviction is unreachable until the directory `fsync` succeeds.
+
+*The process terminates after durability is established but before eviction completes.* The
+replacement is durable; an oldest-prefix subset of the victims may be gone. The startup scan finishes
+the retention that was interrupted.
+
+These are not one outcome under three labels. Collapsing them loses the fact an operator needs —
+whether the replacement is known to survive a reboot — and it would assert a survival the storage
+layer never confirmed.
+
+**Over capacity is a separate question from all three.** It is a property of the repository's actual
 state, not of which step failed: publication onto a ring that was not full plans no victims and
 leaves nothing over any bound. Health reports it when a bound is genuinely exceeded, and reports
 unconfirmed durability whenever `fsync` did not return — the two are independent signals.
@@ -598,7 +616,12 @@ What the decision must be able to see, stated plainly so it can be made knowingl
 
 ## 11. Frozen invariants, and when this document reopens
 
-**§5 and §7 are frozen after this section.** They describe a rotation and
+**§5 and §7 are FROZEN.** Not "will be" — the closure round completed, the
+bounded provenance audit was accepted, and the freeze took effect at the commit
+that carries this sentence. Changes to those sections from here require one of
+T1–T6 in §11.2, cited by name.
+
+They describe a rotation and
 publication algorithm, and prose has no type checker — each round of English
 refinement kept exposing the next undefined transition, which is the compiler's
 job rather than a reviewer's. Precision beyond this point moves into the

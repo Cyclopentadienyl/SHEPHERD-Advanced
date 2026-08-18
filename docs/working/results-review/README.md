@@ -4,8 +4,9 @@ Design for the clinician-facing results review: how a diagnosis result is
 snapshotted, reopened, sorted, filtered and explained, and what the deployment
 must be secured against before any of it is exposed.
 
-**Status:** under review. Spec 2 §§5 and 7 freeze once the closure audit below
-completes; everything else is draft.
+**Status:** Spec 2 **§§5 and 7 are frozen** — the closure audit below completed
+and was accepted. They reopen only under T1–T6 (Spec 2 §11.2). Everything else
+is draft and under review.
 
 | File | Scope |
 |---|---|
