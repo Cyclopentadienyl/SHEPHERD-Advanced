@@ -36,11 +36,16 @@ __all__ = [
     "LEGACY_TRUNCATION_K",
     "MeasurementManifest",
     "ModeAResult",
-    "to_global_disease_ids",
+    "ModeResult",
+    "to_global_ids",
     "canonical_ranking",
     "legacy_ranking",
     "ranks_of_truth",
     "run_mode_a",
+    "run_modes_ab",
+    "encode_full_graph",
+    "run_mode_c",
+    "assert_constructions_agree",
 ]
 
 
@@ -55,10 +60,16 @@ def _require_integer_ids(ids: Tensor, name: str) -> None:
         raise ValueError(f"{name} must be an integer tensor, not {ids.dtype}")
 
 
-def to_global_disease_ids(original_disease_indices: Tensor, local_ids: Tensor) -> Tensor:
-    """Translate subgraph-local disease indices into global knowledge-graph ids.
+def to_global_ids(original_indices: Tensor, local_ids: Tensor) -> Tensor:
+    """Translate subgraph-local node indices into global knowledge-graph ids.
 
-    ``original_disease_indices`` is the dataloader's ``original_indices["disease"]``
+    Used for diseases when ranking candidates and for phenotypes when Mode B
+    pools a patient from full-graph embeddings. It was named for diseases while
+    they were its only caller; nothing about it was ever disease-specific, and a
+    disease-shaped name on the phenotype path would have been the misleading kind
+    of accurate.
+
+    ``original_indices`` is the dataloader's ``original_indices["disease"]``
     — it is *already* the local-to-global direction: built as
     ``torch.tensor(sorted(nodes))`` and indexed by local position
     (`src/kg/data_loader.py:336-342`), so entry *i* holds the global index of local
@@ -72,21 +83,21 @@ def to_global_disease_ids(original_disease_indices: Tensor, local_ids: Tensor) -
     Local indices are only comparable within the batch that produced them, so
     everything persisted or aggregated must be global.
     """
-    _require_integer_ids(original_disease_indices, "original_disease_indices")
+    _require_integer_ids(original_indices, "original_indices")
     _require_integer_ids(local_ids, "local_ids")
-    if original_disease_indices.dim() != 1:
+    if original_indices.dim() != 1:
         raise ValueError(
-            f"original_disease_indices must be 1-D; got {tuple(original_disease_indices.shape)}"
+            f"original_indices must be 1-D; got {tuple(original_indices.shape)}"
         )
-    if local_ids.numel() and int(local_ids.max()) >= original_disease_indices.numel():
+    if local_ids.numel() and int(local_ids.max()) >= original_indices.numel():
         raise ValueError(
             f"local id {int(local_ids.max())} is outside the subgraph's "
-            f"{original_disease_indices.numel()} disease nodes"
+            f"{original_indices.numel()} disease nodes"
         )
     if local_ids.numel() and int(local_ids.min()) < 0:
         raise ValueError("local ids must be non-negative")
 
-    return original_disease_indices.to(local_ids.device)[local_ids.long()]
+    return original_indices.to(local_ids.device)[local_ids.long()]
 
 
 def canonical_ranking(scores: Tensor, global_disease_ids: Tensor) -> Tensor:
@@ -158,7 +169,7 @@ def legacy_ranking(scores: Tensor) -> Tensor:
     Translate explicitly where global identity is wanted:
 
         local_ids  = legacy_ranking(scores)
-        global_ids = to_global_disease_ids(original_disease_indices, local_ids)
+        global_ids = to_global_ids(original_indices, local_ids)
 
     The local order is for exact oracle calibration; the translated order is for
     persistence and rank extraction. Neither requires a second sort.
@@ -321,39 +332,70 @@ class MeasurementManifest:
 
 
 @dataclass(frozen=True)
-class ModeAResult:
-    """One Mode A run.
+class ModeResult:
+    """One measurement run, in any mode.
 
-    The two metric families are kept apart in the type, not merged into one dict,
-    because they answer different questions and only one of them is comparable
-    across modes.
+    Everything here is comparable **across** modes, which is the whole point of
+    the ladder: the same cohort in the same order, each sample's truth rank under
+    that mode's encoder and candidate universe. `canonical_ranks` is aligned with
+    `sample_ids`, so A→B→C can be read per patient and not only in aggregate — an
+    aggregate that moved by a little can hide a cohort where half the ranks
+    improved and half collapsed.
     """
 
     manifest: MeasurementManifest
-    legacy_metrics: Dict[str, float]
     authoritative_metrics: Dict[str, float]
     n_ranked: int
     n_ground_truth_absent: int
     sampler_evidence: Dict[str, Any]
     sample_ids: List[str]
     truth_global_ids: List[int]
+    canonical_ranks: List[int]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The measurement report. **Per-sample rows are deliberately not here** —
+        they are their own artifact, because one is a summary a human reads and
+        the other is a bulk list a comparison consumes."""
+        return {
+            "manifest": asdict(self.manifest),
+            "authoritative_metrics": self.authoritative_metrics,
+            "n_ranked": self.n_ranked,
+            "n_ground_truth_absent": self.n_ground_truth_absent,
+            "sampler_evidence": self.sampler_evidence,
+        }
+
+    def to_ranks(self) -> List[Dict[str, Any]]:
+        """Per-sample ranks, for comparing this mode against another."""
+        return [
+            {"sample_id": sample_id, "ground_truth": truth, "rank": rank}
+            for sample_id, truth, rank in zip(
+                self.sample_ids, self.truth_global_ids, self.canonical_ranks
+            )
+        ]
+
+
+@dataclass(frozen=True)
+class ModeAResult(ModeResult):
+    """Mode A, which carries what no other mode can: the frozen oracle's own
+    artifacts.
+
+    The two metric families are kept apart in the type, not merged into one dict,
+    because they answer different questions and only one of them is comparable
+    across modes. `legacy_metrics` exists **only** here — B and C have no frozen
+    oracle to be compared against, and a `legacy_mrr` on them would invite exactly
+    the comparison that means nothing.
+    """
+
+    legacy_metrics: Dict[str, float]
     legacy_top_k_local: List[List[int]]
     """Per sample, the frozen oracle's observable artifact: subgraph-local column
     indices, truncated to `LEGACY_TRUNCATION_K`. This is what a comparison against
     `--save-predictions` output is made of."""
 
     def to_dict(self) -> Dict[str, Any]:
-        """The measurement report. **Per-sample rows are deliberately not here** —
-        they are their own artifact (`to_predictions`), because one is a summary a
-        human reads and the other is a bulk list a comparison consumes."""
-        return {
-            "manifest": asdict(self.manifest),
-            "legacy_metrics": self.legacy_metrics,
-            "authoritative_metrics": self.authoritative_metrics,
-            "n_ranked": self.n_ranked,
-            "n_ground_truth_absent": self.n_ground_truth_absent,
-            "sampler_evidence": self.sampler_evidence,
-        }
+        report = super().to_dict()
+        report["legacy_metrics"] = self.legacy_metrics
+        return report
 
     def to_predictions(self) -> List[Dict[str, Any]]:
         """Per-sample rows in the frozen oracle's own artifact shape.
@@ -418,7 +460,7 @@ class _SamplerEvidence:
         # handed over (`src/kg/data_loader.py:965-970`), so a global count has to
         # translate first — with the same function the ranking path uses, not a
         # second index expression.
-        globals_2d = to_global_disease_ids(
+        globals_2d = to_global_ids(
             batch_data["original_indices"]["disease"].to(negatives_local.device),
             negatives_local,
         )
@@ -450,6 +492,87 @@ class _SamplerEvidence:
                 "repeat_draws_within_sample": self.negatives_within_sample_duplicates,
             },
         }
+
+
+def _authoritative(ranks: List[int]) -> Dict[str, float]:
+    """The metric family every mode is compared on.
+
+    `mrr` is renamed `untruncated_mrr` because the legacy family also has an
+    `mrr`, and two numbers under one name in adjacent columns of a report is how
+    a truncated metric ends up quoted as an untruncated one.
+    """
+    from src.utils.metrics import RankingMetrics
+
+    return {
+        f"untruncated_{name}" if name == "mrr" else name: value
+        for name, value in RankingMetrics()
+        .compute_from_ranks(ranks, k_values=(1, 5, 10, 20, 50, 100))
+        .items()
+    }
+
+
+def encode_full_graph(model: Any, graph_data: Dict[str, Any], device: Any) -> Dict[str, Any]:
+    """Embed every node once, the way the deployed pipeline does.
+
+    `src/inference/pipeline.py:_precompute_node_embeddings` is the same three
+    operations — move the tensors to the device, one forward under `no_grad`,
+    keep the result. It is not called directly because reaching it means
+    constructing a `DiagnosisPipeline`, which loads a knowledge-graph object, a
+    shortest-path table and the path-finding and explanation machinery that modes
+    B and C do not use. An integration test asserts that this produces what the
+    pipeline caches, so "the same three operations" is checked rather than
+    asserted in a comment.
+    """
+    import torch as _torch
+
+    x_dict = {k: v.to(device) for k, v in graph_data["x_dict"].items()}
+    edge_index_dict = {k: v.to(device) for k, v in graph_data["edge_index_dict"].items()}
+    model.eval()
+    with _torch.no_grad():
+        return model(x_dict, edge_index_dict)
+
+
+def _score_from_full_graph(
+    embeddings: Dict[str, Any],
+    batch_data: Dict[str, Any],
+    global_disease_ids: Tensor,
+    device: Any,
+) -> "tuple":
+    """Mode B's score matrix for one batch, and the candidate tensor it used.
+
+    Returns the candidate tensor it was handed, so the caller can check that it
+    is the same object Mode A scored rather than trusting the arrangement of the
+    code.
+
+    **Both index spaces appear here and they must not be mixed.** The batch dict
+    is remapped to subgraph-local indices before it is handed over
+    (`src/kg/data_loader.py:945-970`), while these embeddings are indexed
+    globally. Phenotype ids are therefore translated back through the same
+    local-to-global map the disease path uses. Padded positions are clamped to a
+    valid row and then discarded by the mask, exactly as the subgraph path does —
+    they contribute nothing either way, and clamping keeps the gather in bounds.
+    """
+    from src.inference.scoring import cosine_score_matrix, masked_mean_pool
+
+    phenotype_emb = embeddings["phenotype"]
+    disease_emb = embeddings["disease"]
+    batch = batch_data["batch"]
+
+    local_phenotypes = batch["phenotype_ids"]
+    phenotype_map = batch_data["original_indices"]["phenotype"]
+    safe_local = local_phenotypes.clamp(min=0, max=phenotype_map.numel() - 1)
+    phenotype_ids = to_global_ids(phenotype_map, safe_local.reshape(-1)).reshape(
+        local_phenotypes.shape
+    ).to(device)
+    mask = batch["phenotype_mask"].to(device)
+
+    valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
+    patient_phenotypes = phenotype_emb.to(device)[valid.reshape(-1)].reshape(
+        phenotype_ids.size(0), phenotype_ids.size(1), -1
+    )
+    patients = masked_mean_pool(patient_phenotypes, mask)
+    candidates = disease_emb.to(device)[global_disease_ids.to(device).long()]
+    return cosine_score_matrix(patients, candidates), global_disease_ids
 
 
 def _assert_cohort_is_intact(
@@ -496,6 +619,19 @@ def run_mode_a(
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
 ) -> ModeAResult:
+    """Mode A alone. See `run_modes_ab`, of which this is the one-mode case."""
+    result_a, _ = run_modes_ab(model, dataloader, manifest, device=device)
+    return result_a
+
+
+def run_modes_ab(
+    model: Any,
+    dataloader: Iterable[Dict[str, Any]],
+    manifest_a: MeasurementManifest,
+    manifest_b: Optional[MeasurementManifest] = None,
+    full_graph_embeddings: Optional[Dict[str, Any]] = None,
+    device: Optional[Any] = None,
+) -> "tuple":
     """Score a cohort exactly as the legacy evaluator does, and report honestly.
 
     Per batch: forward the subgraph, pool the patient's phenotypes with the
@@ -517,6 +653,19 @@ def run_mode_a(
     is wrong — and a report that quietly drops the affected samples would answer a
     question about a cohort nobody chose. The same applies to any shrinkage:
     legacy rows, canonical ranks and `manifest.n_samples` must all agree.
+
+    **Mode B rides the same traversal, deliberately.** B is defined as *the same
+    candidates as A, scored from full-graph embeddings*, so A→B is only a
+    measurement of encoder scope if the candidate sets are genuinely identical.
+    Running B separately — even from the same seed — would not establish that:
+    the calibration evidence available compares the aggregate MRR and the local
+    top-20, and two runs can agree on both while their candidate universes differ
+    **outside** the top 20. Here both modes are handed the *same tensor*, and the
+    identity is asserted rather than left as a property of how the code happens to
+    be arranged today.
+
+    Pass `manifest_b` and `full_graph_embeddings` to get B; omit them for A alone.
+    Returns `(mode_a, mode_b_or_None)`.
     """
     import torch as _torch
 
@@ -526,13 +675,22 @@ def run_mode_a(
     device = _torch.device(device) if device is not None else _torch.device("cpu")
     model.eval()
 
+    want_b = manifest_b is not None
+    if want_b and full_graph_embeddings is None:
+        raise ValueError(
+            "Mode B needs full_graph_embeddings; without them it would fall back "
+            "to the subgraph encoder and silently be Mode A under another name"
+        )
+
     legacy_top_k: List[List[int]] = []
     legacy_truth_local: List[int] = []
     sample_ids: List[str] = []
     truth_global_ids: List[int] = []
     canonical_ranks: List[int] = []
+    canonical_ranks_b: List[int] = []
     evidence = _SamplerEvidence()
     absent = 0
+    absent_b = 0
 
     with _torch.no_grad():
         for batch_data in dataloader:
@@ -573,7 +731,7 @@ def run_mode_a(
             sample_ids.extend(batch["patient_ids"])
 
             canonical = canonical_ranking(scores, global_ids)
-            truth_global = to_global_disease_ids(global_ids, disease_ids_local)
+            truth_global = to_global_ids(global_ids, disease_ids_local)
             truth_global_ids.extend(truth_global.tolist())
             for rank in ranks_of_truth(canonical, truth_global):
                 if rank is None:
@@ -581,16 +739,46 @@ def run_mode_a(
                 else:
                     canonical_ranks.append(rank)
 
+            if not want_b:
+                continue
+
+            # Mode B: the SAME candidates, encoded over the whole graph instead
+            # of this batch's subgraph. `global_ids` is the one tensor both modes
+            # index by, and the assertion below says so in code — "they share a
+            # variable" is a structural claim, and structural claims decay.
+            b_scores, b_ids = _score_from_full_graph(
+                full_graph_embeddings, batch_data, global_ids, device
+            )
+            if b_ids is not global_ids:
+                raise AssertionError(
+                    "Mode B scored a different candidate tensor from Mode A; A->B "
+                    "would then measure encoder scope and candidate construction "
+                    "together, which is not what it is for"
+                )
+            for rank in ranks_of_truth(canonical_ranking(b_scores, b_ids), truth_global):
+                if rank is None:
+                    absent_b += 1
+                else:
+                    canonical_ranks_b.append(rank)
+
     _assert_cohort_is_intact(
-        manifest=manifest,
+        manifest=manifest_a,
         n_legacy_rows=len(legacy_top_k),
         n_sample_ids=len(sample_ids),
         n_canonical_ranks=len(canonical_ranks),
         n_absent=absent,
     )
+    if want_b:
+        _assert_cohort_is_intact(
+            manifest=manifest_b,
+            n_legacy_rows=len(sample_ids),
+            n_sample_ids=len(sample_ids),
+            n_canonical_ranks=len(canonical_ranks_b),
+            n_absent=absent_b,
+        )
 
-    return ModeAResult(
-        manifest=manifest,
+    result_a = ModeAResult(
+        manifest=manifest_a,
         legacy_metrics={
             # Through `RankingMetrics.mean_reciprocal_rank` — the same call the
             # frozen evaluator reaches via `compute_all` (`evaluate_model.py:285,
@@ -601,16 +789,187 @@ def run_mode_a(
             f"legacy_mrr_truncated_at_{LEGACY_TRUNCATION_K}":
                 RankingMetrics().mean_reciprocal_rank(legacy_top_k, legacy_truth_local),
         },
-        authoritative_metrics={
-            f"untruncated_{name}" if name == "mrr" else name: value
-            for name, value in RankingMetrics()
-            .compute_from_ranks(canonical_ranks, k_values=(1, 5, 10, 20, 50, 100))
-            .items()
-        },
+        authoritative_metrics=_authoritative(canonical_ranks),
         n_ranked=len(canonical_ranks),
         n_ground_truth_absent=absent,
         sampler_evidence=evidence.summary(),
         sample_ids=sample_ids,
         truth_global_ids=truth_global_ids,
+        canonical_ranks=canonical_ranks,
         legacy_top_k_local=legacy_top_k,
+    )
+    if not want_b:
+        return result_a, None
+
+    result_b = ModeResult(
+        manifest=manifest_b,
+        authoritative_metrics=_authoritative(canonical_ranks_b),
+        n_ranked=len(canonical_ranks_b),
+        n_ground_truth_absent=absent_b,
+        # The same observation, because it is the same traversal. Recording it on
+        # both is what lets a reader check that claim from the artifacts alone.
+        sampler_evidence=evidence.summary(),
+        sample_ids=sample_ids,
+        truth_global_ids=truth_global_ids,
+        canonical_ranks=canonical_ranks_b,
+    )
+    return result_a, result_b
+
+
+def assert_constructions_agree(legacy_model: Any, production_model: Any) -> None:
+    """Refuse to read A→B as encoder scope unless the two models are the same model.
+
+    Mode A builds through the frozen evaluator's loader; modes B and C build
+    through production's. If those disagree — a different conv type recovered, a
+    different layer count, different weights — then A→B is encoder scope *plus*
+    architecture resolution, and the ladder's first rung measures two things at
+    once while reporting one.
+
+    A difference here is a finding, not a nuisance: it means the served model and
+    the historically evaluated model were never the same, which is worth knowing
+    before any number is published.
+    """
+    import torch as _torch
+
+    differences: List[str] = []
+    left, right = getattr(legacy_model, "metadata", None), getattr(production_model, "metadata", None)
+    if left != right:
+        differences.append(f"metadata: legacy {left} vs production {right}")
+
+    left_state = legacy_model.state_dict()
+    right_state = production_model.state_dict()
+    only_legacy = sorted(set(left_state) - set(right_state))
+    only_production = sorted(set(right_state) - set(left_state))
+    if only_legacy or only_production:
+        differences.append(
+            f"parameter names: {len(only_legacy)} only in legacy {only_legacy[:3]}, "
+            f"{len(only_production)} only in production {only_production[:3]}"
+        )
+
+    mismatched = [
+        name for name in sorted(set(left_state) & set(right_state))
+        if left_state[name].shape != right_state[name].shape
+        or not _torch.equal(left_state[name].cpu(), right_state[name].cpu())
+    ]
+    if mismatched:
+        differences.append(f"{len(mismatched)} parameter tensors differ, e.g. {mismatched[:3]}")
+
+    if differences:
+        raise ValueError(
+            "the legacy and production model constructions disagree, so A→B would "
+            "measure encoder scope and architecture resolution together:\n  "
+            + "\n  ".join(differences)
+        )
+
+
+def run_mode_c(
+    full_graph_embeddings: Dict[str, Any],
+    samples: Iterable[Any],
+    manifest: MeasurementManifest,
+    device: Optional[Any] = None,
+    batch_size: int = 32,
+) -> ModeResult:
+    """Score every patient against **every disease in the graph**.
+
+    This is what the reference method does — *"we calculate a patient's
+    similarity to all disease nodes in the KG at inference time"* (npj Digital
+    Medicine 8:380, 2025, Methods) — and what nothing in this system did before.
+
+    **No subgraph sampler and no dataloader.** Mode C's candidate universe is all
+    diseases, so there is nothing for the sampler to select and no reason to pay
+    for it; and running it would consume the random draws that make A and B
+    reproducible without using any of them. Patients come straight from the
+    samples, which is where the dataloader gets them too.
+
+    Padding is done here rather than through `diagnosis_collate_fn` for the same
+    reason: that function builds items through `DiagnosisDataset`, which draws
+    negative samples this mode discards. Eight lines of `pad` and `stack` against
+    a dependency that consumes randomness for nothing is not a close call.
+
+    Absence is impossible by construction — the truth is a disease, and every
+    disease is a candidate — so a non-zero absence count means the ids are wrong,
+    and `_assert_cohort_is_intact` treats it as fatal.
+    """
+    import torch as _torch
+    import torch.nn.functional as _F
+
+    from src.inference.scoring import cosine_score_matrix, masked_mean_pool
+
+    device = _torch.device(device) if device is not None else _torch.device("cpu")
+    phenotype_emb = full_graph_embeddings["phenotype"].to(device)
+    disease_emb = full_graph_embeddings["disease"].to(device)
+    all_disease_ids = _torch.arange(disease_emb.size(0), device=device)
+
+    materialised = list(samples)
+    sample_ids: List[str] = []
+    truth_global_ids: List[int] = []
+    canonical_ranks: List[int] = []
+    absent = 0
+    candidate_counts: List[int] = []
+
+    with _torch.no_grad():
+        for start in range(0, len(materialised), batch_size):
+            chunk = materialised[start:start + batch_size]
+            widest = max(len(sample.phenotype_ids) for sample in chunk)
+            ids, masks = [], []
+            for sample in chunk:
+                row = _torch.tensor(sample.phenotype_ids, dtype=_torch.long)
+                pad = widest - row.numel()
+                ids.append(_F.pad(row, (0, pad)))
+                masks.append(
+                    _torch.cat([
+                        _torch.ones(row.numel(), dtype=_torch.bool),
+                        _torch.zeros(pad, dtype=_torch.bool),
+                    ])
+                )
+            phenotype_ids = _torch.stack(ids).to(device)
+            mask = _torch.stack(masks).to(device)
+
+            valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
+            patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
+                phenotype_ids.size(0), phenotype_ids.size(1), -1
+            )
+            patients = masked_mean_pool(patient_phenotypes, mask)
+            scores = cosine_score_matrix(patients, disease_emb)
+            candidate_counts.append(int(scores.size(1)))
+
+            truth = _torch.tensor([s.disease_id for s in chunk], dtype=_torch.long, device=device)
+            ranked = canonical_ranking(scores, all_disease_ids)
+            sample_ids.extend(s.patient_id for s in chunk)
+            truth_global_ids.extend(truth.tolist())
+            for rank in ranks_of_truth(ranked, truth):
+                if rank is None:
+                    absent += 1
+                else:
+                    canonical_ranks.append(rank)
+
+    _assert_cohort_is_intact(
+        manifest=manifest,
+        n_legacy_rows=len(sample_ids),
+        n_sample_ids=len(sample_ids),
+        n_canonical_ranks=len(canonical_ranks),
+        n_absent=absent,
+    )
+
+    return ModeResult(
+        manifest=manifest,
+        authoritative_metrics=_authoritative(canonical_ranks),
+        n_ranked=len(canonical_ranks),
+        n_ground_truth_absent=absent,
+        sampler_evidence={
+            "n_batches": len(candidate_counts),
+            "candidate_columns": {
+                "min": min(candidate_counts) if candidate_counts else None,
+                "max": max(candidate_counts) if candidate_counts else None,
+                "mean": (sum(candidate_counts) / len(candidate_counts))
+                if candidate_counts else None,
+            },
+            "max_subgraph_nodes": {},
+            # No sampler ran, and saying so is the point: an empty structure here
+            # would read as "not recorded" rather than "not applicable".
+            "negative_sampling": {"observed": False, "reason": "mode C scores every disease"},
+        },
+        sample_ids=sample_ids,
+        truth_global_ids=truth_global_ids,
+        canonical_ranks=canonical_ranks,
     )

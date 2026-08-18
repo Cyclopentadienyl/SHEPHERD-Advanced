@@ -21,7 +21,7 @@ from src.evaluation.measurement import (  # noqa: E402
     canonical_ranking,
     legacy_ranking,
     ranks_of_truth,
-    to_global_disease_ids,
+    to_global_ids,
 )
 
 
@@ -33,7 +33,7 @@ def test_local_ids_translate_through_original_indices():
     GLOBAL index, so it is already the direction needed."""
     original = torch.tensor([12, 47, 300, 9001])  # local 0..3 -> these globals
 
-    got = to_global_disease_ids(original, torch.tensor([2, 0, 3]))
+    got = to_global_ids(original, torch.tensor([2, 0, 3]))
 
     assert got.tolist() == [300, 12, 9001]
 
@@ -46,19 +46,19 @@ def test_translation_is_not_the_inverse_direction():
     """
     original = torch.tensor([5, 11, 40])
 
-    assert to_global_disease_ids(original, torch.tensor([0])).tolist() == [5]
-    assert to_global_disease_ids(original, torch.tensor([2])).tolist() == [40]
+    assert to_global_ids(original, torch.tensor([0])).tolist() == [5]
+    assert to_global_ids(original, torch.tensor([2])).tolist() == [40]
 
 
 @pytest.mark.parametrize("bad_local", [[3], [99], [-1]])
 def test_out_of_range_local_ids_are_rejected(bad_local):
     with pytest.raises(ValueError):
-        to_global_disease_ids(torch.tensor([5, 11, 40]), torch.tensor(bad_local))
+        to_global_ids(torch.tensor([5, 11, 40]), torch.tensor(bad_local))
 
 
 def test_translation_rejects_a_non_vector_table():
     with pytest.raises(ValueError):
-        to_global_disease_ids(torch.tensor([[1, 2], [3, 4]]), torch.tensor([0]))
+        to_global_ids(torch.tensor([[1, 2], [3, 4]]), torch.tensor([0]))
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ def test_legacy_local_output_translates_without_a_second_sort():
     original = torch.tensor([70, 80, 90])
 
     local = legacy_ranking(scores)
-    global_ids = to_global_disease_ids(original, local)
+    global_ids = to_global_ids(original, local)
 
     assert local.tolist() == [[1, 2, 0]]
     assert global_ids.tolist() == [[80, 90, 70]]
@@ -154,7 +154,7 @@ def test_the_two_streams_agree_when_no_scores_tie():
     scores = torch.randn(4, 9)
     ids = torch.tensor([31, 4, 77, 12, 90, 5, 68, 23, 51])
 
-    legacy_global = to_global_disease_ids(ids, legacy_ranking(scores))
+    legacy_global = to_global_ids(ids, legacy_ranking(scores))
 
     assert canonical_ranking(scores, ids).tolist() == legacy_global.tolist()
 
@@ -177,9 +177,9 @@ def test_identifier_tensors_must_be_integers(bad):
     original = torch.tensor([5, 11, 40])
 
     with pytest.raises(ValueError, match="integer"):
-        to_global_disease_ids(original, torch.tensor([1]).to(bad))
+        to_global_ids(original, torch.tensor([1]).to(bad))
     with pytest.raises(ValueError, match="integer"):
-        to_global_disease_ids(original.to(bad), torch.tensor([1]))
+        to_global_ids(original.to(bad), torch.tensor([1]))
 
 
 def test_canonical_rejects_non_integer_global_ids():
