@@ -17,9 +17,12 @@ to the dataloader: ``src/inference/pipeline.py:579-606``,
 ``scripts/measure_scorer.py``. Every copy depends on the same filenames and the
 same serialisation format, so a format change breaks all of them at once.
 
-Reserved module names (both empty):
-  - ``file_storage.py`` — one shared implementation of the layout above
-  - ``graph_db.py``     — a graph-database backend
+Modules:
+  - ``file_storage.py`` — the shared reader. **Started, not finished.** Two
+    callers are migrated (`scripts/measure_scorer.py`, and Mode C through it);
+    the five listed above still have their own copies, and collapsing them is
+    the rest of P1.
+  - ``graph_db.py``     — reserved, empty: a graph-database backend
 
 **Scope guardrail for whoever implements ``file_storage.py`` (P1).** Its first
 and only job is to become the single reader/writer of the current file layout,

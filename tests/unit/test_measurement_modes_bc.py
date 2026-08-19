@@ -68,12 +68,13 @@ def world(tmp_path_factory):
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     production_model = build_shepherd_model(checkpoint, graph_data, device)
 
-    def manifest(mode, construction):
+    def manifest(mode, construction, n_samples=None):
         base = build_manifest(args, graph_data, len(samples), device, loader_config)
         return type(base)(**{
             **{f: getattr(base, f) for f in base.__dataclass_fields__},
             "mode": mode,
             "candidate_construction": construction,
+            "n_samples": len(samples) if n_samples is None else n_samples,
         })
 
     return {
@@ -272,3 +273,99 @@ def test_the_three_modes_agree_here_because_the_fixture_makes_them_agree(ab, mod
     )
     assert result_a.canonical_ranks == result_b.canonical_ranks
     assert result_a.canonical_ranks == mode_c.canonical_ranks
+
+
+# ---------------------------------------------------------------------------
+# Mode C refuses ids it cannot honestly score
+# ---------------------------------------------------------------------------
+def _sample(patient_id, phenotype_ids, disease_id):
+    from src.kg.data_loader import DiagnosisSample
+
+    return DiagnosisSample(
+        patient_id=patient_id, phenotype_ids=phenotype_ids, disease_id=disease_id
+    )
+
+
+@pytest.mark.parametrize("phenotypes, fragment", [
+    ([-1, 0], "phenotype id -1"),
+    ([0, 99999], "phenotype id 99999"),
+])
+def test_an_out_of_range_phenotype_is_refused_not_clamped(world, phenotypes, fragment):
+    """The defect this was corrected for.
+
+    Mode A clamps, and is right to: its out-of-range values are the dataloader's
+    `-1` padding under a `False` mask, so the clamp only keeps the gather in
+    bounds. In Mode C every id is a real value from a real patient with
+    `mask=True`. Clamping would score phenotype -1 as phenotype 0 and 99999 as
+    the last node in the graph — a real patient, a plausible rank, and the wrong
+    one, indistinguishable downstream from a genuine result.
+    """
+    bad = [_sample("P-bad", phenotypes, 0)]
+
+    with pytest.raises(ValueError, match=fragment):
+        run_mode_c(
+            full_graph_embeddings=world["embeddings"],
+            samples=bad,
+            manifest=world["manifest"]("C", "every disease"),
+            device=world["device"],
+        )
+
+
+def test_the_offending_patient_is_named(world):
+    """An operator needs the row, not just the fact. A cohort of thousands with
+    "an id is out of range" is a search; with the patient id it is a lookup."""
+    bad = [_sample("P-good", [0], 0), _sample("P-offending", [0, -5], 0)]
+
+    with pytest.raises(ValueError, match="P-offending"):
+        run_mode_c(
+            full_graph_embeddings=world["embeddings"],
+            samples=bad,
+            manifest=world["manifest"]("C", "every disease"),
+            device=world["device"],
+        )
+
+
+def test_an_out_of_range_ground_truth_is_refused(world):
+    """Caught before ranking rather than surfacing later as an absence. Absence
+    is Mode C's signal that the id spaces are wrong; letting a bad truth reach it
+    would report the symptom instead of the cause."""
+    bad = [_sample("P-truth", [0], 99999)]
+
+    with pytest.raises(ValueError, match="ground-truth disease id 99999"):
+        run_mode_c(
+            full_graph_embeddings=world["embeddings"],
+            samples=bad,
+            manifest=world["manifest"]("C", "every disease"),
+            device=world["device"],
+        )
+
+
+def test_a_patient_with_no_phenotypes_is_refused(world):
+    """Pooling nothing yields the zero vector, whose cosine against every disease
+    is zero, whose ranking is an arbitrary tie-break over the whole graph. That
+    is a rank, and it means nothing."""
+    with pytest.raises(ValueError, match="no phenotypes"):
+        run_mode_c(
+            full_graph_embeddings=world["embeddings"],
+            samples=[_sample("P-empty", [], 0)],
+            manifest=world["manifest"]("C", "every disease"),
+            device=world["device"],
+        )
+
+
+def test_valid_ids_at_both_boundaries_are_accepted(world):
+    """The negative control for the four refusals above: index 0 and the last
+    node are in range, and a guard that rejected them would be worse than none.
+    """
+    n_phenotypes = world["embeddings"]["phenotype"].size(0)
+    n_diseases = world["embeddings"]["disease"].size(0)
+    edge = [_sample("P-edge", [0, n_phenotypes - 1], n_diseases - 1)]
+
+    result = run_mode_c(
+        full_graph_embeddings=world["embeddings"],
+        samples=edge,
+        manifest=world["manifest"]("C", "every disease", n_samples=1),
+        device=world["device"],
+    )
+
+    assert result.n_ranked == 1

@@ -723,8 +723,10 @@ def run_modes_ab(
 
             # Index clamping mirrors the legacy path, which clamps rather than
             # raising on a padded -1.
-            valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
-            patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
+            # No clamp: every entry is either a validated real id or a padded 0
+            # that the mask removes. A clamp here would be the defect this mode
+            # was corrected for.
+            patient_phenotypes = phenotype_emb[phenotype_ids.reshape(-1)].reshape(
                 phenotype_ids.size(0), phenotype_ids.size(1), -1
             )
             patients = masked_mean_pool(patient_phenotypes, mask)
@@ -870,6 +872,40 @@ def assert_constructions_agree(legacy_model: Any, production_model: Any) -> None
         )
 
 
+def _assert_ids_in_range(samples: Any, n_phenotypes: int, n_diseases: int) -> None:
+    """Every id a sample carries must index the graph it is being scored against.
+
+    Out of range is fatal and names the patient and the value. The alternative —
+    clamping, dropping, or substituting — turns a data error into a plausible
+    rank for a patient who was never scored on their own phenotypes, and nothing
+    downstream can tell that apart from a real result.
+
+    A sample with **no** phenotypes is refused for the same reason: pooling over
+    an empty mask yields the zero vector, whose cosine against every disease is
+    zero, whose ranking is then an arbitrary tie-break over the whole graph.
+    """
+    for sample in samples:
+        if not sample.phenotype_ids:
+            raise ValueError(
+                f"sample {sample.patient_id!r} has no phenotypes; it cannot be "
+                "scored, and pooling nothing would rank the whole graph by a "
+                "tie-break"
+            )
+        for phenotype_id in sample.phenotype_ids:
+            if not 0 <= phenotype_id < n_phenotypes:
+                raise ValueError(
+                    f"sample {sample.patient_id!r} has phenotype id {phenotype_id}, "
+                    f"outside the graph's {n_phenotypes} phenotype nodes. Refusing "
+                    "rather than clamping: a clamped id scores a different patient"
+                )
+        if not 0 <= sample.disease_id < n_diseases:
+            raise ValueError(
+                f"sample {sample.patient_id!r} has ground-truth disease id "
+                f"{sample.disease_id}, outside the graph's {n_diseases} disease "
+                "nodes. Its rank would be meaningless"
+            )
+
+
 def run_mode_c(
     full_graph_embeddings: Dict[str, Any],
     samples: Iterable[Any],
@@ -897,6 +933,15 @@ def run_mode_c(
     Absence is impossible by construction — the truth is a disease, and every
     disease is a candidate — so a non-zero absence count means the ids are wrong,
     and `_assert_cohort_is_intact` treats it as fatal.
+
+    **Every real id is validated before it is used, and out-of-range is fatal.**
+    Mode A clamps, and is right to: its out-of-range values are the dataloader's
+    `-1` padding, already excluded by a `False` mask, and clamping only keeps the
+    gather in bounds. Here every id is a real value from a real patient with
+    `mask=True`, so the same clamp would score phenotype `-3` as phenotype 0 and
+    phenotype 999999 as the last node in the graph — a plausible patient, a
+    plausible rank, and a wrong one. Padding still uses a safe value under a
+    `False` mask; **real values are never clamped, dropped or substituted.**
     """
     import torch as _torch
     import torch.nn.functional as _F
@@ -918,11 +963,14 @@ def run_mode_c(
     with _torch.no_grad():
         for start in range(0, len(materialised), batch_size):
             chunk = materialised[start:start + batch_size]
+            _assert_ids_in_range(chunk, phenotype_emb.size(0), disease_emb.size(0))
             widest = max(len(sample.phenotype_ids) for sample in chunk)
             ids, masks = [], []
             for sample in chunk:
                 row = _torch.tensor(sample.phenotype_ids, dtype=_torch.long)
                 pad = widest - row.numel()
+                # Padding is 0 — a valid row that the mask discards. Real values
+                # reached here already validated, so nothing below alters one.
                 ids.append(_F.pad(row, (0, pad)))
                 masks.append(
                     _torch.cat([

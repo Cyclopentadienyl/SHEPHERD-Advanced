@@ -145,59 +145,24 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
     as the oracle does. **Modes B, C and D must not import it.** It retires with
     `scripts/evaluate_model.py` once institutional parity succeeds.
 
-    *Known duplication, recorded rather than fixed here.* The
-    `node_features.pt` / `edge_indices.pt` / `num_nodes.json` read appears in
-    seven places: `src/inference/pipeline.py:579-606`, `scripts/train_model.py`,
-    `scripts/evaluate_model.py`, `scripts/build_index.py`, `scripts/setup_demo.py`,
-    `scripts/spikes/validate_fast_subgraph.py`, and here. This is **not a good
-    permanent decoupling boundary** — every copy still depends on the same
-    filenames and the same serialisation format, so a format change breaks all
-    seven at once and the duplication buys nothing.
+    **The reading is no longer duplicated here.** It delegates to
+    `src/kg/storage/file_storage.py`, which does not retire with the frozen
+    evaluator — Mode C needs the same files and may not reach them through this
+    function. What stays legacy about this one is its *name and lifecycle*: it is
+    the entry point Mode A uses, and it goes when the oracle goes.
 
-    **P1, out of B-0.2 scope:** one shared reader, in a **KG-owned** module.
-    `src/kg/storage/file_storage.py` already exists, is empty, and is documented
-    as the reserved home for exactly this — "formalise the current on-disk layout
-    behind an interface" (`src/kg/storage/__init__.py`). That is the P1's home; a
-    new module would be a second home for a job already reserved.
+    The same read still appears in `src/inference/pipeline.py:579-606`,
+    `scripts/train_model.py`, `scripts/evaluate_model.py`,
+    `scripts/build_index.py` and `scripts/setup_demo.py`. Every copy depends on
+    the same filenames and serialisation format, so a format change breaks all of
+    them at once and the duplication buys nothing.
 
-    **Not a layer below `src.kg`.** Both consumers that matter are above it —
-    `src.training` and `src.inference` may import `src.kg` under the layers
-    contract — so nothing forces the format knowledge downward, and pushing it
-    into `src.utils` or `src.core` would put knowledge of a KG file format in a
-    package that has no business knowing what a knowledge graph is.
-
-    Refactoring seven consumers inside a calibration change would put the
-    comparison behind an unrelated migration. This copy is exempt from the P1
-    regardless: it must keep matching the frozen oracle until both are deleted
-    together.
+    Migrating those five is P1 and stays out of this change; migrating them here
+    would put the measurement behind an unrelated sweep.
     """
-    from src.kg.data_loader import DiagnosisSample
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
-    samples_path = data_dir / f"{split}_samples.json"
-    if not samples_path.exists():
-        raise FileNotFoundError(f"Samples file not found: {samples_path}")
-
-    samples = [
-        DiagnosisSample(
-            patient_id=s["patient_id"],
-            phenotype_ids=s["phenotype_ids"],
-            disease_id=s["disease_id"],
-        )
-        for s in json.loads(samples_path.read_text())
-    ]
-
-    graph_data: Dict[str, Any] = {}
-    node_features = data_dir / "node_features.pt"
-    if node_features.exists():
-        graph_data["x_dict"] = torch.load(node_features, weights_only=True)
-    edge_indices = data_dir / "edge_indices.pt"
-    if edge_indices.exists():
-        graph_data["edge_index_dict"] = torch.load(edge_indices, weights_only=True)
-    num_nodes = data_dir / "num_nodes.json"
-    if num_nodes.exists():
-        graph_data["num_nodes_dict"] = json.loads(num_nodes.read_text())
-
-    return graph_data, samples
+    return read_graph_artifacts(data_dir), read_samples(data_dir, split)
 
 
 def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> Any:
@@ -335,21 +300,32 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=None,
                         help="Seeds Python, NumPy and torch. Recorded in the manifest")
     parser.add_argument("--modes", default="A",
-                        help="Comma-separated: A, B, C. Default A, which is the "
-                             "calibration path and must stay the default. B rides "
-                             "A's traversal and is only meaningful beside it, so "
-                             "requesting B implies A")
+                        help="One of: A, A,B, C, A,B,C. Default A, which is the "
+                             "calibration path and must stay the default. "
+                             "**B requires A** — it is A's candidates under a "
+                             "different encoder, so it is refused without A "
+                             "rather than silently adding it")
     return parser.parse_args(argv)
 
 
-def parse_modes(spec: str) -> List[str]:
-    """Normalise `--modes`, and refuse the combinations that mean nothing.
+SUPPORTED_MODE_SETS = (("A",), ("A", "B"), ("C",), ("A", "B", "C"))
+"""The combinations that mean something, enumerated rather than derived.
 
-    B exists to be read against A — it is *the same candidates, a different
-    encoder* — so B without A is a number with nothing to compare it to. Rather
-    than silently adding A, that is an error: a caller who asked for B alone has
-    misunderstood what B is, and adding A quietly would leave them believing
-    otherwise.
+Each is either one measurement or a **ladder** in which consecutive modes differ
+by one thing. `A,C` is deliberately absent: it is two measurements whose
+difference confounds encoder scope with candidate universe, and a run that emits
+both invites exactly the attribution it cannot support. Ask for `A,B,C`, which
+contains both and can attribute, or run them separately and say why.
+"""
+
+
+def parse_modes(spec: str) -> List[str]:
+    """Normalise `--modes` against the supported combinations.
+
+    Refusing rather than repairing, in both directions: an unsupported set is not
+    silently completed to a supported one, because a caller who asked for `A,C`
+    believes they asked for something attributable, and quietly handing them
+    `A,B,C` would confirm it.
     """
     modes = [m.strip().upper() for m in spec.split(",") if m.strip()]
     unknown = sorted(set(modes) - {"A", "B", "C"})
@@ -357,12 +333,51 @@ def parse_modes(spec: str) -> List[str]:
         raise SystemExit(f"unknown mode(s): {unknown}. Known modes are A, B and C")
     if not modes:
         raise SystemExit("--modes selected nothing")
-    if "B" in modes and "A" not in modes:
-        raise SystemExit(
-            "Mode B is defined as Mode A's candidates under a full-graph encoder, "
-            "so it is only meaningful beside A. Request --modes A,B"
+
+    ordered = tuple(m for m in ("A", "B", "C") if m in set(modes))
+    if ordered not in SUPPORTED_MODE_SETS:
+        supported = ", ".join(",".join(combo) for combo in SUPPORTED_MODE_SETS)
+        if ordered == ("A", "C"):
+            raise SystemExit(
+                "A,C is not a supported combination. A->C changes the encoder AND "
+                "the candidate universe, so a difference between them attributes "
+                "to neither. Use A,B,C, which contains both and can attribute, or "
+                "run them as separate invocations if you want them independently."
+            )
+        if "B" in ordered and "A" not in ordered:
+            raise SystemExit(
+                "Mode B is Mode A's candidates under a full-graph encoder, so it "
+                "is only meaningful beside A. Request --modes A,B"
+            )
+        raise SystemExit(f"unsupported mode combination {','.join(ordered)}. "
+                         f"Supported: {supported}")
+    return list(ordered)
+
+
+def _assert_same_cohort(left: Any, right: Any) -> None:
+    """Two modes are comparable only over the same patients in the same order.
+
+    Checked rather than assumed, because the two reach their cohort by different
+    routes: Mode A through the dataloader, Mode C straight from the samples file.
+    A reordering in either would leave every metric well formed and every
+    per-sample comparison wrong.
+    """
+    a_mode, b_mode = left.manifest.mode, right.manifest.mode
+    if left.sample_ids != right.sample_ids:
+        first = next(
+            (i for i, (x, y) in enumerate(zip(left.sample_ids, right.sample_ids)) if x != y),
+            min(len(left.sample_ids), len(right.sample_ids)),
         )
-    return modes
+        raise SystemExit(
+            f"modes {a_mode} and {b_mode} did not score the same cohort in the same "
+            f"order: {len(left.sample_ids)} vs {len(right.sample_ids)} samples, first "
+            f"difference at index {first}. Nothing comparing them would mean anything."
+        )
+    if left.truth_global_ids != right.truth_global_ids:
+        raise SystemExit(
+            f"modes {a_mode} and {b_mode} disagree on the ground truth for the same "
+            "patients; one of the two id spaces is wrong"
+        )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -391,8 +406,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     from src.kg.data_loader import create_diagnosis_dataloader
 
     modes = parse_modes(args.modes)
-    graph_data, samples = load_legacy_mode_a_inputs(args.data_dir, args.split)
-    model = build_legacy_mode_a_model(args.checkpoint, device)
+    wants_legacy = "A" in modes          # A, and B which rides A's traversal
+    wants_production = bool({"B", "C"} & set(modes))
+
+    # Loading and construction are dispatched by mode, not done unconditionally.
+    # `load_legacy_mode_a_inputs` and `build_legacy_mode_a_model` retire with the
+    # frozen evaluator; a C-only run that touched them would fail when they go,
+    # and could fail today on a checkpoint the legacy loader cannot rebuild even
+    # though production can.
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+
+    if wants_legacy:
+        graph_data, samples = load_legacy_mode_a_inputs(args.data_dir, args.split)
+    else:
+        graph_data = read_graph_artifacts(args.data_dir)
+        samples = read_samples(args.data_dir, args.split)
+
+    legacy_model = build_legacy_mode_a_model(args.checkpoint, device) if wants_legacy else None
 
     # One config object, two consumers. Not two instances that happen to agree.
     loader_config = build_loader_config(args)
@@ -405,22 +435,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     embeddings = None
-    if {"B", "C"} & set(modes):
-        # Production semantics, through the builder the served pipeline uses.
+    if wants_production:
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
         checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=True)
         production_model = build_shepherd_model(checkpoint, graph_data, device)
-        # Before A->B may be read as encoder scope, the two constructions have to
-        # be the same model. A difference is a finding, not a nuisance.
-        if "A" in modes:
-            assert_constructions_agree(model, production_model)
+        # Only B is read against A as encoder scope, so only B needs the two
+        # constructions to be the same model. C is never compared to A directly.
+        if "B" in modes:
+            assert_constructions_agree(legacy_model, production_model)
         embeddings = encode_full_graph(production_model, graph_data, device)
 
     results: Dict[str, Any] = {}
     if "A" in modes:
         results["A"], mode_b = run_modes_ab(
-            model=model,
+            model=legacy_model,
             dataloader=create_diagnosis_dataloader(
                 samples=samples, graph_data=graph_data, config=loader_config
             ),
@@ -450,16 +479,26 @@ def main(argv: Optional[List[str]] = None) -> int:
             batch_size=args.batch_size,
         )
 
+    # The cohort claim, enforced before anything is written rather than printed
+    # afterwards. A and C reach their patients by different routes — the
+    # dataloader and the samples file — so their agreement is a fact to check,
+    # not a consequence of the code's shape.
+    if {"A", "C"} <= set(results):
+        _assert_same_cohort(results["A"], results["C"])
+
     result = results.get("A")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    # Mode A keeps the filename the calibration launcher reads; the others sit
-    # beside it. One file per mode, because a mode is one measurement and merging
-    # them would put two manifests in one document.
+    # A single-mode run writes the mode the caller asked for to `--output`; a
+    # multi-mode run keeps A there, because `scripts/calibrate_mode_a.py` reads
+    # that path and must keep finding Mode A in it. One file per mode either way,
+    # since a mode is one measurement and merging them would put two manifests in
+    # one document.
+    primary = modes[0] if len(modes) == 1 else "A"
     for mode, mode_result in results.items():
         path = (
-            args.output if mode == "A"
+            args.output if mode == primary
             else args.output.with_name(f"{args.output.stem}_mode{mode}.json")
         )
         path.write_text(json.dumps(mode_result.to_dict(), indent=2, allow_nan=False))
@@ -487,9 +526,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  candidate columns per batch            "
               f"{candidates['min']}-{candidates['max']} (mean {candidates['mean']:.1f})")
 
-    if len(results) > 1:
-        print("\n  Modes are comparable only because they share this cohort in this")
-        print("  order. A->B is encoder scope; B->C is the candidate universe.")
+    rungs = []
+    if {"A", "B"} <= set(results):
+        rungs.append("A->B is encoder scope")
+    if {"B", "C"} <= set(results):
+        rungs.append("B->C is the candidate universe")
+    if rungs:
+        print("\n  Comparable only because these modes share this cohort in this order,")
+        print(f"  which was checked before anything was written. {'; '.join(rungs)}.")
 
     if not cuda_executed:
         print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")

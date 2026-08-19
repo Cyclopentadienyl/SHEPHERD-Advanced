@@ -1,6 +1,7 @@
 # B-0.3 — Modes B and C
 
-**Status:** proposal, revised after review. Three decisions, then implement.
+**Status:** implemented. Revised twice under review — once before implementation
+(three decisions) and once after (five corrections, §7).
 
 Modes B and C need almost no new machinery. Nearly everything they run on was
 either built in B-0.2 or already exists in production, and the point of this
@@ -202,3 +203,51 @@ Same shape as B-0.2, and the same refusal to overclaim:
 - **no authoritative comparison between modes is claimed from a CPU synthetic
   run.** A→B→C on institutional CUDA hardware is a separate acceptance gate, as
   Mode A's parity is.
+
+---
+
+## 7. Corrections after implementation review
+
+Five findings against the first implementation. Two were defects rather than
+untidiness.
+
+**Mode C was coupled to the retiring loaders.** `main()` loaded inputs and built
+a legacy model unconditionally, before dispatching any mode. A `--modes C` run
+therefore executed both — work it discarded, a failure mode it did not need (a
+checkpoint the legacy loader cannot rebuild but production can), and a breakage
+scheduled for the day the frozen evaluator is deleted. Loading and construction
+are now dispatched by mode. The reader those paths shared moved into
+`src/kg/storage/file_storage.py` — the home the package already reserved — so C
+reaches the same files without an eighth copy and without the legacy entry point.
+**That is the P1's first two callers, not the P1**: five copies remain and
+migrating them stays out of this change.
+
+**Mode C clamped real phenotype ids.** Mode A clamps and is right to: its
+out-of-range values are the dataloader's `-1` padding under a `False` mask, so
+the clamp only keeps the gather in bounds. Mode C's ids are real values from real
+patients with `mask=True`, so the same clamp scored phenotype `-1` as phenotype 0
+and an oversized id as the last node in the graph — a real patient, a plausible
+rank, and the wrong one, indistinguishable downstream from a genuine result. Ids
+are now validated before use and out-of-range is fatal, naming the patient and
+the value; ground-truth disease ids likewise, and a patient with no phenotypes,
+whose zero-vector pooling would rank the whole graph by a tie-break. Padding
+still uses a safe value under a false mask; **no real value is clamped, dropped
+or substituted.**
+
+**The CLI printed a cohort claim it did not check.** A and C reach their patients
+by different routes — the dataloader and the samples file — so their agreement is
+a fact to verify, not a consequence of the code's shape. Two list comparisons now
+run before anything is written.
+
+**Mode combinations are now enumerated:** `A`, `A,B`, `C`, `A,B,C`. `A,C` is
+refused rather than silently completed: A→C changes encoder scope *and* candidate
+universe, so a difference attributes to neither, and quietly upgrading the request
+to `A,B,C` would confirm a caller's belief that they had asked for something
+attributable. The construction-equality guard runs only when B is requested,
+since only B is read against A as encoder scope. A single-mode run writes that
+mode to `--output`; a multi-mode run keeps A there, because the calibration
+launcher reads that path.
+
+**An unrelated benchmark fix was mixed into the implementation commit.** Reverted
+and reapplied as its own commit rather than rebased: `f6e1afd` and `4a0feda` are
+what the review read, and rewriting them would invalidate the SHAs it refers to.

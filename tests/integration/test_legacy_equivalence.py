@@ -332,3 +332,94 @@ def test_mode_b_without_mode_a_is_refused(tmp_path):
             "--split", "test", "--output", str(tmp_path / "m.json"),
             "--device", "cpu", "--modes", "B",
         ])
+
+
+def test_mode_c_alone_touches_no_retiring_legacy_path(tmp_path, monkeypatch):
+    """The lifecycle claim, enforced rather than documented.
+
+    `load_legacy_mode_a_inputs` and `build_legacy_mode_a_model` retire with the
+    frozen evaluator. A C-only run that called them would break the day they go —
+    and could fail today on a checkpoint the legacy loader cannot rebuild but
+    production can.
+    """
+    import scripts.measure_scorer as cli
+    from tests.fixtures.synthetic_workspace import build_workspace as build
+
+    data_dir, checkpoint = build(tmp_path / "ws")
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a C-only run reached a retiring legacy entry point")
+
+    monkeypatch.setattr(cli, "load_legacy_mode_a_inputs", refuse)
+    monkeypatch.setattr(cli, "build_legacy_mode_a_model", refuse)
+
+    output = tmp_path / "c_only" / "measurement.json"
+    assert cli.main([
+        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--split", "test", "--output", str(output),
+        "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
+        "--device", "cpu", "--modes", "C",
+    ]) == 0
+
+    # A single-mode run writes the mode that was asked for to --output, rather
+    # than leaving the requested path absent and a suffixed one beside it.
+    written = json.loads(output.read_text())
+    assert written["manifest"]["mode"] == "C"
+    assert not (output.parent / "measurement_predictions.json").exists()
+
+
+def test_a_and_c_must_agree_on_the_cohort_before_anything_is_written(tmp_path, monkeypatch):
+    """The CLI prints that the modes share a cohort; that has to be checked, not
+    announced. A and C reach their patients by different routes — the dataloader
+    and the samples file — so a reordering in either is possible."""
+    import scripts.measure_scorer as cli
+    from tests.fixtures.synthetic_workspace import build_workspace as build
+
+    data_dir, checkpoint = build(tmp_path / "ws")
+
+    # `main` imports run_mode_c inside the function, so the patch has to land on
+    # the source module rather than on the CLI's namespace.
+    from src.evaluation import measurement
+
+    original = measurement.run_mode_c
+
+    def reordered(*args, **kwargs):
+        result = original(*args, **kwargs)
+        return type(result)(**{
+            **{f: getattr(result, f) for f in result.__dataclass_fields__},
+            "sample_ids": list(reversed(result.sample_ids)),
+        })
+
+    monkeypatch.setattr(measurement, "run_mode_c", reordered)
+
+    with pytest.raises(SystemExit, match="same cohort in the same order"):
+        cli.main([
+            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--split", "test", "--output", str(tmp_path / "out" / "m.json"),
+            "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
+            "--device", "cpu", "--modes", "A,B,C",
+        ])
+
+
+@pytest.mark.parametrize("spec, expected", [
+    ("A,C", "not a supported combination"),
+    ("B", "only meaningful beside A"),
+    ("B,C", "only meaningful beside A"),
+    ("D", "unknown mode"),
+])
+def test_unsupported_mode_combinations_are_refused_not_repaired(tmp_path, spec, expected):
+    """`A,C` confounds encoder scope with candidate universe, so a run emitting
+    both invites an attribution it cannot support. Silently completing it to
+    `A,B,C` would confirm the caller's belief that they had asked for something
+    attributable."""
+    from scripts.measure_scorer import main
+    from tests.fixtures.synthetic_workspace import build_workspace as build
+
+    data_dir, checkpoint = build(tmp_path / "ws")
+
+    with pytest.raises(SystemExit, match=expected):
+        main([
+            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--split", "test", "--output", str(tmp_path / "m.json"),
+            "--device", "cpu", "--modes", spec,
+        ])
