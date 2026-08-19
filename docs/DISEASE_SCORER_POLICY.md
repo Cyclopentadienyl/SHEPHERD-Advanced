@@ -3,6 +3,13 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 4. Factual correction.** The implemented B-0 artifacts record aggregate metrics
+and per-sample ground-truth ranks, not per-candidate score components. The deferred cascade/tie-break
+analysis can be performed without a second institutional inference run only if B-0.5 persists an
+approved bounded component artifact, or computes the predeclared analysis during that run. No
+normative scorer-policy decision changed. **The deploying institution should be informed that its
+authority document was corrected**; reapproval is not required for a factual amendment.
+
 **Revision:** rev 3. Amended to permit clinician-controlled view operations over an immutable
 canonical result (statement 4a/4b, §1.1), to record the eager-SP / lazy-evidence computation
 schedule (§1.2), and to separate the three limits previously conflated as `top_k` (§1.3). The
@@ -223,7 +230,7 @@ unexamined default.
 |---|---|
 | **Keep η in ranking, applied to the full universe** | Requires SP over ~27,990 candidates, where the term degenerates towards a reachability indicator (§3.5). Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
-| **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It can be evaluated offline from B-0's recorded per-candidate score components without a further run. |
+| **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** |
 | **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. |
 
 ---
@@ -293,8 +300,10 @@ This record should be reopened if any of the following occurs:
 2. **The paper-parity retraining track is undertaken**, changing the trained scorer. Statement 2 is
    interim precisely because of this.
 3. **The knowledge graph changes materially** in coverage or connectivity, altering what SP measures.
-4. **A cascade or tie-break design is evaluated and shown to help** (§4), which B-0's recorded
-   per-candidate score components make possible without a further measurement run.
+4. **A cascade or tie-break design is evaluated and shown to help** (§4). Evaluating it without a
+   further measurement run is conditional on B-0.5 either recording an approved bounded
+   per-candidate component artifact or computing the predeclared analysis during that run; the
+   implemented B-0 artifacts do not carry those components (rev 4).
 
 ---
 
