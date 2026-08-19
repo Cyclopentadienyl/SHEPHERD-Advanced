@@ -1,5 +1,30 @@
 #!/usr/bin/env python3
 """
+BEHAVIOURALLY FROZEN — non-authoritative, scheduled for deletion.
+=================================================================
+This script does not measure the deployed scorer. It is kept only so the new
+harness can be calibrated against it.
+
+  - it scores a **per-batch 2-hop subgraph** whose disease candidates are seeded
+    from the answers and their sampled negatives
+    (`src/kg/data_loader.py:916-926`), not the diseases the pipeline would
+    consider;
+  - it scores **pure cosine** — no eta mixture, no shortest-path term;
+  - it truncates predictions to twenty, so mean rank is not computable and every
+    true rank beyond twenty is indistinguishable from absence.
+
+`scripts/measure_scorer.py` replaces it. Mode A there reproduces this behaviour
+deliberately, as the control the other modes are read against.
+
+**Do not modify this file.** Its only value is being the unmodified artefact that
+produced the reference numbers; an edit makes it no longer the thing being
+compared against. **Delete it — together with `legacy_ranking` and the
+`LEGACY_TRUNCATION_K` path in `src/evaluation/measurement.py` — once
+institutional Mode A calibration succeeds.** Nothing else may depend on its
+behaviour.
+
+---
+
 SHEPHERD-Advanced Model Evaluation Script
 ==========================================
 Standalone evaluation script for trained ShepherdGNN models.
@@ -339,9 +364,20 @@ def generate_report(
             "split": config.split,
             "num_samples": results["num_samples"],
         },
+        # `mean_rank` is reported as null rather than as a number. Nothing
+        # computes it: `RankingMetrics.compute_all` returns mrr, hits@k and
+        # ndcg@k, and `mean_rank` exists only on `LinkPredictionMetrics`, a
+        # different class this script does not use. The previous
+        # `results.get("mean_rank", 0.0)` therefore printed a fabricated 0.00 on
+        # every run.
+        #
+        # It is not computed here rather than being quietly implemented, because
+        # a mean rank over a truncated prediction list has to decide what rank a
+        # ground truth outside the list receives, and that decision belongs to
+        # B-0's untruncated-metrics work rather than to a reporting function.
         "metrics": {
             "mrr": results.get("mrr", 0.0),
-            "mean_rank": results.get("mean_rank", 0.0),
+            "mean_rank": results.get("mean_rank"),
         },
         "hits_at_k": {},
         "config": asdict(config),
@@ -365,7 +401,11 @@ def print_results(results: Dict[str, Any], config: EvalConfig) -> None:
     print(f"Samples: {results['num_samples']}")
     print("-" * 60)
     print(f"MRR:        {results.get('mrr', 0.0):.4f}")
-    print(f"Mean Rank:  {results.get('mean_rank', 0.0):.2f}")
+    mean_rank = results.get("mean_rank")
+    if mean_rank is None:
+        print("Mean Rank:  not computed (see generate_report)")
+    else:
+        print(f"Mean Rank:  {mean_rank:.2f}")
     print("-" * 60)
     print("Hits@K:")
     for k in config.top_k_values:

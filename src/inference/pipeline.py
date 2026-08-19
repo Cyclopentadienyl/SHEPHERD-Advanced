@@ -76,7 +76,6 @@ from src.reasoning import (
 # Optional torch dependency for GNN inference
 try:
     import torch
-    import torch.nn.functional as F
     from torch import Tensor
     HAS_TORCH = True
 except ImportError:
@@ -102,183 +101,6 @@ PostProcessCallback = Callable[
     [List["DiagnosisCandidate"], PatientPhenotypes],
     List["DiagnosisCandidate"]
 ]
-
-
-# ==============================================================================
-# Checkpoint architecture inference
-# ==============================================================================
-def _infer_conv_type_from_keys(state_keys) -> Optional[str]:
-    """Infer the GNN conv type from a checkpoint's parameter names.
-
-    Older checkpoints don't record ``conv_type`` in their config (the trainer
-    serialized only training hyperparameters), so we recover it from the weight
-    names — otherwise an HGT/SAGE checkpoint is silently rebuilt as the GAT
-    default and the state_dict load fails.
-
-    Distinguishing markers (params are under ``gnn_layers.<n>.conv...``):
-      - HGT (``HGTConv``): ``kqv_lin`` / ``k_rel`` / ``v_rel`` / ``p_rel`` / ``skip``
-      - GAT (``GATConv`` in ``HeteroConv``): ``att_src`` / ``att_dst``
-      - SAGE (``SAGEConv`` in ``HeteroConv``): ``lin_l`` / ``lin_r`` (no attention)
-    """
-    keys = state_keys if isinstance(state_keys, (set, frozenset)) else set(state_keys)
-    if any(
-        (".conv.kqv_lin." in k or ".conv.k_rel" in k or ".conv.v_rel" in k
-         or ".conv.p_rel." in k or ".conv.skip." in k)
-        for k in keys
-    ):
-        return "hgt"
-    if any(k.endswith(".att_src") or k.endswith(".att_dst") for k in keys):
-        return "gat"
-    if any((".conv.convs." in k) and (".lin_l." in k or ".lin_r." in k) for k in keys):
-        return "sage"
-    return None
-
-
-def _infer_num_layers_from_keys(state_keys) -> Optional[int]:
-    """Infer the number of GNN layers from the highest ``gnn_layers.<n>`` index."""
-    import re
-
-    indices = set()
-    for k in state_keys:
-        m = re.match(r"gnn_layers\.(\d+)\.", k)
-        if m:
-            indices.add(int(m.group(1)))
-    return (max(indices) + 1) if indices else None
-
-
-def _resolve_arch_params(
-    ckpt_config: dict,
-    state_keys,
-    *,
-    valid_fields,
-    supported_conv,
-    has_pos_encoder: bool = False,
-    has_ortholog_gate: bool = False,
-) -> dict:
-    """Resolve model-architecture kwargs from a checkpoint, by precedence.
-
-    This is the schema resolution the diagnosis pipeline uses to reconstruct a
-    model. It is deliberately free of torch/model imports so it can be unit
-    tested in isolation: the caller passes ``valid_fields`` (the current
-    ``ShepherdGNNConfig`` field names) and ``supported_conv`` (the conv types the
-    factory can build).
-
-    Precedence (highest first):
-      1. ``ckpt_config["model_config"]`` — the full, self-describing sub-dict
-         written by current trainers.
-      2. Legacy flat arch fields at the top level of ``ckpt_config`` (written by
-         the interim fix before ``model_config`` existed).
-      3. Inference from the parameter names (``conv_type`` / ``num_layers``) for
-         checkpoints that carry no architecture metadata at all.
-      4. ``ShepherdGNNConfig`` defaults (applied by the caller when a key is
-         simply absent from the returned dict).
-
-    Unknown keys are filtered against ``valid_fields`` to tolerate version drift
-    (and are logged). ``conv_type`` handling depends on where it came from, which
-    is tracked explicitly:
-
-      - ``model_config`` (tier 1) is the trainer's authoritative self-description
-        and is TRUSTED over the weight-key heuristic (only warned on conflict).
-        The heuristic is a legacy fallback that is not future-proof — a new
-        architecture may reuse PyG key patterns (e.g. ``att_src`` / ``lin_l``),
-        so it must not override an explicit model_config value.
-      - ``legacy_flat`` (tier 2) predates ``model_config``; here the weights are
-        treated as structural ground truth and override a conflicting value.
-      - ``inferred`` (tier 3) is derived from the weights, so it cannot conflict.
-
-    In all cases an explicit-but-unsupported ``conv_type`` raises rather than
-    silently degrading to GAT; only a truly absent/undetectable one defaults.
-    """
-    params: dict = {}
-    conv_source = None  # "model_config" | "legacy_flat" | "inferred"
-
-    # Tier 1: full self-describing model_config sub-dict.
-    model_config = ckpt_config.get("model_config")
-    if isinstance(model_config, dict):
-        ignored = []
-        for k, v in model_config.items():
-            if k in valid_fields:
-                params[k] = v
-            else:
-                ignored.append(k)
-        if ignored:
-            logger.warning(
-                "Ignoring unknown model_config field(s) not in the current "
-                "ShepherdGNNConfig schema: %s",
-                sorted(ignored),
-            )
-        if "conv_type" in params:
-            conv_source = "model_config"
-
-    # Tier 2: legacy flat arch fields (fill only what tier 1 didn't provide).
-    for key in (
-        "conv_type",
-        "hidden_dim",
-        "num_layers",
-        "num_heads",
-        "use_positional_encoding",
-        "use_ortholog_gate",
-    ):
-        if key not in params and key in valid_fields and ckpt_config.get(key) is not None:
-            params[key] = ckpt_config[key]
-            if key == "conv_type":
-                conv_source = "legacy_flat"
-
-    # Tier 3: infer structural fields from the parameter names when still absent.
-    detected_conv = _infer_conv_type_from_keys(state_keys)
-    if "conv_type" not in params and detected_conv:
-        params["conv_type"] = detected_conv
-        conv_source = "inferred"
-        logger.info(
-            "conv_type not in checkpoint config; detected %r from weights.",
-            detected_conv,
-        )
-    if "num_layers" not in params:
-        detected_layers = _infer_num_layers_from_keys(state_keys)
-        if detected_layers:
-            params["num_layers"] = detected_layers
-    if "use_positional_encoding" in valid_fields:
-        params.setdefault("use_positional_encoding", has_pos_encoder)
-    if "use_ortholog_gate" in valid_fields:
-        params.setdefault("use_ortholog_gate", has_ortholog_gate)
-
-    # Conflict handling depends on the SOURCE of conv_type:
-    #   - legacy_flat: weights are ground truth -> override on conflict.
-    #   - model_config: authoritative -> keep it, only warn (the key heuristic is
-    #     a legacy fallback that may misclassify future architectures).
-    conv_type = params.get("conv_type")
-    if conv_type is not None and detected_conv and conv_type != detected_conv:
-        if conv_source == "legacy_flat":
-            logger.warning(
-                "Legacy flat conv_type=%r disagrees with parameter names "
-                "(detected %r); trusting the weights.",
-                conv_type, detected_conv,
-            )
-            params["conv_type"] = detected_conv
-        else:  # model_config
-            logger.warning(
-                "model_config conv_type=%r disagrees with the weight-key "
-                "heuristic (detected %r); trusting model_config, as the heuristic "
-                "is a legacy fallback that may misclassify newer architectures.",
-                conv_type, detected_conv,
-            )
-
-    # Validate: an explicit-but-unsupported conv_type must fail loudly. Only a
-    # truly absent/undetectable conv_type falls back to the GAT default.
-    conv_type = params.get("conv_type")
-    if conv_type is None:
-        params["conv_type"] = "gat"
-    elif conv_type not in supported_conv:
-        raise ValueError(
-            f"Checkpoint specifies unsupported conv_type={conv_type!r}; "
-            f"supported types are {tuple(supported_conv)}."
-        )
-
-    # Inference-time override (never carry training dropout into eval).
-    if "dropout" in valid_fields:
-        params["dropout"] = 0.0
-
-    return params
 
 
 # ==============================================================================
@@ -433,6 +255,7 @@ class DiagnosisPipeline:
         self._sp_di: Optional["torch.Tensor"] = None
         self._sp_offsets: Optional[Dict[int, Tuple[int, int]]] = None
         self._sp_max_hops: int = 5
+        self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
         # Fingerprint verification warnings (populated by _load_model_from_checkpoint)
@@ -707,6 +530,20 @@ class DiagnosisPipeline:
             except Exception:
                 pass
 
+        # Bundle the same tensors for the shared scoring primitives. The
+        # individual attributes stay exactly as they were — they are part of this
+        # class's observable surface — and this is a view over them, built once
+        # after max_hops is known.
+        from src.inference.scoring import SPLookup
+
+        self._sp_lookup = SPLookup(
+            target=self._sp_tg,
+            target_type=self._sp_ty,
+            distance=self._sp_di,
+            offsets=self._sp_offsets,
+            max_hops=self._sp_max_hops,
+        )
+
         logger.info(
             f"Loaded shortest paths: {n_pairs:,} pairs, "
             f"max_hops={self._sp_max_hops}"
@@ -724,7 +561,7 @@ class DiagnosisPipeline:
         - Trainer format: key "model_state_dict"
         - ModelCheckpoint callback format: key "state_dict"
         """
-        from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
+        from src.models.gnn.shepherd_gnn import build_shepherd_model
 
         ckpt_path = Path(checkpoint_path)
         if not ckpt_path.exists():
@@ -734,22 +571,9 @@ class DiagnosisPipeline:
         logger.info(f"Loading GNN model from checkpoint: {ckpt_path}")
         checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
-        # Extract state dict (handle both formats)
-        if "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
-        elif "state_dict" in checkpoint:
-            state_dict = checkpoint["state_dict"]
-        else:
-            logger.error(
-                f"Checkpoint has no recognized state dict key. "
-                f"Available keys: {list(checkpoint.keys())}"
-            )
-            return None
-
-        # Extract model config from checkpoint
-        ckpt_config = checkpoint.get("config", {})
-
-        # Verify data fingerprint compatibility (KG version check)
+        # Verify data fingerprint compatibility (KG version check). Pipeline
+        # business, not construction: it decides what an operator is warned
+        # about, and the measurement harness records its own manifest instead.
         from src.utils.fingerprint import verify_fingerprint
         fp_warnings = verify_fingerprint(
             checkpoint,
@@ -762,14 +586,6 @@ class DiagnosisPipeline:
                 logger.warning(f"[Fingerprint] {w}")
         self._fingerprint_warnings = fp_warnings
 
-        # Reconstruct model architecture.
-        # CRITICAL: metadata MUST be derived from graph_data["edge_index_dict"]
-        # to match how scripts/train_model.py builds the model. The trainer
-        # uses graph_data keys (which include rev_* reverse edges for
-        # bidirectional message passing), NOT kg.metadata() (which only has
-        # forward edges from the KG). Using kg.metadata() here would create a
-        # model with fewer conv layers than the checkpoint expects, causing
-        # state_dict load to fail.
         if self._graph_data is None:
             logger.error(
                 "Cannot reconstruct model: graph_data not loaded. "
@@ -777,70 +593,17 @@ class DiagnosisPipeline:
             )
             return None
 
-        node_types = list(self._graph_data["x_dict"].keys())
-        edge_types = list(self._graph_data["edge_index_dict"].keys())
-        metadata = (node_types, edge_types)
-
-        # Get in_channels_dict from graph data features
-        in_channels_dict = {}
-        for node_type, features in self._graph_data["x_dict"].items():
-            if features.dim() >= 2:
-                in_channels_dict[node_type] = features.size(-1)
-
-        # Reconstruct the model architecture from the checkpoint, by precedence:
-        #   1) model_config sub-dict (self-describing, current trainers)
-        #   2) legacy flat arch fields  3) inference from weight names  4) defaults
-        # (see _resolve_arch_params). This makes the loader deterministic for
-        # self-describing checkpoints while still recovering legacy ones, so an
-        # HGT/SAGE checkpoint is never silently rebuilt as GAT.
-        import dataclasses as _dc
-
-        from src.config.model_types import SUPPORTED_CONV_TYPES
-
-        state_keys = set(state_dict.keys())
-        has_pos_encoder = any(k.startswith("pos_encoder.") for k in state_keys)
-        has_ortholog_gate = any(k.startswith("ortholog_gate.") for k in state_keys)
-
-        valid_fields = {f.name for f in _dc.fields(ShepherdGNNConfig)}
-        arch_params = _resolve_arch_params(
-            ckpt_config,
-            state_keys,
-            valid_fields=valid_fields,
-            supported_conv=SUPPORTED_CONV_TYPES,
-            has_pos_encoder=has_pos_encoder,
-            has_ortholog_gate=has_ortholog_gate,
-        )
-        model_config = ShepherdGNNConfig(**arch_params)
-        hidden_dim = model_config.hidden_dim
-
-        # Provide default in_channels if not inferred from data
-        if not in_channels_dict:
-            for node_type in node_types:
-                in_channels_dict[node_type] = hidden_dim
-
-        model = ShepherdGNN(
-            metadata=metadata,
-            in_channels_dict=in_channels_dict,
-            config=model_config,
-        )
-
-        # Load trained weights. If this fails, log the SPECIFIC mismatch so
-        # operators can diagnose checkpoint compat issues (e.g., metadata
-        # source mismatch between trainer and inference paths).
+        # Construction is shared with the measurement harness
+        # (`src/models/gnn/shepherd_gnn.py:build_shepherd_model`), so modes B and
+        # C cannot encode with semantics that have drifted from the served model.
+        # Metadata derivation from graph_data keys, architecture recovery and
+        # weight loading all live there; what stays here is what only a running
+        # pipeline needs.
         try:
-            model.load_state_dict(state_dict)
-        except RuntimeError as e:
-            logger.error(
-                f"Failed to load state dict from {ckpt_path}: {e}\n"
-                f"Model expects {len(metadata[1])} edge types: "
-                f"{[f'{s}--{r}--{t}' for s, r, t in metadata[1]][:5]}...\n"
-                f"Checkpoint has {len(state_dict)} parameter tensors. "
-                f"Common cause: trainer and inference use different metadata "
-                f"sources (trainer uses graph_data keys, inference must too)."
-            )
+            model = build_shepherd_model(checkpoint, self._graph_data)
+        except (KeyError, ValueError, RuntimeError) as exc:
+            logger.error(f"Failed to build model from {ckpt_path}: {exc}")
             return None
-
-        model.eval()
 
         # Store checkpoint training metadata for UI display
         self._checkpoint_meta = {
@@ -1306,8 +1069,22 @@ class DiagnosisPipeline:
             source_ids, target_id, target_type_idx
         )
 
-        eta = self.config.eta
-        combined = eta * emb_score + (1.0 - eta) * sp_score
+        from src.inference.scoring import mix_embedding_and_sp_scores
+
+        # float64 is required, not incidental. The scores arriving here are Python
+        # doubles; constructing float32 tensors would round them to ~7 significant
+        # digits, and two candidates whose true scores differ below that threshold
+        # would collapse to an exact tie. A tie is then resolved by sort stability
+        # — that is, by input order — which can move a candidate across the top-k
+        # boundary a clinician sees. The extraction is only behaviour-preserving in
+        # double precision.
+        combined = float(
+            mix_embedding_and_sp_scores(
+                torch.tensor([emb_score], dtype=torch.float64),
+                torch.tensor([sp_score], dtype=torch.float64),
+                self.config.eta,
+            )[0]
+        )
         return combined, emb_score, sp_score
 
     def _calculate_sp_score(
@@ -1329,7 +1106,12 @@ class DiagnosisPipeline:
         Returns 0.0 if the SP table is not loaded or no phenotypes can be
         looked up.
         """
-        if not self._sp_ready:
+        from src.inference.scoring import (
+            sp_mean_distances,
+            sp_scores_from_distances,
+        )
+
+        if not self._sp_ready or self._sp_lookup is None:
             return 0.0
 
         node_mapping = self._node_id_to_idx
@@ -1357,27 +1139,17 @@ class DiagnosisPipeline:
         if not phenotype_indices:
             return 0.0
 
-        # Look up distances from per-phenotype sorted index.
-        unreachable_distance = float(self._sp_max_hops + 1)
-        total = 0.0
-        for ph_idx in phenotype_indices:
-            offsets = self._sp_offsets.get(ph_idx)
-            if offsets is None:
-                total += unreachable_distance
-                continue
-            s, e = offsets
-            tg_slice = self._sp_tg[s:e]
-            ty_slice = self._sp_ty[s:e]
-            di_slice = self._sp_di[s:e]
-            mask = (tg_slice == target_idx) & (ty_slice == target_type_idx)
-            matches = di_slice[mask]
-            if len(matches) > 0:
-                total += float(matches[0])
-            else:
-                total += unreachable_distance
-
-        avg_distance = total / len(phenotype_indices)
-        return 1.0 / (1.0 + avg_distance)
+        # One candidate is a batch of one. The primitive returns the measured
+        # quantity (mean hop distance) plus an availability mask; this wrapper
+        # keeps the historical contract of a bare float, collapsing unavailable
+        # to 0.0. That collapse is lossy — 0.0 is below the value a genuine
+        # "no path found" produces — which is why the mask exists upstream.
+        distances, available = sp_mean_distances(
+            self._sp_lookup, phenotype_indices, [target_idx], target_type_idx
+        )
+        if not bool(available[0]):
+            return 0.0
+        return float(sp_scores_from_distances(distances)[0])
 
     def _calculate_gnn_score(
         self,
@@ -1402,6 +1174,12 @@ class DiagnosisPipeline:
 
         Returns 0.0 if GNN inference is not available.
         """
+        from src.inference.scoring import (
+            cosine_scores,
+            normalise_cosine_to_unit_interval,
+            pool_patient_embeddings,
+        )
+
         if not self._gnn_ready or self._node_embeddings is None:
             return 0.0
 
@@ -1425,13 +1203,7 @@ class DiagnosisPipeline:
         if phenotype_emb is None:
             return 0.0
 
-        indices_tensor = torch.tensor(phenotype_indices, dtype=torch.long)
-        # Clamp indices to valid range
-        indices_tensor = indices_tensor.clamp(
-            min=0, max=phenotype_emb.size(0) - 1
-        )
-        selected_emb = phenotype_emb[indices_tensor]  # (N, hidden_dim)
-        patient_embedding = selected_emb.mean(dim=0, keepdim=True)  # (1, H)
+        patient_embedding = pool_patient_embeddings(phenotype_emb, phenotype_indices)
 
         # 3. Map disease NodeID to integer index
         disease_type = NodeType.DISEASE.value  # "disease"
@@ -1445,17 +1217,12 @@ class DiagnosisPipeline:
             return 0.0
 
         disease_idx = min(disease_idx, disease_emb.size(0) - 1)
-        disease_embedding = disease_emb[disease_idx].unsqueeze(0)  # (1, H)
 
-        # 4. Cosine similarity (matches training: Trainer._compute_model_outputs)
-        patient_norm = F.normalize(patient_embedding, dim=-1)
-        disease_norm = F.normalize(disease_embedding, dim=-1)
-        cosine_sim = torch.mm(patient_norm, disease_norm.t()).item()
-
-        # 5. Normalize from [-1, 1] to [0, 1]
-        score = (cosine_sim + 1.0) / 2.0
-
-        return score
+        # 4. Cosine similarity, then [-1,1] -> [0,1]. One candidate is a batch of
+        #    one; scoring the whole disease universe is the same call with a
+        #    taller candidate matrix.
+        cosine = cosine_scores(patient_embedding, disease_emb[disease_idx].unsqueeze(0))
+        return float(normalise_cosine_to_unit_interval(cosine)[0])
 
     def _extract_supporting_genes(
         self, paths: List[ReasoningPath]

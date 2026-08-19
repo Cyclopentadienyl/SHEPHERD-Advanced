@@ -43,6 +43,24 @@ router = APIRouter()
 # =============================================================================
 # Request/Response Models
 # =============================================================================
+#: Route-local request-safety bound on `candidate_genes`, **not** a semantic
+#: selection limit for the future gene scorer.
+#:
+#: Deliberately not `phenotypes`' 100: the reference paper's variant-filtered
+#: candidate-gene lists average **244.3 genes with SD 244.0**
+#: (`docs/SP_SCORE_GUIDE.md` §3), so a 100-item cap would reject ordinary real
+#: lists. Whatever the gene scorer eventually accepts is its own decision, taken
+#: with that interface's design.
+CANDIDATE_GENES_MAX = 1000
+
+#: Emitted whenever `candidate_genes` is supplied. A test proving the field is
+#: inert tells nobody but us; the caller who sent it learns nothing unless the
+#: response says so.
+CANDIDATE_GENES_IGNORED_WARNING = (
+    "candidate_genes was supplied but is not used by the current disease scorer."
+)
+
+
 class DiagnoseRequest(BaseModel):
     """Diagnosis request model"""
 
@@ -62,7 +80,14 @@ class DiagnoseRequest(BaseModel):
     )
     candidate_genes: Optional[List[str]] = Field(
         default=None,
-        description="Pre-selected candidate genes to consider",
+        max_length=CANDIDATE_GENES_MAX,
+        description=(
+            "RESERVED — accepted and validated, but currently ignored by the "
+            "disease scorer. It does not affect the disease candidates, their "
+            "scores or their ranks. Supplying it adds a warning to the response. "
+            "Reserved at the deploying institution's request for future "
+            "causal-gene prioritisation."
+        ),
     )
     top_k: int = Field(
         default=10,
@@ -88,6 +113,22 @@ class DiagnoseRequest(BaseModel):
                 # Relaxed validation - warn but allow
                 logger.warning(f"Non-standard HPO format: {term}")
         return v
+
+    @field_validator("candidate_genes")
+    @classmethod
+    def validate_candidate_genes(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Strip entries and reject blanks. **No identifier ontology.**
+
+        Which gene identifier namespace this field accepts belongs to the
+        interface's real design, not to a reservation. This checks only that a
+        caller sent something rather than whitespace.
+        """
+        if v is None:
+            return v
+        stripped = [item.strip() for item in v]
+        if any(not item for item in stripped):
+            raise ValueError("candidate_genes entries must not be blank")
+        return stripped
 
     @field_validator("phenotype_confidences")
     @classmethod
@@ -183,6 +224,11 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     logger.info(f"Diagnosis request: session={session_id}, phenotypes={len(request.phenotypes)}")
 
     warnings = []
+
+    # Reserved, accepted, ignored — and the caller is told so on every path
+    # below, because the field is equally inert in the mock fallback.
+    if request.candidate_genes:
+        warnings.append(CANDIDATE_GENES_IGNORED_WARNING)
 
     try:
         # Get application state

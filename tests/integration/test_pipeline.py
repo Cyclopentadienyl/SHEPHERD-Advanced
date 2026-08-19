@@ -356,6 +356,55 @@ class TestCheckpointBridge:
         scores2 = [(c.disease_id, c.gnn_score) for c in result2.candidates]
         assert scores1 == scores2, "Same input should produce identical scores"
 
+    def test_offline_full_graph_encode_matches_what_the_pipeline_caches(
+        self, medium_kg, gnn_model_and_data, tmp_path
+    ):
+        """`encode_full_graph` must be the pipeline's own forward, not a lookalike.
+
+        Modes B and C encode offline rather than by constructing a
+        `DiagnosisPipeline`, which would drag in the knowledge-graph object, the
+        shortest-path table and the path-finding and explanation machinery they do
+        not use. That saving is only safe while the two really are the same three
+        operations, so the claim is checked against a pipeline built the
+        production way rather than left as a comment.
+
+        The pipeline moves its cache to CPU for memory; that is storage, not
+        computation, so the comparison is made on CPU.
+        """
+        from src.evaluation.measurement import encode_full_graph
+
+        model, graph_data = gnn_model_and_data
+        model.eval()
+
+        ckpt_path = tmp_path / "encode_checkpoint.pt"
+        torch.save({
+            "epoch": 1,
+            "model_state_dict": model.state_dict(),
+            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4,
+                       "conv_type": "gat", "dropout": 0.0},
+        }, ckpt_path)
+
+        data_dir = tmp_path / "encode_graph_data"
+        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
+        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
+        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+
+        pipeline = DiagnosisPipeline(
+            kg=medium_kg,
+            checkpoint_path=str(ckpt_path),
+            data_dir=str(data_dir),
+            device="cpu",
+        )
+        cached = pipeline._node_embeddings
+        if not cached:
+            pytest.skip("pipeline did not precompute embeddings in this environment")
+
+        offline = encode_full_graph(pipeline.model, pipeline._graph_data, torch.device("cpu"))
+
+        assert set(offline) == set(cached)
+        for node_type, tensor in cached.items():
+            assert torch.equal(offline[node_type].cpu(), tensor), node_type
+
     def test_export_graph_data_matches_kg_structure(self, medium_kg, tmp_path):
         """KG.export_graph_data() should produce files matching KG node/edge counts."""
         data_dir = tmp_path / "export_test"

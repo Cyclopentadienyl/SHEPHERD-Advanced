@@ -101,8 +101,21 @@ class TestRetrievalIntegration:
         """
         from src.retrieval import create_index
 
-        # Step 1: Create and build index
-        index = create_index(backend="voyager", dim=768, metric="cosine")
+        # Step 1: Create and build index.
+        #
+        # num_threads=1 because this test asserts an *exact* nearest-neighbour
+        # result ("the query returns itself first") from an *approximate* HNSW
+        # index whose construction is multi-threaded by default (num_threads=-1,
+        # src/retrieval/backends/voyager_backend.py:161). Concurrent insertion
+        # order changes the graph: twelve builds of this same input come out
+        # identical on an idle machine and NOT identical under CPU load, which is
+        # how the assertion below became an intermittent failure once the suite
+        # grew busier. Single-threaded construction is deterministic, so the test
+        # now either passes or fails rather than doing both.
+        #
+        # The other tests in this file assert shape and ordering properties that a
+        # differently-built graph still satisfies, so they are left alone.
+        index = create_index(backend="voyager", dim=768, metric="cosine", num_threads=1)
         index.build_index(realistic_embeddings)
 
         assert len(index) == 350  # 100 + 200 + 50
@@ -150,7 +163,9 @@ class TestRetrievalIntegration:
         """
         from src.retrieval import create_index
 
-        index = create_index(backend="voyager", dim=768, metric="cosine")
+        # num_threads=1 for the same reason as above: the final assertion is an
+        # exact-identity claim against an approximate index.
+        index = create_index(backend="voyager", dim=768, metric="cosine", num_threads=1)
         index.build_index(realistic_embeddings)
 
         # Batch of 5 queries

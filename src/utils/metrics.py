@@ -69,6 +69,72 @@ class RankingMetrics:
     # Default k values for Hits@k
     default_k_values: Tuple[int, ...] = (1, 3, 5, 10, 20)
 
+    def compute_from_ranks(
+        self,
+        ranks: Sequence[int],
+        k_values: Optional[Sequence[int]] = None,
+    ) -> Dict[str, float]:
+        """Rank-based metrics from ranks that were already determined elsewhere.
+
+        The prediction-list entry points above take truncated top-k lists. A truth
+        at the last kept position still contributes ``1/K``; what a truncated list
+        loses is everything past it — **every true rank beyond K, and absence from
+        the candidate set entirely, all collapse to a contribution of zero and
+        become indistinguishable from each other.** This entry point takes ranks
+        directly and so can report an untruncated MRR, a mean rank, and Hits@k for
+        any k — including k larger than any list a caller would carry.
+
+        **Ranking policy deliberately lives outside this module.** Score ordering,
+        tie breaking, candidate identity and what to do about a ground truth that
+        is absent from the candidate set are measurement decisions; they belong to
+        the caller that knows which measurement mode it is running. This function
+        receives ranks and nothing else, and stays unaware of any of that.
+
+        Args:
+            ranks: 1-based rank of the ground truth, one per sample. Every sample
+                that has a rank appears here; a sample whose ground truth was not
+                in the candidate set has no rank and is **excluded by the caller**,
+                which reports that outcome separately.
+            k_values: k values for Hits@k. Defaults to ``default_k_values``.
+
+        Returns:
+            ``{"mean_rank", "mrr", "hits@k"...}`` — all over the same denominator,
+            ``len(ranks)``.
+
+        Raises:
+            ValueError: on empty input, or a rank or k that is not a positive
+                integer.
+        """
+        k_values = tuple(k_values) if k_values is not None else self.default_k_values
+
+        # An empty cohort has no mean rank and no MRR. Returning 0.0 would be a
+        # fabricated number, which is the defect this project has already had to
+        # correct once in the evaluation report.
+        if len(ranks) == 0:
+            raise ValueError("compute_from_ranks requires at least one rank")
+
+        # bool is a subclass of int, so `isinstance(True, int)` is True and a
+        # boolean would otherwise sail through as rank 1.
+        for label, values in (("rank", ranks), ("k", k_values)):
+            for value in values:
+                if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+                    raise ValueError(
+                        f"{label} values must be integers, not {type(value).__name__}: {value!r}"
+                    )
+                if value < 1:
+                    raise ValueError(f"{label} values must be >= 1; got {value}")
+
+        rank_array = np.asarray(ranks, dtype=np.int64)
+        n = float(rank_array.size)
+
+        metrics: Dict[str, float] = {
+            "mean_rank": float(rank_array.mean()),
+            "mrr": float((1.0 / rank_array).sum() / n),
+        }
+        for k in k_values:
+            metrics[f"hits@{k}"] = float((rank_array <= k).sum() / n)
+        return metrics
+
     def hits_at_k(
         self,
         predictions: Sequence[Sequence[str]],

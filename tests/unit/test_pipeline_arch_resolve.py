@@ -1,5 +1,5 @@
 """
-Unit tests for checkpoint architecture resolution (_resolve_arch_params).
+Unit tests for checkpoint architecture resolution (resolve_arch_params).
 
 Covers the precedence chain used to reconstruct a model at inference time:
   1. model_config sub-dict (self-describing, current trainers)
@@ -16,7 +16,7 @@ import pytest
 # pipeline.py / shepherd_gnn.py import torch at module load; skip if unavailable.
 pytest.importorskip("torch")
 
-from src.inference.pipeline import _resolve_arch_params  # noqa: E402
+from src.config.model_types import resolve_arch_params  # noqa: E402
 from src.models.gnn.shepherd_gnn import ShepherdGNNConfig  # noqa: E402
 
 SUPPORTED = ("hgt", "gat", "sage")
@@ -34,7 +34,7 @@ GAT_KEYS = {
 
 
 def _resolve(ckpt_config, state_keys=frozenset(), **kw):
-    return _resolve_arch_params(
+    return resolve_arch_params(
         ckpt_config,
         set(state_keys),
         valid_fields=VALID,
@@ -90,7 +90,7 @@ def test_legacy_flat_conv_type_overridden_by_weights():
 def test_supported_future_conv_type_not_overridden_by_heuristic():
     # Codex case: a supported future type whose weights look GAT-like must be
     # kept, not silently rewritten to "gat".
-    p = _resolve_arch_params(
+    p = resolve_arch_params(
         {"model_config": {"conv_type": "gatv2"}},
         set(GAT_KEYS),
         valid_fields=VALID,
