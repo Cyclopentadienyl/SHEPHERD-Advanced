@@ -390,3 +390,95 @@ def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
     assert file_sha256(original) == file_sha256(copy)
     assert file_sha256(original) != file_sha256(altered)
     assert file_sha256(tmp_path / "absent.bin") is None
+
+
+# ---------------------------------------------------------------------------
+# Oracle parity on padded phenotype ids
+# ---------------------------------------------------------------------------
+def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
+    """Mode A must reproduce the frozen evaluator's index semantics, not a
+    cancellation that happens to give the same answer.
+
+    `diagnosis_collate_fn` pads phenotype ids with `-1` and `_remap_indices`
+    leaves those positions at `-1`, so the oracle clamps before gathering and
+    reads **row 0** for every padded slot. Indexing with `-1` instead reads the
+    **last** row through Python negative indexing. For ordinary finite embeddings
+    the mask multiplies both away and the pooled vector is the same — which is
+    exactly why this test puts a `NaN` in the last phenotype row. `NaN * 0` is
+    `NaN`, so the difference between the two operations stops being invisible:
+    with the clamp the run completes, without it the score matrix is non-finite
+    and `canonical_ranking` refuses it.
+
+    A regression here is not cosmetic. Mode A is the control the whole ladder is
+    read against, and a control that performs a *different* gather from the
+    oracle is not one.
+    """
+    import argparse
+
+    from scripts.measure_scorer import (
+        build_loader_config,
+        build_manifest,
+        load_legacy_mode_a_inputs,
+    )
+    from src.kg.data_loader import DiagnosisSample, create_diagnosis_dataloader
+
+    _, data_dir, checkpoint = workspace
+    device = torch.device("cpu")
+    graph_data, _ = load_legacy_mode_a_inputs(data_dir, "test")
+
+    # Variable-length patients, so the collate pads and the padding is -1. The
+    # phenotypes used are 0 and 1; phenotype 2 still enters the subgraph through
+    # the 2-hop expansion, so it is the last row and **no patient reads it**.
+    # That is what makes the last row reachable only by an unclamped -1.
+    samples = [
+        DiagnosisSample(patient_id="P-one", phenotype_ids=[0], disease_id=0),
+        DiagnosisSample(patient_id="P-two", phenotype_ids=[0, 1], disease_id=1),
+    ]
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+                              batch_size=2, num_workers=0, seed=None)
+    loader_config = build_loader_config(args)
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data, config=loader_config
+    )
+    batch_data = next(iter(loader))
+    local_ids = batch_data["batch"]["phenotype_ids"]
+    mask = batch_data["batch"]["phenotype_mask"]
+    last_row = batch_data["subgraph_x_dict"]["phenotype"].size(0) - 1
+    used = {int(i) for row, keep in zip(local_ids.tolist(), mask.tolist())
+            for i, k in zip(row, keep) if k}
+
+    # The test's own preconditions. If either stops holding it proves nothing,
+    # and a green run would be worse than a red one.
+    assert (local_ids == -1).any(), "no -1 padding in this batch"
+    assert last_row not in used, (
+        f"the last subgraph phenotype row {last_row} is read by a real patient, so "
+        "it cannot distinguish the clamp from negative indexing"
+    )
+
+    class _NaNInLastPhenotypeRow:
+        """Finite everywhere the oracle reads, NaN where only an unclamped -1 goes."""
+
+        def eval(self):
+            return self
+
+        def __call__(self, x_dict, edge_index_dict):
+            phenotypes = torch.ones(x_dict["phenotype"].size(0), 4)
+            phenotypes[-1] = float("nan")
+            diseases = torch.arange(
+                1, x_dict["disease"].size(0) * 4 + 1, dtype=torch.float32
+            ).reshape(x_dict["disease"].size(0), 4)
+            return {"phenotype": phenotypes, "disease": diseases}
+
+    manifest = build_manifest(args, graph_data, len(samples), device, loader_config)
+
+    result = run_mode_a(
+        model=_NaNInLastPhenotypeRow(),
+        dataloader=create_diagnosis_dataloader(
+            samples=samples, graph_data=graph_data, config=loader_config
+        ),
+        manifest=manifest,
+        device=device,
+    )
+
+    assert result.n_ranked == len(samples)
+    assert all(rank >= 1 for rank in result.canonical_ranks)

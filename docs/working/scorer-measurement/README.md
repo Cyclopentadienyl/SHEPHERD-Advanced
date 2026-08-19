@@ -54,4 +54,28 @@ the 2-hop subgraph *is* the whole graph, which is what makes the shared-cohort
 claims checkable — and which also means A, B and C agree on it by construction.
 A test asserts that agreement so it is not mistaken for a result.
 
+## Removing the legacy path
+
+The frozen evaluator does not match the paper's design and does not answer the
+clinical question. It exists to calibrate the harness against the historical
+number and **nothing else**, so it should come out cleanly when that calibration
+succeeds — no pipeline refactor, no archaeology. This is the checklist, kept
+current so removal is a deletion rather than an investigation.
+
+| Delete | What it is |
+|---|---|
+| `scripts/evaluate_model.py` | The frozen oracle itself |
+| `scripts/calibrate_mode_a.py` | Runs both scorers and compares them; has no purpose after |
+| `scripts/measure_scorer.py`: `load_legacy_mode_a_inputs`, `build_legacy_mode_a_model` | The two entry points that mirror the oracle. **Nothing but Mode A reaches them** — Mode C reads through `src.kg.storage.file_storage` for exactly this reason |
+| `src/evaluation/measurement.py`: `legacy_ranking`, `LEGACY_TRUNCATION_K`, `ModeAResult`, `_score_legacy` inputs to `run_modes_ab` | The legacy ranking stream and the result type that carries it. `ModeResult` and the canonical stream stay |
+| Mode A's phenotype-id **clamp** in `run_modes_ab` | Oracle index parity on `-1` padding. It is correct only as parity; without an oracle it is a defect, and Mode C already shows what the non-legacy answer looks like |
+| `--modes A` and `A,B`, and the `A` branch of the CLI | Mode B is defined as *A's candidates*, so it goes with A. **C survives alone** |
+| `tests/integration/test_legacy_equivalence.py`, the legacy tests in `tests/unit/test_measurement_mode_a.py` | Everything that asserts oracle parity |
+
+**What must not need touching:** `ModeResult`, `canonical_ranking`,
+`to_global_ids`, `ranks_of_truth`, `encode_full_graph`, `run_mode_c`,
+`build_shepherd_model`, the manifest, the digests, the CUDA gate, and
+`src.kg.storage.file_storage`. If a removal round finds itself editing those,
+the boundary has drifted and that is the finding.
+
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.

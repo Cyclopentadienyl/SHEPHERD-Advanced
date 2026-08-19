@@ -721,12 +721,21 @@ def run_modes_ab(
             disease_ids_local = batch["disease_ids"].to(device)
             mask = batch["phenotype_mask"].to(device)
 
-            # Index clamping mirrors the legacy path, which clamps rather than
-            # raising on a padded -1.
-            # No clamp: every entry is either a validated real id or a padded 0
-            # that the mask removes. A clamp here would be the defect this mode
-            # was corrected for.
-            patient_phenotypes = phenotype_emb[phenotype_ids.reshape(-1)].reshape(
+            # **The clamp is oracle parity, not defensiveness, and it stays.**
+            # `diagnosis_collate_fn` pads phenotype ids with -1 and `_remap_indices`
+            # leaves those positions at -1, so the frozen evaluator clamps before
+            # gathering and reads row 0 for every padded slot. Indexing with -1
+            # instead would read the *last* row through Python negative indexing —
+            # a different operation, cancelled by the mask only for finite values,
+            # and a NaN survives multiplication by zero. Mode A may not swap the
+            # oracle's index semantics for an assumed downstream cancellation.
+            #
+            # This is the opposite decision from Mode C's, and deliberately so:
+            # there every id is a real value under a true mask, so clamping would
+            # score a different patient. Here every out-of-range value is padding
+            # the mask already discards. Both go when the frozen oracle goes.
+            valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
+            patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
                 phenotype_ids.size(0), phenotype_ids.size(1), -1
             )
             patients = masked_mean_pool(patient_phenotypes, mask)
@@ -981,8 +990,10 @@ def run_mode_c(
             phenotype_ids = _torch.stack(ids).to(device)
             mask = _torch.stack(masks).to(device)
 
-            valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
-            patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
+            # No clamp: every entry is either a real id already validated above or
+            # a padded 0 the mask removes. A clamp here is the defect this mode was
+            # corrected for — it would score a different patient rather than fail.
+            patient_phenotypes = phenotype_emb[phenotype_ids.reshape(-1)].reshape(
                 phenotype_ids.size(0), phenotype_ids.size(1), -1
             )
             patients = masked_mean_pool(patient_phenotypes, mask)
