@@ -733,7 +733,8 @@ def run_modes_ab(
             # This is the opposite decision from Mode C's, and deliberately so:
             # there every id is a real value under a true mask, so clamping would
             # score a different patient. Here every out-of-range value is padding
-            # the mask already discards. Both go when the frozen oracle goes.
+            # the mask already discards. This clamp and the Mode A/B traversal go
+            # when the frozen oracle goes; Mode C's validated no-clamp path remains.
             valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
             patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
                 phenotype_ids.size(0), phenotype_ids.size(1), -1

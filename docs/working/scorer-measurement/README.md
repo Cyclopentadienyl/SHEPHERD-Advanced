@@ -67,15 +67,23 @@ current so removal is a deletion rather than an investigation.
 | `scripts/evaluate_model.py` | The frozen oracle itself |
 | `scripts/calibrate_mode_a.py` | Runs both scorers and compares them; has no purpose after |
 | `scripts/measure_scorer.py`: `load_legacy_mode_a_inputs`, `build_legacy_mode_a_model` | The two entry points that mirror the oracle. **Nothing but Mode A reaches them** — Mode C reads through `src.kg.storage.file_storage` for exactly this reason |
-| `src/evaluation/measurement.py`: `legacy_ranking`, `LEGACY_TRUNCATION_K`, `ModeAResult`, `_score_legacy` inputs to `run_modes_ab` | The legacy ranking stream and the result type that carries it. `ModeResult` and the canonical stream stay |
-| Mode A's phenotype-id **clamp** in `run_modes_ab` | Oracle index parity on `-1` padding. It is correct only as parity; without an oracle it is a defect, and Mode C already shows what the non-legacy answer looks like |
+| `src/evaluation/measurement.py`: `run_mode_a`, `run_modes_ab`, `legacy_ranking`, `LEGACY_TRUNCATION_K`, `ModeAResult` | **The whole A/B traversal**, the legacy ranking stream, and the result type that carries it. B is defined as A's candidates and is produced by A's loop, so the loop leaves with A. `ModeResult`, `canonical_ranking` and `run_mode_c` stay |
+| Mode A's phenotype-id **clamp** in `run_modes_ab` | Oracle index parity on `-1` padding. It leaves inside the traversal above rather than separately; it is listed because it must not be carried into Mode C, whose ids are validated instead. It is correct only as parity; without an oracle it is a defect |
+| `MeasurementManifest`: `legacy_truncation_k`, `legacy_tie_policy`, and the two lines populating them in `scripts/measure_scorer.py: build_manifest` | Fields describing the frozen oracle's truncation depth and tie behaviour. `build_manifest` sets them **unconditionally**, so a Mode C manifest carries them today although Mode C has no oracle and no legacy ranking stream. Delete the fields and their assignment; every authoritative field, the artifact digests and the CUDA metadata stay |
 | `--modes A` and `A,B`, and the `A` branch of the CLI | Mode B is defined as *A's candidates*, so it goes with A. **C survives alone** |
 | `tests/integration/test_legacy_equivalence.py`, the legacy tests in `tests/unit/test_measurement_mode_a.py` | Everything that asserts oracle parity |
 
 **What must not need touching:** `ModeResult`, `canonical_ranking`,
 `to_global_ids`, `ranks_of_truth`, `encode_full_graph`, `run_mode_c`,
-`build_shepherd_model`, the manifest, the digests, the CUDA gate, and
-`src.kg.storage.file_storage`. If a removal round finds itself editing those,
-the boundary has drifted and that is the finding.
+`build_shepherd_model`, the manifest's authoritative fields, the digests, the
+CUDA gate, and `src.kg.storage.file_storage`. If a removal round finds itself
+editing those, the boundary has drifted and that is the finding.
+
+The manifest itself is **not** on that list, and an earlier revision of this
+checklist wrongly said it was: it carries two legacy fields that must go with the
+oracle, as the row above records. **Do not pre-empt that edit with machinery** —
+no manifest subclass hierarchy, no schema framework, no discriminated union over
+mode. Deleting two fields and two assignments once is cheaper than any structure
+built to avoid deleting them, and the structure would outlive the problem.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
