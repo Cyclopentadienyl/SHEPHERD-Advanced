@@ -114,20 +114,10 @@ class TestVoyagerBenchmark:
         print(f"\n[Voyager] Batch query throughput: {qps:.1f} QPS")
 
     def test_voyager_recall_at_10(self, voyager_available, large_embeddings):
-        """Benchmark: Voyager recall@10 accuracy.
-
-        num_threads=1 because this asserts an *exact* self-retrieval rate from an
-        *approximate* HNSW index whose construction is multi-threaded by default
-        (`src/retrieval/backends/voyager_backend.py:161`): concurrent insertion
-        order changes the graph, and the same input builds identically on an idle
-        machine but not under CPU load. This is the largest index in the suite --
-        10,000 vectors at dim 768 -- and it failed once as part of a full run
-        while passing in isolation. Single-threaded construction is deterministic,
-        so the benchmark now either passes or fails rather than doing both.
-        """
+        """Benchmark: Voyager recall@10 accuracy."""
         from src.retrieval.backends.voyager_backend import VoyagerIndex
 
-        index = VoyagerIndex(dim=768, metric="cosine", num_threads=1)
+        index = VoyagerIndex(dim=768, metric="cosine")
         index.build_index(large_embeddings)
 
         # Test recall: query with known vectors
