@@ -11,6 +11,15 @@ existing sort rather than adding a second one (§5.2), and index-build time and
 memory are part of the selection (§5.4). No representation is preferred in
 advance any more.
 
+Rev 3 after review: a synthetic run **may not** close the stage with "no
+replacement" (§3.1); the int64 key domain is derived from the tensors rather than
+from the optional metadata sidecar (§5.2); the claim that one composite sort
+preserves peak memory is **withdrawn** — sort count only, memory measured
+(§5.2, §5.4); the uniqueness assertion gains a **real-artifact compatibility
+gate** because it changes startup behaviour (§5.3.2); prototyping is conditional
+on the gate rather than unconditional (§4); and the index is described by what it
+is for rather than by a false claim that it has no keys (§4).
+
 ---
 
 ## 1. What PLAN_B03 §5 got wrong
@@ -112,15 +121,32 @@ non-institutional**; final acceptance uses the institutional target when it is
 supplied. B-0.4 is not cancelled or postponed because that target is still open —
 the baseline measurement is useful to the institution deciding it.
 
-### 3.1 Shipping no replacement is a legitimate outcome
+### 3.1 Shipping no replacement is a legitimate outcome — under a stated gate
 
-Stated so the gate is not a formality. If the baseline shows the current
-implementation comfortably inside any plausible budget across the §5.4 matrix,
-**B-0.4 ships the benchmark, the recorded curves and nothing else.** The
-correction to `PLAN_B03.md`, the measurement and the recorded distribution are
-the deliverable in that case; the index is not built. A stage that measures and
-declines to act on the measurement has done its job, and it is a cheaper mistake
-than optimising a cost nobody has seen.
+Stated so the gate is not a formality: a stage that measures and declines to act
+on the measurement has done its job, and that is a cheaper mistake than
+optimising a cost nobody has seen.
+
+**But an earlier revision let a synthetic run close the stage**, which
+contradicts what the same plan says about the slice tail being the axis a
+synthetic distribution is most likely to misrepresent (§5.4). The decision rule,
+not a governance framework:
+
+| Run | May establish | May **not** establish |
+|---|---|---|
+| Synthetic, development CPU | That the benchmark works; relative comparison between implementations; gross regressions | That the **deployed** baseline is fast enough |
+| Deployment-equivalent CPU **and** the real artifact — or a distribution verified from it | Everything above, plus the baseline verdict | — |
+
+- **Closing B-0.4 with "no replacement" requires the second row.**
+- **If no real artifact is available, the valid outcome is "benchmark complete;
+  production replacement decision pending institutional run"** — not "baseline
+  accepted".
+- **If the institutional latency target is still open, a provisional
+  non-institutional decision threshold is stated *before* the results are
+  examined.** Declaring the threshold afterwards is choosing the verdict.
+
+No SP artifact exists in this development container (§5.4), so on today's
+evidence the expected outcome of a run here is the pending one.
 
 ---
 
@@ -131,11 +157,12 @@ than optimising a cost nobody has seen.
 1. **Baseline first.** Run the current implementation across the §5.4 matrix
    before any index is prototyped. This is the deliverable that exists whatever
    else does (§3.1).
-2. **Prototype both representations** (§5.2) and measure them on **both caller
-   shapes** — the singleton loop production actually ships, and the batched call
-   B-1 and the offline harness will use.
-3. **Vectorise the body of `sp_mean_distances`** *if the baseline warrants it*.
-   Signature unchanged, results unchanged, float64 contract unchanged.
+2. **Only if the §3.1 gate warrants a replacement:** prototype both
+   representations (§5.2) and measure them on **both caller shapes** — the
+   singleton loop production actually ships, and the batched call B-1 and the
+   offline harness will use.
+3. **Then vectorise the body of `sp_mean_distances`**, again only under that
+   gate. Signature unchanged, results unchanged, float64 contract unchanged.
 4. **Equivalence test**: the vectorised implementation and the current one agree
    exactly on the same inputs, including the unreachable, empty-phenotype and
    empty-candidate paths.
@@ -148,9 +175,12 @@ than optimising a cost nobody has seen.
   `DISEASE_SCORER_POLICY.md`'s, and B-1's.
 - Full-universe SP. Policy §4 rejected it as an alternative; nothing here revives
   it.
-- Any cache, memoisation or precomputed result store. The index in §5 is built
-  once at load, which is not a cache: it has no invalidation, no keys and no
-  lifetime.
+- **No request-result cache, no persistent memoisation, no cache-invalidation
+  subsystem.** A derived lookup index built with the artifact at load time **is**
+  in scope. An earlier revision drew this line by claiming the index "has no
+  keys and no lifetime", which is simply false — a lookup index is keys, and it
+  lives as long as the loaded artifact. The boundary is what it is for, not a
+  taxonomy.
 
 ### 4.1 Why the caller change is deferred to B-1
 
@@ -212,9 +242,15 @@ all four jobs at once —
 | Derive offsets | Unchanged: run boundaries in the phenotype column (`pipeline.py:509-519`) |
 | Detect duplicates | Adjacent equal composite keys — one comparison over the sorted key vector |
 
-That keeps the loader at today's sort count and today's peak-memory shape, which
-matters because the existing loader compacts tensors incrementally (`del ph_t`,
-`del tg_t`, … at `pipeline.py:497-505`) precisely to control peak RAM.
+**That keeps the loader at one full-table sort. It does not establish unchanged
+peak memory**, and an earlier revision claimed it did. Constructing an int64
+composite key allocates another full-length tensor, and the arithmetic
+intermediates and duplicate-check vectors are further allocations; peak transient
+memory can rise even with the sort count unchanged. It matters that it is
+measured rather than argued, because the existing loader compacts tensors
+incrementally (`del ph_t`, `del tg_t`, … at `pipeline.py:497-505`) precisely to
+control peak RAM. **Peak memory is a measured selection criterion (§5.4), not a
+claim of this section.**
 
 Two candidate representations, both already named in the primitive's docstring:
 
@@ -236,9 +272,23 @@ or leave the batched-specific optimisation to B-1, which is where the batched
 caller arrives. **Prototype both; productionise one.** No strategy hierarchy, no
 backend registry, no runtime selector.
 
-A's one construction risk: the composite key must not overflow int64, which is
-checked against the real table's node counts — available in the artifact's
-`.meta.json` sidecar (`compute_shortest_paths.py:409-417`) — rather than assumed.
+**A's key domain comes from the tensors, never from the sidecar.** An earlier
+revision proposed bounding the int64 key using the node counts in
+`shortest_paths.meta.json`. **That would make correctness depend on an optional
+file.** The loader treats the sidecar as optional and swallows any failure
+reading it (`pipeline.py:523-531`), and a sidecar can additionally be stale or
+mismatched with the `.pt` it sits beside. So:
+
+- validate that phenotype, target and target-type ids are **non-negative**;
+- derive the strides from the **actual tensor maxima**;
+- compute the largest possible key in **Python integers**, which are arbitrary
+  precision, and check it against the int64 bound **before** any int64 key tensor
+  is constructed — an overflow check performed in int64 has already overflowed;
+- use the sidecar's counts only as provenance, or as an optional consistency
+  check that does not gate correctness.
+
+The sidecar's existing role — supplying `max_hops`, and through it
+`unreachable_distance` — is unchanged and out of scope here.
 
 ### 5.3 Invariants the replacement must hold
 
@@ -254,6 +304,16 @@ Named here because each is a way the change could silently alter results:
    **The index build asserts uniqueness and fails loudly**, rather than
    preserving original-order semantics for a case the data model says cannot
    occur.
+
+   **This changes startup behaviour, so it needs a compatibility gate against
+   the real artifact, not only a synthetic test.** A table that today's
+   first-match implementation loads happily would make the new loader refuse to
+   start. Before the loader change is productionised: scan the **deployed**
+   artifact and record its fingerprint, pair count and duplicate count. **The
+   duplicate count must be zero.** If the artifact is unavailable, implementation
+   may proceed but **deployment compatibility remains pending**. If duplicates
+   are found, **stop** — B-0.4 does not invent a deduplication or migration
+   policy.
 3. **Unreachable handling.** A phenotype with no row for a candidate contributes
    `unreachable_distance`, and a phenotype absent from `offsets` entirely does
    too. Both are misses in the vectorised form and must produce the same value,
@@ -313,6 +373,19 @@ memory; steady-state added memory; the query curves for both caller shapes; and
 the duplicate-check cost. A representation that wins at query time and doubles
 startup memory has not obviously won.
 
+**Memory must be measured at the process level.** `tracemalloc` sees Python
+allocations and **not** PyTorch's CPU tensor storage, which is allocated by the
+C++ allocator — it would report a fraction of the real footprint. Peak RSS
+(`resource.getrusage(...).ru_maxrss`, or `VmHWM` from `/proc/self/status`) sees
+it. Still not a profiling framework: two reads and a subtraction.
+
+*One trap that would silently invalidate those numbers:* **peak RSS is a
+process high-water mark that never decreases.** Measuring the baseline and both
+prototypes in one process would report the highest of the three for all three,
+and the first one measured would look best purely from ordering. **Each
+implementation's memory is therefore measured in its own subprocess.** Timing
+curves have no such constraint and may share a process.
+
 **Runs on CPU**, because the table is on CPU (§2). Unlike the measurement
 harness, it is **not gated on institutional CUDA hardware**.
 
@@ -356,14 +429,24 @@ is the order a direct reader of those attributes would see.
 - `PLAN_B03.md` §5 no longer describes B-0.4 as a caller change;
 - **no production caller, scorer, transform or policy behaviour changes.**
 
-**If, and only if, the baseline warrants a replacement** (§3.1):
+- **the verdict is stated at the honest strength the run supports** (§3.1): with
+  no real artifact, "benchmark complete; production replacement decision pending
+  institutional run", never "baseline accepted";
+- any provisional decision threshold was **recorded before** the results were
+  examined.
+
+**If, and only if, the §3.1 gate warrants a replacement:**
 
 - the vectorised primitive agrees exactly with the current one on the same
   inputs, including every path in §5.3;
 - the uniqueness assertion fires on a table that violates it, proven by a test
   that constructs one;
+- **the deployed artifact's duplicate count is recorded and is zero**, or
+  deployment compatibility is declared pending (§5.3.2);
+- the int64 key domain is derived and bounds-checked from the tensors, with the
+  check performed in Python integers before any int64 key tensor exists (§5.2);
 - both prototypes are measured on both caller shapes, with index-build time and
-  memory reported, and **one** is productionised;
+  per-subprocess memory reported, and **one** is productionised;
 - `tests/unit/test_scoring_primitives.py` continues to pass unchanged, since the
   contract it tests is unchanged.
 
