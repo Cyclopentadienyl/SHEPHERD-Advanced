@@ -1,7 +1,10 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 5. The **baseline stage is run** (§8) and its verdict is
-*pending*; no index prototype is built and no production code has changed. This
+**Status:** rev 6. The **baseline stage is complete** and its gate is answered:
+measured on the real artifact and the institution's primary deployment platform,
+the current lookup **exceeds the provisional budget by 1.7-2.5x** (§9), so the
+stage moves to the prototype phase. No index prototype is built yet and no
+production code has changed. This
 plan also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md)
 §5, which was wrong in a way that made the work look smaller and pointed at the
 wrong file.
@@ -38,6 +41,13 @@ the whole 120-cell / 240-row matrix re-run with every §8 aggregate recomputed. 
 verdict also no longer implies acceptance: a real artifact is one of §3.1's two
 requirements and the deployment-equivalent CPU is the other, which this script
 cannot self-attest and must not gain a flag to fake.
+
+Rev 6: the artifact run landed (§9). The synthetic sweep understated the real
+mean slice length by 2.2x and its `dense_tail` shape does not resemble the
+artifact, whose p100 is only 1.17x its p50; the caller-shape conclusion holds at
+a median ratio of 1.001; the baseline misses the provisional budget by 1.7-2.5x;
+and 430 million rows makes index-build memory a first-order criterion that may
+invert §5.2's expected ordering.
 
 ---
 
@@ -596,6 +606,101 @@ phenotype sets, and §8.2 shows it carries a 2.19× median swing.
 **This is the useful outcome of a baseline stage.** It converts "we should
 probably optimise this" into two specific measurements that decide it, and it
 settles the caller question for *this* primitive without overreaching into B-1's.
+
+
+---
+
+## 9. Artifact results — the real table, on the primary deployment platform
+
+Run on the deploying institution's **SPARK (GB10, aarch64)**, which the institution
+states is its **primary edge deployment platform** — so §3.1's second condition,
+a deployment-equivalent CPU, is satisfied **for that platform** and is asserted by
+a person, as the script refuses to self-attest it.
+
+| Provenance | |
+|---|---|
+| Artifact | `shortest_paths.pt`, SHA-256 `9ada0c1aa16510f7c55c71d5e3eab01b48fd9ce165a63ad07f352bd29994d4df` |
+| Host | aarch64, `Linux-6.17.0-1029-nvidia`, torch `2.10.0+cu130`, 20 CPU threads |
+| Cells | 60 timed cells, 120 rows, 0 skipped |
+
+**Note the platform scope.** The SP lookup is CPU-bound, and the institution names
+three deployment targets with different CPUs. **This measurement governs the
+primary one.** Whether `selection_limit` is set per platform or by the slowest is
+an institutional decision, not this plan's.
+
+### 9.1 The table is far larger and far flatter than the synthetic sweep assumed
+
+| | Value |
+|---|---|
+| Rows | **429,971,678** |
+| Phenotypes | 19,540 |
+| Disease targets | 23,640 |
+| Mean slice length | **22,005** |
+| p50 / p90 / p99 / p100 | 24,518 / 26,380 / 27,412 / **28,580** |
+
+**Two of §8's assumptions are refuted by this.**
+
+*The sweep's ceiling was too low.* §5.4 declared synthetic mean slice lengths of
+1,000 and 10,000. The real mean is **22,005 — 2.2× beyond the top of the sweep.**
+
+*The tail hypothesis does not hold here.* **p100 is only 1.17× p50**, and the mean
+(22,005) sits *below* the median (24,518): the distribution is flat and
+left-skewed, not heavy-tailed. §8.2's `dense_tail` shape does not resemble this
+artifact; `representative` is much closer. Slice totals for `longest` exceed
+`sampled` by only **1.24×**, against the 2.19× cost ratio the synthetic sweep
+produced.
+
+**The selection axis is therefore not separable in timing at these repeat
+counts**, and no claim is made from it: the `longest` cells at the budget point
+show a max/median spread of 1.55 on three repeats, which is wider than the
+difference being compared. What the artifact does settle is the *shape*, and the
+shape says the axis matters far less here than the synthetic sweep implied.
+
+### 9.2 The caller-shape conclusion holds on real hardware
+
+**Median `singleton / batched` = 1.001** over 30 configurations, against 1.029 on
+synthetic. The range is wider (0.62–1.91), and the noise metric explains it:
+**median `max/median` per cell is 1.01, worst 1.82.** Most cells are very stable;
+the extremes sit in the low-repeat cells. §8.1's conclusion — no caller-only
+optimisation is justified for the current primitive — survives contact with the
+real table.
+
+### 9.3 The gate: the baseline does not meet the provisional budget
+
+At the pre-declared point — **C = 200, P = 20, 250 ms, non-institutional**:
+
+| Selection | singleton | batched |
+|---|---|---|
+| `sampled` | **629.5 ms** | **629.6 ms** |
+| `longest` | **428.4 ms** | **478.5 ms** |
+
+**All four exceed the threshold, by 1.7× to 2.5×.** At C = 500, P = 20 the cost is
+1,024–1,554 ms; at C = 500, P = 100, 3,920–5,966 ms.
+
+**Under §3.1's rule this warrants a replacement**, and the stage moves to the
+prototype phase. Two limits on that statement, both stated rather than buried:
+
+- **250 ms is this plan's placeholder, not the institution's target**, which
+  remains `[OPEN]` (policy §1.3). The margin is a factor of two, not a few per
+  cent, but the threshold is still not theirs.
+- The result governs the **primary** deployment platform. The other two targets
+  have different CPUs and are unmeasured.
+
+### 9.4 What 430 million rows does to §5.2's two candidates
+
+The row count is an input §5.2 did not have, and it may **invert** the expected
+ordering:
+
+| | Index-build memory |
+|---|---|
+| **A — global composite key** | An int64 key over 429,971,678 rows is **3.44 GB**, and sorting it needs a comparable index buffer — order **+7 GB transient**, on top of a table already in the multi-GB range |
+| **B — per-phenotype sorted slices** | No global key; the offsets already exist; sorting happens within slices |
+
+§5.2 expected A to win on kernel-launch count and explicitly refused to prefer it
+in advance. **That refusal is now earning itself**: at this scale A's memory cost
+is a first-order selection criterion rather than a footnote, which is exactly what
+MAJOR 2 required be measured. Both are still prototyped; neither is preferred here.
+
 
 ---
 
