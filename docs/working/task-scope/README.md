@@ -1,7 +1,11 @@
 # Task scope — what the supplied-short-list scenario changes
 
-**Status:** rev 3. Scope decisions reviewed and settled; **implementation
-uncommitted**. Rev 2 revised Q1, Q3 and Q4 after the reasoning or facts were
+**Status:** rev 4. Scope decisions reviewed and settled; **implementation
+uncommitted**. Rev 4 closes §6's three open proposals: the scoring experiment's
+unit is a **scorer bundle** rather than a (score family, objective) pair, the
+state-dict inference boundary is narrowed after "a score family has no
+parameters" was shown false, and the single legacy-checkpoint rule is replaced by
+four kinds after it was shown to infer an objective from structure. Rev 2 revised Q1, Q3 and Q4 after the reasoning or facts were
 found wrong; rev 3 narrows F2's validation claim, replaces the proposed
 per-candidate field vocabulary, and withdraws a sampling policy this document had
 no standing to choose. The factual error it found in
@@ -359,7 +363,7 @@ resemblance.
   scan, or a test asserting that no constructor call exists — that test breaks on
   the day someone legitimately wires it.
 
-### 6.3 Scoping order for the retraining track — settled, with one open proposal
+### 6.3 Scoping order for the retraining track — settled
 
 The wiring decision and the score-family decision cannot be taken independently:
 the patient encoder determines checkpoint parameters, the score family
@@ -376,15 +380,42 @@ embeddings were trained to mean.
 
 **No generic production dropdown first.**
 
-> **[OPEN — proposed, not yet answered]** Steps 2 and 3 as written select before
-> step 5 measures, which would defeat the question that started this ("which is
-> better?"). The paper shows the two are paired rather than independent: Eq 18's
-> negative squared L2 is trained by Eq 19's NCA loss, while this repository pairs
-> cosine with a contrastive loss that L2-normalises internally. **Proposal: steps
-> 2 and 3 *enumerate* candidate (score family, objective) pairs, and step 6
-> selects.** The rest of the order is unaffected.
+**Superseded — the order above enumerated too little.** Selecting a score family
+before measuring would defeat the question that started this, and the paper shows
+family and objective are paired (Eq 18's negative squared L2 is trained by Eq 19's
+NCA loss; this repository pairs cosine with a contrastive loss that L2-normalises
+internally). But a *(score family, objective)* pair is still not the unit:
+**patient aggregation is equally load-bearing**, and the tree already holds three
+different ones:
 
-### 6.4 Checkpoint scorer schema — settled, with one boundary added
+| Path | Patient aggregation | Source |
+|---|---|---|
+| Live | masked mean pooling | `trainer.py:744-751` |
+| `PhenotypeDiseaseMatcher` | masked mean, then a **learned aggregator** | `shepherd_gnn.py:346, 397, 422` |
+| `DiagnosisHead` | `phenotype_encoder` MLP plus an **attention** aggregator | `heads.py:69-76, 100-106` |
+
+**The unit of comparison is a scorer bundle:**
+
+```
+ScorerVariant = patient_encoder + score_family + training_objective + output_semantics
+```
+
+**The order, settled:**
+
+1. Fix the task, candidate universe, cohort, split, and **evaluation protocol**.
+2. Enumerate a small, **justified** set of scorer bundles.
+3. Define the checkpoint scorer schema for each bundle.
+4. Train the bundles.
+5. Evaluate them under the fixed protocol.
+6. Select one.
+7. Add inference support for the selected explicit schema.
+
+Fixing the protocol at step 1 — before enumeration — is what stops the protocol
+being chosen to suit a bundle. **No Cartesian-product sweep**, and **`DiagnosisHead`'s
+euclidean branch is not the paper bundle** until the paper's patient encoder,
+objective and remaining semantics are established for it.
+
+### 6.4 Checkpoint scorer schema — settled
 
 Inference must never guess or silently switch similarity functions. The
 checkpoint records a **versioned scorer schema** covering at least: patient
@@ -393,23 +424,52 @@ transform if any; training objective; and the architecture parameters needed to
 reconstruct the scorer. The loader instantiates only a supported explicit schema
 and **fails closed** on unknown or incompatible metadata.
 
-> **[OPEN — proposed, not yet answered]** "Do not infer the scorer heuristically
-> from state-dict keys or tensor shapes" needs a stated boundary, or it reads as
-> condemning `resolve_arch_params`, which is correct. That function infers
-> `conv_type` from state-dict keys, and that is sound because different conv
-> types **produce different parameter names** — the evidence is real. A score
-> family has no parameters and leaves no trace. **The boundary: infer what leaves
-> parameter evidence, record what does not.** `resolve_arch_params` is on the
-> correct side of it.
+**The boundary, settled:**
 
-> **[OPEN — proposed, not yet answered]** The legacy compatibility rule is
-> writable today rather than left as a migration question.
-> `DISEASE_SCORER_POLICY.md` §3.2 and §3.3 establish that `ShepherdGNN`
-> constructs no task head, that the deployed checkpoint passes a strict
-> `load_state_dict` and so carries no task-head parameters, and that training
-> uses the inline cosine at `trainer.py:761-763`. **Proposed rule:** a checkpoint
-> produced by *this repository's trainer* and carrying no scorer schema is cosine
-> with the contrastive objective. Scoped to checkpoints this trainer produced.
+> Explicit checkpoint metadata is authoritative. Structural inference from
+> state-dict evidence is permitted only as a **bounded legacy compatibility
+> rule**, where the mapping from observed keys or shapes to a supported
+> architecture is sufficiently specific, validated by strict loading, and
+> documented as a fallback rather than a general semantic detector.
+>
+> **State-dict evidence may recover structure. It does not, by itself, establish
+> training objective or score semantics.**
+
+`resolve_arch_params` sits inside that rule: conv architectures leave
+distinguishing parameter names, explicit `model_config` stays authoritative, and
+strict loading validates structural compatibility.
+
+*An earlier proposal here said "infer what leaves parameter evidence, record what
+does not", justified by "a score family has no parameters". **That is false.**
+`DiagnosisHead`'s `learned` branch builds a parametered `similarity_net`
+(`heads.py:88-95`) while its `cosine` and `euclidean` branches build nothing — so
+some families are distinguishable from the state dict and some are not, and
+`cosine` versus `euclidean` are **identical** in it. Objectives, normalisation,
+score direction and transforms leave no parameter evidence at all.*
+
+### 6.5 Legacy checkpoints — four kinds, not one rule
+
+*An earlier proposal here was rejected, correctly: that a schema-less checkpoint
+which strict-loads into a headless `ShepherdGNN` is "cosine with the contrastive
+objective". Strict loading establishes **structural** compatibility and the
+absence of task-head parameters. It does not establish which training loop
+produced the file — and the repository's checkpoint callback writes
+`{"state_dict": ...}` plus optimizer and scheduler state and **no producer
+identity or scorer metadata whatsoever** (`training/callbacks.py:297-312`), so
+the rule's own antecedent — "produced by this repository's trainer" — is not
+checkable from the artifact. The proposal also contradicted §6.4's boundary,
+which it sat directly beneath: it inferred a training objective from structure.*
+
+| Kind | What may be said |
+|---|---|
+| Known legacy repository checkpoints, with provenance or as an accepted artifact family | May be classified **legacy headless cosine**; the historical objective stated **only where provenance supports it** |
+| Unknown schema-less checkpoints that strict-load into headless `ShepherdGNN` | Structurally compatible; **training objective unknown** |
+| Explicit future scorer-schema checkpoints | Read the schema |
+| Unsupported | Refused |
+
+Serving a *known* legacy family with interim raw cosine may be an approved
+compatibility policy. **An arbitrary schema-less checkpoint may not be described
+as "contrastive-cosine trained" merely because it has no task-head keys.**
 
 ---
 
