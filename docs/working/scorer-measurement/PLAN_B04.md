@@ -468,4 +468,76 @@ is the order a direct reader of those attributes would see.
 - **The real table's node counts**, needed for A's int64 key bound. Read from the
   artifact's `.meta.json` at implementation time, not assumed.
 
+---
+
+## 8. Baseline results — synthetic, development CPU
+
+`scripts/benchmark_sp_lookup.py`, seed 0, 240 cells, 0 skipped. Deterministic, so
+the script reproduces the raw JSON exactly; `reports/` is gitignored and the
+numbers below are the record.
+
+**Verdict, at the strength §3.1 permits: *benchmark complete; production
+replacement decision pending institutional run.* No SP artifact exists here, so
+this run may not accept the deployed baseline and does not.**
+
+### 8.1 The caller shape is empirically irrelevant
+
+**Median `singleton / batched` ratio across 120 configurations: 1.029.** Range
+0.86 to 1.30, and the extremes are the low-work cells where per-call overhead is
+a large share of a small total.
+
+§2 argued the caller shape was "the small part" and §4.1 deferred the caller
+change to B-1 on that basis. **That is now measured rather than argued**, and it
+holds: batching the caller buys ~3% at the median. Whatever is worth having is
+in the primitive.
+
+### 8.2 The dense-tail axis needed a second dimension — a defect in the first run
+
+The first implementation reported **`dense_tail` as 0.93× the cost of
+`representative`** — cheaper, which is the opposite of that axis's purpose.
+
+Cause: the benchmark queried phenotypes `0..P-1`, so it drew a **random sample**
+of the lognormal, and a lognormal's median sits below its mean. The *table* had a
+heavy tail; the *query* never touched it.
+
+A `phenotype_selection` axis (`random` / `longest`) fixes it, and the corrected
+sensitivity is large:
+
+| Distribution | `longest / random`, median | max |
+|---|---|---|
+| representative | 1.02× | 1.22× |
+| **dense_tail** | **1.77×** | **4.71×** |
+
+`longest` is not merely a worst case. Common, well-studied phenotypes have more
+KG connections and so longer slices, and common phenotypes are the ones likely to
+appear on a patient's list — so the correlation may be real and positive. **Which
+selection is realistic is a property of the deployed artifact and the cohort, and
+is `[OPEN]` until measured there.**
+
+### 8.3 The verdict hinges on two unknowns, both properties of the artifact
+
+At the pre-declared provisional budget point — **C = 200, P = 20, 250 ms,
+non-institutional**, recorded in the script before the run — 14 of 16
+configurations pass and 2 breach:
+
+| Configuration | median |
+|---|---|
+| L = 1,000, any distribution or selection | 102 – 145 ms |
+| L = 10,000, `random` selection, either distribution | 164 – 194 ms |
+| L = 10,000, `representative` × `longest` | 204 – 210 ms |
+| **L = 10,000, `dense_tail` × `longest`** | **392 – 395 ms** ← over |
+
+So the answer to "is the current implementation fast enough" is **conditional on
+two things nobody has measured**: the artifact's mean slice length, and whether a
+patient's phenotypes correlate with slice length. Both are read from the deployed
+artifact in one pass — §5.4's distribution measurement already does the first,
+and the second needs the cohort.
+
+**This is the useful outcome of a baseline stage.** It converts "we should
+probably optimise this" into two specific measurements that decide it, and it
+rules out the caller-restructuring half of the original B-0.4 idea outright
+(§8.1).
+
+---
+
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
