@@ -174,14 +174,20 @@ duplicating candidate construction is not a detail.
 | Fixing candidate construction or negative sampling | The measurement exists to decide whether that is needed. Changing it first destroys the baseline |
 | Any scorer change | Work item B proper |
 
-**B-0.4 is smaller than its name.** "Vectorised SP lookup" reads like a rewrite,
-but `sp_mean_distances` (`src/inference/scoring.py:240`) **already takes a
-sequence of targets and returns a `(C,)` tensor**. The pipeline calls it with a
-one-element list, once per candidate (`pipeline.py:1399`). The vectorisation is
-therefore a caller change in production, not a new primitive — and the offline
-harness can pass the whole candidate list from its first line. This is recorded
-here so nobody plans a rewrite for it; it stays out of B-0.3 because it changes
-production behaviour and belongs with a benchmark.
+**B-0.4 — corrected, see [`PLAN_B04.md`](PLAN_B04.md).** This section previously
+claimed that "vectorised SP lookup" was *a caller change in production, not a new
+primitive*, because `sp_mean_distances` already takes a sequence of targets and
+returns a `(C,)` tensor. **That was wrong.** The signature is batched; the body
+is a Python double loop that scans a whole slice per (candidate, phenotype) pair,
+as the primitive's own docstring states (`src/inference/scoring.py:289`). The
+cost is `O(C × P × L)` and it lives inside the primitive, not at the caller. The
+call site cited here — `pipeline.py:1399` — has also moved; it is now
+`pipeline.py:1068` → `_calculate_sp_score` → `:1147`.
+
+The claim is corrected in place rather than deleted, because a plan that quietly
+loses a wrong estimate teaches nothing. What remains true from the original note:
+B-0.4 stays out of B-0.3, and the offline harness can pass a whole candidate list
+from its first line.
 
 ---
 

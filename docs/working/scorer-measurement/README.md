@@ -32,7 +32,7 @@ designed or implemented in B-0.3.
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
 | B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | **implementation complete**; institutional CUDA run pending |
 | B-0.3 | Modes B and C | **implementation complete**; institutional CUDA run pending. Plan: [`PLAN_B03.md`](PLAN_B03.md) |
-| B-0.4 | vectorised SP lookup in the pipeline | not started; smaller than it looks — a caller change, not a new primitive ([`PLAN_B03.md`](PLAN_B03.md) §5) |
+| B-0.4 | vectorised SP lookup | not started. Plan: [`PLAN_B04.md`](PLAN_B04.md) — the primitive's body, not the caller; the caller's shape is B-1's |
 | B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem |
 
 [`PLAN_B02_shipped.md`](PLAN_B02_shipped.md) is the plan the shipped B-0.2 code

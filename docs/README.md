@@ -68,6 +68,7 @@ work shipped is stale, not authoritative.
 | [`working/results-review/ARCHIVE_rev1_6.md`](working/results-review/ARCHIVE_rev1_6.md) | Revisions 1–6 of the above, with the withdrawn claims and what the scope audit removed. History, not authority |
 | [`working/scorer-measurement/README.md`](working/scorer-measurement/README.md) | Scorer-measurement phase (work item B-0): the A/B/C/D mode ladder and the stage map |
 | [`working/scorer-measurement/PLAN_B03.md`](working/scorer-measurement/PLAN_B03.md) | B-0.3 proposal — Modes B and C, and the three decisions that keep the ladder interpretable |
+| [`working/scorer-measurement/PLAN_B04.md`](working/scorer-measurement/PLAN_B04.md) | B-0.4 proposal — vectorising the shortest-path primitive's body, why the production caller is deferred to B-1, and the correction to what B-0.4 was previously thought to be |
 | [`working/scorer-measurement/PLAN_B02_shipped.md`](working/scorer-measurement/PLAN_B02_shipped.md) | The plan the shipped B-0.2 harness was built from. History, not authority |
 | [`working/task-scope/README.md`](working/task-scope/README.md) | Five open scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, input field vs scoring-mode switch, where the SP ablation belongs, and whether causal-gene scoring becomes its own work item. Positions stated, none decided |
 
