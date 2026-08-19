@@ -622,7 +622,7 @@ a person, as the script refuses to self-attest it.
 | Artifact | `shortest_paths.pt`, SHA-256 `9ada0c1aa16510f7c55c71d5e3eab01b48fd9ce165a63ad07f352bd29994d4df` |
 | Host | aarch64, `Linux-6.17.0-1029-nvidia`, torch `2.10.0+cu130`, 20 CPU threads |
 | Cells | 60 timed cells, 120 rows, 0 skipped |
-| Evidence | `EVIDENCE_B04_artifact_spark.json`, SHA-256 `53a63df1be7d49661a40a3826f94f951eeeadefec4a680ebcf2a542603b4102f` — **held on the deployment host, not yet pushed.** The hash is recorded now so the file can be verified as the same one when it lands |
+| Evidence | [`EVIDENCE_B04_artifact_spark.json`](EVIDENCE_B04_artifact_spark.json), SHA-256 `53a63df1be7d49661a40a3826f94f951eeeadefec4a680ebcf2a542603b4102f` — transferred from the deployment host and **verified against the hash recorded there** before committing |
 
 **Note the platform scope.** The SP lookup is CPU-bound, and the institution names
 three deployment targets with different CPUs. **This measurement governs the
