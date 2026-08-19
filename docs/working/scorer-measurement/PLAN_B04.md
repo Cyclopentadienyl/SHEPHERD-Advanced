@@ -1,8 +1,10 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 2, proposed, not implemented. This plan **corrects** the
-description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md) §5, which was wrong in a way
-that made the work look smaller and pointed at the wrong file.
+**Status:** rev 4. The **baseline stage is run** (§8) and its verdict is
+*pending*; no index prototype is built and no production code has changed. This
+plan also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md)
+§5, which was wrong in a way that made the work look smaller and pointed at the
+wrong file.
 
 Rev 2 after review: the stage is **benchmark-gated and baseline-first** (§3), the
 benchmark covers **both caller shapes** and sweeps `P` and the slice tail rather
@@ -19,6 +21,15 @@ preserves peak memory is **withdrawn** — sort count only, memory measured
 gate** because it changes startup behaviour (§5.3.2); prototyping is conditional
 on the gate rather than unconditional (§4); and the index is described by what it
 is for rather than by a false claim that it has no keys (§4).
+
+Rev 4 after review of the baseline run: `--artifact` now times the artifact's
+**own slices** instead of a synthetic table parameterised by its mean, and the
+two modes are separate code paths (§8, `scripts/benchmark_sp_lookup.py`); the
+raw evidence is committed and referenced by SHA-256, and the false
+"reproduces the raw JSON exactly" claim is replaced (§8); the non-worst-case
+phenotype selection is a seeded `randperm` subset rather than a fixed prefix
+called random (§8.2); and the caller conclusion is narrowed to the current
+primitive rather than ruling the question out for B-1 (§8.1).
 
 ---
 
@@ -465,56 +476,79 @@ is the order a direct reader of those attributes would see.
 - **The `L` distribution**, which the metadata sidecar does not record. §5.4
   measures it from an artifact when one is present; the first development runs
   have none and are synthetic.
-- **The real table's node counts**, needed for A's int64 key bound. Read from the
-  artifact's `.meta.json` at implementation time, not assumed.
+- **The key domain**, needed for A's int64 bound. Derived and bounds-checked
+  from the **loaded tensors** (§5.2) — non-negative id validation, strides from
+  the actual maxima, and the largest possible key checked in Python integers
+  before any int64 key tensor exists. An earlier revision said the counts come
+  from the `.meta.json` sidecar; that contradicted §5.2 and would have made
+  correctness depend on an optional file.
 
 ---
 
 ## 8. Baseline results — synthetic, development CPU
 
-`scripts/benchmark_sp_lookup.py`, seed 0, 240 cells, 0 skipped. Deterministic, so
-the script reproduces the raw JSON exactly; `reports/` is gitignored and the
-numbers below are the record.
+`scripts/benchmark_sp_lookup.py`, seed 0, 240 cells, 0 skipped.
 
-**Verdict, at the strength §3.1 permits: *benchmark complete; production
-replacement decision pending institutional run.* No SP artifact exists here, so
-this run may not accept the deployed baseline and does not.**
+**Evidence:** [`EVIDENCE_B04_baseline_synthetic.json`](EVIDENCE_B04_baseline_synthetic.json)
+— the full 240 rows with repeat counts, queried-slice totals, measurement order
+and provenance, so the ratios below can be audited rather than taken.
+SHA-256 `882b83f871a5c32879960736953566a4c34d43c094dac99c4e34e7cba30992e9`.
 
-### 8.1 The caller shape is empirically irrelevant
+**Reproducibility, stated accurately:** the seed reproduces the same workload;
+**timing observations are expected to vary.** An earlier revision claimed the
+script "reproduces the raw JSON exactly", which is false — `perf_counter`
+readings, OS scheduling, CPU state and the adaptive repeat counts all move. That
+is why the evidence file is committed rather than regenerated on demand.
 
-**Median `singleton / batched` ratio across 120 configurations: 1.029.** Range
-0.86 to 1.30, and the extremes are the low-work cells where per-call overhead is
-a large share of a small total.
+**Verdict, at the strength §3.1 permits: *synthetic sensitivity sweep complete;
+production replacement decision pending institutional run.* No SP artifact
+exists here, so this run may not accept the deployed baseline and does not.**
 
-§2 argued the caller shape was "the small part" and §4.1 deferred the caller
-change to B-1 on that basis. **That is now measured rather than argued**, and it
-holds: batching the caller buys ~3% at the median. Whatever is worth having is
-in the primitive.
+### 8.1 No caller-only optimisation is justified for the current primitive
 
-### 8.2 The dense-tail axis needed a second dimension — a defect in the first run
+Median `singleton / batched` ratio across 120 configurations: **1.040** (range
+0.87–1.26). Measurement order is alternated per cell and recorded in
+`measured_first`, so the difference is not confounded with a fixed order.
 
-The first implementation reported **`dense_tail` as 0.93× the cost of
-`representative`** — cheaper, which is the opposite of that axis's purpose.
+**This is close to a structural identity, and must not be read as a finding
+about caller design.** `sp_mean_distances` loops over candidates *inside* the
+function, so the singleton caller runs `C` calls of a one-iteration loop and the
+batched caller runs one call of a `C`-iteration loop. **The same Python loop
+executes either way; only its position moves.** The measurement therefore says
+one thing:
 
-Cause: the benchmark queried phenotypes `0..P-1`, so it drew a **random sample**
-of the lognormal, and a lognormal's median sits below its mean. The *table* had a
-heavy tail; the *query* never touched it.
+> **No caller-only optimisation is justified in B-0.4 for the current
+> primitive.**
 
-A `phenotype_selection` axis (`random` / `longest`) fixes it, and the corrected
-sensitivity is large:
+It does **not** say caller restructuring is ruled out for B-1, and an earlier
+revision of this section claimed exactly that. It predicts nothing about
+prototype A, prototype B, or B-1's eager selected-set enrichment — under a
+vectorised primitive the two shapes stop being the same work. B-1 need not
+revisit batching as a 3% micro-optimisation, but it may well use a batched
+primitive because eager enrichment naturally produces one SP vector over the
+selected set. That is a design consequence, not an optimisation.
 
-| Distribution | `longest / random`, median | max |
+### 8.2 The selection axis needed correcting twice
+
+**First defect.** The benchmark reported `dense_tail` as **0.93×** the cost of
+`representative` — cheaper, the opposite of that axis's purpose. Cause: the query
+used phenotypes `0..P-1`, drawing from the lognormal near its median, which sits
+below its mean. The *table* had a heavy tail; the *query* never touched it.
+
+**Second defect.** The fix added a selection axis but drew the non-worst case as
+that same fixed prefix while calling it `random`. It is now `sampled`: a genuine
+seeded `randperm` subset, and named for what it is — **one sensitivity example,
+not an estimate of typical selection.** Estimating typical selection needs a
+bounded set of seeds and belongs to the artifact run.
+
+Corrected sensitivity:
+
+| Distribution | `longest / sampled`, median | max |
 |---|---|---|
-| representative | 1.02× | 1.22× |
-| **dense_tail** | **1.77×** | **4.71×** |
+| representative | 1.05× | 1.18× |
+| **dense_tail** | **2.18×** | **3.98×** |
 
-`longest` is not merely a worst case. Common, well-studied phenotypes have more
-KG connections and so longer slices, and common phenotypes are the ones likely to
-appear on a patient's list — so the correlation may be real and positive. **Which
-selection is realistic is a property of the deployed artifact and the cohort, and
-is `[OPEN]` until measured there.**
-
-### 8.3 The verdict hinges on two unknowns, both properties of the artifact
+### 8.3 The verdict hinges on two unknowns — and they are not the same kind
 
 At the pre-declared provisional budget point — **C = 200, P = 20, 250 ms,
 non-institutional**, recorded in the script before the run — 14 of 16
@@ -522,21 +556,26 @@ configurations pass and 2 breach:
 
 | Configuration | median |
 |---|---|
-| L = 1,000, any distribution or selection | 102 – 145 ms |
-| L = 10,000, `random` selection, either distribution | 164 – 194 ms |
-| L = 10,000, `representative` × `longest` | 204 – 210 ms |
-| **L = 10,000, `dense_tail` × `longest`** | **392 – 395 ms** ← over |
+| L = 1,000, any distribution or selection | 103 – 171 ms |
+| L = 10,000, `sampled` selection, either distribution | 157 – 194 ms |
+| L = 10,000, `representative` × `longest` | 185 – 194 ms |
+| **L = 10,000, `dense_tail` × `longest`** | **438 – 443 ms** ← over |
 
-So the answer to "is the current implementation fast enough" is **conditional on
-two things nobody has measured**: the artifact's mean slice length, and whether a
-patient's phenotypes correlate with slice length. Both are read from the deployed
-artifact in one pass — §5.4's distribution measurement already does the first,
-and the second needs the cohort.
+The two unknowns that decide it are of **different kinds**, and an earlier
+revision wrongly called both artifact properties:
+
+| Unknown | Kind | Measured from |
+|---|---|---|
+| Mean and tail slice length | **artifact property** | the deployed artifact alone (§5.4) |
+| Whether a patient's phenotypes correlate with slice length | **artifact–cohort relationship** | the artifact *and* a real cohort together |
+
+The distinction matters operationally: the first is answered by pointing the
+benchmark at `shortest_paths.pt`, the second is not answerable without patient
+phenotype sets, and §8.2 shows it carries a 2.18× median swing.
 
 **This is the useful outcome of a baseline stage.** It converts "we should
 probably optimise this" into two specific measurements that decide it, and it
-rules out the caller-restructuring half of the original B-0.4 idea outright
-(§8.1).
+settles the caller question for *this* primitive without overreaching into B-1's.
 
 ---
 
