@@ -70,7 +70,8 @@ work shipped is stale, not authoritative.
 | [`working/scorer-measurement/PLAN_B03.md`](working/scorer-measurement/PLAN_B03.md) | B-0.3 proposal — Modes B and C, and the three decisions that keep the ladder interpretable |
 | [`working/scorer-measurement/PLAN_B04.md`](working/scorer-measurement/PLAN_B04.md) | B-0.4 proposal — vectorising the shortest-path primitive's body, why the production caller is deferred to B-1, and the correction to what B-0.4 was previously thought to be |
 | [`working/scorer-measurement/PLAN_B02_shipped.md`](working/scorer-measurement/PLAN_B02_shipped.md) | The plan the shipped B-0.2 harness was built from. History, not authority |
-| [`working/task-scope/README.md`](working/task-scope/README.md) | Five scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, the supplied-universe request/result variant, where the SP ablation belongs, and causal-gene scoring as its own work item. **Scope decisions reviewed; implementation uncommitted** |
+| [`working/task-scope/README.md`](working/task-scope/README.md) | Five scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, the supplied-universe request/result variant, where the SP ablation belongs, and causal-gene scoring as its own work item. **Scope decisions reviewed; the reserved-interface item is scheduled** |
+| [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) | Scoping for the scorer-retraining phase: the scorer-bundle unit of comparison, the experiment order, the versioned checkpoint scorer schema and its inference boundary, and the four kinds of legacy checkpoint. Nothing scheduled, no gate cleared |
 
 ## Archived
 

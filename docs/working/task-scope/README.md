@@ -1,27 +1,18 @@
 # Task scope — what the supplied-short-list scenario changes
 
-**Status:** rev 4. Scope decisions reviewed and settled; **implementation
-uncommitted**.
+**Status:** rev 5. Scope decisions reviewed and settled. Q1 is **scheduled**;
+the rest remain uncommitted.
 
 - **rev 2** — revised Q1, Q3 and Q4 after the reasoning or facts were found wrong.
 - **rev 3** — narrowed F2's validation claim, replaced the proposed per-candidate
   field vocabulary, and withdrew a sampling policy this document had no standing
   to choose. The factual error it found in `../../DISEASE_SCORER_POLICY.md` is
   corrected there under that record's rev 4.
-- **rev 4** — closed §6's three open proposals: the scoring experiment's unit is
-  a **scorer bundle** rather than a (score family, objective) pair; the
-  state-dict inference boundary is narrowed after "a score family has no
-  parameters" was shown false; and the single legacy-checkpoint rule is replaced
-  by four kinds after it was shown to infer an objective from structure.
-
-**§6 does not belong in this document.** It arrived from a separate
-conversation about training-time similarity, was reviewed as its own stream, and
-its consumer is the paper-parity retraining track — not the supplied-short-list
-scenario this document is named for. It was filed here on the grounds that it is
-"the same class as Q1", which is a surface resemblance: Q1 is an
-institution-requested reserved **API field**, §6 is internal **model classes** in
-an open architecture decision. Splitting it into its own working folder is
-proposed and not yet done.
+- **rev 4** — settled the scorer-bundle, schema-boundary and
+  legacy-checkpoint questions that had been drafted here as §6.
+- **rev 5** — moved that material to
+  [`../scorer-retraining/README.md`](../scorer-retraining/README.md), where it
+  belongs, leaving §6 as a cross-reference.
 
 The deploying institution described a second use case: clinicians who have
 already narrowed a patient to **a list of suspected diseases or gene variants**
@@ -107,10 +98,15 @@ Four bounded changes:
    `candidate_genes was supplied but is not used by the current disease scorer.`
    **`DiagnoseResponse.warnings: List[str]` already exists**
    (`api/routes/diagnose.py:140`), so this adds no API surface.
-3. A list-length bound and non-blank-string validation, matching the convention
-   `phenotypes` already sets (`:53-56`). **No gene-identifier ontology** — that
-   belongs to the interface's real design.
-4. Tests covering both result invariance and the warning.
+3. A list-length bound of **1000** and stripped non-blank item validation.
+   **The bound is declared here, before implementation.** It is deliberately not
+   `phenotypes`' 100: F1 records a variant-filtered candidate-gene mean of
+   **244.3 with SD 244.0**, so a 100-item cap would reject ordinary real lists.
+   1000 is a **route-local request-safety bound**, not the future gene scorer's
+   semantic selection limit. **No gene-identifier ontology** — that belongs to
+   the interface's real design.
+4. Tests covering warning presence and absence, result invariance, blank
+   rejection, and over-limit rejection.
 
 Rejected: returning 400 — the institution asked for the reservation, and
 refusing the field breaks what it was reserved for. Also rejected: a feature
@@ -332,156 +328,20 @@ second institutional run.**
 
 ---
 
-## 6. Unwired similarity switches — a second instance of Q1's class
+## 6. Related but separate: scorer selection and checkpoint schemas
 
-Reviewed in its own round, **after** §3's questions. Recorded here because it is
-the same class as Q1: a switch that reads like a live capability and reaches
-nothing. **Status of each item is marked**, because parts are settled and parts
-are still awaiting a reply.
+Which patient encoder, score family and training objective the system should
+use, and how a checkpoint should record that choice, is **separate work** with
+its own gates and its own evaluation protocol:
+[`../scorer-retraining/README.md`](../scorer-retraining/README.md).
 
-### 6.1 What is there — verified
+It was drafted inside this document on the grounds that an unwired
+`similarity_type` switch is "the same class as Q1". That was a surface
+resemblance — Q1 is an institution-requested reserved **API field**, that work is
+internal **model classes** inside an open architecture decision — and it has been
+moved out.
 
-| Fact | Source |
-|---|---|
-| `PhenotypeDiseaseMatcher` exposes `similarity_type`: `bilinear` / `mlp` / `cosine` | `models/gnn/shepherd_gnn.py:332` |
-| `DiagnosisHead` exposes `similarity_type`: `learned` / `cosine` / `euclidean` | `models/decoders/heads.py:52`, branch at `:217` |
-| Neither class is constructed on any production path | no construction call in `src/` or `scripts/` |
-| The live training similarity is **hardcoded cosine in three places** | `trainer.py:761-763`; `loss_functions.py:323-331`; `scoring.py:210-211` |
-| `PhenotypeDiseaseMatcher`'s unwired status was **already recorded** | `RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md:433` |
-| It is **not** dead code — it is one side of an open decision | same document §6.B item 2, §7 question 2 |
-| All four `heads.py` classes are constructed **by tests** | `tests/unit/test_models.py:537-661` |
-
-**The euclidean branch is not "the paper's Eq 18".** It shares a distance family
-and nothing more has been shown — not the patient encoder, aggregation,
-objective, candidate universe or calibration. An earlier claim that it *was* Eq 18
-made the same mistake as the original F4: inferring equivalence from surface
-resemblance.
-
-### 6.2 Settled by review
-
-- **Severity is LOW; the work is deferred.** Neither class has clinical or
-  checkpoint exposure, so nothing here blocks or precedes B-0.4. The euclidean
-  branch does not raise the severity.
-- **Removal stays off the table** until the authoritative patient encoder/scorer
-  decision is made (findings §7 question 2).
-- **A short code-local annotation is the whole treatment**, added when the
-  retraining-track scoping or another legitimate edit touches those definitions —
-  **not as a standalone work item or hotfix.** It says only: experimental and
-  unwired; not constructed by the current training or inference pipeline;
-  `similarity_type` is not a live runtime or checkpoint contract; the decision is
-  tracked in `RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md` §7.
-- **Not permitted:** duplicating the findings text, an experimental-component
-  registry, a repository-wide audit of unwired capability, rewriting the module
-  scan, or a test asserting that no constructor call exists — that test breaks on
-  the day someone legitimately wires it.
-
-### 6.3 Scoping order for the retraining track — settled
-
-The wiring decision and the score-family decision cannot be taken independently:
-the patient encoder determines checkpoint parameters, the score family
-determines direction and geometry, and the objective determines what the
-embeddings were trained to mean.
-
-1. define the task and the authoritative patient representation;
-2. choose the score family;
-3. choose a compatible training objective;
-4. define a versioned checkpoint scorer schema;
-5. train and measure explicit variants;
-6. select a variant;
-7. add inference support for that explicit schema.
-
-**No generic production dropdown first.**
-
-**Superseded — the order above enumerated too little.** Selecting a score family
-before measuring would defeat the question that started this, and the paper shows
-family and objective are paired (Eq 18's negative squared L2 is trained by Eq 19's
-NCA loss; this repository pairs cosine with a contrastive loss that L2-normalises
-internally). But a *(score family, objective)* pair is still not the unit:
-**patient aggregation is equally load-bearing**, and the tree already holds three
-different ones:
-
-| Path | Patient aggregation | Source |
-|---|---|---|
-| Live | masked mean pooling | `trainer.py:744-751` |
-| `PhenotypeDiseaseMatcher` | masked mean, then a **learned aggregator** | `shepherd_gnn.py:346, 397, 422` |
-| `DiagnosisHead` | `phenotype_encoder` MLP plus an **attention** aggregator | `heads.py:69-76, 100-106` |
-
-**The unit of comparison is a scorer bundle:**
-
-```
-ScorerVariant = patient_encoder + score_family + training_objective + output_semantics
-```
-
-**The order, settled:**
-
-1. Fix the task, candidate universe, cohort, split, and **evaluation protocol**.
-2. Enumerate a small, **justified** set of scorer bundles.
-3. Define the checkpoint scorer schema for each bundle.
-4. Train the bundles.
-5. Evaluate them under the fixed protocol.
-6. Select one.
-7. Add inference support for the selected explicit schema.
-
-Fixing the protocol at step 1 — before enumeration — is what stops the protocol
-being chosen to suit a bundle. **No Cartesian-product sweep**, and **`DiagnosisHead`'s
-euclidean branch is not the paper bundle** until the paper's patient encoder,
-objective and remaining semantics are established for it.
-
-### 6.4 Checkpoint scorer schema — settled
-
-Inference must never guess or silently switch similarity functions. The
-checkpoint records a **versioned scorer schema** covering at least: patient
-encoder/aggregation type and version; score family and direction; score
-transform if any; training objective; and the architecture parameters needed to
-reconstruct the scorer. The loader instantiates only a supported explicit schema
-and **fails closed** on unknown or incompatible metadata.
-
-**The boundary, settled:**
-
-> Explicit checkpoint metadata is authoritative. Structural inference from
-> state-dict evidence is permitted only as a **bounded legacy compatibility
-> rule**, where the mapping from observed keys or shapes to a supported
-> architecture is sufficiently specific, validated by strict loading, and
-> documented as a fallback rather than a general semantic detector.
->
-> **State-dict evidence may recover structure. It does not, by itself, establish
-> training objective or score semantics.**
-
-`resolve_arch_params` sits inside that rule: conv architectures leave
-distinguishing parameter names, explicit `model_config` stays authoritative, and
-strict loading validates structural compatibility.
-
-*An earlier proposal here said "infer what leaves parameter evidence, record what
-does not", justified by "a score family has no parameters". **That is false.**
-`DiagnosisHead`'s `learned` branch builds a parametered `similarity_net`
-(`heads.py:88-95`) while its `cosine` and `euclidean` branches build nothing — so
-some families are distinguishable from the state dict and some are not, and
-`cosine` versus `euclidean` are **identical** in it. Objectives, normalisation,
-score direction and transforms leave no parameter evidence at all.*
-
-### 6.5 Legacy checkpoints — four kinds, not one rule
-
-*An earlier proposal here was rejected, correctly: that a schema-less checkpoint
-which strict-loads into a headless `ShepherdGNN` is "cosine with the contrastive
-objective". Strict loading establishes **structural** compatibility and the
-absence of task-head parameters. It does not establish which training loop
-produced the file — and the repository's checkpoint callback writes
-`{"state_dict": ...}` plus optimizer and scheduler state and **no producer
-identity or scorer metadata whatsoever** (`training/callbacks.py:297-312`), so
-the rule's own antecedent — "produced by this repository's trainer" — is not
-checkable from the artifact. The proposal also contradicted §6.4's boundary,
-which it sat directly beneath: it inferred a training objective from structure.*
-
-| Kind | What may be said |
-|---|---|
-| Known legacy repository checkpoints, with provenance or as an accepted artifact family | May be classified **legacy headless cosine**; the historical objective stated **only where provenance supports it** |
-| Unknown schema-less checkpoints that strict-load into headless `ShepherdGNN` | Structurally compatible; **training objective unknown** |
-| Explicit future scorer-schema checkpoints | Read the schema |
-| Unsupported | Refused |
-
-Serving a *known* legacy family with interim raw cosine may be an approved
-compatibility policy. **An arbitrary schema-less checkpoint may not be described
-as "contrastive-cosine trained" merely because it has no task-head keys.**
+**It does not change any decision in §3, and it does not block B-0.**
 
 ---
 
