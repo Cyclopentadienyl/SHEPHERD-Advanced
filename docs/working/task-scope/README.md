@@ -1,15 +1,27 @@
 # Task scope — what the supplied-short-list scenario changes
 
 **Status:** rev 4. Scope decisions reviewed and settled; **implementation
-uncommitted**. Rev 4 closes §6's three open proposals: the scoring experiment's
-unit is a **scorer bundle** rather than a (score family, objective) pair, the
-state-dict inference boundary is narrowed after "a score family has no
-parameters" was shown false, and the single legacy-checkpoint rule is replaced by
-four kinds after it was shown to infer an objective from structure. Rev 2 revised Q1, Q3 and Q4 after the reasoning or facts were
-found wrong; rev 3 narrows F2's validation claim, replaces the proposed
-per-candidate field vocabulary, and withdraws a sampling policy this document had
-no standing to choose. The factual error it found in
-`../../DISEASE_SCORER_POLICY.md` is corrected there under that record's rev 4.
+uncommitted**.
+
+- **rev 2** — revised Q1, Q3 and Q4 after the reasoning or facts were found wrong.
+- **rev 3** — narrowed F2's validation claim, replaced the proposed per-candidate
+  field vocabulary, and withdrew a sampling policy this document had no standing
+  to choose. The factual error it found in `../../DISEASE_SCORER_POLICY.md` is
+  corrected there under that record's rev 4.
+- **rev 4** — closed §6's three open proposals: the scoring experiment's unit is
+  a **scorer bundle** rather than a (score family, objective) pair; the
+  state-dict inference boundary is narrowed after "a score family has no
+  parameters" was shown false; and the single legacy-checkpoint rule is replaced
+  by four kinds after it was shown to infer an objective from structure.
+
+**§6 does not belong in this document.** It arrived from a separate
+conversation about training-time similarity, was reviewed as its own stream, and
+its consumer is the paper-parity retraining track — not the supplied-short-list
+scenario this document is named for. It was filed here on the grounds that it is
+"the same class as Q1", which is a surface resemblance: Q1 is an
+institution-requested reserved **API field**, §6 is internal **model classes** in
+an open architecture decision. Splitting it into its own working folder is
+proposed and not yet done.
 
 The deploying institution described a second use case: clinicians who have
 already narrowed a patient to **a list of suspected diseases or gene variants**
