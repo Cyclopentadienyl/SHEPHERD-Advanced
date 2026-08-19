@@ -69,6 +69,7 @@ work shipped is stale, not authoritative.
 | [`working/scorer-measurement/README.md`](working/scorer-measurement/README.md) | Scorer-measurement phase (work item B-0): the A/B/C/D mode ladder and the stage map |
 | [`working/scorer-measurement/PLAN_B03.md`](working/scorer-measurement/PLAN_B03.md) | B-0.3 proposal — Modes B and C, and the three decisions that keep the ladder interpretable |
 | [`working/scorer-measurement/PLAN_B02_shipped.md`](working/scorer-measurement/PLAN_B02_shipped.md) | The plan the shipped B-0.2 harness was built from. History, not authority |
+| [`working/task-scope/README.md`](working/task-scope/README.md) | Five open scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, input field vs scoring-mode switch, where the SP ablation belongs, and whether causal-gene scoring becomes its own work item. Positions stated, none decided |
 
 ## Archived
 
