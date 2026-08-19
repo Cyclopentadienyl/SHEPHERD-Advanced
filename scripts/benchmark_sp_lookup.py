@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import platform
 import statistics
@@ -213,10 +214,12 @@ def build_artifact_lookup(
     This mirrors `DiagnosisPipeline._load_shortest_paths` (`pipeline.py:470-545`):
     same required keys, same dtype compaction, same sort-by-phenotype, same
     offsets from run boundaries. **It is a second reader of that layout and is
-    meant to stop being one** — PLAN_B04 §5.6 restructures that loader when a
-    prototype lands, and the two collapse into one there. Recorded rather than
-    left to be discovered, because `src/kg/storage/file_storage.py` exists to end
-    exactly this kind of duplication.
+    meant to stop being one: reconcile it whenever the production SP loader is
+    next changed, whether or not B-0.4 selects a prototype.** Tying it to a
+    prototype would leave the duplicate permanent if no prototype is selected.
+    Recorded rather than left to be discovered, because
+    `src/kg/storage/file_storage.py` exists to end exactly this kind of
+    duplication.
 
     Returns `(lookup, slice_lengths, disease_targets, provenance)`.
     """
@@ -320,6 +323,7 @@ def time_table(
     seed: int,
     rows: List[Dict[str, Any]],
     skipped: List[Dict[str, Any]],
+    cell_counter: "itertools.count",
 ) -> None:
     by_length = sorted(range(len(lengths)), key=lambda i: -lengths[i])
     generator = torch.Generator().manual_seed(seed)
@@ -356,7 +360,14 @@ def time_table(
                 shapes = [("singleton", _call_singleton), ("batched", _call_batched)]
                 # Alternate which shape runs first, so a small difference between
                 # them is not confounded with a fixed measurement order.
-                if len(rows) % 2:
+                #
+                # **Counted per timed cell, not from `len(rows)`.** Each cell
+                # appends two rows, so `len(rows)` is even at every cell boundary
+                # and a `len(rows) % 2` test never fires — the first version of
+                # this alternated nothing, and the evidence file recorded
+                # `measured_first="singleton"` for all 240 rows while §8.1 claimed
+                # otherwise.
+                if next(cell_counter) % 2:
                     shapes.reverse()
                 for shape, fn in shapes:
                     timing = _repeat(fn, lookup, phenotypes, candidates)
@@ -412,6 +423,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     torch.manual_seed(args.seed)
+    cells = itertools.count()
     rows: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
 
@@ -422,14 +434,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         phenotype_ids = sorted(lookup.offsets)
         time_table({"table": "artifact"}, lookup, lengths, targets, phenotype_ids,
-                   args.seed, rows, skipped)
+                   args.seed, rows, skipped, cells)
         source: Dict[str, Any] = {"source": "artifact", **artifact_meta}
-        verdict = "artifact slices timed; see PLAN_B04 §3.1 for the acceptance gate"
+        # A real artifact is one of §3.1's two requirements. The other is a
+        # deployment-equivalent CPU, which this script cannot self-attest — and
+        # must not gain a flag that would let it.
+        verdict = (
+            "artifact slices timed; baseline acceptance remains subject to the "
+            "deployment-equivalent CPU gate"
+        )
     else:
         mode = "synthetic"
         for labels, lookup, lengths, targets in synthetic_tables(args.max_hops, args.seed):
             time_table(labels, lookup, lengths, targets, list(range(len(lengths))),
-                       args.seed, rows, skipped)
+                       args.seed, rows, skipped, cells)
         source = {
             "source": "synthetic",
             "reason": "no shortest_paths.pt supplied; none exists in development",

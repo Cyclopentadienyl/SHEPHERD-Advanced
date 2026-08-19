@@ -1,6 +1,6 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 4. The **baseline stage is run** (§8) and its verdict is
+**Status:** rev 5. The **baseline stage is run** (§8) and its verdict is
 *pending*; no index prototype is built and no production code has changed. This
 plan also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md)
 §5, which was wrong in a way that made the work look smaller and pointed at the
@@ -30,6 +30,14 @@ raw evidence is committed and referenced by SHA-256, and the false
 phenotype selection is a seeded `randperm` subset rather than a fixed prefix
 called random (§8.2); and the caller conclusion is narrowed to the current
 primitive rather than ruling the question out for B-1 (§8.1).
+
+Rev 5 after review: the measurement-order alternation was **claimed but never
+executed** — it branched on `len(rows) % 2`, which is even at every cell
+boundary — so it is now counted per timed cell, pinned by a regression test, and
+the whole 240-cell matrix re-run with every §8 aggregate recomputed. The artifact
+verdict also no longer implies acceptance: a real artifact is one of §3.1's two
+requirements and the deployment-equivalent CPU is the other, which this script
+cannot self-attest and must not gain a flag to fake.
 
 ---
 
@@ -492,7 +500,7 @@ is the order a direct reader of those attributes would see.
 **Evidence:** [`EVIDENCE_B04_baseline_synthetic.json`](EVIDENCE_B04_baseline_synthetic.json)
 — the full 240 rows with repeat counts, queried-slice totals, measurement order
 and provenance, so the ratios below can be audited rather than taken.
-SHA-256 `882b83f871a5c32879960736953566a4c34d43c094dac99c4e34e7cba30992e9`.
+SHA-256 `b0ce086171a84705055c1380029fd24599549df0ff6126450aa3ee8f491f22c3`.
 
 **Reproducibility, stated accurately:** the seed reproduces the same workload;
 **timing observations are expected to vary.** An earlier revision claimed the
@@ -506,9 +514,20 @@ exists here, so this run may not accept the deployed baseline and does not.**
 
 ### 8.1 No caller-only optimisation is justified for the current primitive
 
-Median `singleton / batched` ratio across 120 configurations: **1.040** (range
-0.87–1.26). Measurement order is alternated per cell and recorded in
-`measured_first`, so the difference is not confounded with a fixed order.
+Median `singleton / batched` ratio across 120 configurations: **1.029** (range
+0.70–1.30). Measurement order alternates per timed cell and is recorded in
+`measured_first` — 120 cells each way — so the difference is not confounded with
+a fixed order.
+
+*It did not, in the first run.* The alternation was written as
+`if len(rows) % 2`, and each cell appends two rows, so `len(rows)` is even at
+every cell boundary and the branch never fired: all 240 rows recorded
+`measured_first="singleton"` while this section claimed the order was alternated.
+Fixed with an explicit per-cell counter, pinned by a regression test verified to
+fail against the old condition, and the whole matrix re-run — the figures here
+are from that re-run. The visible effect is the range widening from 0.87–1.30 to
+0.70–1.30, in the low-work cells where one call's overhead is a large share of
+the total.
 
 **This is close to a structural identity, and must not be read as a finding
 about caller design.** `sp_mean_distances` loops over candidates *inside* the
@@ -545,8 +564,8 @@ Corrected sensitivity:
 
 | Distribution | `longest / sampled`, median | max |
 |---|---|---|
-| representative | 1.05× | 1.18× |
-| **dense_tail** | **2.18×** | **3.98×** |
+| representative | 1.03× | 1.31× |
+| **dense_tail** | **2.19×** | **3.42×** |
 
 ### 8.3 The verdict hinges on two unknowns — and they are not the same kind
 
@@ -556,10 +575,10 @@ configurations pass and 2 breach:
 
 | Configuration | median |
 |---|---|
-| L = 1,000, any distribution or selection | 103 – 171 ms |
-| L = 10,000, `sampled` selection, either distribution | 157 – 194 ms |
-| L = 10,000, `representative` × `longest` | 185 – 194 ms |
-| **L = 10,000, `dense_tail` × `longest`** | **438 – 443 ms** ← over |
+| L = 1,000, any distribution or selection | 102 – 171 ms |
+| L = 10,000, `sampled` selection, either distribution | 161 – 195 ms |
+| L = 10,000, `representative` × `longest` | 200 – 203 ms |
+| **L = 10,000, `dense_tail` × `longest`** | **453 – 473 ms** ← over |
 
 The two unknowns that decide it are of **different kinds**, and an earlier
 revision wrongly called both artifact properties:
@@ -571,7 +590,7 @@ revision wrongly called both artifact properties:
 
 The distinction matters operationally: the first is answered by pointing the
 benchmark at `shortest_paths.pt`, the second is not answerable without patient
-phenotype sets, and §8.2 shows it carries a 2.18× median swing.
+phenotype sets, and §8.2 shows it carries a 2.19× median swing.
 
 **This is the useful outcome of a baseline stage.** It converts "we should
 probably optimise this" into two specific measurements that decide it, and it
