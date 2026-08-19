@@ -21,7 +21,7 @@ after its work shipped is stale, not authoritative.
 |---|---|
 | [`results-review/`](results-review/) | under review — snapshot repository, results-review UX, deployment security |
 | [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0, the A/B/C/D measurement ladder |
-| [`task-scope/`](task-scope/) | what the institution's supplied-short-list use case changes. Scope decisions settled; the reserved-interface item is scheduled |
+| [`task-scope/`](task-scope/) | what the institution's supplied-short-list use case changes. Scope decisions settled; the reserved-interface item is **implemented**, the rest unscheduled |
 | [`scorer-retraining/`](scorer-retraining/) | scoping only — selecting a patient-encoder / score-family / objective bundle, and the checkpoint scorer schema. No gate cleared |
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md` and

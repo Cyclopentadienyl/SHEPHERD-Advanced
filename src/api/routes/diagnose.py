@@ -227,7 +227,13 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
 
     # Reserved, accepted, ignored — and the caller is told so on every path
     # below, because the field is equally inert in the mock fallback.
-    if request.candidate_genes:
+    #
+    # `is not None`, not truthiness. An explicitly supplied `[]` **was** supplied,
+    # and the settled contract and the field's own description both say supplying
+    # the field warns. A truthiness test would silently encode a "non-empty"
+    # contract that nobody agreed to, and would leave a caller who sent `[]`
+    # believing it had an effect.
+    if request.candidate_genes is not None:
         warnings.append(CANDIDATE_GENES_IGNORED_WARNING)
 
     try:

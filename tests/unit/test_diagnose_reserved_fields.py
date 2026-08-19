@@ -101,8 +101,19 @@ def test_omitting_the_field_produces_no_such_warning(client):
     assert CANDIDATE_GENES_IGNORED_WARNING not in body["warnings"]
 
 
-def test_an_empty_list_is_not_a_supplied_list(client):
+def test_an_explicitly_supplied_empty_list_still_warns(client):
+    """`[]` was supplied, so the contract says it warns.
+
+    An earlier version asserted the opposite, encoding a "non-empty" contract
+    through truthiness that neither the settled requirement nor the field's
+    description states. Omitted and null do not warn; `[]` and non-empty do.
+    """
     body = _run(client, {"phenotypes": PHENOTYPES, "candidate_genes": []})
+    assert CANDIDATE_GENES_IGNORED_WARNING in body["warnings"]
+
+
+def test_an_explicit_null_does_not_warn(client):
+    body = _run(client, {"phenotypes": PHENOTYPES, "candidate_genes": None})
     assert CANDIDATE_GENES_IGNORED_WARNING not in body["warnings"]
 
 

@@ -35,7 +35,7 @@ Read from the tree, not recalled.
 | R6 | It is **not dead code** — it is one side of an open decision | same document §6.B item 2, §7 question 2 |
 | R7 | All four `heads.py` classes are constructed **by tests** | `tests/unit/test_models.py:537-661` |
 | R8 | Three different patient aggregations exist | masked mean `trainer.py:744-751`; masked mean then a learned aggregator `shepherd_gnn.py:346,397,422`; `phenotype_encoder` MLP plus attention `heads.py:69-76,100-106` |
-| R9 | The checkpoint callback writes `state_dict` plus optimizer and scheduler state, and **no producer identity or scorer metadata** | `training/callbacks.py:297-312` |
+| R9 | The checkpoint callback has **two formats**. Weights-only writes `state_dict` alone. The normal format writes `epoch`, `state_dict`, `optimizer_state_dict`, `logs`, a serialized trainer `config`, optionally `scheduler_state_dict`, and optionally a `data_fingerprint`. **Neither carries a producer identity or an explicit scorer schema**, and which format a given file used is not recorded in it | `training/callbacks.py:288-317` |
 | R10 | The paper pairs its geometry with its objective: Eq 18's negative squared L2 is trained by Eq 19's NCA loss; this repository pairs cosine with a contrastive loss that L2-normalises internally | `SP_SCORE_GUIDE.md` §3; `loss_functions.py:323-331` |
 
 **`DiagnosisHead`'s euclidean branch is not "the paper's Eq 18".** It shares a
@@ -95,7 +95,7 @@ strict loading validates structural compatibility.
 
 | Kind | What may be said |
 |---|---|
-| Known legacy repository checkpoints, with provenance or as an accepted artifact family | May be classified **legacy headless cosine**; the historical objective stated **only where provenance supports it** |
+| Known legacy repository checkpoints, with provenance or as an accepted artifact family | May be classified **legacy headless cosine**; the historical objective stated **only where provenance supports it**. R9 gives that phrase a concrete hook: the normal format's optional `data_fingerprint` and its `logs` and `config` are what provenance could rest on — none is guaranteed present, and none is a scorer schema |
 | Unknown schema-less checkpoints that strict-load into headless `ShepherdGNN` | Structurally compatible; **training objective unknown** |
 | Explicit future scorer-schema checkpoints | Read the schema |
 | Unsupported | Refused |
@@ -128,7 +128,7 @@ counter-example that refuted it.
 | Comparing (score family, objective) pairs | Insufficient — the patient encoder is load-bearing too (R8) |
 | A generic runtime dropdown for the score family | Breaks checkpoint/objective semantics; the schema must be explicit first |
 | "Infer what leaves parameter evidence, record what does not" | Rested on "a score family has no parameters", which is false: `DiagnosisHead`'s `learned` branch builds a parametered `similarity_net` while `cosine` and `euclidean` build nothing — and those two are **identical** in the state dict |
-| "A schema-less checkpoint that strict-loads is contrastive-cosine trained" | Infers an objective from structure, which §2.3 forbids; and its antecedent "produced by this repository's trainer" is not checkable, since the callback writes no producer identity (R9) |
+| "A schema-less checkpoint that strict-loads is contrastive-cosine trained" | Infers an objective from structure, which §2.3 forbids; and its antecedent "produced by this repository's trainer" is not checkable, since neither callback format carries a producer identity (R9) — the serialized `config` is trainer configuration, not a scorer contract, and the weights-only format has none of it |
 | Deleting the unwired classes | Would delete one side of an open architecture decision (R6) |
 | A test asserting no constructor call exists | Breaks the day someone legitimately wires it |
 | Moving this plan into `DISEASE_SCORER_POLICY.md` | That file is the **accepted authority record**; this is an unexecuted experimental plan |
