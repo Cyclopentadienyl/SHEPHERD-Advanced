@@ -147,9 +147,18 @@ def test_measurement_order_actually_alternates(tmp_path, monkeypatch):
             f"both rows of cell {key} must record the same measurement order"
         )
 
-    orders = {pair[0]["measured_first"] for pair in cells.values()}
-    assert orders == {"singleton", "batched"}, (
-        f"measurement order never alternated across cells; saw only {orders}"
+    # `cells` is insertion-ordered, and rows are appended in timing order, so
+    # this list is the timed-cell sequence.
+    ordered = [pair[0]["measured_first"] for pair in cells.values()]
+
+    assert set(ordered) == {"singleton", "batched"}, (
+        f"measurement order never alternated across cells; saw only {set(ordered)}"
+    )
+    # Both orders occurring is not alternation: singleton, singleton, batched,
+    # batched would satisfy the assertion above and still leave a run of cells
+    # measured the same way round.
+    assert all(a != b for a, b in zip(ordered, ordered[1:])), (
+        f"adjacent timed cells did not alternate: {ordered}"
     )
 
 

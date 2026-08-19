@@ -34,7 +34,7 @@ primitive rather than ruling the question out for B-1 (§8.1).
 Rev 5 after review: the measurement-order alternation was **claimed but never
 executed** — it branched on `len(rows) % 2`, which is even at every cell
 boundary — so it is now counted per timed cell, pinned by a regression test, and
-the whole 240-cell matrix re-run with every §8 aggregate recomputed. The artifact
+the whole 120-cell / 240-row matrix re-run with every §8 aggregate recomputed. The artifact
 verdict also no longer implies acceptance: a real artifact is one of §3.1's two
 requirements and the deployment-equivalent CPU is the other, which this script
 cannot self-attest and must not gain a flag to fake.
@@ -495,7 +495,7 @@ is the order a direct reader of those attributes would see.
 
 ## 8. Baseline results — synthetic, development CPU
 
-`scripts/benchmark_sp_lookup.py`, seed 0, 240 cells, 0 skipped.
+`scripts/benchmark_sp_lookup.py`, seed 0. **120 timed cells, 240 result rows, 0 skipped** — the matrix is 2 mean lengths x 2 distributions x 2 phenotype selections x 3 phenotype counts x 5 candidate counts, and each cell emits one row per caller shape.
 
 **Evidence:** [`EVIDENCE_B04_baseline_synthetic.json`](EVIDENCE_B04_baseline_synthetic.json)
 — the full 240 rows with repeat counts, queried-slice totals, measurement order
@@ -516,7 +516,8 @@ exists here, so this run may not accept the deployed baseline and does not.**
 
 Median `singleton / batched` ratio across 120 configurations: **1.029** (range
 0.70–1.30). Measurement order alternates per timed cell and is recorded in
-`measured_first` — 120 cells each way — so the difference is not confounded with
+`measured_first` — 60 cells each way, represented by 120 rows carrying each
+value — so the difference is not confounded with
 a fixed order.
 
 *It did not, in the first run.* The alternation was written as
