@@ -314,4 +314,103 @@ per-candidate component rows listed there, under a bound that is not a top-N
 window. **That is an output contract, not a new mode, not a new stage and not a
 second institutional run.**
 
+---
+
+## 6. Unwired similarity switches — a second instance of Q1's class
+
+Reviewed in its own round, **after** §3's questions. Recorded here because it is
+the same class as Q1: a switch that reads like a live capability and reaches
+nothing. **Status of each item is marked**, because parts are settled and parts
+are still awaiting a reply.
+
+### 6.1 What is there — verified
+
+| Fact | Source |
+|---|---|
+| `PhenotypeDiseaseMatcher` exposes `similarity_type`: `bilinear` / `mlp` / `cosine` | `models/gnn/shepherd_gnn.py:332` |
+| `DiagnosisHead` exposes `similarity_type`: `learned` / `cosine` / `euclidean` | `models/decoders/heads.py:52`, branch at `:217` |
+| Neither class is constructed on any production path | no construction call in `src/` or `scripts/` |
+| The live training similarity is **hardcoded cosine in three places** | `trainer.py:761-763`; `loss_functions.py:323-331`; `scoring.py:210-211` |
+| `PhenotypeDiseaseMatcher`'s unwired status was **already recorded** | `RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md:433` |
+| It is **not** dead code — it is one side of an open decision | same document §6.B item 2, §7 question 2 |
+| All four `heads.py` classes are constructed **by tests** | `tests/unit/test_models.py:537-661` |
+
+**The euclidean branch is not "the paper's Eq 18".** It shares a distance family
+and nothing more has been shown — not the patient encoder, aggregation,
+objective, candidate universe or calibration. An earlier claim that it *was* Eq 18
+made the same mistake as the original F4: inferring equivalence from surface
+resemblance.
+
+### 6.2 Settled by review
+
+- **Severity is LOW; the work is deferred.** Neither class has clinical or
+  checkpoint exposure, so nothing here blocks or precedes B-0.4. The euclidean
+  branch does not raise the severity.
+- **Removal stays off the table** until the authoritative patient encoder/scorer
+  decision is made (findings §7 question 2).
+- **A short code-local annotation is the whole treatment**, added when the
+  retraining-track scoping or another legitimate edit touches those definitions —
+  **not as a standalone work item or hotfix.** It says only: experimental and
+  unwired; not constructed by the current training or inference pipeline;
+  `similarity_type` is not a live runtime or checkpoint contract; the decision is
+  tracked in `RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md` §7.
+- **Not permitted:** duplicating the findings text, an experimental-component
+  registry, a repository-wide audit of unwired capability, rewriting the module
+  scan, or a test asserting that no constructor call exists — that test breaks on
+  the day someone legitimately wires it.
+
+### 6.3 Scoping order for the retraining track — settled, with one open proposal
+
+The wiring decision and the score-family decision cannot be taken independently:
+the patient encoder determines checkpoint parameters, the score family
+determines direction and geometry, and the objective determines what the
+embeddings were trained to mean.
+
+1. define the task and the authoritative patient representation;
+2. choose the score family;
+3. choose a compatible training objective;
+4. define a versioned checkpoint scorer schema;
+5. train and measure explicit variants;
+6. select a variant;
+7. add inference support for that explicit schema.
+
+**No generic production dropdown first.**
+
+> **[OPEN — proposed, not yet answered]** Steps 2 and 3 as written select before
+> step 5 measures, which would defeat the question that started this ("which is
+> better?"). The paper shows the two are paired rather than independent: Eq 18's
+> negative squared L2 is trained by Eq 19's NCA loss, while this repository pairs
+> cosine with a contrastive loss that L2-normalises internally. **Proposal: steps
+> 2 and 3 *enumerate* candidate (score family, objective) pairs, and step 6
+> selects.** The rest of the order is unaffected.
+
+### 6.4 Checkpoint scorer schema — settled, with one boundary added
+
+Inference must never guess or silently switch similarity functions. The
+checkpoint records a **versioned scorer schema** covering at least: patient
+encoder/aggregation type and version; score family and direction; score
+transform if any; training objective; and the architecture parameters needed to
+reconstruct the scorer. The loader instantiates only a supported explicit schema
+and **fails closed** on unknown or incompatible metadata.
+
+> **[OPEN — proposed, not yet answered]** "Do not infer the scorer heuristically
+> from state-dict keys or tensor shapes" needs a stated boundary, or it reads as
+> condemning `resolve_arch_params`, which is correct. That function infers
+> `conv_type` from state-dict keys, and that is sound because different conv
+> types **produce different parameter names** — the evidence is real. A score
+> family has no parameters and leaves no trace. **The boundary: infer what leaves
+> parameter evidence, record what does not.** `resolve_arch_params` is on the
+> correct side of it.
+
+> **[OPEN — proposed, not yet answered]** The legacy compatibility rule is
+> writable today rather than left as a migration question.
+> `DISEASE_SCORER_POLICY.md` §3.2 and §3.3 establish that `ShepherdGNN`
+> constructs no task head, that the deployed checkpoint passes a strict
+> `load_state_dict` and so carries no task-head parameters, and that training
+> uses the inline cosine at `trainer.py:761-763`. **Proposed rule:** a checkpoint
+> produced by *this repository's trainer* and carrying no scorer schema is cosine
+> with the contrastive objective. Scoped to checkpoints this trainer produced.
+
+---
+
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
