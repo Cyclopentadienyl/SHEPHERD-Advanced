@@ -320,7 +320,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--split", default="test", choices=["train", "val", "test"])
+    parser.add_argument("--split", required=True,
+                        choices=["train", "val", "test"],
+                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. `val` is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated and are not held-out generalisation.')
     parser.add_argument("--workdir", type=Path, required=True,
                         help="Where both runs write. Created if absent")
     parser.add_argument("--seed", type=int, required=True,
