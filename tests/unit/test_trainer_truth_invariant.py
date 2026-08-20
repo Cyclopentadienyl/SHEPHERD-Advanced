@@ -6,14 +6,22 @@ wrong. Scoring it as a rank miss would turn a data-pipeline failure into
 apparent model error and contaminate the loss, `val_mrr`, early stopping and
 checkpoint selection. **The contract is refuse.**
 
-This file exists in two halves, and the order matters:
+Three boundaries enforce it, each small and local, and this file covers two:
 
-  1. **Characterization** — the complete trainer path already refuses, through
-     `DiagnosisLoss`. Frozen here *before* the guard below was added, so the
-     guard can be shown to preserve behaviour rather than create it.
-  2. **The explicit guard** — `_compute_model_outputs` now checks the range
-     itself. Same outcome, named error, and raised before the silent clamp that
-     used to stand in that position.
+  1. **`DiagnosisDataLoader._assert_disease_truth_in_range`** — where the failure
+     is created, on the host, immediately after the remap that can produce a `-1`
+     hole. Covered in `tests/unit/test_data_pipeline.py`.
+  2. **`DiagnosisLoss`** — the independent refusal for any caller that bypasses
+     that loader. Covered below.
+  3. **`to_global_ids`** — the measurement harness's own boundary. Covered in
+     `tests/unit/test_measurement_ranking.py:52-56`.
+
+**Scope of the claim below, stated narrowly on purpose.** These tests establish
+refusal *at the loss*, plus the fact that `_compute_model_outputs` no longer
+clamps. They do **not** drive `_validate` or `evaluate` end to end, so "the
+complete path refuses" rests on those two facts plus the call ordering visible in
+`trainer.py:640` — source ordering, not coverage. Full orchestration coverage is
+backlog item 1b and is not built here.
 
 `_compute_model_outputs` touches no attribute of `self`, so it is exercised as
 an unbound call rather than behind a constructed `Trainer` with an optimizer, a
@@ -64,7 +72,7 @@ def compute(disease_ids):
 
 
 # ---------------------------------------------------------------------------
-# 1. Characterization — what the complete path did before the guard
+# 1. Loss-level refusal — the independent second boundary
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("label_smoothing", [0.0, 0.1])
 @pytest.mark.parametrize("bad", [[0, -1], [0, N_DISEASES], [0, 99]])
@@ -81,14 +89,18 @@ def test_diagnosis_loss_refuses_a_malformed_truth(label_smoothing, bad):
         loss(scores, torch.tensor(bad))
 
 
-def test_the_loss_runs_before_predictions_are_collected():
-    """Why the metric fragment is unreachable with a malformed truth.
+def test_the_ranking_primitive_is_permissive_in_isolation():
+    """The distinction that made an earlier claim in this project wrong.
 
-    `_validate` calls `self.loss_fn(...)` (`trainer.py:640`) before collecting
-    predictions (`:646-657`). `mean_reciprocal_rank` *would* score a `-1` truth
-    as `0.0` in isolation — but the loss raises first, so the trainer never
-    records that number. This asserts the isolated behaviour so the distinction
-    stays visible: the primitive is permissive, the path is not.
+    `mean_reciprocal_rank` scores a `-1` truth as `0.0` when called directly.
+    That is a fact about the *primitive*, and it was once written up as a fact
+    about the trainer — which it is not, because `_validate` calls
+    `self.loss_fn(...)` at `trainer.py:640` before collecting predictions at
+    `:646-657`, and the loss refuses first.
+
+    **This test does not prove that ordering**; it pins the permissive primitive
+    so the difference between it and the path stays visible. The ordering is
+    source-level and its coverage belongs to item 1b.
     """
     from src.utils.metrics import RankingMetrics
 
@@ -100,29 +112,43 @@ def test_the_loss_runs_before_predictions_are_collected():
 
 
 # ---------------------------------------------------------------------------
-# 2. The explicit guard
+# 2. `_compute_model_outputs` no longer clamps, and adds no CUDA sync
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("bad,offender", [([0, -1], -1), ([0, N_DISEASES], 5), ([99, 0], 99)])
-def test_compute_model_outputs_refuses_a_malformed_truth(bad, offender):
-    """Named, domain-specific, and raised before any gather."""
-    with pytest.raises(ValueError, match="disease truth"):
-        compute(bad)
+def test_no_range_check_runs_in_the_hot_path():
+    """The guard must not be reinstated here, and this says why in an assertion.
 
-    with pytest.raises(ValueError, match=str(offender)):
-        compute(bad)
+    `disease_ids` reaches `_compute_model_outputs` after `_move_to_device`, so any
+    data-dependent branch on it — `bool(t.any())`, `if t.item()`, an `assert` over
+    a device tensor — forces a host-device synchronisation on **every valid
+    batch** of training and validation. A tensor that records every `bool()` taken
+    of it stands in for the CUDA tensor a deployment run would pass.
+    """
+    calls = []
+
+    class RecordingBool(torch.Tensor):
+        @staticmethod
+        def __new__(cls, data):
+            return torch.Tensor._make_subclass(cls, data)
+
+        def __bool__(self):
+            calls.append("bool")
+            return super().__bool__()
+
+    batch = make_batch([0, 1])
+    batch["disease_ids"] = RecordingBool(batch["disease_ids"])
+    Trainer._compute_model_outputs(None, node_embeddings(), batch, {}, {})
+
+    assert calls == [], (
+        "a bool() was taken of the disease-id tensor in the hot path; on CUDA "
+        "that is a per-batch host-device synchronisation"
+    )
 
 
-def test_the_error_names_the_candidate_count():
-    """An id of 5 against 5 rows is a different bug from an id of 5 against 500."""
-    with pytest.raises(ValueError, match=str(N_DISEASES)):
-        compute([0, N_DISEASES])
+def test_a_legal_truth_gathers_the_rows_the_ids_name():
+    """The gather uses the **original** ids — no clamp, no copy.
 
-
-def test_a_legal_truth_is_unchanged_by_the_guard():
-    """Behaviour-preserving for valid input — the whole justification for adding it.
-
-    The gather must use the **original** ids, not a clamped copy, so this pins
-    the embeddings to the rows the ids name.
+    A clamp here would silently score a different disease for a malformed truth,
+    which is the defect this removal exists to prevent.
     """
     embeddings = node_embeddings()
     outputs = Trainer._compute_model_outputs(

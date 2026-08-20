@@ -81,12 +81,12 @@ that exist. Only the rows below are open.
 |---|---|
 | D1 | **Record the limitation, not a field.** Historical epoch RNG state was never saved, so the historical stochastic validation traversal is not exactly reproducible. Sample order in a *new* run is pinned by `shuffle=False` plus the samples digest |
 | D2 | Add `amp_dtype` (only the boolean is recorded today) and the **observed** `torch.compile` execution state — an execution fact, not a requested config value. No compile-metadata machinery |
-| D3 | **ID space closed from source; enforcement is asymmetric and that is the open item.** `_remap_indices` (`data_loader.py:956-964`) maps `batch["disease_ids"]` through `node_mapping["disease"]` into subgraph-local space, the same space as the score-matrix columns, and trainer and Mode A read the same remapped tensor. **Mode A enforces the range invariant and refuses; the trainer does not.** See §2.3 |
+| D3 | **Closed.** `_remap_indices` (`data_loader.py:956-964`) maps `batch["disease_ids"]` into subgraph-local space, the same space as the score-matrix columns, and trainer and Mode A read the same remapped tensor. The range invariant is enforced at **three independent boundaries** — loader, loss, harness — none of them in the CUDA hot path. See §2.3. What remains is the legal-truth equality test, which needs 1c and sits in 1e |
 | D4 | No excluded-sample list is required **while the run is fail-fast**. Record that the run does not silently skip samples and that ranked plus ground-truth-absent account for the intact cohort. `n_ground_truth_absent` is a count, **not** an excluded- or failed-sample list; if skip-and-continue is ever introduced, skipped ids and reasons become required then |
 | D5 | Exact artifact identity. A/B/C already digest checkpoint, samples, node features, edge indices and num_nodes (`measure_scorer.py:79-92`). Open: the **shortest-path artifact digest, added when Mode D consumes it**, and comparing recorded digests against the institution-approved artifact set at acceptance. No registry, no compatibility database |
 | D6 | Aggregate `val_mrr` is insufficient for parity and is a historical sanity reference only (§3.1.1) |
 
-### 2.3 D3 — where the malformed-truth invariant is enforced, and where it is not
+### 2.3 D3 — where the malformed-truth invariant is enforced
 
 The invariant at issue:
 
@@ -145,17 +145,35 @@ batch wiring is wrong. Scoring it as a rank miss would convert a data-pipeline
 failure into apparent model error and contaminate the loss, `val_mrr`, early
 stopping and checkpoint selection.
 
-**What was still worth fixing** — and is now done (`trainer.py:754-784`): the
-disease gather was guarded by `disease_ids.clamp(min=0, max=...)`, a *silent
-correction* sitting where the refusal belongs. It protected nothing, since the
-loss rejects the same ids two statements later, and it made the refusal an
-accident of which tensor got passed where — a later edit passing the clamped
-tensor as `diagnosis_targets` would have removed the refusal without touching
-anything that looked load-bearing. The clamp is replaced by an explicit range
-check that names the offending id and the candidate count, and the gather now
-uses the original ids. Behaviour-preserving for valid input; 10 characterization
-tests were written and passing **before** the change, and 4 guard tests were
-failing before it and passing after.
+**What was still worth fixing** — and is now done: the disease gather was
+guarded by `disease_ids.clamp(min=0, max=...)`, a *silent correction* sitting
+where the refusal belongs. It protected nothing, since the loss rejects the same
+ids two statements later, and it made the refusal an accident of which tensor got
+passed where — a later edit passing the clamped tensor as `diagnosis_targets`
+would have removed the refusal without touching anything that looked
+load-bearing. The clamp is gone and the gather uses the original ids.
+
+**The explicit check lives at the loader, not the trainer, and the reason is
+performance.** A first version put it in `_compute_model_outputs`, where
+`disease_ids` has already been through `_move_to_device`; `bool(t.any())` on a
+CUDA tensor forces a **host-device synchronisation on every valid training and
+validation batch**. That is a permanent throughput cost to catch a condition that
+cannot occur. It now sits in
+`DiagnosisDataLoader._assert_disease_truth_in_range`, on the host, immediately
+after the remap that creates the failure.
+
+**Three boundaries, each small and local, none shared:**
+
+| Boundary | Where | Covers |
+|---|---|---|
+| `_assert_disease_truth_in_range` | `data_loader.py`, CPU | the point the `-1` hole is created |
+| `DiagnosisLoss` | `loss_functions.py` | any caller that bypasses that loader |
+| `to_global_ids` | `measurement.py:91-100` | the measurement harness's own boundary |
+
+No cross-module validator: three checks of a few lines each keep the coupling
+lower than one shared one would. A regression test asserts that **no `bool()` is
+taken of the disease-id tensor in the hot path**, so the CUDA sync cannot be
+reinstated by a later well-meaning edit.
 
 The **phenotype** clamp at `trainer.py:739` is a different thing and stays:
 `diagnosis_collate_fn` pads phenotype ids with `-1` by design and the mask
@@ -288,7 +306,7 @@ depends on is resolved.
 |---|---|---|---|---|
 | **1** | **The calibration decision** — §3.1.2, adopted and reviewed | — | **decided** | — |
 | **1a** | Correct and **suspend** the legacy-removal checklist | 1 | author | **done** |
-| **1a2** | **Malformed-truth invariant** (§2.3) — characterize the complete trainer path as refusing, replace the silent disease clamp with an explicit range check, test `-1`, upper bound and legal bounds. **Not a decision gate**: the contract is REFUSE and both paths already implement it | 1a | author | **done** |
+| **1a2** | **Malformed-truth invariant** (§2.3) — remove the silent disease clamp; enforce the range at the **loader** boundary on CPU, not in the trainer hot path where it would sync CUDA every batch. **Not a decision gate**: the contract is REFUSE and all three boundaries implement it | 1a | author | **done** |
 | **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour | 1a2 | author | small |
 | **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
 | **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
@@ -423,6 +441,9 @@ Recorded because the request that produced this file was to stop them recurring.
 | §2.2 credited `_assert_cohort_is_intact` with enforcing the local-truth range invariant | **Wrong citation, right conclusion.** `to_global_ids` (`measurement.py:91-100`) is what enforces it, and `tests/unit/test_measurement_ranking.py:52-56` already covers `[3]`, `[99]` and `[-1]`. Corrected in §2.3 |
 | Review held that a `-1` local truth reaches PyTorch negative indexing and silently selects the last candidate, leaving `n_absent` at zero | **Refuted empirically.** `to_global_ids` raises `"local ids must be non-negative"` before any indexing, and `tests/unit/test_measurement_ranking.py:52-56` already covers it. The trainer-side asymmetry proposed in the same reply was itself wrong — see the row below |
 | This file claimed the trainer silently scored a malformed truth `0.0` into `val_mrr`, making it an open contract decision (item 1f) | **Wrong, and wrong the same way I had criticised: a fragment traced without its path.** `self.loss_fn` runs before prediction collection (`trainer.py:640`) and `DiagnosisLoss` raises on both label-smoothing branches. Verified by execution. Item 1f is dissolved; the contract is REFUSE and both paths already implement it |
+| The first fix for the malformed-truth invariant put the check in `Trainer._compute_model_outputs`, after `_move_to_device` | `bool(cuda_tensor.any())` synchronises host and device **every valid batch**. Moved to `DiagnosisDataLoader._assert_disease_truth_in_range` — CPU, at the boundary that creates the hole. A test now asserts no `bool()` is taken of that tensor in the hot path |
+| The trainer test file claimed to characterize "the complete trainer path" | It called `DiagnosisLoss` directly and rested the rest on source ordering. Claim narrowed to loss-level refusal; full orchestration coverage stays with item 1b |
+| `benchmark_sp_lookup` chose shape order with `(cell_index + position) % 2`, intending to decorrelate it from the rotated implementation order | With two implementations the rotation moves `position` with `cell_index`, so the sum was **constant per implementation identity** — `current` singleton-first 60/60, prototypes batched-first 60/60. Keyed on the cell alone; regression test now runs the two-implementation configs. Impact on the collected data bounded in `PLAN_B04.md` §12.6 |
 | M1 was written as "no checkpoint this project has produced" | Overclaimed: no historical audit was run. Narrowed to the current producers and the scanned family, which is sufficient to reject the frozen evaluator as the acceptance oracle |
 | Item 10 asked for "the raw scan and audit outputs" | Raw institutional console output carries paths and sample identifiers. Replaced by three bounded aggregate JSONs plus their scripts (§5.2) |
 

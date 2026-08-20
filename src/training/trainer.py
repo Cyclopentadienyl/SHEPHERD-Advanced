@@ -754,34 +754,25 @@ class Trainer:
 
         # Get disease embeddings for targets.
         #
-        # **Refuse a malformed truth; never clamp one.** A disease id outside
-        # [0, n_subgraph_disease_rows) means the subgraph seeding, the id remap
-        # (`data_loader.py:956-964`), the candidate alignment or the batch wiring
-        # is wrong. Clamping it silently scores a *different* disease and turns a
-        # data-pipeline failure into apparent model error, contaminating the
-        # loss, `val_mrr`, early stopping and checkpoint selection.
+        # **No clamp, and no range check here either.** The clamp that used to
+        # stand in this position silently scored a *different* disease for a
+        # malformed truth, turning a data-pipeline failure into apparent model
+        # error; it is gone. The range check that briefly replaced it is gone
+        # too, for a different reason: `disease_ids` has been through
+        # `_move_to_device` by the time this runs, so `bool(out_of_range.any())`
+        # would force a host-device synchronisation on **every valid batch** of
+        # training and validation. That is a throughput cost paid forever to
+        # catch a condition that cannot occur.
         #
-        # This replaces a clamp rather than adding to one. The complete path
-        # already refused — `DiagnosisLoss` reaches `cross_entropy`/`gather`/
-        # `scatter_` with the unclamped `diagnosis_targets` below and raises
-        # there — so this is behaviour-preserving for valid input and only moves
-        # the refusal earlier, with a message that names the offending id and the
-        # candidate count instead of a bare tensor index error. It also stops the
-        # refusal depending on which tensor a later edit happens to pass where.
+        # The invariant is enforced where it is created and while it is still on
+        # the host: `DiagnosisDataLoader._assert_disease_truth_in_range`, run
+        # immediately after the remap that can produce a `-1` hole. `DiagnosisLoss`
+        # is the independent second refusal for any caller that bypasses that
+        # loader.
         #
         # The phenotype clamp above is **not** the same thing and stays:
         # `diagnosis_collate_fn` pads phenotype ids with -1 by design and the
         # mask discards those positions. Disease truths are never padded.
-        n_disease_rows = disease_emb.size(0)
-        out_of_range = (disease_ids < 0) | (disease_ids >= n_disease_rows)
-        if bool(out_of_range.any()):
-            offenders = disease_ids[out_of_range].tolist()
-            raise ValueError(
-                f"disease truth out of range: {offenders} not in "
-                f"[0, {n_disease_rows}) for this batch's subgraph. The ground "
-                "truth must be one of the subgraph's own disease rows; this is a "
-                "batch-construction or id-remapping failure, not a model result"
-            )
         target_disease_emb = disease_emb[disease_ids]
         outputs["disease_embeddings"] = target_disease_emb
 

@@ -499,10 +499,18 @@ def time_table(
                     # recorded `measured_first="singleton"` for all 240 rows while
                     # §8.1 claimed otherwise.
                     #
-                    # Derived from (cell, position) rather than a second draw, so
-                    # shape order and implementation order vary independently
-                    # instead of moving together.
-                    if (cell_index + position) % 2:
+                    # **From the cell alone, never from `position`.** An earlier
+                    # version used `(cell_index + position) % 2`, intending to
+                    # decorrelate the two orders. With two implementations the
+                    # rotation moves `position` in lockstep with `cell_index`, so
+                    # the sum is constant per implementation *identity*: `current`
+                    # came out singleton-first in 60/60 rows and the prototype
+                    # batched-first in 60/60. Rotating the implementations
+                    # cancelled the shape alternation instead of decorrelating it.
+                    #
+                    # Keyed on the cell, every implementation in a cell shares one
+                    # shape order and each alternates across cells.
+                    if cell_index % 2:
                         shapes.reverse()
                     for shape, fn in shapes:
                         timing = _repeat(fn, table, phenotypes, candidates)

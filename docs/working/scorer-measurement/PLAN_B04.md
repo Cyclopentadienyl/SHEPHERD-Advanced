@@ -1092,7 +1092,46 @@ spectrum — A stores a global key, B stores none and pays per phenotype — and
 nothing between them was measured. §5.2's instruction was prototype both,
 productionise one.
 
-### 12.6 A defect in the evidence, recorded rather than corrected
+### 12.6 The measurement-order defect, and what it does to §12
+
+**Found in review after the run, and confirmed in the evidence itself.** The
+shape order was chosen with `(cell_index + position) % 2`, meaning to decorrelate
+it from the rotated implementation order. With two implementations the rotation
+moves `position` in lockstep with `cell_index`, so the sum is constant per
+implementation *identity*. Counted from the committed files:
+
+| | rows | `measured_first` |
+|---|---|---|
+| `current` | 60 / 60 | `singleton` |
+| `global` | 60 / 60 | `batched` |
+| `slices` | 60 / 60 | `batched` |
+
+Implementation *position* rotated correctly — 30/30 for each — so the fix was
+half-right and the half that failed is the one that mattered. This is the second
+time an alternation in this script was claimed and not delivered; the first
+(rev 5) branched on `len(rows) % 2`. Both are now pinned by regression tests, and
+the new one runs the **two-implementation configurations §11.3 actually
+documents** rather than a single-implementation run that cannot see the coupling.
+
+**What it does to the conclusions, bounded rather than asserted:**
+
+- **A-vs-B is unaffected.** Both prototypes were batched-first in 60/60 rows, so
+  the bias is identical on both sides of the selection comparison.
+- **The order effect is measurable and small.** `current` runs the same algorithm
+  for both shapes (§9.2 put the ratio at 1.001), so for `current` any systematic
+  singleton/batched gap in this run *is* the order effect: **median 1.003, worst
+  1.049** across both runs.
+- **The gaps it would have to explain are far larger.** The smallest
+  current-vs-prototype ratio anywhere in the singleton matrix is **2.18×**, and
+  the selection-relevant ones are 8-34×.
+
+So §12.2-12.5 stand. **The run should nonetheless be repeated** once this lands:
+it costs about three minutes per process, and an evidence file whose ordering
+guarantee was not honoured is a worse record than one that was, however small the
+effect. §12.5's recommendation is not expected to move, and saying so in advance
+is what makes the re-run a check rather than a search for a better answer.
+
+### 12.7 A defect in the evidence, recorded rather than corrected
 
 Both JSONs carry `provenance.sampling_rule` saying candidates are drawn "with
 replacement". **They were not.** The without-replacement fix landed in the same

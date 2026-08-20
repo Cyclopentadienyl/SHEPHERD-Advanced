@@ -358,3 +358,69 @@ def test_a_cell_wanting_more_candidates_than_exist_is_reported_skipped(tmp_path,
     assert report["rows"] == []
     reasons = {s["reason"] for s in report["skipped"]}
     assert any("unique candidates" in r for r in reasons), reasons
+
+
+@pytest.mark.parametrize("prototype", ["global", "slices"])
+def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, prototype):
+    """BLOCKING regression: run the **documented two-implementation configs**.
+
+    An earlier version chose the shape order with `(cell_index + position) % 2`,
+    meaning to decorrelate it from the rotated implementation order. With two
+    implementations the rotation moves `position` in lockstep with `cell_index`,
+    so the sum was constant per implementation *identity*: on the real artifact
+    `current` came out singleton-first in 60/60 rows and the prototype
+    batched-first in 60/60. Any warm-up or cache asymmetry between the shapes
+    then attached permanently to one implementation.
+
+    A single-implementation run cannot see this, and the previous test used one.
+    These use `current,global` and `current,slices` — the two commands PLAN_B04
+    §11.3 actually tells the operator to run.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10, 20))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1, 20))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / f"order_{prototype}.json"
+    assert bench.main(
+        ["--implementations", f"current,{prototype}", "--output", str(output)]
+    ) == 0
+    rows = json.loads(output.read_text())["rows"]
+
+    for implementation in ("current", prototype):
+        orders = {r["measured_first"] for r in rows if r["implementation"] == implementation}
+        assert orders == {"singleton", "batched"}, (
+            f"{implementation} was always measured {orders} first across every "
+            "cell; shape order is coupled to implementation identity"
+        )
+
+    # Both implementation orders still occur, and both still see one workload.
+    positions = {
+        (r["implementation"], r["implementation_position"]) for r in rows
+    }
+    for implementation in ("current", prototype):
+        assert {p for i, p in positions if i == implementation} == {0, 1}, implementation
+
+    def workload(name):
+        return sorted(
+            (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+             r["caller_shape"], r["queried_slice_total"])
+            for r in rows if r["implementation"] == name
+        )
+
+    assert workload("current") == workload(prototype)
+
+    # Within one cell every implementation must share the shape order, which is
+    # what keeps the two comparable at all.
+    per_cell = {}
+    for r in rows:
+        key = (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+               r["distribution"], r["mean_slice_length"])
+        per_cell.setdefault(key, set()).add(r["measured_first"])
+    for key, orders in per_cell.items():
+        assert len(orders) == 1, f"cell {key} measured two shape orders: {orders}"
