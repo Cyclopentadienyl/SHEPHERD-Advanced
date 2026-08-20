@@ -1,14 +1,19 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 7. The **baseline stage is complete**, and the §5.3.2
-compatibility gate has **passed** (§10). and its gate is answered:
-measured on the real artifact and on a GB10 SPARK — the hardware class the
-institution names as its primary edge deployment platform — the current lookup
-**exceeds the provisional budget by 1.7-2.5x** (§9), so the
-stage moves to the prototype phase. No index prototype is built yet and no
-production code has changed. This
-plan also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md)
-§5, which was wrong in a way that made the work look smaller and pointed at the
+**Status:** rev 7. **Both gates are cleared and the stage is ready to
+prototype.**
+
+- **§3.1, the latency gate — answered.** On the real artifact and a GB10 SPARK,
+  the hardware class the institution names as its primary edge deployment
+  platform, the current lookup **exceeds the provisional budget by 1.7-2.5x**
+  (§9). A replacement is warranted.
+- **§5.3.2, the compatibility gate — passed.** Zero duplicate rows on two
+  independently built artifacts (§10), so the uniqueness assertion will not
+  refuse to start.
+
+**No index prototype is built and no production code has changed.** The plan
+also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md) §5,
+which was wrong in a way that made the work look smaller and pointed at the
 wrong file.
 
 Rev 2 after review: the stage is **benchmark-gated and baseline-first** (§3), the
@@ -345,14 +350,22 @@ Named here because each is a way the change could silently alter results:
    occur.
 
    **This changes startup behaviour, so it needs a compatibility gate against
-   the real artifact, not only a synthetic test.** A table that today's
-   first-match implementation loads happily would make the new loader refuse to
-   start. Before the loader change is productionised: scan the **deployed**
-   artifact and record its fingerprint, pair count and duplicate count. **The
-   duplicate count must be zero.** If the artifact is unavailable, implementation
-   may proceed but **deployment compatibility remains pending**. If duplicates
-   are found, **stop** — B-0.4 does not invent a deduplication or migration
-   policy.
+   real artifacts, not only a synthetic test.** A table that today's first-match
+   implementation loads happily would make the new loader refuse to start.
+
+   **The gate is evidence about the generator, not clearance for one file
+   (§10.1).** The knowledge base is updated on purpose — that is a project
+   feature, not drift — so there is no single "deployed artifact" to clear:
+   there is a sequence of them, and the institution's will be a vintage nobody
+   has built yet. What the gate establishes is that real tables satisfy the
+   invariant, which is a property of `compute_shortest_paths.py`'s BFS rather
+   than of any one build. **Satisfied by two independently built artifacts from
+   different HPO vintages, both with zero duplicates.**
+
+   The ongoing guarantee is the load-time assertion itself, which runs on
+   whatever table is present. If a future rebuild ever violates uniqueness it
+   fails at startup rather than scoring wrongly — and **B-0.4 does not invent a
+   deduplication or migration policy** for that case.
 3. **Unreachable handling.** A phenotype with no row for a candidate contributes
    `unreachable_distance`, and a phenotype absent from `offsets` entirely does
    too. Both are misses in the vectorised form and must produce the same value,
@@ -711,7 +724,7 @@ ordering:
 
 | | Index-build memory |
 |---|---|
-| **A — global composite key** | An int64 key over 429,971,678 rows is **3.44 GB**, and sorting it needs a comparable index buffer — order **+7 GB transient**, on top of a table already in the multi-GB range |
+| **A — global composite key** | An int64 key over 429,971,678 rows is **3.44 GB**, and sorting it needs a comparable index buffer — an estimate of order **+7 GB transient**, on top of a table already in the multi-GB range. **§10.2 measures roughly three times that** for a comparable operation, on unified memory shared with the model |
 | **B — per-phenotype sorted slices** | No global key; the offsets already exist; sorting happens within slices |
 
 §5.2 expected A to win on kernel-launch count and explicitly refused to prefer it
