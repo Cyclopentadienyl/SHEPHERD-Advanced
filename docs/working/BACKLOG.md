@@ -230,6 +230,7 @@ depends on is resolved.
 | **8a** | B-0.5 protocol and output-contract **design** | 1 | author | **before** any expensive run |
 | **8b** | B-0.5 institutional execution | 8a, 7b, 6, exact artifacts, production-path prerequisites | both | blocked |
 | **9** | Mechanical rename (~70 refs, 9 files), then rewrite the checklist, then delete the oracle-only surface | **1d passed review incl. its institutional CUDA run** | author | behaviour-neutral |
+| **10** | **Commit evidence files for M1-M5.** M6 and M7 have `EVIDENCE_B04_*.json` beside their plan; M1-M5 have nothing — they exist only as text pasted into a review thread. Needs the raw scan and audit outputs, and the scripts that produced them | — | institution + author | small, see §5.1 |
 
 **Parked deliberately, not forgotten:** `task-scope/` Q2–Q5 (settled, unscheduled)
 and `scorer-retraining/` (scoping only, four gates uncleared). Neither blocks nor
@@ -256,6 +257,23 @@ would leave the harness with no acceptance at all.
 **8a comes before 7b for a reason:** designing B-0.5's output contract after an
 expensive institutional run is how required evidence gets discovered too late to
 collect.
+
+### 5.1 An asymmetry in the evidence, recorded because it is load-bearing
+
+M6 and M7 have committed artifacts — `EVIDENCE_B04_baseline_synthetic.json` and
+`EVIDENCE_B04_artifact_spark.json` sit beside `PLAN_B04.md`, and anyone may
+recompute from them.
+
+**M1-M5 have no artifact.** They exist as text pasted into a review thread and
+summarised here. That is the wrong way round: M1 and M2 are what established that
+the calibration target does not exist — the largest decision this phase has made
+— and M4 is what bounds every number the project will report. Those are precisely
+the facts that most need to be independently checkable, and they are the ones a
+reviewer has to take on trust.
+
+Nothing here is disputed. The point is that "reviewed and approved" currently
+means *approved on a summary* for five of the eight established facts, and the
+existing `EVIDENCE_*.json` convention already shows what fixes it.
 
 ---
 
