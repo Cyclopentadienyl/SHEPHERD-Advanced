@@ -1,7 +1,7 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 7. **Both gates are cleared and the stage is ready to
-prototype.**
+**Status:** rev 8. **Both prototypes are built, correct, and measured on the
+real artifact. A selection is recommended and awaits review (§12.5).**
 
 - **§3.1, the latency gate — answered.** On the real artifact and a GB10 SPARK,
   the hardware class the institution names as its primary edge deployment
@@ -11,7 +11,8 @@ prototype.**
   independently built artifacts (§10), so the uniqueness assertion will not
   refuse to start.
 
-**No index prototype is built and no production code has changed.** The plan
+**No production code has changed.** Both prototypes live in
+`scripts/sp_index_prototypes.py` and are consumed only by the benchmark. The plan
 also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md) §5,
 which was wrong in a way that made the work look smaller and pointed at the
 wrong file.
@@ -55,6 +56,16 @@ artifact, whose p100 is only 1.17x its p50; the caller-shape conclusion holds at
 a median ratio of 1.001; the baseline misses the provisional budget by 1.7-2.5x;
 and 430 million rows makes index-build memory a first-order criterion that may
 invert §5.2's expected ordering.
+
+Rev 8: both prototypes measured on the real artifact (§12). Approach A is
+8-34x faster on the **singleton** caller production ships — inverting §5.2's
+expectation that its advantage would be batched-only — and meets the provisional
+budget in all 60 cells where B misses four inside the contractual phenotype
+range. The memory argument against A **does not survive measurement**: neither
+build raises the process peak, which loading alone already sets at 21.11 GB. A's
+real cost is 3.44 GB of steady-state residence. §9.3's gate verdict also does not
+reproduce on this third artifact vintage, which is itself a finding about the
+baseline rather than about the prototypes.
 
 Rev 7: the §5.3.2 compatibility gate **passed** on a second, independently built
 artifact — zero duplicates, non-negative ids, and a composite-key maximum seven
@@ -837,7 +848,7 @@ yet for prototyping approach B rather than assuming A.
 
 ---
 
-## 11. Prototype phase — both built, correctness closed, timing pending
+## 11. Prototype phase — both built, correctness closed, both measured
 
 `scripts/sp_index_prototypes.py`. **Measurement subjects, not production code**,
 and not importable from `src/` — when one wins it moves into the loader and the
@@ -971,5 +982,130 @@ that exercised the plumbing is not evidence: its synthetic slices are ~200 rows,
 where `log L` has almost nothing to save. §9's conclusion — that the baseline
 misses the provisional budget — stands on the artifact run, and the prototypes'
 verdict must stand on one too.
+
+---
+
+## 12. Prototype results — the real artifact, GB10 SPARK
+
+Three processes as §11.3 specifies. Evidence:
+[`EVIDENCE_B04_proto_global.json`](EVIDENCE_B04_proto_global.json),
+[`EVIDENCE_B04_proto_slices.json`](EVIDENCE_B04_proto_slices.json), and
+`time_baseline.txt` / `time_global.txt` / `time_slices.txt`.
+
+**The artifact is a third vintage**, sha256 `7268900c…`, 430,585,772 rows,
+19,566 phenotypes — not the `9ada0c1a…` / 429,971,678-row table §9 measured.
+§10.1 already established that this is the normal case. It is why each run
+carries its own in-process `current` baseline.
+
+### 12.1 The two runs are comparable
+
+`current` was measured in both, over the same 60 cells with the same seed:
+**median run-to-run deviation 0.62%, maximum 2.80%.** Every prototype-vs-current
+ratio below is therefore within one run, and the two runs can be read side by
+side.
+
+### 12.2 Latency — the production caller shape decides it
+
+`slices / global`, median ms, **singleton** — the shape production ships (§4.1):
+
+| P \ C | 10 | 50 | 100 | 200 | 500 |
+|---|---|---|---|---|---|
+| **1** | 0.78 | 0.76 | 0.77 | 0.76 | 0.78 |
+| **20** | 8.56 | 8.55 | 8.38 | 8.23 | 8.07 |
+| **100** | 33.89 | 25.41 | 22.97 | 24.06 | 24.58 |
+
+Above 1.0 means **A is faster**. At one phenotype B wins by ~1.3×; at twenty A
+wins by ~8×; at a hundred A wins by 23-34×.
+
+**The mechanism is kernel-launch count, and it inverts §5.2's expectation.** B
+loops over phenotypes *inside* the per-candidate loop — `C × P × 3` searches —
+while A loops only over candidates. §5.2 predicted A's advantage would appear in
+the **batched** shape and refused to prefer it because B-0.4 retains the
+singleton caller. The refusal was right and the reasoning was backwards: A's
+advantage is in **singleton**, which is exactly the shape that ships.
+
+Batched is genuinely mixed (B ahead at P=20, C≥50; A ahead elsewhere), which
+matters less because no production caller uses it yet.
+
+### 12.3 Against the provisional budget
+
+250 ms, **non-institutional** (§9.3), over all 60 cells:
+
+| | cells over budget | worst cell |
+|---|---|---|
+| `current` | **22 / 60** (11 of 30 singleton) | 3,672 ms |
+| **A — global** | **0 / 60** | **32.4 ms** |
+| B — slices | 4 / 60, all singleton | 734.2 ms |
+
+B's four failures are all at P=100: `(longest, 100, 200)` 285.8 ms,
+`(longest, 100, 500)` 734.2 ms, `(sampled, 100, 200)` 295.9 ms,
+`(sampled, 100, 500)` 714.9 ms. One hundred phenotypes is the API's contractual
+maximum (`diagnose.py:56`), not an exotic case.
+
+**§9.3's verdict does not reproduce on this artifact, and that is a finding.**
+At the declared gate point (C=200, P=20) `current` measures 222 ms `sampled` and
+301 ms `longest` here, against 428-630 ms in §9.3. The `sampled` case is now
+*under* the 250 ms budget. The baseline's gate result is artifact- and
+host-dependent; the prototypes' margins — 31-41× at that same point — are not.
+
+### 12.4 Memory — the argument against A does not survive measurement
+
+| | build time | resident (actual) | production steady-state | current-RSS delta | process peak |
+|---|---|---|---|---|---|
+| **A — global** | 20.2 s | 3.88 GB | **3.44 GB** | 4.31 GB | **unchanged** |
+| B — slices | 62.5 s | 2.58 GB | **0** | 2.59 GB | **unchanged** |
+
+`/usr/bin/time -v` maximum RSS: baseline 21,110,244 KB, global 21,107,512 KB,
+slices 21,107,516 KB — **the same 21.11 GB in all three.** Loading and
+transforming the artifact sets that peak; neither index build approaches it, and
+current RSS settles to ~3.1 GB before either build starts. This is what the
+loader-only run was for.
+
+§9.4 estimated "order +7 GB transient" for A and §10.2 measured ~24 GB for a
+comparable operation, calling it "the strongest argument yet for prototyping B
+rather than assuming A". **Measured, that argument fails**: A's transient is
+4.31 GB, well inside a peak already established by loading, and A's projected
+key column is 3.44 GB against §9.4's predicted 3.44 GB — the one prediction that
+was exact.
+
+What survives is the **steady-state** cost. A adds 3.44 GB resident for as long
+as the process serves, on unified memory shared with the model. B adds nothing.
+
+### 12.5 Recommendation: approach A, with its cost stated
+
+Not a close call on the axis that was declared to matter:
+
+- production ships the singleton caller, where A is 8-34× faster at the
+  phenotype counts the API actually permits;
+- A meets the provisional budget in **every** cell; B misses four, all inside
+  the contractual phenotype range;
+- A builds three times faster;
+- the memory objection that motivated preferring B was a predicted transient
+  that did not materialise.
+
+**The cost of choosing A is 3.44 GB of permanent resident memory on UMA**, and
+that is the whole of the case against it. It is a fraction of the 21.11 GB the
+loader already peaks at, but it is permanent where the peak is not.
+
+**No third prototype is proposed.** A and B are the two ends of the same
+spectrum — A stores a global key, B stores none and pays per phenotype — and
+nothing between them was measured. §5.2's instruction was prototype both,
+productionise one.
+
+### 12.6 A defect in the evidence, recorded rather than corrected
+
+Both JSONs carry `provenance.sampling_rule` saying candidates are drawn "with
+replacement". **They were not.** The without-replacement fix landed in the same
+commit as the string it failed to update, so the record misdescribes its own
+workload. The code is corrected; the two committed files are **not** edited,
+because an evidence artifact that has been retouched is not evidence. The actual
+sampling is `torch.randperm(len(targets))[:n_candidate]` at the commit the runs
+were made from.
+
+Also missing: `EVIDENCE_B04_proto_baseline.json` did not transfer. Its
+`time_baseline.txt` did, and that carries the number the run existed for — the
+loader-only peak of 21,110,244 KB. What is lost is 60 rows of a second
+independent `current` measurement; §12.1's cross-run agreement rests on the two
+runs that did transfer.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.

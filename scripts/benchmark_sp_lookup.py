@@ -532,8 +532,9 @@ def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
         "seed": args.seed,
         "sampling_rule": (
             "phenotypes: 'longest' takes the n longest slices; 'sampled' takes one "
-            "seeded randperm subset. candidates: seeded uniform draw with replacement "
-            "from the disease target space."
+            "seeded randperm subset. candidates: seeded randperm subset of the "
+            "disease target space, **without replacement** — a cell requesting "
+            "more unique candidates than the space holds is reported as skipped."
         ),
         "warmup_runs": 1,
         "min_repeats": MIN_REPEATS,
