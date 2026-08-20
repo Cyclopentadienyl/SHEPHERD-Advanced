@@ -157,7 +157,7 @@ counter-example that refuted it.
 | Gate | Status |
 |---|---|
 | Authoritative patient encoder/scorer decision (findings §7 Q2) | **Not cleared** |
-| A fixed evaluation protocol, cohort and split | **Not defined** |
+| A fixed evaluation protocol, cohort and split | **Not defined.** This is the **same decision** as `../BACKLOG.md` item 11, which owns it — including which unit of holdout each claim needs. Do not settle it here; a second answer is how two phases end up disagreeing about what their numbers mean |
 | Gene-side work, if gene bundles are in scope — starts with the gradient-path audit against a real workspace artifact | **Not started** (`../task-scope/README.md` Q5) |
 | Institutional scheduling | **Not requested** |
 
