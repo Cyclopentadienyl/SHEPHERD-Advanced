@@ -12,7 +12,7 @@ productionisation is a separate item (5a) behind its own gate. This revision add
 **M9 and item 11**: the project has no held-out split at all, which was known in
 two passing mentions and owned by nothing.
 
-**Next action: item 1b.** Two directions this file proposed were withdrawn along
+**Next action: item 1c** — extract the pass `_validate` and `evaluate` duplicate, behind 1b's frozen behaviour. Two directions this file proposed were withdrawn along
 the way, and several of its factual claims have been narrowed or re-cited under
 review — §6 records all of them rather than hiding them.
 
@@ -359,7 +359,7 @@ depends on is resolved.
 | **1** | **The calibration decision** — §3.1.2, adopted and reviewed | — | **decided** | — |
 | **1a** | Correct and **suspend** the legacy-removal checklist | 1 | author | **done** |
 | **1a2** | **Malformed-truth invariant** (§2.3) — remove the silent disease clamp; enforce the range at the **loader** boundary on CPU, not in the trainer hot path where it would sync CUDA every batch. **Not a decision gate**: the contract is REFUSE and all three boundaries implement it | 1a | author | **done** |
-| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour | 1a2 | author | small |
+| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour — 21 tests, each checked against a mutation that should break it. Found that the malformed-truth refusal has **two independent sources** inside `_compute_model_outputs`, which one fires depending on the sign of the bad id | 1a2 | author | **done** |
 | **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
 | **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
 | **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3) | 1c | author | small |
