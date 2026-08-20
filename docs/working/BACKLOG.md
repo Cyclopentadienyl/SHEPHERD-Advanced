@@ -5,13 +5,16 @@ readable without reconstructing six review threads. Phase documents keep their
 own detail; this file holds **ordering, dependencies and blockers only** and must
 not restate their decisions.
 
-**Status:** fourth revision. The calibration decision at item 1 is **made and
+**Status:** fifth revision. The calibration decision at item 1 is **made and
 reviewed** (§3.1.2); the legacy-removal checklist it invalidated is corrected and
 suspended. B-0.4's measurement is **complete and reviewed**, and its
-productionisation is now a separate item (5a) behind its own gate. Two directions
-this file proposed were withdrawn along the way, and several of its factual
-claims have been narrowed or re-cited under review — §6 records all of them
-rather than hiding them.
+productionisation is a separate item (5a) behind its own gate. This revision adds
+**M9 and item 11**: the project has no held-out split at all, which was known in
+two passing mentions and owned by nothing.
+
+**Next action: item 1b.** Two directions this file proposed were withdrawn along
+the way, and several of its factual claims have been narrowed or re-cited under
+review — §6 records all of them rather than hiding them.
 
 ---
 
@@ -29,9 +32,9 @@ does not currently work.
 
 ## 2. Established facts
 
-M1-M7 were **measured on deployment hardware**; M8 was **read from source**. Both
-are checkable; neither is recalled or inferred. These are what changed the
-ordering.
+M1-M7 were **measured on deployment hardware**; M8 and M9 were **read from
+source**. Both kinds are checkable; neither is recalled or inferred. These are
+what changed the ordering.
 
 | # | Fact | Where |
 |---|---|---|
@@ -43,6 +46,7 @@ ordering.
 | M6 | **The SP lookup breaches the provisional latency budget in 22 of 60 measurements**, worst 3,722 ms, on the real artifact and a GB10 SPARK. Approach A brings that to **0 of 60** at a cost of 3.44 GB permanent residence; the earlier "1.7-2.5x" figure came from a different artifact vintage and host and is superseded | `scorer-measurement/PLAN_B04.md` §12.3 |
 | M7 | **Zero duplicate rows** on two independently built artifacts of different HPO vintages — evidence about the generator's invariant, not clearance for one file; every future artifact is protected by the load-time assertion | same, §10.1 |
 | M8 | **The trainer's own validation loop is Mode-A-shaped, not Mode-C-shaped** — per-batch subgraph forward, cosine against *the subgraph's* disease rows, top-20 truncation, MRR from the same function Mode A calls. See §2.1 | read from `trainer.py`, `metrics.py`, `measurement.py` |
+| M9 | **The project has no held-out test split.** `sample_generator.py:97-111` writes `train_samples.json` and `val_samples.json` and nothing else, and `val` is what `early_stopping_monitor=val_mrr` selects checkpoints on. So **every reportable number is either training data or selection-contaminated**. The `--split` entry points were made required-with-no-fallback, which stops silent misuse but does not create the missing split | read from `sample_generator.py`, `trainer.py:124` |
 
 ### 2.1 M8 in detail — where `val_mrr` comes from
 
@@ -297,6 +301,52 @@ candidates fall outside the 5-hop table so the SP term degenerates to a
 reachability indicator. M5 says the opposite. The correction is factual and
 touches no normative statement.
 
+### 3.4 There is no held-out split, and nothing owned that
+
+M9. The mechanical guards landed and work: `--split` is required with no default
+on both entry points, its help text names both contamination kinds, and
+`read_samples` lists what exists rather than substituting. Those stop a number
+from being produced *silently* on the wrong split.
+
+**They do not create the missing split.** `sample_generator.py:97-111` writes
+train and val only, and `val` is what `early_stopping_monitor=val_mrr` selects
+on, so the project currently cannot produce a held-out number **at all** — not
+for B-0, not for scorer-retraining, not for the institution.
+
+Until this was written down it appeared only as a parenthetical in item 6 and one
+line in `scorer-measurement/README.md`. **No item owned it**, which is how a
+known problem becomes a forgotten one.
+
+It is a **protocol decision, not a code fix**, and it is the same decision three
+places are already waiting on:
+
+| Waiting on it | How it appears there |
+|---|---|
+| item 11 | the decision itself |
+| `scorer-retraining/README.md` §5 | gate "a fixed evaluation protocol, cohort and split" — **not defined** |
+| item 8a | B-0.5's protocol and output-contract design |
+
+Decide it once for all three. Deciding it three times is how they end up
+disagreeing.
+
+### 3.5 What item 5a does and does not depend on
+
+Recorded because "independent of the calibration line" was true of the
+*implementation* and got read as true of the *acceptance*.
+
+| | Depends on |
+|---|---|
+| **5a implementation** — wiring A into the loader and the primitive | nothing in B-0. Not calibration, not the split protocol, not the authoritative-checkpoint decision |
+| **5a acceptance** — §13's integrated memory and reload gate | a **designated loadable checkpoint**, plus compatible graph and SP artifacts. A complete pipeline cold start with a resident model cannot be measured without a model |
+
+**"Designated loadable" is not "authoritative".** 5a does not wait on item 6's
+clinical decision; it needs *a* checkpoint that loads against the artifact set,
+which is a far weaker requirement. If the finally deployed model has a materially
+different architecture or memory footprint, compatibility is confirmed **for that
+model** — that is a re-run of the gate, not a blocker on it now.
+
+No checkpoint registry. One designated file, named in the 5a plan.
+
 ---
 
 ## 4. Ordered backlog
@@ -317,7 +367,8 @@ depends on is resolved.
 | **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
-| **5a** | **B-0.4 productionisation** — wire A into `_load_shortest_paths` and `sp_mean_distances`, then `PLAN_B04.md` §13's integrated memory and reload gate on the deployed shape and the smallest supported target. **Production code: needs its own plan and review before any edit** | 5 | author + institution | not started |
+| **5a** | **B-0.4 productionisation** — wire A into `_load_shortest_paths` and `sp_mean_distances`, then `PLAN_B04.md` §13's gate. **Production code: needs its own plan and review before any edit.** Its *implementation* depends on no calibration, split or checkpoint decision; its **acceptance does need a designated loadable checkpoint** plus compatible graph and SP artifacts — see §3.5 | 5; acceptance also needs a loadable checkpoint | author + institution | not started |
+| **11** | **Decide the evaluation split protocol** (M9, §3.4). The project cannot currently produce a held-out number at all. This is a **protocol decision**, not a code fix — the mechanical guards are already in. It overlaps `scorer-retraining/`'s uncleared gate "a fixed evaluation protocol, cohort and split" and B-0.5's **8a**, and should be decided once for all three rather than three times | 2, 10 | needs review | design question |
 | **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, **10 (the same M1-M3 audit)** | institution | question |
 | **7a** | Engineering differential calibration run | 1d, **10 (M1-M3 evidence)**, D5 artifact set, a designated loadable checkpoint | author | blocked |
 | **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
@@ -448,6 +499,9 @@ Recorded because the request that produced this file was to stop them recurring.
 | The first fix for the malformed-truth invariant put the check in `Trainer._compute_model_outputs`, after `_move_to_device` | `bool(cuda_tensor.any())` synchronises host and device **every valid batch**. Moved to `DiagnosisDataLoader._assert_disease_truth_in_range` — CPU, at the boundary that creates the hole. A test now asserts no `bool()` is taken of that tensor in the hot path |
 | The trainer test file claimed to characterize "the complete trainer path" | It called `DiagnosisLoss` directly and rested the rest on source ordering. Claim narrowed to loss-level refusal; full orchestration coverage stays with item 1b |
 | `benchmark_sp_lookup` chose shape order with `(cell_index + position) % 2`, intending to decorrelate it from the rotated implementation order | With two implementations the rotation moves `position` with `cell_index`, so the sum was **constant per implementation identity** — `current` singleton-first 60/60, prototypes batched-first 60/60. Keyed on the cell alone; regression test now runs the two-implementation configs. Impact on the collected data bounded in `PLAN_B04.md` §12.6 |
+| "No transient memory threat" from A's index build | Broader than the evidence. Narrowed to what was measured: **in the isolated cold benchmark** A added no peak above artifact loading. Integrated steady-state and reload peaks stay open under `PLAN_B04.md` §13 |
+| Item 5a read as fully independent of the calibration line | True of its **implementation**, false of its **acceptance**: §13 measures a cold start with a resident model, which needs a designated loadable checkpoint plus compatible artifacts. §3.5 separates the two. Not the authoritative-checkpoint decision, and no registry |
+| The absence of a held-out test split appeared only as a parenthetical in item 6 and one line in a phase README | Promoted to **M9** and **item 11**. The `--split` guards stop silent misuse but do not create the split; three places were already waiting on the same undecided protocol (§3.4) |
 | M1 was written as "no checkpoint this project has produced" | Overclaimed: no historical audit was run. Narrowed to the current producers and the scanned family, which is sufficient to reject the frozen evaluator as the acceptance oracle |
 | Item 10 asked for "the raw scan and audit outputs" | Raw institutional console output carries paths and sample identifiers. Replaced by three bounded aggregate JSONs plus their scripts (§5.2) |
 
