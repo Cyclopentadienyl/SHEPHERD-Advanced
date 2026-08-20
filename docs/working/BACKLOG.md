@@ -117,28 +117,49 @@ An earlier revision of this file credited `_assert_cohort_is_intact` with this.
 That was the wrong citation: that function checks absent canonical truths and
 cohort counts, not local-truth range. The conclusion held; the reference did not.
 
-**The trainer does not enforce it, and that is the real open item.**
-`_compute_model_outputs` clamps only for the embedding gather —
-`valid_disease_ids = disease_ids.clamp(...)` at `trainer.py:756` — and then
-publishes the **unclamped** tensor as the metric target at `:766`. `_validate`
-stringifies it (`:657`), so a `-1` truth becomes `"-1"`, never appears among the
-column-index predictions, and `mean_reciprocal_rank` scores it `0.0`:
+**The trainer refuses too — through the loss, not the metric.** An earlier
+revision of this file claimed the trainer silently scored such a truth `0.0`
+into `val_mrr`. That was wrong: it traced `_validate`'s metric fragment
+(`trainer.py:648-657`) without checking what runs before it. `self.loss_fn(...)`
+is called first (`:640`), `MultiTaskLoss` invokes `DiagnosisLoss` whenever
+`diagnosis_scores` and `diagnosis_targets` are present
+(`loss_functions.py:513-516`), and that reaches the malformed target through
+`cross_entropy`, `gather` and `scatter_`. Measured on both branches:
 
 ```
->>> RankingMetrics().mean_reciprocal_rank([['0','1','2']], ['-1'])
-0.0
+label_smoothing=0.0  -1 hole  -> IndexError:   Target -1 is out of bounds.
+label_smoothing=0.0  >= n     -> IndexError:   Target 5 is out of bounds.
+label_smoothing=0.1  -1 hole  -> RuntimeError: index -1 is out of bounds ...
+label_smoothing=0.1  >= n     -> RuntimeError: index 5 is out of bounds ...
 ```
 
-So on the same malformed batch **Mode A raises and the trainer silently records a
-rank miss into `val_mrr`.** The two paths the differential test compares disagree
-about what a malformed truth *is*.
+`mean_reciprocal_rank` *is* permissive in isolation — it scores `"-1"` as `0.0` —
+but the path never reaches it. **The primitive is permissive; the path is not.**
 
-**This must be decided before 1d, not discovered during it** (item 1f). A
-differential run against a table with one such row would report a crash on one
-side and a plausible number on the other, and the natural reading — "the harness
-is broken" — would be the wrong one. Neither path may be changed to match the
-other without deciding which behaviour is correct; the trainer's is a live
-training path and Mode A's refusal is deliberate.
+So there is no raise-versus-plausible-number asymmetry, only a difference in
+where the error surfaces and how it reads.
+
+**The contract is REFUSE, and it is not an open decision.** A malformed local
+truth means the subgraph seeding, the id remap, the candidate alignment or the
+batch wiring is wrong. Scoring it as a rank miss would convert a data-pipeline
+failure into apparent model error and contaminate the loss, `val_mrr`, early
+stopping and checkpoint selection.
+
+**What was still worth fixing** — and is now done (`trainer.py:754-784`): the
+disease gather was guarded by `disease_ids.clamp(min=0, max=...)`, a *silent
+correction* sitting where the refusal belongs. It protected nothing, since the
+loss rejects the same ids two statements later, and it made the refusal an
+accident of which tensor got passed where — a later edit passing the clamped
+tensor as `diagnosis_targets` would have removed the refusal without touching
+anything that looked load-bearing. The clamp is replaced by an explicit range
+check that names the offending id and the candidate count, and the gather now
+uses the original ids. Behaviour-preserving for valid input; 10 characterization
+tests were written and passing **before** the change, and 4 guard tests were
+failing before it and passing after.
+
+The **phenotype** clamp at `trainer.py:739` is a different thing and stays:
+`diagnosis_collate_fn` pads phenotype ids with `-1` by design and the mask
+discards those positions. Disease truths are never padded.
 
 Still to cover, and only reachable once 1c exists: **equality of the legal truth
 id consumed by the trainer reference and by Mode A** on the same batch.
@@ -267,17 +288,17 @@ depends on is resolved.
 |---|---|---|---|---|
 | **1** | **The calibration decision** — §3.1.2, adopted and reviewed | — | **decided** | — |
 | **1a** | Correct and **suspend** the legacy-removal checklist | 1 | author | **done** |
-| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour | 1a | author | small |
+| **1a2** | **Malformed-truth invariant** (§2.3) — characterize the complete trainer path as refusing, replace the silent disease clamp with an explicit range check, test `-1`, upper bound and legal bounds. **Not a decision gate**: the contract is REFUSE and both paths already implement it | 1a | author | **done** |
+| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour | 1a2 | author | small |
 | **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
 | **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
 | **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3) | 1c | author | small |
-| **1f** | **Decide the malformed-truth contract** (§2.3). Mode A refuses, the trainer scores `0.0`. Must be settled **before** 1d, or a differential run reports a crash against a plausible number and the obvious reading is the wrong one | — | needs review | decision |
 | **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | **10 (M4 evidence)** | author | small |
 | **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — prototype A and B, both caller shapes, per-subprocess memory | — **independent of 1 and of 10**, because M6 and M7 already have committed evidence | author | prototypes built; artifact run pending |
 | **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, **10 (the same M1-M3 audit)** | institution | question |
-| **7a** | Engineering differential calibration run | 1d, 1f, **10 (M1-M3 evidence)**, D5 artifact set, a designated loadable checkpoint | author | blocked |
+| **7a** | Engineering differential calibration run | 1d, **10 (M1-M3 evidence)**, D5 artifact set, a designated loadable checkpoint | author | blocked |
 | **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
 | **8a** | B-0.5 protocol and output-contract **design** | 1 | author | **before** any expensive run |
 | **8b** | B-0.5 institutional execution | 8a, 7b, 6, exact artifacts, production-path prerequisites | both | blocked |
@@ -400,7 +421,8 @@ Recorded because the request that produced this file was to stop them recurring.
 | The legacy-removal checklist instructed deletion of the clamp, local ranking, top-20 semantics, the A/B traversal and two manifest fields — all of which the adopted calibration **keeps** | Checklist **corrected and suspended**, with the oracle-only surface separated out and the removal order fixed at eight gated steps |
 | An earlier reply claimed an out-of-range disease id "would be read as if it were already local" | Imprecise. The mapping tensor is `-1`-initialised, so an in-range unsampled id maps to `-1`; an out-of-range id is left unchanged and is not normally a valid local column. §2.3 states the invariant instead of the guard |
 | §2.2 credited `_assert_cohort_is_intact` with enforcing the local-truth range invariant | **Wrong citation, right conclusion.** `to_global_ids` (`measurement.py:91-100`) is what enforces it, and `tests/unit/test_measurement_ranking.py:52-56` already covers `[3]`, `[99]` and `[-1]`. Corrected in §2.3 |
-| Review held that a `-1` local truth reaches PyTorch negative indexing and silently selects the last candidate, leaving `n_absent` at zero | **Refuted empirically.** `to_global_ids` raises `"local ids must be non-negative"` before any indexing. The genuine asymmetry is on the **trainer** side, which scores such a truth `0.0` — recorded as item 1f |
+| Review held that a `-1` local truth reaches PyTorch negative indexing and silently selects the last candidate, leaving `n_absent` at zero | **Refuted empirically.** `to_global_ids` raises `"local ids must be non-negative"` before any indexing, and `tests/unit/test_measurement_ranking.py:52-56` already covers it. The trainer-side asymmetry proposed in the same reply was itself wrong — see the row below |
+| This file claimed the trainer silently scored a malformed truth `0.0` into `val_mrr`, making it an open contract decision (item 1f) | **Wrong, and wrong the same way I had criticised: a fragment traced without its path.** `self.loss_fn` runs before prediction collection (`trainer.py:640`) and `DiagnosisLoss` raises on both label-smoothing branches. Verified by execution. Item 1f is dissolved; the contract is REFUSE and both paths already implement it |
 | M1 was written as "no checkpoint this project has produced" | Overclaimed: no historical audit was run. Narrowed to the current producers and the scanned family, which is sufficient to reject the frozen evaluator as the acceptance oracle |
 | Item 10 asked for "the raw scan and audit outputs" | Raw institutional console output carries paths and sample identifiers. Replaced by three bounded aggregate JSONs plus their scripts (§5.2) |
 

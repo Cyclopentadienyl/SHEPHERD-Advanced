@@ -752,9 +752,37 @@ class Trainer:
 
         outputs["patient_embeddings"] = patient_embeddings
 
-        # Get disease embeddings for targets
-        valid_disease_ids = disease_ids.clamp(min=0, max=disease_emb.size(0) - 1)
-        target_disease_emb = disease_emb[valid_disease_ids]
+        # Get disease embeddings for targets.
+        #
+        # **Refuse a malformed truth; never clamp one.** A disease id outside
+        # [0, n_subgraph_disease_rows) means the subgraph seeding, the id remap
+        # (`data_loader.py:956-964`), the candidate alignment or the batch wiring
+        # is wrong. Clamping it silently scores a *different* disease and turns a
+        # data-pipeline failure into apparent model error, contaminating the
+        # loss, `val_mrr`, early stopping and checkpoint selection.
+        #
+        # This replaces a clamp rather than adding to one. The complete path
+        # already refused — `DiagnosisLoss` reaches `cross_entropy`/`gather`/
+        # `scatter_` with the unclamped `diagnosis_targets` below and raises
+        # there — so this is behaviour-preserving for valid input and only moves
+        # the refusal earlier, with a message that names the offending id and the
+        # candidate count instead of a bare tensor index error. It also stops the
+        # refusal depending on which tensor a later edit happens to pass where.
+        #
+        # The phenotype clamp above is **not** the same thing and stays:
+        # `diagnosis_collate_fn` pads phenotype ids with -1 by design and the
+        # mask discards those positions. Disease truths are never padded.
+        n_disease_rows = disease_emb.size(0)
+        out_of_range = (disease_ids < 0) | (disease_ids >= n_disease_rows)
+        if bool(out_of_range.any()):
+            offenders = disease_ids[out_of_range].tolist()
+            raise ValueError(
+                f"disease truth out of range: {offenders} not in "
+                f"[0, {n_disease_rows}) for this batch's subgraph. The ground "
+                "truth must be one of the subgraph's own disease rows; this is a "
+                "batch-construction or id-remapping failure, not a model result"
+            )
+        target_disease_emb = disease_emb[disease_ids]
         outputs["disease_embeddings"] = target_disease_emb
 
         # Compute diagnosis scores (similarity to all diseases)
