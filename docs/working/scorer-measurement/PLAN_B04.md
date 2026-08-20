@@ -1,10 +1,10 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 9. **Both prototypes are built, correct, and measured on the
-real artifact. Approach A is recommended (§12.5) and awaits review.** A
-measurement-order defect found after that run is fixed and its impact bounded
-(§12.6); the run is to be **repeated for the record**, with the recommendation
-stated in advance so the repeat is a check rather than a search.
+**Status:** rev 10. **Both prototypes are built, correct, and measured twice on
+the real artifact. Approach A is recommended (§12.5) and awaits review.** The
+repeat was run after a measurement-order defect was found (§12.6) and
+**reproduces every conclusion** (§12.7); the recommendation was stated before it
+ran, so the repeat was a check rather than a search.
 
 - **§3.1, the latency gate — answered.** On the real artifact and a GB10 SPARK,
   the hardware class the institution names as its primary edge deployment
@@ -68,6 +68,16 @@ rather than about one file, and makes the load-time assertion the right ongoing
 mechanism. Measured index-build memory came in at roughly three times §9.4's
 estimate, on unified memory shared with the model.
 
+Rev 8: both prototypes measured on the real artifact (§12). Approach A is
+8-34x faster on the **singleton** caller production ships — inverting §5.2's
+expectation that its advantage would be batched-only — and meets the provisional
+budget in every measurement where B misses four inside the contractual
+phenotype range. The memory argument against A **does not survive measurement**: neither
+build raises the process peak, which loading alone already sets at 21.11 GB. A's
+real cost is 3.44 GB of steady-state residence. §9.3's gate verdict also does not
+reproduce on this third artifact vintage, which is itself a finding about the
+baseline rather than about the prototypes.
+
 Rev 9: the shape-order alternation was false a second time — keyed on
 `(cell_index + position) % 2`, which the implementation rotation cancels, so
 `current` was singleton-first in 60/60 rows and both prototypes batched-first in
@@ -75,15 +85,16 @@ Rev 9: the shape-order alternation was false a second time — keyed on
 configurations, and its bounded effect on §12 recorded (§12.6). The defective
 run's files are kept under `*_orderdefect` names so that record stays checkable.
 
-Rev 8: both prototypes measured on the real artifact (§12). Approach A is
-8-34x faster on the **singleton** caller production ships — inverting §5.2's
-expectation that its advantage would be batched-only — and meets the provisional
-budget in all 60 cells where B misses four inside the contractual phenotype
-range. The memory argument against A **does not survive measurement**: neither
-build raises the process peak, which loading alone already sets at 21.11 GB. A's
-real cost is 3.44 GB of steady-state residence. §9.3's gate verdict also does not
-reproduce on this third artifact vintage, which is itself a finding about the
-baseline rather than about the prototypes.
+
+Rev 10: the repeat run landed and **reproduces every conclusion** (§12.7) —
+identical over-budget counts, the same four failing cells for B, singleton ratios
+within a percent or two, and the same 21.11 GB process peak in all three
+processes. Cross-run agreement on `current` improved to 0.38% median / 1.93% max.
+The one material difference is B's index build at 44.8 s against 62.5 s, which is
+run-to-run variance in a per-slice Python loop the ordering defect never touched.
+§12.0 also spells out the cells-versus-measurements arithmetic, because an
+earlier revision wrote "0/60 cells" for what are 30 cells measured on two caller
+shapes.
 
 ---
 
@@ -997,42 +1008,60 @@ verdict must stand on one too.
 
 ## 12. Prototype results — the real artifact, GB10 SPARK
 
-Three processes as §11.3 specifies.
+Three processes as §11.3 specifies, on artifact `7268900c…`, 430,585,772 rows,
+19,566 phenotypes. Evidence:
+[`EVIDENCE_B04_proto_global.json`](EVIDENCE_B04_proto_global.json),
+[`EVIDENCE_B04_proto_slices.json`](EVIDENCE_B04_proto_slices.json),
+`time_baseline.txt` / `time_global.txt` / `time_slices.txt`.
 
-**The numbers below come from the run carrying the §12.6 ordering defect**, whose
-files are kept under `*_orderdefect` names so §12.6's claims about them stay
-checkable:
-[`EVIDENCE_B04_proto_global_orderdefect.json`](EVIDENCE_B04_proto_global_orderdefect.json),
-[`EVIDENCE_B04_proto_slices_orderdefect.json`](EVIDENCE_B04_proto_slices_orderdefect.json),
-and `time_baseline_orderdefect.txt` / `time_global_orderdefect.txt` /
-`time_slices_orderdefect.txt`. The repeat run writes the unsuffixed names and
-**those become authoritative** when it lands; this section is rewritten from them
-and the difference recorded.
+**These are the corrected run.** An earlier run of the same matrix carried the
+ordering defect described in §12.6; its files are kept under `*_orderdefect`
+names and are **not** the basis of anything below. §12.7 compares the two.
 
-**The artifact is a third vintage**, sha256 `7268900c…`, 430,585,772 rows,
-19,566 phenotypes — not the `9ada0c1a…` / 429,971,678-row table §9 measured.
-§10.1 already established that this is the normal case. It is why each run
-carries its own in-process `current` baseline.
+### 12.0 What "cell" means here
+
+The matrix is `2 selections × 3 phenotype counts × 5 candidate counts` =
+**30 workload cells**. Each cell is measured on **2 caller shapes** for each of
+**2 implementations**, giving **120 rows per file**. Where a count below reads
+"`n`/60" it is counting **(cell, caller-shape) measurements for one
+implementation**, not cells.
+
+An earlier revision of this section wrote "0/60 cells", conflating the two. That
+is the same cells-versus-rows slip rev 5 had to correct once already, which is
+why the arithmetic is spelled out rather than assumed.
 
 ### 12.1 The two runs are comparable
 
-`current` was measured in both, over the same 60 cells with the same seed:
-**median run-to-run deviation 0.62%, maximum 2.80%.** Every prototype-vs-current
-ratio below is therefore within one run, and the two runs can be read side by
-side.
+`current` was measured in both prototype processes, over the same 30 cells with
+the same seed: **median run-to-run deviation 0.38%, maximum 1.93%** across all 60
+measurements. Every prototype-vs-current ratio below is therefore within one
+process, and the two processes can be read side by side.
+
+Alternation, counted from the committed files — 30/30 for every
+(implementation, shape-order) pair in both:
+
+```
+global: {(current,batched):30, (current,singleton):30, (global,batched):30, (global,singleton):30}
+slices: {(current,batched):30, (current,singleton):30, (slices,batched):30, (slices,singleton):30}
+```
 
 ### 12.2 Latency — the production caller shape decides it
 
-`slices / global`, median ms, **singleton** — the shape production ships (§4.1):
+`slices / global`, median ms, **singleton** — the shape production ships (§4.1).
+Above 1.0 means **A is faster**:
 
 | P \ C | 10 | 50 | 100 | 200 | 500 |
 |---|---|---|---|---|---|
-| **1** | 0.78 | 0.76 | 0.77 | 0.76 | 0.78 |
-| **20** | 8.56 | 8.55 | 8.38 | 8.23 | 8.07 |
-| **100** | 33.89 | 25.41 | 22.97 | 24.06 | 24.58 |
+| **1** (sampled) | 0.79 | 0.79 | 0.79 | 0.79 | 0.79 |
+| **20** (sampled) | 8.52 | 8.48 | 8.51 | 8.37 | 8.28 |
+| **100** (sampled) | 30.04 | 22.10 | 22.61 | 25.23 | 24.96 |
+| **1** (longest) | 0.78 | 0.79 | 0.79 | 0.79 | 0.78 |
+| **20** (longest) | 8.55 | 8.55 | 8.31 | 8.38 | 8.43 |
+| **100** (longest) | 33.23 | 22.83 | 22.60 | 22.04 | 21.66 |
 
-Above 1.0 means **A is faster**. At one phenotype B wins by ~1.3×; at twenty A
-wins by ~8×; at a hundred A wins by 23-34×.
+At one phenotype B wins by ~1.27×; at twenty A wins by ~8.4×; at a hundred A
+wins by 22-33×. The two selection rules agree closely, which is itself worth
+noting — this ordering is not an artifact of how the phenotypes were drawn.
 
 **The mechanism is kernel-launch count, and it inverts §5.2's expectation.** B
 loops over phenotypes *inside* the per-candidate loop — `C × P × 3` searches —
@@ -1041,49 +1070,55 @@ the **batched** shape and refused to prefer it because B-0.4 retains the
 singleton caller. The refusal was right and the reasoning was backwards: A's
 advantage is in **singleton**, which is exactly the shape that ships.
 
-Batched is genuinely mixed (B ahead at P=20, C≥50; A ahead elsewhere), which
-matters less because no production caller uses it yet.
+At the declared gate point, C=200 and P=20:
+
+| selection | shape | `current` | A — global | B — slices |
+|---|---|---|---|---|
+| sampled | singleton | 219.4 | **7.09** | 59.35 |
+| sampled | batched | 219.2 | 0.73 | 0.52 |
+| longest | singleton | 294.9 | **7.09** | 59.39 |
+| longest | batched | 295.4 | 1.73 | 0.51 |
 
 ### 12.3 Against the provisional budget
 
-250 ms, **non-institutional** (§9.3), over all 60 cells:
+250 ms, **non-institutional** (§9.3), over 60 measurements per implementation:
 
-| | cells over budget | worst cell |
-|---|---|---|
-| `current` | **22 / 60** (11 of 30 singleton) | 3,672 ms |
-| **A — global** | **0 / 60** | **32.4 ms** |
-| B — slices | 4 / 60, all singleton | 734.2 ms |
+| | over budget | of which singleton | worst measurement |
+|---|---|---|---|
+| `current` | **22 / 60** | 11 / 30 | 3,722 ms |
+| **A — global** | **0 / 60** | 0 / 30 | **33.4 ms** |
+| B — slices | 4 / 60 | 4 / 30 | 735.8 ms |
 
-B's four failures are all at P=100: `(longest, 100, 200)` 285.8 ms,
-`(longest, 100, 500)` 734.2 ms, `(sampled, 100, 200)` 295.9 ms,
-`(sampled, 100, 500)` 714.9 ms. One hundred phenotypes is the API's contractual
-maximum (`diagnose.py:56`), not an exotic case.
+B's four failures are all singleton at P=100: `(longest, C=200)` 293.8 ms,
+`(longest, C=500)` 723.8 ms, `(sampled, C=200)` 293.6 ms, `(sampled, C=500)`
+735.8 ms. One hundred phenotypes is the API's contractual maximum
+(`diagnose.py:56`), not an exotic case.
 
-**§9.3's verdict does not reproduce on this artifact, and that is a finding.**
-At the declared gate point (C=200, P=20) `current` measures 222 ms `sampled` and
-301 ms `longest` here, against 428-630 ms in §9.3. The `sampled` case is now
+**§9.3's verdict does not reproduce on this artifact, and that is a finding
+about the baseline.** At the gate point `current` measures 219 ms `sampled` and
+295 ms `longest` here, against 428-630 ms in §9.3 — so the `sampled` case is now
 *under* the 250 ms budget. The baseline's gate result is artifact- and
-host-dependent; the prototypes' margins — 31-41× at that same point — are not.
+host-dependent; the prototypes' margins at that same point, 31× and 42×, are not.
 
 ### 12.4 Memory — the argument against A does not survive measurement
 
-| | build time | resident (actual) | production steady-state | current-RSS delta | process peak |
+| | build time | resident (measured) | production steady-state | current-RSS delta | process peak |
 |---|---|---|---|---|---|
-| **A — global** | 20.2 s | 3.88 GB | **3.44 GB** | 4.31 GB | **unchanged** |
-| B — slices | 62.5 s | 2.58 GB | **0** | 2.59 GB | **unchanged** |
+| **A — global** | 19.9 s | 3.88 GB | **3.44 GB** | 4.31 GB | **unchanged** |
+| B — slices | 44.8 s | 2.58 GB | **0** | 2.59 GB | **unchanged** |
 
-`/usr/bin/time -v` maximum RSS: baseline 21,110,244 KB, global 21,107,512 KB,
-slices 21,107,516 KB — **the same 21.11 GB in all three.** Loading and
+`/usr/bin/time -v` maximum RSS: baseline 21,108,120 KB, global 21,107,928 KB,
+slices 21,108,048 KB — **the same 21.11 GB in all three**. Loading and
 transforming the artifact sets that peak; neither index build approaches it, and
 current RSS settles to ~3.1 GB before either build starts. This is what the
-loader-only run was for.
+loader-only process was for.
 
 §9.4 estimated "order +7 GB transient" for A and §10.2 measured ~24 GB for a
 comparable operation, calling it "the strongest argument yet for prototyping B
 rather than assuming A". **Measured, that argument fails**: A's transient is
-4.31 GB, well inside a peak already established by loading, and A's projected
-key column is 3.44 GB against §9.4's predicted 3.44 GB — the one prediction that
-was exact.
+4.31 GB, inside a peak already established by loading, and A's projected key
+column is 3.44 GB against §9.4's predicted 3.44 GB — the one prediction that was
+exact.
 
 What survives is the **steady-state** cost. A adds 3.44 GB resident for as long
 as the process serves, on unified memory shared with the model. B adds nothing.
@@ -1092,11 +1127,11 @@ as the process serves, on unified memory shared with the model. B adds nothing.
 
 Not a close call on the axis that was declared to matter:
 
-- production ships the singleton caller, where A is 8-34× faster at the
-  phenotype counts the API actually permits;
-- A meets the provisional budget in **every** cell; B misses four, all inside
-  the contractual phenotype range;
-- A builds three times faster;
+- production ships the singleton caller, where A is 8-33× faster at the
+  phenotype counts the API permits;
+- A meets the provisional budget in **every** measurement; B misses four, all
+  inside the contractual phenotype range;
+- A builds more than twice as fast;
 - the memory objection that motivated preferring B was a predicted transient
   that did not materialise.
 
@@ -1109,13 +1144,13 @@ spectrum — A stores a global key, B stores none and pays per phenotype — and
 nothing between them was measured. §5.2's instruction was prototype both,
 productionise one.
 
-### 12.6 The measurement-order defect, and what it does to §12
+### 12.6 The measurement-order defect this run was made to correct
 
-**Found in review after the run, and confirmed in the evidence itself.** The
-shape order was chosen with `(cell_index + position) % 2`, meaning to decorrelate
-it from the rotated implementation order. With two implementations the rotation
-moves `position` in lockstep with `cell_index`, so the sum is constant per
-implementation *identity*. Counted from the committed files:
+The first run of this matrix chose the shape order with
+`(cell_index + position) % 2`, meaning to decorrelate it from the rotated
+implementation order. With two implementations the rotation moves `position` in
+lockstep with `cell_index`, so the sum was constant per implementation
+*identity*. Counted from `*_orderdefect`:
 
 | | rows | `measured_first` |
 |---|---|---|
@@ -1123,45 +1158,48 @@ implementation *identity*. Counted from the committed files:
 | `global` | 60 / 60 | `batched` |
 | `slices` | 60 / 60 | `batched` |
 
-Implementation *position* rotated correctly — 30/30 for each — so the fix was
-half-right and the half that failed is the one that mattered. This is the second
-time an alternation in this script was claimed and not delivered; the first
-(rev 5) branched on `len(rows) % 2`. Both are now pinned by regression tests, and
-the new one runs the **two-implementation configurations §11.3 actually
-documents** rather than a single-implementation run that cannot see the coupling.
+Implementation *position* rotated correctly at 30/30, so the fix was half-right
+and the half that failed is the one that mattered. This was the second false
+alternation in this script; the first (rev 5) branched on `len(rows) % 2`. Both
+are now pinned by regression tests, and the new one runs the **two-implementation
+configurations §11.3 documents** rather than a single-implementation run that
+cannot see the coupling.
 
-**What it does to the conclusions, bounded rather than asserted:**
+### 12.7 The defective run against the corrected one
 
-- **A-vs-B is unaffected.** Both prototypes were batched-first in 60/60 rows, so
-  the bias is identical on both sides of the selection comparison.
-- **The order effect is measurable and small.** `current` runs the same algorithm
-  for both shapes (§9.2 put the ratio at 1.001), so for `current` any systematic
-  singleton/batched gap in this run *is* the order effect: **median 1.003, worst
-  1.049** across both runs.
-- **The gaps it would have to explain are far larger.** The smallest
-  current-vs-prototype ratio anywhere in the singleton matrix is **2.18×**, and
-  the selection-relevant ones are 8-34×.
+Recorded because "the conclusions were unaffected" is a claim, and a claim of
+that kind should be checkable rather than asserted:
 
-So §12.2-12.5 stand. **The run should nonetheless be repeated** once this lands:
-it costs about three minutes per process, and an evidence file whose ordering
-guarantee was not honoured is a worse record than one that was, however small the
-effect. §12.5's recommendation is not expected to move, and saying so in advance
-is what makes the re-run a check rather than a search for a better answer.
+| | order-defect run | corrected run |
+|---|---|---|
+| gate point, `current` singleton (sampled / longest) | 222.7 / 301.0 ms | 219.4 / 294.9 ms |
+| gate point, A singleton | 7.15 ms | 7.09 ms |
+| gate point, B singleton | 59.67 ms | 59.35 ms |
+| singleton ratio at P=20 | 8.07-8.56 | 8.28-8.55 |
+| singleton ratio at P=100 | 22.97-33.89 | 21.66-33.23 |
+| over budget: current / A / B | 22 / 0 / 4 | 22 / 0 / 4 |
+| B's four failing cells | P=100, C∈{200,500}, both selections | **identical** |
+| A build / B build | 20.2 s / 62.5 s | 19.9 s / **44.8 s** |
+| process peak, all three | 21.11 GB | 21.11 GB |
+| cross-run `current` deviation | 0.62% median, 2.80% max | **0.38% / 1.93%** |
 
-### 12.7 A defect in the evidence, recorded rather than corrected
+**Every conclusion reproduces**, which is what §12.6's bounded-impact argument
+predicted before the repeat was run. The one material difference is B's index
+build, 62.5 s → 44.8 s: build time is a per-slice Python loop over 19,566
+iterations and was never touched by the ordering defect, so this is run-to-run
+variance on a shared machine and not a correction. It does not change §12.5,
+where A already built faster.
 
-Both JSONs carry `provenance.sampling_rule` saying candidates are drawn "with
-replacement". **They were not.** The without-replacement fix landed in the same
-commit as the string it failed to update, so the record misdescribes its own
-workload. The code is corrected; the two committed files are **not** edited,
-because an evidence artifact that has been retouched is not evidence. The actual
-sampling is `torch.randperm(len(targets))[:n_candidate]` at the commit the runs
-were made from.
+The corrected run also carries the right `provenance.sampling_rule`. The
+`*_orderdefect` files say candidates were drawn "with replacement" when the code
+used `randperm`; that string was fixed in the same commit that produced this run.
+**Those files are not edited** — an evidence artifact that has been retouched is
+not evidence — and this paragraph is the correction.
 
-Also missing: `EVIDENCE_B04_proto_baseline.json` did not transfer. Its
-`time_baseline_orderdefect.txt` did, and that carries the number the run existed
-for — the loader-only peak of 21,110,244 KB. What is lost is 60 rows of a second
-independent `current` measurement; §12.1's cross-run agreement rests on the two
-runs that did transfer.
+`EVIDENCE_B04_proto_baseline.json` for the corrected run has not transferred yet.
+`time_baseline.txt` has, and it carries the number the loader-only process exists
+for: peak 21,108,120 KB. What is still outstanding is its 60 rows of a third
+independent `current` measurement; §12.1's agreement rests on the two prototype
+processes.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
