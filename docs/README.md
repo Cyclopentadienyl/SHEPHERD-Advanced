@@ -59,6 +59,7 @@ work shipped is stale, not authoritative.
 | Document | Contents |
 |---|---|
 | [`working/README.md`](working/README.md) | The convention, and the list of live phases |
+| [`working/BACKLOG.md`](working/BACKLOG.md) | The one ordered list across all live phases: what is open, in what order, what blocks what, and the measured facts that set that order. Ordering and dependencies only — the decisions themselves stay in the phase folders |
 | [`working/results-review/README.md`](working/results-review/README.md) | Results-review phase: what the specs cover, and how to run the closure audit |
 | [`working/results-review/SPEC_0_INDEX.md`](working/results-review/SPEC_0_INDEX.md) | Index, requirements traceability, gates, open institutional values, backlog |
 | [`working/results-review/SPEC_1_RESULTS_REVIEW.md`](working/results-review/SPEC_1_RESULTS_REVIEW.md) | Scorer/view authority, SP sort and filter policy, decomposition, two-surface UX, limits |

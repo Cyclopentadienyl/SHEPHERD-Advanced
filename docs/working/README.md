@@ -17,6 +17,12 @@ move into the committed documents that outlive it — `docs/DISEASE_SCORER_POLIC
 as a record with a header saying it is one. A phase folder that is still here
 after its work shipped is stale, not authoritative.
 
+[`BACKLOG.md`](BACKLOG.md) sits beside the phase folders rather than inside one,
+because it is the only thing here that spans them: **ordering, dependencies and
+blockers across every live phase, and nothing else.** Each phase's own decisions
+stay in its folder. Read the backlog to find what is next; read the phase
+document to find what it means.
+
 | Phase | Status |
 |---|---|
 | [`results-review/`](results-review/) | under review — snapshot repository, results-review UX, deployment security |
