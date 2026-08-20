@@ -63,7 +63,7 @@ A test asserts that agreement so it is not mistaken for a result.
 
 > **This checklist is superseded and must not be run.** It was written when Mode A's
 > acceptance was bit-parity with `scripts/evaluate_model.py`. That target is
-> unexecutable — no checkpoint this project has produced carries the
+> unexecutable — no checkpoint in the scanned family carries the
 > `metadata`/`in_channels_dict` keys either loader needs — and the replacement
 > acceptance is a **same-batch differential test against the trainer's own
 > validation calculation**. See `../BACKLOG.md` §3.1.

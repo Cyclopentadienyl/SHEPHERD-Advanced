@@ -5,10 +5,11 @@ readable without reconstructing six review threads. Phase documents keep their
 own detail; this file holds **ordering, dependencies and blockers only** and must
 not restate their decisions.
 
-**Status:** second revision. The calibration decision at item 1 is **made and
+**Status:** third revision. The calibration decision at item 1 is **made and
 reviewed** (§3.1.2); the legacy-removal checklist it invalidated is corrected and
-suspended. Two directions this file proposed were withdrawn along the way — §6
-records them rather than hiding them.
+suspended. Two directions this file proposed were withdrawn along the way, and
+three of its factual claims have been narrowed or re-cited under review — §6
+records all of them rather than hiding them.
 
 ---
 
@@ -32,7 +33,7 @@ ordering.
 
 | # | Fact | Where |
 |---|---|---|
-| M1 | **No checkpoint carries `metadata`.** All carry `config`, `data_fingerprint`, `epoch`, `logs` | checkpoint scan, both workspaces |
+| M1 | **No scanned checkpoint carries `metadata` or `in_channels_dict`.** All carry `config`, `data_fingerprint`, `epoch`, `logs`. The claim is about the **current producers and the scanned family**, not about every checkpoint the project has ever written — no historical audit was run, and none is needed to reject the frozen evaluator as the acceptance oracle | checkpoint scan, both workspaces |
 | M2 | **`in_channels` is 128** in every checkpoint; the frozen evaluator's hardcoded fallback is 256, which is the size mismatch it dies on | same |
 | M3 | **The filename number is `val_mrr`** — `model-45-0.6975.pt` carries `logs["val_mrr"] = 0.69754…` | same |
 | M4 | **100% of validation diseases appear in training** — 7,970 of 7,970. Train: 100,000 samples over 10,576 diseases; val: 15,000 over 7,970 | overlap audit |
@@ -58,7 +59,7 @@ previously proposed.
 | Metric | `RankingMetrics().compute_all(...)["mrr"]` (`:663-666`; `metrics.py:285`) | `RankingMetrics().mean_reciprocal_rank(...)` (`:809-810`) |
 
 Every row is the same operation. **`val_mrr` is a Mode-A-shaped number, and M3
-says every checkpoint carries it.**
+says every scanned checkpoint carries it.**
 
 **Every row above holds only when identical model weights, batch/subgraph
 objects, ID mappings and numerical execution context are supplied.** It is a
@@ -80,28 +81,67 @@ that exist. Only the rows below are open.
 |---|---|
 | D1 | **Record the limitation, not a field.** Historical epoch RNG state was never saved, so the historical stochastic validation traversal is not exactly reproducible. Sample order in a *new* run is pinned by `shuffle=False` plus the samples digest |
 | D2 | Add `amp_dtype` (only the boolean is recorded today) and the **observed** `torch.compile` execution state — an execution fact, not a requested config value. No compile-metadata machinery |
-| D3 | **Closed from source.** `_remap_indices` (`data_loader.py:956-964`) maps `batch["disease_ids"]` through `node_mapping["disease"]` into subgraph-local space, the same space as the score-matrix columns; trainer and Mode A read the same remapped tensor. The invariant is **already enforced loudly**: `_assert_cohort_is_intact` raises on any absent truth and names id translation as a cause (`measurement.py:606-613`). What is missing is only the regression tests — see §2.3 |
+| D3 | **ID space closed from source; enforcement is asymmetric and that is the open item.** `_remap_indices` (`data_loader.py:956-964`) maps `batch["disease_ids"]` through `node_mapping["disease"]` into subgraph-local space, the same space as the score-matrix columns, and trainer and Mode A read the same remapped tensor. **Mode A enforces the range invariant and refuses; the trainer does not.** See §2.3 |
 | D4 | No excluded-sample list is required **while the run is fail-fast**. Record that the run does not silently skip samples and that ranked plus ground-truth-absent account for the intact cohort. `n_ground_truth_absent` is a count, **not** an excluded- or failed-sample list; if skip-and-continue is ever introduced, skipped ids and reasons become required then |
 | D5 | Exact artifact identity. A/B/C already digest checkpoint, samples, node features, edge indices and num_nodes (`measure_scorer.py:79-92`). Open: the **shortest-path artifact digest, added when Mode D consumes it**, and comparing recorded digests against the institution-approved artifact set at acceptance. No registry, no compatibility database |
 | D6 | Aggregate `val_mrr` is insufficient for parity and is a historical sanity reference only (§3.1.1) |
 
-### 2.3 The D3 regression tests
+### 2.3 D3 — where the malformed-truth invariant is enforced, and where it is not
 
-The invariant to assert is stronger and simpler than a guard-boundary check:
+The invariant at issue:
 
 > every valid sample's seeded ground-truth disease must remap to
 > `0 <= local_truth < number_of_subgraph_disease_rows`.
 
-The mapping tensor has length `max(sampled_global_id) + 1`, is initialised to
-`-1`, and holds local indices only at sampled global-id positions
-(`data_loader.py:358-366`). So a global id inside the tensor range but absent
-from the subgraph maps to `-1`; an id beyond the tensor length is left unchanged
-and will not normally be a valid local column, since the local candidate count is
-no larger than the sampled-node count.
+**How a violation could arise.** The mapping tensor has length
+`max(sampled_global_id) + 1`, is initialised to `-1`, and holds local indices
+only at sampled global-id positions (`data_loader.py:358-366`). A global id
+inside the tensor range but absent from the subgraph therefore maps to `-1`; an
+id beyond the tensor length is left unchanged by `_remap_indices`' own guard. In
+Mode A the truth is one of the subgraph's seed nodes, so neither should happen —
+which is exactly why it needs a guard rather than an assumption.
 
-Cover: a successful seeded-truth mapping; a `-1` hole; an id beyond the mapping
-tensor; local↔global round-trip identity; and equality of the truth id consumed
-by the trainer reference and by Mode A.
+**Mode A already enforces it, and the check is already tested.** `to_global_ids`
+raises on both failures *before* any indexing (`measurement.py:91-100`):
+
+```
+local id 4 is outside the subgraph's 4 disease nodes   # >= n_rows
+local ids must be non-negative                          # the -1 hole
+```
+
+`tests/unit/test_measurement_ranking.py:52-56` parametrises exactly `[3]`, `[99]`
+and `[-1]`. A `-1` never reaches PyTorch's negative indexing on this path, so it
+cannot silently select the last candidate.
+
+An earlier revision of this file credited `_assert_cohort_is_intact` with this.
+That was the wrong citation: that function checks absent canonical truths and
+cohort counts, not local-truth range. The conclusion held; the reference did not.
+
+**The trainer does not enforce it, and that is the real open item.**
+`_compute_model_outputs` clamps only for the embedding gather —
+`valid_disease_ids = disease_ids.clamp(...)` at `trainer.py:756` — and then
+publishes the **unclamped** tensor as the metric target at `:766`. `_validate`
+stringifies it (`:657`), so a `-1` truth becomes `"-1"`, never appears among the
+column-index predictions, and `mean_reciprocal_rank` scores it `0.0`:
+
+```
+>>> RankingMetrics().mean_reciprocal_rank([['0','1','2']], ['-1'])
+0.0
+```
+
+So on the same malformed batch **Mode A raises and the trainer silently records a
+rank miss into `val_mrr`.** The two paths the differential test compares disagree
+about what a malformed truth *is*.
+
+**This must be decided before 1d, not discovered during it** (item 1f). A
+differential run against a table with one such row would report a crash on one
+side and a plausible number on the other, and the natural reading — "the harness
+is broken" — would be the wrong one. Neither path may be changed to match the
+other without deciding which behaviour is correct; the trainer's is a live
+training path and Mode A's refusal is deliberate.
+
+Still to cover, and only reachable once 1c exists: **equality of the legal truth
+id consumed by the trainer reference and by Mode A** on the same batch.
 
 ---
 
@@ -119,7 +159,7 @@ Two loaders fail on the same missing key, in two different ways:
   It therefore builds a **structurally wrong model** and dies later in
   `load_state_dict` against a real 128 (M2).
 
-**Mode A cannot execute on any checkpoint this project has produced**, and neither
+**Mode A cannot execute on any checkpoint in the scanned family**, and neither
 can the frozen evaluator.
 
 **Everything downstream inherits this.** B-0.2 and B-0.3 are implementation-
@@ -230,18 +270,19 @@ depends on is resolved.
 | **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour | 1a | author | small |
 | **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
 | **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
-| **1e** | D2 manifest additions (`amp_dtype`, observed compile state); D3 regression tests (§2.3) | 1c | author | small |
-| **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | — | author | small |
-| **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | — | author | ~5 lines |
+| **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3) | 1c | author | small |
+| **1f** | **Decide the malformed-truth contract** (§2.3). Mode A refuses, the trainer scores `0.0`. Must be settled **before** 1d, or a differential run reports a crash against a plausible number and the obvious reading is the wrong one | — | needs review | decision |
+| **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | **10 (M4 evidence)** | author | small |
+| **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
-| **5** | **B-0.4 prototype phase** — prototype A and B, both caller shapes, per-subprocess memory | — **independent of 1** | author | the next real engineering |
-| **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2 | institution | question |
-| **7a** | Engineering differential calibration run | 1d, D5 artifact set, a designated loadable checkpoint | author | blocked |
+| **5** | **B-0.4 prototype phase** — prototype A and B, both caller shapes, per-subprocess memory | — **independent of 1 and of 10**, because M6 and M7 already have committed evidence | author | prototypes built; artifact run pending |
+| **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, **10 (the same M1-M3 audit)** | institution | question |
+| **7a** | Engineering differential calibration run | 1d, 1f, **10 (M1-M3 evidence)**, D5 artifact set, a designated loadable checkpoint | author | blocked |
 | **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
 | **8a** | B-0.5 protocol and output-contract **design** | 1 | author | **before** any expensive run |
 | **8b** | B-0.5 institutional execution | 8a, 7b, 6, exact artifacts, production-path prerequisites | both | blocked |
 | **9** | Mechanical rename (~70 refs, 9 files), then rewrite the checklist, then delete the oracle-only surface | **1d passed review incl. its institutional CUDA run** | author | behaviour-neutral |
-| **10** | **Commit evidence files for M1-M5.** M6 and M7 have `EVIDENCE_B04_*.json` beside their plan; M1-M5 have nothing — they exist only as text pasted into a review thread. Needs the raw scan and audit outputs, and the scripts that produced them | — | institution + author | small, see §5.1 |
+| **10** | **Commit bounded evidence for M1-M5** — three JSON files and the three scripts that emit them. **Not raw console output** (§5.2). Blocks 2, 3, 6 and 7a | — | institution + author | small, see §5.1-5.2 |
 
 **Parked deliberately, not forgotten:** `task-scope/` Q2–Q5 (settled, unscheduled)
 and `scorer-retraining/` (scoping only, four gates uncleared). Neither blocks nor
@@ -319,6 +360,29 @@ Nothing here is disputed. The point is that "reviewed and approved" currently
 means *approved on a summary* for five of the eight established facts, and the
 existing `EVIDENCE_*.json` convention already shows what fixes it.
 
+### 5.2 What that evidence may and may not contain
+
+**Not raw institutional console output.** These runs touch a clinical
+deployment, and a console transcript carries filesystem paths, sample and patient
+identifiers, and whatever else was on screen. Each item below is an **aggregate
+JSON plus the script that emits it** — the script is what makes the number
+reproducible, and the bounded schema is what keeps the artifact publishable.
+
+| Fact | The file records | It must not record |
+|---|---|---|
+| M1-M3 | input digests, checkpoint count, key-presence summary, `in_channels` summary, and the filename-vs-`logs` metric comparison | checkpoint tensors, absolute paths, operator or host names |
+| M4 | both split hashes, the two disease counts, and the size of their intersection | any patient id, sample id, or per-disease list |
+| M5 | the SP artifact digest, the disease denominator, the hop bound, the reachable count and percentage, **and the phenotype-selection rule** | per-phenotype rows |
+
+**"A typical phenotype reaches 71.3%" is not reproducible as written**, and
+putting it in JSON would not make it so. The selection rule has to be
+operational — which phenotype or phenotypes, chosen how, and whether 71.3% is one
+phenotype's value, a median or a mean. Until the emitting script states that, M5
+is a number without a definition, and item 3 depends on it.
+
+**No evidence database, registry or index.** Three files beside the plans they
+support, exactly as `EVIDENCE_B04_*.json` already sit beside `PLAN_B04.md`.
+
 ---
 
 ## 6. Contradictions found and resolved in this revision
@@ -335,5 +399,9 @@ Recorded because the request that produced this file was to stop them recurring.
 | Its second draft then proposed calibrating **Mode A** against the *stored* `val_mrr` — right shape, but unreproducible and insufficient | Withdrawn on review. §3.1.1 gives both reasons; the stored value is demoted to a historical sanity reference |
 | The legacy-removal checklist instructed deletion of the clamp, local ranking, top-20 semantics, the A/B traversal and two manifest fields — all of which the adopted calibration **keeps** | Checklist **corrected and suspended**, with the oracle-only surface separated out and the removal order fixed at eight gated steps |
 | An earlier reply claimed an out-of-range disease id "would be read as if it were already local" | Imprecise. The mapping tensor is `-1`-initialised, so an in-range unsampled id maps to `-1`; an out-of-range id is left unchanged and is not normally a valid local column. §2.3 states the invariant instead of the guard |
+| §2.2 credited `_assert_cohort_is_intact` with enforcing the local-truth range invariant | **Wrong citation, right conclusion.** `to_global_ids` (`measurement.py:91-100`) is what enforces it, and `tests/unit/test_measurement_ranking.py:52-56` already covers `[3]`, `[99]` and `[-1]`. Corrected in §2.3 |
+| Review held that a `-1` local truth reaches PyTorch negative indexing and silently selects the last candidate, leaving `n_absent` at zero | **Refuted empirically.** `to_global_ids` raises `"local ids must be non-negative"` before any indexing. The genuine asymmetry is on the **trainer** side, which scores such a truth `0.0` — recorded as item 1f |
+| M1 was written as "no checkpoint this project has produced" | Overclaimed: no historical audit was run. Narrowed to the current producers and the scanned family, which is sufficient to reject the frozen evaluator as the acceptance oracle |
+| Item 10 asked for "the raw scan and audit outputs" | Raw institutional console output carries paths and sample identifiers. Replaced by three bounded aggregate JSONs plus their scripts (§5.2) |
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
