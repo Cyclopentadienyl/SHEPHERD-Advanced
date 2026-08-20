@@ -13,7 +13,7 @@ productionisation is a separate item (5a) behind its own gate. This revision add
 protocol defines one — known in two passing mentions and owned by nothing. Item
 11's scope is the **unit** of holdout, not a filename (§3.4).
 
-**Next action: item 1c** — extract the pass `_validate` and `evaluate` duplicate, behind 1b's frozen behaviour. Two directions this file proposed were withdrawn along
+**Next action: item 1d** — same-batch differential calibration, against the pass 1c extracted. Two directions this file proposed were withdrawn along
 the way, and several of its factual claims have been narrowed or re-cited under
 review — §6 records all of them rather than hiding them.
 
@@ -391,13 +391,14 @@ depends on is resolved.
 | **1a** | Correct and **suspend** the legacy-removal checklist | 1 | author | **done** |
 | **1a2** | **Malformed-truth invariant** (§2.3) — remove the silent disease clamp; enforce the range at the **loader** boundary on CPU, not in the trainer hot path where it would sync CUDA every batch. **Not a decision gate**: the contract is REFUSE and all three boundaries implement it | 1a | author | **done** |
 | **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour — 32 tests. Shared-pass behaviour is driven through **both** entry points; caller-specific contracts stay separate. Each contract group mutation-checked against a representative defect (9 mutations). Found that the malformed-truth refusal has **two independent sources**, and which fires depends on the sign of the bad id — so the tests run both signs | 1a2 | author | **done** |
-| **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
+| **1c** | Extract the pass those two already duplicate — private, narrow. Behaviour-neutral: the 32 characterization tests pass **unchanged**, and each shared operation went 2 occurrences to 1 | 1b | author | **done** |
 | **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
 | **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3) | 1c | author | small |
 | **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | **10 (M4 evidence)** | author | small |
 | **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
+| **12** | **`evaluate([])` silently evaluates the val set** — `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an explicit empty list is falsy and becomes a full validation pass. Frozen by a 1b test marked *observed, not endorsed*. Kept out of 1c deliberately, since an extraction commit must stay behaviour-neutral; raised here so the frozen defect is **not stranded** as a permanent monument to a known bug | 1c | author | small, unscheduled |
 | **5a** | **B-0.4 productionisation** — wire A into `_load_shortest_paths` and `sp_mean_distances`, then `PLAN_B04.md` §13's gate. **Production code: needs its own plan and review before any edit.** Its *implementation* depends on no calibration, split or checkpoint decision; its **acceptance does need a designated loadable checkpoint** plus compatible graph and SP artifacts — see §3.5 | 5; acceptance also needs a loadable checkpoint | author + institution | not started |
 | **11** | **Decide the evaluation-holdout protocol** (M9, §3.4) — **first** which claim each phase needs, then the unit that supports it: held-out sample views, disease-disjoint, or an external cohort. A **protocol decision**, not a code fix; the mechanical guards are already in and the tools already accept a supplied `test` split. Blocks 8a, `scorer-retraining` acceptance, and any held-out or generalisation claim. Does **not** block 1b/1c/1d | 2, 10 | needs review | design question |
 | **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, **10 (the same M1-M3 audit)** | institution | question |

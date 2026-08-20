@@ -612,18 +612,51 @@ class Trainer:
             "learning_rate": self.optimizer.param_groups[0]["lr"],
         }
 
-    def _validate(self, epoch: int) -> Dict[str, float]:
-        """驗證模型"""
-        self.model.eval()
-        self.callbacks.on_validation_begin(self)
+    @dataclass(frozen=True)
+    class _EvaluationPass:
+        """What one traversal of an evaluation dataloader produced.
 
-        all_predictions = []
-        all_ground_truths = []
+        A plain frozen container, deliberately: the callers need four values out
+        of the loop and a tuple would make the call sites unreadable. **Not** a
+        public result type, not a protocol, and nothing subclasses it.
+
+        `predictions` and `ground_truths` are carried out of the pass although no
+        caller reads them yet. They are the per-sample artifact item 1d compares
+        against Mode A's `legacy_top_k_local`, and returning them here costs
+        nothing and changes nothing observable.
+        """
+
+        ranking_metrics: Dict[str, float]
+        mean_loss: float
+        predictions: List[List[str]]
+        ground_truths: List[str]
+        num_batches: int
+
+    def _run_evaluation_pass(
+        self, dataloader: Iterator[Dict[str, Any]]
+    ) -> "Trainer._EvaluationPass":
+        """The pass `_validate` and `evaluate` both perform.
+
+        **Extracted, not rewritten.** Every operation below was already present
+        in both callers, in this order, and the 32 characterization tests in
+        `tests/unit/test_trainer_validation_characterization.py` exist to prove
+        that moving them changed nothing: the autocast boundary still closes
+        before metric aggregation, the loss is still a mean over batches, the
+        prediction rows are still local column indices truncated at 20, and a
+        malformed truth still refuses before any metric is computed.
+
+        **What stays with the callers**, because it is not shared:
+        `model.eval()` ordering relative to the validation callbacks, the `val_`
+        prefix, best-metric and history bookkeeping, `evaluate`'s dataloader
+        selection and early return, and its logging.
+        """
+        all_predictions: List[List[str]] = []
+        all_ground_truths: List[str] = []
         total_loss = 0.0
         num_batches = 0
 
         with torch.no_grad():
-            for batch_data in self.val_dataloader:
+            for batch_data in dataloader:
                 # Move data to device
                 batch = self._move_to_device(batch_data["batch"])
                 subgraph_x = self._move_to_device(batch_data["subgraph_x_dict"])
@@ -656,16 +689,39 @@ class Trainer:
                         all_predictions.append([str(idx) for idx in pred_indices[:20]])
                         all_ground_truths.append(str(targets[i].item()))
 
-        # Compute metrics
-        val_metrics = {}
-
+        ranking_metrics: Dict[str, float] = {}
         if all_predictions:
             ranking_metrics = RankingMetrics().compute_all(
                 all_predictions, all_ground_truths
             )
-            val_metrics.update({f"val_{k}": v for k, v in ranking_metrics.items()})
 
-        val_metrics["val_loss"] = total_loss / max(num_batches, 1)
+        return Trainer._EvaluationPass(
+            ranking_metrics=ranking_metrics,
+            mean_loss=total_loss / max(num_batches, 1),
+            predictions=all_predictions,
+            ground_truths=all_ground_truths,
+            num_batches=num_batches,
+        )
+
+    def _validate(self, epoch: int) -> Dict[str, float]:
+        """驗證模型
+
+        The traversal lives in `_run_evaluation_pass`; what stays here is the
+        validation lifecycle `evaluate` does not share — the callbacks, the
+        `val_` prefix, and the best-metric and history bookkeeping.
+
+        `model.eval()` stays **before** `on_validation_begin` rather than moving
+        into the pass: a callback receives the trainer and may read
+        `model.training`, so the order is observable.
+        """
+        self.model.eval()
+        self.callbacks.on_validation_begin(self)
+
+        result = self._run_evaluation_pass(self.val_dataloader)
+
+        # Compute metrics
+        val_metrics = {f"val_{k}": v for k, v in result.ranking_metrics.items()}
+        val_metrics["val_loss"] = result.mean_loss
 
         # Track best metric
         monitor_value = val_metrics.get(self.config.early_stopping_monitor)
@@ -818,52 +874,11 @@ class Trainer:
 
         self.model.eval()
 
-        all_predictions = []
-        all_ground_truths = []
-        total_loss = 0.0
-        num_batches = 0
-
-        with torch.no_grad():
-            for batch_data in dataloader:
-                # Move data to device
-                batch = self._move_to_device(batch_data["batch"])
-                subgraph_x = self._move_to_device(batch_data["subgraph_x_dict"])
-                subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
-
-                # Forward pass
-                with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
-                    node_embeddings = self.model(subgraph_x, subgraph_edges)
-                    model_outputs = self._compute_model_outputs(
-                        node_embeddings, batch, subgraph_x, subgraph_edges
-                    )
-
-                    # Compute loss
-                    loss, _ = self.loss_fn(batch, model_outputs)
-
-                total_loss += loss.item()
-                num_batches += 1
-
-                # Collect predictions for metrics
-                if "diagnosis_scores" in model_outputs:
-                    scores = model_outputs["diagnosis_scores"]
-                    targets = model_outputs.get("diagnosis_targets", batch.get("disease_ids"))
-
-                    # Get ranked predictions
-                    _, indices = scores.sort(dim=-1, descending=True)
-
-                    for i in range(scores.size(0)):
-                        pred_indices = indices[i].tolist()
-                        all_predictions.append([str(idx) for idx in pred_indices[:20]])
-                        all_ground_truths.append(str(targets[i].item()))
+        result = self._run_evaluation_pass(dataloader)
 
         # Compute metrics
-        metrics = {"loss": total_loss / max(num_batches, 1)}
-
-        if all_predictions:
-            ranking_metrics = RankingMetrics().compute_all(
-                all_predictions, all_ground_truths
-            )
-            metrics.update(ranking_metrics)
+        metrics = {"loss": result.mean_loss}
+        metrics.update(result.ranking_metrics)
 
         logger.info(f"Evaluation metrics: {metrics}")
         return metrics
