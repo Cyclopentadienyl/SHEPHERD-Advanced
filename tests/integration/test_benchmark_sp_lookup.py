@@ -424,3 +424,33 @@ def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, 
         per_cell.setdefault(key, set()).add(r["measured_first"])
     for key, orders in per_cell.items():
         assert len(orders) == 1, f"cell {key} measured two shape orders: {orders}"
+
+
+def test_an_existing_output_is_not_silently_replaced(tmp_path, monkeypatch):
+    """A measurement artifact is cited by digest; a repeat run must not clobber it.
+
+    This is a regression: the repeat of the B-0.4 artifact run was handed the
+    first run's exact output paths, and the shell's `2>` redirection truncated
+    the `time_*.txt` companions at launch. The JSONs survived only because they
+    were already committed.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    for name, value in (
+        ("CANDIDATE_COUNTS", (10,)), ("PHENOTYPE_COUNTS", (1,)),
+        ("SYNTHETIC_MEAN_SLICE_LENGTHS", (50,)),
+        ("SYNTHETIC_DISTRIBUTIONS", ("representative",)),
+        ("MIN_REPEATS", 1), ("MAX_REPEATS", 1), ("TARGET_MEASURE_SECONDS", 0.0),
+    ):
+        monkeypatch.setattr(bench, name, value)
+
+    output = tmp_path / "evidence.json"
+    assert bench.main(["--output", str(output)]) == 0
+    first = output.read_text()
+
+    with pytest.raises(SystemExit):
+        bench.main(["--output", str(output)])
+    assert output.read_text() == first, "the refused run still modified the file"
+
+    assert bench.main(["--output", str(output), "--overwrite"]) == 0
+    assert output.exists()

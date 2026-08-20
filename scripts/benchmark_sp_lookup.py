@@ -568,6 +568,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--max-hops", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Replace an existing --output file. Off by default: measurement "
+             "artifacts are cited by digest and must not be replaced silently.",
+    )
+    parser.add_argument(
         "--implementations", default="current",
         help=(
             "Comma-separated: current, global, slices. **Run one prototype per "
@@ -654,6 +659,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     }
 
     if args.output:
+        # **Refuse to overwrite evidence.** An artifact run takes minutes and its
+        # output is cited by SHA-256 from the plan; a second run pointed at the
+        # same path silently replaces the file those citations describe. This
+        # already happened once: the repeat run was given the first run's exact
+        # output paths, and the shell's own `2>` redirection truncated the
+        # `time_*.txt` companions at launch, before any replacement existed.
+        #
+        # Deliberately *not* an auto-generated unique name — that would leave the
+        # operator guessing which file the plan means. Name the new run, or say
+        # `--overwrite` and mean it.
+        if args.output.exists() and not args.overwrite:
+            parser.error(
+                f"{args.output} already exists. A measurement artifact is cited "
+                "by digest and must not be replaced silently — give the new run "
+                "its own --output name, or pass --overwrite if replacing this "
+                "file is what you intend."
+            )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2))
         print(f"\nWrote {args.output}", file=sys.stderr)
