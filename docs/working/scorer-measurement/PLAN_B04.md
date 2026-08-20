@@ -987,10 +987,17 @@ verdict must stand on one too.
 
 ## 12. Prototype results — the real artifact, GB10 SPARK
 
-Three processes as §11.3 specifies. Evidence:
-[`EVIDENCE_B04_proto_global.json`](EVIDENCE_B04_proto_global.json),
-[`EVIDENCE_B04_proto_slices.json`](EVIDENCE_B04_proto_slices.json), and
-`time_baseline.txt` / `time_global.txt` / `time_slices.txt`.
+Three processes as §11.3 specifies.
+
+**The numbers below come from the run carrying the §12.6 ordering defect**, whose
+files are kept under `*_orderdefect` names so §12.6's claims about them stay
+checkable:
+[`EVIDENCE_B04_proto_global_orderdefect.json`](EVIDENCE_B04_proto_global_orderdefect.json),
+[`EVIDENCE_B04_proto_slices_orderdefect.json`](EVIDENCE_B04_proto_slices_orderdefect.json),
+and `time_baseline_orderdefect.txt` / `time_global_orderdefect.txt` /
+`time_slices_orderdefect.txt`. The repeat run writes the unsuffixed names and
+**those become authoritative** when it lands; this section is rewritten from them
+and the difference recorded.
 
 **The artifact is a third vintage**, sha256 `7268900c…`, 430,585,772 rows,
 19,566 phenotypes — not the `9ada0c1a…` / 429,971,678-row table §9 measured.
@@ -1142,8 +1149,8 @@ sampling is `torch.randperm(len(targets))[:n_candidate]` at the commit the runs
 were made from.
 
 Also missing: `EVIDENCE_B04_proto_baseline.json` did not transfer. Its
-`time_baseline.txt` did, and that carries the number the run existed for — the
-loader-only peak of 21,110,244 KB. What is lost is 60 rows of a second
+`time_baseline_orderdefect.txt` did, and that carries the number the run existed
+for — the loader-only peak of 21,110,244 KB. What is lost is 60 rows of a second
 independent `current` measurement; §12.1's cross-run agreement rests on the two
 runs that did transfer.
 
