@@ -1,7 +1,10 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 8. **Both prototypes are built, correct, and measured on the
-real artifact. A selection is recommended and awaits review (§12.5).**
+**Status:** rev 9. **Both prototypes are built, correct, and measured on the
+real artifact. Approach A is recommended (§12.5) and awaits review.** A
+measurement-order defect found after that run is fixed and its impact bounded
+(§12.6); the run is to be **repeated for the record**, with the recommendation
+stated in advance so the repeat is a check rather than a search.
 
 - **§3.1, the latency gate — answered.** On the real artifact and a GB10 SPARK,
   the hardware class the institution names as its primary edge deployment
@@ -57,6 +60,21 @@ a median ratio of 1.001; the baseline misses the provisional budget by 1.7-2.5x;
 and 430 million rows makes index-build memory a first-order criterion that may
 invert §5.2's expected ordering.
 
+Rev 7: the §5.3.2 compatibility gate **passed** on a second, independently built
+artifact — zero duplicates, non-negative ids, and a composite-key maximum seven
+orders of magnitude inside int64 (§10). The two tables differ because their HPO
+vintages do, which reframes the gate as evidence about the generator's invariant
+rather than about one file, and makes the load-time assertion the right ongoing
+mechanism. Measured index-build memory came in at roughly three times §9.4's
+estimate, on unified memory shared with the model.
+
+Rev 9: the shape-order alternation was false a second time — keyed on
+`(cell_index + position) % 2`, which the implementation rotation cancels, so
+`current` was singleton-first in 60/60 rows and both prototypes batched-first in
+60/60. Fixed, pinned by a test that runs the documented two-implementation
+configurations, and its bounded effect on §12 recorded (§12.6). The defective
+run's files are kept under `*_orderdefect` names so that record stays checkable.
+
 Rev 8: both prototypes measured on the real artifact (§12). Approach A is
 8-34x faster on the **singleton** caller production ships — inverting §5.2's
 expectation that its advantage would be batched-only — and meets the provisional
@@ -66,14 +84,6 @@ build raises the process peak, which loading alone already sets at 21.11 GB. A's
 real cost is 3.44 GB of steady-state residence. §9.3's gate verdict also does not
 reproduce on this third artifact vintage, which is itself a finding about the
 baseline rather than about the prototypes.
-
-Rev 7: the §5.3.2 compatibility gate **passed** on a second, independently built
-artifact — zero duplicates, non-negative ids, and a composite-key maximum seven
-orders of magnitude inside int64 (§10). The two tables differ because their HPO
-vintages do, which reframes the gate as evidence about the generator's invariant
-rather than about one file, and makes the load-time assertion the right ongoing
-mechanism. Measured index-build memory came in at roughly three times §9.4's
-estimate, on unified memory shared with the model.
 
 ---
 
