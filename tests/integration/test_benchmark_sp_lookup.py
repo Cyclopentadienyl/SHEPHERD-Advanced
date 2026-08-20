@@ -180,3 +180,75 @@ def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatc
     assert report["provenance"]["mode"] == "synthetic"
     assert "artifact" not in report["verdict"]
     assert "pending institutional run" in report["verdict"]
+
+
+# =============================================================================
+# Prototype selection (B-0.4 prototype phase)
+# =============================================================================
+def test_unknown_implementation_is_rejected():
+    """A typo must not silently benchmark fewer implementations than asked for."""
+    from scripts.benchmark_sp_lookup import main
+
+    with pytest.raises(SystemExit):
+        main(["--implementations", "current,globl"])
+
+
+def test_memory_attribution_flag_is_honest(tmp_path, monkeypatch):
+    """`ru_maxrss` is a process high-water mark, so two prototypes in one process
+    cannot both be attributed. The report must say so rather than imply isolation.
+
+    Asserted in both directions: one prototype is isolated, two are not.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10,))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1,))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    one = tmp_path / "one.json"
+    assert bench.main(["--implementations", "global", "--output", str(one)]) == 0
+    single = json.loads(one.read_text())
+    assert single["memory_attribution_isolated"] is True
+    assert single["stage"] == "B-0.4 prototype"
+    assert [b["implementation"] for b in single["index_builds"]] == ["global"]
+
+    both = tmp_path / "both.json"
+    assert bench.main(
+        ["--implementations", "current,global,slices", "--output", str(both)]
+    ) == 0
+    pair = json.loads(both.read_text())
+    assert pair["memory_attribution_isolated"] is False
+    assert pair["implementations"] == ["current", "global", "slices"]
+
+
+def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
+    """A timing difference must be the implementation, not a different workload."""
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10, 50))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1, 20))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / "cells.json"
+    assert bench.main(
+        ["--implementations", "current,global,slices", "--output", str(output)]
+    ) == 0
+    rows = json.loads(output.read_text())["rows"]
+
+    def cells(name):
+        return sorted(
+            (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+             r["caller_shape"], r["queried_slice_total"])
+            for r in rows if r["implementation"] == name
+        )
+
+    assert cells("current") == cells("global") == cells("slices")
+    assert cells("current"), "the matrix produced no rows to compare"

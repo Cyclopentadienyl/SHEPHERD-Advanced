@@ -280,19 +280,61 @@ def _time_once(fn, *args) -> float:
     return time.perf_counter() - start
 
 
-def _call_singleton(lookup, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
-    """The shape production ships: one call per candidate, `[0]` taken."""
-    from src.inference.scoring import sp_mean_distances
+def _callers(query_fn):
+    """Both caller shapes for one query function.
 
-    for candidate in candidates:
-        sp_mean_distances(lookup, phenotypes, [candidate], DISEASE_TYPE_IDX)
+    The prototypes take an index where the current primitive takes an `SPLookup`,
+    but the signature is otherwise identical — deliberately, since PLAN_B04 §4.1
+    keeps the caller unchanged. So one factory serves all three implementations
+    and there is no second copy of the loop to drift.
+    """
+
+    def singleton(table, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
+        """The shape production ships: one call per candidate, `[0]` taken."""
+        for candidate in candidates:
+            query_fn(table, phenotypes, [candidate], DISEASE_TYPE_IDX)
+
+    def batched(table, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
+        """The shape B-1 and the offline harness use: one call, every candidate."""
+        query_fn(table, phenotypes, candidates, DISEASE_TYPE_IDX)
+
+    return singleton, batched
 
 
-def _call_batched(lookup, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
-    """The shape B-1 and the offline harness use: one call, every candidate."""
-    from src.inference.scoring import sp_mean_distances
+def _peak_rss_bytes() -> int:
+    """Process high-water RSS.
 
-    sp_mean_distances(lookup, phenotypes, candidates, DISEASE_TYPE_IDX)
+    `ru_maxrss` never decreases, so a difference across a build measures how much
+    that build raised the process peak — which is only attributable to one
+    prototype when it is the only one built in the process. The report records
+    whether that held; `main` does not silently correct for it.
+    """
+    import resource
+
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+
+
+def build_index(implementation: str, lookup) -> Tuple[Any, Dict[str, Any]]:
+    """Build one prototype's index, timing it and attributing its peak RSS."""
+    from scripts.sp_index_prototypes import (
+        build_global_key_index,
+        build_slice_sorted_index,
+    )
+
+    builders = {"global": build_global_key_index, "slices": build_slice_sorted_index}
+    before = _peak_rss_bytes()
+    start = time.perf_counter()
+    index = builders[implementation](lookup)
+    elapsed = time.perf_counter() - start
+    return index, {
+        "record": "index_build",
+        "implementation": implementation,
+        "build_seconds": elapsed,
+        "index_resident_bytes": index.index_bytes,
+        "peak_rss_before_bytes": before,
+        "peak_rss_after_bytes": _peak_rss_bytes(),
+        "rows": int(lookup.target.numel()),
+    }
 
 
 def _repeat(fn, *args) -> Dict[str, float]:
@@ -324,7 +366,29 @@ def time_table(
     rows: List[Dict[str, Any]],
     skipped: List[Dict[str, Any]],
     cell_counter: "itertools.count",
+    tables: Optional[Dict[str, Any]] = None,
 ) -> None:
+    """Time every requested implementation over the same cells.
+
+    `tables` maps an implementation name to the object its query function takes —
+    the `SPLookup` for `current`, a prototype index otherwise. All of them see the
+    **same** phenotypes and candidates in the same cell, so a difference between
+    two rows is the implementation and not the workload.
+    """
+    from src.inference.scoring import sp_mean_distances
+
+    if tables is None:
+        tables = {"current": lookup}
+    query_fns = {"current": sp_mean_distances}
+    if any(name != "current" for name in tables):
+        from scripts.sp_index_prototypes import (
+            sp_mean_distances_global,
+            sp_mean_distances_slices,
+        )
+
+        query_fns["global"] = sp_mean_distances_global
+        query_fns["slices"] = sp_mean_distances_slices
+
     by_length = sorted(range(len(lengths)), key=lambda i: -lengths[i])
     generator = torch.Generator().manual_seed(seed)
     target_t = torch.tensor(targets)
@@ -357,28 +421,36 @@ def time_table(
                 )
                 candidates = target_t[picked].tolist()
 
-                shapes = [("singleton", _call_singleton), ("batched", _call_batched)]
-                # Alternate which shape runs first, so a small difference between
-                # them is not confounded with a fixed measurement order.
-                #
-                # **Counted per timed cell, not from `len(rows)`.** Each cell
-                # appends two rows, so `len(rows)` is even at every cell boundary
-                # and a `len(rows) % 2` test never fires — the first version of
-                # this alternated nothing, and the evidence file recorded
-                # `measured_first="singleton"` for all 240 rows while §8.1 claimed
-                # otherwise.
-                if next(cell_counter) % 2:
-                    shapes.reverse()
-                for shape, fn in shapes:
-                    timing = _repeat(fn, lookup, phenotypes, candidates)
-                    rows.append({
-                        "implementation": "current", **labels,
-                        "caller_shape": shape, "candidates": n_candidate,
-                        "phenotypes": n_phenotype, "phenotype_selection": selection,
-                        "queried_slice_total": int(touched),
-                        "measured_first": shapes[0][0], **timing,
-                    })
-                    print(json.dumps(rows[-1]), flush=True)
+                for implementation, table in tables.items():
+                    singleton, batched = _callers(query_fns[implementation])
+                    shapes = [("singleton", singleton), ("batched", batched)]
+                    # Alternate which shape runs first, so a small difference
+                    # between them is not confounded with a fixed measurement
+                    # order.
+                    #
+                    # **Counted per timed cell, not from `len(rows)`.** Each cell
+                    # appends two rows, so `len(rows)` is even at every cell
+                    # boundary and a `len(rows) % 2` test never fires — the first
+                    # version of this alternated nothing, and the evidence file
+                    # recorded `measured_first="singleton"` for all 240 rows while
+                    # §8.1 claimed otherwise.
+                    #
+                    # Drawn once per (cell, implementation) rather than once per
+                    # cell, so the order does not become a fixed property of which
+                    # implementation is being timed.
+                    if next(cell_counter) % 2:
+                        shapes.reverse()
+                    for shape, fn in shapes:
+                        timing = _repeat(fn, table, phenotypes, candidates)
+                        rows.append({
+                            "implementation": implementation, **labels,
+                            "caller_shape": shape, "candidates": n_candidate,
+                            "phenotypes": n_phenotype,
+                            "phenotype_selection": selection,
+                            "queried_slice_total": int(touched),
+                            "measured_first": shapes[0][0], **timing,
+                        })
+                        print(json.dumps(rows[-1]), flush=True)
 
 
 def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
@@ -420,12 +492,41 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--max-hops", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--implementations", default="current",
+        help=(
+            "Comma-separated: current, global, slices. **Run one prototype per "
+            "process** — peak RSS is a process high-water mark, so building two "
+            "in one process attributes the second's cost to whichever ran first."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    requested = [name.strip() for name in args.implementations.split(",") if name.strip()]
+    unknown = [name for name in requested if name not in ("current", "global", "slices")]
+    if unknown:
+        parser.error(f"unknown implementation(s): {', '.join(unknown)}")
+    if not requested:
+        parser.error("--implementations may not be empty")
+    prototypes = [name for name in requested if name != "current"]
 
     torch.manual_seed(args.seed)
     cells = itertools.count()
     rows: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
+    builds: List[Dict[str, Any]] = []
+
+    def prepare(lookup) -> Dict[str, Any]:
+        tables: Dict[str, Any] = {}
+        for name in requested:
+            if name == "current":
+                tables[name] = lookup
+                continue
+            index, record = build_index(name, lookup)
+            tables[name] = index
+            builds.append(record)
+            print(json.dumps(record), flush=True)
+        return tables
 
     if args.artifact is not None:
         mode = "artifact"
@@ -434,7 +535,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         phenotype_ids = sorted(lookup.offsets)
         time_table({"table": "artifact"}, lookup, lengths, targets, phenotype_ids,
-                   args.seed, rows, skipped, cells)
+                   args.seed, rows, skipped, cells, prepare(lookup))
         source: Dict[str, Any] = {"source": "artifact", **artifact_meta}
         # A real artifact is one of §3.1's two requirements. The other is a
         # deployment-equivalent CPU, which this script cannot self-attest — and
@@ -447,7 +548,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         mode = "synthetic"
         for labels, lookup, lengths, targets in synthetic_tables(args.max_hops, args.seed):
             time_table(labels, lookup, lengths, targets, list(range(len(lengths))),
-                       args.seed, rows, skipped, cells)
+                       args.seed, rows, skipped, cells, prepare(lookup))
         source = {
             "source": "synthetic",
             "reason": "no shortest_paths.pt supplied; none exists in development",
@@ -462,8 +563,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     report = {
-        "stage": "B-0.4 baseline",
-        "implementations": ["current"],
+        "stage": "B-0.4 prototype" if prototypes else "B-0.4 baseline",
+        "implementations": requested,
+        "index_builds": builds,
+        # `ru_maxrss` is a process high-water mark, so a second prototype built in
+        # the same process inherits the first's peak. True only when exactly one
+        # prototype was built here; the numbers are reported either way and the
+        # flag says how to read them.
+        "memory_attribution_isolated": len(prototypes) <= 1,
         "slice_source": source,
         "provenance": provenance(args, mode),
         "verdict": verdict,

@@ -32,7 +32,7 @@ designed or implemented in B-0.3.
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
 | B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | implementation complete, **acceptance redefined**: bit-parity with the frozen evaluator is unexecutable, and the replacement is a same-batch differential test against the trainer's own validation pass. See `../BACKLOG.md` §3.1 |
 | B-0.3 | Modes B and C | implementation complete; institutional run inherits B-0.2's acceptance. Plan: [`PLAN_B03.md`](PLAN_B03.md) |
-| B-0.4 | vectorised SP lookup | both gates cleared; prototype phase ready, and **independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) — the primitive's body, not the caller; the caller's shape is B-1's |
+| B-0.4 | vectorised SP lookup | **both prototypes built, correctness closed and mutation-checked** (`PLAN_B04.md` §11); timing and memory pending an artifact run. **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) — the primitive's body, not the caller; the caller's shape is B-1's |
 | B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
 
 [`PLAN_B02_shipped.md`](PLAN_B02_shipped.md) is the plan the shipped B-0.2 code
@@ -118,7 +118,7 @@ construction and step 8 is last.
 | 1 | Correct and suspend this checklist | **done — this section** |
 | 2 | Characterization tests freezing `Trainer._validate` and `Trainer.evaluate` observable behaviour | metric keys, loss aggregation, callback order and count, best-metric updates, forward count, local top-20 rows, truth ids, AMP placement, empty-result behaviour |
 | 3 | Extract the pass those two already duplicate | private and narrow; no evaluation framework, protocol hierarchy, callback extension point or generic result subsystem |
-| 4 | Same-batch differential calibration | non-tautological **only if `trainer.py` never imports or calls the harness's traversal or ranking**. Sharing `masked_mean_pool` / `cosine_score_matrix` is fine |
+| 4 | Same-batch differential calibration | non-tautological **only if `trainer.py` never imports or calls the harness's traversal or ranking**. Review permitted sharing `masked_mean_pool` / `cosine_score_matrix`; `.import-linter.ini` places `src.training` **below** `src.inference` and forbids it outright, so the trainer keeps its own inline `F.normalize` + `torch.mm` and independence is mechanically enforced. The harness sits in `src.evaluation`, above both, which is the one direction it needs |
 | 5 | Bounded synthetic tests, then the institutional CUDA acceptance run | this is the deletion gate |
 | 6 | One mechanical rename commit | ~70 references across 9 files. **No** scoring, ranking, tie, schema, CLI, builder or manifest behaviour change |
 | 7 | Rewrite this checklist against the final boundary | |

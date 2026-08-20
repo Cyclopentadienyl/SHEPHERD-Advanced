@@ -835,4 +835,93 @@ first-order selection criterion. On UMA it is not merely first-order, it is
 shared with the thing the system exists to run — which is the strongest argument
 yet for prototyping approach B rather than assuming A.
 
+---
+
+## 11. Prototype phase — both built, correctness closed, timing pending
+
+`scripts/sp_index_prototypes.py`. **Measurement subjects, not production code**,
+and not importable from `src/` — when one wins it moves into the loader and the
+primitive, and this file goes with the loser. No strategy base class, no
+registry, no runtime selector.
+
+### 11.1 What each one is
+
+| | Query | Retained beyond the loader's own tensors |
+|---|---|---|
+| **A — `global`** | one `searchsorted` over all `P x C` keys, one gather, one masked reduction — a constant number of launches | a full-length int64 key column |
+| **B — `slices`** | per phenotype: two `searchsorted` narrow the slice to the `target_type` run, one more resolves all `C` candidates inside it | **nothing** |
+
+Both turn the `O(L)` scan into `O(log L)`. **The difference between them is
+memory, not asymptotics** — which is why §9.4 and §10.2 are the sections that
+matter for the choice.
+
+Two implementation constraints that are easy to violate silently, so they are
+recorded rather than left to review:
+
+- **No query path may touch more than `O(log L)` rows.** Casting a slice to a
+  wider dtype to satisfy `torch.searchsorted` is `O(L)` and would quietly
+  reinstate the cost being removed. The *query* is cast to the stored dtype
+  instead, never the reverse. The first draft of B did the opposite.
+- **B's index is built one slice at a time.** A single global lexicographic sort
+  would produce the same ordering faster, but would allocate the same
+  full-length int64 key A does — erasing the difference being measured. The cost
+  moves into build *time*, which is a reported figure.
+
+### 11.2 Correctness — closed, in `tests/unit/test_sp_index_prototypes.py`
+
+25 tests, both prototypes, **exact equality with the scanning primitive** rather
+than a tolerance. Exactness is available because distances are BFS hop counts
+stored as int8 (`pipeline.py:493`) and the unreachable value is `max_hops + 1`,
+so every partial sum is a small integer well inside float64's exact range and
+summation order cannot change the bits.
+
+Covered: every target type; a phenotype absent from `offsets`; a candidate no
+phenotype reaches; an out-of-range `target_type`; negative and out-of-domain ids;
+the narrow `available` semantics both ways; the `C = 1` shape production ships;
+duplicate rows refused by both builders while the scanning path tolerates them;
+negative ids refused at build; the int64 domain overflow; and invariance to
+within-slice row order, which the loader's unstable `argsort` leaves arbitrary.
+
+**The tests were mutation-checked, not merely passed.** Three deliberate defects
+— dropping A's target-domain mask, disabling B's duplicate check, and performing
+the overflow check in int64 instead of Python integers — each failed exactly the
+test claiming that coverage. The overflow mutation is the one worth noting: a
+check performed in int64 has already wrapped and would pass, and only the
+Python-integer form catches it.
+
+### 11.3 What remains, and why it is not in this container
+
+Timing and memory need the real artifact and deployment-class hardware. Neither
+is here.
+
+```
+# one prototype per process — see below
+.venv/bin/python scripts/benchmark_sp_lookup.py --artifact <shortest_paths.pt> \
+    --implementations current,global \
+    --output docs/working/scorer-measurement/EVIDENCE_B04_proto_global.json
+.venv/bin/python scripts/benchmark_sp_lookup.py --artifact <shortest_paths.pt> \
+    --implementations current,slices \
+    --output docs/working/scorer-measurement/EVIDENCE_B04_proto_slices.json
+```
+
+**One prototype per process is a measurement requirement, not tidiness.**
+`ru_maxrss` is a process high-water mark, so a second index built in the same
+process inherits the first's peak and its own cost becomes unattributable. The
+report carries `memory_attribution_isolated`, which is false whenever more than
+one prototype was built there; the numbers are still recorded, and the flag says
+how to read them. Including `current` in both runs is free — it builds no index —
+and gives each file its own baseline to compare against.
+
+Every implementation is timed over **the same cells** with the same phenotypes
+and candidates, so a difference between two rows is the implementation and not
+the workload; a test asserts that rather than trusting the loop. Shape order
+alternates per *(cell, implementation)* rather than per cell, so measurement
+order cannot become a fixed property of which implementation is being timed.
+
+**No timing figure appears in this section**, and the development-CPU smoke run
+that exercised the plumbing is not evidence: its synthetic slices are ~200 rows,
+where `log L` has almost nothing to save. §9's conclusion — that the baseline
+misses the provisional budget — stands on the artifact run, and the prototypes'
+verdict must stand on one too.
+
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
