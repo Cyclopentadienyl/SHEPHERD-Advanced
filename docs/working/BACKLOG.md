@@ -180,9 +180,20 @@ per-sample local top-20 ids, truth ranks, reciprocal ranks, then aggregate MRR.
 (`:773-849`) already duplicate this calculation; the shared pass is extracted
 once, privately, and all three callers use it. Writing a fourth expression of a
 calculation that must agree would leave the newest copy the only untested one.
-Non-tautology holds because `trainer.py` never imports or calls the harness's
-traversal or ranking — sharing `masked_mean_pool` and `cosine_score_matrix` is
-acceptable and does not weaken it.
+
+**Non-tautology is enforced by the layer contract, not by discipline.**
+`.import-linter.ini` orders `src.evaluation` above `src.inference` above
+`src.training`, and a lower layer may not import a higher one — so
+`src/training/` **cannot** import `masked_mean_pool` or `cosine_score_matrix`
+from `src/inference/scoring.py` even if someone wanted to. `make lint-imports`
+fails if it is attempted. The trainer keeps its own inline `F.normalize` +
+`torch.mm` (`trainer.py:761-763`), which is what makes it a genuinely
+independent expression. Review permitted primitive sharing; the architecture
+forbids it in this direction, and the stricter rule is the one that holds.
+
+The differential harness itself sits in `src.evaluation`, which is above both,
+so it may import the trainer's extracted pass and the Mode A traversal. That
+direction is legal and is the only one that needs to be.
 
 **Its cost, stated plainly:** job (b) is retired. The legacy-removal checklist in
 `scorer-measurement/README.md` was written around a parity that will now never be
@@ -257,6 +268,39 @@ would leave the harness with no acceptance at all.
 **8a comes before 7b for a reason:** designing B-0.5's output contract after an
 expensive institutional run is how required evidence gets discovered too late to
 collect.
+
+### 5.0 Is any of this order forced? Checked at file level
+
+Asked because reordering was being considered, and "these are independent" is a
+structural claim that decays.
+
+| Line | Files it touches |
+|---|---|
+| **B-0.4** (item 5) | `scripts/benchmark_sp_lookup.py`; `src/inference/scoring.py` — `sp_mean_distances`, `SPLookup`; `tests/unit/test_scoring_primitives.py` |
+| **Calibration** (1b-1e) | `src/training/trainer.py`; `src/evaluation/measurement.py`; `scripts/measure_scorer.py`; `scripts/calibrate_mode_a.py`; new trainer and D3 tests |
+
+**Disjoint, and the layer contract keeps them that way.** The one file that could
+have been shared is `src/inference/scoring.py` — it holds both the SP primitives
+B-0.4 rewrites *and* the cosine primitives a naive extraction might have reached
+for. `src.training` sits **below** `src.inference`, so the trainer cannot import
+them; `trainer.py` today imports only `src.training.*` and `src.utils.*`, and
+`make lint-imports` reports 3 contracts kept. A B-0.4 regression therefore has no
+path to the calibration reference.
+
+**Only two orderings are genuinely forced**, both already in the table:
+
+- Item 9 (rename, then checklist rewrite, then deletion) after 1d's institutional
+  acceptance — deleting the old acceptance path before the new one is accepted
+  would leave the harness with none.
+- 8a (protocol design) before 7b/8b — evidence requirements have to be known
+  before an expensive run, not after.
+
+**One soft coupling worth naming:** item 2's caveat quotes split file hashes, and
+item 10's evidence file would carry hashes for the same claim. If they are
+produced on different machines they will not match, and both must then say
+**which workspace** they measured. That is the M7 situation and it is a strength,
+not a conflict — two independent replications of a generator-level property —
+but it must be written that way rather than discovered later.
 
 ### 5.1 An asymmetry in the evidence, recorded because it is load-bearing
 
