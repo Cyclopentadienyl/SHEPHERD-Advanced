@@ -765,6 +765,33 @@ Two mechanisms follow, and they are not the same one:
 | **The load-time assertion** (§5.3.2) | The ongoing guarantee. It runs on whatever table is present, so a future rebuild that violated uniqueness fails at startup instead of scoring wrongly. **This is the right mechanism precisely because the artifact keeps changing.** |
 | **The manual scan** | Evidence for the decision to productionise the assertion at all — that it will not refuse to start on real tables. Two vintages passing is the evidence; a third would not add much. |
 
+### 10.1.1 Version matching already exists, and is deliberately a warning
+
+**Nothing here needs a new version mechanism.** The project was scoped with an
+updatable knowledge base as a *feature* — rare-disease data improves over time
+and the model is meant to be upgraded with it — and
+`src/utils/fingerprint.py` is the mechanism that already serves it. It captures
+node types and counts, edge types including reverse, per-type feature dimensions
+and total KG node/edge counts; the trainer embeds it as `data_fingerprint`, and
+`verify_fingerprint` compares it at load (`pipeline.py:574-587`).
+
+**It warns rather than refuses, on purpose** — the module's own docstring says
+"so operators can decide". Since the two SPARKs' graphs differ, their
+fingerprints differ, and loading a checkpoint built against one KG onto the other
+would raise exactly that warning. That is the designed behaviour, not a defect.
+
+**Why §5.3.2's uniqueness assertion fails instead of warning, and why that is
+not an inconsistency.** The two checks differ in whether an operator can act on
+them:
+
+| Check | Behaviour | Why |
+|---|---|---|
+| Fingerprint mismatch | **Warn** | An operator can assess it. A KG that gained nodes since training may be perfectly fine to serve, and only they know whether it is |
+| Duplicate `(phenotype, target, target_type)` rows | **Fail** | Nobody can assess it. A duplicate makes the indexed lookup return a different distance from the linear scan it replaces, so the failure mode is a *silently different score* — there is no "accepted with duplicates" state that behaves correctly |
+
+Recorded because a project whose philosophy is "warn and let the operator judge"
+should not acquire a hard failure by accident, and this one is not an accident.
+
 **One consequence for §9's timings.** They were measured on one vintage. The
 table grew 0.14% in two weeks, which is slow but monotone, and the cost is linear
 in slice length — so the budget overshoot in §9.3 drifts in the wrong direction
