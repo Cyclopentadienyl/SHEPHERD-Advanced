@@ -5,11 +5,13 @@ readable without reconstructing six review threads. Phase documents keep their
 own detail; this file holds **ordering, dependencies and blockers only** and must
 not restate their decisions.
 
-**Status:** third revision. The calibration decision at item 1 is **made and
+**Status:** fourth revision. The calibration decision at item 1 is **made and
 reviewed** (§3.1.2); the legacy-removal checklist it invalidated is corrected and
-suspended. Two directions this file proposed were withdrawn along the way, and
-three of its factual claims have been narrowed or re-cited under review — §6
-records all of them rather than hiding them.
+suspended. B-0.4's measurement is **complete and reviewed**, and its
+productionisation is now a separate item (5a) behind its own gate. Two directions
+this file proposed were withdrawn along the way, and several of its factual
+claims have been narrowed or re-cited under review — §6 records all of them
+rather than hiding them.
 
 ---
 
@@ -38,8 +40,8 @@ ordering.
 | M3 | **The filename number is `val_mrr`** — `model-45-0.6975.pt` carries `logs["val_mrr"] = 0.69754…` | same |
 | M4 | **100% of validation diseases appear in training** — 7,970 of 7,970. Train: 100,000 samples over 10,576 diseases; val: 15,000 over 7,970 | overlap audit |
 | M5 | **SP reachability is dense**: a typical phenotype reaches 71.3% of diseases within 5 hops (16,845 of 23,640) | artifact scan |
-| M6 | **The SP lookup misses the provisional latency budget by 1.7-2.5x** on the real artifact and a GB10 SPARK | `scorer-measurement/PLAN_B04.md` §9 |
-| M7 | **Zero duplicate rows** on two independently built artifacts of different HPO vintages | same, §10 |
+| M6 | **The SP lookup breaches the provisional latency budget in 22 of 60 measurements**, worst 3,722 ms, on the real artifact and a GB10 SPARK. Approach A brings that to **0 of 60** at a cost of 3.44 GB permanent residence; the earlier "1.7-2.5x" figure came from a different artifact vintage and host and is superseded | `scorer-measurement/PLAN_B04.md` §12.3 |
+| M7 | **Zero duplicate rows** on two independently built artifacts of different HPO vintages — evidence about the generator's invariant, not clearance for one file; every future artifact is protected by the load-time assertion | same, §10.1 |
 | M8 | **The trainer's own validation loop is Mode-A-shaped, not Mode-C-shaped** — per-batch subgraph forward, cosine against *the subgraph's* disease rows, top-20 truncation, MRR from the same function Mode A calls. See §2.1 | read from `trainer.py`, `metrics.py`, `measurement.py` |
 
 ### 2.1 M8 in detail — where `val_mrr` comes from
@@ -314,7 +316,8 @@ depends on is resolved.
 | **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | **10 (M4 evidence)** | author | small |
 | **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
-| **5** | **B-0.4 prototype phase** — prototype A and B, both caller shapes, per-subprocess memory | — **independent of 1 and of 10**, because M6 and M7 already have committed evidence | author | prototypes built; artifact run pending |
+| **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
+| **5a** | **B-0.4 productionisation** — wire A into `_load_shortest_paths` and `sp_mean_distances`, then `PLAN_B04.md` §13's integrated memory and reload gate on the deployed shape and the smallest supported target. **Production code: needs its own plan and review before any edit** | 5 | author + institution | not started |
 | **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, **10 (the same M1-M3 audit)** | institution | question |
 | **7a** | Engineering differential calibration run | 1d, **10 (M1-M3 evidence)**, D5 artifact set, a designated loadable checkpoint | author | blocked |
 | **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
@@ -331,11 +334,12 @@ is blocked by anything above.
 
 ## 5. Two orderings that are easy to get wrong
 
-**Item 5 does not wait for item 1.** B-0.4 measures the shortest-path **lookup
-cost**. It consumes no checkpoint, no sample split and no model — only
-`shortest_paths.pt`. Both its gates are cleared (M6, M7), and its findings do not
-depend on whether the harness is calibrated. The root blocker blocks the
-**numbers**, not the **work**.
+**Item 5 did not wait for item 1, and that held.** B-0.4 measures the
+shortest-path **lookup cost**: it consumes no checkpoint, no sample split and no
+model — only `shortest_paths.pt`. It ran to completion and was reviewed while
+item 1 was still open, which is the independence claim discharged rather than
+merely asserted. Item **5a** inherits it: productionising A still needs no
+checkpoint and no calibration.
 
 **Item 9 waits for everything.** The rename is behaviour-neutral and looks safe,
 which is exactly why it must come last: the trainer helper's shape, the
