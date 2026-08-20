@@ -336,7 +336,7 @@ held-out and they support different claims:
 |---|---|---|
 | **Held-out sample views** over diseases already in training — a fresh post-training synthetic cohort | independence from *checkpoint selection*; robustness to phenotype dropout | **not** unseen-disease generalisation: it shares every disease with training |
 | **Disease-disjoint** evaluation | unseen-disease generalisation | requires **retraining** — it cannot be produced for an existing checkpoint |
-| **External clinical cohort** | independence of origin | nothing, until its disease overlap with training is **measured and reported** |
+| **External clinical cohort** | independence of origin, and **patient-level external evaluation** on its own terms | **unseen-disease** claims, until its disease overlap with training is measured and reported. Overlap decides whether it *also* supports that claim — it does not decide whether the cohort supports any result at all |
 
 **Item 11's first job is deciding which claim each phase needs**, then choosing
 the unit that supports it. Choosing a split first and asking what it proves
@@ -390,7 +390,7 @@ depends on is resolved.
 | **1** | **The calibration decision** — §3.1.2, adopted and reviewed | — | **decided** | — |
 | **1a** | Correct and **suspend** the legacy-removal checklist | 1 | author | **done** |
 | **1a2** | **Malformed-truth invariant** (§2.3) — remove the silent disease clamp; enforce the range at the **loader** boundary on CPU, not in the trainer hot path where it would sync CUDA every batch. **Not a decision gate**: the contract is REFUSE and all three boundaries implement it | 1a | author | **done** |
-| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour — 21 tests, each checked against a mutation that should break it. Found that the malformed-truth refusal has **two independent sources** inside `_compute_model_outputs`, which one fires depending on the sign of the bad id | 1a2 | author | **done** |
+| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour — 32 tests. Shared-pass behaviour is driven through **both** entry points; caller-specific contracts stay separate. Each contract group mutation-checked against a representative defect (9 mutations). Found that the malformed-truth refusal has **two independent sources**, and which fires depends on the sign of the bad id — so the tests run both signs | 1a2 | author | **done** |
 | **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
 | **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
 | **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3) | 1c | author | small |

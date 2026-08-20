@@ -16,14 +16,22 @@ should have to edit a test that says what it is changing.
 evaluation framework, no differential calibration. One file, and nothing under
 `src/` is touched.
 
-**Every assertion here was checked against a mutation that should break it**,
-because a characterization test that passes on changed code is worse than none —
-it certifies a change it did not examine. Six mutations were run: dropping the
-`val_` prefix, truncating at 10 instead of 20, replacing the mean loss with the
-last batch's, moving the loss outside `autocast`, clamping only the targets, and
-restoring the whole pre-fix clamp. Five failed the test that names them. The
-sixth — clamping the targets alone — passed everything, which turned out to be a
-finding rather than a gap and is now pinned by the last test in this file.
+**Each contract group was mutation-checked against a representative defect** —
+not every assertion independently, and the difference matters: a characterization
+test that passes on changed code is worse than none, because it certifies a change
+it did not examine. The mutations run were: dropping the `val_` prefix,
+truncating at 10 instead of 20, replacing the mean loss with the last batch's,
+moving the loss outside `autocast`, moving metric aggregation *inside* it,
+clamping only `diagnosis_targets`, and restoring the whole pre-fix clamp. Each
+failed the group that names it.
+
+Clamping only `diagnosis_targets` is the one worth recording. It first passed
+everything, because `disease_emb[disease_ids]` raises on `id >= n_rows` before
+the loss is reached. Driving the **complete entry points** with `-1` as well
+catches it: `-1` wraps through the gather and only the loss refuses, so a clamped
+target lets the run finish and reach metric aggregation. That is why the
+malformed-truth tests are parameterized over both signs rather than over the
+convenient one.
 
 Module: tests/unit/test_trainer_validation_characterization.py
 """
@@ -114,6 +122,22 @@ def make_trainer(val_batches, callbacks=None, **config_overrides) -> Trainer:
     )
 
 
+#: The two public entry points over the pass item 1c extracts. Behaviour that
+#: belongs to the *shared* pass is characterized through **both**; behaviour that
+#: is caller-specific — prefixes, callbacks, state — is tested separately below.
+#: Running the whole file twice would only make the caller contracts harder to
+#: see.
+ENTRY_POINTS = ("validate", "evaluate")
+LOSS_KEY = {"validate": "val_loss", "evaluate": "loss"}
+
+
+def run_entry_point(trainer: Trainer, entry: str, batches=None) -> Dict[str, float]:
+    """Drive one entry point over the trainer's val batches."""
+    if entry == "validate":
+        return trainer._validate(epoch=1)
+    return trainer.evaluate(batches)
+
+
 # ---------------------------------------------------------------------------
 # 1. Metric keys and prefixes — the two entry points disagree
 # ---------------------------------------------------------------------------
@@ -148,8 +172,13 @@ def test_evaluate_returns_the_same_metrics_unprefixed_and_calls_the_loss_key_los
 # ---------------------------------------------------------------------------
 # 2. Loss aggregation — the mean over batches
 # ---------------------------------------------------------------------------
-def test_val_loss_is_the_mean_of_the_per_batch_losses():
-    """Computed independently, not read back from the same accumulator."""
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_loss_is_the_mean_of_the_per_batch_losses(entry):
+    """Computed independently, not read back from the same accumulator.
+
+    Shared-pass behaviour, so both entry points are driven: 1c extracts one
+    aggregation and both callers must keep getting the mean.
+    """
     batches = [make_batch([0, 1]), make_batch([7, 13])]
     trainer = make_trainer(batches)
 
@@ -163,9 +192,9 @@ def test_val_loss_is_the_mean_of_the_per_batch_losses():
             expected.append(float(loss))
     trainer.model.forward_calls = 0
 
-    metrics = trainer._validate(epoch=1)
+    metrics = run_entry_point(trainer, entry)
 
-    assert metrics["val_loss"] == pytest.approx(sum(expected) / len(expected))
+    assert metrics[LOSS_KEY[entry]] == pytest.approx(sum(expected) / len(expected))
     assert expected[0] != pytest.approx(expected[1]), (
         "the two batches must differ, or this test cannot tell a mean from a last value"
     )
@@ -241,10 +270,11 @@ def test_a_missing_monitor_key_leaves_best_metric_unset():
 # ---------------------------------------------------------------------------
 # 5. Model forward count
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
 @pytest.mark.parametrize("n_batches", [1, 2, 3])
-def test_one_forward_per_batch(n_batches):
+def test_one_forward_per_batch(entry, n_batches):
     trainer = make_trainer([make_batch([0, 1]) for _ in range(n_batches)])
-    trainer._validate(epoch=1)
+    run_entry_point(trainer, entry)
 
     assert trainer.model.forward_calls == n_batches
 
@@ -263,15 +293,38 @@ def test_evaluate_with_no_dataloader_at_all_returns_empty():
     assert trainer.model.forward_calls == 0
 
 
+def test_an_explicitly_empty_evaluate_argument_falls_back_to_the_val_dataloader():
+    """**Frozen as observed, not endorsed.** `evaluate` selects its dataloader
+    with `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an
+    explicitly supplied `[]` is falsy and silently becomes the validation set —
+    a caller asking to evaluate nothing gets a full validation pass instead.
+
+    1c must not quietly change this to an `is None` contract. That would be a
+    defensible fix, but it is a **behaviour change** and has to be made by
+    editing this test rather than by an extraction nobody re-read.
+    """
+    trainer = make_trainer([make_batch([0, 1]), make_batch([2, 3])])
+
+    metrics = trainer.evaluate([])
+
+    assert trainer.model.forward_calls == 2, "the two val batches ran"
+    assert "loss" in metrics, "and produced a full result"
+
+
 # ---------------------------------------------------------------------------
 # 6. The local top-20 rows and truth ids handed to the metric
 # ---------------------------------------------------------------------------
-def _capture_metric_inputs(monkeypatch):
-    """Record what `RankingMetrics.compute_all` is called with.
+def _capture_metric_inputs(monkeypatch, events: List[str] | None = None):
+    """Record what `RankingMetrics.compute_all` is called with, and **when**.
 
-    The prediction lists are local to `_validate`, and they are the artifact 1d
-    will compare against Mode A's `legacy_top_k_local`. Capturing the call is the
-    only way to freeze their shape without changing the code under test.
+    The prediction lists are local to the entry points, and they are the artifact
+    1d will compare against Mode A's `legacy_top_k_local`. Capturing the call is
+    the only way to freeze their shape without changing the code under test.
+
+    When `events` is supplied the call appends `"metrics"` **from inside**
+    `compute_all`. Appending it after the entry point returns would prove only
+    that aggregation happened at some point, which is true however the code is
+    ordered — it would not show that aggregation ran after `autocast` exited.
     """
     import src.training.trainer as trainer_module
 
@@ -280,6 +333,8 @@ def _capture_metric_inputs(monkeypatch):
 
     class Capturing(original):  # type: ignore[misc,valid-type]
         def compute_all(self, predictions, ground_truths, k_values=None):
+            if events is not None:
+                events.append("metrics")
             seen["predictions"] = predictions
             seen["ground_truths"] = ground_truths
             return super().compute_all(predictions, ground_truths, k_values)
@@ -288,10 +343,11 @@ def _capture_metric_inputs(monkeypatch):
     return seen
 
 
-def test_predictions_are_local_column_indices_as_strings_truncated_to_twenty(monkeypatch):
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_predictions_are_local_column_indices_as_strings_truncated_to_twenty(entry, monkeypatch):
     seen = _capture_metric_inputs(monkeypatch)
     trainer = make_trainer([make_batch([4, 9])])
-    trainer._validate(epoch=1)
+    run_entry_point(trainer, entry)
 
     predictions = seen["predictions"]
     assert len(predictions) == 2, "one row per sample"
@@ -302,18 +358,20 @@ def test_predictions_are_local_column_indices_as_strings_truncated_to_twenty(mon
         assert len(set(row)) == 20, "a ranking has no repeats"
 
 
-def test_ground_truths_are_the_stringified_local_disease_ids(monkeypatch):
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_ground_truths_are_the_stringified_local_disease_ids(entry, monkeypatch):
     seen = _capture_metric_inputs(monkeypatch)
     trainer = make_trainer([make_batch([4, 9])])
-    trainer._validate(epoch=1)
+    run_entry_point(trainer, entry)
 
     assert seen["ground_truths"] == ["4", "9"]
 
 
-def test_rows_accumulate_across_batches_in_dataloader_order(monkeypatch):
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_rows_accumulate_across_batches_in_dataloader_order(entry, monkeypatch):
     seen = _capture_metric_inputs(monkeypatch)
     trainer = make_trainer([make_batch([4, 9]), make_batch([1, 2])])
-    trainer._validate(epoch=1)
+    run_entry_point(trainer, entry)
 
     assert seen["ground_truths"] == ["4", "9", "1", "2"]
     assert len(seen["predictions"]) == 4
@@ -336,8 +394,13 @@ def test_amp_disables_itself_on_cpu_whatever_the_config_asks_for():
     assert trainer.scaler is None
 
 
-def test_the_forward_and_the_loss_are_inside_autocast_and_the_metrics_are_not(monkeypatch):
-    """Placement, not just settings — 1c must not move either boundary."""
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_the_forward_and_the_loss_are_inside_autocast_and_the_metrics_are_not(entry, monkeypatch):
+    """Placement, not just settings — 1c must not move either boundary.
+
+    `metrics` is appended from **inside** the capturing `compute_all`, so the
+    assertion sees where aggregation really sits relative to `exit`.
+    """
     import src.training.trainer as trainer_module
 
     events: List[str] = []
@@ -365,18 +428,17 @@ def test_the_forward_and_the_loss_are_inside_autocast_and_the_metrics_are_not(mo
         return original_model_forward(self, *args, **kwargs)
 
     monkeypatch.setattr(RecordingModel, "forward", tracing_forward)
-    seen = _capture_metric_inputs(monkeypatch)
+    _capture_metric_inputs(monkeypatch, events)
 
     trainer = make_trainer([make_batch([0, 1])])
-
-    def tracing_loss(batch, outputs, _original=None):
-        events.append("loss")
-        return _original(batch, outputs)
-
     real_loss = trainer.loss_fn
-    trainer.loss_fn = lambda b, o: tracing_loss(b, o, _original=real_loss)
-    trainer._validate(epoch=1)
-    events.append("metrics" if "predictions" in seen else "no-metrics")
+
+    def tracing_loss(batch, outputs):
+        events.append("loss")
+        return real_loss(batch, outputs)
+
+    trainer.loss_fn = tracing_loss
+    run_entry_point(trainer, entry)
 
     assert events == [
         "autocast(enabled=False)",
@@ -389,67 +451,42 @@ def test_the_forward_and_the_loss_are_inside_autocast_and_the_metrics_are_not(mo
 
 
 # ---------------------------------------------------------------------------
-# 8. A malformed truth never reaches metric aggregation
+# 8. A malformed truth never reaches metric aggregation — both signs, both callers
 # ---------------------------------------------------------------------------
-def test_a_malformed_truth_raises_before_any_metric_is_recorded(monkeypatch):
+#: The two ways a remapped truth can be malformed. They refuse in **different
+#: places**, which is why testing only one is not enough:
+#:
+#:   `n_rows` — `disease_emb[disease_ids]` raises at the gather, before the loss;
+#:   `-1`     — the gather wraps to the last row and only `DiagnosisLoss` refuses.
+#:
+#: A mutation that clamps `diagnosis_targets` but leaves the gather alone passes
+#: every `n_rows` test, because the gather is doing the work. It fails on `-1`,
+#: where the clamped target lets the run finish and reach aggregation.
+MALFORMED_IDS = (-1, N_DISEASES)
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("bad_id", MALFORMED_IDS)
+def test_a_malformed_truth_raises_before_any_metric_is_recorded(entry, bad_id, monkeypatch):
     """The claim `test_trainer_truth_invariant.py` could only make at source level.
 
-    That file establishes refusal *at the loss* in isolation. This drives the
-    real `_validate` and asserts the consequence: the run dies, no metric is
-    computed, no history is appended, and `on_validation_end` never fires — so a
-    malformed truth cannot become a `val_mrr` of 0.0.
+    That file establishes refusal *at the loss* in isolation. This drives the real
+    entry points and asserts the consequence: the run dies, no metric is computed,
+    and for `_validate` no history is appended and `on_validation_end` never fires
+    — so a malformed truth cannot become a `val_mrr` of 0.0.
     """
     seen = _capture_metric_inputs(monkeypatch)
     recorder = RecordingCallback()
-    trainer = make_trainer([make_batch([0, N_DISEASES])], callbacks=[recorder])
+    trainer = make_trainer([make_batch([0, bad_id])], callbacks=[recorder])
 
     with pytest.raises((IndexError, RuntimeError)):
-        trainer._validate(epoch=1)
+        run_entry_point(trainer, entry)
 
     assert seen == {}, "no metric aggregation was reached"
-    assert recorder.events == ["validation_begin"], "end never fired"
     assert trainer.state.val_metric_history == []
     assert trainer.state.best_metric is None
 
-
-def test_the_two_malformed_id_paths_refuse_at_different_places(monkeypatch):
-    """Found by mutation, and pinned because 1c could silently remove one.
-
-    `_compute_model_outputs` refuses a malformed truth from **two independent
-    places**, and which one fires depends on the sign:
-
-      - `id >= n_rows` — the gather `disease_emb[disease_ids]` raises `IndexError`
-        on its own, before the loss is reached;
-      - `id == -1` — the gather **wraps** to the last row and does not raise, so
-        only `DiagnosisLoss` refuses.
-
-    A mutation that clamped the *targets* but left the gather unclamped still
-    passed every other test in this file, because the gather was doing the work.
-    An extraction that clamps or reorders the gather would remove one guard while
-    the outcome tests keep passing on the other — until someone also touches the
-    loss, at which point both are gone at once.
-    """
-    embeddings = {
-        "disease": torch.randn(N_DISEASES, HIDDEN),
-        "phenotype": torch.randn(N_PHENOTYPES, HIDDEN),
-    }
-
-    with pytest.raises(IndexError):
-        Trainer._compute_model_outputs(
-            None, embeddings, make_batch([0, N_DISEASES])["batch"], {}, {}
-        )
-
-    # `-1` gets through the gather by wrapping, and the outputs look ordinary.
-    outputs = Trainer._compute_model_outputs(
-        None, embeddings, make_batch([0, -1])["batch"], {}, {}
-    )
-    assert outputs["diagnosis_targets"].tolist() == [0, -1], "unclamped, deliberately"
-    assert torch.equal(
-        outputs["disease_embeddings"][1], embeddings["disease"][-1]
-    ), "the gather wrapped rather than refusing"
-
-    # Only the loss refuses it, which is why the loss must stay on this path.
-    from src.training.loss_functions import LossConfig, MultiTaskLoss
-
-    with pytest.raises((IndexError, RuntimeError)):
-        MultiTaskLoss(LossConfig())(make_batch([0, -1])["batch"], outputs)
+    if entry == "validate":
+        assert recorder.events == ["validation_begin"], "end never fired"
+    else:
+        assert recorder.events == [], "evaluate drives no validation hooks"
