@@ -42,8 +42,13 @@ was built from, kept as the reasoning behind it. History, not authority.
 
 ```
 python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
-    --split test --output reports/measurement.json --modes A,B,C
+    --split val --output reports/measurement.json --modes A,B,C
 ```
+
+**`--split` has no default, and `val` is not held-out data.** It is the
+split the current training configuration uses for early stopping and
+checkpoint selection, and ordinary generated workspaces contain no test
+split at all — `src/kg/sample_generator.py` writes train and val only.
 
 Mode A keeps `--output`'s name and its predictions artifact, so
 `scripts/calibrate_mode_a.py` reads the same file it always did; B and C are

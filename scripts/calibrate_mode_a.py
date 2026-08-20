@@ -54,7 +54,7 @@ therefore informative and is not a reason to retry with another seed.
     python scripts/calibrate_mode_a.py \\
         --checkpoint checkpoints/best.pt \\
         --data-dir data/processed \\
-        --split test --seed 20260818 \\
+        --split val --seed 20260818 \\   # val is not held-out; see below
         --workdir reports/calibration
 
 Module: scripts/calibrate_mode_a.py

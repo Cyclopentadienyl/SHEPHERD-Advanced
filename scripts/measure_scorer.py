@@ -18,7 +18,7 @@ authoritative metrics, which are what the modes are compared with each other on.
     python scripts/measure_scorer.py \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
-        --split test \
+        --split val \        # see the note below: val is not held-out
         --output measurement.json
 
 Two artifacts come out: `--output`, the measurement report a human reads, and

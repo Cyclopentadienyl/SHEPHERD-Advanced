@@ -78,7 +78,11 @@ def read_samples(data_dir: Path, split: str) -> List[Any]:
     if not path.exists():
         available = sorted(
             candidate.name[: -len("_samples.json")]
+            # `is_file()`: a directory named `foo_samples.json` is not a split,
+            # and reporting one as available would send the caller after a name
+            # that can never load.
             for candidate in data_dir.glob("*_samples.json")
+            if candidate.is_file()
         )
         detail = (
             f"this workspace has: {', '.join(available)}"

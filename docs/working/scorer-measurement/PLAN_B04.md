@@ -1,6 +1,7 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 6. The **baseline stage is complete** and its gate is answered:
+**Status:** rev 7. The **baseline stage is complete**, and the §5.3.2
+compatibility gate has **passed** (§10). and its gate is answered:
 measured on the real artifact and on a GB10 SPARK — the hardware class the
 institution names as its primary edge deployment platform — the current lookup
 **exceeds the provisional budget by 1.7-2.5x** (§9), so the
@@ -49,6 +50,14 @@ artifact, whose p100 is only 1.17x its p50; the caller-shape conclusion holds at
 a median ratio of 1.001; the baseline misses the provisional budget by 1.7-2.5x;
 and 430 million rows makes index-build memory a first-order criterion that may
 invert §5.2's expected ordering.
+
+Rev 7: the §5.3.2 compatibility gate **passed** on a second, independently built
+artifact — zero duplicates, non-negative ids, and a composite-key maximum seven
+orders of magnitude inside int64 (§10). The two tables differ because their HPO
+vintages do, which reframes the gate as evidence about the generator's invariant
+rather than about one file, and makes the load-time assertion the right ongoing
+mechanism. Measured index-build memory came in at roughly three times §9.4's
+estimate, on unified memory shared with the model.
 
 ---
 
@@ -712,5 +721,78 @@ MAJOR 2 required be measured. Both are still prototyped; neither is preferred he
 
 
 ---
+
+---
+
+## 10. The §5.3.2 compatibility gate — passed, on a different artifact
+
+Run on a second GB10 SPARK. **Result: PASS.**
+
+| Check | Result |
+|---|---|
+| Duplicate `(phenotype, target, target_type)` rows | **0** |
+| Non-negative ids | `ph=0`, `tg=0`, `ty=0` minima — all pass |
+| Composite key maximum | **1,184,843,951** against the int64 limit of 9,223,372,036,854,775,807 — **seven orders of magnitude of headroom**, and computed in Python integers before any int64 tensor existed, as §5.2 requires |
+
+So the uniqueness assertion §5.3.2 introduces will not refuse to start on this
+table, and approach A's key domain is nowhere near overflow.
+
+### 10.1 A different artifact — and that is the normal case, not an anomaly
+
+| | §9's artifact | This one |
+|---|---|---|
+| Rows | 429,971,678 | **430,585,772** |
+| Difference | — | **+614,094 (+0.14%)** |
+
+The two machines built their knowledge graphs from **HPO releases roughly two
+weeks apart**, and HPO updates about monthly. So the tables differ because the
+source ontology moved, not because either build is wrong — and **the artifact the
+institution eventually deploys will be a third version again.**
+
+**This changes what the gate can establish, and makes it stronger rather than
+weaker.** A one-off scan of "the deployed artifact" is not a thing that can be
+completed, because there is no single deployed artifact — there is a sequence of
+them. What two *independently built* tables, from different ontology vintages,
+both passing with **zero duplicates** does establish is evidence about the
+**generator's invariant** rather than about one file: uniqueness comes from
+`compute_shortest_paths.py`'s BFS recording each node at first arrival
+(`scoring.py:91-94`), and that property survived an ontology update.
+
+Two mechanisms follow, and they are not the same one:
+
+| | What it is for |
+|---|---|
+| **The load-time assertion** (§5.3.2) | The ongoing guarantee. It runs on whatever table is present, so a future rebuild that violated uniqueness fails at startup instead of scoring wrongly. **This is the right mechanism precisely because the artifact keeps changing.** |
+| **The manual scan** | Evidence for the decision to productionise the assertion at all — that it will not refuse to start on real tables. Two vintages passing is the evidence; a third would not add much. |
+
+**One consequence for §9's timings.** They were measured on one vintage. The
+table grew 0.14% in two weeks, which is slow but monotone, and the cost is linear
+in slice length — so the budget overshoot in §9.3 drifts in the wrong direction
+as HPO grows. Not alarming at this rate; recorded so nobody reads §9 as a fixed
+property of the system rather than of one snapshot of the ontology.
+
+### 10.2 Measured memory, and why UMA makes it a first-order constraint
+
+| | Reading |
+|---|---|
+| Peak during the scan | **28.7 GB** |
+| Settled afterwards | ~7 GB |
+| OS baseline at boot | ~5 GB |
+| **Attributable to the scan** | **~24 GB** |
+
+§9.4 estimated "order +7 GB transient" for approach A's key plus sort buffer.
+**The measured figure for a comparable operation is roughly three times that**,
+and the reason is visible in the scan itself: it widened three narrow columns to
+int64 before building the key, which is 3 × 430M × 8 B ≈ 10.3 GB before the key
+or the sort. A careful index build would not do that, so **24 GB is an upper
+bound for a naive implementation rather than a floor for a careful one** — but it
+places the operation in the tens of gigabytes, not the single digits.
+
+**On SPARK this is unified memory.** The index build does not draw from a
+separate host pool; it competes directly with the model, the graph tensors and
+the embeddings. §9.4 said 430 million rows makes index-build memory a
+first-order selection criterion. On UMA it is not merely first-order, it is
+shared with the thing the system exists to run — which is the strongest argument
+yet for prototyping approach B rather than assuming A.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
