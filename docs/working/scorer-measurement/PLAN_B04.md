@@ -1,7 +1,7 @@
 # B-0.4 — vectorised shortest-path lookup
 
 **Status:** rev 10. **Both prototypes are built, correct, and measured twice on
-the real artifact. Approach A is recommended (§12.5) and awaits review.** The
+the real artifact, the second time across three cross-checked processes. Approach A is recommended (§12.5) and awaits review.** The
 repeat was run after a measurement-order defect was found (§12.6) and
 **reproduces every conclusion** (§12.7); the recommendation was stated before it
 ran, so the repeat was a check rather than a search.
@@ -86,10 +86,12 @@ configurations, and its bounded effect on §12 recorded (§12.6). The defective
 run's files are kept under `*_orderdefect` names so that record stays checkable.
 
 
-Rev 10: the repeat run landed and **reproduces every conclusion** (§12.7) —
-identical over-budget counts, the same four failing cells for B, singleton ratios
-within a percent or two, and the same 21.11 GB process peak in all three
-processes. Cross-run agreement on `current` improved to 0.38% median / 1.93% max.
+Rev 10: the repeat run landed complete — all six files — and **reproduces every
+conclusion** (§12.7): identical over-budget counts, the same four failing cells
+for B, singleton ratios within a percent or two, and the same 21.11 GB process
+peak in all three processes. `current` was measured in all three, agreeing to
+0.55% median / 1.98% max, so the loader-only process is an independent third
+reading rather than a number taken on trust from a prototype run.
 The one material difference is B's index build at 44.8 s against 62.5 s, which is
 run-to-run variance in a per-slice Python loop the ordering defect never touched.
 §12.0 also spells out the cells-versus-measurements arithmetic, because an
@@ -1030,19 +1032,33 @@ An earlier revision of this section wrote "0/60 cells", conflating the two. That
 is the same cells-versus-rows slip rev 5 had to correct once already, which is
 why the arithmetic is spelled out rather than assumed.
 
-### 12.1 The two runs are comparable
+### 12.1 The three processes are comparable
 
-`current` was measured in both prototype processes, over the same 30 cells with
-the same seed: **median run-to-run deviation 0.38%, maximum 1.93%** across all 60
-measurements. Every prototype-vs-current ratio below is therefore within one
-process, and the two processes can be read side by side.
+`current` was measured in **all three** — the loader-only process and both
+prototype processes — over the same 30 cells with the same seed, and all three
+consumed the same artifact digest. Spread across the three, over all 60
+(cell, shape) points:
+
+| | median | max |
+|---|---|---|
+| **three-way spread** | **0.55%** | **1.98%** |
+| baseline vs global-run | 0.45% | 1.98% |
+| baseline vs slices-run | 0.23% | 1.21% |
+| global-run vs slices-run | 0.38% | 1.93% |
+
+Every prototype-vs-current ratio below is therefore taken **within one process**,
+and the loader-only process is an independent third reading of the same
+`current` workload rather than a number to be taken on trust from either
+prototype run.
 
 Alternation, counted from the committed files — 30/30 for every
-(implementation, shape-order) pair in both:
+(implementation, shape-order) pair, and 30/30 in the single-implementation
+baseline too:
 
 ```
-global: {(current,batched):30, (current,singleton):30, (global,batched):30, (global,singleton):30}
-slices: {(current,batched):30, (current,singleton):30, (slices,batched):30, (slices,singleton):30}
+baseline: {singleton:30, batched:30}
+global:   {(current,batched):30, (current,singleton):30, (global,batched):30, (global,singleton):30}
+slices:   {(current,batched):30, (current,singleton):30, (slices,batched):30, (slices,singleton):30}
 ```
 
 ### 12.2 Latency — the production caller shape decides it
@@ -1095,10 +1111,19 @@ B's four failures are all singleton at P=100: `(longest, C=200)` 293.8 ms,
 (`diagnose.py:56`), not an exotic case.
 
 **§9.3's verdict does not reproduce on this artifact, and that is a finding
-about the baseline.** At the gate point `current` measures 219 ms `sampled` and
-295 ms `longest` here, against 428-630 ms in §9.3 — so the `sampled` case is now
-*under* the 250 ms budget. The baseline's gate result is artifact- and
-host-dependent; the prototypes' margins at that same point, 31× and 42×, are not.
+about the baseline.** At the gate point, `current` singleton measures:
+
+| selection | baseline | global-run | slices-run | §9.3 |
+|---|---|---|---|---|
+| sampled | 222.2 | 219.4 | 221.5 | 629.5 |
+| longest | 300.1 | 294.9 | 299.5 | 428.4 |
+
+So the `sampled` case is *under* the 250 ms budget in **all three** processes,
+and `longest` is over in all three. The baseline's gate result is artifact- and
+host-dependent; the prototypes' margins at that same point, 31× and 42×, are
+not. Whether §9.3's higher figures come from the different artifact vintage
+(429,971,678 rows against 430,585,772) or from the host is **not established
+here** — both differ, and nothing in these runs separates them.
 
 ### 12.4 Memory — the argument against A does not survive measurement
 
@@ -1196,10 +1221,10 @@ used `randperm`; that string was fixed in the same commit that produced this run
 **Those files are not edited** — an evidence artifact that has been retouched is
 not evidence — and this paragraph is the correction.
 
-`EVIDENCE_B04_proto_baseline.json` for the corrected run has not transferred yet.
-`time_baseline.txt` has, and it carries the number the loader-only process exists
-for: peak 21,108,120 KB. What is still outstanding is its 60 rows of a third
-independent `current` measurement; §12.1's agreement rests on the two prototype
-processes.
+All six files of the corrected run are committed, including
+[`EVIDENCE_B04_proto_baseline.json`](EVIDENCE_B04_proto_baseline.json) — it
+carries `index_builds: []` and 60 rows of `current`, which is the third
+independent reading §12.1 rests on, alongside its loader-only peak of
+21,108,120 KB.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
