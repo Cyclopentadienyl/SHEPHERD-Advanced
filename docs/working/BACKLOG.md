@@ -5,10 +5,10 @@ readable without reconstructing six review threads. Phase documents keep their
 own detail; this file holds **ordering, dependencies and blockers only** and must
 not restate their decisions.
 
-**Status:** first revision, written after the first institutional measurements
-came back and produced two findings that reach further than the stage they came
-from. One direction it originally proposed was checked against source before
-submission and withdrawn; §6 records that rather than hiding it.
+**Status:** second revision. The calibration decision at item 1 is **made and
+reviewed** (§3.1.2); the legacy-removal checklist it invalidated is corrected and
+suspended. Two directions this file proposed were withdrawn along the way — §6
+records them rather than hiding them.
 
 ---
 
@@ -60,21 +60,54 @@ previously proposed.
 Every row is the same operation. **`val_mrr` is a Mode-A-shaped number, and M3
 says every checkpoint carries it.**
 
-**What is not established**, and would have to be closed before treating it as a
-calibration target:
+**Every row above holds only when identical model weights, batch/subgraph
+objects, ID mappings and numerical execution context are supplied.** It is a
+statement about algorithmic shape. It is **not** a claim of historical execution
+parity — see §3.1.1.
 
-| # | Gap | Why it matters |
-|---|---|---|
-| D1 | The candidate set **is** the batch's subgraph, so batch size, shuffle and sampler policy change it | Two runs of the same checkpoint over the same split give different MRR if batching differs. The trainer's `DataLoaderConfig` values may be recoverable from the serialized `config` (M1); whether they are *sufficient* — sampler seed, neighbour policy — is unchecked |
-| D2 | The trainer validates inside `autocast(..., dtype=self.amp_dtype, enabled=self.use_amp)` (`:633`); Mode A's traversal has no autocast | Changes score values and therefore tie order |
-| D3 | The trainer compares `str(column_index)` against `str(disease_ids[i])` | Only meaningful if the dataloader emits subgraph-local disease ids. Mode A names the variable `disease_ids_local`; that both are the same space is an assumption until read |
-| D4 | Cohort and split | `val_mrr` is over the val split at one epoch. Reproducing it needs the same split and the same sample count |
+### 2.2 The D-list: what still has to be recorded or closed
+
+**Most of this is already recorded.** `MeasurementManifest`
+(`measurement.py:259-340`) already carries `batch_size`, `shuffle`,
+`num_workers`, `negative_sampling_strategy`, `num_negative_samples`,
+`subgraph_strategy`, `subgraph_hops`, `num_neighbors`, `max_subgraph_nodes`, the
+three seeds, `device`, `torch_version`, `cuda_version`, `dtype`, `amp_enabled`,
+`deterministic_algorithms`, `cudnn_deterministic`, `cudnn_benchmark`, `split`,
+`n_samples` and `artifact_digests`. Re-specifying those would duplicate fields
+that exist. Only the rows below are open.
+
+| # | Open item |
+|---|---|
+| D1 | **Record the limitation, not a field.** Historical epoch RNG state was never saved, so the historical stochastic validation traversal is not exactly reproducible. Sample order in a *new* run is pinned by `shuffle=False` plus the samples digest |
+| D2 | Add `amp_dtype` (only the boolean is recorded today) and the **observed** `torch.compile` execution state — an execution fact, not a requested config value. No compile-metadata machinery |
+| D3 | **Closed from source.** `_remap_indices` (`data_loader.py:956-964`) maps `batch["disease_ids"]` through `node_mapping["disease"]` into subgraph-local space, the same space as the score-matrix columns; trainer and Mode A read the same remapped tensor. The invariant is **already enforced loudly**: `_assert_cohort_is_intact` raises on any absent truth and names id translation as a cause (`measurement.py:606-613`). What is missing is only the regression tests — see §2.3 |
+| D4 | No excluded-sample list is required **while the run is fail-fast**. Record that the run does not silently skip samples and that ranked plus ground-truth-absent account for the intact cohort. `n_ground_truth_absent` is a count, **not** an excluded- or failed-sample list; if skip-and-continue is ever introduced, skipped ids and reasons become required then |
+| D5 | Exact artifact identity. A/B/C already digest checkpoint, samples, node features, edge indices and num_nodes (`measure_scorer.py:79-92`). Open: the **shortest-path artifact digest, added when Mode D consumes it**, and comparing recorded digests against the institution-approved artifact set at acceptance. No registry, no compatibility database |
+| D6 | Aggregate `val_mrr` is insufficient for parity and is a historical sanity reference only (§3.1.1) |
+
+### 2.3 The D3 regression tests
+
+The invariant to assert is stronger and simpler than a guard-boundary check:
+
+> every valid sample's seeded ground-truth disease must remap to
+> `0 <= local_truth < number_of_subgraph_disease_rows`.
+
+The mapping tensor has length `max(sampled_global_id) + 1`, is initialised to
+`-1`, and holds local indices only at sampled global-id positions
+(`data_loader.py:358-366`). So a global id inside the tensor range but absent
+from the subgraph maps to `-1`; an id beyond the tensor length is left unchanged
+and will not normally be a valid local column, since the local candidate count is
+no larger than the sampled-node count.
+
+Cover: a successful seeded-truth mapping; a `-1` hole; an id beyond the mapping
+tensor; local↔global round-trip identity; and equality of the truth id consumed
+by the trainer reference and by Mode A.
 
 ---
 
 ## 3. What these facts broke
 
-### 3.1 Calibration cannot run as designed — this is the root blocker
+### 3.1 The calibration target did not exist — the root blocker, now decided
 
 Two loaders fail on the same missing key, in two different ways:
 
@@ -108,25 +141,53 @@ Job (a) needs no oracle at all.
 
 #### Directions, corrected by M8
 
-| Direction | Cost | Verdict |
-|---|---|---|
-| Repair the frozen evaluator to derive `in_channels` from features | Small | It is **frozen on purpose**. A repaired oracle is not the oracle whose number is being reproduced — and M8 removes the reason to want one |
-| Accept that no oracle number exists and drop Mode A | Large | Discards the control the whole ladder is built around |
-| ~~Calibrate **Mode C** against the trainer's `val_mrr`~~ | — | **Withdrawn — the premise is false.** The trainer's validation loop does not score the full disease matrix; it scores the batch's subgraph (M8, §2.1). Its `val_mrr` is not a Mode-C-shaped number |
-| **Calibrate Mode A against the trainer's `val_mrr`** | Medium | Every step matches, verified line by line (§2.1). Requires closing D1-D4, and requires Mode A's model builder to stop mirroring the oracle's defaults and construct the way the **trainer** did — which `build_shepherd_model` already does by deriving in-channels from `x_dict` (`shepherd_gnn.py:569-573`) |
+| Direction | Verdict |
+|---|---|
+| Repair the frozen evaluator to derive `in_channels` from features | **Rejected.** It is frozen on purpose, and a repaired evaluator is a *new* evaluator, not a reproduction of a historical executable artifact |
+| Accept that no oracle number exists and drop Mode A | **Rejected.** Discards the control the whole ladder is built around |
+| ~~Calibrate **Mode C** against the trainer's `val_mrr`~~ | **Withdrawn — premise false.** The trainer's validation loop scores the batch's subgraph, not the full disease matrix (M8, §2.1) |
+| ~~Calibrate **Mode A** against the stored `val_mrr`~~ | **Withdrawn — not reproducible, and insufficient even if it were.** See §3.1.1 |
+| **Same-batch differential calibration against the trainer's own validation pass** | **Adopted.** §3.1.2 |
 
-**The fourth is the recommendation, and it is not a workaround.** It replaces an
-unexecutable target with an executable one that has the same shape, and M3 says
-the value is already sitting in every checkpoint — no institutional oracle run
-needed to obtain it.
+#### 3.1.1 Why the stored `val_mrr` is not an oracle
 
-**Its real cost, stated plainly:** it retires job (b). A Mode A that constructs
-its model the way the trainer did is no longer bit-parity with
-`scripts/evaluate_model.py`, and the legacy-removal checklist in
-`scorer-measurement/README.md` is written around a parity that would then never
-have been demonstrated. That checklist would need rereading, not just executing.
-Whether losing (b) is acceptable is the decision item 1 asks for — **it is not
-settled here.**
+Two independent reasons, the first confirmed from source:
+
+- **The historical batching cannot be reconstructed.** Mode A's candidate set
+  *is* the batch's subgraph, and validation subgraphs and negatives are drawn
+  stochastically. `grep -n "rng\|get_rng_state" src/training/callbacks.py
+  src/training/trainer.py` returns **no matches** — the checkpoint saves epoch,
+  `state_dict`, `optimizer_state_dict`, `logs`, `config`, optionally
+  `scheduler_state_dict` and optionally `data_fingerprint`, and no RNG state. The
+  candidate universe at epoch 45 depended on the RNG stream position after 45
+  epochs of training, which is unrecoverable.
+- **One aggregate scalar cannot establish parity anyway.** Per-sample ranking,
+  candidate-set, tie-order and ID-mapping disagreements can cancel in aggregate.
+
+Stored `val_mrr` is retained as a **historical aggregate sanity reference** and
+nothing more.
+
+#### 3.1.2 The adopted direction
+
+Retire frozen-evaluator bit parity; keep Mode A as the trainer-validation-shaped
+bottom rung; calibrate it with a **same-batch differential test**: build the real
+model through `build_shepherd_model`, hand the *same* batch and subgraph objects
+to a trainer-path reference calculation and to the Mode A harness, and compare
+per-sample local top-20 ids, truth ranks, reciprocal ranks, then aggregate MRR.
+
+**The reference is the trainer's own code, not a third implementation.**
+`Trainer._validate` (`trainer.py:615-681`) and `Trainer.evaluate`
+(`:773-849`) already duplicate this calculation; the shared pass is extracted
+once, privately, and all three callers use it. Writing a fourth expression of a
+calculation that must agree would leave the newest copy the only untested one.
+Non-tautology holds because `trainer.py` never imports or calls the harness's
+traversal or ranking — sharing `masked_mean_pool` and `cosine_score_matrix` is
+acceptable and does not weaken it.
+
+**Its cost, stated plainly:** job (b) is retired. The legacy-removal checklist in
+`scorer-measurement/README.md` was written around a parity that will now never be
+demonstrated, and most of what it lists for deletion is machinery the replacement
+keeps. That checklist is **corrected and suspended**, not executed.
 
 ### 3.2 Validation measures no unseen-disease generalisation at all
 
@@ -153,14 +214,22 @@ depends on is resolved.
 
 | # | Item | Depends on | Owner | Size |
 |---|---|---|---|---|
-| **1** | **Decide what calibration means now** (§3.1). The trainer's candidate universe is now **verified** (M8) and the recommendation is direction 4; what needs deciding is whether retiring oracle bit-parity is acceptable, and closing D1-D4 | — | needs review | design question |
+| **1** | **The calibration decision** — §3.1.2, adopted and reviewed | — | **decided** | — |
+| **1a** | Correct and **suspend** the legacy-removal checklist | 1 | author | **done** |
+| **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour | 1a | author | small |
+| **1c** | Extract the pass those two already duplicate — private, narrow | 1b | author | small |
+| **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
+| **1e** | D2 manifest additions (`amp_dtype`, observed compile state); D3 regression tests (§2.3) | 1c | author | small |
 | **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | — | author | small |
 | **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | — | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — prototype A and B, both caller shapes, per-subprocess memory | — **independent of 1** | author | the next real engineering |
-| **6** | Confirm which checkpoint is authoritative. `select_checkpoint_in_dir` picks by logged ranking metric and would choose `model-22-0.7372.pt`, not the `model-45` supplied | — | institution | question |
-| **7** | B-0.2 / B-0.3 institutional runs | **1** | both | blocked |
-| **8** | B-0.5 — Mode D, the intermediate rung, statistical protocol | **1, 7** | — | not started |
+| **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2 | institution | question |
+| **7a** | Engineering differential calibration run | 1d, D5 artifact set, a designated loadable checkpoint | author | blocked |
+| **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
+| **8a** | B-0.5 protocol and output-contract **design** | 1 | author | **before** any expensive run |
+| **8b** | B-0.5 institutional execution | 8a, 7b, 6, exact artifacts, production-path prerequisites | both | blocked |
+| **9** | Mechanical rename (~70 refs, 9 files), then rewrite the checklist, then delete the oracle-only surface | **1d passed review incl. its institutional CUDA run** | author | behaviour-neutral |
 
 **Parked deliberately, not forgotten:** `task-scope/` Q2–Q5 (settled, unscheduled)
 and `scorer-retraining/` (scoping only, four gates uncleared). Neither blocks nor
@@ -168,14 +237,25 @@ is blocked by anything above.
 
 ---
 
-## 5. Why item 5 does not wait for item 1
+## 5. Two orderings that are easy to get wrong
 
-B-0.4 measures the shortest-path **lookup cost**. It consumes no checkpoint, no
-sample split and no model — only `shortest_paths.pt`. Both its gates are cleared
-(M6, M7), and its findings do not depend on whether the harness is calibrated.
-
-So the root blocker at item 1 does not idle the engineering. It blocks the
+**Item 5 does not wait for item 1.** B-0.4 measures the shortest-path **lookup
+cost**. It consumes no checkpoint, no sample split and no model — only
+`shortest_paths.pt`. Both its gates are cleared (M6, M7), and its findings do not
+depend on whether the harness is calibrated. The root blocker blocks the
 **numbers**, not the **work**.
+
+**Item 9 waits for everything.** The rename is behaviour-neutral and looks safe,
+which is exactly why it must come last: the trainer helper's shape, the
+per-sample result contract, manifest ownership and the calibration CLI are not
+settled until 1d lands, so renaming earlier buys a second rename. And **nothing
+oracle-only may be deleted until 1d has passed review including its institutional
+CUDA run** — deleting the old acceptance path before the new one is accepted
+would leave the harness with no acceptance at all.
+
+**8a comes before 7b for a reason:** designing B-0.5's output contract after an
+expensive institutional run is how required evidence gets discovered too late to
+collect.
 
 ---
 
@@ -190,5 +270,8 @@ Recorded because the request that produced this file was to stop them recurring.
 | The `PLAN_B04` status header was spliced into a broken sentence by a scripted edit | Rebuilt as two named gates with their verdicts |
 | `--split` defaulted to `test`, which the generator never writes | Made required on both entry points; the error names the splits that exist |
 | This file's own first draft proposed calibrating **Mode C** against the trainer's `val_mrr`, on an unverified guess about the trainer's candidate universe | Verified before submission and **withdrawn**: the trainer scores the batch subgraph, so the number is Mode-A-shaped (M8). The direction table now records the withdrawal rather than deleting it |
+| Its second draft then proposed calibrating **Mode A** against the *stored* `val_mrr` — right shape, but unreproducible and insufficient | Withdrawn on review. §3.1.1 gives both reasons; the stored value is demoted to a historical sanity reference |
+| The legacy-removal checklist instructed deletion of the clamp, local ranking, top-20 semantics, the A/B traversal and two manifest fields — all of which the adopted calibration **keeps** | Checklist **corrected and suspended**, with the oracle-only surface separated out and the removal order fixed at eight gated steps |
+| An earlier reply claimed an out-of-range disease id "would be read as if it were already local" | Imprecise. The mapping tensor is `-1`-initialised, so an in-range unsampled id maps to `-1`; an out-of-range id is left unchanged and is not normally a valid local column. §2.3 states the invariant instead of the guard |
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
