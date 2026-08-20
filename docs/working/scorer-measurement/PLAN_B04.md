@@ -1,8 +1,9 @@
 # B-0.4 — vectorised shortest-path lookup
 
 **Status:** rev 6. The **baseline stage is complete** and its gate is answered:
-measured on the real artifact and the institution's primary deployment platform,
-the current lookup **exceeds the provisional budget by 1.7-2.5x** (§9), so the
+measured on the real artifact and on a GB10 SPARK — the hardware class the
+institution names as its primary edge deployment platform — the current lookup
+**exceeds the provisional budget by 1.7-2.5x** (§9), so the
 stage moves to the prototype phase. No index prototype is built yet and no
 production code has changed. This
 plan also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md)
@@ -612,10 +613,17 @@ settles the caller question for *this* primitive without overreaching into B-1's
 
 ## 9. Artifact results — the real table, on the primary deployment platform
 
-Run on the deploying institution's **SPARK (GB10, aarch64)**, which the institution
-states is its **primary edge deployment platform** — so §3.1's second condition,
-a deployment-equivalent CPU, is satisfied **for that platform** and is asserted by
-a person, as the script refuses to self-attest it.
+Run on a **GB10 SPARK (aarch64)** — the hardware *class* the institution states
+is its **primary edge deployment platform**. §3.1's second condition, a
+deployment-equivalent CPU, is satisfied **for that class** and is asserted by a
+person, as the script refuses to self-attest it.
+
+*Class, not machine.* The run was made on the author's own SPARK rather than on
+an institutional host. For a CPU-bound lookup on identical silicon that is what
+"deployment-equivalent" means, but a different SPARK will differ in thread count,
+thermal behaviour and load, so a second machine's numbers are a second data point
+rather than a contradiction. An earlier revision of this section said "the
+deploying institution's SPARK", which claimed the machine and not just the class.
 
 | Provenance | |
 |---|---|
