@@ -146,6 +146,22 @@ def _phenotype_column(lookup) -> Tensor:
     return column
 
 
+def _tensor_bytes(*tensors: Tensor) -> int:
+    return sum(t.numel() * t.element_size() for t in tensors)
+
+
+def _all_unreachable(n_candidates: int, unreachable: float) -> Tuple[Tensor, Tensor]:
+    """Every candidate missed, but every candidate still *computed*.
+
+    `available` is True: there were phenotypes and there were candidates, so
+    something was measured. §5.3.4 keeps that Boolean narrow.
+    """
+    return (
+        torch.full((n_candidates,), unreachable, dtype=torch.float64),
+        torch.ones(n_candidates, dtype=torch.bool),
+    )
+
+
 def _empty_result(n_candidates: int) -> Tuple[Tensor, Tensor]:
     return (
         torch.zeros(n_candidates, dtype=torch.float64),
@@ -189,9 +205,27 @@ class GlobalKeyIndex:
     unreachable_distance: float
 
     @property
-    def index_bytes(self) -> int:
-        """Resident bytes the index adds beyond the loader's own tensors."""
-        return self.keys.numel() * self.keys.element_size()
+    def resident_bytes_actual(self) -> int:
+        """Every tensor this object holds while the original lookup is **also** alive.
+
+        What the prototype really costs in the benchmark process. Not the same as
+        what production would pay, and reported separately from it because
+        conflating the two is how a memory verdict goes wrong.
+        """
+        return _tensor_bytes(self.keys, self.distance)
+
+    @property
+    def production_incremental_bytes_projected(self) -> int:
+        """Steady-state increment **if** the loader reorders in place instead of
+        retaining both copies: the key column, and nothing else.
+
+        A projection from the design, not a measurement — and a **lower bound** on
+        the real thing, since `pipeline.py:533-536` calls `_sp_tg`/`_sp_ty`/`_sp_di`
+        part of the class's observable surface, so production would keep the
+        reordered target and target_type as well. The transient cost of the
+        reorder itself is not here; only the RSS figures capture that.
+        """
+        return _tensor_bytes(self.keys)
 
 
 def build_global_key_index(lookup) -> GlobalKeyIndex:
@@ -256,15 +290,21 @@ def sp_mean_distances_global(
     unreachable = index.unreachable_distance
     n_phenotypes = len(phenotype_indices)
     domain = index.domain
+    n_rows = index.keys.numel()
+
+    # An empty table: nothing can be found, so everything is unreachable. Answered
+    # before the gather because `keys[clamped]` would index element 0 of an empty
+    # tensor and raise, where the scanning primitive returns unreachable. Approach
+    # B has no equivalent hazard — an empty table has no offsets, so every
+    # phenotype takes its missing-bounds path.
+    if n_rows == 0:
+        return _all_unreachable(n_candidates, unreachable)
 
     # A target_type outside the table's range cannot match any row, so every
     # candidate misses. Answered here rather than folded into the key, where an
     # out-of-domain component could alias onto a stored triple.
     if not 0 <= target_type_idx <= domain.max_type:
-        return (
-            torch.full((n_candidates,), unreachable, dtype=torch.float64),
-            torch.ones(n_candidates, dtype=torch.bool),
-        )
+        return _all_unreachable(n_candidates, unreachable)
 
     # A phenotype absent from `offsets` needs no special case: it has no rows, so
     # every lookup against it misses and contributes `unreachable` — exactly what
@@ -284,7 +324,6 @@ def sp_mean_distances_global(
         + targets.unsqueeze(0)
     ).reshape(-1)  # (P * C,)
 
-    n_rows = index.keys.numel()
     position = torch.searchsorted(index.keys, query)
     clamped = position.clamp(max=max(n_rows - 1, 0))
     hit = (position < n_rows) & (index.keys[clamped] == query)
@@ -325,8 +364,25 @@ class SliceSortedIndex:
     unreachable_distance: float
 
     @property
-    def index_bytes(self) -> int:
-        """Zero. A property so the benchmark can report both prototypes alike."""
+    def resident_bytes_actual(self) -> int:
+        """**Not zero.** The build clones all three tensors, so in the benchmark
+        process this prototype holds a full second copy of them beside the
+        loader's originals. Reporting zero here — as a first version did — would
+        present the production projection as a measurement.
+        """
+        return _tensor_bytes(self.target, self.target_type, self.distance)
+
+    @property
+    def production_incremental_bytes_projected(self) -> int:
+        """Zero steady-state: production reorders the loader's own tensors and
+        keeps no key column.
+
+        The clones above exist only so the benchmark can hold both
+        implementations at once. The **transient** cost of the reorder is not
+        zero and is not here — but because this prototype sorts one slice at a
+        time, that transient is one slice rather than the whole table, which is
+        the difference the RSS figures should show.
+        """
         return 0
 
 
@@ -402,7 +458,7 @@ def sp_mean_distances_slices(
     unreachable_row = torch.full((n_candidates,), unreachable, dtype=torch.float64)
 
     if not 0 <= target_type_idx <= domain.max_type:
-        return unreachable_row.clone(), torch.ones(n_candidates, dtype=torch.bool)
+        return _all_unreachable(n_candidates, unreachable)
 
     targets, target_ok = _query_values(target_indices, index.target, domain.max_target)
     type_value = torch.tensor([int(target_type_idx)], dtype=index.target_type.dtype)

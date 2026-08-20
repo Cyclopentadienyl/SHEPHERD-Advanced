@@ -294,3 +294,58 @@ def test_slice_internal_order_does_not_change_the_answer(name, build, query):
     first, _ = query(build(lookup), phenotypes, candidates, 2)
     second, _ = query(build(shuffled), phenotypes, candidates, 2)
     assert torch.equal(first, second), name
+
+
+@pytest.mark.parametrize("name,build,query", PROTOTYPES)
+def test_an_empty_table_agrees_instead_of_raising(name, build, query):
+    """Nothing to find means everything unreachable — not an IndexError.
+
+    Approach A gathers `keys[position.clamp(...)]`, which on an empty table
+    indexes element 0 of a zero-length tensor and raised, while the scanning
+    primitive returned `unreachable` for every candidate. Approach B never had
+    the hazard — an empty table has no offsets, so every phenotype takes its
+    missing-bounds path — but both are asserted so the pair cannot drift.
+    """
+    empty = SPLookup(
+        target=torch.zeros(0, dtype=torch.int32),
+        target_type=torch.zeros(0, dtype=torch.int8),
+        distance=torch.zeros(0, dtype=torch.int8),
+        offsets={},
+        max_hops=MAX_HOPS,
+    )
+
+    expected_d, expected_a = sp_mean_distances(empty, [0, 1], [3, 4], 0)
+    actual_d, actual_a = query(build(empty), [0, 1], [3, 4], 0)
+
+    assert torch.equal(actual_d, expected_d), name
+    assert torch.equal(actual_a, expected_a), name
+    assert actual_d.tolist() == [float(MAX_HOPS + 1)] * 2, name
+    assert actual_a.tolist() == [True, True], name
+
+
+def test_reported_memory_separates_measured_residence_from_projection():
+    """§9.4's selection criterion must not be read off a projection.
+
+    `SliceSortedIndex` clones all three tensors so the benchmark can hold both
+    implementations at once, so its *actual* residence is not zero even though
+    its production increment is. Reporting only the projection — as a first
+    version did — would have shown approach B costing nothing at all.
+    """
+    lookup = build_lookup()
+    table_bytes = sum(
+        t.numel() * t.element_size()
+        for t in (lookup.target, lookup.target_type, lookup.distance)
+    )
+
+    slices = build_slice_sorted_index(lookup)
+    assert slices.production_incremental_bytes_projected == 0
+    assert slices.resident_bytes_actual == table_bytes
+
+    global_index = build_global_key_index(lookup)
+    # The key column alone is the projection; the retained distance copy is not.
+    assert global_index.production_incremental_bytes_projected == (
+        global_index.keys.numel() * 8
+    )
+    assert global_index.resident_bytes_actual > (
+        global_index.production_incremental_bytes_projected
+    )

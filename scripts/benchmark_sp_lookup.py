@@ -6,9 +6,15 @@ Measures `sp_mean_distances` (`src/inference/scoring.py`) across the matrix
 shapes**: the singleton loop production ships today, and the batched call B-1
 and the offline harness will use.
 
-**This is the baseline stage. No index prototype exists yet**, and per PLAN_B04
-§3.1 none is built until the gate warrants it. Read the plan before extending
-this script; several of its shapes are decisions rather than conveniences.
+The gate in PLAN_B04 §3.1 has since been crossed, so `--implementations` also
+times the two prototypes in `scripts/sp_index_prototypes.py`. Read the plan
+before extending this script; several of its shapes are decisions rather than
+conveniences.
+
+**Run one prototype per process.** `ru_maxrss` is a process high-water mark, so
+a second index built in the same process inherits the first's peak and its own
+cost stops being attributable. The report carries
+`memory_attribution_isolated`, which is false whenever that was violated.
 
 Two modes, and they are **not** interchangeable (PLAN_B04 §3.1):
 
@@ -41,7 +47,6 @@ Module: scripts/benchmark_sp_lookup.py
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
 import platform
@@ -255,11 +260,20 @@ def build_artifact_lookup(
     # Candidates are drawn from the real disease target space, not an invented one.
     disease_targets = torch.unique(target[target_type == DISEASE_TYPE_IDX]).tolist()
 
+    from scripts.measure_scorer import file_sha256
+
     quantiles = (0.5, 0.9, 0.99, 1.0)
     length_t = torch.tensor(lengths, dtype=torch.float64)
     provenance = {
         "path": str(path),
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        # **Not `sha256(path.read_bytes())`.** That allocates the whole
+        # multi-gigabyte artifact as one `bytes` object *after* the tensors are
+        # already resident, and `ru_maxrss` never decreases — so the digest would
+        # set a process high-water mark that hides every later prototype build,
+        # and could OOM on unified memory. `file_sha256` reads in chunks and is
+        # the one `measure_scorer.py` already uses; a second copy here would be
+        # another place for the two to drift.
+        "sha256": file_sha256(path),
         "n_pairs": int(phenotype.numel()),
         "n_phenotypes": len(keys),
         "n_disease_targets": len(disease_targets),
@@ -301,38 +315,65 @@ def _callers(query_fn):
     return singleton, batched
 
 
-def _peak_rss_bytes() -> int:
-    """Process high-water RSS.
+def _rss_bytes() -> Dict[str, Optional[int]]:
+    """Current **and** high-water RSS.
 
-    `ru_maxrss` never decreases, so a difference across a build measures how much
-    that build raised the process peak — which is only attributable to one
-    prototype when it is the only one built in the process. The report records
-    whether that held; `main` does not silently correct for it.
+    `ru_maxrss` alone cannot attribute a prototype build: loading the artifact
+    has already set a process peak far above anything the build adds, and a
+    high-water mark never comes back down. Current RSS does move, so the pair
+    says both "how much is resident now" and "how high has this process ever
+    been" — and their disagreement is itself the signal that the peak belongs to
+    something earlier.
+
+    `/proc/self/status` on Linux, which is where the deployment runs; `None`
+    elsewhere rather than a fabricated number. No profiling dependency.
     """
     import resource
 
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+    values: Dict[str, Optional[int]] = {
+        "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+        "current_rss_bytes": None,
+    }
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                values["current_rss_bytes"] = int(line.split()[1]) * 1024
+                break
+    except OSError:
+        pass
+    return values
 
 
 def build_index(implementation: str, lookup) -> Tuple[Any, Dict[str, Any]]:
-    """Build one prototype's index, timing it and attributing its peak RSS."""
+    """Build one prototype's index, timing it and recording what it costs.
+
+    **Two memory numbers, deliberately not merged.** `resident_bytes_actual` is
+    what the prototype object holds in *this* process, beside the loader's own
+    tensors; `production_incremental_bytes_projected` is the steady-state
+    increment if the loader reordered in place instead of keeping both copies.
+    The second is a projection from the design and is labelled as one — reporting
+    it as measured residence is how a memory verdict goes wrong.
+    """
     from scripts.sp_index_prototypes import (
         build_global_key_index,
         build_slice_sorted_index,
     )
 
     builders = {"global": build_global_key_index, "slices": build_slice_sorted_index}
-    before = _peak_rss_bytes()
+    before = _rss_bytes()
     start = time.perf_counter()
     index = builders[implementation](lookup)
     elapsed = time.perf_counter() - start
+    after = _rss_bytes()
     return index, {
         "record": "index_build",
         "implementation": implementation,
         "build_seconds": elapsed,
-        "index_resident_bytes": index.index_bytes,
-        "peak_rss_before_bytes": before,
-        "peak_rss_after_bytes": _peak_rss_bytes(),
+        "prototype_resident_bytes_actual": index.resident_bytes_actual,
+        "production_incremental_bytes_projected":
+            index.production_incremental_bytes_projected,
+        "rss_before": before,
+        "rss_after": after,
         "rows": int(lookup.target.numel()),
     }
 
@@ -416,12 +457,35 @@ def time_table(
                         "reason": "exceeds WORK_CEILING",
                     })
                     continue
-                picked = torch.randint(
-                    0, len(targets), (n_candidate,), generator=generator
-                )
+                # **Without replacement.** `torch.randint` draws with it, and a
+                # repeated candidate is not a workload production can present:
+                # the real disease candidate list is a set. Duplicates would also
+                # flatter a binary search, whose repeated probes hit the same
+                # cache lines.
+                if n_candidate > len(targets):
+                    skipped.append({
+                        **labels, "candidates": n_candidate,
+                        "phenotypes": n_phenotype,
+                        "phenotype_selection": selection,
+                        "available_targets": len(targets),
+                        "reason": "requested more unique candidates than the "
+                                  "target space holds",
+                    })
+                    continue
+                picked = torch.randperm(len(targets), generator=generator)[:n_candidate]
                 candidates = target_t[picked].tolist()
 
-                for implementation, table in tables.items():
+                # Rotate which implementation is measured first, independently of
+                # the caller-shape alternation below. Iterating `tables` in
+                # insertion order would put `current` first in every cell of every
+                # documented command, so any warm-up or cache advantage would
+                # accrue to the same implementation throughout.
+                cell_index = next(cell_counter)
+                ordered = list(tables.items())
+                rotation = cell_index % len(ordered)
+                ordered = ordered[rotation:] + ordered[:rotation]
+
+                for position, (implementation, table) in enumerate(ordered):
                     singleton, batched = _callers(query_fns[implementation])
                     shapes = [("singleton", singleton), ("batched", batched)]
                     # Alternate which shape runs first, so a small difference
@@ -435,10 +499,10 @@ def time_table(
                     # recorded `measured_first="singleton"` for all 240 rows while
                     # §8.1 claimed otherwise.
                     #
-                    # Drawn once per (cell, implementation) rather than once per
-                    # cell, so the order does not become a fixed property of which
-                    # implementation is being timed.
-                    if next(cell_counter) % 2:
+                    # Derived from (cell, position) rather than a second draw, so
+                    # shape order and implementation order vary independently
+                    # instead of moving together.
+                    if (cell_index + position) % 2:
                         shapes.reverse()
                     for shape, fn in shapes:
                         timing = _repeat(fn, table, phenotypes, candidates)
@@ -448,7 +512,9 @@ def time_table(
                             "phenotypes": n_phenotype,
                             "phenotype_selection": selection,
                             "queried_slice_total": int(touched),
-                            "measured_first": shapes[0][0], **timing,
+                            "measured_first": shapes[0][0],
+                            "implementation_position": position,
+                            **timing,
                         })
                         print(json.dumps(rows[-1]), flush=True)
 

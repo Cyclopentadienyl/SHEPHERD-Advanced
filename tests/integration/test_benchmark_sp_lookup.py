@@ -252,3 +252,109 @@ def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
 
     assert cells("current") == cells("global") == cells("slices")
     assert cells("current"), "the matrix produced no rows to compare"
+
+
+def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, monkeypatch):
+    """BLOCKING 3: `current` must not be measured first in every cell.
+
+    Iterating the implementations in insertion order put `current` first in every
+    cell of every documented command, so any warm-up or cache advantage accrued
+    to the same implementation throughout. Both halves are asserted together
+    because either alone is satisfiable by a broken benchmark: rotating the order
+    while varying the workload would be worse than not rotating at all.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10, 20))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1, 20))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / "rotation.json"
+    assert bench.main(
+        ["--implementations", "current,global,slices", "--output", str(output)]
+    ) == 0
+    rows = json.loads(output.read_text())["rows"]
+
+    first_per_cell = {}
+    for row in rows:
+        if row["implementation_position"] != 0:
+            continue
+        key = (row["candidates"], row["phenotypes"], row["phenotype_selection"],
+               row["distribution"], row["mean_slice_length"])
+        first_per_cell[key] = row["implementation"]
+
+    assert len(first_per_cell) > 1, "fixture must produce more than one timed cell"
+    assert "current" in first_per_cell.values(), "no cell measured current first"
+    assert {v for v in first_per_cell.values()} - {"current"}, (
+        f"no cell measured a prototype first: {first_per_cell}"
+    )
+
+    def workload(name):
+        return sorted(
+            (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+             r["caller_shape"], r["queried_slice_total"])
+            for r in rows if r["implementation"] == name
+        )
+
+    assert workload("current") == workload("global") == workload("slices")
+
+
+def test_candidates_are_sampled_without_replacement(tmp_path, monkeypatch):
+    """MAJOR 2: a repeated candidate is not a workload production can present.
+
+    The real disease candidate list is a set, and duplicates would also flatter a
+    binary search whose repeated probes hit the same cache lines.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    seen = []
+    original = bench._repeat
+
+    def capture(fn, table, phenotypes, candidates):
+        seen.append(list(candidates))
+        return original(fn, table, phenotypes, candidates)
+
+    monkeypatch.setattr(bench, "_repeat", capture)
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (25,))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1,))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "SYNTHETIC_TARGET_SPACE", 60)
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    assert bench.main(["--output", str(tmp_path / "unique.json")]) == 0
+
+    assert seen, "no cell was timed"
+    for candidates in seen:
+        assert len(set(candidates)) == len(candidates), (
+            f"candidates repeated within one cell: {candidates}"
+        )
+
+
+def test_a_cell_wanting_more_candidates_than_exist_is_reported_skipped(tmp_path, monkeypatch):
+    """Sampling without replacement cannot invent candidates, and must not cap
+    silently — a silent cap reads as "covered everything" when it did not."""
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (5_000,))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1,))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (50,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "SYNTHETIC_TARGET_SPACE", 60)
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / "skipped.json"
+    assert bench.main(["--output", str(output)]) == 0
+    report = json.loads(output.read_text())
+
+    assert report["rows"] == []
+    reasons = {s["reason"] for s in report["skipped"]}
+    assert any("unique candidates" in r for r in reasons), reasons

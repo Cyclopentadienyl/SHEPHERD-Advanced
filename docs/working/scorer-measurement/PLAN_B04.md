@@ -894,23 +894,71 @@ Python-integer form catches it.
 Timing and memory need the real artifact and deployment-class hardware. Neither
 is here.
 
+**Three processes, one prototype each**, each wrapped so the OS reports the peak
+independently of anything the script measures about itself:
+
 ```
-# one prototype per process — see below
-.venv/bin/python scripts/benchmark_sp_lookup.py --artifact <shortest_paths.pt> \
+D=docs/working/scorer-measurement
+SP=<path to shortest_paths.pt>
+
+# 1. loader only — establishes the peak that belongs to loading, not to any index
+/usr/bin/time -v .venv/bin/python scripts/benchmark_sp_lookup.py --artifact $SP \
+    --implementations current \
+    --output $D/EVIDENCE_B04_proto_baseline.json  2> $D/time_baseline.txt
+
+# 2. approach A
+/usr/bin/time -v .venv/bin/python scripts/benchmark_sp_lookup.py --artifact $SP \
     --implementations current,global \
-    --output docs/working/scorer-measurement/EVIDENCE_B04_proto_global.json
-.venv/bin/python scripts/benchmark_sp_lookup.py --artifact <shortest_paths.pt> \
+    --output $D/EVIDENCE_B04_proto_global.json    2> $D/time_global.txt
+
+# 3. approach B
+/usr/bin/time -v .venv/bin/python scripts/benchmark_sp_lookup.py --artifact $SP \
     --implementations current,slices \
-    --output docs/working/scorer-measurement/EVIDENCE_B04_proto_slices.json
+    --output $D/EVIDENCE_B04_proto_slices.json    2> $D/time_slices.txt
 ```
 
 **One prototype per process is a measurement requirement, not tidiness.**
 `ru_maxrss` is a process high-water mark, so a second index built in the same
 process inherits the first's peak and its own cost becomes unattributable. The
-report carries `memory_attribution_isolated`, which is false whenever more than
-one prototype was built there; the numbers are still recorded, and the flag says
-how to read them. Including `current` in both runs is free — it builds no index —
-and gives each file its own baseline to compare against.
+report carries `memory_attribution_isolated`, false whenever that was violated.
+Including `current` in runs 2 and 3 is free — it builds no index — and gives each
+file its own in-process baseline.
+
+**Run 1 is not redundant.** Loading and transforming a 430-million-row artifact
+sets a process peak far above anything an index build adds, and a high-water mark
+never comes back down. Without a loader-only process there is no way to tell
+which part of runs 2 and 3 belongs to the prototype.
+
+**Three memory numbers, kept apart on purpose:**
+
+| Field | What it is |
+|---|---|
+| `prototype_resident_bytes_actual` | every tensor the prototype object holds **in this process**, beside the loader's own — measured |
+| `production_incremental_bytes_projected` | the steady-state increment if the loader reordered in place instead of retaining both copies — a **projection from the design**, and a lower bound, since `pipeline.py:533-536` makes the reordered tensors observable surface that production must also keep |
+| `rss_before` / `rss_after` | current **and** peak RSS around the build. Current RSS moves; the peak does not come down, so the pair shows when a peak belongs to something earlier |
+
+An earlier revision reported only the projection, under the name
+`index_resident_bytes`. That showed approach B costing **zero**, which is true of
+the production design and false of the object being measured — it clones all
+three tensors so the benchmark can hold both implementations at once.
+
+**Two sampling and ordering corrections went in with this**, both of which would
+have biased the comparison rather than merely adding noise:
+
+- Candidates are drawn **without replacement**. `torch.randint` draws with it, and
+  a repeated candidate is not a list production can present — the real disease
+  candidate set is a set. Duplicates would also flatter a binary search, whose
+  repeated probes hit the same cache lines. A cell asking for more unique
+  candidates than the target space holds is **reported as skipped**, not capped.
+- Implementation order **rotates per cell**, independently of the caller-shape
+  alternation. Iterating in insertion order put `current` first in every cell of
+  every command above, so any warm-up advantage accrued to the same
+  implementation throughout.
+- The artifact digest uses chunked `file_sha256` — the one `measure_scorer.py`
+  already has. `sha256(path.read_bytes())` allocated the whole multi-gigabyte
+  file as one `bytes` object *after* the tensors were resident, which would have
+  set a high-water mark hiding every later build, and could OOM on unified
+  memory.
 
 Every implementation is timed over **the same cells** with the same phenotypes
 and candidates, so a difference between two rows is the implementation and not
