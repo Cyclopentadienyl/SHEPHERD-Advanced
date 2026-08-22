@@ -7,14 +7,34 @@ oracle cannot be run and cannot be reproduced. This module is the replacement
 acceptance: hand **the same batches** to the trainer's own validation calculation
 and to the Mode A harness, and compare them per sample.
 
-**Why this is not a tautology.** The two paths compute the same quantity through
-two separately written implementations, and the separation is enforced by the
-build rather than by discipline. `.import-linter.ini` orders `src.evaluation`
-above `src.inference` above `src.training`, and a lower layer may not import a
-higher one — so `src/training/` **cannot** reach `masked_mean_pool` or
-`cosine_score_matrix` even if someone wanted it to. The trainer keeps its own
-inline `F.normalize` + `torch.mm`; Mode A goes through the served primitives.
-`make lint-imports` fails if that ever stops being true.
+**Why this is not a tautology, stated at the precision the build actually
+supports.** The two paths compute the same quantity through two separately
+*maintained* expressions, and what the build forbids is a **direct import across
+the scorer stacks, in either direction**:
+
+  - `.import-linter.ini` orders `src.evaluation` above `src.inference` above
+    `src.training`, so `src/training/` cannot reach `masked_mean_pool` or
+    `cosine_score_matrix`;
+  - layers are directional and permitted the reverse, so a fourth contract,
+    `scorer-independence`, forbids `src.inference.scoring` from importing
+    `src.training`. Both were mutation-checked against a probe import.
+
+**What that does not establish, and must not be read as establishing.** Neither
+contract can stop the two from delegating to a shared helper in a layer *below*
+both, and they already share the torch calls themselves — the trainer's inline
+`F.normalize` + `torch.mm` are the same two library calls `cosine_score_matrix`
+makes. More than that, `masked_mean_pool`'s own docstring says it "mirrors
+`Trainer._compute_model_outputs` operation for operation", which is deliberate:
+Mode A exists to reproduce what the trainer measures.
+
+So what this calibration detects is **divergence between two maintained copies of
+the same intended calculation** — a drift, a refactor, a fix applied to one and
+not the other. It is not a correctness proof of either, and it cannot be: Mode A
+is a control that preserves the legacy behaviour *including what is wrong with
+it* (`docs/working/scorer-measurement/README.md`), so both sides being wrong in
+the same way is the design, not a gap in it. Independence of the current
+expressions is established by reading them and exercised by the mutation tests,
+not by the contracts alone.
 
 What is deliberately *shared* is the **metric**: both sides reach
 `RankingMetrics.mean_reciprocal_rank`. A second expression of `1/rank` here would
@@ -118,10 +138,14 @@ class SampleDisagreement:
 class DifferentialResult:
     """What one same-batch comparison established, and under what conditions.
 
-    `agreed` is the narrow machine-checkable fact: zero disagreements over the
-    whole cohort. It is deliberately *not* named "calibration_passed" — whether a
-    run is fit for institutional acceptance depends on the checkpoint and cohort
-    it consumed, which nothing here can observe.
+    `agreed` is the narrow machine-checkable fact, and it is **all four checks**:
+    no per-sample disagreement anywhere in the cohort *and* the two aggregate MRRs
+    exactly equal. It meant only the first of those in the commit that introduced
+    it, which is the defect review round 1 found.
+
+    It is deliberately *not* named "calibration_passed" — whether a run is fit for
+    institutional acceptance depends on the checkpoint and cohort it consumed,
+    which nothing here can observe.
     """
 
     n_samples: int
@@ -322,12 +346,18 @@ def compare_trainer_against_mode_a(
     # `_run_evaluation_pass` then completes normally with no predictions and an
     # empty metric dict (verified by execution, not assumed).
     #
-    # **This is not a hole being closed.** With the supplied-result seam gone, that
-    # cohort would reach `run_mode_a`, which refuses it too — a batch with no
-    # disease embeddings raises there, and a zero-row batch raises earlier still,
-    # inside the trainer's own reshape. What this buys is failing *before* a wasted
-    # Mode A pass, and a message about this comparison's contract rather than about
-    # another module's manifest arithmetic.
+    # **This is not a hole being closed**, and there are two cases rather than one:
+    #
+    #   - the encoder genuinely yields no disease embeddings, so *both* paths are
+    #     affected and `run_modes_ab` raises on its own account;
+    #   - only the trainer's side is broken, so Mode A still returns a full cohort
+    #     and the `n_trainer != n_mode_a` check below refuses the mismatch.
+    #
+    # Either way the old code refused; it did not return agreement. A zero-row
+    # batch never gets this far at all — the trainer raises first, inside its own
+    # reshape. What this check buys is failing *before* a wasted Mode A pass, and a
+    # message about this comparison's contract rather than a count mismatch that
+    # leaves the reader to work out why one side was empty.
     if not trainer_pass.predictions:
         raise ValueError(
             f"the batch stream yielded {len(batches)} batch(es) but no scored rows. "

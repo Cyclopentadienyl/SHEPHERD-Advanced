@@ -271,11 +271,15 @@ def test_a_cohort_that_scores_no_rows_is_refused(cohort):
 
     `_compute_model_outputs` returns early when the encoder yields no disease or
     phenotype embeddings, and `_run_evaluation_pass` then completes normally with
-    no predictions and an empty metric dict — it does not raise. A comparison at
-    that point would have nothing to compare and would say so by agreeing.
+    no predictions and an empty metric dict — it does not raise.
 
-    Mode A would refuse this cohort too, so this is a fail-fast with a message
-    about *this* contract, not a hole that was open.
+    **The old comparator did not return agreement here**, and this test must not be
+    read as though it did. Only the trainer's side is broken in this mutation, so
+    Mode A still returns the full cohort and the `n_trainer != n_mode_a` check
+    refuses the mismatch. What the new guard adds is an earlier and
+    comparator-specific refusal: it fails before a wasted Mode A pass, and it says
+    "no scored rows" instead of a count mismatch that leaves the reader to work out
+    why one side was empty.
     """
     trainer = make_trainer(cohort)
     trainer._compute_model_outputs = lambda node_embeddings, *a, **k: {
