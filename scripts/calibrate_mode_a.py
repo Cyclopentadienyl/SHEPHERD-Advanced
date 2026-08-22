@@ -2,6 +2,27 @@
 """
 Mode A calibration — run both scorers on one seeded stream and compare.
 ======================================================================
+**SUPERSEDED — this launcher cannot run, and its target no longer exists.**
+
+    It drives `scripts/evaluate_model.py`, and no checkpoint in the scanned
+    family carries the `metadata` / `in_channels_dict` keys that script's loader
+    needs (BACKLOG §3.1, M1-M2). Frozen-evaluator bit parity is therefore
+    unexecutable, not merely unrun, and it has been **retired as the acceptance
+    target** rather than deferred.
+
+    The replacement is `src/evaluation/differential.py`: the same batches handed
+    to `Trainer._run_evaluation_pass` and to the Mode A harness, compared per
+    sample. Its reference is the trainer's own validation calculation, which is
+    code that runs, instead of an artifact that cannot be reproduced.
+
+    **This file is kept, not deleted, and it is not yet rewritten.** Calibration
+    still happens; only its reference changed, and the rewrite belongs with item
+    7a, which is the institutional run and needs a designated loadable checkpoint
+    to be verifiable against. Rewriting it now would produce a launcher nothing
+    could execute and nothing could check. Everything below this banner describes
+    the retired parity run and is retained as the reasoning behind it — history,
+    not instructions.
+
 The acceptance gate for B-0.2, made executable. It runs the frozen evaluator and
 `scripts/measure_scorer.py` over the same data, then compares the only artifacts
 the frozen evaluator writes: its report's `mrr`, and its per-sample predictions.

@@ -13,7 +13,8 @@ productionisation is a separate item (5a) behind its own gate. This revision add
 protocol defines one — known in two passing mentions and owned by nothing. Item
 11's scope is the **unit** of holdout, not a filename (§3.4).
 
-**Next action: item 1d** — same-batch differential calibration, against the pass 1c extracted. Two directions this file proposed were withdrawn along
+**Next action: item 1e** — the D2 manifest additions, whose `amp_dtype` field 1d
+turned from a tidiness item into a load-bearing one (§3.1.3). Two directions this file proposed were withdrawn along
 the way, and several of its factual claims have been narrowed or re-cited under
 review — §6 records all of them rather than hiding them.
 
@@ -286,6 +287,39 @@ direction is legal and is the only one that needs to be.
 demonstrated, and most of what it lists for deletion is machinery the replacement
 keeps. That checklist is **corrected and suspended**, not executed.
 
+#### 3.1.3 What 1d found: bit-exactness is a contract only when AMP is off
+
+§3.1.2 specified the comparison but not the precision it runs at, and the two
+paths do not agree about that.
+
+- `Trainer._run_evaluation_pass` forwards inside
+  `autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp)`.
+- The Mode A traversal in `run_modes_ab` has **no autocast at all**.
+- `trainer.py:380` resolves `use_amp = config.use_amp and device.type == "cuda"`.
+
+So the answer depends on the device, and not by a little:
+
+| Where | `use_amp` | What a comparison establishes |
+|---|---|---|
+| **CPU** — the bounded tests | always **False**, whatever the config says | **bit-exact agreement.** Both paths are fp32 and every disagreement is a real one |
+| **CUDA** — item 7a's institutional run | **True** by default, `float16` | the trainer's scores differ from Mode A's in the last bits by construction. Anything near a tie may reorder |
+
+**A CUDA disagreement is therefore a measurement, not a fault**, and the harness
+must not be built to refuse it — refusing would make AMP's effect on the ranking
+the one thing the calibration cannot observe. `DifferentialResult` records the
+**resolved** `amp_enabled` / `amp_dtype` beside the verdict and exposes
+`bit_exact_contract`, which says which of the two questions the run answered.
+
+**This promotes item 1e.** `amp_dtype` was listed as a manifest tidiness item; it
+is the field that decides whether a recorded number is an exact result or a
+tolerance observation. A calibration artifact without it cannot say what it means.
+
+**What the bounded tests consequently cannot do**, stated so item 7a does not
+inherit it silently: they cannot ask the CUDA question at all. The container this
+work is done in has no CUDA device. The CPU result is a genuine and necessary
+precondition — the two implementations agree when precision is held equal — and
+it is not a substitute for the institutional run.
+
 ### 3.2 Validation measures no unseen-disease generalisation at all
 
 M4 is the maximal case: **every** disease in val appears in train. The escalation
@@ -392,8 +426,8 @@ depends on is resolved.
 | **1a2** | **Malformed-truth invariant** (§2.3) — remove the silent disease clamp; enforce the range at the **loader** boundary on CPU, not in the trainer hot path where it would sync CUDA every batch. **Not a decision gate**: the contract is REFUSE and all three boundaries implement it | 1a | author | **done** |
 | **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour — 32 tests. Shared-pass behaviour is driven through **both** entry points; caller-specific contracts stay separate. Each contract group mutation-checked against a representative defect (9 mutations). Found that the malformed-truth refusal has **two independent sources**, and which fires depends on the sign of the bad id — so the tests run both signs | 1a2 | author | **done** |
 | **1c** | Extract the pass those two already duplicate — private, narrow. Behaviour-neutral: the 32 characterization tests pass **unchanged**, and each shared operation went 2 occurrences to 1 | 1b | author | **done** |
-| **1d** | Same-batch differential calibration | 1c | author | the calibration itself |
-| **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3) | 1c | author | small |
+| **1d** | Same-batch differential calibration — `src/evaluation/differential.py`, 17 bounded tests. One materialised batch list to both paths; per-sample top-20, truth, reciprocal rank, then aggregate MRR. Four legs mutation-checked (scoring, pooling, truth, truncation). Found that **bit-exactness is a contract only when AMP is off** (§3.1.3), and that the shared synthetic cohort is too narrow to exercise the truncation at all — so the fixture gained size parameters and a second, wider cohort | 1c | author | **done** |
+| **1e** | D2 manifest additions (`amp_dtype`, observed compile state); the trainer/Mode A legal-truth equality test (§2.3). **No longer cosmetic**: 1d established that `amp_dtype` decides which of two different questions a calibration run answered (§3.1.3), so a manifest without it cannot say what its own number means | 1c, 1d | author | small |
 | **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | **10 (M4 evidence)** | author | small |
 | **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
@@ -518,6 +552,10 @@ Recorded because the request that produced this file was to stop them recurring.
 | Contradiction | Resolution |
 |---|---|
 | `PLAN_B04` §5.3.2 required scanning "the deployed artifact" while §10.1 established there is no single one | §5.3.2 restated as evidence about the generator's invariant |
+| **This file's own §3.1.2 was silent on precision** while specifying an exact per-sample comparison, and the two paths run at different precisions on CUDA | §3.1.3 added; the verdict now carries the resolved AMP state and `bit_exact_contract` rather than implying one answer |
+| **1d's first draft claimed the truth comparison "exercises the `original_indices` translation"** | **False, and self-corrected before review.** Both sides translate through the *same* gather, so it cancels. What it actually tests is that the trainer's `diagnosis_targets` and Mode A's `disease_ids_local` are the same ids — which holds exactly because the gather is injective. The docstring now says that, and cites where `to_global_ids` *is* tested |
+| **1d's first draft froze the legacy metric key at import** while `run_modes_ab` rebuilds it per call — and the comment on it claimed the opposite | Resolved per call via `legacy_mrr_key()`. The stale constant would have raised `KeyError` the moment anything moved the truncation, while the comment promised it could not |
+| **The shared synthetic cohort is 4 candidates wide**, so a top-20 truncation and no truncation are the same list, and every existing test on it certifies a truncation it never performed | `build_workspace` gained size parameters (defaults unchanged, so no existing caller moved) and 1d added a second cohort wider than `LEGACY_TRUNCATION_K`. `assert_candidate_universe_is_stable` now takes the loader config, because stability is a property of the graph **and** the sampling limits together — and it immediately rejected the first wide config, whose hop-1 limit was below the disease count |
 | `PLAN_B04` §9.4's estimated "+7 GB" stood beside §10.2's measured ~24 GB with no link | §9.4 marked as an estimate and pointed at the measurement |
 | The `PLAN_B04` status header was spliced into a broken sentence by a scripted edit | Rebuilt as two named gates with their verdicts |
 | `--split` defaulted to `test`, which the generator never writes | Made required on both entry points; the error names the splits that exist |
