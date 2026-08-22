@@ -58,7 +58,13 @@ def _run(data_dir, checkpoint, batch_size=3):
     loader = create_diagnosis_dataloader(
         samples=samples, graph_data=graph_data, config=loader_config
     )
-    manifest = build_manifest(args, graph_data, len(samples), device, loader_config)
+    # `model=` too, because this helper claims to drive the harness the way the
+    # CLI does and the CLI now passes it: `torch_compiled` is observed from the
+    # model that runs, so a helper omitting it would record 'not observed' and
+    # quietly stop mirroring the thing it exists to mirror.
+    manifest = build_manifest(
+        args, graph_data, len(samples), device, loader_config, model=model
+    )
     return run_mode_a(model=model, dataloader=loader, manifest=manifest, device=device)
 
 
@@ -146,6 +152,63 @@ def test_the_manifest_records_what_makes_the_number_mean_something(workspace):
     # Recorded even when absent, so a reader can tell "no CUDA" from "not asked".
     assert manifest.device == "cpu"
     assert manifest.amp_enabled is False
+
+
+def test_the_manifest_records_the_numeric_regime_not_only_the_boolean(workspace):
+    """Backlog item D2. `amp_enabled=False` alone cannot distinguish an fp32 run
+    from one whose dtype was never recorded, and BACKLOG §3.1.3 established that
+    the AMP regime decides which question a comparison answered.
+
+    `torch_compiled` is an **execution** fact: the project carries a compile toggle
+    in `src/config/training_fields.py`, and what has to be recorded is what ran,
+    not what was asked for. `_run` builds an uncompiled model, so `False` here is
+    an observation — `None` would mean nothing was observed at all, which is a
+    different claim.
+    """
+    _, data_dir, checkpoint = workspace
+
+    manifest = _run(data_dir, checkpoint).manifest
+
+    assert manifest.amp_dtype is None
+    assert manifest.torch_compiled is False
+
+
+def test_measuring_inside_an_autocast_block_is_refused(workspace):
+    """The manifest's `amp_enabled=False` is a structural claim about this module
+    — no traversal here opens an autocast context. A caller who wrapped the run in
+    one would shift every score while the manifest went on recording fp32.
+
+    So the claim is enforced, not asserted in prose. The refusal is the mutation
+    check for it: this is exactly the state that would otherwise be misrecorded.
+    """
+    _, data_dir, checkpoint = workspace
+
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        with pytest.raises(RuntimeError, match="autocast is enabled"):
+            _run(data_dir, checkpoint)
+
+
+# ---------------------------------------------------------------------------
+# Observing the execution state, as opposed to reading the requested config
+# ---------------------------------------------------------------------------
+def test_a_compiled_model_is_observed_as_compiled():
+    """Against a real `torch.compile` wrapper, not a stand-in with the right
+    attribute — a stand-in would test the test."""
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compiled
+
+    plain = nn.Linear(4, 4)
+
+    assert observe_torch_compiled(plain) is False
+    assert observe_torch_compiled(torch.compile(plain)) is True
+
+
+def test_no_model_is_not_observed_rather_than_not_compiled():
+    """`None` and `False` are different claims and must not be flattened."""
+    from src.evaluation.measurement import observe_torch_compiled
+
+    assert observe_torch_compiled(None) is None
 
 
 def test_the_result_serialises_without_non_finite_values(workspace):

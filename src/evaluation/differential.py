@@ -89,6 +89,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from src.evaluation.measurement import (
     MeasurementManifest,
     ModeAResult,
+    observe_torch_compiled,
     run_mode_a,
     to_global_ids,
 )
@@ -171,6 +172,17 @@ class DifferentialResult:
 
     amp_enabled: bool
     amp_dtype: str
+    torch_compiled: Optional[bool]
+    """Whether the model both paths ran was a `torch.compile` wrapper — observed,
+    not configured.
+
+    It cannot make the two paths disagree with each other: they are handed the
+    **same model object**, so it is compiled for both or for neither. It is
+    recorded for the same reason `amp_dtype` is — a verdict that does not say what
+    numeric regime produced it cannot be compared with another verdict later, and
+    fused kernels move the last bits of a score exactly where a near-tie decides
+    the ranking."""
+
     bit_exact_contract: bool
     """True exactly when AMP was off, i.e. when an exact comparison was the
     question being asked. Under AMP the two paths run at different precisions by
@@ -198,6 +210,7 @@ class DifferentialResult:
             "mrr_absolute_difference": self.mrr_absolute_difference,
             "amp_enabled": self.amp_enabled,
             "amp_dtype": self.amp_dtype,
+            "torch_compiled": self.torch_compiled,
             "bit_exact_contract": self.bit_exact_contract,
             "device": self.device,
         }
@@ -452,6 +465,7 @@ def compare_trainer_against_mode_a(
 
     amp_enabled = bool(getattr(trainer, "use_amp", False))
     amp_dtype = str(getattr(trainer, "amp_dtype", _torch.float32))
+    torch_compiled = observe_torch_compiled(trainer.model)
 
     aggregate_mrr_agreed = trainer_mrr == mode_a_mrr
 
@@ -465,6 +479,7 @@ def compare_trainer_against_mode_a(
         mrr_absolute_difference=abs(trainer_mrr - mode_a_mrr),
         amp_enabled=amp_enabled,
         amp_dtype=amp_dtype,
+        torch_compiled=torch_compiled,
         bit_exact_contract=not amp_enabled,
         device=str(trainer.device),
         n_disagreements_by_kind=by_kind,

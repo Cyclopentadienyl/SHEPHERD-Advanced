@@ -501,3 +501,172 @@ def test_an_aggregate_only_disagreement_is_caught(cohort, monkeypatch):
     assert result.aggregate_mrr_agreed is False
     assert result.agreed is False
     assert result.mrr_absolute_difference == pytest.approx(0.5)
+
+
+def test_the_verdict_records_the_compile_state_it_observed(cohort):
+    """Backlog item D2, on the artifact where the numeric regime actually varies.
+
+    It cannot make the two paths disagree — they are handed the same model object,
+    so it is compiled for both or neither. It is recorded for the same reason
+    `amp_dtype` is: a verdict that does not say what regime produced it cannot be
+    compared with a later one, and fused kernels move the last bits of a score
+    exactly where a near-tie decides the ranking.
+
+    `False` here is an observation. `None` would mean nothing was observed.
+    """
+    result = run(cohort)
+
+    assert result.torch_compiled is False
+    assert result.to_dict()["torch_compiled"] is False
+
+
+# ---------------------------------------------------------------------------
+# D3's remaining item: legal-truth equality where local and global differ
+# ---------------------------------------------------------------------------
+#
+# The two cohorts above cannot test this. Their subgraphs reach every disease, so
+# `original_indices["disease"]` is `[0, 1, ..., n-1]` — an identity map, under
+# which a side reading the wrong space produces the right numbers anyway. That is
+# the "Direction" failure `tests/unit/test_measurement_ranking.py` names: local and
+# global ids are both plausible integers, so a wrong-direction translation yields
+# valid-looking, wrong metrics that nothing downstream can detect.
+#
+# So this section builds one batch by hand with a deliberately non-identity,
+# non-monotonic map. It is not an end-to-end cohort and is not trying to be; it
+# exists to make local != global so the equality has something to say.
+
+GLOBAL_DISEASE_IDS = [7, 2, 9, 4]   # non-identity and non-sorted, both on purpose
+LOCAL_TRUTHS = [0, 2, 3]            # -> globals 7, 9, 4
+HIDDEN = 4
+
+
+class _StubEncoder(torch.nn.Module):
+    """Deterministic embeddings that ignore their inputs.
+
+    The comparison under test is about identifier spaces, not about the encoder,
+    and an input-dependent model would make a failure ambiguous between the two.
+    It still owns a parameter, because `Trainer` builds an optimizer over
+    `model.parameters()`.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.eye(HIDDEN))
+
+    def forward(self, x_dict, edge_index_dict):
+        generator = torch.Generator().manual_seed(11)
+        return {
+            "disease": torch.randn(len(GLOBAL_DISEASE_IDS), HIDDEN, generator=generator),
+            "phenotype": torch.randn(5, HIDDEN, generator=generator),
+        }
+
+
+def _remapped_batch():
+    return {
+        "batch": {
+            "phenotype_ids": torch.tensor([[0, 1, -1], [2, 3, -1], [1, 4, -1]]),
+            "phenotype_mask": torch.tensor(
+                [[True, True, False], [True, True, False], [True, True, False]]
+            ),
+            "disease_ids": torch.tensor(LOCAL_TRUTHS),
+            "patient_ids": ["r0", "r1", "r2"],
+        },
+        "subgraph_x_dict": {},
+        "subgraph_edge_index_dict": {},
+        "original_indices": {"disease": torch.tensor(GLOBAL_DISEASE_IDS)},
+    }
+
+
+def _remapped_trainer():
+    from src.training.callbacks import Callback
+
+    return Trainer(
+        model=_StubEncoder(),
+        train_dataloader=[],
+        val_dataloader=[],
+        config=TrainerConfig(device="cpu", use_amp=True, scheduler_type="none", seed=0),
+        callbacks=[Callback()],
+    )
+
+
+def _remapped_manifest(cohort: Cohort):
+    """One real manifest with its cohort size corrected, rather than a hand-built
+    one: `MeasurementManifest` has thirty-odd required fields and a second
+    construction site would be a copy to keep in step for no gain."""
+    import dataclasses
+
+    return dataclasses.replace(cohort.manifest, n_samples=len(LOCAL_TRUTHS))
+
+
+def test_the_map_this_section_uses_is_really_not_the_identity(cohort):
+    """The precondition. If it ever became the identity, the test below would go
+    on passing while testing nothing — which is how the gap it closes arose."""
+    assert GLOBAL_DISEASE_IDS != list(range(len(GLOBAL_DISEASE_IDS)))
+    assert GLOBAL_DISEASE_IDS != sorted(GLOBAL_DISEASE_IDS)
+    assert all(
+        list(b["original_indices"]["disease"]) == list(range(b["original_indices"]["disease"].numel()))
+        for b in cohort.batches
+    ), "the shared cohort is identity-mapped, which is why this section exists"
+
+
+def test_the_two_paths_agree_about_the_truth_where_local_is_not_global(cohort):
+    """D3's legal-truth equality: the trainer reports subgraph-local truths, Mode A
+    reports global ones, and they describe the same diseases.
+
+    Under a non-identity map this can fail; under the identity map of the shared
+    cohorts it could not.
+    """
+    batches = [_remapped_batch()]
+
+    result = compare_trainer_against_mode_a(
+        _remapped_trainer(), batches, _remapped_manifest(cohort),
+        device=torch.device("cpu"),
+    )
+
+    assert result.agreed is True
+    assert result.mode_a_result.truth_global_ids == [
+        GLOBAL_DISEASE_IDS[local] for local in LOCAL_TRUTHS
+    ]
+
+
+def test_a_trainer_reporting_global_truths_is_caught(cohort):
+    """The mutation the identity map would have hidden.
+
+    A trainer emitting **global** ids where local ones belong is the exact
+    wrong-direction defect: both are plausible integers, so nothing downstream can
+    tell them apart from the values alone.
+
+    **Which boundary refuses it, checked rather than predicted.** The first draft
+    of this test expected the harness's `to_global_ids` range check. It is refused
+    earlier than that, by `DiagnosisLoss._label_smoothed_ce`'s `scatter_` — global
+    id 7 into a four-column target. That is the second of D3's three boundaries
+    (BACKLOG §2.3) firing before the harness sees anything, and it matches what
+    §2.3 already measured: the trainer refuses through the loss, not through the
+    metric. The harness boundary is tested where it lives, in
+    `tests/unit/test_measurement_ranking.py`.
+
+    Under an identity map this mutation is literally a no-op, which is asserted
+    below so the reason this test needs the remapped batch is not left implicit.
+    """
+    identity = list(range(len(GLOBAL_DISEASE_IDS)))
+    assert [identity[local] for local in LOCAL_TRUTHS] == LOCAL_TRUTHS, (
+        "under an identity map this mutation changes nothing; the non-identity "
+        "map is what gives it something to break"
+    )
+    trainer = _remapped_trainer()
+    inner = trainer._compute_model_outputs
+    lookup = torch.tensor(GLOBAL_DISEASE_IDS)
+
+    def as_globals(*args, **kwargs):
+        outputs = inner(*args, **kwargs)
+        if "diagnosis_targets" in outputs:
+            outputs["diagnosis_targets"] = lookup[outputs["diagnosis_targets"]]
+        return outputs
+
+    trainer._compute_model_outputs = as_globals
+
+    with pytest.raises(RuntimeError, match="index 7 is out of bounds"):
+        compare_trainer_against_mode_a(
+            trainer, [_remapped_batch()], _remapped_manifest(cohort),
+            device=torch.device("cpu"),
+        )

@@ -223,8 +223,19 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    mode: str = "A",
                    candidate_construction: str =
                    "per-batch 2-hop subgraph seeded from answers and negatives",
-                   model_construction: str = "frozen evaluator (legacy)") -> Any:
-    from src.evaluation.measurement import LEGACY_TRUNCATION_K, MeasurementManifest
+                   model_construction: str = "frozen evaluator (legacy)",
+                   model: Any = None) -> Any:
+    """Build the manifest for one mode.
+
+    `model` is optional and is used only to **observe** whether what ran was a
+    `torch.compile` wrapper. Omitting it records `torch_compiled=None` — "not
+    observed", which is deliberately not the same claim as "not compiled".
+    """
+    from src.evaluation.measurement import (
+        LEGACY_TRUNCATION_K,
+        MeasurementManifest,
+        observe_torch_compiled,
+    )
     from src.utils.fingerprint import compute_fingerprint
 
     return MeasurementManifest(
@@ -258,7 +269,13 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_version=torch.version.cuda,
         device=str(device),
         dtype=str(torch.get_default_dtype()),
+        # Structural, and enforced rather than trusted: no traversal in
+        # `src/evaluation/measurement.py` opens an autocast context, and
+        # `assert_no_autocast` refuses to run inside one opened by a caller. So
+        # these two are facts about the run, not defaults that happen to be right.
         amp_enabled=False,
+        amp_dtype=None,
+        torch_compiled=observe_torch_compiled(model),
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         cudnn_deterministic=torch.backends.cudnn.deterministic if torch.cuda.is_available() else None,
         cudnn_benchmark=torch.backends.cudnn.benchmark if torch.cuda.is_available() else None,
@@ -429,14 +446,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     # One config object, two consumers. Not two instances that happen to agree.
     loader_config = build_loader_config(args)
 
-    def manifest_for(mode: str, candidates: str, construction: str):
+    def manifest_for(mode: str, candidates: str, construction: str, model: Any = None):
         return build_manifest(
             args, graph_data, len(samples), device, loader_config, cuda_executed,
             mode=mode, candidate_construction=candidates,
-            model_construction=construction,
+            model_construction=construction, model=model,
         )
 
     embeddings = None
+    production_model = None
     if wants_production:
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
@@ -455,13 +473,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             dataloader=create_diagnosis_dataloader(
                 samples=samples, graph_data=graph_data, config=loader_config
             ),
+            # Which model each mode's `torch_compiled` describes, stated because
+            # the modes do not all forward a model. A forwards `legacy_model` per
+            # batch. B and C forward nothing — they index the embeddings
+            # `encode_full_graph` produced, so the compile state that could have
+            # moved their numbers is `production_model`'s, at the moment those
+            # embeddings were computed.
             manifest_a=manifest_for(
                 "A", "per-batch 2-hop subgraph seeded from answers and negatives",
-                "frozen evaluator (legacy)",
+                "frozen evaluator (legacy)", model=legacy_model,
             ),
             manifest_b=manifest_for(
                 "B", "per-batch 2-hop subgraph seeded from answers and negatives",
-                "production (build_shepherd_model)",
+                "production (build_shepherd_model)", model=production_model,
             ) if "B" in modes else None,
             full_graph_embeddings=embeddings,
             device=device,
@@ -475,7 +499,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             samples=samples,
             manifest=manifest_for(
                 "C", "every disease in the knowledge graph",
-                "production (build_shepherd_model)",
+                "production (build_shepherd_model)", model=production_model,
             ),
             device=device,
             batch_size=args.batch_size,

@@ -171,6 +171,26 @@ def mode_c(world):
     )
 
 
+def test_mode_c_also_refuses_to_measure_inside_an_autocast_block(world):
+    """The same structural claim as Mode A's, guarded in the same way.
+
+    Mode C forwards no model — it indexes precomputed embeddings — but its
+    pooling and cosine still run here, so an autocast context around the call
+    would shift its scores while its manifest recorded `amp_enabled=False`. Both
+    traversals carry the guard because both compute the numbers the manifest
+    describes.
+    """
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        with pytest.raises(RuntimeError, match="autocast is enabled"):
+            run_mode_c(
+                full_graph_embeddings=world["embeddings"],
+                samples=world["samples"],
+                manifest=world["manifest"]("C", "every disease in the graph"),
+                device=world["device"],
+                batch_size=BATCH_SIZE,
+            )
+
+
 def test_mode_c_scores_every_disease(mode_c, world):
     """The candidate universe is the graph's disease count, not a sampled subset —
     which is what the reference method does and what nothing here did before."""

@@ -256,6 +256,67 @@ refuses to compare the two MRRs unless `max(top_k_values)` is this value. Two
 numbers truncated at different K are not the same quantity."""
 
 
+def observe_torch_compiled(model: Any) -> Optional[bool]:
+    """Whether `model` is a `torch.compile` wrapper. An **execution fact**.
+
+    Not the requested config value. `src/config/training_fields.py` carries a
+    compile toggle and the Runtime Settings tab writes it, but what a manifest has
+    to record is what actually ran: a run configured to compile and a run that
+    compiled are different runs, and only the second one has fused kernels that can
+    move the last bits of a score.
+
+    `None` when no model was supplied — "not observed", which is a different claim
+    from "not compiled" and must not be flattened into `False`.
+
+    **The detection is deliberately two-layered and never raises.** `torch.compile`
+    returns a `torch._dynamo.eval_frame.OptimizedModule`, and an isinstance check
+    against that class is exact — but the path is private and may move. The
+    `_orig_mod` attribute the wrapper carries is the fallback. A measurement run
+    must not die because a torch internal was renamed, and a manifest field is not
+    worth that risk; an unobservable state comes back as `None`.
+    """
+    if model is None:
+        return None
+    try:
+        from torch._dynamo.eval_frame import OptimizedModule
+
+        return isinstance(model, OptimizedModule)
+    except Exception:  # noqa: BLE001 - a renamed internal must not fail a run
+        return hasattr(model, "_orig_mod")
+
+
+def assert_no_autocast(device: Any) -> None:
+    """Refuse to measure inside an autocast block.
+
+    The manifest records `amp_enabled=False` and `amp_dtype=None` for every mode,
+    because none of the traversals here opens an `autocast` context — unlike
+    `Trainer._run_evaluation_pass`, which does. That is a **structural** claim
+    about this module, and a caller who wrapped `run_mode_a(...)` in
+    `with autocast(...)` would make the manifest describe a run that did not
+    happen while every number in it shifted.
+
+    So the claim is enforced rather than asserted in prose. One boolean read per
+    run, before the loop: nothing is checked per batch and nothing synchronises a
+    device.
+
+    This is not a judgement that AMP is wrong to use. `BACKLOG.md` §3.1.3 records
+    why the differential calibration must be able to run under it and report the
+    effect. What may not happen is a run measuring one regime and recording the
+    other.
+    """
+    import torch as _torch
+
+    device_type = _torch.device(device).type if device is not None else "cpu"
+    if _torch.is_autocast_enabled(device_type):
+        raise RuntimeError(
+            f"autocast is enabled for '{device_type}' and this measurement would "
+            f"run at {_torch.get_autocast_dtype(device_type)} while its manifest "
+            "recorded amp_enabled=False. Measure outside the autocast block, or "
+            "use the differential calibration, which records the AMP state it "
+            "observed instead of claiming one"
+        )
+
+
 @dataclass(frozen=True)
 class MeasurementManifest:
     """What has to be recorded for a number to mean anything later.
@@ -331,6 +392,20 @@ class MeasurementManifest:
     device: str
     dtype: str
     amp_enabled: bool
+    amp_dtype: Optional[str]
+    """The autocast dtype in force, or `None` when AMP is off.
+
+    The boolean alone cannot say what a run computed in. `amp_enabled=False` with
+    no dtype leaves a reader unable to tell an fp32 run from one whose dtype was
+    simply not recorded, and BACKLOG §3.1.3 established that the AMP regime decides
+    which of two different questions a comparison answered. For every mode in this
+    module it is `None`, and `assert_no_autocast` is what makes that a fact rather
+    than an expectation."""
+
+    torch_compiled: Optional[bool]
+    """Whether the model that ran was a `torch.compile` wrapper — observed, not
+    configured. `None` means not observed. See `observe_torch_compiled`."""
+
     deterministic_algorithms: bool
     cudnn_deterministic: Optional[bool]
     cudnn_benchmark: Optional[bool]
@@ -681,6 +756,7 @@ def run_modes_ab(
     from src.utils.metrics import RankingMetrics
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
+    assert_no_autocast(device)
     model.eval()
 
     want_b = manifest_b is not None
@@ -959,6 +1035,7 @@ def run_mode_c(
     from src.inference.scoring import cosine_score_matrix, masked_mean_pool
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
+    assert_no_autocast(device)
     phenotype_emb = full_graph_embeddings["phenotype"].to(device)
     disease_emb = full_graph_embeddings["disease"].to(device)
     all_disease_ids = _torch.arange(disease_emb.size(0), device=device)
