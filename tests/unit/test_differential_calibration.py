@@ -503,21 +503,21 @@ def test_an_aggregate_only_disagreement_is_caught(cohort, monkeypatch):
     assert result.mrr_absolute_difference == pytest.approx(0.5)
 
 
-def test_the_verdict_records_the_compile_state_it_observed(cohort):
+def test_the_verdict_records_the_compile_wrapper_it_observed(cohort):
     """Backlog item D2, on the artifact where the numeric regime actually varies.
 
     It cannot make the two paths disagree — they are handed the same model object,
-    so it is compiled for both or neither. It is recorded for the same reason
+    so it is wrapped for both or neither. It is recorded for the same reason
     `amp_dtype` is: a verdict that does not say what regime produced it cannot be
-    compared with a later one, and fused kernels move the last bits of a score
-    exactly where a near-tie decides the ranking.
+    compared with a later one.
 
-    `False` here is an observation. `None` would mean nothing was observed.
+    `False` here is an observation. `None` would mean nothing was observed. Neither
+    says anything about whether a compiled graph executed.
     """
     result = run(cohort)
 
-    assert result.torch_compiled is False
-    assert result.to_dict()["torch_compiled"] is False
+    assert result.torch_compile_wrapped is False
+    assert result.to_dict()["torch_compile_wrapped"] is False
 
 
 # ---------------------------------------------------------------------------

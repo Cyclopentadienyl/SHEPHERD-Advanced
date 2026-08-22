@@ -228,13 +228,15 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     """Build the manifest for one mode.
 
     `model` is optional and is used only to **observe** whether what ran was a
-    `torch.compile` wrapper. Omitting it records `torch_compiled=None` — "not
-    observed", which is deliberately not the same claim as "not compiled".
+    `torch.compile` wrapper object. Omitting it records
+    `torch_compile_wrapped=None` — "not observed", which is deliberately not the
+    same claim as "not compiled". Neither value says a compiled graph executed;
+    see `observe_torch_compile_wrapper`.
     """
     from src.evaluation.measurement import (
         LEGACY_TRUNCATION_K,
         MeasurementManifest,
-        observe_torch_compiled,
+        observe_torch_compile_wrapper,
     )
     from src.utils.fingerprint import compute_fingerprint
 
@@ -275,7 +277,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         # these two are facts about the run, not defaults that happen to be right.
         amp_enabled=False,
         amp_dtype=None,
-        torch_compiled=observe_torch_compiled(model),
+        torch_compile_wrapped=observe_torch_compile_wrapper(model),
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         cudnn_deterministic=torch.backends.cudnn.deterministic if torch.cuda.is_available() else None,
         cudnn_benchmark=torch.backends.cudnn.benchmark if torch.cuda.is_available() else None,
@@ -473,7 +475,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             dataloader=create_diagnosis_dataloader(
                 samples=samples, graph_data=graph_data, config=loader_config
             ),
-            # Which model each mode's `torch_compiled` describes, stated because
+            # Which model each mode's `torch_compile_wrapped` describes, stated because
             # the modes do not all forward a model. A forwards `legacy_model` per
             # batch. B and C forward nothing — they index the embeddings
             # `encode_full_graph` produced, so the compile state that could have

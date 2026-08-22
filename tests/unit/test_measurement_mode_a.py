@@ -11,6 +11,7 @@ assumed — if it stopped holding, everything below would fail intermittently,
 which is worse than failing.
 """
 import json
+import sys
 
 import pytest
 
@@ -59,7 +60,7 @@ def _run(data_dir, checkpoint, batch_size=3):
         samples=samples, graph_data=graph_data, config=loader_config
     )
     # `model=` too, because this helper claims to drive the harness the way the
-    # CLI does and the CLI now passes it: `torch_compiled` is observed from the
+    # CLI does and the CLI now passes it: `torch_compile_wrapped` is observed from
     # model that runs, so a helper omitting it would record 'not observed' and
     # quietly stop mirroring the thing it exists to mirror.
     manifest = build_manifest(
@@ -159,18 +160,18 @@ def test_the_manifest_records_the_numeric_regime_not_only_the_boolean(workspace)
     from one whose dtype was never recorded, and BACKLOG §3.1.3 established that
     the AMP regime decides which question a comparison answered.
 
-    `torch_compiled` is an **execution** fact: the project carries a compile toggle
-    in `src/config/training_fields.py`, and what has to be recorded is what ran,
-    not what was asked for. `_run` builds an uncompiled model, so `False` here is
-    an observation — `None` would mean nothing was observed at all, which is a
-    different claim.
+    `torch_compile_wrapped` is an **execution** fact rather than a config value:
+    the project carries a compile toggle in `src/config/training_fields.py`, and
+    what has to be recorded is what ran, not what was asked for. `_run` builds an
+    unwrapped model, so `False` here is an observation — `None` would mean nothing
+    was observed at all, which is a different claim.
     """
     _, data_dir, checkpoint = workspace
 
     manifest = _run(data_dir, checkpoint).manifest
 
     assert manifest.amp_dtype is None
-    assert manifest.torch_compiled is False
+    assert manifest.torch_compile_wrapped is False
 
 
 def test_measuring_inside_an_autocast_block_is_refused(workspace):
@@ -189,26 +190,107 @@ def test_measuring_inside_an_autocast_block_is_refused(workspace):
 
 
 # ---------------------------------------------------------------------------
-# Observing the execution state, as opposed to reading the requested config
+# Observing the compile wrapper — the tri-state, and every way it can be reached
 # ---------------------------------------------------------------------------
-def test_a_compiled_model_is_observed_as_compiled():
+#
+# `False` is only reported when both probes ran and both were negative. An
+# earlier version returned the attribute probe's own `False` when the exact
+# import raised, which converted "not observable" into "observed and not
+# compiled" — the one conversion a tri-state exists to prevent.
+
+
+def _block_the_private_probe(monkeypatch):
+    """Make `from torch._dynamo.eval_frame import OptimizedModule` fail.
+
+    `sys.modules[name] = None` is how the import system is told a module is
+    absent; verified by execution to raise `ModuleNotFoundError`. This stands in
+    for the real risk, which is torch moving a private path between versions.
+    """
+    monkeypatch.setitem(sys.modules, "torch._dynamo.eval_frame", None)
+
+
+def test_an_exact_positive_is_observed(monkeypatch):
     """Against a real `torch.compile` wrapper, not a stand-in with the right
     attribute — a stand-in would test the test."""
     import torch.nn as nn
 
-    from src.evaluation.measurement import observe_torch_compiled
+    from src.evaluation.measurement import observe_torch_compile_wrapper
 
-    plain = nn.Linear(4, 4)
+    assert observe_torch_compile_wrapper(torch.compile(nn.Linear(4, 4))) is True
 
-    assert observe_torch_compiled(plain) is False
-    assert observe_torch_compiled(torch.compile(plain)) is True
+
+def test_an_exact_negative_is_observed():
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    assert observe_torch_compile_wrapper(nn.Linear(4, 4)) is False
 
 
 def test_no_model_is_not_observed_rather_than_not_compiled():
     """`None` and `False` are different claims and must not be flattened."""
-    from src.evaluation.measurement import observe_torch_compiled
+    from src.evaluation.measurement import observe_torch_compile_wrapper
 
-    assert observe_torch_compiled(None) is None
+    assert observe_torch_compile_wrapper(None) is None
+
+
+def test_an_unavailable_private_probe_reports_not_observed(monkeypatch):
+    """The defect this rewrite fixes. With the exact probe gone and no wrapper
+    attribute, the old code answered `False` — an assertion built on one broken
+    probe and one negative."""
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    _block_the_private_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(nn.Linear(4, 4)) is None
+
+
+def test_the_attribute_probe_still_finds_a_wrapper_without_the_private_path(monkeypatch):
+    """A positive survives the exact probe being unavailable, which is the whole
+    point of having a second one."""
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    wrapped = torch.compile(nn.Linear(4, 4))
+    _block_the_private_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(wrapped) is True
+
+
+def test_the_attribute_probe_is_consulted_even_when_the_exact_one_answers():
+    """If torch ever returns a wrapper the imported class does not cover,
+    `isinstance` says `False`. A fallback reached only on exception would never
+    run, and the observer would report a confident wrong negative."""
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    class UncoveredWrapper:
+        _orig_mod = object()
+
+    assert observe_torch_compile_wrapper(UncoveredWrapper()) is True
+
+
+def test_hostile_attribute_access_does_not_raise(monkeypatch):
+    """`hasattr` swallows `AttributeError` and nothing else — verified by
+    execution, a `__getattr__` raising `RuntimeError` comes straight back out. The
+    observer says what a run was, so it must return data rather than a traceback.
+
+    The private probe is blocked here **on purpose**. Without that the exact check
+    answers first and the attribute path is never reached, so the test would pass
+    against an implementation that does not guard `hasattr` at all — it would be
+    asserting a value, not the absence of a raise.
+    """
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    class Hostile:
+        def __getattr__(self, name):
+            raise RuntimeError("attribute access is hostile")
+
+    _block_the_private_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(Hostile()) is None
 
 
 def test_the_result_serialises_without_non_finite_values(workspace):

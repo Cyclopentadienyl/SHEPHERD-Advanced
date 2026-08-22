@@ -256,33 +256,88 @@ refuses to compare the two MRRs unless `max(top_k_values)` is this value. Two
 numbers truncated at different K are not the same quantity."""
 
 
-def observe_torch_compiled(model: Any) -> Optional[bool]:
-    """Whether `model` is a `torch.compile` wrapper. An **execution fact**.
+def _exact_wrapper_check(model: Any) -> Optional[bool]:
+    """isinstance against the class `torch.compile` actually returns.
 
-    Not the requested config value. `src/config/training_fields.py` carries a
-    compile toggle and the Runtime Settings tab writes it, but what a manifest has
-    to record is what actually ran: a run configured to compile and a run that
-    compiled are different runs, and only the second one has fused kernels that can
-    move the last bits of a score.
-
-    `None` when no model was supplied — "not observed", which is a different claim
-    from "not compiled" and must not be flattened into `False`.
-
-    **The detection is deliberately two-layered and never raises.** `torch.compile`
-    returns a `torch._dynamo.eval_frame.OptimizedModule`, and an isinstance check
-    against that class is exact — but the path is private and may move. The
-    `_orig_mod` attribute the wrapper carries is the fallback. A measurement run
-    must not die because a torch internal was renamed, and a manifest field is not
-    worth that risk; an unobservable state comes back as `None`.
+    Exact when it works. `None` when the private path is unavailable — a renamed
+    or moved torch internal is not evidence about the model.
     """
-    if model is None:
-        return None
     try:
         from torch._dynamo.eval_frame import OptimizedModule
 
         return isinstance(model, OptimizedModule)
-    except Exception:  # noqa: BLE001 - a renamed internal must not fail a run
+    except Exception:  # noqa: BLE001 - a moved internal is not an answer
+        return None
+
+
+def _attribute_wrapper_check(model: Any) -> Optional[bool]:
+    """The `_orig_mod` attribute every compile wrapper carries.
+
+    Consulted **always**, not only when the exact check fails. If torch ever
+    returns a wrapper the imported class does not cover, `isinstance` would say
+    `False` and a fallback reached only on exception would never run.
+
+    `hasattr` is not safe on its own: it swallows `AttributeError` and nothing
+    else, so an object whose `__getattr__` raises anything else propagates it.
+    Verified by execution — a `__getattr__` raising `RuntimeError` comes straight
+    back out of `hasattr`. That is why this is wrapped rather than trusted.
+    """
+    try:
         return hasattr(model, "_orig_mod")
+    except Exception:  # noqa: BLE001 - hostile attribute access is not an answer
+        return None
+
+
+def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
+    """Whether `model` **is a `torch.compile` wrapper object**. An execution-side
+    observation of the object, and deliberately not more than that.
+
+    **What this does not claim.** It does not say a compiled graph ran. Graph
+    breaks, guard failures and `suppress_errors` all leave a wrapped model
+    executing eagerly, so `True` here means "wrapped", never "the scores came out
+    of fused kernels". The field it feeds is named `torch_compile_wrapped` for the
+    same reason `cuda_executed` was renamed from `calibration_eligible`: a field
+    whose name claims more than its probe can see gets read for the claim, not for
+    the probe. Establishing actual compiled execution would need Dynamo counters
+    and graph-break accounting, which backlog item D2 rules out and which nothing
+    in this phase needs.
+
+    Still worth recording. It remains an **execution** fact rather than a config
+    value — `src/config/training_fields.py` carries a compile toggle and the
+    Runtime Settings tab writes it, and a run configured to compile is not a run
+    that was handed a compiled model.
+
+    **Tri-state, and the third state is load-bearing:**
+
+    | Result | Means |
+    |---|---|
+    | `True` | either probe saw a wrapper |
+    | `False` | **both** probes ran and **both** were negative |
+    | `None` | no model supplied, or any probe could not answer |
+
+    A negative is reported only when nothing failed. An earlier version returned
+    the attribute check's own `False` when the exact import raised, which turned
+    "not observable" into "observed and not compiled" — the one conversion a
+    tri-state exists to prevent.
+
+    **This never raises.** It is the thing that says what the run was, so a
+    hostile object or a moved torch internal must come back as `None` rather than
+    as a traceback that kills the measurement for the sake of one field.
+    """
+    if model is None:
+        return None
+
+    exact = _exact_wrapper_check(model)
+    if exact is True:
+        return True
+
+    attribute = _attribute_wrapper_check(model)
+    if attribute is True:
+        return True
+
+    if exact is False and attribute is False:
+        return False
+    return None
 
 
 def assert_no_autocast(device: Any) -> None:
@@ -402,9 +457,14 @@ class MeasurementManifest:
     module it is `None`, and `assert_no_autocast` is what makes that a fact rather
     than an expectation."""
 
-    torch_compiled: Optional[bool]
-    """Whether the model that ran was a `torch.compile` wrapper — observed, not
-    configured. `None` means not observed. See `observe_torch_compiled`."""
+    torch_compile_wrapped: Optional[bool]
+    """Whether the model that ran **was a `torch.compile` wrapper object** —
+    observed, not configured. `None` means not observed, which is a different
+    claim from `False`.
+
+    Named for what the probe can see. It does **not** say a compiled graph
+    executed: graph breaks and eager fallback leave a wrapped model running
+    eagerly. See `observe_torch_compile_wrapper`."""
 
     deterministic_algorithms: bool
     cudnn_deterministic: Optional[bool]
