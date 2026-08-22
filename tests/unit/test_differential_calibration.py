@@ -238,6 +238,7 @@ def test_the_result_serialises_what_a_reader_needs_to_interpret_it(cohort):
 
     assert report["agreed"] is True
     assert report["n_disagreements"] == 0
+    assert report["aggregate_mrr_agreed"] is True
     assert report["bit_exact_contract"] is True
     assert report["amp_enabled"] is False
     assert "trainer_mrr" in report and "mode_a_mrr" in report
@@ -251,7 +252,7 @@ def test_a_one_shot_iterator_is_refused(cohort):
     drained by whichever path runs first; the second sees an empty stream, and on
     one of the two orderings that produces two empty cohorts and a cheerful
     `agreed=True`."""
-    with pytest.raises(TypeError, match="re-iterable sequence"):
+    with pytest.raises(TypeError, match="must be a list or tuple"):
         compare_trainer_against_mode_a(
             make_trainer(cohort), (b for b in cohort.batches), cohort.manifest,
             device=torch.device("cpu"),
@@ -265,23 +266,53 @@ def test_an_empty_cohort_is_refused(cohort):
         )
 
 
-def test_a_mode_a_result_from_a_different_cohort_is_refused(cohort):
-    """`mode_a_result` lets a caller reuse a Mode A run it already has, and
-    nothing can verify it came from these batches. Size is the one mismatch that
-    *is* detectable, so it must not be skipped: a comparison across two cohorts
-    would misalign row-for-row rather than fail somewhere obvious."""
-    shorter = cohort.batches[:1]
-    assert len(shorter) < len(cohort.batches), "fixture too small to test this"
+def test_a_cohort_that_scores_no_rows_is_refused(cohort):
+    """The reachable route to an empty cohort, and it is not an empty batch list.
 
-    full = run_mode_a(
-        cohort.model, cohort.batches, cohort.manifest, device=torch.device("cpu"),
-    )
+    `_compute_model_outputs` returns early when the encoder yields no disease or
+    phenotype embeddings, and `_run_evaluation_pass` then completes normally with
+    no predictions and an empty metric dict — it does not raise. A comparison at
+    that point would have nothing to compare and would say so by agreeing.
 
-    with pytest.raises(ValueError, match="over the same batches|accounts for"):
+    Mode A would refuse this cohort too, so this is a fail-fast with a message
+    about *this* contract, not a hole that was open.
+    """
+    trainer = make_trainer(cohort)
+    trainer._compute_model_outputs = lambda node_embeddings, *a, **k: {
+        "node_embeddings": node_embeddings
+    }
+
+    with pytest.raises(ValueError, match="no scored rows"):
         compare_trainer_against_mode_a(
-            make_trainer(cohort), shorter, cohort.manifest,
-            device=torch.device("cpu"), mode_a_result=full,
+            trainer, cohort.batches, cohort.manifest, device=torch.device("cpu"),
         )
+
+
+def test_mode_a_cannot_be_supplied_by_the_caller(cohort):
+    """The acceptance gate does not accept evidence about what it is gating.
+
+    An earlier draft took an optional `mode_a_result` to save a forward pass. No
+    amount of field checking repairs that seam — patient ids and row counts can
+    all match while the supplied result came from a different negative draw over
+    the same patients — so it is gone, and the saving is served instead by
+    `DifferentialResult.mode_a_result` carrying the run this function performed.
+    """
+    import inspect
+
+    parameters = inspect.signature(compare_trainer_against_mode_a).parameters
+
+    assert "mode_a_result" not in parameters
+
+
+def test_the_verdict_carries_the_mode_a_run_it_performed(cohort):
+    """So a caller needing both the artifact and the verdict pays for one pass."""
+    result = run(cohort)
+
+    assert result.mode_a_result is not None
+    assert result.mode_a_result.sample_ids == [
+        pid for b in cohort.batches for pid in b["batch"]["patient_ids"]
+    ]
+    assert "mode_a_result" not in result.to_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -431,3 +462,38 @@ def test_a_truncation_disagreement_is_caught_on_the_wide_cohort(wide_cohort, mon
 
     assert result.agreed is False
     assert result.n_disagreements_by_kind.get("top_k", 0) > 0
+
+
+def test_an_aggregate_only_disagreement_is_caught(cohort, monkeypatch):
+    """The fourth check, which the first draft listed and did not enforce.
+
+    The mutation moves **only** the aggregate: every sample id, top-20 row and
+    truth is preserved, so all three per-sample comparisons still agree and
+    `disagreements` stays empty. A verdict of `agreed = not disagreements` would
+    pass this, which is exactly the false pass being closed.
+
+    `dataclasses.replace` on the frozen `ModeAResult` is what makes the mutation
+    surgical — patching `RankingMetrics` instead would move both sides at once
+    and prove nothing about the verdict.
+    """
+    import dataclasses
+
+    import src.evaluation.differential as differential
+
+    real = differential.run_mode_a
+
+    def shifted(*args, **kwargs):
+        result = real(*args, **kwargs)
+        key = differential.legacy_mrr_key()
+        return dataclasses.replace(
+            result, legacy_metrics={**result.legacy_metrics, key: result.legacy_metrics[key] + 0.5}
+        )
+
+    monkeypatch.setattr(differential, "run_mode_a", shifted)
+
+    result = run(cohort)
+
+    assert result.disagreements == [], "the mutation must not disturb any sample"
+    assert result.aggregate_mrr_agreed is False
+    assert result.agreed is False
+    assert result.mrr_absolute_difference == pytest.approx(0.5)

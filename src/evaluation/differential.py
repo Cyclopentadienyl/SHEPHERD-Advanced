@@ -34,7 +34,10 @@ are per-sample and the fourth is the aggregate they imply:
      tested on its own in `tests/unit/test_measurement_ranking.py`;
   3. the reciprocal rank in truncated-local space;
   4. aggregate MRR — the trainer's `compute_all()["mrr"]` against Mode A's
-     `legacy_mrr_truncated_at_{K}`.
+     `legacy_mrr_truncated_at_{K}`. **All four gate the verdict**: `agreed` is
+     false if any per-sample comparison disagrees *or* if the two aggregates are
+     not exactly equal. An earlier draft listed the aggregate here and then
+     recorded it without letting it fail anything.
 
 **Bit-exactness is a contract only when AMP is off, and that is not a caveat —
 it is the thing this module has to report.** `Trainer._run_evaluation_pass`
@@ -127,6 +130,21 @@ class DifferentialResult:
     trainer_mrr: float
     mode_a_mrr: float
     mrr_absolute_difference: float
+    aggregate_mrr_agreed: bool
+    """Whether the two aggregate MRRs are exactly equal. **Part of `agreed`.**
+
+    It is kept as its own flag rather than as a `SampleDisagreement` with a
+    sentinel index, because it is not a sample and typing it as one would make
+    `disagreements` mean two things.
+
+    On the path this function actually takes, per-sample agreement implies
+    aggregate agreement — both aggregates are the mean of the same per-sample
+    reciprocal ranks in the same order. That does not make the check redundant:
+    the module's contract names the aggregate as the fourth thing compared, and a
+    contract that only the docstring enforces is the defect this project keeps
+    finding. It also survives a future change to how either aggregate is
+    obtained, which is exactly when a derived property stops being derived."""
+
     amp_enabled: bool
     amp_dtype: str
     bit_exact_contract: bool
@@ -137,12 +155,18 @@ class DifferentialResult:
 
     device: str
     n_disagreements_by_kind: Dict[str, int] = field(default_factory=dict)
+    mode_a_result: Optional[ModeAResult] = None
+    """The Mode A run this comparison performed, so a caller needing both the
+    artifact and the verdict pays for one pass. **Not serialised by `to_dict`** —
+    it has its own `to_dict` and `to_predictions`, and nesting them here would
+    make the verdict artifact a container for a different artifact."""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "n_samples": self.n_samples,
             "agreed": self.agreed,
             "n_disagreements": len(self.disagreements),
+            "aggregate_mrr_agreed": self.aggregate_mrr_agreed,
             "n_disagreements_by_kind": self.n_disagreements_by_kind,
             "disagreements": [d.to_dict() for d in self.disagreements],
             "trainer_mrr": self.trainer_mrr,
@@ -166,12 +190,17 @@ def _require_rerunnable(batches: Any) -> Sequence[Dict[str, Any]]:
     of two empty cohorts is trivially "agreed". A calibration that passes by
     measuring nothing is the exact failure this module exists to make impossible.
     """
-    if isinstance(batches, (str, bytes)) or not isinstance(batches, Sequence):
+    if not isinstance(batches, (list, tuple)):
         raise TypeError(
-            f"batches must be a re-iterable sequence (list/tuple), not "
-            f"{type(batches).__name__}. Both paths traverse it independently, so a "
-            "one-shot iterator would hand the second caller an empty stream and the "
-            "comparison would pass by measuring nothing"
+            f"batches must be a list or tuple, not {type(batches).__name__}. Both "
+            "paths traverse it independently, so a one-shot iterator would hand the "
+            "second caller an empty stream and the comparison would pass by "
+            "measuring nothing.\n\n"
+            "`Sequence` is deliberately *not* accepted, although an earlier draft "
+            "did: the protocol guarantees indexing and length, not that two "
+            "traversals yield the same objects with no side effects. A stateful "
+            "`Sequence` would satisfy the type and defeat the guard, which is the "
+            "one thing this check exists to prevent"
         )
     if len(batches) == 0:
         raise ValueError(
@@ -252,7 +281,6 @@ def compare_trainer_against_mode_a(
     batches: Sequence[Dict[str, Any]],
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
-    mode_a_result: Optional[ModeAResult] = None,
 ) -> DifferentialResult:
     """Run both paths over one materialised batch list and compare them per sample.
 
@@ -268,9 +296,17 @@ def compare_trainer_against_mode_a(
     neither mutates the batch dicts. Order-independence is a property of the
     inputs, not something the caller has to arrange.
 
-    Pass `mode_a_result` to reuse a Mode A run the caller already has; it must have
-    come from these same batches, and nothing here can check that, which is why the
-    default is to run it.
+    **Mode A is always run here, and cannot be supplied.** An earlier draft took an
+    optional `mode_a_result` so a caller holding one could skip a forward pass. That
+    seam is gone: an acceptance gate that accepts caller-supplied evidence about the
+    very thing it is gating is wrong in kind, not in degree, and no amount of field
+    checking repairs it — patient ids and row counts can all match while the
+    supplied result came from a different negative draw over the same patients.
+
+    The one legitimate use of that seam is served better by the result itself:
+    `DifferentialResult.mode_a_result` carries the run this function performed, so a
+    caller wanting both the Mode A artifact and the verdict gets them from **one**
+    pass with nothing to trust. Same saving, no trust surface.
     """
     import torch as _torch
 
@@ -278,10 +314,29 @@ def compare_trainer_against_mode_a(
 
     trainer.model.eval()
     trainer_pass = trainer._run_evaluation_pass(batches)
-    if mode_a_result is None:
-        mode_a_result = run_mode_a(trainer.model, batches, manifest, device=device)
+
+    # `_require_rerunnable` checks that the *list* is non-empty; this checks that
+    # the list produced rows. They are different failures. The reachable route is
+    # a batch whose model output carries no `diagnosis_scores` — `_compute_model_outputs`
+    # returns early when the encoder yields no disease or phenotype embeddings, and
+    # `_run_evaluation_pass` then completes normally with no predictions and an
+    # empty metric dict (verified by execution, not assumed).
+    #
+    # **This is not a hole being closed.** With the supplied-result seam gone, that
+    # cohort would reach `run_mode_a`, which refuses it too — a batch with no
+    # disease embeddings raises there, and a zero-row batch raises earlier still,
+    # inside the trainer's own reshape. What this buys is failing *before* a wasted
+    # Mode A pass, and a message about this comparison's contract rather than about
+    # another module's manifest arithmetic.
+    if not trainer_pass.predictions:
+        raise ValueError(
+            f"the batch stream yielded {len(batches)} batch(es) but no scored rows. "
+            "A comparison over an empty cohort reports agreement without having "
+            "compared anything, which is the one verdict this function may not return"
+        )
 
     n_trainer = len(trainer_pass.predictions)
+    mode_a_result = run_mode_a(trainer.model, batches, manifest, device=device)
     n_mode_a = len(mode_a_result.legacy_top_k_local)
     if n_trainer != n_mode_a:
         raise ValueError(
@@ -368,9 +423,12 @@ def compare_trainer_against_mode_a(
     amp_enabled = bool(getattr(trainer, "use_amp", False))
     amp_dtype = str(getattr(trainer, "amp_dtype", _torch.float32))
 
+    aggregate_mrr_agreed = trainer_mrr == mode_a_mrr
+
     return DifferentialResult(
         n_samples=n_trainer,
-        agreed=not disagreements,
+        agreed=not disagreements and aggregate_mrr_agreed,
+        aggregate_mrr_agreed=aggregate_mrr_agreed,
         disagreements=disagreements,
         trainer_mrr=trainer_mrr,
         mode_a_mrr=mode_a_mrr,
@@ -380,4 +438,5 @@ def compare_trainer_against_mode_a(
         bit_exact_contract=not amp_enabled,
         device=str(trainer.device),
         n_disagreements_by_kind=by_kind,
+        mode_a_result=mode_a_result,
     )
