@@ -1,6 +1,9 @@
 # Plan — configurability as a requirement, and the provenance gap that undermines it
 
-**Status: draft for review. Nothing here is implemented.**
+**Status: draft, revision 2. Nothing here is implemented.**
+
+Revision 1 was reviewed and its direction accepted; every change below comes from
+that review and is listed in §7 rather than folded in silently.
 
 ## 0. Why this document exists
 
@@ -20,28 +23,40 @@ This is a **design position**, not a feature request, and it is recorded here so
 that later work can be checked against it instead of re-deriving it.
 
 **What this document is not.** It proposes no configuration framework, no
-experiment-tracking subsystem, no run registry or provenance database, and no
-schema hierarchy. Both proposals below are small and reuse machinery that already
-exists. If either grows past what §4 describes, that growth is the finding.
+experiment-tracking subsystem, no run registry or provenance database, no schema
+hierarchy, and no execution tracing. Both proposals below are small and reuse
+machinery that already exists. If either grows past what §4 describes, that growth
+is the finding.
 
 ---
 
 ## 1. The position, stated so it can be checked against
 
-**P1. A knob is removed only when nothing could want it, and removing one is a
-reviewable change rather than a tidy-up.** The reverse — a knob nobody turns —
-is also a cost, so this is not "add options"; it is "do not close a door that
-research needs open".
+Revision 1 wrote these as absolutes. Absolutes are what a design position must
+avoid, because they get applied where they do not fit — and P1 as first written
+was unfalsifiable. All three are narrowed.
 
-**P2. Where a setting affects results, the artifact records what was *observed*,
-not what was *requested*.** This is already the project's stated rule, in
-`BACKLOG.md` D2: *"the **observed** `torch.compile` execution state — an
-execution fact, not a requested config value"*.
+**P1. A knob that plausibly affects behaviour and has a concrete clinical or
+research use must not be silently fixed or removed.** Removal or fixing needs a
+reviewed reason — **not** proof that no imaginable caller could want it, which is
+a bar nothing can clear. A clinical preset may legitimately constrain a knob the
+research surface still exposes; those are different envelopes, not a conflict.
 
-**P3. Refusing an input is a stronger act than recording it, and needs a stronger
-reason.** A refusal protects one value; an honest record protects every value.
-Refusal is right where a state would make an artifact lie and cannot be
-described. It is wrong where the state can simply be written down.
+**P2. Where a setting affects results, the artifact must record the *effective*
+value — what actually applied.** Recording the *requested* value as well is good
+provenance where the two can meaningfully diverge, and the pair is often more
+informative than either. What is forbidden is the requested value **standing in
+for** the observed one. This is the project's existing rule in `BACKLOG.md` D2:
+*"the **observed** `torch.compile` execution state — an execution fact, not a
+requested config value"*.
+
+**P3. Refusal needs a concrete reason, and "the state is describable" is not by
+itself a reason to accept it.** Refusal is justified by concrete invalidity,
+safety constraints, unsupported semantics, or an inability to produce an honest
+artifact. A meaningful state **inside the intended clinical or research envelope**
+should normally be recorded rather than refused. The question to ask of any
+refusal is therefore not "could this have been described?" but "which of those
+four grounds does it stand on?"
 
 **P4. Two runs are comparable only if the artifacts can prove they differed in
 what the experimenter thinks they differed in.** A configuration comparison in
@@ -68,7 +83,7 @@ currently violated at the training layer. Two things below are, in narrower ways
 
 ## 3. The two findings
 
-### 3.1 The measurement harness refuses a state it could have recorded
+### 3.1 A refusal without one of P3's four grounds
 
 `src/evaluation/measurement.py::assert_no_autocast` raises if either traversal is
 entered inside an `autocast` block. It is called from `run_modes_ab` and
@@ -76,23 +91,28 @@ entered inside an `autocast` block. It is called from `run_modes_ab` and
 
 **The reason it was added is real.** `scripts/measure_scorer.py::build_manifest`
 writes `amp_enabled=False` and `amp_dtype=None` as **literals**. Under autocast
-every score shifts while the manifest goes on claiming fp32, so the artifact
-would describe a run that did not happen.
+every score shifts while the manifest goes on claiming fp32, so the artifact would
+describe a run that did not happen — which is P3's fourth ground, *inability to
+produce an honest artifact*.
 
-**But the fix chosen was the stronger of the two available acts, and P3 says it
-needed the stronger reason.** It does not have one. The state is trivially
-describable: `torch.is_autocast_enabled(device_type)` and
-`torch.get_autocast_dtype(device_type)` both answer on any host, including a
-CPU-only one — verified by execution.
+**But that ground is removable, and removing it is cheaper than living with the
+refusal.** The state is not merely describable; it is describable **at the point
+that matters**, by `torch.is_autocast_enabled(device_type)` and
+`torch.get_autocast_dtype(device_type)`, both of which answer on any host
+including a CPU-only one — verified by execution. Once the manifest records what
+applied, the artifact is honest and the ground is gone. None of P3's other three
+grounds is claimed: an AMP-on measurement is not invalid, not unsafe, and not
+unsupported semantics — it is the regime the deployment actually uses.
 
 **The cost is a research question the harness can no longer answer.** *"What is
-Mode A's MRR under the AMP setting the deployment actually uses?"* is legitimate,
-and Modes A/B/C now refuse it. Note the asymmetry with `torch_compile_wrapped`,
-added in the same work item: compile state is **observed and recorded**; AMP state
-is **forbidden**. D2's own wording asked for the first treatment. The
-inconsistency is the author's.
+Mode A's MRR under the AMP setting the deployment actually uses?"* sits squarely
+inside the research envelope, and Modes A/B/C now refuse it.
 
-### 3.2 A checkpoint cannot say which data it was trained on
+Note the asymmetry inside one work item: `torch_compile_wrapped` is **observed and
+recorded**; AMP state is **forbidden**. D2's wording asked for the first
+treatment. The inconsistency is the author's.
+
+### 3.2 A checkpoint's provenance metadata cannot identify its training inputs
 
 `scripts/train_model.py:658` sets `trainer.data_fingerprint =
 compute_fingerprint(graph_data)`, and `src/training/callbacks.py:315-316` embeds
@@ -100,7 +120,10 @@ it in every saved checkpoint. So a fingerprint mechanism exists and is wired.
 
 **What it records is the graph's shape, not its content.**
 `src/utils/fingerprint.py::compute_fingerprint` returns `node_types`,
-`node_counts`, `feature_dims` and `edge_types`.
+`node_counts`, `feature_dims` and `edge_types`. Its signature is
+`compute_fingerprint(graph_data, kg_total_nodes=None, kg_total_edges=None)` —
+**samples are not a parameter at all**, so no property of the sample files, shape
+included, participates in the fingerprint.
 
 **The project already documents this limit — on the measurement side.**
 `scripts/measure_scorer.py::artifact_digests`:
@@ -116,12 +139,16 @@ So the two sides of the project disagree about their own rule:
 | Measurement manifest (`MeasurementManifest.artifact_digests`) | **yes** — checkpoint, samples, node_features, edge_indices, num_nodes |
 | Training checkpoint | **no** — structural fingerprint only |
 
-**The consequence lands exactly on P4.** Two investigators training on *different
-sample files* produce checkpoints with **identical** `data_fingerprint` whenever
-the disease and phenotype counts match. Comparing those two runs looks like a
-configuration comparison and may be a dataset comparison, **and no artifact either
-of them holds can detect the difference.** `verify_fingerprint` cannot: it
-compares structure to structure.
+**The defect, stated precisely.** Revision 1 said two such checkpoints are
+"indistinguishable", which is false — their weights and their bytes differ. The
+accurate statement is:
+
+> **The checkpoints' provenance metadata cannot identify or distinguish their
+> training inputs, so an observer cannot attribute an observed difference to data,
+> configuration, randomness, or training behaviour.**
+
+That is what P4 forbids. `verify_fingerprint` cannot close it either: it compares
+structure to structure, and structure never saw the samples.
 
 This also touches work already queued. Item 6 asks which checkpoint is
 authoritative and item 10 must produce M1–M3 checkpoint evidence; both are harder
@@ -135,17 +162,39 @@ Ordered by value. Each states what it does **not** do.
 
 ### 4.1 Proposal A — record the training checkpoint's input digests
 
+**Structure and content identity stay separate**, as two sibling checkpoint
+fields. Revision 1 offered overloading `compute_fingerprint`'s result as an
+option; review rejected it and the author agrees.
+
+| Field | Answers |
+|---|---|
+| `data_fingerprint` (existing, unchanged) | is this checkpoint *structurally compatible* with the graph in front of me? |
+| `training_input_digests` (new) | *which exact inputs* produced this checkpoint? |
+
+**What is hashed: the semantic input roles the run actually consumed** — the
+training samples, the validation samples actually used, node features, edge
+indices, and `num_nodes` or its equivalent where graph construction consumes it.
+**Not** every `*_samples.json` in the directory. Hashing whatever files happen to
+be present records the directory, not the run, and would make a checkpoint's
+provenance change when an unrelated split was added beside it.
+
 **Change.**
 
 1. Move `file_sha256` and `artifact_digests` from `scripts/measure_scorer.py`
    into `src/utils/fingerprint.py`, which already owns fingerprinting and sits in
    the bottom layer where every caller can reach it. Re-export from
-   `measure_scorer` so no call site changes behaviour.
-2. Extend `compute_fingerprint`'s **result** with a `digests` sub-dict, or attach
-   digests alongside it at the `train_model.py:658` wiring point — §5 asks review
-   which.
-3. `verify_fingerprint` reports a digest mismatch as one more warning string in
-   the list it already returns.
+   `measure_scorer` so no call site changes behaviour. The role-keyed shape may
+   need a small generalisation, since the measurement caller passes one split and
+   the training caller passes two.
+2. Attach `training_input_digests` at the `train_model.py:658` wiring point,
+   beside `data_fingerprint`, and let `callbacks.py` embed it the same way.
+3. **Capture is the deliverable; comparison is separable.** Recording the digest
+   map is the primary provenance repair and lands on its own. Extending
+   `verify_fingerprint` to compare against a current workspace requires deciding
+   how it receives a current path for each semantic role, and how it reports
+   missing inputs, legacy checkpoints and relocated workspaces. If those are not
+   settled in the same item, the comparison helper is **explicitly deferred** and
+   the capture still lands.
 
 **Why this is reuse, not a new mechanism.** `file_sha256` already has three
 callers outside its own module (`measure_scorer:88-92`,
@@ -153,41 +202,71 @@ callers outside its own module (`measure_scorer:88-92`,
 Lifting it gives one implementation to callers that already exist — the move is
 overdue independently of this plan.
 
+**Which checkpoints carry it.** Every checkpoint this callback writes, following
+`data_fingerprint`. Revision 1 asked whether weights-only checkpoints should be
+excluded; the premise was wrong. `callbacks.py:315-316` appends the fingerprint
+**after** the `save_weights_only` branch closes, so those checkpoints are already
+provenance-bearing. Digests follow the same path unless a separately named
+checkpoint path has an explicit reason to omit provenance.
+
 **Cost.** One SHA-256 pass over the graph artifacts and the sample files, once per
 training run, at startup. Bounded and not on any hot path.
 
-**Does not do.** No registry, no database, no comparison tooling, no
-`verify_fingerprint` change beyond one warning string, no fatal error on mismatch —
-it stays a warning, because whether a mismatch is disqualifying is a judgement
-this code cannot make.
+**Known limitation, documented rather than engineered around.** The digest is
+taken at a different instant from the load, so a file changed in between would be
+recorded incorrectly. **No file locking, transactional loading, content-addressed
+store or provenance database is proposed for this item.** The limitation is stated
+in the field's documentation.
 
-**Open risk to name.** A digest binds a checkpoint to exact bytes. If a workspace
-is legitimately regenerated, every prior checkpoint reports a mismatch. That is
-the correct signal, but it must arrive as information rather than as an
-obstruction — hence warning, not error.
+**Does not do.** No registry, no database, no comparison tooling beyond §4.1.3, no
+fatal error on mismatch — it stays a warning, because whether a mismatch is
+disqualifying is a judgement this code cannot make. A legitimately regenerated
+workspace will make every prior checkpoint report a mismatch; that is the correct
+signal and it must arrive as information, not as an obstruction.
 
-### 4.2 Proposal B — observe the AMP state instead of forbidding it
+### 4.2 Proposal B — record the AMP regime instead of forbidding it
 
 **Change.**
 
-1. `build_manifest` **observes** `amp_enabled` and `amp_dtype` rather than
-   writing literals.
+1. The manifest **records** `amp_enabled` and `amp_dtype` rather than writing
+   literals.
 2. `assert_no_autocast` becomes a **consistency** check: the traversal refuses if
-   the state it observes differs from what its manifest recorded.
+   the regime it observes differs from what its manifest recorded.
 3. The `MeasurementManifest` docstrings drop "no traversal here opens an autocast
    context, therefore False" and say what the fields now mean.
 
-**Why this is strictly stronger than the refusal it replaces.** The refusal
-protects one value. The consistency check protects every value — including the
-case the refusal never covered, where a manifest is built in one context and the
-traversal runs in another.
+**Where the observation is taken, corrected.** Revision 1 said "observe in
+`build_manifest`", and review found that is **too late for Modes B and C**. In
+`scripts/measure_scorer.py`, `encode_full_graph` runs at line 497 while the B and
+C manifests are constructed at lines 516 and 530. A caller who wrapped only the
+embedding computation would get manifests describing the *later* context and
+silently mislabelling those embeddings. The invariant is therefore:
 
-**Does not do.** It adds no autocast **inside** the harness. The traversals still
-open no autocast context of their own; the change is only that a caller's context
-is described instead of rejected. Nor does it touch the differential calibration,
-which already records the trainer's resolved AMP state, nor define any acceptance
-criterion for AMP-on runs — that ownership was settled in BACKLOG §3.1.3 and this
-plan does not reopen it.
+> **The manifest describes the autocast regime at the computation that produced
+> the recorded scores, or their source embeddings.**
+
+Two boundaries, not one: Mode A's per-batch forward, and the production
+embedding-generation call that Modes B and C consume. The observed value is small
+and is passed into the manifest; nothing traces per-operation state.
+
+**Named for what it can see.** If an autocast context opened *inside* a model is
+not observable at these boundaries, the field is documented as the
+**harness-boundary autocast regime** and claims nothing about nested contexts.
+This is the same discipline `torch_compile_wrapped` was renamed under.
+
+**Why this is stronger than the refusal it replaces.** The refusal protects one
+value. The consistency check protects every value — including the case the
+refusal never covered, where a manifest is built in one context and the
+computation ran in another, which is exactly the B/C defect above.
+
+**Does not do.** It adds no autocast **inside** the harness — the traversals still
+open no autocast context of their own; a caller's ambient regime is described
+rather than rejected. It adds **no AMP CLI or configuration surface**: the harness
+honours and records the caller's ambient regime and does not gain a switch of its
+own. It does not touch the differential calibration, which already records the
+trainer's resolved AMP state, and it does not define any acceptance criterion for
+AMP-on runs — that ownership was settled in BACKLOG §3.1.3 and this plan does not
+reopen it.
 
 **Boundary check.** Proposal B must not become "make everything observable".
 Manifest fields sourced from `loader_config` are already the object the loader
@@ -196,43 +275,74 @@ build.
 
 ---
 
-## 5. Questions for review
+## 5. Deferred, with the reason
 
-1. **Proposal A's shape.** Digests inside `compute_fingerprint`'s result, or
-   attached beside it? Inside keeps one call site; beside keeps a structural
-   fingerprint structural. Author leans **beside**, for the second reason.
-2. **Which files.** `artifact_digests` takes one `split`. Training consumes
-   **train and val**. Does the training record digest both, or all
-   `*_samples.json` present?
-3. **`save_weights_only`.** That path writes `{"state_dict": ...}` only
-   (`callbacks.py:296-297`). Do digests belong there too, or is a
-   weights-only checkpoint deliberately not provenance-bearing?
-4. **P1 against a decision already taken.** `DIAGNOSIS_SUBGRAPH_HOPS`
-   (`src/kg/data_loader.py`) was made a constant with the note *"nothing varies
-   it, and adding a knob nobody turns is a wider change than removing a
-   duplicated literal"*. Under the position in §1, **hop count is exactly the kind
-   of thing a researcher would vary.** Was that call wrong? The author does not
-   think it should be reopened *in this plan* — it is a `DataLoaderConfig` change
-   touching the training path and deserves its own item — but it should not stand
-   unexamined either.
-5. **Ordering.** Author proposes **A before B**: A closes a gap that makes
-   comparisons unreliable and improves item 6's evidence; B restores a capability
-   nothing is currently blocked on.
+**`DIAGNOSIS_SUBGRAPH_HOPS` is recorded as a candidate item, not opened here.**
+It was made a constant earlier in this stage with the note *"nothing varies it,
+and adding a knob nobody turns is a wider change than removing a duplicated
+literal"*. Hop count is a plausible research knob, so that note does not settle
+it — but under the **narrowed** P1 it does not immediately reopen it either:
+P1 asks for a concrete clinical or research use, and none has been named. It
+should therefore acquire an owner and a use case before anything is built, and if
+opened it needs a default, bounds, config persistence and manifest provenance —
+not merely a field. **It must not be added to satisfy a principle.**
 
 ---
 
 ## 6. Acceptance
 
-Both proposals are behaviour-preserving for every existing caller, so the bar is:
+Revision 1 called both proposals "behaviour-preserving for every existing caller".
+That was wrong: A changes the checkpoint schema and its serialized bytes, and B
+deliberately turns a refused state into an accepted one while adding a new
+refusal. The accurate framing:
 
-- every existing test passes unchanged;
-- **A**: a checkpoint trained on one sample file and one trained on a *different*
-  file of the same shape are distinguishable from their artifacts alone — the case
-  §3.2 says is currently invisible, tested directly;
-- **B**: a manifest produced inside an autocast block records the observed dtype,
-  and a manifest whose recorded state disagrees with the traversal's is refused —
-  both mutation-checked, including against the current refuse-absence code;
-- `make lint-imports` reports 4 contracts kept.
+> **Both proposals preserve the existing default numerical path, while
+> intentionally changing artifact schema and accepted execution states.**
 
-**Neither proposal needs CUDA**, and neither may be used to argue for a CPU
-substitute for the institutional runs in items 7a and 5a.
+**Proposal A:**
+
+- default training numerics unchanged;
+- structural-fingerprint semantics unchanged;
+- digests cover the inputs actually consumed, and only those;
+- a checkpoint trained on one sample file and one trained on a different file are
+  **distinguishable from their provenance metadata** with no structural graph
+  change — the case §3.2 says is currently unattributable, tested directly;
+- digests present in weights-only callback checkpoints;
+- explicit, tested behaviour for legacy checkpoints and missing digests;
+- a stated boundary between capture and any current-workspace verification.
+
+**Proposal B:**
+
+- default no-autocast numerics unchanged;
+- an AMP-on boundary regime is accepted and accurately recorded;
+- a recorded regime that disagrees with the traversal's is refused;
+- **Mode B/C attribution is correct**: a mutation test computes embeddings under
+  one autocast context and constructs the manifest under another, and the
+  implementation must not label those embeddings with the later context;
+- no claim of observing model-internal nested autocast.
+
+Both: every existing test passes unchanged, and `make lint-imports` reports 4
+contracts kept.
+
+**Neither proposal needs CUDA**, and no CPU test here may be represented as a
+substitute for the institutional CUDA evidence required by items 7a and 5a.
+
+---
+
+## 7. What review changed, and what it corrected
+
+| Revision 1 said | Corrected to |
+|---|---|
+| P1: remove a knob only if "nothing could want it" | Unfalsifiable. Now: a plausibly behaviour-affecting knob with a **concrete** use must not be silently fixed or removed; removal needs a reviewed reason. Clinical preset and research surface are different envelopes |
+| P2: record observed **instead of** requested | Record the **effective** value; the requested value may also be recorded and is often useful. What is forbidden is requested **standing in for** observed |
+| P3: refusal is stronger and needs a stronger reason; describability implies acceptance | Too absolute. Refusal stands on four concrete grounds; describability alone is not an argument for acceptance. §3.1 now names which ground applied and why it is removable |
+| Two checkpoints are "indistinguishable" | **False** — weights and bytes differ. The defect is that **provenance metadata cannot identify or distinguish training inputs**, so a difference cannot be attributed |
+| "sample files of the same shape" | Unnecessary qualifier: `compute_fingerprint` takes no samples parameter, so **no** property of the sample files participates |
+| Digests inside `compute_fingerprint`'s result, or beside it — open question | Settled: **beside**, as a sibling field. Structure and content identity stay separate |
+| Hash which files? — open question | Settled: the **semantic roles the run consumed**, not a directory scan |
+| Are weights-only checkpoints deliberately not provenance-bearing? — open question | **Premise was wrong.** `data_fingerprint` is appended after the branch, so they already carry it. Digests follow the same path |
+| Proposal B observes in `build_manifest` | **Too late for Modes B and C** — `encode_full_graph` at line 497, their manifests at 516 and 530. Observation moves to the computation boundaries, and a mutation test pins the mislabelling case |
+| `DIAGNOSIS_SUBGRAPH_HOPS` — should it have been a field? | Recorded as a candidate needing an owner and a use case. Not opened here, and **not to be added to satisfy a principle** |
+| "behaviour-preserving for every existing caller" | **False.** Both preserve the default numerical path while intentionally changing artifact schema and accepted execution states |
+| Verification and capture treated as one change | Separated. Capture is the primary repair and lands alone; the comparison helper may be explicitly deferred |
+| — | Added: the load-versus-hash race is documented as a limitation, with no locking, transactional loading or content-addressed store proposed |
