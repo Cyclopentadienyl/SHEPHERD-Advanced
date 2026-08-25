@@ -1,6 +1,6 @@
 # Plan — configurability as a requirement, and the provenance gap that undermines it
 
-**Status: revision 3a. Proposal A is implemented and approved. Proposal B is implemented and awaiting review.**
+**Status: complete. Both proposals are implemented and approved** (A: `cf413d4`, B: `e226631`). Revision 3a of the design text.
 
 The findings in §3 describe the state this plan was written against; both are now
 addressed in code, and §4's proposals are the record of what was built.
