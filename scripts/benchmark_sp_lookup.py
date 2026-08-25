@@ -379,7 +379,7 @@ def _rss_bytes() -> Dict[str, Optional[int]]:
     been" — and their disagreement is itself the signal that the peak belongs to
     something earlier.
 
-    **Linux only, deliberately** — see `require_posix_memory_accounting`. An
+    **Linux only, deliberately** — see `require_linux_memory_accounting`. An
     earlier version of this docstring said non-Linux hosts get `None` "rather than
     a fabricated number". That was false: the `/proc/self/status` read is guarded,
     but `import resource` is not, and `resource` does not exist on Windows. The
@@ -646,8 +646,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # After parsing so `--help` works everywhere; before anything is loaded or
-    # timed, which is the cost that matters.
+    # After parsing so `--help` works everywhere; before any artifact is loaded or
+    # workload is timed, which is the cost that matters. Not before *anything* is
+    # loaded — `torch` is imported when this module is.
     require_linux_memory_accounting()
 
     requested = [name.strip() for name in args.implementations.split(",") if name.strip()]
