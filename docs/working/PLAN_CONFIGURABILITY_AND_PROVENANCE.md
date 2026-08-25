@@ -1,6 +1,6 @@
 # Plan — configurability as a requirement, and the provenance gap that undermines it
 
-**Status: draft, revision 3. Nothing here is implemented.**
+**Status: approved for implementation, revision 3a. Nothing here is implemented yet.**
 
 Revisions 1 and 2 were reviewed and the direction accepted both times. Every
 change comes from those reviews and is listed in §7 rather than folded in
@@ -94,7 +94,7 @@ currently violated at the training layer. Two things below are, in narrower ways
 
 ## 3. The two findings
 
-### 3.1 A refusal without one of P3's four grounds
+### 3.1 A refusal whose concrete ground can be removed
 
 `src/evaluation/measurement.py::assert_no_autocast` raises if either traversal is
 entered inside an `autocast` block. It is called from `run_modes_ab` and
@@ -243,17 +243,23 @@ branch closes, so they are already provenance-bearing, and digests follow the sa
 path.
 
 *Out of scope:* `Trainer.save_checkpoint`. This is the bounded choice, and it is
-made on a fact rather than a preference: **the method has no callers anywhere** —
-not in `src/`, not in `scripts/`, not in `tests/`. The only textual hit is a
-comment at `trainer.py:996` about its key convention. Extending a writer nothing
-invokes would be completeness for its own sake, which review explicitly warned
-against.
+made on a fact rather than a preference: **no invocation or call site exists in
+`src/`, `scripts/` or `tests/`.** The remaining references are declarations or
+comments about its schema — the method's own definition at `trainer.py:961`, the
+protocol declaration at `src/core/protocols.py:1218`, a key-convention comment at
+`trainer.py:996`, and a comment in `tests/integration/test_pipeline.py:290`.
+Extending a writer nothing invokes would be completeness for its own sake, which
+review explicitly warned against.
 
 *The boundary is stated rather than left implicit*, so a future caller finds a
 documented limit instead of a silent trap: a checkpoint written through
-`Trainer.save_checkpoint` carries provenance **only** if the caller passes it. That
-it currently has no callers at all is a separate observation about dead public API
-and is deliberately not this plan's to act on.
+`Trainer.save_checkpoint` carries provenance **only** if the caller passes it.
+
+Note that "uncalled" is not the same as "dead". The method satisfies a declared
+interface (`src/core/protocols.py:1218`), which is a reason for it to exist
+without a current invocation. Whether that interface should also require
+provenance is a protocol question, not a provenance-capture question, and is
+deliberately not this plan's to answer.
 
 **Cost.** One SHA-256 pass over the graph artifacts and the sample files, once per
 training run, at startup. Bounded and not on any hot path.
@@ -411,3 +417,11 @@ substitute for the institutional CUDA evidence required by items 7a and 5a.
 | Writer coverage left implicit | **Bounded on evidence, not symmetry.** In scope: the `ModelCheckpoint` path, weights-only included. Out of scope: `Trainer.save_checkpoint`, because it has **no callers anywhere** in `src/`, `scripts/` or `tests/`. The boundary is stated so a future caller meets a documented limit rather than a silent trap. Its having no callers at all is a separate question this plan does not act on |
 | "every existing test passes unchanged" | **Ambiguous, and it cuts both ways** — it would either forbid the legitimate schema updates these proposals require, or invite loosening a test until it passes. Now: the full pre-existing suite continues to pass; existing tests may be updated **only** where the intentionally changed schema or execution-state contract changes their asserted expectation; new tests cover new behaviour |
 | "§4.1.3" | `§4.1` has numbered steps, not a subsection. Now "§4.1 step 3" |
+
+### Revision 3a — editorial, applied while implementation begins
+
+| Revision 3 said | Corrected to |
+|---|---|
+| §3.1's title and body still named "P3's four grounds" and "P3's fourth ground" | P3 is no longer a closed or ordered list. The section is now "A refusal whose concrete ground can be removed", and the ground is named rather than numbered: *inability to produce an honest artifact* |
+| "the only textual hit is a comment at `trainer.py:996`" | **Literally too strong** — it ignored the method's own declaration and the protocol declaration. Now: no **invocation or call site** exists in `src/`, `scripts/` or `tests/`; the remaining references are declarations or schema comments, listed with citations |
+| `Trainer.save_checkpoint` framed as "dead public API" | **Uncalled is not dead.** It satisfies a declared interface at `src/core/protocols.py:1218`, which is a reason to exist without a caller. Whether that interface should require provenance is a protocol question, not a provenance-capture one, and is not this plan's to answer |
