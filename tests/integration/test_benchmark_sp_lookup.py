@@ -454,3 +454,34 @@ def test_an_existing_output_is_not_silently_replaced(tmp_path, monkeypatch):
 
     assert bench.main(["--output", str(output), "--overwrite"]) == 0
     assert output.exists()
+
+
+def test_the_benchmark_refuses_a_host_without_posix_memory_accounting(monkeypatch):
+    """A platform declaration, checked the way `cuvs_backend` checks its own.
+
+    Windows has neither `resource.getrusage` nor `/proc/self/status`, and memory
+    residence is the quantity this benchmark exists to weigh — approach A's
+    3.44 GB against its speed. There is nothing to port: a Windows number would
+    not be the number the B-0.4 decision needs.
+
+    The refusal is asserted to happen **before** argument parsing, because the
+    alternative is discovering it from inside a timing loop after `shortest_paths.pt`
+    has already cost minutes and gigabytes. `--help` would be handled by argparse,
+    so passing it and still getting the refusal is what proves the ordering.
+    """
+    import scripts.benchmark_sp_lookup as benchmark
+
+    monkeypatch.setattr(benchmark.sys, "platform", "win32")
+
+    with pytest.raises(SystemExit) as raised:
+        benchmark.main(["--help"])
+
+    assert "cannot run on win32" in str(raised.value)
+    assert "by design" in str(raised.value)
+
+
+def test_the_benchmark_runs_where_posix_memory_accounting_exists():
+    """The other half: the gate must not fire on the platform it is written for."""
+    import scripts.benchmark_sp_lookup as benchmark
+
+    benchmark.require_posix_memory_accounting()

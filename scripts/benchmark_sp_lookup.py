@@ -11,6 +11,13 @@ times the two prototypes in `scripts/sp_index_prototypes.py`. Read the plan
 before extending this script; several of its shapes are decisions rather than
 conveniences.
 
+**Linux only, by design.** Memory residence is the quantity this benchmark
+exists to weigh, and it is read through `resource.getrusage` and
+`/proc/self/status`. Windows has neither, and a Windows number would not be the
+number the B-0.4 decision needs — the platform under measurement is the GB10 the
+deployment runs on. `require_posix_memory_accounting` refuses at startup rather
+than failing later from inside a timing loop.
+
 **Run one prototype per process.** `ru_maxrss` is a process high-water mark, so
 a second index built in the same process inherits the first's peak and its own
 cost stops being attributable. The report carries
@@ -315,6 +322,35 @@ def _callers(query_fn):
     return singleton, batched
 
 
+def require_posix_memory_accounting() -> None:
+    """Refuse to start on a host where this benchmark cannot measure what it
+    exists to measure.
+
+    **This is a platform declaration, not a missing feature.** Memory residence is
+    the whole point of the B-0.4 comparison — approach A's 3.44 GB is the cost
+    being weighed against its speed — and it is read through `resource.getrusage`
+    and `/proc/self/status`, neither of which Windows has. The measured platform is
+    the GB10 the deployment runs on, so there is nothing to port: a Windows number
+    would not be the number the decision needs.
+
+    The same shape as `src/retrieval/backends/cuvs_backend.py`, which is Linux-only
+    for its own reasons and says so rather than pretending to degrade.
+
+    Checked **before** anything is loaded. `shortest_paths.pt` is gigabytes and
+    takes minutes; discovering the host cannot account for memory after paying
+    that, through a `ModuleNotFoundError` raised from inside a timing loop, is a
+    worse failure than the same fact stated in one line at the start.
+    """
+    if sys.platform == "win32":
+        raise SystemExit(
+            "benchmark_sp_lookup requires POSIX memory accounting "
+            "(resource.getrusage and /proc/self/status) and cannot run on "
+            f"{sys.platform}. This is by design: the measurement is about memory "
+            "residence on the deployment platform, which is Linux. Nothing here "
+            "needs a Windows port — run it on the target host."
+        )
+
+
 def _rss_bytes() -> Dict[str, Optional[int]]:
     """Current **and** high-water RSS.
 
@@ -325,8 +361,18 @@ def _rss_bytes() -> Dict[str, Optional[int]]:
     been" — and their disagreement is itself the signal that the peak belongs to
     something earlier.
 
-    `/proc/self/status` on Linux, which is where the deployment runs; `None`
-    elsewhere rather than a fabricated number. No profiling dependency.
+    **Linux only, deliberately** — see `require_posix_memory_accounting`. An
+    earlier version of this docstring said non-Linux hosts get `None` "rather than
+    a fabricated number". That was false: the `/proc/self/status` read is guarded,
+    but `import resource` is not, and `resource` does not exist on Windows. The
+    module is unavailable there, not degraded, and the CLI now says so before it
+    spends anything.
+
+    `ru_maxrss` for the high-water mark, `/proc/self/status` for current. The
+    `/proc` read stays guarded because it can be absent on a Linux host too — a
+    restricted container, for instance — and a missing current-RSS line is worth
+    reporting as `None` beside a peak that was read successfully. No profiling
+    dependency.
     """
     import resource
 
@@ -561,6 +607,8 @@ def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    require_posix_memory_accounting()
+
     parser = argparse.ArgumentParser(description="B-0.4 SP lookup baseline benchmark")
     parser.add_argument("--artifact", type=Path, default=None,
                         help="Real shortest_paths.pt. Its own slices are timed.")

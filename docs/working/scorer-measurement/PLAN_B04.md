@@ -1043,6 +1043,15 @@ verdict must stand on one too.
 
 ---
 
+> **Platform: the benchmark is Linux-only, by design.** Memory residence is the
+> quantity §12.5 weighs — approach A's 3.44 GB against its speed — and it is read
+> through `resource.getrusage` and `/proc/self/status`, neither of which Windows
+> has. `require_posix_memory_accounting` refuses at startup rather than failing
+> later from inside a timing loop. This is a declaration in the same shape as
+> `src/retrieval/backends/cuvs_backend.py`'s, not a gap: the platform under
+> measurement is the GB10 the deployment runs on, and a Windows number would not
+> be the number this decision needs.
+
 ## 12. Prototype results — the real artifact, GB10 SPARK
 
 Three processes as §11.3 specifies, on artifact `7268900c…`, 430,585,772 rows,
