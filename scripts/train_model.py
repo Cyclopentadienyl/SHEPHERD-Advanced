@@ -430,6 +430,47 @@ def load_samples(data_dir: Path, split: str = "train") -> List[DiagnosisSample]:
     return samples
 
 
+def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optional[Path]:
+    """Load a parent checkpoint if one was asked for and is there, and return the
+    path **that was actually loaded**.
+
+    Returns `None` when nothing was requested, and `None` when a path was
+    requested but does not exist — in that case the run warns and continues, so it
+    did not consume the parent and must not record it.
+
+    **Deciding and loading are one operation on purpose.** Split apart, "which
+    path did we load" and "which path do we record" are two answers that can
+    disagree, and nothing downstream could tell. Here the returned value *is* the
+    argument `load_checkpoint` received, so recording something the run did not
+    load is not a bug that can be introduced without editing this function.
+
+    **Extracted so the decision itself is testable.** Its three outcomes used to
+    be reachable only by running `train()`, so the tests exercised the role
+    builder's response to an argument and assumed the caller supplied it
+    correctly — the same weakness as testing a copy of production instead of
+    production.
+
+    One further property comes free, and it matters. `train()` now binds
+    `resumed_from` in exactly one place, from this call. Constructing the digest
+    map above that line makes `resumed_from` undefined, which is an `F821` that
+    the lint gate in `tests/unit/test_training_provenance.py` already fails on —
+    verified by moving the block and watching it fire. The pre-initialised
+    `resumed_from = None` this replaces left a window where a reordering would
+    have compiled and silently recorded no parent.
+    """
+    if not requested:
+        return None
+
+    resume_path = Path(requested)
+    if not resume_path.exists():
+        logger.warning(f"Checkpoint not found: {resume_path}")
+        return None
+
+    logger.info(f"Resuming from checkpoint: {resume_path}")
+    trainer.load_checkpoint(resume_path)
+    return resume_path
+
+
 def training_input_roles(
     data_dir: Path, *, with_validation: bool,
     resumed_from: Optional[Path] = None,
@@ -716,17 +757,9 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # attribute here is not enough on its own.
     from src.utils.fingerprint import compute_fingerprint, compute_input_digests
 
-    # Resume if specified. `resumed_from` records what was **actually loaded**: a
-    # requested path that does not exist only warns, so the run did not consume it.
-    resumed_from: Optional[Path] = None
-    if config.resume_from:
-        resume_path = Path(config.resume_from)
-        if resume_path.exists():
-            logger.info(f"Resuming from checkpoint: {resume_path}")
-            trainer.load_checkpoint(resume_path)
-            resumed_from = resume_path
-        else:
-            logger.warning(f"Checkpoint not found: {resume_path}")
+    # Resume if specified. One binding site, from one call: see
+    # `resolve_resume_checkpoint` for why that placement is load-bearing.
+    resumed_from = resolve_resume_checkpoint(trainer, config.resume_from)
 
     # **After the resume decision, not before it.** A first version attached the
     # digests above this block, where `resumed_from` cannot exist yet; a resumed

@@ -148,59 +148,103 @@ def test_a_run_without_validation_does_not_claim_a_validation_input(tmp_path):
 # ---------------------------------------------------------------------------
 # The resume parent, which is an input too
 # ---------------------------------------------------------------------------
-def test_a_run_that_resumes_nothing_records_no_parent(tmp_path):
-    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
+class _RecordingTrainer:
+    """Records what `load_checkpoint` was handed, and nothing else.
 
-    assert "resume_checkpoint" not in _training_roles(data_dir, with_val=False)
+    A real `Trainer` would bring a model, an optimizer and a config along for a
+    decision that touches none of them."""
+
+    def __init__(self):
+        self.loaded = []
+
+    def load_checkpoint(self, path):
+        self.loaded.append(path)
 
 
-def test_a_loaded_parent_checkpoint_is_recorded(tmp_path):
-    """A resumed run restores weights, optimizer, scheduler, scaler and training
-    state from its parent, so the parent is an input its results rest on."""
-    from scripts.train_model import training_input_roles
+def test_no_resume_requested_loads_nothing_and_records_nothing():
+    """The production decision, not a helper's response to an argument.
+
+    These three tests exist because the previous version called
+    `training_input_roles` with a path or `None` and assumed `train()` chose
+    correctly. That assumption is what the earlier mirrored-role-map defect was
+    made of, and it would have survived production recording a path it never
+    loaded, or ceasing to load at all.
+    """
+    from scripts.train_model import resolve_resume_checkpoint
+
+    trainer = _RecordingTrainer()
+
+    assert resolve_resume_checkpoint(trainer, None) is None
+    assert resolve_resume_checkpoint(trainer, "") is None
+    assert trainer.loaded == []
+
+
+def test_a_requested_but_missing_parent_warns_loads_nothing_and_records_nothing(tmp_path):
+    """`train()` continues after the warning, so the run did not consume the
+    parent. Omission and a present role with a `None` digest are different
+    statements: `None` already means "this role's file was absent" for a role that
+    *was* consumed."""
+    from scripts.train_model import resolve_resume_checkpoint
+
+    trainer = _RecordingTrainer()
+    absent = tmp_path / "not_here.pt"
+
+    assert resolve_resume_checkpoint(trainer, str(absent)) is None
+    assert trainer.loaded == [], "a missing parent must not be loaded"
+
+
+def test_an_existing_parent_is_loaded_and_the_loaded_path_is_what_is_returned(tmp_path):
+    """The returned value **is** the argument `load_checkpoint` received, so
+    recording something the run did not load cannot be introduced without editing
+    the function that does both."""
+    from scripts.train_model import resolve_resume_checkpoint
+
+    trainer = _RecordingTrainer()
+    parent = tmp_path / "parent.pt"
+    torch.save({"state_dict": {}}, parent)
+
+    returned = resolve_resume_checkpoint(trainer, str(parent))
+
+    assert trainer.loaded == [parent], "the parent must actually be loaded"
+    assert returned == trainer.loaded[0], "the recorded path must be the loaded path"
+
+
+def test_the_decision_feeds_the_role_map_end_to_end(tmp_path):
+    """The two halves joined: a real decision, then the role map built from it."""
+    from scripts.train_model import resolve_resume_checkpoint, training_input_roles
 
     data_dir = _workspace(tmp_path / "ws", samples_payload=[])
     parent = tmp_path / "parent.pt"
     torch.save({"state_dict": {}}, parent)
+    trainer = _RecordingTrainer()
 
-    roles = training_input_roles(data_dir, with_validation=False, resumed_from=parent)
+    loaded = resolve_resume_checkpoint(trainer, str(parent))
+    roles = training_input_roles(data_dir, with_validation=False, resumed_from=loaded)
 
     assert roles["resume_checkpoint"] == parent
     assert compute_input_digests(roles)["resume_checkpoint"] is not None
 
-
-def test_a_requested_but_missing_parent_is_omitted_rather_than_recorded_as_none(tmp_path):
-    """`train()` warns and continues when the resume path does not exist, so the
-    run did not consume it.
-
-    Omission and a present role with a `None` digest are different statements:
-    `None` already means "this role's file was absent" for a role the run *did*
-    consume, and overloading it would lose that distinction.
-    """
-    from scripts.train_model import training_input_roles
-
-    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
-
-    # This is what `train()` passes when `resume_path.exists()` was False.
-    roles = training_input_roles(data_dir, with_validation=False, resumed_from=None)
-
-    assert "resume_checkpoint" not in roles
+    unloaded = resolve_resume_checkpoint(trainer, str(tmp_path / "gone.pt"))
+    assert "resume_checkpoint" not in training_input_roles(
+        data_dir, with_validation=False, resumed_from=unloaded)
 
 
 def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
     """The case the field exists for: identical workspace files, different
     parents. Without the parent role these two runs carried the same digest map."""
-    from scripts.train_model import training_input_roles
+    from scripts.train_model import resolve_resume_checkpoint, training_input_roles
 
     data_dir = _workspace(tmp_path / "ws", samples_payload=[{"patient_id": "p0"}])
     first, second = tmp_path / "a.pt", tmp_path / "b.pt"
     torch.save({"state_dict": {"w": torch.zeros(1)}}, first)
     torch.save({"state_dict": {"w": torch.ones(1)}}, second)
 
-    a = compute_input_digests(
-        training_input_roles(data_dir, with_validation=False, resumed_from=first))
-    b = compute_input_digests(
-        training_input_roles(data_dir, with_validation=False, resumed_from=second))
+    def digests_for(parent):
+        loaded = resolve_resume_checkpoint(_RecordingTrainer(), str(parent))
+        return compute_input_digests(
+            training_input_roles(data_dir, with_validation=False, resumed_from=loaded))
+
+    a, b = digests_for(first), digests_for(second)
 
     assert a["resume_checkpoint"] != b["resume_checkpoint"]
     assert a["train_samples"] == b["train_samples"], "only the parent differs"
@@ -359,6 +403,7 @@ def test_a_checkpoint_predating_the_field_still_verifies_structurally():
 _F821_CLEAN = (
     "scripts/train_model.py",
     "scripts/measure_scorer.py",
+    "scripts/benchmark_sp_lookup.py",
     "src/utils/fingerprint.py",
     "tests/unit/test_training_provenance.py",
 )
