@@ -214,19 +214,70 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
     assert "2-hop" not in after.candidate_construction
 
 
-def test_measuring_inside_an_autocast_block_is_refused(workspace):
-    """The manifest's `amp_enabled=False` is a structural claim about this module
-    — no traversal here opens an autocast context. A caller who wrapped the run in
-    one would shift every score while the manifest went on recording fp32.
+def test_measuring_inside_an_autocast_block_is_recorded_not_refused(workspace):
+    """The capability the previous version removed.
 
-    So the claim is enforced, not asserted in prose. The refusal is the mutation
-    check for it: this is exactly the state that would otherwise be misrecorded.
+    *"What is Mode A's MRR under the AMP setting the deployment actually uses?"*
+    is a legitimate research question, and it sits inside the intended envelope.
+    The earlier refusal stood on a real ground — `build_manifest` wrote
+    `amp_enabled=False` as a literal, so a run under autocast produced an artifact
+    describing a run that did not happen — but that ground is removable, and
+    recording what applied removes it.
+
+    `_run` builds the manifest and drives the traversal in one call, so both see
+    this context and the artifact describes the run it came from.
     """
     _, data_dir, checkpoint = workspace
 
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        with pytest.raises(RuntimeError, match="autocast is enabled"):
-            _run(data_dir, checkpoint)
+        manifest = _run(data_dir, checkpoint).manifest
+
+    assert manifest.amp_enabled is True
+    assert manifest.amp_dtype == "torch.bfloat16"
+
+
+def test_a_manifest_recording_a_different_regime_is_refused(workspace):
+    """What remains refused, and it is narrower than before: numbers produced
+    under one regime and recorded under another.
+
+    A single field cannot describe that, which is the one ground the earlier
+    blanket refusal genuinely had. Here the manifest is built outside the context
+    the traversal runs in.
+    """
+    import argparse
+
+    from scripts.measure_scorer import (
+        build_legacy_mode_a_model,
+        build_loader_config,
+        build_manifest,
+    )
+    from src.evaluation.measurement import run_mode_a
+    from src.kg.data_loader import create_diagnosis_dataloader
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+
+    _, data_dir, checkpoint = workspace
+    device = torch.device("cpu")
+    graph_data = read_graph_artifacts(data_dir)
+    samples = read_samples(data_dir, "test")
+    model = build_legacy_mode_a_model(checkpoint, device)
+    args = argparse.Namespace(
+        checkpoint=checkpoint, data_dir=data_dir, split="test",
+        batch_size=3, num_workers=0, seed=None,
+    )
+    loader_config = build_loader_config(args)
+
+    # Built out here: fp32.
+    manifest = build_manifest(
+        args, graph_data, len(samples), device, loader_config, model=model
+    )
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data, config=loader_config
+    )
+
+    # Run in there: bfloat16.
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        with pytest.raises(RuntimeError, match="records"):
+            run_mode_a(model=model, dataloader=loader, manifest=manifest, device=device)
 
 
 # ---------------------------------------------------------------------------

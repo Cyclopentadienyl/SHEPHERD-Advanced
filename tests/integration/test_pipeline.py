@@ -399,7 +399,9 @@ class TestCheckpointBridge:
         if not cached:
             pytest.skip("pipeline did not precompute embeddings in this environment")
 
-        offline = encode_full_graph(pipeline.model, pipeline._graph_data, torch.device("cpu"))
+        offline = encode_full_graph(
+            pipeline.model, pipeline._graph_data, torch.device("cpu")
+        ).embeddings
 
         assert set(offline) == set(cached)
         for node_type, tensor in cached.items():

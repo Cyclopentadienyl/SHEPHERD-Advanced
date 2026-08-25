@@ -251,12 +251,21 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    mode: str = "A",
                    candidate_construction: Optional[str] = None,
                    model_construction: str = "frozen evaluator (legacy)",
-                   model: Any = None) -> Any:
+                   model: Any = None,
+                   regime: Any = None) -> Any:
     """Build the manifest for one mode.
 
     `candidate_construction` defaults to the subgraph description derived from
     `DIAGNOSIS_SUBGRAPH_HOPS`, so it cannot drift from `subgraph_hops` in the same
     artifact. Mode C passes its own, having no expansion to describe.
+
+    `regime` is the `AutocastRegime` observed **at the computation that produced
+    this mode's numbers** — Mode A's own forward runs in the ambient context of
+    this call, while Modes B and C must pass the regime `encode_full_graph`
+    reported, since their embeddings were computed earlier and possibly elsewhere.
+    Omitting it observes the ambient context here, which is right for Mode A and
+    wrong for B and C; `assert_manifest_describes_regime` refuses the mismatch
+    rather than letting it through.
 
     `model` is optional and is used only to **observe** whether what ran was a
     `torch.compile` wrapper object. Omitting it records
@@ -267,8 +276,11 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     from src.evaluation.measurement import (
         LEGACY_TRUNCATION_K,
         MeasurementManifest,
+        observe_autocast_regime,
         observe_torch_compile_wrapper,
     )
+
+    observed_regime = regime if regime is not None else observe_autocast_regime(device)
     from src.kg.data_loader import DIAGNOSIS_SUBGRAPH_HOPS
     from src.utils.fingerprint import compute_fingerprint
 
@@ -307,12 +319,11 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_version=torch.version.cuda,
         device=str(device),
         dtype=str(torch.get_default_dtype()),
-        # Structural, and enforced rather than trusted: no traversal in
-        # `src/evaluation/measurement.py` opens an autocast context, and
-        # `assert_no_autocast` refuses to run inside one opened by a caller. So
-        # these two are facts about the run, not defaults that happen to be right.
-        amp_enabled=False,
-        amp_dtype=None,
+        # Observed, not asserted. No traversal in `src/evaluation/measurement.py`
+        # opens an autocast context, but a caller can, and a literal `False` then
+        # described a run that did not happen.
+        amp_enabled=observed_regime.enabled,
+        amp_dtype=observed_regime.dtype,
         torch_compile_wrapped=observe_torch_compile_wrapper(model),
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         cudnn_deterministic=torch.backends.cudnn.deterministic if torch.cuda.is_available() else None,
@@ -484,14 +495,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     # One config object, two consumers. Not two instances that happen to agree.
     loader_config = build_loader_config(args)
 
-    def manifest_for(mode: str, candidates: str, construction: str, model: Any = None):
+    def manifest_for(mode: str, candidates: str, construction: str,
+                     model: Any = None, regime: Any = None):
         return build_manifest(
             args, graph_data, len(samples), device, loader_config, cuda_executed,
             mode=mode, candidate_construction=candidates,
-            model_construction=construction, model=model,
+            model_construction=construction, model=model, regime=regime,
         )
 
     embeddings = None
+    embedding_regime = None
     production_model = None
     if wants_production:
         from src.models.gnn.shepherd_gnn import build_shepherd_model
@@ -502,7 +515,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         # constructions to be the same model. C is never compared to A directly.
         if "B" in modes:
             assert_constructions_agree(legacy_model, production_model)
-        embeddings = encode_full_graph(production_model, graph_data, device)
+        encoded = encode_full_graph(production_model, graph_data, device)
+        # The regime travels with the embeddings because it cannot be recovered
+        # from them and because reading it here, after the fact, would be a
+        # different context. Modes B and C score from these and are described by
+        # this.
+        embeddings, embedding_regime = encoded.embeddings, encoded.regime
 
     results: Dict[str, Any] = {}
     if "A" in modes:
@@ -524,6 +542,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             manifest_b=manifest_for(
                 "B", subgraph_candidate_construction(),
                 "production (build_shepherd_model)", model=production_model,
+                regime=embedding_regime,
             ) if "B" in modes else None,
             full_graph_embeddings=embeddings,
             device=device,
@@ -538,6 +557,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             manifest=manifest_for(
                 "C", "every disease in the knowledge graph",
                 "production (build_shepherd_model)", model=production_model,
+                regime=embedding_regime,
             ),
             device=device,
             batch_size=args.batch_size,

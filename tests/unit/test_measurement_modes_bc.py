@@ -68,8 +68,15 @@ def world(tmp_path_factory):
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     production_model = build_shepherd_model(checkpoint, graph_data, device)
 
-    def manifest(mode, construction, n_samples=None):
-        base = build_manifest(args, graph_data, len(samples), device, loader_config)
+    def manifest(mode, construction, n_samples=None, regime_here=False):
+        """`regime_here=True` observes the caller's ambient context, which is what
+        a manifest built alongside its own computation would record."""
+        from src.evaluation.measurement import observe_autocast_regime
+
+        base = build_manifest(
+            args, graph_data, len(samples), device, loader_config,
+            regime=observe_autocast_regime(device) if regime_here else None,
+        )
         return type(base)(**{
             **{f: getattr(base, f) for f in base.__dataclass_fields__},
             "mode": mode,
@@ -85,7 +92,7 @@ def world(tmp_path_factory):
         "device": device,
         "legacy_model": build_legacy_mode_a_model(checkpoint_path, device),
         "production_model": production_model,
-        "embeddings": encode_full_graph(production_model, graph_data, device),
+        "embeddings": encode_full_graph(production_model, graph_data, device).embeddings,
         "loader": lambda: create_diagnosis_dataloader(
             samples=samples, graph_data=graph_data, config=loader_config
         ),
@@ -171,24 +178,65 @@ def mode_c(world):
     )
 
 
-def test_mode_c_also_refuses_to_measure_inside_an_autocast_block(world):
-    """The same structural claim as Mode A's, guarded in the same way.
-
-    Mode C forwards no model — it indexes precomputed embeddings — but its
-    pooling and cosine still run here, so an autocast context around the call
-    would shift its scores while its manifest recorded `amp_enabled=False`. Both
-    traversals carry the guard because both compute the numbers the manifest
-    describes.
-    """
+def test_mode_c_records_the_regime_it_ran_under_rather_than_refusing(world):
+    """The same capability restored for C. Its manifest is built in the same
+    context the traversal runs in, so the artifact describes the run."""
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        with pytest.raises(RuntimeError, match="autocast is enabled"):
+        result = run_mode_c(
+            full_graph_embeddings=world["embeddings"],
+            samples=world["samples"],
+            manifest=world["manifest"](
+                "C", "every disease in the graph", regime_here=True),
+            device=world["device"],
+            batch_size=BATCH_SIZE,
+        )
+
+    assert result.manifest.amp_enabled is True
+    assert result.manifest.amp_dtype == "torch.bfloat16"
+
+
+def test_mode_c_refuses_a_manifest_recording_a_different_regime(world):
+    """What stays refused: numbers produced under one regime, recorded under
+    another. C pools and scores here, so a manifest claiming fp32 while this runs
+    in bfloat16 would describe a run that did not happen."""
+    manifest = world["manifest"]("C", "every disease in the graph")
+
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        with pytest.raises(RuntimeError, match="records"):
             run_mode_c(
                 full_graph_embeddings=world["embeddings"],
                 samples=world["samples"],
-                manifest=world["manifest"]("C", "every disease in the graph"),
+                manifest=manifest,
                 device=world["device"],
                 batch_size=BATCH_SIZE,
             )
+
+
+def test_embeddings_are_not_labelled_with_a_later_context(world):
+    """**The mutation the review asked for, and the reason the regime travels.**
+
+    The embeddings are computed under bfloat16; the manifest is constructed
+    afterwards, outside that context. An implementation observing at manifest
+    construction would label these embeddings fp32 — silently, since nothing
+    downstream can recover the regime from the tensors.
+
+    `encode_full_graph` observes inside itself and returns the pair, so the
+    context it actually ran in is what reaches the manifest.
+    """
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        encoded = encode_full_graph(
+            world["production_model"], world["graph_data"], world["device"])
+
+    # Out here it is fp32 again — and the reported regime must still be the
+    # embeddings' own.
+    assert encoded.regime.enabled is True
+    assert encoded.regime.dtype == "torch.bfloat16"
+
+    from src.evaluation.measurement import observe_autocast_regime
+
+    assert observe_autocast_regime(world["device"]).enabled is False, (
+        "the surrounding context must really be fp32, or this proves nothing"
+    )
 
 
 def test_mode_c_scores_every_disease(mode_c, world):
