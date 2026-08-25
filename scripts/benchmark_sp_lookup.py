@@ -268,7 +268,7 @@ def build_artifact_lookup(
     # Candidates are drawn from the real disease target space, not an invented one.
     disease_targets = torch.unique(target[target_type == DISEASE_TYPE_IDX]).tolist()
 
-    from scripts.measure_scorer import file_sha256
+    from src.utils.fingerprint import file_sha256
 
     quantiles = (0.5, 0.9, 0.99, 1.0)
     length_t = torch.tensor(lengths, dtype=torch.float64)

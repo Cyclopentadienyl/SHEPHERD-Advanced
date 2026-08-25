@@ -131,13 +131,79 @@ def test_an_unrelated_split_beside_the_inputs_is_not_recorded(tmp_path):
 
 def test_a_run_without_validation_does_not_claim_a_validation_input(tmp_path):
     """`scripts/train_model.py` loads val conditionally and trains without it when
-    absent, so recording the role unconditionally would claim an input the run
-    never read."""
+    absent, so recording the role unconditionally would claim an input the run's
+    results do not rest on.
+
+    Worded carefully: an existing-but-empty `val_samples.json` **is** opened and
+    parsed before the loader becomes `None`. The claim is that the samples were
+    not used by a validation pass, not that the file was never touched — and the
+    file is not added to the role map merely because it was probed."""
     data_dir = _workspace(tmp_path / "ws", samples_payload=[])
 
     digests = compute_input_digests(_training_roles(data_dir, with_val=False))
 
     assert "val_samples" not in digests
+
+
+# ---------------------------------------------------------------------------
+# The resume parent, which is an input too
+# ---------------------------------------------------------------------------
+def test_a_run_that_resumes_nothing_records_no_parent(tmp_path):
+    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
+
+    assert "resume_checkpoint" not in _training_roles(data_dir, with_val=False)
+
+
+def test_a_loaded_parent_checkpoint_is_recorded(tmp_path):
+    """A resumed run restores weights, optimizer, scheduler, scaler and training
+    state from its parent, so the parent is an input its results rest on."""
+    from scripts.train_model import training_input_roles
+
+    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
+    parent = tmp_path / "parent.pt"
+    torch.save({"state_dict": {}}, parent)
+
+    roles = training_input_roles(data_dir, with_validation=False, resumed_from=parent)
+
+    assert roles["resume_checkpoint"] == parent
+    assert compute_input_digests(roles)["resume_checkpoint"] is not None
+
+
+def test_a_requested_but_missing_parent_is_omitted_rather_than_recorded_as_none(tmp_path):
+    """`train()` warns and continues when the resume path does not exist, so the
+    run did not consume it.
+
+    Omission and a present role with a `None` digest are different statements:
+    `None` already means "this role's file was absent" for a role the run *did*
+    consume, and overloading it would lose that distinction.
+    """
+    from scripts.train_model import training_input_roles
+
+    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
+
+    # This is what `train()` passes when `resume_path.exists()` was False.
+    roles = training_input_roles(data_dir, with_validation=False, resumed_from=None)
+
+    assert "resume_checkpoint" not in roles
+
+
+def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
+    """The case the field exists for: identical workspace files, different
+    parents. Without the parent role these two runs carried the same digest map."""
+    from scripts.train_model import training_input_roles
+
+    data_dir = _workspace(tmp_path / "ws", samples_payload=[{"patient_id": "p0"}])
+    first, second = tmp_path / "a.pt", tmp_path / "b.pt"
+    torch.save({"state_dict": {"w": torch.zeros(1)}}, first)
+    torch.save({"state_dict": {"w": torch.ones(1)}}, second)
+
+    a = compute_input_digests(
+        training_input_roles(data_dir, with_validation=False, resumed_from=first))
+    b = compute_input_digests(
+        training_input_roles(data_dir, with_validation=False, resumed_from=second))
+
+    assert a["resume_checkpoint"] != b["resume_checkpoint"]
+    assert a["train_samples"] == b["train_samples"], "only the parent differs"
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +226,16 @@ def test_two_runs_over_different_samples_are_distinguishable_from_provenance(tmp
     first = _workspace(tmp_path / "a", samples_payload=[{"patient_id": "p0"}])
     second = _workspace(tmp_path / "b", samples_payload=[{"patient_id": "p1"}])
 
-    assert compute_fingerprint(graph) == compute_fingerprint(graph), (
-        "the structural fingerprint must be unchanged by this work"
+    # Two independently constructed but equivalent graphs. A first version
+    # compared `compute_fingerprint(graph)` with itself, which is true of any
+    # function and is evidence of nothing.
+    equivalent = {
+        "x_dict": {"disease": torch.zeros(2, 4)},
+        "edge_index_dict": {("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
+        "num_nodes_dict": {"disease": 2},
+    }
+    assert compute_fingerprint(graph) == compute_fingerprint(equivalent), (
+        "the structural fingerprint must still see these two graphs as the same"
     )
 
     a = compute_input_digests(_training_roles(first, with_val=True))
@@ -276,16 +350,20 @@ def test_a_checkpoint_predating_the_field_still_verifies_structurally():
     assert verify_fingerprint({"data_fingerprint": compute_fingerprint(graph)}, graph) == []
 
 
-#: Files this work touched that are F821-clean. `src/training/callbacks.py` is
-#: excluded: it carries 33 pre-existing `Undefined name 'Trainer'` findings from
-#: quoted forward references without a `TYPE_CHECKING` import, none of them from
-#: this change and none of them this item's to fix.
+#: Files this work touched that are F821-clean, **repo-relative**; the test
+#: resolves them against the repository root rather than the caller's cwd.
+#: `src/training/callbacks.py` is excluded: it carries 33 pre-existing
+#: `Undefined name 'Trainer'` findings from quoted forward references without a
+#: `TYPE_CHECKING` import, none of them from this change and none of them this
+#: item's to fix.
 _F821_CLEAN = (
     "scripts/train_model.py",
     "scripts/measure_scorer.py",
     "src/utils/fingerprint.py",
     "tests/unit/test_training_provenance.py",
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_the_touched_files_reference_no_undefined_names():
@@ -303,16 +381,36 @@ def test_the_touched_files_reference_no_undefined_names():
     missing is that `make check` runs `lint-imports` and the unit tests, **not**
     `make lint`, so nothing in the default gate ran it. This closes that gap for
     the files this work touched, and nothing wider.
+
+    **Fail-closed, which the first version was not.** Ruff warns on a target it
+    cannot find and still exits 0 — verified: `ruff check /definitely/not/here`
+    prints "All checks passed!" and returns 0. Passing repo-relative paths without
+    a cwd therefore meant a run from anywhere else linted nothing and passed. So
+    the paths are resolved against the repository root, each is asserted to exist
+    **before** ruff is invoked, and only a zero return code passes.
+
+    Ruff's absence is detected as absence, not inferred from a return code: an
+    exit status outside {0, 1} is a configuration, CLI or I/O failure and must
+    fail the test rather than quietly skip it.
     """
+    import importlib.util
     import subprocess
     import sys
 
+    if importlib.util.find_spec("ruff") is None:
+        pytest.skip("ruff is not installed in this environment")
+
+    targets = [_REPO_ROOT / name for name in _F821_CLEAN]
+    missing = [str(path) for path in targets if not path.exists()]
+    assert not missing, f"lint targets do not exist, so linting them proves nothing: {missing}"
+
     result = subprocess.run(
         [sys.executable, "-m", "ruff", "check", "--select", "F821",
-         "--output-format", "concise", *_F821_CLEAN],
-        capture_output=True, text=True,
+         "--output-format", "concise", *[str(path) for path in targets]],
+        capture_output=True, text=True, cwd=_REPO_ROOT,
     )
-    if result.returncode not in (0, 1):
-        pytest.skip(f"ruff unavailable in this environment: {result.stderr.strip()[:120]}")
 
-    assert result.returncode == 0, result.stdout
+    assert result.returncode == 0, (
+        f"ruff exited {result.returncode}\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )

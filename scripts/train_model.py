@@ -430,7 +430,10 @@ def load_samples(data_dir: Path, split: str = "train") -> List[DiagnosisSample]:
     return samples
 
 
-def training_input_roles(data_dir: Path, *, with_validation: bool) -> Dict[str, Path]:
+def training_input_roles(
+    data_dir: Path, *, with_validation: bool,
+    resumed_from: Optional[Path] = None,
+) -> Dict[str, Path]:
     """The semantic input roles a training run consumes, by role name.
 
     **Named rather than inlined so the tests can exercise this instead of
@@ -443,7 +446,22 @@ def training_input_roles(data_dir: Path, *, with_validation: bool) -> Dict[str, 
     an assumption that a file exists. `create_dataloaders` returns `None` for the
     validation loader when there are no validation samples, and a run in that state
     trains without validation — recording the role anyway would claim an input the
-    run never opened.
+    run's results do not rest on. Note the wording: an existing-but-empty
+    `val_samples.json` *is* opened and parsed before the loader becomes `None`, so
+    the honest statement is that the samples were **not used by a validation
+    pass**, not that the file was never touched.
+
+    `resumed_from` is the parent checkpoint, when one was **actually loaded**. A
+    resumed run restores model weights, optimizer, scheduler, scaler and training
+    state from it, so two runs over identical workspace files but different parents
+    produce materially different results — and a digest map that could not tell
+    them apart would contradict this field's whole claim. `None` covers both "no
+    resume was requested" and "one was requested but the path did not exist", since
+    `train()` warns and continues in the second case: the run did not consume it,
+    and recording the role with a `None` digest would say something different.
+
+    **One role, not a lineage.** The parent's own provenance lives in the parent;
+    nothing here walks it, and there is no registry or parent/child graph.
 
     Nothing globs the directory. An unrelated split appearing beside these files
     must not change the record of a run that never read it.
@@ -456,6 +474,8 @@ def training_input_roles(data_dir: Path, *, with_validation: bool) -> Dict[str, 
     }
     if with_validation:
         roles["val_samples"] = data_dir / "val_samples.json"
+    if resumed_from is not None:
+        roles["resume_checkpoint"] = Path(resumed_from)
     return roles
 
 
@@ -696,6 +716,28 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # attribute here is not enough on its own.
     from src.utils.fingerprint import compute_fingerprint, compute_input_digests
 
+    # Resume if specified. `resumed_from` records what was **actually loaded**: a
+    # requested path that does not exist only warns, so the run did not consume it.
+    resumed_from: Optional[Path] = None
+    if config.resume_from:
+        resume_path = Path(config.resume_from)
+        if resume_path.exists():
+            logger.info(f"Resuming from checkpoint: {resume_path}")
+            trainer.load_checkpoint(resume_path)
+            resumed_from = resume_path
+        else:
+            logger.warning(f"Checkpoint not found: {resume_path}")
+
+    # **After the resume decision, not before it.** A first version attached the
+    # digests above this block, where `resumed_from` cannot exist yet; a resumed
+    # run would then have recorded every current file and stayed silent about the
+    # parent checkpoint whose weights, optimizer, scheduler, scaler and training
+    # state it restored. Two runs over identical workspace files with different
+    # parents would have carried identical digests.
+    #
+    # Both attributes are read by name in `ModelCheckpoint._save_checkpoint`, and
+    # nothing reads them before `trainer.train()` below, so attaching them here
+    # changes nothing except what they can see.
     trainer.data_fingerprint = compute_fingerprint(graph_data)
 
     # Only the roles this run consumed. `val_loader is None` is the observation
@@ -704,17 +746,12 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # holds. A first version read `val_samples`, which lives in
     # `create_dataloaders` and is not in scope here at all.
     trainer.training_input_digests = compute_input_digests(
-        training_input_roles(data_dir, with_validation=val_loader is not None)
+        training_input_roles(
+            data_dir,
+            with_validation=val_loader is not None,
+            resumed_from=resumed_from,
+        )
     )
-
-    # Resume if specified
-    if config.resume_from:
-        resume_path = Path(config.resume_from)
-        if resume_path.exists():
-            logger.info(f"Resuming from checkpoint: {resume_path}")
-            trainer.load_checkpoint(resume_path)
-        else:
-            logger.warning(f"Checkpoint not found: {resume_path}")
 
     # Train
     logger.info("Starting training...")

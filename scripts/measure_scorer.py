@@ -59,12 +59,18 @@ from src.utils.fingerprint import file_sha256 as _file_sha256
 logger = logging.getLogger(__name__)
 
 
-#: Re-exported so `scripts/calibrate_mode_a.py`, `scripts/benchmark_sp_lookup.py`
-#: and the tests that import it from here keep working unchanged. The definition
-#: moved to `src/utils/fingerprint.py`, the bottom layer, because three consumers
-#: importing a hashing primitive **from a script** made an entry point into a
-#: library — and the SP benchmark, which has nothing to do with scorer
-#: measurement, should never have depended on this module to get it.
+#: Re-exported so callers that import the name from here keep working. The
+#: definition moved to `src/utils/fingerprint.py`, the bottom layer, because
+#: consumers importing a hashing primitive **from a script** made an entry point
+#: into a library.
+#:
+#: **Moving the definition did not by itself remove the edge**, and an earlier
+#: revision claimed it had. `scripts/benchmark_sp_lookup.py` now imports from
+#: `src.utils.fingerprint` directly, which is the edge that had no business
+#: existing — the SP benchmark has nothing to do with scorer measurement. The
+#: remaining importer is `scripts/calibrate_mode_a.py`, which reaches for
+#: `artifact_digests` as well: one measurement script using another's domain
+#: concept, which is cohesion rather than a layering fault.
 file_sha256 = _file_sha256
 
 
