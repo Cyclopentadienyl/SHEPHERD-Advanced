@@ -34,6 +34,8 @@ from torch import Tensor
 
 __all__ = [
     "LEGACY_TRUNCATION_K",
+    "AutocastRegime",
+    "EncodedGraph",
     "MeasurementManifest",
     "ModeAResult",
     "ModeResult",
@@ -388,15 +390,20 @@ class EncodedGraph:
     the regime at manifest construction, which is a different context and would
     have labelled these embeddings with it.
 
-    A frozen dataclass rather than a bare tuple: three call sites unpack it, and
-    `encoded.embeddings` says what a `[0]` does not.
+    A frozen dataclass rather than a bare tuple: callers read its named fields,
+    and `encoded.embeddings` says what a `[0]` does not. It travels **whole** into
+    the B and C traversals, which is what lets them verify that their manifest
+    describes the regime these embeddings were actually computed under — splitting
+    it at the caller left that association unverifiable.
     """
 
     embeddings: Dict[str, Any]
     regime: AutocastRegime
 
 
-def assert_manifest_describes_regime(manifest: Any, device: Any) -> None:
+def assert_manifest_describes_regime(
+    manifest: Any, device: Any, encoded: Optional["EncodedGraph"] = None
+) -> None:
     """Refuse when the manifest's recorded regime is not the one now in force.
 
     **A consistency check, not an absence check.** The version this replaces
@@ -414,11 +421,36 @@ def assert_manifest_describes_regime(manifest: Any, device: Any) -> None:
     regime, so a traversal running under a different one is refused rather than
     averaged into a single claim.
 
-    One boolean read per run, before any loop. Nothing is checked per batch and
-    nothing synchronises a device.
+    **Two associations, not one.** `encoded` is the full-graph embeddings Modes B
+    and C score from, and its regime is the one they were computed under. Checking
+    only the current scoring context leaves the other half unverified: fp32
+    embeddings scored under bfloat16 would pass, which is precisely the
+    mixed-regime run this function exists to refuse. An earlier version took only
+    the current context — and the Mode C test written for it asserted success on
+    exactly that run, freezing the defect as a specification.
+
+    **Called per batch, not once per run.** A generator that enters an autocast
+    context and yields from inside it leaves that context active while the
+    consumer works, and closes it between batches — verified by execution, and the
+    regime can therefore differ from batch to batch. An entry check would see the
+    context the *stream* was created in and miss the one each forward runs in.
+
+    The cost is one thread-local read. This is not the D3 situation: that guard
+    was removed from the hot path because `bool(tensor.any())` on a CUDA tensor
+    forces a host-device synchronisation on every batch. Nothing here touches a
+    tensor or a device.
     """
-    observed = observe_autocast_regime(device)
     recorded = AutocastRegime(enabled=manifest.amp_enabled, dtype=manifest.amp_dtype)
+
+    if encoded is not None and encoded.regime != recorded:
+        raise RuntimeError(
+            f"the full-graph embeddings were computed under {encoded.regime} while "
+            f"this manifest records {recorded}. Modes B and C score numbers these "
+            "embeddings produced, so a manifest describing a different regime "
+            "describes a run that did not happen"
+        )
+
+    observed = observe_autocast_regime(device)
     if observed != recorded:
         raise RuntimeError(
             f"this measurement is running under {observed} while its manifest "
@@ -845,7 +877,7 @@ def run_modes_ab(
     dataloader: Iterable[Dict[str, Any]],
     manifest_a: MeasurementManifest,
     manifest_b: Optional[MeasurementManifest] = None,
-    full_graph_embeddings: Optional[Dict[str, Any]] = None,
+    full_graph_embeddings: Optional["EncodedGraph"] = None,
     device: Optional[Any] = None,
 ) -> "tuple":
     """Score a cohort exactly as the legacy evaluator does, and report honestly.
@@ -889,13 +921,11 @@ def run_modes_ab(
     from src.utils.metrics import RankingMetrics
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
+    # Fail fast, before a dataloader is touched. The per-batch checks below are
+    # what actually enforce this; this one buys a clear error before any work.
     assert_manifest_describes_regime(manifest_a, device)
     if manifest_b is not None:
-        # B rides A's traversal but scores from embeddings computed elsewhere, so
-        # its manifest carries the *embedding* regime. Both must match what is in
-        # force here, or the run produced numbers under two regimes and no single
-        # field describes it.
-        assert_manifest_describes_regime(manifest_b, device)
+        assert_manifest_describes_regime(manifest_b, device, full_graph_embeddings)
     model.eval()
 
     want_b = manifest_b is not None
@@ -917,6 +947,13 @@ def run_modes_ab(
 
     with _torch.no_grad():
         for batch_data in dataloader:
+            # **After the yield, before any tensor work.** A generator can enter
+            # an autocast context and yield from inside it, so the regime a batch
+            # is scored under is not knowable before it arrives.
+            assert_manifest_describes_regime(manifest_a, device)
+            if want_b:
+                assert_manifest_describes_regime(manifest_b, device, full_graph_embeddings)
+
             batch = batch_data["batch"]
             subgraph_x = {k: v.to(device) for k, v in batch_data["subgraph_x_dict"].items()}
             subgraph_edges = {
@@ -982,7 +1019,7 @@ def run_modes_ab(
             # index by, and the assertion below says so in code — "they share a
             # variable" is a structural claim, and structural claims decay.
             b_scores, b_ids = _score_from_full_graph(
-                full_graph_embeddings, batch_data, global_ids, device
+                full_graph_embeddings.embeddings, batch_data, global_ids, device
             )
             if b_ids is not global_ids:
                 raise AssertionError(
@@ -1132,7 +1169,7 @@ def _assert_ids_in_range(samples: Any, n_phenotypes: int, n_diseases: int) -> No
 
 
 def run_mode_c(
-    full_graph_embeddings: Dict[str, Any],
+    full_graph_embeddings: "EncodedGraph",
     samples: Iterable[Any],
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
@@ -1174,9 +1211,9 @@ def run_mode_c(
     from src.inference.scoring import cosine_score_matrix, masked_mean_pool
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
-    assert_manifest_describes_regime(manifest, device)
-    phenotype_emb = full_graph_embeddings["phenotype"].to(device)
-    disease_emb = full_graph_embeddings["disease"].to(device)
+    assert_manifest_describes_regime(manifest, device, full_graph_embeddings)
+    phenotype_emb = full_graph_embeddings.embeddings["phenotype"].to(device)
+    disease_emb = full_graph_embeddings.embeddings["disease"].to(device)
     all_disease_ids = _torch.arange(disease_emb.size(0), device=device)
 
     materialised = list(samples)

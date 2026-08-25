@@ -503,7 +503,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             model_construction=construction, model=model, regime=regime,
         )
 
-    embeddings = None
+    encoded = None
     embedding_regime = None
     production_model = None
     if wants_production:
@@ -515,12 +515,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         # constructions to be the same model. C is never compared to A directly.
         if "B" in modes:
             assert_constructions_agree(legacy_model, production_model)
+        # Kept **whole**. An earlier version split it here into a bare dict and a
+        # regime, which left the traversals unable to verify that their manifest
+        # describes the regime these embeddings were computed under — fp32
+        # embeddings scored under bfloat16 would have passed.
         encoded = encode_full_graph(production_model, graph_data, device)
-        # The regime travels with the embeddings because it cannot be recovered
-        # from them and because reading it here, after the fact, would be a
-        # different context. Modes B and C score from these and are described by
-        # this.
-        embeddings, embedding_regime = encoded.embeddings, encoded.regime
+        embedding_regime = encoded.regime
 
     results: Dict[str, Any] = {}
     if "A" in modes:
@@ -544,7 +544,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "production (build_shepherd_model)", model=production_model,
                 regime=embedding_regime,
             ) if "B" in modes else None,
-            full_graph_embeddings=embeddings,
+            full_graph_embeddings=encoded,
             device=device,
         )
         if mode_b is not None:
@@ -552,7 +552,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if "C" in modes:
         results["C"] = run_mode_c(
-            full_graph_embeddings=embeddings,
+            full_graph_embeddings=encoded,
             samples=samples,
             manifest=manifest_for(
                 "C", "every disease in the knowledge graph",

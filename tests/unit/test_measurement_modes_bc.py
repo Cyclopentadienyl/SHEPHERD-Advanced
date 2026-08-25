@@ -92,7 +92,7 @@ def world(tmp_path_factory):
         "device": device,
         "legacy_model": build_legacy_mode_a_model(checkpoint_path, device),
         "production_model": production_model,
-        "embeddings": encode_full_graph(production_model, graph_data, device).embeddings,
+        "encoded": encode_full_graph(production_model, graph_data, device),
         "loader": lambda: create_diagnosis_dataloader(
             samples=samples, graph_data=graph_data, config=loader_config
         ),
@@ -110,7 +110,7 @@ def ab(world):
         dataloader=world["loader"](),
         manifest_a=world["manifest"]("A", "per-batch 2-hop subgraph"),
         manifest_b=world["manifest"]("B", "per-batch 2-hop subgraph, full-graph encoder"),
-        full_graph_embeddings=world["embeddings"],
+        full_graph_embeddings=world["encoded"],
         device=world["device"],
     )
 
@@ -170,7 +170,7 @@ def test_omitting_mode_b_returns_the_mode_a_run_alone(world):
 @pytest.fixture(scope="module")
 def mode_c(world):
     return run_mode_c(
-        full_graph_embeddings=world["embeddings"],
+        full_graph_embeddings=world["encoded"],
         samples=world["samples"],
         manifest=world["manifest"]("C", "every disease in the graph"),
         device=world["device"],
@@ -178,12 +178,24 @@ def mode_c(world):
     )
 
 
-def test_mode_c_records_the_regime_it_ran_under_rather_than_refusing(world):
-    """The same capability restored for C. Its manifest is built in the same
-    context the traversal runs in, so the artifact describes the run."""
+def _encode_here(world):
+    """Embeddings computed in the caller's ambient context."""
+    return encode_full_graph(
+        world["production_model"], world["graph_data"], world["device"])
+
+
+def test_mode_c_accepts_a_run_whose_embeddings_manifest_and_scoring_all_agree(world):
+    """The capability the blanket refusal removed, and **all three** halves must
+    be in the same regime for it.
+
+    A first version of this test used the fixture's fp32 embeddings, built a
+    bfloat16 manifest and scored under bfloat16, and asserted success. That is the
+    mixed-regime run this module says a single field cannot describe — the test
+    froze the defect as a specification, and the review caught it.
+    """
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
         result = run_mode_c(
-            full_graph_embeddings=world["embeddings"],
+            full_graph_embeddings=_encode_here(world),
             samples=world["samples"],
             manifest=world["manifest"](
                 "C", "every disease in the graph", regime_here=True),
@@ -195,21 +207,60 @@ def test_mode_c_records_the_regime_it_ran_under_rather_than_refusing(world):
     assert result.manifest.amp_dtype == "torch.bfloat16"
 
 
-def test_mode_c_refuses_a_manifest_recording_a_different_regime(world):
-    """What stays refused: numbers produced under one regime, recorded under
-    another. C pools and scores here, so a manifest claiming fp32 while this runs
-    in bfloat16 would describe a run that did not happen."""
-    manifest = world["manifest"]("C", "every disease in the graph")
+def test_fp32_embeddings_scored_under_autocast_are_refused(world):
+    """Half the mixed-regime case: the embeddings predate the context the scoring
+    runs in. The manifest can describe one or the other, never both."""
+    fp32_encoded = _encode_here(world)
+    assert fp32_encoded.regime.enabled is False, "the fixture must really be fp32"
 
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        with pytest.raises(RuntimeError, match="records"):
+        with pytest.raises(RuntimeError, match="records|computed under"):
             run_mode_c(
-                full_graph_embeddings=world["embeddings"],
+                full_graph_embeddings=fp32_encoded,
                 samples=world["samples"],
-                manifest=manifest,
+                manifest=world["manifest"](
+                    "C", "every disease in the graph", regime_here=True),
                 device=world["device"],
                 batch_size=BATCH_SIZE,
             )
+
+
+def test_autocast_embeddings_scored_in_fp32_are_refused(world):
+    """The other half, which only the embeddings' own regime can catch: the
+    scoring context and the manifest agree with each other and are both wrong
+    about where the numbers came from."""
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        bf16_encoded = _encode_here(world)
+    assert bf16_encoded.regime.enabled is True
+
+    with pytest.raises(RuntimeError, match="computed under"):
+        run_mode_c(
+            full_graph_embeddings=bf16_encoded,
+            samples=world["samples"],
+            manifest=world["manifest"]("C", "every disease in the graph"),
+            device=world["device"],
+            batch_size=BATCH_SIZE,
+        )
+
+
+def test_a_manifest_disagreeing_with_the_embeddings_regime_is_refused(world):
+    """Stated on its own because it is the association the split-at-the-caller
+    version could not check at all: everything runs in fp32 and the manifest
+    claims bfloat16."""
+    fp32_encoded = _encode_here(world)
+
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        bf16_manifest = world["manifest"](
+            "C", "every disease in the graph", regime_here=True)
+
+    with pytest.raises(RuntimeError, match="computed under"):
+        run_mode_c(
+            full_graph_embeddings=fp32_encoded,
+            samples=world["samples"],
+            manifest=bf16_manifest,
+            device=world["device"],
+            batch_size=BATCH_SIZE,
+        )
 
 
 def test_embeddings_are_not_labelled_with_a_later_context(world):
@@ -372,7 +423,7 @@ def test_an_out_of_range_phenotype_is_refused_not_clamped(world, phenotypes, fra
 
     with pytest.raises(ValueError, match=fragment):
         run_mode_c(
-            full_graph_embeddings=world["embeddings"],
+            full_graph_embeddings=world["encoded"],
             samples=bad,
             manifest=world["manifest"]("C", "every disease"),
             device=world["device"],
@@ -386,7 +437,7 @@ def test_the_offending_patient_is_named(world):
 
     with pytest.raises(ValueError, match="P-offending"):
         run_mode_c(
-            full_graph_embeddings=world["embeddings"],
+            full_graph_embeddings=world["encoded"],
             samples=bad,
             manifest=world["manifest"]("C", "every disease"),
             device=world["device"],
@@ -401,7 +452,7 @@ def test_an_out_of_range_ground_truth_is_refused(world):
 
     with pytest.raises(ValueError, match="ground-truth disease id 99999"):
         run_mode_c(
-            full_graph_embeddings=world["embeddings"],
+            full_graph_embeddings=world["encoded"],
             samples=bad,
             manifest=world["manifest"]("C", "every disease"),
             device=world["device"],
@@ -414,7 +465,7 @@ def test_a_patient_with_no_phenotypes_is_refused(world):
     is a rank, and it means nothing."""
     with pytest.raises(ValueError, match="no phenotypes"):
         run_mode_c(
-            full_graph_embeddings=world["embeddings"],
+            full_graph_embeddings=world["encoded"],
             samples=[_sample("P-empty", [], 0)],
             manifest=world["manifest"]("C", "every disease"),
             device=world["device"],
@@ -425,15 +476,44 @@ def test_valid_ids_at_both_boundaries_are_accepted(world):
     """The negative control for the four refusals above: index 0 and the last
     node are in range, and a guard that rejected them would be worse than none.
     """
-    n_phenotypes = world["embeddings"]["phenotype"].size(0)
-    n_diseases = world["embeddings"]["disease"].size(0)
+    n_phenotypes = world["encoded"].embeddings["phenotype"].size(0)
+    n_diseases = world["encoded"].embeddings["disease"].size(0)
     edge = [_sample("P-edge", [0, n_phenotypes - 1], n_diseases - 1)]
 
     result = run_mode_c(
-        full_graph_embeddings=world["embeddings"],
+        full_graph_embeddings=world["encoded"],
         samples=edge,
         manifest=world["manifest"]("C", "every disease", n_samples=1),
         device=world["device"],
     )
 
     assert result.n_ranked == 1
+
+
+def test_a_generator_yielding_from_inside_autocast_is_refused(world):
+    """The hole an entry-only check cannot see.
+
+    A generator that enters an autocast context and yields from inside it leaves
+    that context **active while the consumer works** — verified by execution — and
+    closes it between batches, so the regime can differ from batch to batch. A
+    check taken once before iteration sees the context the stream was *created*
+    in, not the one each forward runs in.
+
+    Here the manifest and the entry check both see fp32 and agree. The first batch
+    then arrives under bfloat16, and the per-batch check is the only thing that
+    can refuse it.
+    """
+    def batches():
+        with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+            for batch in world["loader"]():
+                yield batch
+
+    assert not torch.is_autocast_enabled("cpu"), "the entry check must see fp32"
+
+    with pytest.raises(RuntimeError, match="records"):
+        run_modes_ab(
+            model=world["legacy_model"],
+            dataloader=batches(),
+            manifest_a=world["manifest"]("A", "per-batch 2-hop subgraph"),
+            device=world["device"],
+        )
