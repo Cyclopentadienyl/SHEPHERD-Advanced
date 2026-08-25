@@ -35,6 +35,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# The vocabulary is shared with the other evidence scripts rather than restated
+# here: an institutional reader joins these reports by machine, and that join
+# breaks the moment two scripts spell the same claim differently.
+from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +58,7 @@ def disease_ids(data_dir: Path, split: str) -> List[int]:
     return [int(sample.disease_id) for sample in read_samples(data_dir, split)]
 
 
-def build_report(data_dir: Path, splits: List[str], platform_note: Optional[str]) -> Dict[str, Any]:
+def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[str, Any]:
     from src.utils.fingerprint import file_sha256
 
     train_split, eval_split = splits
@@ -92,7 +97,7 @@ def build_report(data_dir: Path, splits: List[str], platform_note: Optional[str]
                 f"{len(shared)} of {len(eval_set)}" if eval_set else "no evaluation diseases"
             ),
         },
-        "platform_note": platform_note,
+        "deployment_relationship": relationship,
         "excluded_by_design": [
             "patient ids",
             "sample ids",
@@ -113,9 +118,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "as the second argument.")
     parser.add_argument("--overwrite", action="store_true",
                         help="Replace an existing --output. Off by default.")
-    parser.add_argument("--platform-note", default=None,
-                        help="An operator's statement about this machine's relationship "
-                             "to the deployment. Recorded verbatim and not verified.")
+    parser.add_argument("--deployment-relationship", default=UNSTATED_RELATIONSHIP,
+                        choices=DEPLOYMENT_RELATIONSHIPS,
+                        help="How this machine relates to the deployment. A bounded "
+                             "vocabulary rather than free text: the schema forbids "
+                             "operator and host names, and cannot then accept an "
+                             "arbitrary string. Unverified by design.")
     return parser.parse_args(argv)
 
 
@@ -126,7 +134,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 
-    report = build_report(args.data_dir, args.splits, args.platform_note)
+    report = build_report(args.data_dir, args.splits, args.deployment_relationship)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     logger.info("%s -> %s", report["overlap"]["as_written"], args.output)

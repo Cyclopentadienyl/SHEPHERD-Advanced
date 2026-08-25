@@ -577,13 +577,32 @@ reproducible, and the bounded schema is what keeps the artifact publishable.
 |---|---|---|
 | M1-M3 | input digests, checkpoint count, key-presence summary, `in_channels` summary, and the filename-vs-`logs` metric comparison | checkpoint tensors, absolute paths, operator or host names |
 | M4 | both split hashes, the two disease counts, and the size of their intersection | any patient id, sample id, or per-disease list |
-| M5 | the SP artifact digest, the disease denominator, the hop bound, the reachable count and percentage, **and the phenotype-selection rule** | per-phenotype rows |
+| M5 | the SP artifact digest **and its sidecar's**, the disease denominator, the **configured** hop bound beside the observed one, the reachable count and percentage, **and the phenotype-selection rule** | per-phenotype rows |
 
 **"A typical phenotype reaches 71.3%" is not reproducible as written**, and
 putting it in JSON would not make it so. The selection rule has to be
 operational — which phenotype or phenotypes, chosen how, and whether 71.3% is one
-phenotype's value, a median or a mean. Until the emitting script states that, M5
-is a number without a definition, and item 3 depends on it.
+phenotype's value, a median or a mean.
+
+`scripts/audit_sp_reachability.py` now states it, and states it by **removing the
+choice**: the distribution is computed over every phenotype in the graph, and the
+report's `selection_rule` says so. Two consequences follow, and item 3 has to
+carry both.
+
+  - **The recorded 71.3% is likely an overestimate.** A phenotype that reaches no
+    disease has no rows in the artifact, so any count taken over the table drops
+    exactly the zeroes and reports a distribution shifted upward. On the unit
+    fixture the same data gives median 2.0 counted over the table and 1.0 counted
+    over the graph.
+  - **The hop bound is the configured one, not the largest distance present.** An
+    artifact built to 5 hops whose longest path happens to be 4 would otherwise be
+    reported as a 4-hop artifact, and every percentage in it read against a bound
+    nobody chose. The configured value is read from the producer's
+    `<artifact>.meta.json`; the observed maximum is recorded beside it, and a
+    disagreement in the wrong direction is a refusal.
+
+The figure itself is still not established here — it needs the institutional
+artifact, which is item 10's run.
 
 **No evidence database, registry or index.** Three files beside the plans they
 support, exactly as `EVIDENCE_B04_*.json` already sit beside `PLAN_B04.md`.

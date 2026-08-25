@@ -48,6 +48,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# The vocabulary is shared with the other evidence scripts rather than restated
+# here: an institutional reader joins these reports by machine, and that join
+# breaks the moment two scripts spell the same claim differently.
+from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 #: The keys whose presence M1 is about, plus the ones it observed instead.
@@ -71,21 +76,42 @@ _PROJECTION_PREFIX = "feature_encoder.projections."
 _PROJECTION_SUFFIX = ".weight"
 
 
-def _filename_number(name: str) -> Optional[float]:
-    """The score baked into a checkpoint filename, or `None`.
+def filename_score_token(name: str) -> Optional[str]:
+    """The score baked into a checkpoint filename, **as written**, or `None`.
 
-    `model-45-0.6975.pt` carries `0.6975`. Parsed positionally — the last
-    dot-decimal token before the extension — rather than by a naming convention
-    this script would then be asserting rather than observing.
+    `model-45-0.6975.pt` gives `"0.6975"`. Returned as text because the text is the
+    evidence: `float("0.7000")` is `0.7`, and `repr` of that recovers one decimal
+    place rather than four, so a precision taken from the parsed value would widen
+    the comparison tolerance by three orders of magnitude.
+
+    **A decimal point is required.** `model-45.pt` carries an epoch and no score,
+    and an earlier version read `45` as one — then compared it against a metric in
+    [0, 1] and recorded a disagreement that was really a filename with nothing in
+    it to compare.
     """
     stem = name[: -len(".pt")] if name.endswith(".pt") else name
     for token in reversed(stem.split("-")):
+        if "." not in token:
+            continue
         try:
-            value = float(token)
+            float(token)
         except ValueError:
             continue
-        return value
+        return token
     return None
+
+
+def scores_agree(token: str, value: float) -> bool:
+    """Whether a filename's score and a logs metric are the same number.
+
+    **The rounding rule, stated rather than implied.** A filename carries a
+    rendering of the metric rounded to however many decimals it was written with,
+    so the metric is rounded the same way and the two are compared exactly. An
+    earlier version compared with a tolerance derived from the parsed float, which
+    was both too wide and wrong for trailing zeroes.
+    """
+    decimals = len(token.split(".")[1])
+    return f"{round(value, decimals):.{decimals}f}" == f"{float(token):.{decimals}f}"
 
 
 def inspect_checkpoint(path: Path) -> Dict[str, Any]:
@@ -96,7 +122,7 @@ def inspect_checkpoint(path: Path) -> Dict[str, Any]:
 
     record: Dict[str, Any] = {
         "filename": path.name,
-        "filename_number": _filename_number(path.name),
+        "filename_score_token": filename_score_token(path.name),
         "loaded": False,
         "load_error": None,
         "keys_present": [],
@@ -111,11 +137,15 @@ def inspect_checkpoint(path: Path) -> Dict[str, Any]:
         # the evidence would be the wrong trade in a clinical repository.
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     except Exception as exc:  # noqa: BLE001 - an unreadable checkpoint is data
-        record["load_error"] = f"{type(exc).__name__}: {exc}"
+        # **The class, never the message.** Torch and filesystem errors routinely
+        # interpolate the absolute path they failed on, and §5.2 forbids absolute
+        # paths in this file. A stable category says as much as a reader here needs
+        # and cannot carry a path, a username or a mount point out with it.
+        record["load_error"] = type(exc).__name__
         return record
 
     if not isinstance(checkpoint, dict):
-        record["load_error"] = f"not a dict: {type(checkpoint).__name__}"
+        record["load_error"] = "NotADict"
         return record
 
     record["loaded"] = True
@@ -137,8 +167,12 @@ def inspect_checkpoint(path: Path) -> Dict[str, Any]:
 def summarise(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """The aggregate the three facts are read from.
 
-    Counters rather than per-checkpoint lists wherever a count answers the
-    question, so the file stays small and stays publishable.
+    **Aggregates and filenames, no per-checkpoint block.** BACKLOG §5.2 asks for a
+    key-presence *summary*, an `in_channels` *summary* and the filename-versus-logs
+    comparison, and an evidence file committed to a clinical repository should not
+    carry more than it was specified to. Filenames appear only where a count alone
+    would strand a reader — which checkpoints were unreadable, which disagreed —
+    and they are already `checkpoint_digests` keys, so no new category leaks.
     """
     loaded = [r for r in records if r["loaded"]]
 
@@ -147,45 +181,50 @@ def summarise(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         key_presence.update(record["keys_present"])
 
     widths = Counter()
+    n_with_widths = 0
     for record in loaded:
-        widths.update(record["in_channels"].values())
+        if record["in_channels"]:
+            n_with_widths += 1
+            widths.update(record["in_channels"].values())
 
     metrics = Counter(r["logs_metric"] for r in loaded if r["logs_metric"])
 
-    # M3: does the filename's number match the logs' ranking metric? Compared at
-    # the precision a filename carries, since `model-45-0.6975.pt` is a rounded
-    # rendering of `0.69754...` and an exact comparison would report a mismatch
-    # that is only a formatting difference.
-    agreements, disagreements, uncomparable = 0, 0, 0
+    agree, disagree, uncomparable = [], [], []
     for record in loaded:
-        number, value = record["filename_number"], record["logs_value"]
-        if number is None or value is None:
-            uncomparable += 1
-        elif abs(number - value) < 10 ** -_decimals(number):
-            agreements += 1
+        token, value = record["filename_score_token"], record["logs_value"]
+        if token is None or value is None:
+            uncomparable.append(record["filename"])
+        elif scores_agree(token, value):
+            agree.append(record["filename"])
         else:
-            disagreements += 1
+            disagree.append(record["filename"])
 
     return {
         "n_checkpoints_found": len(records),
         "n_loaded": len(loaded),
         "n_unreadable": len(records) - len(loaded),
+        "unreadable_filenames": sorted(r["filename"] for r in records if not r["loaded"]),
+        "load_error_categories": dict(sorted(
+            Counter(r["load_error"] for r in records if r["load_error"]).items())),
         "key_presence_counts": dict(sorted(key_presence.items())),
-        "in_channels_value_counts": {str(k): v for k, v in sorted(widths.items())},
+        # **How many checkpoints could answer M2 at all**, beside the answer. A
+        # family whose projection weights are named differently would otherwise
+        # produce an empty summary that reads like a normal result.
+        "in_channels": {
+            "n_loaded_exposing_projection_widths": n_with_widths,
+            "n_loaded_without_projection_widths": len(loaded) - n_with_widths,
+            "value_counts": {str(k): v for k, v in sorted(widths.items())},
+            "established": bool(widths),
+        },
         "logs_ranking_metric_counts": dict(sorted(metrics.items())),
         "filename_vs_logs": {
-            "agree": agreements,
-            "disagree": disagreements,
-            "uncomparable": uncomparable,
+            "agree": len(agree),
+            "disagree": len(disagree),
+            "uncomparable": len(uncomparable),
+            "disagreeing_filenames": sorted(disagree),
+            "uncomparable_filenames": sorted(uncomparable),
         },
     }
-
-
-def _decimals(value: float) -> int:
-    """Decimal places a filename number was written to, so a rounded rendering is
-    compared as one."""
-    text = repr(value)
-    return len(text.split(".")[1]) if "." in text else 0
 
 
 def _runtime_facts() -> Dict[str, Any]:
@@ -196,7 +235,8 @@ def _runtime_facts() -> Dict[str, Any]:
     from a machine of the deployment's kind, which is a statement about hardware
     and software rather than about a hostname. The narrow checkable facts are
     recorded here; the claim that this machine *is* equivalent to the deployment
-    is `--platform-note`, made by a person who can make it. The same split
+    is `--deployment-relationship`, chosen from a bounded vocabulary by a person
+    who can make it. The same split
     `MeasurementManifest.cuda_executed` already uses.
     """
     import platform
@@ -217,11 +257,25 @@ def _runtime_facts() -> Dict[str, Any]:
     return facts
 
 
-def build_report(checkpoint_dir: Path, platform_note: Optional[str]) -> Dict[str, Any]:
+def build_report(checkpoint_dir: Path, relationship: str) -> Dict[str, Any]:
     from src.utils.fingerprint import file_sha256
 
     paths = sorted(checkpoint_dir.glob("*.pt"))
+    if not paths:
+        raise SystemExit(
+            f"{checkpoint_dir} holds no *.pt files. An evidence file reporting zero "
+            "checkpoints would read as a finding about the family rather than about "
+            "the directory that was pointed at."
+        )
+
     records = [inspect_checkpoint(path) for path in paths]
+    if not any(r["loaded"] for r in records):
+        raise SystemExit(
+            f"none of the {len(paths)} checkpoints in {checkpoint_dir.name} could be "
+            "loaded. Partial failure is evidence — M1 exists because a loader fails "
+            "on this family — but total failure says nothing about what checkpoints "
+            "carry, only that this reader could not open any of them."
+        )
 
     return {
         "fact": "M1-M3",
@@ -232,21 +286,8 @@ def build_report(checkpoint_dir: Path, platform_note: Optional[str]) -> Dict[str
         ),
         "checkpoint_digests": {path.name: file_sha256(path) for path in paths},
         "summary": summarise(records),
-        "per_checkpoint": [
-            {
-                "filename": r["filename"],
-                "loaded": r["loaded"],
-                "load_error": r["load_error"],
-                "keys_present": r["keys_present"],
-                "in_channels": r["in_channels"],
-                "logs_metric": r["logs_metric"],
-                "logs_value": r["logs_value"],
-                "filename_number": r["filename_number"],
-            }
-            for r in records
-        ],
         "runtime": _runtime_facts(),
-        "platform_note": platform_note,
+        "deployment_relationship": relationship,
         "excluded_by_design": [
             "checkpoint tensors",
             "absolute paths (only basenames are recorded)",
@@ -267,11 +308,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="Replace an existing --output. Off by default: evidence "
                              "artifacts are cited by digest and must not be replaced "
                              "silently.")
-    parser.add_argument("--platform-note", default=None,
-                        help="An operator's statement about this machine's relationship "
-                             "to the deployment — for example that it is an identical "
-                             "sibling. Recorded verbatim. This script cannot verify it "
-                             "and does not try to.")
+    parser.add_argument("--deployment-relationship", default=UNSTATED_RELATIONSHIP,
+                        choices=DEPLOYMENT_RELATIONSHIPS,
+                        help="How this machine relates to the deployment. A bounded "
+                             "vocabulary rather than free text: the schema forbids "
+                             "operator and host names, and cannot then accept an "
+                             "arbitrary string. Unverified by design.")
     return parser.parse_args(argv)
 
 
@@ -287,7 +329,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "elsewhere — an evidence file that was silently replaced is not evidence."
         )
 
-    report = build_report(args.checkpoint_dir, args.platform_note)
+    report = build_report(args.checkpoint_dir, args.deployment_relationship)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
 
