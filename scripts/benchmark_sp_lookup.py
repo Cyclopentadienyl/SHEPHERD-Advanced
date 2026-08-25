@@ -6,9 +6,23 @@ Measures `sp_mean_distances` (`src/inference/scoring.py`) across the matrix
 shapes**: the singleton loop production ships today, and the batched call B-1
 and the offline harness will use.
 
-**This is the baseline stage. No index prototype exists yet**, and per PLAN_B04
-§3.1 none is built until the gate warrants it. Read the plan before extending
-this script; several of its shapes are decisions rather than conveniences.
+The gate in PLAN_B04 §3.1 has since been crossed, so `--implementations` also
+times the two prototypes in `scripts/sp_index_prototypes.py`. Read the plan
+before extending this script; several of its shapes are decisions rather than
+conveniences.
+
+**Linux only, by design.** Memory residence is the quantity this benchmark
+exists to weigh, and it is read the way Linux reports it: `/proc/self/status`,
+and `ru_maxrss` in kilobytes. A number from another platform would not be the
+number the B-0.4 decision needs — the platform under measurement is the GB10 the
+deployment runs on. `require_linux_memory_accounting` refuses right after argument
+parsing — `--help` still works everywhere — rather than failing later from inside
+a timing loop.
+
+**Run one prototype per process.** `ru_maxrss` is a process high-water mark, so
+a second index built in the same process inherits the first's peak and its own
+cost stops being attributable. The report carries
+`memory_attribution_isolated`, which is false whenever that was violated.
 
 Two modes, and they are **not** interchangeable (PLAN_B04 §3.1):
 
@@ -41,7 +55,6 @@ Module: scripts/benchmark_sp_lookup.py
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
 import platform
@@ -255,11 +268,20 @@ def build_artifact_lookup(
     # Candidates are drawn from the real disease target space, not an invented one.
     disease_targets = torch.unique(target[target_type == DISEASE_TYPE_IDX]).tolist()
 
+    from scripts.measure_scorer import file_sha256
+
     quantiles = (0.5, 0.9, 0.99, 1.0)
     length_t = torch.tensor(lengths, dtype=torch.float64)
     provenance = {
         "path": str(path),
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        # **Not `sha256(path.read_bytes())`.** That allocates the whole
+        # multi-gigabyte artifact as one `bytes` object *after* the tensors are
+        # already resident, and `ru_maxrss` never decreases — so the digest would
+        # set a process high-water mark that hides every later prototype build,
+        # and could OOM on unified memory. `file_sha256` reads in chunks and is
+        # the one `measure_scorer.py` already uses; a second copy here would be
+        # another place for the two to drift.
+        "sha256": file_sha256(path),
         "n_pairs": int(phenotype.numel()),
         "n_phenotypes": len(keys),
         "n_disease_targets": len(disease_targets),
@@ -280,19 +302,144 @@ def _time_once(fn, *args) -> float:
     return time.perf_counter() - start
 
 
-def _call_singleton(lookup, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
-    """The shape production ships: one call per candidate, `[0]` taken."""
-    from src.inference.scoring import sp_mean_distances
+def _callers(query_fn):
+    """Both caller shapes for one query function.
 
-    for candidate in candidates:
-        sp_mean_distances(lookup, phenotypes, [candidate], DISEASE_TYPE_IDX)
+    The prototypes take an index where the current primitive takes an `SPLookup`,
+    but the signature is otherwise identical — deliberately, since PLAN_B04 §4.1
+    keeps the caller unchanged. So one factory serves all three implementations
+    and there is no second copy of the loop to drift.
+    """
+
+    def singleton(table, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
+        """The shape production ships: one call per candidate, `[0]` taken."""
+        for candidate in candidates:
+            query_fn(table, phenotypes, [candidate], DISEASE_TYPE_IDX)
+
+    def batched(table, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
+        """The shape B-1 and the offline harness use: one call, every candidate."""
+        query_fn(table, phenotypes, candidates, DISEASE_TYPE_IDX)
+
+    return singleton, batched
 
 
-def _call_batched(lookup, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
-    """The shape B-1 and the offline harness use: one call, every candidate."""
-    from src.inference.scoring import sp_mean_distances
+def require_linux_memory_accounting() -> None:
+    """Refuse to start on a host where this benchmark cannot measure what it
+    exists to measure.
 
-    sp_mean_distances(lookup, phenotypes, candidates, DISEASE_TYPE_IDX)
+    **This is a platform declaration, not a missing feature.** Memory residence is
+    the whole point of the B-0.4 comparison — approach A's 3.44 GB is the cost
+    being weighed against its speed — and it is read the way Linux reports it:
+    `/proc/self/status`, and `ru_maxrss` **in kilobytes**, which is why `_rss_bytes`
+    multiplies by 1024. The measured platform is the GB10 the deployment runs on,
+    so there is nothing to port. A number from elsewhere would not be the number
+    the decision needs.
+
+    **A positive Linux gate, not a Windows blocklist**, and the difference is not
+    pedantic. The first version of this check tested `sys.platform == "win32"`,
+    copied from `src/retrieval/backends/cuvs_backend.py` — but only its first line.
+    There the win32 test is a shortcut and the real decision is `import cuvs`, so a
+    non-Linux POSIX host lands correctly on the `ImportError`. Copied without that
+    second half, the shortcut became the whole check, and every non-Linux POSIX
+    host fell straight through into accounting that assumes Linux semantics.
+    Review reports that `ru_maxrss` on macOS is already in bytes, which would make
+    the peak read 1024x too large — and it would look like a valid measurement,
+    which is the failure worth refusing over. That specific claim is the reviewer's
+    and is not verified here; what *is* verified is that this code encodes a Linux
+    assumption, and a Linux assumption belongs behind a Linux gate.
+
+    Linux ARM and Linux x86 share both semantics, so one gate covers the two
+    deployment architectures that matter.
+
+    Called immediately after argument parsing: `--help` still works everywhere,
+    and the refusal lands **before artifact loading and any timed workload**.
+    That is the cost worth protecting — `shortest_paths.pt` is gigabytes and takes
+    minutes, and discovering the host cannot account for memory after paying it,
+    through a `ModuleNotFoundError` raised inside a timing loop, is a far worse
+    failure than one line at the start. It is *not* before "anything is loaded";
+    `torch` is imported when this module is.
+    """
+    if not sys.platform.startswith("linux"):
+        raise SystemExit(
+            f"benchmark_sp_lookup requires Linux memory accounting "
+            f"(/proc/self/status, and ru_maxrss in kilobytes) and cannot run on "
+            f"{sys.platform}. This is by design: the measurement is about memory "
+            "residence on the deployment platform, which is Linux on ARM or x86. "
+            "Nothing here needs a port — run it on the target host."
+        )
+
+
+def _rss_bytes() -> Dict[str, Optional[int]]:
+    """Current **and** high-water RSS.
+
+    `ru_maxrss` alone cannot attribute a prototype build: loading the artifact
+    has already set a process peak far above anything the build adds, and a
+    high-water mark never comes back down. Current RSS does move, so the pair
+    says both "how much is resident now" and "how high has this process ever
+    been" — and their disagreement is itself the signal that the peak belongs to
+    something earlier.
+
+    **Linux only, deliberately** — see `require_linux_memory_accounting`. An
+    earlier version of this docstring said non-Linux hosts get `None` "rather than
+    a fabricated number". That was false: the `/proc/self/status` read is guarded,
+    but `import resource` is not, and `resource` does not exist on Windows. The
+    module is unavailable there, not degraded, and the CLI now says so before it
+    spends anything.
+
+    `ru_maxrss` for the high-water mark, `/proc/self/status` for current. The
+    `/proc` read stays guarded because it can be absent on a Linux host too — a
+    restricted container, for instance — and a missing current-RSS line is worth
+    reporting as `None` beside a peak that was read successfully. No profiling
+    dependency.
+    """
+    import resource
+
+    values: Dict[str, Optional[int]] = {
+        "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+        "current_rss_bytes": None,
+    }
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                values["current_rss_bytes"] = int(line.split()[1]) * 1024
+                break
+    except OSError:
+        pass
+    return values
+
+
+def build_index(implementation: str, lookup) -> Tuple[Any, Dict[str, Any]]:
+    """Build one prototype's index, timing it and recording what it costs.
+
+    **Two memory numbers, deliberately not merged.** `resident_bytes_actual` is
+    what the prototype object holds in *this* process, beside the loader's own
+    tensors; `production_incremental_bytes_projected` is the steady-state
+    increment if the loader reordered in place instead of keeping both copies.
+    The second is a projection from the design and is labelled as one — reporting
+    it as measured residence is how a memory verdict goes wrong.
+    """
+    from scripts.sp_index_prototypes import (
+        build_global_key_index,
+        build_slice_sorted_index,
+    )
+
+    builders = {"global": build_global_key_index, "slices": build_slice_sorted_index}
+    before = _rss_bytes()
+    start = time.perf_counter()
+    index = builders[implementation](lookup)
+    elapsed = time.perf_counter() - start
+    after = _rss_bytes()
+    return index, {
+        "record": "index_build",
+        "implementation": implementation,
+        "build_seconds": elapsed,
+        "prototype_resident_bytes_actual": index.resident_bytes_actual,
+        "production_incremental_bytes_projected":
+            index.production_incremental_bytes_projected,
+        "rss_before": before,
+        "rss_after": after,
+        "rows": int(lookup.target.numel()),
+    }
 
 
 def _repeat(fn, *args) -> Dict[str, float]:
@@ -324,7 +471,29 @@ def time_table(
     rows: List[Dict[str, Any]],
     skipped: List[Dict[str, Any]],
     cell_counter: "itertools.count",
+    tables: Optional[Dict[str, Any]] = None,
 ) -> None:
+    """Time every requested implementation over the same cells.
+
+    `tables` maps an implementation name to the object its query function takes —
+    the `SPLookup` for `current`, a prototype index otherwise. All of them see the
+    **same** phenotypes and candidates in the same cell, so a difference between
+    two rows is the implementation and not the workload.
+    """
+    from src.inference.scoring import sp_mean_distances
+
+    if tables is None:
+        tables = {"current": lookup}
+    query_fns = {"current": sp_mean_distances}
+    if any(name != "current" for name in tables):
+        from scripts.sp_index_prototypes import (
+            sp_mean_distances_global,
+            sp_mean_distances_slices,
+        )
+
+        query_fns["global"] = sp_mean_distances_global
+        query_fns["slices"] = sp_mean_distances_slices
+
     by_length = sorted(range(len(lengths)), key=lambda i: -lengths[i])
     generator = torch.Generator().manual_seed(seed)
     target_t = torch.tensor(targets)
@@ -352,33 +521,74 @@ def time_table(
                         "reason": "exceeds WORK_CEILING",
                     })
                     continue
-                picked = torch.randint(
-                    0, len(targets), (n_candidate,), generator=generator
-                )
+                # **Without replacement.** `torch.randint` draws with it, and a
+                # repeated candidate is not a workload production can present:
+                # the real disease candidate list is a set. Duplicates would also
+                # flatter a binary search, whose repeated probes hit the same
+                # cache lines.
+                if n_candidate > len(targets):
+                    skipped.append({
+                        **labels, "candidates": n_candidate,
+                        "phenotypes": n_phenotype,
+                        "phenotype_selection": selection,
+                        "available_targets": len(targets),
+                        "reason": "requested more unique candidates than the "
+                                  "target space holds",
+                    })
+                    continue
+                picked = torch.randperm(len(targets), generator=generator)[:n_candidate]
                 candidates = target_t[picked].tolist()
 
-                shapes = [("singleton", _call_singleton), ("batched", _call_batched)]
-                # Alternate which shape runs first, so a small difference between
-                # them is not confounded with a fixed measurement order.
-                #
-                # **Counted per timed cell, not from `len(rows)`.** Each cell
-                # appends two rows, so `len(rows)` is even at every cell boundary
-                # and a `len(rows) % 2` test never fires — the first version of
-                # this alternated nothing, and the evidence file recorded
-                # `measured_first="singleton"` for all 240 rows while §8.1 claimed
-                # otherwise.
-                if next(cell_counter) % 2:
-                    shapes.reverse()
-                for shape, fn in shapes:
-                    timing = _repeat(fn, lookup, phenotypes, candidates)
-                    rows.append({
-                        "implementation": "current", **labels,
-                        "caller_shape": shape, "candidates": n_candidate,
-                        "phenotypes": n_phenotype, "phenotype_selection": selection,
-                        "queried_slice_total": int(touched),
-                        "measured_first": shapes[0][0], **timing,
-                    })
-                    print(json.dumps(rows[-1]), flush=True)
+                # Rotate which implementation is measured first, independently of
+                # the caller-shape alternation below. Iterating `tables` in
+                # insertion order would put `current` first in every cell of every
+                # documented command, so any warm-up or cache advantage would
+                # accrue to the same implementation throughout.
+                cell_index = next(cell_counter)
+                ordered = list(tables.items())
+                rotation = cell_index % len(ordered)
+                ordered = ordered[rotation:] + ordered[:rotation]
+
+                for position, (implementation, table) in enumerate(ordered):
+                    singleton, batched = _callers(query_fns[implementation])
+                    shapes = [("singleton", singleton), ("batched", batched)]
+                    # Alternate which shape runs first, so a small difference
+                    # between them is not confounded with a fixed measurement
+                    # order.
+                    #
+                    # **Counted per timed cell, not from `len(rows)`.** Each cell
+                    # appends two rows, so `len(rows)` is even at every cell
+                    # boundary and a `len(rows) % 2` test never fires — the first
+                    # version of this alternated nothing, and the evidence file
+                    # recorded `measured_first="singleton"` for all 240 rows while
+                    # §8.1 claimed otherwise.
+                    #
+                    # **From the cell alone, never from `position`.** An earlier
+                    # version used `(cell_index + position) % 2`, intending to
+                    # decorrelate the two orders. With two implementations the
+                    # rotation moves `position` in lockstep with `cell_index`, so
+                    # the sum is constant per implementation *identity*: `current`
+                    # came out singleton-first in 60/60 rows and the prototype
+                    # batched-first in 60/60. Rotating the implementations
+                    # cancelled the shape alternation instead of decorrelating it.
+                    #
+                    # Keyed on the cell, every implementation in a cell shares one
+                    # shape order and each alternates across cells.
+                    if cell_index % 2:
+                        shapes.reverse()
+                    for shape, fn in shapes:
+                        timing = _repeat(fn, table, phenotypes, candidates)
+                        rows.append({
+                            "implementation": implementation, **labels,
+                            "caller_shape": shape, "candidates": n_candidate,
+                            "phenotypes": n_phenotype,
+                            "phenotype_selection": selection,
+                            "queried_slice_total": int(touched),
+                            "measured_first": shapes[0][0],
+                            "implementation_position": position,
+                            **timing,
+                        })
+                        print(json.dumps(rows[-1]), flush=True)
 
 
 def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
@@ -394,8 +604,9 @@ def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
         "seed": args.seed,
         "sampling_rule": (
             "phenotypes: 'longest' takes the n longest slices; 'sampled' takes one "
-            "seeded randperm subset. candidates: seeded uniform draw with replacement "
-            "from the disease target space."
+            "seeded randperm subset. candidates: seeded randperm subset of the "
+            "disease target space, **without replacement** — a cell requesting "
+            "more unique candidates than the space holds is reported as skipped."
         ),
         "warmup_runs": 1,
         "min_repeats": MIN_REPEATS,
@@ -420,12 +631,51 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--max-hops", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Replace an existing --output file. Off by default: measurement "
+             "artifacts are cited by digest and must not be replaced silently.",
+    )
+    parser.add_argument(
+        "--implementations", default="current",
+        help=(
+            "Comma-separated: current, global, slices. **Run one prototype per "
+            "process** — peak RSS is a process high-water mark, so building two "
+            "in one process attributes the second's cost to whichever ran first."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # After parsing so `--help` works everywhere; before any artifact is loaded or
+    # workload is timed, which is the cost that matters. Not before *anything* is
+    # loaded — `torch` is imported when this module is.
+    require_linux_memory_accounting()
+
+    requested = [name.strip() for name in args.implementations.split(",") if name.strip()]
+    unknown = [name for name in requested if name not in ("current", "global", "slices")]
+    if unknown:
+        parser.error(f"unknown implementation(s): {', '.join(unknown)}")
+    if not requested:
+        parser.error("--implementations may not be empty")
+    prototypes = [name for name in requested if name != "current"]
 
     torch.manual_seed(args.seed)
     cells = itertools.count()
     rows: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
+    builds: List[Dict[str, Any]] = []
+
+    def prepare(lookup) -> Dict[str, Any]:
+        tables: Dict[str, Any] = {}
+        for name in requested:
+            if name == "current":
+                tables[name] = lookup
+                continue
+            index, record = build_index(name, lookup)
+            tables[name] = index
+            builds.append(record)
+            print(json.dumps(record), flush=True)
+        return tables
 
     if args.artifact is not None:
         mode = "artifact"
@@ -434,7 +684,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         phenotype_ids = sorted(lookup.offsets)
         time_table({"table": "artifact"}, lookup, lengths, targets, phenotype_ids,
-                   args.seed, rows, skipped, cells)
+                   args.seed, rows, skipped, cells, prepare(lookup))
         source: Dict[str, Any] = {"source": "artifact", **artifact_meta}
         # A real artifact is one of §3.1's two requirements. The other is a
         # deployment-equivalent CPU, which this script cannot self-attest — and
@@ -447,7 +697,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         mode = "synthetic"
         for labels, lookup, lengths, targets in synthetic_tables(args.max_hops, args.seed):
             time_table(labels, lookup, lengths, targets, list(range(len(lengths))),
-                       args.seed, rows, skipped, cells)
+                       args.seed, rows, skipped, cells, prepare(lookup))
         source = {
             "source": "synthetic",
             "reason": "no shortest_paths.pt supplied; none exists in development",
@@ -462,8 +712,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     report = {
-        "stage": "B-0.4 baseline",
-        "implementations": ["current"],
+        "stage": "B-0.4 prototype" if prototypes else "B-0.4 baseline",
+        "implementations": requested,
+        "index_builds": builds,
+        # `ru_maxrss` is a process high-water mark, so a second prototype built in
+        # the same process inherits the first's peak. True only when exactly one
+        # prototype was built here; the numbers are reported either way and the
+        # flag says how to read them.
+        "memory_attribution_isolated": len(prototypes) <= 1,
         "slice_source": source,
         "provenance": provenance(args, mode),
         "verdict": verdict,
@@ -472,6 +728,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     }
 
     if args.output:
+        # **Refuse to overwrite evidence.** An artifact run takes minutes and its
+        # output is cited by SHA-256 from the plan; a second run pointed at the
+        # same path silently replaces the file those citations describe. This
+        # already happened once: the repeat run was given the first run's exact
+        # output paths, and the shell's own `2>` redirection truncated the
+        # `time_*.txt` companions at launch, before any replacement existed.
+        #
+        # Deliberately *not* an auto-generated unique name — that would leave the
+        # operator guessing which file the plan means. Name the new run, or say
+        # `--overwrite` and mean it.
+        if args.output.exists() and not args.overwrite:
+            parser.error(
+                f"{args.output} already exists. A measurement artifact is cited "
+                "by digest and must not be replaced silently — give the new run "
+                "its own --output name, or pass --overwrite if replacing this "
+                "file is what you intend."
+            )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2))
         print(f"\nWrote {args.output}", file=sys.stderr)

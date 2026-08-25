@@ -423,3 +423,44 @@ def test_unsupported_mode_combinations_are_refused_not_repaired(tmp_path, spec, 
             "--split", "test", "--output", str(tmp_path / "m.json"),
             "--device", "cpu", "--modes", spec,
         ])
+
+
+# ==============================================================================
+# --split is required, and a missing split says what the workspace has
+# ==============================================================================
+def test_split_has_no_default_on_either_entry_point():
+    """Both defaulted to `test`, which the generator never writes.
+
+    `src/kg/sample_generator.py` produces train and val only, so every entry
+    point's default named a file no ordinary workspace contains. Requiring the
+    flag is deliberate rather than switching the default to `val`: `val` is the
+    checkpoint-selection split, and a default would let a caller measure on it
+    without ever deciding to.
+    """
+    import scripts.calibrate_mode_a as calibrate
+    import scripts.measure_scorer as measure
+
+    for module, argv in (
+        (measure, ["--checkpoint", "c.pt", "--data-dir", "d", "--output", "o.json"]),
+        (calibrate, ["--checkpoint", "c.pt", "--data-dir", "d",
+                     "--workdir", "w", "--seed", "0"]),
+    ):
+        with pytest.raises(SystemExit):
+            module.parse_args(argv)
+
+
+def test_missing_split_error_lists_what_the_workspace_actually_has(tmp_path):
+    from src.kg.storage.file_storage import read_samples
+
+    (tmp_path / "train_samples.json").write_text("[]")
+    (tmp_path / "val_samples.json").write_text("[]")
+
+    with pytest.raises(FileNotFoundError, match=r"this workspace has: train, val"):
+        read_samples(tmp_path, "test")
+
+
+def test_missing_split_error_when_nothing_is_there(tmp_path):
+    from src.kg.storage.file_storage import read_samples
+
+    with pytest.raises(FileNotFoundError, match="no \\*_samples.json files at all"):
+        read_samples(tmp_path, "val")

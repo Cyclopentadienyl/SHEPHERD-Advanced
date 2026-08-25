@@ -30,10 +30,10 @@ designed or implemented in B-0.3.
 | Stage | Scope | Status |
 |---|---|---|
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
-| B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | **implementation complete**; institutional CUDA run pending |
-| B-0.3 | Modes B and C | **implementation complete**; institutional CUDA run pending. Plan: [`PLAN_B03.md`](PLAN_B03.md) |
-| B-0.4 | vectorised SP lookup | not started. Plan: [`PLAN_B04.md`](PLAN_B04.md) — the primitive's body, not the caller; the caller's shape is B-1's |
-| B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem |
+| B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | implementation complete, **acceptance redefined**: bit-parity with the frozen evaluator is unexecutable, and the replacement is a same-batch differential test against the trainer's own validation pass. See `../BACKLOG.md` §3.1. **The replacement is built and passing on CPU** (`src/evaluation/differential.py`); the institutional CUDA run is item 7a. `scripts/calibrate_mode_a.py` is the *old* launcher and carries a SUPERSEDED banner |
+| B-0.3 | Modes B and C | implementation complete; institutional run inherits B-0.2's acceptance. Plan: [`PLAN_B03.md`](PLAN_B03.md) |
+| B-0.4 | vectorised SP lookup | **measurement complete and reviewed.** Approach A selected for the primary GB10 platform (`PLAN_B04.md` §12.5): 8-33x faster on the caller production ships, 0 of 60 measurements over the provisional budget, at a cost of 3.44 GB permanent residence. **Production adoption is not cleared** — it waits on §13's integrated memory and reload gate, which needs A wired into production code and therefore its own plan and review. **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) |
+| B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
 
 [`PLAN_B02_shipped.md`](PLAN_B02_shipped.md) is the plan the shipped B-0.2 code
 was built from, kept as the reasoning behind it. History, not authority.
@@ -42,8 +42,13 @@ was built from, kept as the reasoning behind it. History, not authority.
 
 ```
 python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
-    --split test --output reports/measurement.json --modes A,B,C
+    --split val --output reports/measurement.json --modes A,B,C
 ```
+
+**`--split` has no default, and `val` is not held-out data.** It is the
+split the current training configuration uses for early stopping and
+checkpoint selection, and ordinary generated workspaces contain no test
+split at all — `src/kg/sample_generator.py` writes train and val only.
 
 Mode A keeps `--output`'s name and its predictions artifact, so
 `scripts/calibrate_mode_a.py` reads the same file it always did; B and C are
@@ -54,36 +59,84 @@ the 2-hop subgraph *is* the whole graph, which is what makes the shared-cohort
 claims checkable — and which also means A, B and C agree on it by construction.
 A test asserts that agreement so it is not mistaken for a result.
 
-## Removing the legacy path
+## Removing the legacy path — SUSPENDED, DO NOT EXECUTE
 
-The frozen evaluator does not match the paper's design and does not answer the
-clinical question. It exists to calibrate the harness against the historical
-number and **nothing else**, so it should come out cleanly when that calibration
-succeeds — no pipeline refactor, no archaeology. This is the checklist, kept
-current so removal is a deletion rather than an investigation.
+> **This checklist is superseded and must not be run.** It was written when Mode A's
+> acceptance was bit-parity with `scripts/evaluate_model.py`. That target is
+> unexecutable — no checkpoint in the scanned family carries the
+> `metadata`/`in_channels_dict` keys either loader needs — and the replacement
+> acceptance is a **same-batch differential test against the trainer's own
+> validation calculation**. See `../BACKLOG.md` §3.1.
+>
+> **The hazard is concrete.** Most rows below name machinery that the replacement
+> calibration *keeps*: the padding clamp, the local ranking, the truncation at 20,
+> the per-sample local top-20 rows and the A/B traversal are all **also** what
+> `Trainer._validate` does. An engineer executing this checklist in good faith
+> would delete the calibration's own subject matter while believing they were
+> following documented procedure.
+>
+> Nothing may be deleted until the differential calibration has passed review
+> **including its institutional CUDA run**. The corrected boundary is below; the
+> corrected checklist is written at step 7 of that order, not now.
 
-| Delete | What it is |
-|---|---|
-| `scripts/evaluate_model.py` | The frozen oracle itself |
-| `scripts/calibrate_mode_a.py` | Runs both scorers and compares them; has no purpose after |
-| `scripts/measure_scorer.py`: `load_legacy_mode_a_inputs`, `build_legacy_mode_a_model` | The two entry points that mirror the oracle. **Nothing but Mode A reaches them** — Mode C reads through `src.kg.storage.file_storage` for exactly this reason |
-| `src/evaluation/measurement.py`: `run_mode_a`, `run_modes_ab`, `legacy_ranking`, `LEGACY_TRUNCATION_K`, `ModeAResult` | **The whole A/B traversal**, the legacy ranking stream, and the result type that carries it. B is defined as A's candidates and is produced by A's loop, so the loop leaves with A. `ModeResult`, `canonical_ranking` and `run_mode_c` stay |
-| Mode A's phenotype-id **clamp** in `run_modes_ab` | Oracle index parity on `-1` padding. It leaves inside the traversal above rather than separately; it is listed because it must not be carried into Mode C, whose ids are validated instead. It is correct only as parity; without an oracle it is a defect |
-| `MeasurementManifest`: `legacy_truncation_k`, `legacy_tie_policy`, and the two lines populating them in `scripts/measure_scorer.py: build_manifest` | Fields describing the frozen oracle's truncation depth and tie behaviour. `build_manifest` sets them **unconditionally**, so a Mode C manifest carries them today although Mode C has no oracle and no legacy ranking stream. Delete the fields and their assignment; every authoritative field, the artifact digests and the CUDA metadata stay |
-| `--modes A` and `A,B`, and the `A` branch of the CLI | Mode B is defined as *A's candidates*, so it goes with A. **C survives alone** |
-| `tests/integration/test_legacy_equivalence.py`, the legacy tests in `tests/unit/test_measurement_mode_a.py` | Everything that asserts oracle parity |
+### What is actually oracle-only
 
-**What must not need touching:** `ModeResult`, `canonical_ranking`,
+Verified against `trainer.py`, not recalled. Four of the five things "bit parity"
+was carried by are trainer-validation shapes and survive:
+
+| Carrier | Oracle-only? | Where the trainer does the same thing |
+|---|---|---|
+| phenotype-id `clamp` on `-1` padding | **no** | `trainer.py:739` |
+| `legacy_ranking` — `Tensor.sort(descending=True)`, and its tie behaviour | **no** | `trainer.py:651`, the same call |
+| truncation at 20 (`LEGACY_TRUNCATION_K`) | **no** | `trainer.py:656`, `pred_indices[:20]` |
+| the per-sample local top-20 rows (`ModeAResult.legacy_top_k_local`) | **no** | `trainer.py:654-656` builds the same rows |
+| `build_legacy_mode_a_model` — mirrors `create_model_from_checkpoint` **including its hardcoded fallbacks** | **yes** | the trainer builds from real feature dims |
+
+So the genuinely oracle-only surface is: `scripts/evaluate_model.py`,
+`build_legacy_mode_a_model`, `tests/integration/test_legacy_equivalence.py`, and
+the oracle-parity assertions inside `tests/unit/test_measurement_mode_a.py`.
+Everything else the old table lists is retained.
+
+Two rows of the old table were wrong in a second way as well, and both are
+recorded here so the correction is not lost when the checklist is rewritten:
+
+- **`scripts/calibrate_mode_a.py` is not purposeless after the oracle goes.**
+  Calibration still happens; only its reference changes. It is rewritten, not
+  deleted.
+- **`MeasurementManifest.legacy_truncation_k` / `legacy_tie_policy` describe
+  surviving semantics.** They are renamed, not deleted. `model_construction`'s
+  docstring ("Mode A mirrors the oracle deliberately") becomes false at the same
+  moment and is corrected in the same commit.
+
+### The order removal must follow
+
+Reviewed and approved. Each step gates the next; step 6 is behaviour-neutral by
+construction and step 8 is last.
+
+| # | Step | Note |
+|---|---|---|
+| 1 | Correct and suspend this checklist | **done — this section** |
+| 2 | Characterization tests freezing `Trainer._validate` and `Trainer.evaluate` observable behaviour | metric keys, loss aggregation, callback order and count, best-metric updates, forward count, local top-20 rows, truth ids, AMP placement, empty-result behaviour |
+| 3 | Extract the pass those two already duplicate | private and narrow; no evaluation framework, protocol hierarchy, callback extension point or generic result subsystem |
+| 4 | Same-batch differential calibration | **done** — `src/evaluation/differential.py`. Non-tautological **only if `trainer.py` never imports or calls the harness's traversal or ranking**. Review permitted sharing `masked_mean_pool` / `cosine_score_matrix`; `.import-linter.ini` places `src.training` **below** `src.inference` and forbids it outright, so the trainer keeps its own inline `F.normalize` + `torch.mm`. **Layers alone were not sufficient**: they are directional, and a probe import of `src.training` inside `src/inference/scoring.py` left all three green. A fourth contract, `scorer-independence`, forbids that direction and was mutation-checked against the same probe — `make lint-imports` reports 4 contracts kept. **Stated at the precision the contracts support**: what is forbidden is a direct import across the two scorer stacks, in either direction. Neither contract prevents both from delegating to a helper below both, and they already share `F.normalize` and `torch.mm`. The calibration therefore detects divergence between two maintained copies — which is what it is for — and is not a correctness proof of either, since Mode A preserves the legacy behaviour including its defects. The harness sits in `src.evaluation`, above both, which is the one direction it needs |
+| 5 | Bounded synthetic tests, then the institutional CUDA acceptance run | this is the deletion gate. **First half done**: 20 tests, two cohorts, five mutation-checked legs. **Second half not started and not schedulable here** — the run is item 7a, it needs a designated loadable checkpoint, and `../BACKLOG.md` §3.1.3 records why the CPU result cannot stand in for it: AMP is off on CPU by construction, so the bounded tests ask the bit-exact question and the CUDA run asks a different one |
+| 6 | One mechanical rename commit | ~70 references across 9 files. **No** scoring, ranking, tie, schema, CLI, builder or manifest behaviour change |
+| 7 | Rewrite this checklist against the final boundary | |
+| 8 | Delete the oracle-only surface | |
+
+**Why the rename waits until step 6:** the trainer helper's shape, the per-sample
+result contract, manifest ownership and the calibration CLI are not settled until
+step 4 lands. Renaming first would buy a second rename.
+
+**What must not need touching, at any step:** `ModeResult`, `canonical_ranking`,
 `to_global_ids`, `ranks_of_truth`, `encode_full_graph`, `run_mode_c`,
 `build_shepherd_model`, the manifest's authoritative fields, the digests, the
-CUDA gate, and `src.kg.storage.file_storage`. If a removal round finds itself
-editing those, the boundary has drifted and that is the finding.
+CUDA gate, and `src.kg.storage.file_storage`. If a step finds itself editing
+those, the boundary has drifted and that is the finding.
 
-The manifest itself is **not** on that list, and an earlier revision of this
-checklist wrongly said it was: it carries two legacy fields that must go with the
-oracle, as the row above records. **Do not pre-empt that edit with machinery** —
-no manifest subclass hierarchy, no schema framework, no discriminated union over
-mode. Deleting two fields and two assignments once is cheaper than any structure
-built to avoid deleting them, and the structure would outlive the problem.
+**Do not pre-empt any of this with machinery** — no manifest subclass hierarchy,
+no schema framework, no discriminated union over mode, no artifact registry or
+compatibility database. Renaming fields once is cheaper than any structure built
+to avoid renaming them, and the structure would outlive the problem.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.

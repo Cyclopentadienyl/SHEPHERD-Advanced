@@ -256,6 +256,126 @@ refuses to compare the two MRRs unless `max(top_k_values)` is this value. Two
 numbers truncated at different K are not the same quantity."""
 
 
+#: Where `torch.compile`'s wrapper class is exported. The package-level name is
+#: tried first because it is the less private of the two. Both resolve to the same
+#: class in the pinned torch, so this buys compatibility with a release that moves
+#: one of them, not two different answers.
+_WRAPPER_IMPORT_PATHS = (
+    ("torch._dynamo", "OptimizedModule"),
+    ("torch._dynamo.eval_frame", "OptimizedModule"),
+)
+
+
+def _resolve_wrapper_classes() -> tuple:
+    """Every wrapper class that could be imported. Empty when none could.
+
+    **All of them, not the first.** Returning on the first path that resolves
+    would answer `False` for a model wrapped by a class only the second path
+    exports — which is the exact situation two paths exist for. They are the same
+    class today; aggregating is what makes the claim true rather than incidental.
+    """
+    classes: list = []
+    for module_name, attribute in _WRAPPER_IMPORT_PATHS:
+        try:
+            candidate = getattr(__import__(module_name, fromlist=[attribute]), attribute)
+        except Exception:  # noqa: BLE001 - a moved internal is not an answer
+            continue
+        if isinstance(candidate, type) and candidate not in classes:
+            classes.append(candidate)
+    return tuple(classes)
+
+
+def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
+    """Whether `model` **is a `torch.compile` wrapper object**. An execution-side
+    observation of the object, and deliberately not more than that.
+
+    **What this does not claim.** It does not say a compiled graph ran. Graph
+    breaks, guard failures and `suppress_errors` all leave a wrapped model
+    executing eagerly, so `True` here means "wrapped", never "the scores came out
+    of fused kernels". The field it feeds is named `torch_compile_wrapped` for the
+    same reason `cuda_executed` was renamed from `calibration_eligible`: a field
+    whose name claims more than its probe can see gets read for the claim, not for
+    the probe. Establishing actual compiled execution would need Dynamo counters
+    and graph-break accounting, which backlog item D2 rules out and which nothing
+    in this phase needs.
+
+    Still worth recording. It remains an **execution** fact rather than a config
+    value — `src/config/training_fields.py` carries a compile toggle and the
+    Runtime Settings tab writes it, and a run configured to compile is not a run
+    that was handed a compiled model.
+
+    **isinstance is the only evidence, and the tri-state carries the rest:**
+
+    | Situation | Result |
+    |---|---|
+    | no model supplied | `None` |
+    | a wrapper class resolved and the model is one | `True` |
+    | a wrapper class resolved and the model is not | `False` |
+    | no wrapper class resolved | `None` |
+
+    **There is no attribute fallback, and two earlier versions of this function
+    are why.** The first promoted `hasattr(model, "_orig_mod")` to `True`, and the
+    test written for it asserted that an arbitrary class carrying that attribute
+    was a compile wrapper — freezing a false positive as a specification. The
+    second required the class to be defined under `torch._dynamo` as well, which
+    fails twice over: `startswith` also matches `torch._dynamoevil`, and
+    `__module__` is assignable class metadata that any object can declare rather
+    than provenance of how it was built. `_orig_mod` is a *necessary* marker of
+    the known wrapper, never sufficient evidence of wrapper identity, and no
+    rearrangement of weak signals makes it so. When the exact classes cannot be
+    imported the honest answer is that nothing was observed.
+
+    **This never raises.** It is the thing that says what the run was, so a moved
+    torch internal or an object with unusual attribute behaviour must come back as
+    `None` rather than as a traceback that kills the measurement for the sake of
+    one field.
+    """
+    if model is None:
+        return None
+
+    classes = _resolve_wrapper_classes()
+    if not classes:
+        return None
+    try:
+        return isinstance(model, classes)
+    except Exception:  # noqa: BLE001 - upholds the never-raises contract; a
+        # custom `__instancecheck__` or `__class__` is the only way here, and an
+        # ordinary object does not reach it.
+        return None
+
+
+def assert_no_autocast(device: Any) -> None:
+    """Refuse to measure inside an autocast block.
+
+    The manifest records `amp_enabled=False` and `amp_dtype=None` for every mode,
+    because none of the traversals here opens an `autocast` context — unlike
+    `Trainer._run_evaluation_pass`, which does. That is a **structural** claim
+    about this module, and a caller who wrapped `run_mode_a(...)` in
+    `with autocast(...)` would make the manifest describe a run that did not
+    happen while every number in it shifted.
+
+    So the claim is enforced rather than asserted in prose. One boolean read per
+    run, before the loop: nothing is checked per batch and nothing synchronises a
+    device.
+
+    This is not a judgement that AMP is wrong to use. `BACKLOG.md` §3.1.3 records
+    why the differential calibration must be able to run under it and report the
+    effect. What may not happen is a run measuring one regime and recording the
+    other.
+    """
+    import torch as _torch
+
+    device_type = _torch.device(device).type if device is not None else "cpu"
+    if _torch.is_autocast_enabled(device_type):
+        raise RuntimeError(
+            f"autocast is enabled for '{device_type}' and this measurement would "
+            f"run at {_torch.get_autocast_dtype(device_type)} while its manifest "
+            "recorded amp_enabled=False. Measure outside the autocast block, or "
+            "use the differential calibration, which records the AMP state it "
+            "observed instead of claiming one"
+        )
+
+
 @dataclass(frozen=True)
 class MeasurementManifest:
     """What has to be recorded for a number to mean anything later.
@@ -331,6 +451,25 @@ class MeasurementManifest:
     device: str
     dtype: str
     amp_enabled: bool
+    amp_dtype: Optional[str]
+    """The autocast dtype in force, or `None` when AMP is off.
+
+    The boolean alone cannot say what a run computed in. `amp_enabled=False` with
+    no dtype leaves a reader unable to tell an fp32 run from one whose dtype was
+    simply not recorded, and BACKLOG §3.1.3 established that the AMP regime decides
+    which of two different questions a comparison answered. For every mode in this
+    module it is `None`, and `assert_no_autocast` is what makes that a fact rather
+    than an expectation."""
+
+    torch_compile_wrapped: Optional[bool]
+    """Whether the model that ran **was a `torch.compile` wrapper object** —
+    observed, not configured. `None` means not observed, which is a different
+    claim from `False`.
+
+    Named for what the probe can see. It does **not** say a compiled graph
+    executed: graph breaks and eager fallback leave a wrapped model running
+    eagerly. See `observe_torch_compile_wrapper`."""
+
     deterministic_algorithms: bool
     cudnn_deterministic: Optional[bool]
     cudnn_benchmark: Optional[bool]
@@ -681,6 +820,7 @@ def run_modes_ab(
     from src.utils.metrics import RankingMetrics
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
+    assert_no_autocast(device)
     model.eval()
 
     want_b = manifest_b is not None
@@ -959,6 +1099,7 @@ def run_mode_c(
     from src.inference.scoring import cosine_score_matrix, masked_mean_pool
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
+    assert_no_autocast(device)
     phenotype_emb = full_graph_embeddings["phenotype"].to(device)
     disease_emb = full_graph_embeddings["disease"].to(device)
     all_disease_ids = _torch.arange(disease_emb.size(0), device=device)

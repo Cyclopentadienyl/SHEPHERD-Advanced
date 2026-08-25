@@ -59,6 +59,7 @@ work shipped is stale, not authoritative.
 | Document | Contents |
 |---|---|
 | [`working/README.md`](working/README.md) | The convention, and the list of live phases |
+| [`working/BACKLOG.md`](working/BACKLOG.md) | The one ordered list across all live phases: what is open, in what order, what blocks what, and the measured facts that set that order. Ordering and dependencies only — the decisions themselves stay in the phase folders |
 | [`working/results-review/README.md`](working/results-review/README.md) | Results-review phase: what the specs cover, and how to run the closure audit |
 | [`working/results-review/SPEC_0_INDEX.md`](working/results-review/SPEC_0_INDEX.md) | Index, requirements traceability, gates, open institutional values, backlog |
 | [`working/results-review/SPEC_1_RESULTS_REVIEW.md`](working/results-review/SPEC_1_RESULTS_REVIEW.md) | Scorer/view authority, SP sort and filter policy, decomposition, two-surface UX, limits |
@@ -70,7 +71,7 @@ work shipped is stale, not authoritative.
 | [`working/scorer-measurement/PLAN_B03.md`](working/scorer-measurement/PLAN_B03.md) | B-0.3 proposal — Modes B and C, and the three decisions that keep the ladder interpretable |
 | [`working/scorer-measurement/PLAN_B04.md`](working/scorer-measurement/PLAN_B04.md) | B-0.4 proposal — vectorising the shortest-path primitive's body, why the production caller is deferred to B-1, and the correction to what B-0.4 was previously thought to be |
 | [`working/scorer-measurement/PLAN_B02_shipped.md`](working/scorer-measurement/PLAN_B02_shipped.md) | The plan the shipped B-0.2 harness was built from. History, not authority |
-| [`working/task-scope/README.md`](working/task-scope/README.md) | Five scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, the supplied-universe request/result variant, where the SP ablation belongs, and causal-gene scoring as its own work item. **Scope decisions reviewed; the reserved-interface item is scheduled** |
+| [`working/task-scope/README.md`](working/task-scope/README.md) | Five scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, the supplied-universe request/result variant, where the SP ablation belongs, and causal-gene scoring as its own work item. **Scope decisions reviewed; the reserved-interface item is implemented, the rest unscheduled** |
 | [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) | Scoping for the scorer-retraining phase: the scorer-bundle unit of comparison, the experiment order, the versioned checkpoint scorer schema and its inference boundary, and the four kinds of legacy checkpoint. Nothing scheduled, no gate cleared |
 
 ## Archived

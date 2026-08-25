@@ -768,6 +768,21 @@ def diagnosis_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     return collated
 
 
+#: Hops the diagnosis loader expands each batch's subgraph by.
+#:
+#: **A constant with two readers, not a literal with two writers.** The manifest
+#: this project writes records `subgraph_hops` because Mode A's candidate universe
+#: *is* the expanded subgraph, so the number is part of what was measured rather
+#: than a tuning knob. `scripts/measure_scorer.build_manifest` used to write its
+#: own `2` beside this one; the manifest was then accurate only because two
+#: independent literals happened to agree, and editing one of them would have made
+#: it describe a run that never happened without anything failing.
+#:
+#: Not a `DataLoaderConfig` field: nothing varies it, and adding a knob nobody
+#: turns is a wider change than removing a duplicated literal.
+DIAGNOSIS_SUBGRAPH_HOPS = 2
+
+
 # =============================================================================
 # Main Data Loader
 # =============================================================================
@@ -834,7 +849,9 @@ class DiagnosisDataLoader:
         # 採樣子圖
         seed_nodes = self._get_seed_nodes(batch)
         subgraph_nodes, subgraph_edges, node_mapping = \
-            self.subgraph_sampler.sample_subgraph(seed_nodes, num_hops=2)
+            self.subgraph_sampler.sample_subgraph(
+                seed_nodes, num_hops=DIAGNOSIS_SUBGRAPH_HOPS
+            )
 
         # 準備子圖特徵
         subgraph_x_dict = {}
@@ -844,6 +861,7 @@ class DiagnosisDataLoader:
 
         # 更新批次中的索引到子圖索引
         batch = self._remap_indices(batch, node_mapping)
+        self._assert_disease_truth_in_range(batch, subgraph_nodes)
 
         return {
             "batch": batch,
@@ -932,6 +950,59 @@ class DiagnosisDataLoader:
                 seed_nodes["gene"] = valid_genes.unique()
 
         return seed_nodes
+
+    @staticmethod
+    def _assert_disease_truth_in_range(
+        batch: Dict[str, Any],
+        subgraph_nodes: Dict[str, Tensor],
+    ) -> None:
+        """Every remapped disease truth must index a real subgraph disease row.
+
+        **This is the boundary where the failure is created**, so it is where it
+        is caught. `_remap_indices` sends each global disease id through a
+        mapping tensor that is `-1` at every unsampled position, so a truth the
+        subgraph did not sample becomes `-1`; an id past the tensor's length is
+        left unchanged and is not a local index at all. Either one then means the
+        seeding, the remap or the batch wiring is wrong — never that the model
+        was.
+
+        **CPU, and before any device transfer.** An equivalent check inside
+        `Trainer._compute_model_outputs` would run on `disease_ids` after
+        `_move_to_device`, and `bool(cuda_tensor.any())` forces a host-device
+        synchronisation on every valid training and validation batch. Here the
+        tensors are still on the host and the cost is a comparison over one
+        batch-sized vector.
+
+        Two independent boundaries remain downstream and are deliberate, not
+        redundant: `DiagnosisLoss` refuses a malformed target for any caller that
+        bypasses this loader, and `to_global_ids` refuses one at the measurement
+        harness's own boundary. Three small local checks, no shared validator.
+
+        Never clamps. Clamping a ground truth silently scores a different
+        disease.
+        """
+        disease_ids = batch.get("disease_ids")
+        rows = subgraph_nodes.get("disease")
+        if disease_ids is None or rows is None:
+            return
+
+        n_rows = int(rows.numel())
+        out_of_range = (disease_ids < 0) | (disease_ids >= n_rows)
+        if not bool(out_of_range.any()):
+            return
+
+        offenders = disease_ids[out_of_range].tolist()
+        patients = batch.get("patient_ids") or []
+        named = [
+            patients[i] if i < len(patients) else f"<index {i}>"
+            for i in out_of_range.nonzero(as_tuple=True)[0].tolist()
+        ]
+        raise ValueError(
+            f"disease truth out of range after subgraph remapping: {offenders} "
+            f"not in [0, {n_rows}) for patients {named}. The ground truth must be "
+            "one of the subgraph's own disease rows — this is a seeding, "
+            "id-remapping or batch-wiring failure, not a model result"
+        )
 
     def _remap_indices(
         self,

@@ -18,7 +18,7 @@ authoritative metrics, which are what the modes are compared with each other on.
     python scripts/measure_scorer.py \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
-        --split test \
+        --split val \        # see the note below: val is not held-out
         --output measurement.json
 
 Two artifacts come out: `--output`, the measurement report a human reads, and
@@ -200,6 +200,26 @@ def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> An
     return model
 
 
+def subgraph_candidate_construction() -> str:
+    """The Mode A/B candidate description, with the hop count read rather than
+    retyped.
+
+    `manifest.subgraph_hops` and this sentence describe the same thing to two
+    different readers, so a literal here would let one move without the other and
+    produce an artifact that contradicts itself — `subgraph_hops=3` beside "2-hop".
+    Both now come from `DIAGNOSIS_SUBGRAPH_HOPS`.
+
+    Mode C has no hop count in its description because it has no expansion: its
+    candidates are every disease in the graph.
+    """
+    from src.kg.data_loader import DIAGNOSIS_SUBGRAPH_HOPS
+
+    return (
+        f"per-batch {DIAGNOSIS_SUBGRAPH_HOPS}-hop subgraph seeded from answers "
+        "and negatives"
+    )
+
+
 def build_loader_config(args: argparse.Namespace) -> Any:
     """The one `DataLoaderConfig` the run uses.
 
@@ -221,21 +241,42 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    n_samples: int, device: torch.device, loader_config: Any,
                    cuda_executed: Optional[bool] = None,
                    mode: str = "A",
-                   candidate_construction: str =
-                   "per-batch 2-hop subgraph seeded from answers and negatives",
-                   model_construction: str = "frozen evaluator (legacy)") -> Any:
-    from src.evaluation.measurement import LEGACY_TRUNCATION_K, MeasurementManifest
+                   candidate_construction: Optional[str] = None,
+                   model_construction: str = "frozen evaluator (legacy)",
+                   model: Any = None) -> Any:
+    """Build the manifest for one mode.
+
+    `candidate_construction` defaults to the subgraph description derived from
+    `DIAGNOSIS_SUBGRAPH_HOPS`, so it cannot drift from `subgraph_hops` in the same
+    artifact. Mode C passes its own, having no expansion to describe.
+
+    `model` is optional and is used only to **observe** whether what ran was a
+    `torch.compile` wrapper object. Omitting it records
+    `torch_compile_wrapped=None` — "not observed", which is deliberately not the
+    same claim as "not compiled". Neither value says a compiled graph executed;
+    see `observe_torch_compile_wrapper`.
+    """
+    from src.evaluation.measurement import (
+        LEGACY_TRUNCATION_K,
+        MeasurementManifest,
+        observe_torch_compile_wrapper,
+    )
+    from src.kg.data_loader import DIAGNOSIS_SUBGRAPH_HOPS
     from src.utils.fingerprint import compute_fingerprint
 
     return MeasurementManifest(
         mode=mode,
         split=args.split,
         n_samples=n_samples,
-        candidate_construction=candidate_construction,
+        candidate_construction=(
+            subgraph_candidate_construction()
+            if candidate_construction is None
+            else candidate_construction
+        ),
         negative_sampling_strategy=loader_config.negative_sampling_strategy,
         num_negative_samples=loader_config.num_negative_samples,
         subgraph_strategy=loader_config.sampling_strategy,
-        subgraph_hops=2,
+        subgraph_hops=DIAGNOSIS_SUBGRAPH_HOPS,
         num_neighbors=list(loader_config.num_neighbors),
         max_subgraph_nodes=loader_config.max_subgraph_nodes,
         batch_size=loader_config.batch_size,
@@ -258,7 +299,13 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_version=torch.version.cuda,
         device=str(device),
         dtype=str(torch.get_default_dtype()),
+        # Structural, and enforced rather than trusted: no traversal in
+        # `src/evaluation/measurement.py` opens an autocast context, and
+        # `assert_no_autocast` refuses to run inside one opened by a caller. So
+        # these two are facts about the run, not defaults that happen to be right.
         amp_enabled=False,
+        amp_dtype=None,
+        torch_compile_wrapped=observe_torch_compile_wrapper(model),
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         cudnn_deterministic=torch.backends.cudnn.deterministic if torch.cuda.is_available() else None,
         cudnn_benchmark=torch.backends.cudnn.benchmark if torch.cuda.is_available() else None,
@@ -272,7 +319,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Measure the disease scorer (Mode A)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--split", default="test")
+    parser.add_argument("--split", required=True,
+                        choices=["train", "val", "test"],
+                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. `val` is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated and are not held-out generalisation.')
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the measurement JSON is written")
     parser.add_argument("--predictions-output", type=Path, default=None,
@@ -427,14 +476,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     # One config object, two consumers. Not two instances that happen to agree.
     loader_config = build_loader_config(args)
 
-    def manifest_for(mode: str, candidates: str, construction: str):
+    def manifest_for(mode: str, candidates: str, construction: str, model: Any = None):
         return build_manifest(
             args, graph_data, len(samples), device, loader_config, cuda_executed,
             mode=mode, candidate_construction=candidates,
-            model_construction=construction,
+            model_construction=construction, model=model,
         )
 
     embeddings = None
+    production_model = None
     if wants_production:
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
@@ -453,13 +503,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             dataloader=create_diagnosis_dataloader(
                 samples=samples, graph_data=graph_data, config=loader_config
             ),
+            # Which model each mode's `torch_compile_wrapped` describes, stated because
+            # the modes do not all forward a model. A forwards `legacy_model` per
+            # batch. B and C forward nothing — they index the embeddings
+            # `encode_full_graph` produced, so the compile state that could have
+            # moved their numbers is `production_model`'s, at the moment those
+            # embeddings were computed.
             manifest_a=manifest_for(
-                "A", "per-batch 2-hop subgraph seeded from answers and negatives",
-                "frozen evaluator (legacy)",
+                "A", subgraph_candidate_construction(),
+                "frozen evaluator (legacy)", model=legacy_model,
             ),
             manifest_b=manifest_for(
-                "B", "per-batch 2-hop subgraph seeded from answers and negatives",
-                "production (build_shepherd_model)",
+                "B", subgraph_candidate_construction(),
+                "production (build_shepherd_model)", model=production_model,
             ) if "B" in modes else None,
             full_graph_embeddings=embeddings,
             device=device,
@@ -473,7 +529,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             samples=samples,
             manifest=manifest_for(
                 "C", "every disease in the knowledge graph",
-                "production (build_shepherd_model)",
+                "production (build_shepherd_model)", model=production_model,
             ),
             device=device,
             batch_size=args.batch_size,

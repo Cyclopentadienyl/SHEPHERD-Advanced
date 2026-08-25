@@ -1,7 +1,7 @@
 # Task scope — what the supplied-short-list scenario changes
 
-**Status:** rev 5. Scope decisions reviewed and settled. Q1 is **scheduled**;
-the rest remain uncommitted.
+**Status:** rev 6. Scope decisions reviewed and settled. **Q1 is implemented**;
+Q2-Q5 remain settled but unscheduled, which is why this document is not archived.
 
 - **rev 2** — revised Q1, Q3 and Q4 after the reasoning or facts were found wrong.
 - **rev 3** — narrowed F2's validation claim, replaced the proposed per-candidate
@@ -51,7 +51,7 @@ written. Nothing here is recalled.
 | # | Fact | Source |
 |---|---|---|
 | F1 | The paper uses **three different similarity functions**, and only causal-gene discovery carries the SP term — the only task with a candidate short list (13.3 genes expert-curated, 244.3 variant-filtered). Disease ranking is `−‖z_d − z_P‖²`, over **all** diseases in the KG | `docs/SP_SCORE_GUIDE.md:341-349`; `docs/DISEASE_SCORER_POLICY.md:3.1` |
-| F2 | `candidate_genes` is **structurally accepted as `Optional[List[str]]` and stored** on `PatientInput` — currently without length, non-blank or identifier-semantic validation — and **read by no scoring path**. Five occurrences repository-wide; none in `src/inference/pipeline.py` | `api/routes/diagnose.py:63,216`; `inference/input_validator.py:437,466`; `core/types.py:388` |
+| F2 | `candidate_genes` is accepted as `Optional[List[str]]`, **bounded at 1000, stripped and blank-rejected**, and **warns on non-null supply** (Q1, implemented). It carries **no identifier ontology** and is still **read by no scoring path** | `api/routes/diagnose.py`; `inference/input_validator.py:437,466`; `core/types.py:388` |
 | F3 | `ShepherdGNN` constructs **no task head**, and the deployed checkpoint passes a strict `load_state_dict`, so it carries no task-head parameters | `DISEASE_SCORER_POLICY.md:3.2, 3.3` |
 | F4 | **No gene-targeted ranking objective is active in the current training path.** The link-prediction and ortholog losses are gated on `positive_triples` / `negative_triples` / `ortholog_pairs`, and **no dataset, collate function or trainer in `src/` produces those keys** — the three names occur only inside `loss_functions.py`. `gene_ids` is not consumed by a loss either. Gene representations **may still receive indirect gradients** through heterogeneous message passing and the supervised disease objective; no current evidence establishes that their geometry is calibrated for patient-to-gene ranking | `training/loss_functions.py:513-584`; absence verified across `src/` |
 | F5 | `DiagnosisSample.gene_ids` is collated into batches and read at `data_loader.py:929-930`, but **no loss consumes it** | `kg/data_loader.py:614,675,741-765,929` |
@@ -90,7 +90,7 @@ earlier revision proposed only a description change plus an inertness test.
 Review rejected that as insufficient, correctly: **a test that proves the field
 is ignored tells nobody but us.** The caller who sent it learns nothing.
 
-Four bounded changes:
+Four bounded changes, **all implemented**:
 
 1. The description states the field is **reserved — accepted but currently
    ignored**, and does not affect disease candidates, scores or ranks.

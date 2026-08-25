@@ -62,12 +62,34 @@ def read_samples(data_dir: Path, split: str) -> List[Any]:
 
     Missing is an error, not an empty cohort: an empty list would flow into a
     measurement and produce metrics over nobody.
+
+    **The error names the splits that do exist, and never falls back to one.**
+    `src/kg/sample_generator.py` writes `train_samples.json` and
+    `val_samples.json` only, so a caller asking for `test` on an ordinary
+    workspace gets a file that was never generated. Listing what is present
+    turns that from "which path did I mistype" into "this workspace has no test
+    split" — and choosing a substitute here would silently answer a question
+    the caller has to answer, since `val` is the checkpoint-selection split
+    rather than held-out data.
     """
     from src.kg.data_loader import DiagnosisSample
 
     path = data_dir / f"{split}_samples.json"
     if not path.exists():
-        raise FileNotFoundError(f"Samples file not found: {path}")
+        available = sorted(
+            candidate.name[: -len("_samples.json")]
+            # `is_file()`: a directory named `foo_samples.json` is not a split,
+            # and reporting one as available would send the caller after a name
+            # that can never load.
+            for candidate in data_dir.glob("*_samples.json")
+            if candidate.is_file()
+        )
+        detail = (
+            f"this workspace has: {', '.join(available)}"
+            if available
+            else "this workspace has no *_samples.json files at all"
+        )
+        raise FileNotFoundError(f"Samples file not found: {path} — {detail}")
 
     return [
         DiagnosisSample(

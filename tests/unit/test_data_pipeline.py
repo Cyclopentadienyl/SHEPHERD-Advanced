@@ -454,3 +454,79 @@ class TestBuildScriptValidation:
 
         assert result.returncode == 1
         assert "Missing" in result.stderr or "not found" in result.stderr
+
+
+# =============================================================================
+# The disease-truth range invariant, at the boundary that creates the failure
+# =============================================================================
+class TestDiseaseTruthRangeInvariant:
+    """`_assert_disease_truth_in_range` — the first of three boundaries.
+
+    `_remap_indices` sends each global disease id through a mapping tensor that
+    is `-1` at every unsampled position, so this is where a legal global truth
+    can become an illegal local one. Catching it here keeps the check on the
+    **host**: the equivalent test inside `Trainer._compute_model_outputs` would
+    run after `_move_to_device` and force a host-device synchronisation on every
+    valid batch.
+
+    The two downstream boundaries — `DiagnosisLoss` and `to_global_ids` — are
+    covered by their own files and are deliberately independent of this one.
+    """
+
+    @staticmethod
+    def _check(disease_ids, n_rows=4):
+        import torch
+
+        from src.kg.data_loader import DiagnosisDataLoader
+
+        DiagnosisDataLoader._assert_disease_truth_in_range(
+            {
+                "disease_ids": torch.tensor(disease_ids),
+                "patient_ids": [f"p{i}" for i in range(len(disease_ids))],
+            },
+            {"disease": torch.arange(n_rows)},
+        )
+
+    def test_legal_truths_pass(self):
+        self._check([0, 1, 3])
+        self._check([0])
+        self._check([3, 3])
+
+    def test_a_minus_one_hole_is_refused(self):
+        """The unsampled-disease case: in range globally, absent from the subgraph."""
+        with pytest.raises(ValueError, match=r"disease truth out of range"):
+            self._check([0, -1, 2])
+
+    def test_an_id_beyond_the_subgraph_is_refused(self):
+        """`_remap_indices` leaves an out-of-range global id unchanged, so it
+        arrives here as a number that is not a local index at all."""
+        with pytest.raises(ValueError, match=r"not in \[0, 4\)"):
+            self._check([0, 4])
+
+    def test_the_error_names_the_offending_patients(self):
+        """A cohort-sized failure needs to say *which* samples, not just that one."""
+        with pytest.raises(ValueError, match="p1"):
+            self._check([0, -1, 2])
+
+    def test_a_truth_is_never_clamped(self):
+        """Refuse, never correct. A clamp would silently score another disease."""
+        import torch
+
+        from src.kg.data_loader import DiagnosisDataLoader
+
+        batch = {"disease_ids": torch.tensor([0, 2]), "patient_ids": ["a", "b"]}
+        DiagnosisDataLoader._assert_disease_truth_in_range(
+            batch, {"disease": torch.arange(4)}
+        )
+        assert batch["disease_ids"].tolist() == [0, 2], "the check must not mutate"
+
+    def test_a_batch_without_disease_ids_is_not_an_error(self):
+        """Not every consumer carries a disease truth; absence is not malformity."""
+        import torch
+
+        from src.kg.data_loader import DiagnosisDataLoader
+
+        DiagnosisDataLoader._assert_disease_truth_in_range({}, {"disease": torch.arange(4)})
+        DiagnosisDataLoader._assert_disease_truth_in_range(
+            {"disease_ids": torch.tensor([0])}, {}
+        )

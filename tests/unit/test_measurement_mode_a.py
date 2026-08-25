@@ -11,6 +11,7 @@ assumed — if it stopped holding, everything below would fail intermittently,
 which is worse than failing.
 """
 import json
+import sys
 
 import pytest
 
@@ -58,7 +59,13 @@ def _run(data_dir, checkpoint, batch_size=3):
     loader = create_diagnosis_dataloader(
         samples=samples, graph_data=graph_data, config=loader_config
     )
-    manifest = build_manifest(args, graph_data, len(samples), device, loader_config)
+    # `model=` too, because this helper claims to drive the harness the way the
+    # CLI does and the CLI now passes it: `torch_compile_wrapped` is observed from
+    # model that runs, so a helper omitting it would record 'not observed' and
+    # quietly stop mirroring the thing it exists to mirror.
+    manifest = build_manifest(
+        args, graph_data, len(samples), device, loader_config, model=model
+    )
     return run_mode_a(model=model, dataloader=loader, manifest=manifest, device=device)
 
 
@@ -146,6 +153,216 @@ def test_the_manifest_records_what_makes_the_number_mean_something(workspace):
     # Recorded even when absent, so a reader can tell "no CUDA" from "not asked".
     assert manifest.device == "cpu"
     assert manifest.amp_enabled is False
+
+
+def test_the_manifest_records_the_numeric_regime_not_only_the_boolean(workspace):
+    """Backlog item D2. `amp_enabled=False` alone cannot distinguish an fp32 run
+    from one whose dtype was never recorded, and BACKLOG §3.1.3 established that
+    the AMP regime decides which question a comparison answered.
+
+    `torch_compile_wrapped` is an **execution** fact rather than a config value:
+    the project carries a compile toggle in `src/config/training_fields.py`, and
+    what has to be recorded is what ran, not what was asked for. `_run` builds an
+    unwrapped model, so `False` here is an observation — `None` would mean nothing
+    was observed at all, which is a different claim.
+    """
+    _, data_dir, checkpoint = workspace
+
+    manifest = _run(data_dir, checkpoint).manifest
+
+    assert manifest.amp_dtype is None
+    assert manifest.torch_compile_wrapped is False
+
+
+def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, monkeypatch):
+    """`subgraph_hops` describes what was measured — Mode A's candidate universe
+    *is* the expanded subgraph — so a manifest that repeats the loader's literal
+    instead of reading it is accurate only by coincidence.
+
+    **Two fields, not one.** `candidate_construction` says the same thing in prose
+    for a human reader, and it was still spelling "2-hop" as a literal after the
+    numeric field started reading the constant. Moving the constant now moves both,
+    which is what stops the artifact contradicting itself.
+    """
+    import argparse
+
+    import src.kg.data_loader as data_loader
+    from scripts.measure_scorer import build_loader_config, build_manifest
+    from src.kg.storage.file_storage import read_graph_artifacts
+
+    _, data_dir, checkpoint = workspace
+    args = argparse.Namespace(
+        checkpoint=checkpoint, data_dir=data_dir, split="test",
+        batch_size=3, num_workers=0, seed=None,
+    )
+    graph_data = read_graph_artifacts(data_dir)
+    build = lambda: build_manifest(  # noqa: E731 - one expression, twice
+        args, graph_data, 6, torch.device("cpu"), build_loader_config(args)
+    )
+
+    before = build()
+    assert before.subgraph_hops == data_loader.DIAGNOSIS_SUBGRAPH_HOPS
+    assert f"{data_loader.DIAGNOSIS_SUBGRAPH_HOPS}-hop" in before.candidate_construction
+
+    monkeypatch.setattr(data_loader, "DIAGNOSIS_SUBGRAPH_HOPS", 3)
+
+    after = build()
+    assert after.subgraph_hops == 3
+    # The prose too. A manifest reading `subgraph_hops=3` beside "per-batch 2-hop"
+    # contradicts itself, and the number moving alone is how that happens.
+    assert "3-hop" in after.candidate_construction
+    assert "2-hop" not in after.candidate_construction
+
+
+def test_measuring_inside_an_autocast_block_is_refused(workspace):
+    """The manifest's `amp_enabled=False` is a structural claim about this module
+    — no traversal here opens an autocast context. A caller who wrapped the run in
+    one would shift every score while the manifest went on recording fp32.
+
+    So the claim is enforced, not asserted in prose. The refusal is the mutation
+    check for it: this is exactly the state that would otherwise be misrecorded.
+    """
+    _, data_dir, checkpoint = workspace
+
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        with pytest.raises(RuntimeError, match="autocast is enabled"):
+            _run(data_dir, checkpoint)
+
+
+# ---------------------------------------------------------------------------
+# Observing the compile wrapper — isinstance, and the tri-state around it
+# ---------------------------------------------------------------------------
+#
+# `isinstance` against the imported wrapper class is the only evidence used. Two
+# earlier versions accepted `_orig_mod` as a fallback signal and both were wrong:
+# any object may carry that attribute name, and pairing it with `__module__` did
+# not fix it, since `__module__` is assignable class metadata rather than
+# provenance. When the class cannot be imported, nothing was observed and the
+# answer is `None`.
+
+
+def _block_the_exact_probe(monkeypatch):
+    """Make both of the observer's import paths fail.
+
+    `sys.modules[name] = None` is how the import system is told a module is
+    absent; verified by execution to raise `ModuleNotFoundError`. This stands in
+    for the real risk, which is torch moving these names between versions.
+
+    Both, because the observer aggregates every path that resolves — blocking one
+    leaves the observation exact, which is the point of having two and is tested
+    on its own below.
+    """
+    monkeypatch.setitem(sys.modules, "torch._dynamo", None)
+    monkeypatch.setitem(sys.modules, "torch._dynamo.eval_frame", None)
+
+
+def test_an_exact_positive_is_observed():
+    """Against a real `torch.compile` wrapper, not a stand-in carrying the right
+    attribute — a stand-in would test the test."""
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    assert observe_torch_compile_wrapper(torch.compile(nn.Linear(4, 4))) is True
+
+
+def test_an_exact_negative_is_observed():
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    assert observe_torch_compile_wrapper(nn.Linear(4, 4)) is False
+
+
+def test_no_model_is_not_observed_rather_than_not_compiled():
+    """`None` and `False` are different claims and must not be flattened."""
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    assert observe_torch_compile_wrapper(None) is None
+
+
+def test_an_object_carrying_only_the_wrapper_attribute_is_not_a_wrapper():
+    """`_orig_mod` is a **necessary** marker of the known wrapper, never sufficient
+    evidence of wrapper identity: any object may legally carry that attribute name.
+
+    An earlier version promoted the attribute to `True`, and the test written for
+    it asserted this very object *was* a wrapper — freezing a false positive as
+    though it were a specification.
+    """
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    class NotAWrapper:
+        _orig_mod = object()
+
+    assert observe_torch_compile_wrapper(NotAWrapper()) is False
+
+
+def test_the_package_level_path_keeps_the_probe_exact_on_its_own(monkeypatch):
+    """Two import paths, so a torch release that moves one still leaves the
+    observation exact rather than dropping it to `None`."""
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    monkeypatch.setitem(sys.modules, "torch._dynamo.eval_frame", None)
+
+    assert observe_torch_compile_wrapper(nn.Linear(4, 4)) is False
+
+
+def test_no_resolvable_wrapper_class_is_not_observed(monkeypatch):
+    """The subject is a **real** compiled wrapper on purpose.
+
+    Even a genuine true positive becomes `None` once the classes cannot be
+    imported, because there is then no evidence — only guesses that an object
+    could arrange to satisfy. That is the whole reason the field is
+    `Optional[bool]` and not a bool with a default.
+    """
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    wrapped = torch.compile(nn.Linear(4, 4))
+    _block_the_exact_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(wrapped) is None
+
+
+def test_an_object_that_declares_torch_provenance_is_still_not_observed(monkeypatch):
+    """The counterexample that removed the fallback, pinned so it cannot return.
+
+    A second version of this observer accepted `_orig_mod` **plus** a class whose
+    `__module__` began with `torch._dynamo`. It failed twice: `startswith` also
+    matches `torch._dynamoevil`, and `__module__` is assignable class metadata —
+    any object can declare it, so it describes what a class says about itself, not
+    how it was built. This object satisfies both of those weak signals and was
+    never touched by `torch.compile`.
+    """
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    class Impostor:
+        __module__ = "torch._dynamo.fake"
+        _orig_mod = object()
+
+    _block_the_exact_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(Impostor()) is None
+
+
+def test_hostile_attribute_access_does_not_raise():
+    """The observer says what a run was, so it must return data rather than a
+    traceback — a manifest field is not worth killing a measurement for.
+
+    With the attribute fallback gone the observer reads no attributes at all, so
+    this now pins the contract end to end rather than one probe inside it: an
+    object whose `__getattr__` raises comes back as an answer.
+    """
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    class Hostile:
+        def __getattr__(self, name):
+            raise RuntimeError("attribute access is hostile")
+
+    assert observe_torch_compile_wrapper(Hostile()) is False
 
 
 def test_the_result_serialises_without_non_finite_values(workspace):

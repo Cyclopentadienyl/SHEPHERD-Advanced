@@ -16,12 +16,25 @@ Module: tests/integration/test_benchmark_sp_lookup.py
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 import torch
 
 from scripts.benchmark_sp_lookup import build_artifact_lookup, main
+
+
+#: The benchmark itself is Linux-only by design — see
+#: `require_linux_memory_accounting`. Its *execution* tests are therefore skipped
+#: elsewhere, with the reason stated rather than the suite going red for a
+#: platform decision it is meant to record. The refusal contract below and the
+#: pure workload helpers above stay unconditional: those are what a non-Linux
+#: runner can and should still check.
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="benchmark_sp_lookup is Linux-only by design (Linux RSS accounting)",
+)
 
 
 def write_artifact(path: Path, n_phenotypes: int = 25, target_space: int = 200) -> dict:
@@ -89,6 +102,7 @@ def test_missing_keys_are_fatal_rather_than_silently_partial(tmp_path):
         build_artifact_lookup(artifact, 5)
 
 
+@linux_only
 def test_artifact_run_records_the_artifact_as_its_slice_source(tmp_path):
     artifact = tmp_path / "shortest_paths.pt"
     write_artifact(artifact)
@@ -112,6 +126,7 @@ def test_artifact_run_records_the_artifact_as_its_slice_source(tmp_path):
     assert report["provenance"]["deployment_equivalent_cpu"] is False
 
 
+@linux_only
 def test_measurement_order_actually_alternates(tmp_path, monkeypatch):
     """The order was claimed, not performed.
 
@@ -162,6 +177,7 @@ def test_measurement_order_actually_alternates(tmp_path, monkeypatch):
     )
 
 
+@linux_only
 def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatch):
     """The regression this file exists for, stated as an assertion."""
     import scripts.benchmark_sp_lookup as bench
@@ -180,3 +196,364 @@ def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatc
     assert report["provenance"]["mode"] == "synthetic"
     assert "artifact" not in report["verdict"]
     assert "pending institutional run" in report["verdict"]
+
+
+# =============================================================================
+# Prototype selection (B-0.4 prototype phase)
+# =============================================================================
+@linux_only
+def test_unknown_implementation_is_rejected():
+    """A typo must not silently benchmark fewer implementations than asked for."""
+    from scripts.benchmark_sp_lookup import main
+
+    with pytest.raises(SystemExit):
+        main(["--implementations", "current,globl"])
+
+
+@linux_only
+def test_memory_attribution_flag_is_honest(tmp_path, monkeypatch):
+    """`ru_maxrss` is a process high-water mark, so two prototypes in one process
+    cannot both be attributed. The report must say so rather than imply isolation.
+
+    Asserted in both directions: one prototype is isolated, two are not.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10,))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1,))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    one = tmp_path / "one.json"
+    assert bench.main(["--implementations", "global", "--output", str(one)]) == 0
+    single = json.loads(one.read_text())
+    assert single["memory_attribution_isolated"] is True
+    assert single["stage"] == "B-0.4 prototype"
+    assert [b["implementation"] for b in single["index_builds"]] == ["global"]
+
+    both = tmp_path / "both.json"
+    assert bench.main(
+        ["--implementations", "current,global,slices", "--output", str(both)]
+    ) == 0
+    pair = json.loads(both.read_text())
+    assert pair["memory_attribution_isolated"] is False
+    assert pair["implementations"] == ["current", "global", "slices"]
+
+
+@linux_only
+def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
+    """A timing difference must be the implementation, not a different workload."""
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10, 50))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1, 20))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / "cells.json"
+    assert bench.main(
+        ["--implementations", "current,global,slices", "--output", str(output)]
+    ) == 0
+    rows = json.loads(output.read_text())["rows"]
+
+    def cells(name):
+        return sorted(
+            (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+             r["caller_shape"], r["queried_slice_total"])
+            for r in rows if r["implementation"] == name
+        )
+
+    assert cells("current") == cells("global") == cells("slices")
+    assert cells("current"), "the matrix produced no rows to compare"
+
+
+@linux_only
+def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, monkeypatch):
+    """BLOCKING 3: `current` must not be measured first in every cell.
+
+    Iterating the implementations in insertion order put `current` first in every
+    cell of every documented command, so any warm-up or cache advantage accrued
+    to the same implementation throughout. Both halves are asserted together
+    because either alone is satisfiable by a broken benchmark: rotating the order
+    while varying the workload would be worse than not rotating at all.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10, 20))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1, 20))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / "rotation.json"
+    assert bench.main(
+        ["--implementations", "current,global,slices", "--output", str(output)]
+    ) == 0
+    rows = json.loads(output.read_text())["rows"]
+
+    first_per_cell = {}
+    for row in rows:
+        if row["implementation_position"] != 0:
+            continue
+        key = (row["candidates"], row["phenotypes"], row["phenotype_selection"],
+               row["distribution"], row["mean_slice_length"])
+        first_per_cell[key] = row["implementation"]
+
+    assert len(first_per_cell) > 1, "fixture must produce more than one timed cell"
+    assert "current" in first_per_cell.values(), "no cell measured current first"
+    assert {v for v in first_per_cell.values()} - {"current"}, (
+        f"no cell measured a prototype first: {first_per_cell}"
+    )
+
+    def workload(name):
+        return sorted(
+            (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+             r["caller_shape"], r["queried_slice_total"])
+            for r in rows if r["implementation"] == name
+        )
+
+    assert workload("current") == workload("global") == workload("slices")
+
+
+@linux_only
+def test_candidates_are_sampled_without_replacement(tmp_path, monkeypatch):
+    """MAJOR 2: a repeated candidate is not a workload production can present.
+
+    The real disease candidate list is a set, and duplicates would also flatter a
+    binary search whose repeated probes hit the same cache lines.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    seen = []
+    original = bench._repeat
+
+    def capture(fn, table, phenotypes, candidates):
+        seen.append(list(candidates))
+        return original(fn, table, phenotypes, candidates)
+
+    monkeypatch.setattr(bench, "_repeat", capture)
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (25,))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1,))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "SYNTHETIC_TARGET_SPACE", 60)
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    assert bench.main(["--output", str(tmp_path / "unique.json")]) == 0
+
+    assert seen, "no cell was timed"
+    for candidates in seen:
+        assert len(set(candidates)) == len(candidates), (
+            f"candidates repeated within one cell: {candidates}"
+        )
+
+
+@linux_only
+def test_a_cell_wanting_more_candidates_than_exist_is_reported_skipped(tmp_path, monkeypatch):
+    """Sampling without replacement cannot invent candidates, and must not cap
+    silently — a silent cap reads as "covered everything" when it did not."""
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (5_000,))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1,))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (50,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "SYNTHETIC_TARGET_SPACE", 60)
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / "skipped.json"
+    assert bench.main(["--output", str(output)]) == 0
+    report = json.loads(output.read_text())
+
+    assert report["rows"] == []
+    reasons = {s["reason"] for s in report["skipped"]}
+    assert any("unique candidates" in r for r in reasons), reasons
+
+
+@linux_only
+@pytest.mark.parametrize("prototype", ["global", "slices"])
+def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, prototype):
+    """BLOCKING regression: run the **documented two-implementation configs**.
+
+    An earlier version chose the shape order with `(cell_index + position) % 2`,
+    meaning to decorrelate it from the rotated implementation order. With two
+    implementations the rotation moves `position` in lockstep with `cell_index`,
+    so the sum was constant per implementation *identity*: on the real artifact
+    `current` came out singleton-first in 60/60 rows and the prototype
+    batched-first in 60/60. Any warm-up or cache asymmetry between the shapes
+    then attached permanently to one implementation.
+
+    A single-implementation run cannot see this, and the previous test used one.
+    These use `current,global` and `current,slices` — the two commands PLAN_B04
+    §11.3 actually tells the operator to run.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    monkeypatch.setattr(bench, "CANDIDATE_COUNTS", (10, 20))
+    monkeypatch.setattr(bench, "PHENOTYPE_COUNTS", (1, 20))
+    monkeypatch.setattr(bench, "SYNTHETIC_MEAN_SLICE_LENGTHS", (100,))
+    monkeypatch.setattr(bench, "SYNTHETIC_DISTRIBUTIONS", ("representative",))
+    monkeypatch.setattr(bench, "MIN_REPEATS", 1)
+    monkeypatch.setattr(bench, "MAX_REPEATS", 1)
+    monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
+
+    output = tmp_path / f"order_{prototype}.json"
+    assert bench.main(
+        ["--implementations", f"current,{prototype}", "--output", str(output)]
+    ) == 0
+    rows = json.loads(output.read_text())["rows"]
+
+    for implementation in ("current", prototype):
+        orders = {r["measured_first"] for r in rows if r["implementation"] == implementation}
+        assert orders == {"singleton", "batched"}, (
+            f"{implementation} was always measured {orders} first across every "
+            "cell; shape order is coupled to implementation identity"
+        )
+
+    # Both implementation orders still occur, and both still see one workload.
+    positions = {
+        (r["implementation"], r["implementation_position"]) for r in rows
+    }
+    for implementation in ("current", prototype):
+        assert {p for i, p in positions if i == implementation} == {0, 1}, implementation
+
+    def workload(name):
+        return sorted(
+            (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+             r["caller_shape"], r["queried_slice_total"])
+            for r in rows if r["implementation"] == name
+        )
+
+    assert workload("current") == workload(prototype)
+
+    # Within one cell every implementation must share the shape order, which is
+    # what keeps the two comparable at all.
+    per_cell = {}
+    for r in rows:
+        key = (r["candidates"], r["phenotypes"], r["phenotype_selection"],
+               r["distribution"], r["mean_slice_length"])
+        per_cell.setdefault(key, set()).add(r["measured_first"])
+    for key, orders in per_cell.items():
+        assert len(orders) == 1, f"cell {key} measured two shape orders: {orders}"
+
+
+@linux_only
+def test_an_existing_output_is_not_silently_replaced(tmp_path, monkeypatch):
+    """A measurement artifact is cited by digest; a repeat run must not clobber it.
+
+    This is a regression: the repeat of the B-0.4 artifact run was handed the
+    first run's exact output paths, and the shell's `2>` redirection truncated
+    the `time_*.txt` companions at launch. The JSONs survived only because they
+    were already committed.
+    """
+    import scripts.benchmark_sp_lookup as bench
+
+    for name, value in (
+        ("CANDIDATE_COUNTS", (10,)), ("PHENOTYPE_COUNTS", (1,)),
+        ("SYNTHETIC_MEAN_SLICE_LENGTHS", (50,)),
+        ("SYNTHETIC_DISTRIBUTIONS", ("representative",)),
+        ("MIN_REPEATS", 1), ("MAX_REPEATS", 1), ("TARGET_MEASURE_SECONDS", 0.0),
+    ):
+        monkeypatch.setattr(bench, name, value)
+
+    output = tmp_path / "evidence.json"
+    assert bench.main(["--output", str(output)]) == 0
+    first = output.read_text()
+
+    with pytest.raises(SystemExit):
+        bench.main(["--output", str(output)])
+    assert output.read_text() == first, "the refused run still modified the file"
+
+    assert bench.main(["--output", str(output), "--overwrite"]) == 0
+    assert output.exists()
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_a_non_linux_host_is_refused(monkeypatch, platform):
+    """A **positive Linux gate**, not a Windows blocklist, and the difference is
+    what this test exists for.
+
+    The first version tested `sys.platform == "win32"`, copied from
+    `src/retrieval/backends/cuvs_backend.py` — but only its first line. There the
+    win32 test is a shortcut and the real decision is `import cuvs`, so a non-Linux
+    POSIX host lands correctly on the `ImportError`. Copied without that second
+    half, the shortcut became the whole check and `darwin` fell through into
+    accounting that assumes Linux semantics: `/proc/self/status`, and `ru_maxrss`
+    in kilobytes, which `_rss_bytes` multiplies by 1024.
+
+    `darwin` is the case that would have passed the old gate and produced a number
+    that looked valid. It is parametrized beside `win32` so neither can be fixed
+    without the other.
+    """
+    import scripts.benchmark_sp_lookup as benchmark
+
+    monkeypatch.setattr(benchmark.sys, "platform", platform)
+
+    with pytest.raises(SystemExit) as raised:
+        benchmark.main(["--output", "unused.json"])
+
+    assert f"cannot run on {platform}" in str(raised.value)
+    assert "by design" in str(raised.value)
+
+
+def test_the_gate_lands_before_any_artifact_is_loaded(tmp_path, monkeypatch):
+    """Ordering, asserted rather than described.
+
+    `shortest_paths.pt` is gigabytes and takes minutes. A host that cannot account
+    for memory must be told so before it pays that, not from inside a timing loop
+    afterwards. Pointing `--artifact` at a path that does not exist is the proof:
+    the platform refusal must arrive instead of a file error.
+    """
+    import scripts.benchmark_sp_lookup as benchmark
+
+    monkeypatch.setattr(benchmark.sys, "platform", "darwin")
+
+    with pytest.raises(SystemExit) as raised:
+        benchmark.main([
+            "--artifact", str(tmp_path / "does_not_exist.pt"),
+            "--output", str(tmp_path / "out.json"),
+        ])
+
+    assert "cannot run on darwin" in str(raised.value)
+
+
+def test_help_still_works_on_an_unsupported_host(monkeypatch, capsys):
+    """The gate runs **after** argument parsing, so a reader on any platform can
+    still see what the tool takes. Refusing `--help` bought nothing: it is the
+    artifact load and the timed workload that are worth protecting, and argparse
+    exits before either."""
+    import scripts.benchmark_sp_lookup as benchmark
+
+    monkeypatch.setattr(benchmark.sys, "platform", "win32")
+
+    with pytest.raises(SystemExit) as raised:
+        benchmark.main(["--help"])
+
+    assert raised.value.code == 0
+    assert "--artifact" in capsys.readouterr().out
+
+
+def test_the_benchmark_runs_where_linux_memory_accounting_exists():
+    """The other half: the gate must not fire on the platform it is written for.
+
+    Linux ARM and Linux x86 share `/proc` and kilobyte `ru_maxrss`, so one gate
+    covers both deployment architectures.
+    """
+    import scripts.benchmark_sp_lookup as benchmark
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("this assertion is about Linux hosts")
+
+    benchmark.require_linux_memory_accounting()

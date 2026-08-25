@@ -1,12 +1,28 @@
 # B-0.4 — vectorised shortest-path lookup
 
-**Status:** rev 6. The **baseline stage is complete** and its gate is answered:
-measured on the real artifact and the institution's primary deployment platform,
-the current lookup **exceeds the provisional budget by 1.7-2.5x** (§9), so the
-stage moves to the prototype phase. No index prototype is built yet and no
-production code has changed. This
-plan also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md)
-§5, which was wrong in a way that made the work look smaller and pointed at the
+**Status:** rev 11. **Measurement is complete and reviewed. Approach A is the
+selected candidate for the primary GB10 platform (§12.5).** Production adoption
+is **not** cleared: it waits on the integrated memory and reload gate in §13,
+which needs A wired into production code and therefore its own plan and review.
+
+The matrix was run twice. The repeat followed a measurement-order defect (§12.6)
+and **reproduces every conclusion** (§12.7); the recommendation was stated before
+it ran, so the repeat was a check rather than a search.
+
+- **§3.1, the latency gate — answered.** The current lookup breaches the
+  provisional budget in 22 of 60 measurements, worst 3,722 ms (§12.3). A
+  replacement is warranted.
+- **§5.3.2, the compatibility gate — passed**, as evidence about the generator's
+  invariant across independently built vintages (§10.1), with every future
+  artifact protected by the load-time assertion.
+- **§13, the productionisation gate — not started.** Integrated memory and
+  reload, on the deployed shape and on the smallest supported target.
+
+**No production code has changed, and none changes until §13's plan is
+approved.** Both prototypes live in `scripts/sp_index_prototypes.py` and are
+consumed only by the benchmark. The plan
+also **corrects** the description of B-0.4 in [`PLAN_B03.md`](PLAN_B03.md) §5,
+which was wrong in a way that made the work look smaller and pointed at the
 wrong file.
 
 Rev 2 after review: the stage is **benchmark-gated and baseline-first** (§3), the
@@ -48,6 +64,54 @@ artifact, whose p100 is only 1.17x its p50; the caller-shape conclusion holds at
 a median ratio of 1.001; the baseline misses the provisional budget by 1.7-2.5x;
 and 430 million rows makes index-build memory a first-order criterion that may
 invert §5.2's expected ordering.
+
+Rev 7: the §5.3.2 compatibility gate **passed** on a second, independently built
+artifact — zero duplicates, non-negative ids, and a composite-key maximum seven
+orders of magnitude inside int64 (§10). The two tables differ because their HPO
+vintages do, which reframes the gate as evidence about the generator's invariant
+rather than about one file, and makes the load-time assertion the right ongoing
+mechanism. Measured index-build memory came in at roughly three times §9.4's
+estimate, on unified memory shared with the model.
+
+Rev 8: both prototypes measured on the real artifact (§12). Approach A is
+8-34x faster on the **singleton** caller production ships — inverting §5.2's
+expectation that its advantage would be batched-only — and meets the provisional
+budget in every measurement where B misses four inside the contractual
+phenotype range. The memory argument against A **does not survive measurement**: neither
+build raises the process peak, which loading alone already sets at 21.11 GB. A's
+real cost is 3.44 GB of steady-state residence. §9.3's gate verdict also does not
+reproduce on this third artifact vintage, which is itself a finding about the
+baseline rather than about the prototypes.
+
+Rev 9: the shape-order alternation was false a second time — keyed on
+`(cell_index + position) % 2`, which the implementation rotation cancels, so
+`current` was singleton-first in 60/60 rows and both prototypes batched-first in
+60/60. Fixed, pinned by a test that runs the documented two-implementation
+configurations, and its bounded effect on §12 recorded (§12.6). The defective
+run's files are kept under `*_orderdefect` names so that record stays checkable.
+
+
+Rev 10: the repeat run landed complete — all six files — and **reproduces every
+conclusion** (§12.7): identical over-budget counts, the same four failing cells
+for B, singleton ratios within a percent or two, and the same 21.11 GB process
+peak in all three processes. `current` was measured in all three, agreeing to
+0.55% median / 1.98% max, so the loader-only process is an independent third
+reading rather than a number taken on trust from a prototype run.
+The one material difference is B's index build at 44.8 s against 62.5 s, which is
+run-to-run variance in a per-slice Python loop the ordering defect never touched.
+§12.0 also spells out the cells-versus-measurements arithmetic, because an
+earlier revision wrote "0/60 cells" for what are 30 cells measured on two caller
+shapes.
+
+Rev 11 after review: measurement is accepted and the stale text is aligned to it.
+§7 was still listing "is `current` fast enough" and "does A or B win" as unknown
+while §12 answered both — it now separates closed findings from the open
+institutional and platform questions. §11.3 no longer says the artifact and
+hardware are unavailable; it is the executed protocol, kept for reproducibility.
+§6's "the deployed artifact's duplicate count" is replaced by the design §10.1
+actually settled on. §12.5 is scoped to the primary GB10 platform. And §13 adds
+the productionisation gate: the isolated benchmark cannot show that A's permanent
+3.44 GB fits beside a resident model and service, or across a reload.
 
 ---
 
@@ -335,14 +399,22 @@ Named here because each is a way the change could silently alter results:
    occur.
 
    **This changes startup behaviour, so it needs a compatibility gate against
-   the real artifact, not only a synthetic test.** A table that today's
-   first-match implementation loads happily would make the new loader refuse to
-   start. Before the loader change is productionised: scan the **deployed**
-   artifact and record its fingerprint, pair count and duplicate count. **The
-   duplicate count must be zero.** If the artifact is unavailable, implementation
-   may proceed but **deployment compatibility remains pending**. If duplicates
-   are found, **stop** — B-0.4 does not invent a deduplication or migration
-   policy.
+   real artifacts, not only a synthetic test.** A table that today's first-match
+   implementation loads happily would make the new loader refuse to start.
+
+   **The gate is evidence about the generator, not clearance for one file
+   (§10.1).** The knowledge base is updated on purpose — that is a project
+   feature, not drift — so there is no single "deployed artifact" to clear:
+   there is a sequence of them, and the institution's will be a vintage nobody
+   has built yet. What the gate establishes is that real tables satisfy the
+   invariant, which is a property of `compute_shortest_paths.py`'s BFS rather
+   than of any one build. **Satisfied by two independently built artifacts from
+   different HPO vintages, both with zero duplicates.**
+
+   The ongoing guarantee is the load-time assertion itself, which runs on
+   whatever table is present. If a future rebuild ever violates uniqueness it
+   fails at startup rather than scoring wrongly — and **B-0.4 does not invent a
+   deduplication or migration policy** for that case.
 3. **Unreachable handling.** A phenotype with no row for a candidate contributes
    `unreachable_distance`, and a phenotype absent from `offsets` entirely does
    too. Both are misses in the vectorised form and must produce the same value,
@@ -470,8 +542,13 @@ is the order a direct reader of those attributes would see.
   inputs, including every path in §5.3;
 - the uniqueness assertion fires on a table that violates it, proven by a test
   that constructs one;
-- **the deployed artifact's duplicate count is recorded and is zero**, or
-  deployment compatibility is declared pending (§5.3.2);
+- **duplicate-freedom is established the way §5.3.2 and §10.1 settled it** —
+  as evidence about the generator's invariant, demonstrated across
+  independently built artifacts of different HPO vintages, with every *future*
+  artifact protected by the load-time uniqueness assertion. **Not** "the deployed
+  artifact's duplicate count", which the earlier wording asked for: the knowledge
+  base is updated on purpose, so there is no single deployed artifact to clear,
+  and the institution's will be a vintage nobody has built yet;
 - the int64 key domain is derived and bounds-checked from the tensors, with the
   check performed in Python integers before any int64 key tensor exists (§5.2);
 - both prototypes are measured on both caller shapes, with index-build time and
@@ -481,25 +558,39 @@ is the order a direct reader of those attributes would see.
 
 ---
 
-## 7. Known unknowns
+## 7. What is closed, and what is still open
 
-- **Whether the current implementation is already fast enough.** That is the
-  question §3 now says this stage asks rather than assumes. Nothing is timed.
-- **Whether approach A or B wins, and on which caller shape.** A's batched
-  advantage does not transfer to the singleton caller this stage retains, so the
-  two shapes may disagree. No speedup figure appears anywhere in this plan.
+Rewritten at rev 11. The first four entries were written before anything was
+timed; §12 answers two of them outright, and leaving them under "unknown" would
+have this plan contradicting its own results.
+
+### 7.1 Closed by measurement
+
+| Question | Answer | Where |
+|---|---|---|
+| Is the current implementation already fast enough? | **No** on `longest` at the gate point (295-300 ms against a 250 ms provisional budget) and in 22 of 60 measurements overall; **yes** on `sampled` at that same point. The verdict depends on the workload, which is itself the finding | §12.3 |
+| Does A or B win, and on which caller shape? | **A**, on the singleton shape production ships — 8-33× at the phenotype counts the API permits. B wins by ~1.27× only at a single phenotype. §5.2 expected A's advantage to be batched-only; the measurement inverts that | §12.2 |
+| Does A's index build threaten memory? | **In the isolated cold benchmark, A added no process peak above artifact loading** — 21.11 GB in all three processes, set by loading, with neither build approaching it. That is the whole of what was measured. A's **steady-state** 3.44 GB is real and carried in the decision, and **integrated steady-state and reload peaks remain open** under §7.2 and §13 | §12.4 |
+| The `L` distribution | Measured from the artifact: mean 22,007, p50 24,517, p100 28,580 | §9.1, §12 |
+| The key domain for A's int64 bound | Derived and bounds-checked from the **loaded tensors** — non-negative validation, strides from actual maxima, largest key checked in Python integers before any int64 tensor exists (§5.2). An earlier revision said the counts come from the `.meta.json` sidecar; that contradicted §5.2 and would have made correctness depend on an optional file | §5.2, §10 |
+
+### 7.2 Still open
+
 - **The interaction latency target and `selection_limit`**, both `[OPEN]`
-  institutional values (policy §1.3). A provisional engineering budget reads the
-  curves in the meantime and is labelled non-institutional.
-- **The `L` distribution**, which the metadata sidecar does not record. §5.4
-  measures it from an artifact when one is present; the first development runs
-  have none and are synthetic.
-- **The key domain**, needed for A's int64 bound. Derived and bounds-checked
-  from the **loaded tensors** (§5.2) — non-negative id validation, strides from
-  the actual maxima, and the largest possible key checked in Python integers
-  before any int64 key tensor exists. An earlier revision said the counts come
-  from the `.meta.json` sidecar; that contradicted §5.2 and would have made
-  correctness depend on an optional file.
+  institutional values (policy §1.3). Everything in §12 is read against a
+  **provisional, non-institutional** 250 ms budget. Final acceptance uses the
+  institutional target, and the margins there — 31× and 42× at the gate point —
+  are what make the choice robust to a target nobody has stated yet.
+- **Integrated memory and reload**, the productionisation gate. The benchmark
+  proves A's key does not raise the peak *in an isolated process*. It does not
+  prove that 3.44 GB fits while the model, graph, embeddings and API service are
+  all resident, nor during a live reload where two pipeline states may coexist.
+  See §13.
+- **Whether §9.3's higher baseline figures come from the artifact vintage or the
+  host.** Both differ between the runs and nothing measured separates them
+  (§12.3).
+- **The other two deployment targets.** §12 governs the primary GB10 platform.
+  The smallest supported target is unmeasured and is part of §13.
 
 ---
 
@@ -612,10 +703,17 @@ settles the caller question for *this* primitive without overreaching into B-1's
 
 ## 9. Artifact results — the real table, on the primary deployment platform
 
-Run on the deploying institution's **SPARK (GB10, aarch64)**, which the institution
-states is its **primary edge deployment platform** — so §3.1's second condition,
-a deployment-equivalent CPU, is satisfied **for that platform** and is asserted by
-a person, as the script refuses to self-attest it.
+Run on a **GB10 SPARK (aarch64)** — the hardware *class* the institution states
+is its **primary edge deployment platform**. §3.1's second condition, a
+deployment-equivalent CPU, is satisfied **for that class** and is asserted by a
+person, as the script refuses to self-attest it.
+
+*Class, not machine.* The run was made on the author's own SPARK rather than on
+an institutional host. For a CPU-bound lookup on identical silicon that is what
+"deployment-equivalent" means, but a different SPARK will differ in thread count,
+thermal behaviour and load, so a second machine's numbers are a second data point
+rather than a contradiction. An earlier revision of this section said "the
+deploying institution's SPARK", which claimed the machine and not just the class.
 
 | Provenance | |
 |---|---|
@@ -694,7 +792,7 @@ ordering:
 
 | | Index-build memory |
 |---|---|
-| **A — global composite key** | An int64 key over 429,971,678 rows is **3.44 GB**, and sorting it needs a comparable index buffer — order **+7 GB transient**, on top of a table already in the multi-GB range |
+| **A — global composite key** | An int64 key over 429,971,678 rows is **3.44 GB**, and sorting it needs a comparable index buffer — an estimate of order **+7 GB transient**, on top of a table already in the multi-GB range. **§10.2 measures roughly three times that** for a comparable operation, on unified memory shared with the model |
 | **B — per-phenotype sorted slices** | No global key; the offsets already exist; sorting happens within slices |
 
 §5.2 expected A to win on kernel-launch count and explicitly refused to prefer it
@@ -704,5 +802,532 @@ MAJOR 2 required be measured. Both are still prototyped; neither is preferred he
 
 
 ---
+
+---
+
+## 10. The §5.3.2 compatibility gate — passed, on a different artifact
+
+Run on a second GB10 SPARK. **Result: PASS.**
+
+| Check | Result |
+|---|---|
+| Duplicate `(phenotype, target, target_type)` rows | **0** |
+| Non-negative ids | `ph=0`, `tg=0`, `ty=0` minima — all pass |
+| Composite key maximum | **1,184,843,951** against the int64 limit of 9,223,372,036,854,775,807 — **seven orders of magnitude of headroom**, and computed in Python integers before any int64 tensor existed, as §5.2 requires |
+
+So the uniqueness assertion §5.3.2 introduces will not refuse to start on this
+table, and approach A's key domain is nowhere near overflow.
+
+### 10.1 A different artifact — and that is the normal case, not an anomaly
+
+| | §9's artifact | This one |
+|---|---|---|
+| Rows | 429,971,678 | **430,585,772** |
+| Difference | — | **+614,094 (+0.14%)** |
+
+The two machines built their knowledge graphs from **HPO releases roughly two
+weeks apart**, and HPO updates about monthly. So the tables differ because the
+source ontology moved, not because either build is wrong — and **the artifact the
+institution eventually deploys will be a third version again.**
+
+**This changes what the gate can establish, and makes it stronger rather than
+weaker.** A one-off scan of "the deployed artifact" is not a thing that can be
+completed, because there is no single deployed artifact — there is a sequence of
+them. What two *independently built* tables, from different ontology vintages,
+both passing with **zero duplicates** does establish is evidence about the
+**generator's invariant** rather than about one file: uniqueness comes from
+`compute_shortest_paths.py`'s BFS recording each node at first arrival
+(`scoring.py:91-94`), and that property survived an ontology update.
+
+Two mechanisms follow, and they are not the same one:
+
+| | What it is for |
+|---|---|
+| **The load-time assertion** (§5.3.2) | The ongoing guarantee. It runs on whatever table is present, so a future rebuild that violated uniqueness fails at startup instead of scoring wrongly. **This is the right mechanism precisely because the artifact keeps changing.** |
+| **The manual scan** | Evidence for the decision to productionise the assertion at all — that it will not refuse to start on real tables. Two vintages passing is the evidence; a third would not add much. |
+
+### 10.1.1 Version matching already exists, and is deliberately a warning
+
+**Nothing here needs a new version mechanism.** The project was scoped with an
+updatable knowledge base as a *feature* — rare-disease data improves over time
+and the model is meant to be upgraded with it — and
+`src/utils/fingerprint.py` is the mechanism that already serves it. It captures
+node types and counts, edge types including reverse, per-type feature dimensions
+and total KG node/edge counts; the trainer embeds it as `data_fingerprint`, and
+`verify_fingerprint` compares it at load (`pipeline.py:574-587`).
+
+**It warns rather than refuses, on purpose** — the module's own docstring says
+"so operators can decide". Since the two SPARKs' graphs differ, their
+fingerprints differ, and loading a checkpoint built against one KG onto the other
+would raise exactly that warning. That is the designed behaviour, not a defect.
+
+**Why §5.3.2's uniqueness assertion fails instead of warning, and why that is
+not an inconsistency.** The two checks differ in whether an operator can act on
+them:
+
+| Check | Behaviour | Why |
+|---|---|---|
+| Fingerprint mismatch | **Warn** | An operator can assess it. A KG that gained nodes since training may be perfectly fine to serve, and only they know whether it is |
+| Duplicate `(phenotype, target, target_type)` rows | **Fail** | Nobody can assess it. A duplicate makes the indexed lookup return a different distance from the linear scan it replaces, so the failure mode is a *silently different score* — there is no "accepted with duplicates" state that behaves correctly |
+
+Recorded because a project whose philosophy is "warn and let the operator judge"
+should not acquire a hard failure by accident, and this one is not an accident.
+
+**One consequence for §9's timings.** They were measured on one vintage. The
+table grew 0.14% in two weeks, which is slow but monotone, and the cost is linear
+in slice length — so the budget overshoot in §9.3 drifts in the wrong direction
+as HPO grows. Not alarming at this rate; recorded so nobody reads §9 as a fixed
+property of the system rather than of one snapshot of the ontology.
+
+### 10.2 Measured memory, and why UMA makes it a first-order constraint
+
+| | Reading |
+|---|---|
+| Peak during the scan | **28.7 GB** |
+| Settled afterwards | ~7 GB |
+| OS baseline at boot | ~5 GB |
+| **Attributable to the scan** | **~24 GB** |
+
+§9.4 estimated "order +7 GB transient" for approach A's key plus sort buffer.
+**The measured figure for a comparable operation is roughly three times that**,
+and the reason is visible in the scan itself: it widened three narrow columns to
+int64 before building the key, which is 3 × 430M × 8 B ≈ 10.3 GB before the key
+or the sort. A careful index build would not do that, so **24 GB is an upper
+bound for a naive implementation rather than a floor for a careful one** — but it
+places the operation in the tens of gigabytes, not the single digits.
+
+**On SPARK this is unified memory.** The index build does not draw from a
+separate host pool; it competes directly with the model, the graph tensors and
+the embeddings. §9.4 said 430 million rows makes index-build memory a
+first-order selection criterion. On UMA it is not merely first-order, it is
+shared with the thing the system exists to run — which is the strongest argument
+yet for prototyping approach B rather than assuming A.
+
+---
+
+## 11. Prototype phase — both built, correctness closed, both measured
+
+`scripts/sp_index_prototypes.py`. **Measurement subjects, not production code**,
+and not importable from `src/` — when one wins it moves into the loader and the
+primitive, and this file goes with the loser. No strategy base class, no
+registry, no runtime selector.
+
+### 11.1 What each one is
+
+| | Query | Retained beyond the loader's own tensors |
+|---|---|---|
+| **A — `global`** | one `searchsorted` over all `P x C` keys, one gather, one masked reduction — a constant number of launches | a full-length int64 key column |
+| **B — `slices`** | per phenotype: two `searchsorted` narrow the slice to the `target_type` run, one more resolves all `C` candidates inside it | **nothing** |
+
+Both turn the `O(L)` scan into `O(log L)`. **The difference between them is
+memory, not asymptotics** — which is why §9.4 and §10.2 are the sections that
+matter for the choice.
+
+Two implementation constraints that are easy to violate silently, so they are
+recorded rather than left to review:
+
+- **No query path may touch more than `O(log L)` rows.** Casting a slice to a
+  wider dtype to satisfy `torch.searchsorted` is `O(L)` and would quietly
+  reinstate the cost being removed. The *query* is cast to the stored dtype
+  instead, never the reverse. The first draft of B did the opposite.
+- **B's index is built one slice at a time.** A single global lexicographic sort
+  would produce the same ordering faster, but would allocate the same
+  full-length int64 key A does — erasing the difference being measured. The cost
+  moves into build *time*, which is a reported figure.
+
+### 11.2 Correctness — closed, in `tests/unit/test_sp_index_prototypes.py`
+
+25 tests, both prototypes, **exact equality with the scanning primitive** rather
+than a tolerance. Exactness is available because distances are BFS hop counts
+stored as int8 (`pipeline.py:493`) and the unreachable value is `max_hops + 1`,
+so every partial sum is a small integer well inside float64's exact range and
+summation order cannot change the bits.
+
+Covered: every target type; a phenotype absent from `offsets`; a candidate no
+phenotype reaches; an out-of-range `target_type`; negative and out-of-domain ids;
+the narrow `available` semantics both ways; the `C = 1` shape production ships;
+duplicate rows refused by both builders while the scanning path tolerates them;
+negative ids refused at build; the int64 domain overflow; and invariance to
+within-slice row order, which the loader's unstable `argsort` leaves arbitrary.
+
+**The tests were mutation-checked, not merely passed.** Three deliberate defects
+— dropping A's target-domain mask, disabling B's duplicate check, and performing
+the overflow check in int64 instead of Python integers — each failed exactly the
+test claiming that coverage. The overflow mutation is the one worth noting: a
+check performed in int64 has already wrapped and would pass, and only the
+Python-integer form catches it.
+
+### 11.3 The institutional-run protocol — executed, kept for reproducibility
+
+**This ran, twice.** §12 reports the second execution. The commands stay because
+the protocol is what makes those numbers reproducible, and because the same three
+processes are what §13's integrated check will be compared against.
+
+**Three processes, one prototype each**, each wrapped so the OS reports the peak
+independently of anything the script measures about itself:
+
+```
+D=docs/working/scorer-measurement
+SP=<path to shortest_paths.pt>
+
+# 1. loader only — establishes the peak that belongs to loading, not to any index
+/usr/bin/time -v .venv/bin/python scripts/benchmark_sp_lookup.py --artifact $SP \
+    --implementations current \
+    --output $D/EVIDENCE_B04_proto_baseline.json  2> $D/time_baseline.txt
+
+# 2. approach A
+/usr/bin/time -v .venv/bin/python scripts/benchmark_sp_lookup.py --artifact $SP \
+    --implementations current,global \
+    --output $D/EVIDENCE_B04_proto_global.json    2> $D/time_global.txt
+
+# 3. approach B
+/usr/bin/time -v .venv/bin/python scripts/benchmark_sp_lookup.py --artifact $SP \
+    --implementations current,slices \
+    --output $D/EVIDENCE_B04_proto_slices.json    2> $D/time_slices.txt
+```
+
+**One prototype per process is a measurement requirement, not tidiness.**
+`ru_maxrss` is a process high-water mark, so a second index built in the same
+process inherits the first's peak and its own cost becomes unattributable. The
+report carries `memory_attribution_isolated`, false whenever that was violated.
+Including `current` in runs 2 and 3 is free — it builds no index — and gives each
+file its own in-process baseline.
+
+**Run 1 is not redundant.** Loading and transforming a 430-million-row artifact
+sets a process peak far above anything an index build adds, and a high-water mark
+never comes back down. Without a loader-only process there is no way to tell
+which part of runs 2 and 3 belongs to the prototype.
+
+**Three memory numbers, kept apart on purpose:**
+
+| Field | What it is |
+|---|---|
+| `prototype_resident_bytes_actual` | every tensor the prototype object holds **in this process**, beside the loader's own — measured |
+| `production_incremental_bytes_projected` | the steady-state increment if the loader reordered in place instead of retaining both copies — a **projection from the design**, and a lower bound, since `pipeline.py:533-536` makes the reordered tensors observable surface that production must also keep |
+| `rss_before` / `rss_after` | current **and** peak RSS around the build. Current RSS moves; the peak does not come down, so the pair shows when a peak belongs to something earlier |
+
+An earlier revision reported only the projection, under the name
+`index_resident_bytes`. That showed approach B costing **zero**, which is true of
+the production design and false of the object being measured — it clones all
+three tensors so the benchmark can hold both implementations at once.
+
+**Two sampling and ordering corrections went in with this**, both of which would
+have biased the comparison rather than merely adding noise:
+
+- Candidates are drawn **without replacement**. `torch.randint` draws with it, and
+  a repeated candidate is not a list production can present — the real disease
+  candidate set is a set. Duplicates would also flatter a binary search, whose
+  repeated probes hit the same cache lines. A cell asking for more unique
+  candidates than the target space holds is **reported as skipped**, not capped.
+- Implementation order **rotates per cell**, independently of the caller-shape
+  alternation. Iterating in insertion order put `current` first in every cell of
+  every command above, so any warm-up advantage accrued to the same
+  implementation throughout.
+- The artifact digest uses chunked `file_sha256` — the one `measure_scorer.py`
+  already has. `sha256(path.read_bytes())` allocated the whole multi-gigabyte
+  file as one `bytes` object *after* the tensors were resident, which would have
+  set a high-water mark hiding every later build, and could OOM on unified
+  memory.
+
+Every implementation is timed over **the same cells** with the same phenotypes
+and candidates, so a difference between two rows is the implementation and not
+the workload; a test asserts that rather than trusting the loop. Shape order
+alternates per *(cell, implementation)* rather than per cell, so measurement
+order cannot become a fixed property of which implementation is being timed.
+
+**No timing figure appears in this section**, and the development-CPU smoke run
+that exercised the plumbing is not evidence: its synthetic slices are ~200 rows,
+where `log L` has almost nothing to save. §9's conclusion — that the baseline
+misses the provisional budget — stands on the artifact run, and the prototypes'
+verdict must stand on one too.
+
+---
+
+> **Platform: the benchmark is Linux-only, by design.** Memory residence is the
+> quantity §12.5 weighs — approach A's 3.44 GB against its speed — and it is read
+> the way Linux reports it: `/proc/self/status`, and `ru_maxrss` **in kilobytes**,
+> which is why `_rss_bytes` multiplies by 1024. `require_linux_memory_accounting`
+> gates on `sys.platform.startswith("linux")` and refuses right after argument
+> parsing, so `--help` works everywhere and the refusal lands before any artifact
+> load or timed workload.
+>
+> **A positive Linux gate, not a Windows blocklist.** The first version tested
+> `sys.platform == "win32"`, copied from `src/retrieval/backends/cuvs_backend.py`
+> — but only its first line. There the win32 test is a shortcut and the real
+> decision is `import cuvs`, so a non-Linux POSIX host lands on the `ImportError`.
+> Without that second half the shortcut became the whole check, and any non-Linux
+> POSIX host fell through into Linux-specific accounting. Review reports macOS
+> `ru_maxrss` is already in bytes, which would read 1024x high and look valid.
+>
+> This is a declaration, not a gap: the platform under measurement is the GB10 the
+> deployment runs on, Linux ARM and Linux x86 share both semantics, and a number
+> from elsewhere would not be the number this decision needs. The suite skips the
+> benchmark's *execution* tests off Linux with that reason, while its refusal
+> contract and its pure workload helpers stay unconditional.
+
+## 12. Prototype results — the real artifact, GB10 SPARK
+
+Three processes as §11.3 specifies, on artifact `7268900c…`, 430,585,772 rows,
+19,566 phenotypes. Evidence:
+[`EVIDENCE_B04_proto_global.json`](EVIDENCE_B04_proto_global.json),
+[`EVIDENCE_B04_proto_slices.json`](EVIDENCE_B04_proto_slices.json),
+`time_baseline.txt` / `time_global.txt` / `time_slices.txt`.
+
+**These are the corrected run.** An earlier run of the same matrix carried the
+ordering defect described in §12.6; its files are kept under `*_orderdefect`
+names and are **not** the basis of anything below. §12.7 compares the two.
+
+### 12.0 What "cell" means here
+
+The matrix is `2 selections × 3 phenotype counts × 5 candidate counts` =
+**30 workload cells**. Each cell is measured on **2 caller shapes** for each of
+**2 implementations**, giving **120 rows per file**. Where a count below reads
+"`n`/60" it is counting **(cell, caller-shape) measurements for one
+implementation**, not cells.
+
+An earlier revision of this section wrote "0/60 cells", conflating the two. That
+is the same cells-versus-rows slip rev 5 had to correct once already, which is
+why the arithmetic is spelled out rather than assumed.
+
+### 12.1 The three processes are comparable
+
+`current` was measured in **all three** — the loader-only process and both
+prototype processes — over the same 30 cells with the same seed, and all three
+consumed the same artifact digest. Spread across the three, over all 60
+(cell, shape) points:
+
+| | median | max |
+|---|---|---|
+| **three-way spread** | **0.55%** | **1.98%** |
+| baseline vs global-run | 0.45% | 1.98% |
+| baseline vs slices-run | 0.23% | 1.21% |
+| global-run vs slices-run | 0.38% | 1.93% |
+
+Every prototype-vs-current ratio below is therefore taken **within one process**,
+and the loader-only process is an independent third reading of the same
+`current` workload rather than a number to be taken on trust from either
+prototype run.
+
+Alternation, counted from the committed files — 30/30 for every
+(implementation, shape-order) pair, and 30/30 in the single-implementation
+baseline too:
+
+```
+baseline: {singleton:30, batched:30}
+global:   {(current,batched):30, (current,singleton):30, (global,batched):30, (global,singleton):30}
+slices:   {(current,batched):30, (current,singleton):30, (slices,batched):30, (slices,singleton):30}
+```
+
+### 12.2 Latency — the production caller shape decides it
+
+`slices / global`, median ms, **singleton** — the shape production ships (§4.1).
+Above 1.0 means **A is faster**:
+
+| P \ C | 10 | 50 | 100 | 200 | 500 |
+|---|---|---|---|---|---|
+| **1** (sampled) | 0.79 | 0.79 | 0.79 | 0.79 | 0.79 |
+| **20** (sampled) | 8.52 | 8.48 | 8.51 | 8.37 | 8.28 |
+| **100** (sampled) | 30.04 | 22.10 | 22.61 | 25.23 | 24.96 |
+| **1** (longest) | 0.78 | 0.79 | 0.79 | 0.79 | 0.78 |
+| **20** (longest) | 8.55 | 8.55 | 8.31 | 8.38 | 8.43 |
+| **100** (longest) | 33.23 | 22.83 | 22.60 | 22.04 | 21.66 |
+
+At one phenotype B wins by ~1.27×; at twenty A wins by ~8.4×; at a hundred A
+wins by 22-33×. The two selection rules agree closely, which is itself worth
+noting — this ordering is not an artifact of how the phenotypes were drawn.
+
+**The mechanism is kernel-launch count, and it inverts §5.2's expectation.** B
+loops over phenotypes *inside* the per-candidate loop — `C × P × 3` searches —
+while A loops only over candidates. §5.2 predicted A's advantage would appear in
+the **batched** shape and refused to prefer it because B-0.4 retains the
+singleton caller. The refusal was right and the reasoning was backwards: A's
+advantage is in **singleton**, which is exactly the shape that ships.
+
+At the declared gate point, C=200 and P=20:
+
+| selection | shape | `current` | A — global | B — slices |
+|---|---|---|---|---|
+| sampled | singleton | 219.4 | **7.09** | 59.35 |
+| sampled | batched | 219.2 | 0.73 | 0.52 |
+| longest | singleton | 294.9 | **7.09** | 59.39 |
+| longest | batched | 295.4 | 1.73 | 0.51 |
+
+### 12.3 Against the provisional budget
+
+250 ms, **non-institutional** (§9.3), over 60 measurements per implementation:
+
+| | over budget | of which singleton | worst measurement |
+|---|---|---|---|
+| `current` | **22 / 60** | 11 / 30 | 3,722 ms |
+| **A — global** | **0 / 60** | 0 / 30 | **33.4 ms** |
+| B — slices | 4 / 60 | 4 / 30 | 735.8 ms |
+
+B's four failures are all singleton at P=100: `(longest, C=200)` 293.8 ms,
+`(longest, C=500)` 723.8 ms, `(sampled, C=200)` 293.6 ms, `(sampled, C=500)`
+735.8 ms. One hundred phenotypes is the API's contractual maximum
+(`diagnose.py:56`), not an exotic case.
+
+**§9.3's verdict does not reproduce on this artifact, and that is a finding
+about the baseline.** At the gate point, `current` singleton measures:
+
+| selection | baseline | global-run | slices-run | §9.3 |
+|---|---|---|---|---|
+| sampled | 222.2 | 219.4 | 221.5 | 629.5 |
+| longest | 300.1 | 294.9 | 299.5 | 428.4 |
+
+So the `sampled` case is *under* the 250 ms budget in **all three** processes,
+and `longest` is over in all three. The baseline's gate result is artifact- and
+host-dependent; the prototypes' margins at that same point, 31× and 42×, are
+not. Whether §9.3's higher figures come from the different artifact vintage
+(429,971,678 rows against 430,585,772) or from the host is **not established
+here** — both differ, and nothing in these runs separates them.
+
+### 12.4 Memory — the argument against A does not survive measurement
+
+| | build time | resident (measured) | production steady-state | current-RSS delta | process peak |
+|---|---|---|---|---|---|
+| **A — global** | 19.9 s | 3.88 GB | **3.44 GB** | 4.31 GB | **unchanged** |
+| B — slices | 44.8 s | 2.58 GB | **0** | 2.59 GB | **unchanged** |
+
+`/usr/bin/time -v` maximum RSS: baseline 21,108,120 KB, global 21,107,928 KB,
+slices 21,108,048 KB — **the same 21.11 GB in all three**. Loading and
+transforming the artifact sets that peak; neither index build approaches it, and
+current RSS settles to ~3.1 GB before either build starts. This is what the
+loader-only process was for.
+
+§9.4 estimated "order +7 GB transient" for A and §10.2 measured ~24 GB for a
+comparable operation, calling it "the strongest argument yet for prototyping B
+rather than assuming A". **Measured, that argument fails**: A's transient is
+4.31 GB, inside a peak already established by loading, and A's projected key
+column is 3.44 GB against §9.4's predicted 3.44 GB — the one prediction that was
+exact.
+
+What survives is the **steady-state** cost. A adds 3.44 GB resident for as long
+as the process serves, on unified memory shared with the model. B adds nothing.
+
+### 12.5 Recommendation: approach A for the primary GB10 platform
+
+> **Scope, stated exactly.** Approach A is recommended **for the primary GB10
+> platform**, on the evidence in §12. Cross-platform adoption — and production
+> adoption on any platform — remains subject to the integrated steady-memory and
+> reload compatibility check in §13, including on the smallest supported target.
+> Nothing below is a clearance to ship.
+
+Not a close call on the axis that was declared to matter:
+
+- production ships the singleton caller, where A is 8-33× faster at the
+  phenotype counts the API permits;
+- A meets the provisional budget in **every** measurement; B misses four, all
+  inside the contractual phenotype range;
+- A builds more than twice as fast;
+- the memory objection that motivated preferring B was a predicted transient
+  that did not materialise.
+
+**The cost of choosing A is 3.44 GB of permanent resident memory on UMA**, and
+that is the whole of the case against it. It is a fraction of the 21.11 GB the
+loader already peaks at, but it is permanent where the peak is not — and that
+comparison is drawn **inside a process that holds nothing else**. Whether the
+same 3.44 GB is affordable beside a resident model, graph, embeddings and API
+service is a different question, and §13 is where it gets asked.
+
+**No third prototype is proposed.** A and B are the two ends of the same
+spectrum — A stores a global key, B stores none and pays per phenotype — and
+nothing between them was measured. §5.2's instruction was prototype both,
+productionise one.
+
+### 12.6 The measurement-order defect this run was made to correct
+
+The first run of this matrix chose the shape order with
+`(cell_index + position) % 2`, meaning to decorrelate it from the rotated
+implementation order. With two implementations the rotation moves `position` in
+lockstep with `cell_index`, so the sum was constant per implementation
+*identity*. Counted from `*_orderdefect`:
+
+| | rows | `measured_first` |
+|---|---|---|
+| `current` | 60 / 60 | `singleton` |
+| `global` | 60 / 60 | `batched` |
+| `slices` | 60 / 60 | `batched` |
+
+Implementation *position* rotated correctly at 30/30, so the fix was half-right
+and the half that failed is the one that mattered. This was the second false
+alternation in this script; the first (rev 5) branched on `len(rows) % 2`. Both
+are now pinned by regression tests, and the new one runs the **two-implementation
+configurations §11.3 documents** rather than a single-implementation run that
+cannot see the coupling.
+
+### 12.7 The defective run against the corrected one
+
+Recorded because "the conclusions were unaffected" is a claim, and a claim of
+that kind should be checkable rather than asserted:
+
+| | order-defect run | corrected run |
+|---|---|---|
+| gate point, `current` singleton (sampled / longest) | 222.7 / 301.0 ms | 219.4 / 294.9 ms |
+| gate point, A singleton | 7.15 ms | 7.09 ms |
+| gate point, B singleton | 59.67 ms | 59.35 ms |
+| singleton ratio at P=20 | 8.07-8.56 | 8.28-8.55 |
+| singleton ratio at P=100 | 22.97-33.89 | 21.66-33.23 |
+| over budget: current / A / B | 22 / 0 / 4 | 22 / 0 / 4 |
+| B's four failing cells | P=100, C∈{200,500}, both selections | **identical** |
+| A build / B build | 20.2 s / 62.5 s | 19.9 s / **44.8 s** |
+| process peak, all three | 21.11 GB | 21.11 GB |
+| cross-run `current` deviation | 0.62% median, 2.80% max | **0.38% / 1.93%** |
+
+**Every conclusion reproduces**, which is what §12.6's bounded-impact argument
+predicted before the repeat was run. The one material difference is B's index
+build, 62.5 s → 44.8 s: build time is a per-slice Python loop over 19,566
+iterations and was never touched by the ordering defect, so this is run-to-run
+variance on a shared machine and not a correction. It does not change §12.5,
+where A already built faster.
+
+The corrected run also carries the right `provenance.sampling_rule`. The
+`*_orderdefect` files say candidates were drawn "with replacement" when the code
+used `randperm`; that string was fixed in the same commit that produced this run.
+**Those files are not edited** — an evidence artifact that has been retouched is
+not evidence — and this paragraph is the correction.
+
+All six files of the corrected run are committed, including
+[`EVIDENCE_B04_proto_baseline.json`](EVIDENCE_B04_proto_baseline.json) — it
+carries `index_builds: []` and 60 rows of `current`, which is the third
+independent reading §12.1 rests on, alongside its loader-only peak of
+21,108,120 KB.
+
+---
+
+## 13. The productionisation gate — integrated memory and reload
+
+**§12 does not clear approach A to ship, and this section is why.** The benchmark
+measured a process that loads the artifact and nothing else. It establishes that
+A's index build does not raise a peak already set by loading. It does **not**
+establish that A's permanent 3.44 GB fits while the model, the graph tensors, the
+embeddings and the API service are all resident — nor what happens during a live
+reload, where an old and a new pipeline state may exist at once and the key
+column exists twice.
+
+On unified memory that gap matters more than it would elsewhere: A's key competes
+with the thing the system exists to run.
+
+**One bounded compatibility check for the selected implementation.** Five
+readings, on the deployed shape:
+
+| # | Reading |
+|---|---|
+| 1 | complete pipeline cold start with A wired in |
+| 2 | steady and peak RSS/UMA once serving |
+| 3 | one real reload, **if live reload is supported** — establish that first rather than assuming it |
+| 4 | peak while old and new pipeline state coexist |
+| 5 | the same on the **smallest supported deployment target**, not only GB10 |
+
+**What this is not.** No runtime A/B selector, no backend registry, no
+memory-budget framework, no second prototype. B is not kept alive behind a flag:
+§12.5 selected one implementation and this gate tests *that* one. If the gate
+fails, the finding is a memory result about A on a specific target, and what to
+do about it is decided then — not pre-built now against a failure that has not
+happened.
+
+**Sequencing.** This gate needs A wired into `_load_shortest_paths` and
+`sp_mean_distances`, which is production code and therefore its own plan and its
+own review. Nothing in `src/inference/` changes before that plan is approved.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
