@@ -12,11 +12,12 @@ before extending this script; several of its shapes are decisions rather than
 conveniences.
 
 **Linux only, by design.** Memory residence is the quantity this benchmark
-exists to weigh, and it is read through `resource.getrusage` and
-`/proc/self/status`. Windows has neither, and a Windows number would not be the
+exists to weigh, and it is read the way Linux reports it: `/proc/self/status`,
+and `ru_maxrss` in kilobytes. A number from another platform would not be the
 number the B-0.4 decision needs — the platform under measurement is the GB10 the
-deployment runs on. `require_posix_memory_accounting` refuses at startup rather
-than failing later from inside a timing loop.
+deployment runs on. `require_linux_memory_accounting` refuses right after argument
+parsing — `--help` still works everywhere — rather than failing later from inside
+a timing loop.
 
 **Run one prototype per process.** `ru_maxrss` is a process high-water mark, so
 a second index built in the same process inherits the first's peak and its own
@@ -322,32 +323,49 @@ def _callers(query_fn):
     return singleton, batched
 
 
-def require_posix_memory_accounting() -> None:
+def require_linux_memory_accounting() -> None:
     """Refuse to start on a host where this benchmark cannot measure what it
     exists to measure.
 
     **This is a platform declaration, not a missing feature.** Memory residence is
     the whole point of the B-0.4 comparison — approach A's 3.44 GB is the cost
-    being weighed against its speed — and it is read through `resource.getrusage`
-    and `/proc/self/status`, neither of which Windows has. The measured platform is
-    the GB10 the deployment runs on, so there is nothing to port: a Windows number
-    would not be the number the decision needs.
+    being weighed against its speed — and it is read the way Linux reports it:
+    `/proc/self/status`, and `ru_maxrss` **in kilobytes**, which is why `_rss_bytes`
+    multiplies by 1024. The measured platform is the GB10 the deployment runs on,
+    so there is nothing to port. A number from elsewhere would not be the number
+    the decision needs.
 
-    The same shape as `src/retrieval/backends/cuvs_backend.py`, which is Linux-only
-    for its own reasons and says so rather than pretending to degrade.
+    **A positive Linux gate, not a Windows blocklist**, and the difference is not
+    pedantic. The first version of this check tested `sys.platform == "win32"`,
+    copied from `src/retrieval/backends/cuvs_backend.py` — but only its first line.
+    There the win32 test is a shortcut and the real decision is `import cuvs`, so a
+    non-Linux POSIX host lands correctly on the `ImportError`. Copied without that
+    second half, the shortcut became the whole check, and every non-Linux POSIX
+    host fell straight through into accounting that assumes Linux semantics.
+    Review reports that `ru_maxrss` on macOS is already in bytes, which would make
+    the peak read 1024x too large — and it would look like a valid measurement,
+    which is the failure worth refusing over. That specific claim is the reviewer's
+    and is not verified here; what *is* verified is that this code encodes a Linux
+    assumption, and a Linux assumption belongs behind a Linux gate.
 
-    Checked **before** anything is loaded. `shortest_paths.pt` is gigabytes and
-    takes minutes; discovering the host cannot account for memory after paying
-    that, through a `ModuleNotFoundError` raised from inside a timing loop, is a
-    worse failure than the same fact stated in one line at the start.
+    Linux ARM and Linux x86 share both semantics, so one gate covers the two
+    deployment architectures that matter.
+
+    Called immediately after argument parsing: `--help` still works everywhere,
+    and the refusal lands **before artifact loading and any timed workload**.
+    That is the cost worth protecting — `shortest_paths.pt` is gigabytes and takes
+    minutes, and discovering the host cannot account for memory after paying it,
+    through a `ModuleNotFoundError` raised inside a timing loop, is a far worse
+    failure than one line at the start. It is *not* before "anything is loaded";
+    `torch` is imported when this module is.
     """
-    if sys.platform == "win32":
+    if not sys.platform.startswith("linux"):
         raise SystemExit(
-            "benchmark_sp_lookup requires POSIX memory accounting "
-            "(resource.getrusage and /proc/self/status) and cannot run on "
+            f"benchmark_sp_lookup requires Linux memory accounting "
+            f"(/proc/self/status, and ru_maxrss in kilobytes) and cannot run on "
             f"{sys.platform}. This is by design: the measurement is about memory "
-            "residence on the deployment platform, which is Linux. Nothing here "
-            "needs a Windows port — run it on the target host."
+            "residence on the deployment platform, which is Linux on ARM or x86. "
+            "Nothing here needs a port — run it on the target host."
         )
 
 
@@ -607,8 +625,6 @@ def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    require_posix_memory_accounting()
-
     parser = argparse.ArgumentParser(description="B-0.4 SP lookup baseline benchmark")
     parser.add_argument("--artifact", type=Path, default=None,
                         help="Real shortest_paths.pt. Its own slices are timed.")
@@ -629,6 +645,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+
+    # After parsing so `--help` works everywhere; before anything is loaded or
+    # timed, which is the cost that matters.
+    require_linux_memory_accounting()
 
     requested = [name.strip() for name in args.implementations.split(",") if name.strip()]
     unknown = [name for name in requested if name not in ("current", "global", "slices")]

@@ -16,12 +16,25 @@ Module: tests/integration/test_benchmark_sp_lookup.py
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 import torch
 
 from scripts.benchmark_sp_lookup import build_artifact_lookup, main
+
+
+#: The benchmark itself is Linux-only by design — see
+#: `require_linux_memory_accounting`. Its *execution* tests are therefore skipped
+#: elsewhere, with the reason stated rather than the suite going red for a
+#: platform decision it is meant to record. The refusal contract below and the
+#: pure workload helpers above stay unconditional: those are what a non-Linux
+#: runner can and should still check.
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="benchmark_sp_lookup is Linux-only by design (Linux RSS accounting)",
+)
 
 
 def write_artifact(path: Path, n_phenotypes: int = 25, target_space: int = 200) -> dict:
@@ -89,6 +102,7 @@ def test_missing_keys_are_fatal_rather_than_silently_partial(tmp_path):
         build_artifact_lookup(artifact, 5)
 
 
+@linux_only
 def test_artifact_run_records_the_artifact_as_its_slice_source(tmp_path):
     artifact = tmp_path / "shortest_paths.pt"
     write_artifact(artifact)
@@ -112,6 +126,7 @@ def test_artifact_run_records_the_artifact_as_its_slice_source(tmp_path):
     assert report["provenance"]["deployment_equivalent_cpu"] is False
 
 
+@linux_only
 def test_measurement_order_actually_alternates(tmp_path, monkeypatch):
     """The order was claimed, not performed.
 
@@ -162,6 +177,7 @@ def test_measurement_order_actually_alternates(tmp_path, monkeypatch):
     )
 
 
+@linux_only
 def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatch):
     """The regression this file exists for, stated as an assertion."""
     import scripts.benchmark_sp_lookup as bench
@@ -185,6 +201,7 @@ def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatc
 # =============================================================================
 # Prototype selection (B-0.4 prototype phase)
 # =============================================================================
+@linux_only
 def test_unknown_implementation_is_rejected():
     """A typo must not silently benchmark fewer implementations than asked for."""
     from scripts.benchmark_sp_lookup import main
@@ -193,6 +210,7 @@ def test_unknown_implementation_is_rejected():
         main(["--implementations", "current,globl"])
 
 
+@linux_only
 def test_memory_attribution_flag_is_honest(tmp_path, monkeypatch):
     """`ru_maxrss` is a process high-water mark, so two prototypes in one process
     cannot both be attributed. The report must say so rather than imply isolation.
@@ -225,6 +243,7 @@ def test_memory_attribution_flag_is_honest(tmp_path, monkeypatch):
     assert pair["implementations"] == ["current", "global", "slices"]
 
 
+@linux_only
 def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
     """A timing difference must be the implementation, not a different workload."""
     import scripts.benchmark_sp_lookup as bench
@@ -254,6 +273,7 @@ def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
     assert cells("current"), "the matrix produced no rows to compare"
 
 
+@linux_only
 def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, monkeypatch):
     """BLOCKING 3: `current` must not be measured first in every cell.
 
@@ -303,6 +323,7 @@ def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, mon
     assert workload("current") == workload("global") == workload("slices")
 
 
+@linux_only
 def test_candidates_are_sampled_without_replacement(tmp_path, monkeypatch):
     """MAJOR 2: a repeated candidate is not a workload production can present.
 
@@ -337,6 +358,7 @@ def test_candidates_are_sampled_without_replacement(tmp_path, monkeypatch):
         )
 
 
+@linux_only
 def test_a_cell_wanting_more_candidates_than_exist_is_reported_skipped(tmp_path, monkeypatch):
     """Sampling without replacement cannot invent candidates, and must not cap
     silently — a silent cap reads as "covered everything" when it did not."""
@@ -360,6 +382,7 @@ def test_a_cell_wanting_more_candidates_than_exist_is_reported_skipped(tmp_path,
     assert any("unique candidates" in r for r in reasons), reasons
 
 
+@linux_only
 @pytest.mark.parametrize("prototype", ["global", "slices"])
 def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, prototype):
     """BLOCKING regression: run the **documented two-implementation configs**.
@@ -426,6 +449,7 @@ def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, 
         assert len(orders) == 1, f"cell {key} measured two shape orders: {orders}"
 
 
+@linux_only
 def test_an_existing_output_is_not_silently_replaced(tmp_path, monkeypatch):
     """A measurement artifact is cited by digest; a repeat run must not clobber it.
 
@@ -456,19 +480,60 @@ def test_an_existing_output_is_not_silently_replaced(tmp_path, monkeypatch):
     assert output.exists()
 
 
-def test_the_benchmark_refuses_a_host_without_posix_memory_accounting(monkeypatch):
-    """A platform declaration, checked the way `cuvs_backend` checks its own.
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_a_non_linux_host_is_refused(monkeypatch, platform):
+    """A **positive Linux gate**, not a Windows blocklist, and the difference is
+    what this test exists for.
 
-    Windows has neither `resource.getrusage` nor `/proc/self/status`, and memory
-    residence is the quantity this benchmark exists to weigh — approach A's
-    3.44 GB against its speed. There is nothing to port: a Windows number would
-    not be the number the B-0.4 decision needs.
+    The first version tested `sys.platform == "win32"`, copied from
+    `src/retrieval/backends/cuvs_backend.py` — but only its first line. There the
+    win32 test is a shortcut and the real decision is `import cuvs`, so a non-Linux
+    POSIX host lands correctly on the `ImportError`. Copied without that second
+    half, the shortcut became the whole check and `darwin` fell through into
+    accounting that assumes Linux semantics: `/proc/self/status`, and `ru_maxrss`
+    in kilobytes, which `_rss_bytes` multiplies by 1024.
 
-    The refusal is asserted to happen **before** argument parsing, because the
-    alternative is discovering it from inside a timing loop after `shortest_paths.pt`
-    has already cost minutes and gigabytes. `--help` would be handled by argparse,
-    so passing it and still getting the refusal is what proves the ordering.
+    `darwin` is the case that would have passed the old gate and produced a number
+    that looked valid. It is parametrized beside `win32` so neither can be fixed
+    without the other.
     """
+    import scripts.benchmark_sp_lookup as benchmark
+
+    monkeypatch.setattr(benchmark.sys, "platform", platform)
+
+    with pytest.raises(SystemExit) as raised:
+        benchmark.main(["--output", "unused.json"])
+
+    assert f"cannot run on {platform}" in str(raised.value)
+    assert "by design" in str(raised.value)
+
+
+def test_the_gate_lands_before_any_artifact_is_loaded(tmp_path, monkeypatch):
+    """Ordering, asserted rather than described.
+
+    `shortest_paths.pt` is gigabytes and takes minutes. A host that cannot account
+    for memory must be told so before it pays that, not from inside a timing loop
+    afterwards. Pointing `--artifact` at a path that does not exist is the proof:
+    the platform refusal must arrive instead of a file error.
+    """
+    import scripts.benchmark_sp_lookup as benchmark
+
+    monkeypatch.setattr(benchmark.sys, "platform", "darwin")
+
+    with pytest.raises(SystemExit) as raised:
+        benchmark.main([
+            "--artifact", str(tmp_path / "does_not_exist.pt"),
+            "--output", str(tmp_path / "out.json"),
+        ])
+
+    assert "cannot run on darwin" in str(raised.value)
+
+
+def test_help_still_works_on_an_unsupported_host(monkeypatch, capsys):
+    """The gate runs **after** argument parsing, so a reader on any platform can
+    still see what the tool takes. Refusing `--help` bought nothing: it is the
+    artifact load and the timed workload that are worth protecting, and argparse
+    exits before either."""
     import scripts.benchmark_sp_lookup as benchmark
 
     monkeypatch.setattr(benchmark.sys, "platform", "win32")
@@ -476,12 +541,19 @@ def test_the_benchmark_refuses_a_host_without_posix_memory_accounting(monkeypatc
     with pytest.raises(SystemExit) as raised:
         benchmark.main(["--help"])
 
-    assert "cannot run on win32" in str(raised.value)
-    assert "by design" in str(raised.value)
+    assert raised.value.code == 0
+    assert "--artifact" in capsys.readouterr().out
 
 
-def test_the_benchmark_runs_where_posix_memory_accounting_exists():
-    """The other half: the gate must not fire on the platform it is written for."""
+def test_the_benchmark_runs_where_linux_memory_accounting_exists():
+    """The other half: the gate must not fire on the platform it is written for.
+
+    Linux ARM and Linux x86 share `/proc` and kilobyte `ru_maxrss`, so one gate
+    covers both deployment architectures.
+    """
     import scripts.benchmark_sp_lookup as benchmark
 
-    benchmark.require_posix_memory_accounting()
+    if not sys.platform.startswith("linux"):
+        pytest.skip("this assertion is about Linux hosts")
+
+    benchmark.require_linux_memory_accounting()

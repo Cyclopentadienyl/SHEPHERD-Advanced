@@ -1045,12 +1045,25 @@ verdict must stand on one too.
 
 > **Platform: the benchmark is Linux-only, by design.** Memory residence is the
 > quantity §12.5 weighs — approach A's 3.44 GB against its speed — and it is read
-> through `resource.getrusage` and `/proc/self/status`, neither of which Windows
-> has. `require_posix_memory_accounting` refuses at startup rather than failing
-> later from inside a timing loop. This is a declaration in the same shape as
-> `src/retrieval/backends/cuvs_backend.py`'s, not a gap: the platform under
-> measurement is the GB10 the deployment runs on, and a Windows number would not
-> be the number this decision needs.
+> the way Linux reports it: `/proc/self/status`, and `ru_maxrss` **in kilobytes**,
+> which is why `_rss_bytes` multiplies by 1024. `require_linux_memory_accounting`
+> gates on `sys.platform.startswith("linux")` and refuses right after argument
+> parsing, so `--help` works everywhere and the refusal lands before any artifact
+> load or timed workload.
+>
+> **A positive Linux gate, not a Windows blocklist.** The first version tested
+> `sys.platform == "win32"`, copied from `src/retrieval/backends/cuvs_backend.py`
+> — but only its first line. There the win32 test is a shortcut and the real
+> decision is `import cuvs`, so a non-Linux POSIX host lands on the `ImportError`.
+> Without that second half the shortcut became the whole check, and any non-Linux
+> POSIX host fell through into Linux-specific accounting. Review reports macOS
+> `ru_maxrss` is already in bytes, which would read 1024x high and look valid.
+>
+> This is a declaration, not a gap: the platform under measurement is the GB10 the
+> deployment runs on, Linux ARM and Linux x86 share both semantics, and a number
+> from elsewhere would not be the number this decision needs. The suite skips the
+> benchmark's *execution* tests off Linux with that reason, while its refusal
+> contract and its pure workload helpers stay unconditional.
 
 ## 12. Prototype results — the real artifact, GB10 SPARK
 
