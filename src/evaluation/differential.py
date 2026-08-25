@@ -95,7 +95,7 @@ Module: src/evaluation/differential.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from src.evaluation.measurement import (
     MeasurementManifest,
@@ -281,12 +281,20 @@ def _materialize_batches(batches: Any) -> List[Dict[str, Any]]:
     in place would still affect the other. Nothing does, and a snapshot framework
     to guarantee it would be a larger thing than the problem.
     """
+    # `iter()` alone, not the whole materialisation. A `TypeError` raised *inside*
+    # a generator's body — a collate that hit one, say — is a fault in producing
+    # the batches, not evidence that the object was never iterable, and wrapping
+    # the full `list(...)` would relabel it as the latter and send the reader to
+    # the wrong place. Only the failure to obtain an iterator is diagnosed here;
+    # everything the iteration itself raises propagates unchanged.
     try:
-        materialized = list(batches)
+        iterator = iter(batches)
     except TypeError as exc:
         raise TypeError(
             f"batches must be iterable; {type(batches).__name__} is not ({exc})"
         ) from exc
+
+    materialized = list(iterator)
 
     if not materialized:
         raise ValueError(
@@ -364,7 +372,7 @@ def _batch_local_truths(batches: Sequence[Dict[str, Any]]) -> List[int]:
 
 def compare_trainer_against_mode_a(
     trainer: Any,
-    batches: Sequence[Dict[str, Any]],
+    batches: Iterable[Dict[str, Any]],
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
 ) -> DifferentialResult:

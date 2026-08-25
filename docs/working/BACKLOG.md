@@ -312,8 +312,14 @@ the one thing the calibration cannot observe. `DifferentialResult` records the
 `bit_exact_contract`, which says which of the two questions the run answered.
 
 **This promotes item 1e.** `amp_dtype` was listed as a manifest tidiness item; it
-is the field that decides whether a recorded number is an exact result or a
-tolerance observation. A calibration artifact without it cannot say what it means.
+is the field that says which of two comparisons a recorded number came from — an
+exact comparison at **equal** precision, or an exact comparison of discrete ranking
+artifacts computed at **unequal** precision. Both are exact; they are not the same
+question. Neither is a tolerance comparison, and an earlier revision of this
+sentence called the second one that, which was wrong twice over: no tolerance
+exists anywhere in the harness, and the phrase invited a reader to expect a
+threshold that is deliberately absent. A calibration artifact without `amp_dtype`
+cannot say which of the two it is.
 
 **What the bounded tests consequently cannot do**, stated so item 7a does not
 inherit it silently: they cannot ask the CUDA question at all. The container this

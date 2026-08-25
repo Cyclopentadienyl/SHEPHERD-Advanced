@@ -225,8 +225,11 @@ def test_the_predictions_are_truncated_rows_of_local_indices(cohort):
 def test_amp_is_off_on_cpu_so_the_question_asked_was_the_exact_one(cohort):
     """`TrainerConfig(use_amp=True)` above is deliberate: the trainer resolves it
     against the device (`trainer.py:380`) and lands on False. Asserting the
-    *resolved* state is what stops these tests from silently becoming a
-    tolerance comparison if that resolution ever changes."""
+    *resolved* state is what stops these tests from silently starting to compare
+    two **unequal** precision regimes if that resolution ever changes.
+
+    They would still be exact comparisons — the harness has no tolerance anywhere —
+    but of a different question, and one this cohort cannot answer."""
     result = run(cohort)
 
     assert result.amp_enabled is False
@@ -578,6 +581,13 @@ def test_an_aggregate_only_disagreement_is_caught(cohort, monkeypatch):
     assert result.agreed is False
     assert result.mrr_absolute_difference == pytest.approx(0.5)
 
+    # The state this pins is deliberately contradictory-looking and must stay
+    # readable: a run that fails while **no sample** moved. An artifact reporting
+    # `agreed=False` beside a zero rate is telling the reader the disagreement is
+    # in the aggregate alone, which is exactly what happened.
+    assert result.n_samples_disagreeing == 0
+    assert result.to_dict()["sample_disagreement_rate"] == 0.0
+
 
 def test_the_verdict_records_the_compile_wrapper_it_observed(cohort):
     """Backlog item D2, on the artifact where the numeric regime actually varies.
@@ -763,9 +773,16 @@ def test_disagreeing_samples_are_counted_as_samples_not_as_disagreements(cohort,
 
     result = run(cohort)
 
+    # A reversed ranking moves both the top-K row and the truth's rank, so every
+    # affected sample raises two kinds. That is what makes the two quantities
+    # distinguishable here — `<=` would have passed on an implementation that
+    # simply summed the kinds.
+    assert set(result.n_disagreements_by_kind) == {"top_k", "reciprocal_rank"}
+    assert result.n_samples_disagreeing == len({d.index for d in result.disagreements})
+    assert result.n_samples_disagreeing < sum(result.n_disagreements_by_kind.values())
+
     assert result.agreed is False
     assert 0 < result.n_samples_disagreeing <= result.n_samples
-    assert result.n_samples_disagreeing <= sum(result.n_disagreements_by_kind.values())
     assert result.to_dict()["sample_disagreement_rate"] == (
         result.n_samples_disagreeing / result.n_samples
     )
@@ -776,3 +793,31 @@ def test_an_agreeing_run_reports_a_zero_rate(cohort):
 
     assert result.n_samples_disagreeing == 0
     assert result.to_dict()["sample_disagreement_rate"] == 0.0
+
+
+def test_a_failure_inside_the_iteration_is_not_relabelled_as_non_iterability(cohort):
+    """Two different faults, and the message must not conflate them.
+
+    A `TypeError` raised while *producing* batches — a collate that hit one, say —
+    is a fault in the stream, not evidence the object was never iterable. Only the
+    failure to obtain an iterator is diagnosed; whatever the iteration itself
+    raises propagates unchanged, with its own message and traceback.
+    """
+
+    def failing():
+        yield cohort.batches[0]
+        raise TypeError("the collate hit a type error")
+
+    with pytest.raises(TypeError) as raised:
+        compare_trainer_against_mode_a(
+            make_trainer(cohort), failing(), cohort.manifest,
+            device=torch.device("cpu"),
+        )
+
+    # The absence is the assertion. Matching the original text alone proves
+    # nothing: an implementation that wraps the whole materialisation interpolates
+    # that text into its own message, so a `match=` on it passes either way. What
+    # separates the two is whether the run is also told the object was not
+    # iterable, which it was.
+    assert "must be iterable" not in str(raised.value)
+    assert "the collate hit a type error" in str(raised.value)
