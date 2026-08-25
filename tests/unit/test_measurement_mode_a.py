@@ -179,8 +179,10 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
     *is* the expanded subgraph — so a manifest that repeats the loader's literal
     instead of reading it is accurate only by coincidence.
 
-    Both now read `DIAGNOSIS_SUBGRAPH_HOPS`. Moving it moves the manifest, which is
-    what makes the field a report rather than a second claim to keep in step.
+    **Two fields, not one.** `candidate_construction` says the same thing in prose
+    for a human reader, and it was still spelling "2-hop" as a literal after the
+    numeric field started reading the constant. Moving the constant now moves both,
+    which is what stops the artifact contradicting itself.
     """
     import argparse
 
@@ -198,11 +200,18 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
         args, graph_data, 6, torch.device("cpu"), build_loader_config(args)
     )
 
-    assert build().subgraph_hops == data_loader.DIAGNOSIS_SUBGRAPH_HOPS
+    before = build()
+    assert before.subgraph_hops == data_loader.DIAGNOSIS_SUBGRAPH_HOPS
+    assert f"{data_loader.DIAGNOSIS_SUBGRAPH_HOPS}-hop" in before.candidate_construction
 
     monkeypatch.setattr(data_loader, "DIAGNOSIS_SUBGRAPH_HOPS", 3)
 
-    assert build().subgraph_hops == 3
+    after = build()
+    assert after.subgraph_hops == 3
+    # The prose too. A manifest reading `subgraph_hops=3` beside "per-batch 2-hop"
+    # contradicts itself, and the number moving alone is how that happens.
+    assert "3-hop" in after.candidate_construction
+    assert "2-hop" not in after.candidate_construction
 
 
 def test_measuring_inside_an_autocast_block_is_refused(workspace):

@@ -324,21 +324,39 @@ it is not a substitute for the institutional run.
 **And a gap item 7a must close before it runs, found on audit rather than in
 review.** On CUDA the trainer's defaults are `use_amp=True, amp_dtype=float16`, so
 a differential run left at its defaults compares an autocast trainer pass against
-an fp32 Mode A pass and will report `agreed=False` **by construction**. Nothing is
-wrong when that happens, and nothing currently says what a *passing* CUDA run
-looks like:
+an fp32 Mode A pass. **Two legs, and 7a must say which one its acceptance turns
+on rather than inheriting a default:**
 
-| `TrainerConfig` | What the run answers | Pass criterion |
+| `TrainerConfig` | What the run answers | Who decides the criterion |
 |---|---|---|
-| `use_amp=False` | do the two implementations agree exactly | `agreed is True`, as on CPU |
-| `use_amp=True` (the CUDA default) | does autocast reorder anything near a tie | **undefined — 7a's to define** |
+| `use_amp=False` | do the two implementations agree exactly | **engineering** — `agreed is True`, the same hard parity gate as on CPU |
+| `use_amp=True` (the CUDA default) | does autocast reorder anything, on this model, cohort and device | **the institution's experimenters** — see below |
 
-So 7a must set `use_amp` explicitly rather than inherit it, and must state which
-of the two questions its acceptance turns on. Deciding a tolerance for the second
-is design work, not harness work, and is deliberately not done here. The
-mechanical part is already in place: `DifferentialResult` records the resolved
-`amp_enabled` / `amp_dtype` and `bit_exact_contract` says which question was
-asked.
+**A first draft of this section said an AMP-on run reports `agreed=False` "by
+construction". That was wrong and is corrected here.** Nothing in the harness
+compares score bits. The comparison is over discrete ranking artifacts — the
+top-`K` rows, the truths, the reciprocal ranks and the aggregate — so a precision
+difference registers only where it actually *reorders* something. A run in which
+fp16 reorders nothing agrees exactly. There is likewise **no numerical tolerance
+anywhere in the harness**, so an AMP-on result must not be described as a
+"tolerance observation", which an earlier revision also called it. It is an exact
+comparison of discrete artifacts computed under unequal precision regimes.
+
+**The AMP-on criterion is not engineering's to set, and this is a decision, not a
+deferral.** Whether autocast changes a diagnosis ranking enough to matter is an
+empirical question about a particular model, cohort and device, and the acceptable
+answer is a clinical judgement. Neither can be predicted from this side. The
+institution's position is that **the switch stays a switch**: the hospital's
+experimenters configure it, run it both ways if they wish, and record what they
+observe.
+
+So engineering's deliverable is the **evidence, not the verdict**, and it is
+already in place — `DifferentialResult` carries the resolved `amp_enabled` and
+`amp_dtype`, `bit_exact_contract` for which question was asked,
+`n_samples_disagreeing` and its rate, the affected rows with their sample ids and
+both rankings, and `mrr_absolute_difference`. Those are the quantities a
+disagreement criterion would be written in terms of. **No threshold is hardcoded
+and none should be.**
 
 ### 3.2 Validation measures no unseen-disease generalisation at all
 

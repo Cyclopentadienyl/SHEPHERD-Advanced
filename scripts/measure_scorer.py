@@ -200,6 +200,26 @@ def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> An
     return model
 
 
+def subgraph_candidate_construction() -> str:
+    """The Mode A/B candidate description, with the hop count read rather than
+    retyped.
+
+    `manifest.subgraph_hops` and this sentence describe the same thing to two
+    different readers, so a literal here would let one move without the other and
+    produce an artifact that contradicts itself — `subgraph_hops=3` beside "2-hop".
+    Both now come from `DIAGNOSIS_SUBGRAPH_HOPS`.
+
+    Mode C has no hop count in its description because it has no expansion: its
+    candidates are every disease in the graph.
+    """
+    from src.kg.data_loader import DIAGNOSIS_SUBGRAPH_HOPS
+
+    return (
+        f"per-batch {DIAGNOSIS_SUBGRAPH_HOPS}-hop subgraph seeded from answers "
+        "and negatives"
+    )
+
+
 def build_loader_config(args: argparse.Namespace) -> Any:
     """The one `DataLoaderConfig` the run uses.
 
@@ -221,11 +241,14 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    n_samples: int, device: torch.device, loader_config: Any,
                    cuda_executed: Optional[bool] = None,
                    mode: str = "A",
-                   candidate_construction: str =
-                   "per-batch 2-hop subgraph seeded from answers and negatives",
+                   candidate_construction: Optional[str] = None,
                    model_construction: str = "frozen evaluator (legacy)",
                    model: Any = None) -> Any:
     """Build the manifest for one mode.
+
+    `candidate_construction` defaults to the subgraph description derived from
+    `DIAGNOSIS_SUBGRAPH_HOPS`, so it cannot drift from `subgraph_hops` in the same
+    artifact. Mode C passes its own, having no expansion to describe.
 
     `model` is optional and is used only to **observe** whether what ran was a
     `torch.compile` wrapper object. Omitting it records
@@ -245,7 +268,11 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         mode=mode,
         split=args.split,
         n_samples=n_samples,
-        candidate_construction=candidate_construction,
+        candidate_construction=(
+            subgraph_candidate_construction()
+            if candidate_construction is None
+            else candidate_construction
+        ),
         negative_sampling_strategy=loader_config.negative_sampling_strategy,
         num_negative_samples=loader_config.num_negative_samples,
         subgraph_strategy=loader_config.sampling_strategy,
@@ -483,11 +510,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             # moved their numbers is `production_model`'s, at the moment those
             # embeddings were computed.
             manifest_a=manifest_for(
-                "A", "per-batch 2-hop subgraph seeded from answers and negatives",
+                "A", subgraph_candidate_construction(),
                 "frozen evaluator (legacy)", model=legacy_model,
             ),
             manifest_b=manifest_for(
-                "B", "per-batch 2-hop subgraph seeded from answers and negatives",
+                "B", subgraph_candidate_construction(),
                 "production (build_shepherd_model)", model=production_model,
             ) if "B" in modes else None,
             full_graph_embeddings=embeddings,

@@ -64,11 +64,22 @@ it is the thing this module has to report.** `Trainer._run_evaluation_pass`
 forwards inside `autocast(..., enabled=self.use_amp)`; the Mode A traversal has no
 autocast at all. `trainer.py:380` resolves `use_amp = config.use_amp and
 device.type == "cuda"`, so on CPU the two are both fp32 and may be compared
-exactly, while on CUDA the default `float16` autocast makes the trainer's scores
-differ in the last bits and reorders anything close to a tie. A disagreement in
-that state is a **measurement of AMP's effect on the ranking**, not a harness
-fault, so `DifferentialResult` records the observed AMP state beside the verdict
-and `bit_exact_contract` says which of the two questions the run answered.
+exactly, while on CUDA the default `float16` autocast computes the trainer's
+scores at a different precision.
+
+**That does not mean a CUDA run must disagree.** Nothing here compares score bits.
+The comparison is over discrete ranking artifacts — the top-`K` rows, the truths,
+the reciprocal ranks and the aggregate — so a precision difference shows up only
+where it actually *reorders* something, and a run in which it reorders nothing
+agrees exactly. Whether it does is an empirical question about a particular model,
+cohort and device, and this module does not predict it.
+
+There is likewise **no numerical tolerance** anywhere in this file, and a result
+produced under AMP should not be described as one. It is an exact comparison of
+discrete artifacts computed under unequal precision regimes. What the result
+carries is what an experimenter needs to characterise that: the observed AMP
+state, `bit_exact_contract` for which question was asked, the disagreeing-sample
+count and rate, the affected rows, and the MRR gap.
 Deciding what to do about that is item 1e's `amp_dtype` manifest field; refusing
 to run under AMP would only make the effect unmeasurable.
 
@@ -194,6 +205,18 @@ class DifferentialResult:
     on this cohort — a different and still worth-recording question."""
 
     device: str
+    n_samples_disagreeing: int = 0
+    """How many **samples** disagree, as opposed to how many disagreements there
+    are. One sample can raise up to three (`top_k`, `truth`, `reciprocal_rank`), so
+    the counts by kind cannot be added into a rate.
+
+    Reported because characterising a run is not the same as passing it. Under AMP
+    the two paths compute at different precisions on purpose, and whether that
+    reorders anything is an empirical question about a particular model, cohort and
+    device — so what this returns is the rate, the affected samples and the MRR
+    gap, and **not** a verdict about whether the rate is acceptable. That judgement
+    belongs to whoever is running the experiment."""
+
     n_disagreements_by_kind: Dict[str, int] = field(default_factory=dict)
     mode_a_result: Optional[ModeAResult] = None
     """The Mode A run this comparison performed, so a caller needing both the
@@ -206,6 +229,10 @@ class DifferentialResult:
             "n_samples": self.n_samples,
             "agreed": self.agreed,
             "n_disagreements": len(self.disagreements),
+            "n_samples_disagreeing": self.n_samples_disagreeing,
+            "sample_disagreement_rate": (
+                self.n_samples_disagreeing / self.n_samples if self.n_samples else None
+            ),
             "aggregate_mrr_agreed": self.aggregate_mrr_agreed,
             "n_disagreements_by_kind": self.n_disagreements_by_kind,
             "disagreements": [d.to_dict() for d in self.disagreements],
@@ -220,55 +247,53 @@ class DifferentialResult:
         }
 
 
-def _require_rerunnable(batches: Any) -> List[Dict[str, Any]]:
-    """Refuse anything that does not hand out the same batches twice.
+def _materialize_batches(batches: Any) -> List[Dict[str, Any]]:
+    """Freeze the batch stream once, and hand that list to both paths.
 
-    **This is the guard the whole module rests on.** Both paths iterate the stream
-    independently, so a generator would be drained by whichever ran first and the
-    second would see an empty stream. That does not fail loudly: Mode A's
+    **The snapshot is the invariant.** Both paths iterate independently, so a
+    generator handed straight to them would be drained by whichever ran first and
+    the second would see an empty stream. That does not fail loudly: Mode A's
     `_assert_cohort_is_intact` would raise on one ordering, but on the other the
     trainer pass returns no predictions and an empty metric dict, and a comparison
     of two empty cohorts is trivially "agreed". A calibration that passes by
     measuring nothing is the exact failure this module exists to make impossible.
 
-    **The property is checked, not the type.** An earlier version accepted only
-    `list` and `tuple`. That was a gate on one shape of the hazard rather than on
-    the hazard: a `list` subclass with a stateful `__iter__` satisfied it and broke
-    the contract anyway, while a perfectly well-behaved re-iterable container was
-    turned away for not being either type. Two traversals are compared by **object
-    identity**, which is exactly what the two paths need — a container that rebuilt
-    its batch dicts on each pass would hand them different tensors, and that is the
-    same failure wearing a different shape.
+    Materialising here closes that, and closes it for **every** input rather than
+    for the shapes a check could recognise. Two earlier versions tried to police
+    the caller's container instead, and both were worse:
 
-    Cheap: the comparison is over *batches*, tens to hundreds of them, not samples,
-    and it runs once per calibration.
+      - an `isinstance(batches, (list, tuple))` gate let a `list` subclass with a
+        stateful `__iter__` through and turned away a well-behaved re-iterable
+        that was neither type;
+      - comparing two traversals by object identity fixed that but validated a
+        property nothing downstream depends on. Every use below reads the list
+        returned from here, so how the caller behaves on a *second* pass is
+        already irrelevant — while the second pass rejected a finite generator and
+        a rebuilding iterable that freeze perfectly well, doubled the caller's
+        iteration cost and side effects, and could block or raise on a live
+        dataloader that had already given a complete first pass.
 
-    Returns a plain list, so everything downstream traverses a container whose
-    behaviour is now known rather than the caller's.
+    So the only two refusals left are the ones a snapshot cannot repair: input
+    that is not iterable at all, and input that is empty.
+
+    **What this does not do**, so it is not mistaken for more: it takes no deep
+    copy. The two paths receive the same batch dicts, and a path that mutated one
+    in place would still affect the other. Nothing does, and a snapshot framework
+    to guarantee it would be a larger thing than the problem.
     """
     try:
-        first = list(batches)
-        second = list(batches)
+        materialized = list(batches)
     except TypeError as exc:
         raise TypeError(
             f"batches must be iterable; {type(batches).__name__} is not ({exc})"
         ) from exc
 
-    if len(first) != len(second) or any(a is not b for a, b in zip(first, second)):
-        raise TypeError(
-            f"batches ({type(batches).__name__}) did not yield the same objects on "
-            f"a second traversal — {len(first)} then {len(second)}. Both paths "
-            "traverse it independently, so a one-shot iterator hands the second "
-            "caller an empty stream and the comparison passes by measuring nothing, "
-            "and a container that rebuilds its batches hands the two paths "
-            "different tensors"
-        )
-    if not first:
+    if not materialized:
         raise ValueError(
             "no batches to compare; an empty cohort would report agreement without "
             "having compared anything"
         )
-    return first
+    return materialized
 
 
 def _trainer_global_truths(
@@ -371,12 +396,12 @@ def compare_trainer_against_mode_a(
     """
     import torch as _torch
 
-    batches = _require_rerunnable(batches)
+    batches = _materialize_batches(batches)
 
     trainer.model.eval()
     trainer_pass = trainer._run_evaluation_pass(batches)
 
-    # `_require_rerunnable` checks that the *list* is non-empty; this checks that
+    # `_materialize_batches` checks that the *list* is non-empty; this checks that
     # the list produced rows. They are different failures. The reachable route is
     # a batch whose model output carries no `diagnosis_scores` — `_compute_model_outputs`
     # returns early when the encoder yields no disease or phenotype embeddings, and
@@ -486,6 +511,7 @@ def compare_trainer_against_mode_a(
     by_kind: Dict[str, int] = {}
     for item in disagreements:
         by_kind[item.kind] = by_kind.get(item.kind, 0) + 1
+    n_samples_disagreeing = len({item.index for item in disagreements})
 
     amp_enabled = bool(getattr(trainer, "use_amp", False))
     amp_dtype = str(getattr(trainer, "amp_dtype", _torch.float32))
@@ -506,6 +532,7 @@ def compare_trainer_against_mode_a(
         torch_compile_wrapped=torch_compile_wrapped,
         bit_exact_contract=not amp_enabled,
         device=str(trainer.device),
+        n_samples_disagreeing=n_samples_disagreeing,
         n_disagreements_by_kind=by_kind,
         mode_a_result=mode_a_result,
     )

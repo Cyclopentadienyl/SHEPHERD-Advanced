@@ -16,8 +16,9 @@ the point of a differential test is that both sides see the objects production
 would hand them.
 
 **The batches are materialised once and both paths get that list.** That is the
-whole design, and `_require_rerunnable` is what stops it degrading into two
-independent draws with no shared cohort.
+whole design, and `_materialize_batches` is what stops it degrading into two
+independent draws with no shared cohort — by freezing the stream rather than by
+inspecting what the caller passed.
 
 **AMP is off here because the device is CPU** (`trainer.py:380` resolves
 `use_amp = config.use_amp and device.type == "cuda"`), so these tests measure the
@@ -247,45 +248,46 @@ def test_the_result_serialises_what_a_reader_needs_to_interpret_it(cohort):
 # ---------------------------------------------------------------------------
 # The guards against a comparison that passes by measuring nothing
 # ---------------------------------------------------------------------------
-def test_a_one_shot_iterator_is_refused(cohort):
-    """The failure this guard exists for is silent, not loud. A generator is
-    drained by whichever path runs first; the second sees an empty stream, and on
-    one of the two orderings that produces two empty cohorts and a cheerful
-    `agreed=True`."""
-    with pytest.raises(TypeError, match="did not yield the same objects"):
-        compare_trainer_against_mode_a(
-            make_trainer(cohort), (b for b in cohort.batches), cohort.manifest,
-            device=torch.device("cpu"),
-        )
+def test_a_one_shot_iterator_is_frozen_rather_than_refused(cohort):
+    """The hazard is real and the snapshot is what removes it.
 
+    Handed straight to both paths, a generator is drained by whichever runs first;
+    the second sees an empty stream, and on one of the two orderings that produces
+    two empty cohorts and a cheerful `agreed=True`. Frozen once, it is simply a
+    cohort — so this is accepted, not refused.
 
-def test_a_stateful_sequence_is_refused_although_it_is_a_list(cohort):
-    """The case a type gate cannot see.
-
-    An earlier version accepted any `list` or `tuple`. This **is** a list, and it
-    breaks the contract anyway: the second traversal hands back different objects,
-    so the two paths would score different tensors and compare the results as
-    though they had not.
+    Two earlier versions rejected it. Rejecting cost the caller a `list(...)` they
+    should not have had to write, and bought nothing the snapshot does not already
+    guarantee.
     """
+    result = compare_trainer_against_mode_a(
+        make_trainer(cohort), (b for b in cohort.batches), cohort.manifest,
+        device=torch.device("cpu"),
+    )
+
+    assert result.agreed is True
+    assert result.n_samples > 0
+
+
+def test_a_rebuilding_iterable_is_frozen_rather_than_refused(cohort):
+    """A container that hands back new objects each pass is only dangerous if it is
+    traversed twice. It is traversed once."""
 
     class Rebuilding(list):
         def __iter__(self):
             return iter([dict(batch) for batch in list.__iter__(self)])
 
-    with pytest.raises(TypeError, match="did not yield the same objects"):
-        compare_trainer_against_mode_a(
-            make_trainer(cohort), Rebuilding(cohort.batches), cohort.manifest,
-            device=torch.device("cpu"),
-        )
+    result = compare_trainer_against_mode_a(
+        make_trainer(cohort), Rebuilding(cohort.batches), cohort.manifest,
+        device=torch.device("cpu"),
+    )
+
+    assert result.agreed is True
 
 
-def test_a_well_behaved_re_iterable_is_accepted_although_it_is_neither(cohort):
-    """The other half, and the reason the type gate was the wrong check.
-
-    This is neither a list nor a tuple, and it satisfies the contract exactly: two
-    traversals, the same objects. Refusing it bought nothing — a real cohort may
-    reasonably arrive in a container of the caller's own.
-    """
+def test_a_re_iterable_that_is_neither_list_nor_tuple_is_accepted(cohort):
+    """A real cohort may reasonably arrive in a container of the caller's own. The
+    first version of this guard turned those away on type alone."""
 
     class Holder:
         def __init__(self, items):
@@ -300,7 +302,37 @@ def test_a_well_behaved_re_iterable_is_accepted_although_it_is_neither(cohort):
     )
 
     assert result.agreed is True
-    assert result.n_samples > 0
+
+
+def test_the_caller_is_traversed_exactly_once(cohort):
+    """The reason the identity check went. A second pass over a live dataloader
+    re-samples subgraphs — it is not free, and on a real cohort it is not cheap.
+    """
+
+    class Counting:
+        def __init__(self, items):
+            self._items = items
+            self.traversals = 0
+
+        def __iter__(self):
+            self.traversals += 1
+            return iter(self._items)
+
+    counting = Counting(cohort.batches)
+
+    compare_trainer_against_mode_a(
+        make_trainer(cohort), counting, cohort.manifest, device=torch.device("cpu"),
+    )
+
+    assert counting.traversals == 1
+
+
+def test_something_that_is_not_iterable_at_all_is_refused(cohort):
+    """One of the two refusals a snapshot cannot repair."""
+    with pytest.raises(TypeError, match="must be iterable"):
+        compare_trainer_against_mode_a(
+            make_trainer(cohort), 7, cohort.manifest, device=torch.device("cpu"),
+        )
 
 
 def test_an_empty_cohort_is_refused(cohort):
@@ -714,3 +746,33 @@ def test_a_trainer_reporting_global_truths_is_caught(cohort):
             trainer, [_remapped_batch()], _remapped_manifest(cohort),
             device=torch.device("cpu"),
         )
+
+
+def test_disagreeing_samples_are_counted_as_samples_not_as_disagreements(cohort, monkeypatch):
+    """One sample can raise up to three disagreements, so the counts by kind
+    cannot be added into a rate.
+
+    This is what an experimenter reads to characterise an AMP-on run: how much of
+    the cohort moved, not how many assertions fired. The harness reports the number
+    and the rate and takes no position on whether either is acceptable.
+    """
+    import src.inference.scoring as scoring
+
+    original = scoring.cosine_score_matrix
+    monkeypatch.setattr(scoring, "cosine_score_matrix", lambda p, c: -original(p, c))
+
+    result = run(cohort)
+
+    assert result.agreed is False
+    assert 0 < result.n_samples_disagreeing <= result.n_samples
+    assert result.n_samples_disagreeing <= sum(result.n_disagreements_by_kind.values())
+    assert result.to_dict()["sample_disagreement_rate"] == (
+        result.n_samples_disagreeing / result.n_samples
+    )
+
+
+def test_an_agreeing_run_reports_a_zero_rate(cohort):
+    result = run(cohort)
+
+    assert result.n_samples_disagreeing == 0
+    assert result.to_dict()["sample_disagreement_rate"] == 0.0
