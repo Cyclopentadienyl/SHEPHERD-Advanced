@@ -1,9 +1,11 @@
 # Plan — configurability as a requirement, and the provenance gap that undermines it
 
-**Status: draft, revision 2. Nothing here is implemented.**
+**Status: draft, revision 3. Nothing here is implemented.**
 
-Revision 1 was reviewed and its direction accepted; every change below comes from
-that review and is listed in §7 rather than folded in silently.
+Revisions 1 and 2 were reviewed and the direction accepted both times. Every
+change comes from those reviews and is listed in §7 rather than folded in
+silently. Revision 3 is document-only: no proposal was reopened and no scope was
+added.
 
 ## 0. Why this document exists
 
@@ -50,13 +52,22 @@ for** the observed one. This is the project's existing rule in `BACKLOG.md` D2:
 *"the **observed** `torch.compile` execution state — an execution fact, not a
 requested config value"*.
 
-**P3. Refusal needs a concrete reason, and "the state is describable" is not by
-itself a reason to accept it.** Refusal is justified by concrete invalidity,
-safety constraints, unsupported semantics, or an inability to produce an honest
-artifact. A meaningful state **inside the intended clinical or research envelope**
-should normally be recorded rather than refused. The question to ask of any
-refusal is therefore not "could this have been described?" but "which of those
-four grounds does it stand on?"
+**P3. Refusal needs a concrete, reviewable reason, and "the state is describable"
+is not by itself a reason to accept it.** A meaningful state **inside the intended
+clinical or research envelope** should normally be recorded rather than refused.
+
+The reason must be nameable and checkable. Concrete invalidity, safety
+constraints, unsupported semantics and an inability to produce an honest artifact
+are examples — so are regulatory constraints, institutional policy, a declared
+support envelope, and operational or resource limits. **This is not a closed
+list, and it must not be read as one.** Revision 2 wrote exactly four grounds and
+asked which of them a refusal belonged to, which replaced an unfalsifiable rule
+with an over-specified one: a refusal resting on a legitimate ground outside the
+list would have failed the test for the wrong reason.
+
+The question to ask of any refusal is therefore **"what concrete ground does this
+stand on, and is that ground still applicable?"** — not "could this have been
+described?", and not "which of the listed grounds?"
 
 **P4. Two runs are comparable only if the artifacts can prove they differed in
 what the experimenter thinks they differed in.** A configuration comparison in
@@ -100,9 +111,10 @@ refusal.** The state is not merely describable; it is describable **at the point
 that matters**, by `torch.is_autocast_enabled(device_type)` and
 `torch.get_autocast_dtype(device_type)`, both of which answer on any host
 including a CPU-only one — verified by execution. Once the manifest records what
-applied, the artifact is honest and the ground is gone. None of P3's other three
-grounds is claimed: an AMP-on measurement is not invalid, not unsafe, and not
-unsupported semantics — it is the regime the deployment actually uses.
+applied, the artifact is honest and **that ground is gone**. No other ground is
+claimed or, on inspection, available: an AMP-on measurement is not invalid, not
+unsafe, not outside a declared support envelope, and not unsupported semantics —
+it is the regime the deployment actually uses.
 
 **The cost is a research question the harness can no longer answer.** *"What is
 Mode A's MRR under the AMP setting the deployment actually uses?"* sits squarely
@@ -116,7 +128,17 @@ treatment. The inconsistency is the author's.
 
 `scripts/train_model.py:658` sets `trainer.data_fingerprint =
 compute_fingerprint(graph_data)`, and `src/training/callbacks.py:315-316` embeds
-it in every saved checkpoint. So a fingerprint mechanism exists and is wired.
+it in every checkpoint **that callback** writes, when the attribute is present. So
+a fingerprint mechanism exists and is wired on the training pipeline's path.
+
+**Not in "every saved checkpoint", which revision 2 claimed.** `Trainer.save_checkpoint`
+(`trainer.py:961`) is a separate public writer: it takes `data_fingerprint` as an
+explicit argument and **does not read `trainer.data_fingerprint`**, so a caller
+who omits the argument gets a checkpoint with no provenance at all. The two
+writers also disagree on schema — the direct writer stores `model_state_dict`
+where the callback stores `state_dict`, which `trainer.py:996` already
+accommodates by accepting both conventions. They are separate paths, and §4.1
+says which one this plan covers.
 
 **What it records is the graph's shape, not its content.**
 `src/utils/fingerprint.py::compute_fingerprint` returns `node_types`,
@@ -187,7 +209,16 @@ provenance change when an unrelated split was added beside it.
    need a small generalisation, since the measurement caller passes one split and
    the training caller passes two.
 2. Attach `training_input_digests` at the `train_model.py:658` wiring point,
-   beside `data_fingerprint`, and let `callbacks.py` embed it the same way.
+   beside `data_fingerprint`, **and explicitly update
+   `ModelCheckpoint._save_checkpoint` to copy it** into
+   `checkpoint["training_input_digests"]` after the weights-only/full branch,
+   next to where it copies the fingerprint today.
+
+   Revision 2 said "let `callbacks.py` embed it the same way", which is wrong:
+   the callback does not generalise over trainer attributes, it copies
+   `trainer.data_fingerprint` by name (`callbacks.py:315-316`). Setting a new
+   attribute on the trainer serialises nothing. This is a required edit, not a
+   consequence.
 3. **Capture is the deliverable; comparison is separable.** Recording the digest
    map is the primary provenance repair and lands on its own. Extending
    `verify_fingerprint` to compare against a current workspace requires deciding
@@ -202,12 +233,27 @@ callers outside its own module (`measure_scorer:88-92`,
 Lifting it gives one implementation to callers that already exist — the move is
 overdue independently of this plan.
 
-**Which checkpoints carry it.** Every checkpoint this callback writes, following
-`data_fingerprint`. Revision 1 asked whether weights-only checkpoints should be
-excluded; the premise was wrong. `callbacks.py:315-316` appends the fingerprint
-**after** the `save_weights_only` branch closes, so those checkpoints are already
-provenance-bearing. Digests follow the same path unless a separately named
-checkpoint path has an explicit reason to omit provenance.
+**Which checkpoints carry it — the writer boundary, decided on evidence.**
+
+*In scope:* every checkpoint written by `ModelCheckpoint`, which is the designated
+training pipeline's writer. That includes weights-only checkpoints. Revision 1
+asked whether those should be excluded; the premise was wrong —
+`callbacks.py:315-316` appends the fingerprint **after** the `save_weights_only`
+branch closes, so they are already provenance-bearing, and digests follow the same
+path.
+
+*Out of scope:* `Trainer.save_checkpoint`. This is the bounded choice, and it is
+made on a fact rather than a preference: **the method has no callers anywhere** —
+not in `src/`, not in `scripts/`, not in `tests/`. The only textual hit is a
+comment at `trainer.py:996` about its key convention. Extending a writer nothing
+invokes would be completeness for its own sake, which review explicitly warned
+against.
+
+*The boundary is stated rather than left implicit*, so a future caller finds a
+documented limit instead of a silent trap: a checkpoint written through
+`Trainer.save_checkpoint` carries provenance **only** if the caller passes it. That
+it currently has no callers at all is a separate observation about dead public API
+and is deliberately not this plan's to act on.
 
 **Cost.** One SHA-256 pass over the graph artifacts and the sample files, once per
 training run, at startup. Bounded and not on any hot path.
@@ -218,7 +264,7 @@ recorded incorrectly. **No file locking, transactional loading, content-addresse
 store or provenance database is proposed for this item.** The limitation is stated
 in the field's documentation.
 
-**Does not do.** No registry, no database, no comparison tooling beyond §4.1.3, no
+**Does not do.** No registry, no database, no comparison tooling beyond §4.1 step 3, no
 fatal error on mismatch — it stays a warning, because whether a mismatch is
 disqualifying is a judgement this code cannot make. A legitimately regenerated
 workspace will make every prior checkpoint report a mismatch; that is the correct
@@ -321,8 +367,14 @@ refusal. The accurate framing:
   implementation must not label those embeddings with the later context;
 - no claim of observing model-internal nested autocast.
 
-Both: every existing test passes unchanged, and `make lint-imports` reports 4
-contracts kept.
+**Both:** the full pre-existing suite continues to pass. Existing tests may be
+updated **only** where the intentionally changed artifact schema or execution-state
+contract changes their asserted expectation; new acceptance and mutation tests
+cover the new behaviour. This permits a legitimate schema or refusal-contract
+update while ruling out broad fixture rewrites or the quiet deletion of old
+coverage — "every existing test passes unchanged", as revision 2 put it, would
+have either forbidden the first or invited the second. `make lint-imports` reports
+4 contracts kept.
 
 **Neither proposal needs CUDA**, and no CPU test here may be represented as a
 substitute for the institutional CUDA evidence required by items 7a and 5a.
@@ -330,6 +382,8 @@ substitute for the institutional CUDA evidence required by items 7a and 5a.
 ---
 
 ## 7. What review changed, and what it corrected
+
+### Revision 2 — from the first review
 
 | Revision 1 said | Corrected to |
 |---|---|
@@ -346,3 +400,14 @@ substitute for the institutional CUDA evidence required by items 7a and 5a.
 | "behaviour-preserving for every existing caller" | **False.** Both preserve the default numerical path while intentionally changing artifact schema and accepted execution states |
 | Verification and capture treated as one change | Separated. Capture is the primary repair and lands alone; the comparison helper may be explicitly deferred |
 | — | Added: the load-versus-hash race is documented as a limitation, with no locking, transactional loading or content-addressed store proposed |
+
+### Revision 3 — from the second review
+
+| Revision 2 said | Corrected to |
+|---|---|
+| P3: refusal stands on **four** grounds; ask "which of those four?" | **A closed taxonomy is the same failure as an absolute, one layer down.** Regulatory constraints, institutional policy, a declared support envelope and operational limits are equally legitimate grounds. P3 now requires a concrete, reviewable reason **with the list as examples**, and asks "what ground does this stand on, and is it still applicable?" §3.1 is reworded to match, and Proposal B is unaffected — its ground was dishonest metadata and observing at the computation boundary removes it |
+| `data_fingerprint` is embedded in "every saved checkpoint" | **Overstated.** It is embedded in every checkpoint **`ModelCheckpoint` writes**. `Trainer.save_checkpoint` (`trainer.py:961`) is a separate public writer that takes the fingerprint as an argument and does not read `trainer.data_fingerprint`. The two also differ in schema — `model_state_dict` versus `state_dict`, which `trainer.py:996` already accommodates |
+| Step 2: "let `callbacks.py` embed it the same way" | **Wrong: nothing propagates automatically.** The callback copies `trainer.data_fingerprint` by name, so a new attribute serialises nothing. Step 2 now names the required edit to `ModelCheckpoint._save_checkpoint` explicitly |
+| Writer coverage left implicit | **Bounded on evidence, not symmetry.** In scope: the `ModelCheckpoint` path, weights-only included. Out of scope: `Trainer.save_checkpoint`, because it has **no callers anywhere** in `src/`, `scripts/` or `tests/`. The boundary is stated so a future caller meets a documented limit rather than a silent trap. Its having no callers at all is a separate question this plan does not act on |
+| "every existing test passes unchanged" | **Ambiguous, and it cuts both ways** — it would either forbid the legitimate schema updates these proposals require, or invite loosening a test until it passes. Now: the full pre-existing suite continues to pass; existing tests may be updated **only** where the intentionally changed schema or execution-state contract changes their asserted expectation; new tests cover new behaviour |
+| "§4.1.3" | `§4.1` has numbered steps, not a subsection. Now "§4.1 step 3" |
