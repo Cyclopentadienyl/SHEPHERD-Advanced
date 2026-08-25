@@ -257,62 +257,32 @@ numbers truncated at different K are not the same quantity."""
 
 
 #: Where `torch.compile`'s wrapper class is exported. The package-level name is
-#: tried first because it is the less private of the two; both resolve to the same
-#: class, so a torch release that moves only one still leaves the probe exact.
+#: tried first because it is the less private of the two. Both resolve to the same
+#: class in the pinned torch, so this buys compatibility with a release that moves
+#: one of them, not two different answers.
 _WRAPPER_IMPORT_PATHS = (
     ("torch._dynamo", "OptimizedModule"),
     ("torch._dynamo.eval_frame", "OptimizedModule"),
 )
 
-#: The module prefix a real wrapper's class is defined in. Read off the instance's
-#: own class, so it survives the import paths above being unavailable.
-_WRAPPER_MODULE_PREFIX = "torch._dynamo"
 
+def _resolve_wrapper_classes() -> tuple:
+    """Every wrapper class that could be imported. Empty when none could.
 
-def _exact_wrapper_check(model: Any) -> Optional[bool]:
-    """isinstance against the class `torch.compile` actually returns.
-
-    **Authoritative when it answers at all.** If the class imports, isinstance is
-    the definition of wrapper identity and both of its answers are final — a
-    `False` here is not second-guessed by anything below. `None` only when neither
-    import path resolves, because a moved torch internal is not evidence about the
-    model.
+    **All of them, not the first.** Returning on the first path that resolves
+    would answer `False` for a model wrapped by a class only the second path
+    exports — which is the exact situation two paths exist for. They are the same
+    class today; aggregating is what makes the claim true rather than incidental.
     """
+    classes: list = []
     for module_name, attribute in _WRAPPER_IMPORT_PATHS:
         try:
-            module = __import__(module_name, fromlist=[attribute])
-            return isinstance(model, getattr(module, attribute))
-        except Exception:  # noqa: BLE001 - try the next path, then give up
+            candidate = getattr(__import__(module_name, fromlist=[attribute]), attribute)
+        except Exception:  # noqa: BLE001 - a moved internal is not an answer
             continue
-    return None
-
-
-def _torch_specific_marker(model: Any) -> Optional[bool]:
-    """The fallback, and it takes **two** signals rather than one.
-
-    `_orig_mod` alone is not enough and must never be treated as though it were:
-    it is a *necessary* marker of the known wrapper, not sufficient evidence of
-    wrapper identity. Any object may legally carry an attribute of that name, so
-    promoting an attribute match to `True` would let anything opt into the
-    classification by naming a field. An earlier version did exactly that, and the
-    test written for it froze the false positive as if it were a specification.
-
-    So this also requires the object's class to be **defined under
-    `torch._dynamo`**, which an ordinary class cannot satisfy by accident — its
-    `__module__` is wherever it was written. Verified by execution: a real
-    wrapper's class reports `torch._dynamo.eval_frame` and keeps reporting it when
-    both import paths are blocked, because the class travels on the instance.
-
-    `None` when either signal cannot be read. `hasattr` is not safe alone — it
-    swallows `AttributeError` and nothing else, and a `__getattr__` raising
-    `RuntimeError` comes straight back out, verified by execution.
-    """
-    try:
-        if not hasattr(model, "_orig_mod"):
-            return False
-        return type(model).__module__.startswith(_WRAPPER_MODULE_PREFIX)
-    except Exception:  # noqa: BLE001 - hostile attribute access is not an answer
-        return None
+        if isinstance(candidate, type) and candidate not in classes:
+            classes.append(candidate)
+    return tuple(classes)
 
 
 def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
@@ -334,35 +304,44 @@ def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
     Runtime Settings tab writes it, and a run configured to compile is not a run
     that was handed a compiled model.
 
-    **One rule, in one order:**
+    **isinstance is the only evidence, and the tri-state carries the rest:**
 
     | Situation | Result |
     |---|---|
     | no model supplied | `None` |
-    | either import path resolved | whatever `isinstance` says — **final** |
-    | neither resolved, and the object is `_orig_mod`-carrying *and* dynamo-defined | `True` |
-    | neither resolved, and it is not | `None` |
+    | a wrapper class resolved and the model is one | `True` |
+    | a wrapper class resolved and the model is not | `False` |
+    | no wrapper class resolved | `None` |
 
-    The exact probe is not overridden. A second signal that could turn its `False`
-    into `True` would mean the authoritative source is not authoritative, and the
-    fallback exists only for the case where there is no authoritative source at
-    all.
+    **There is no attribute fallback, and two earlier versions of this function
+    are why.** The first promoted `hasattr(model, "_orig_mod")` to `True`, and the
+    test written for it asserted that an arbitrary class carrying that attribute
+    was a compile wrapper — freezing a false positive as a specification. The
+    second required the class to be defined under `torch._dynamo` as well, which
+    fails twice over: `startswith` also matches `torch._dynamoevil`, and
+    `__module__` is assignable class metadata that any object can declare rather
+    than provenance of how it was built. `_orig_mod` is a *necessary* marker of
+    the known wrapper, never sufficient evidence of wrapper identity, and no
+    rearrangement of weak signals makes it so. When the exact classes cannot be
+    imported the honest answer is that nothing was observed.
 
-    **This never raises.** It is the thing that says what the run was, so a
-    hostile object or a moved torch internal must come back as `None` rather than
-    as a traceback that kills the measurement for the sake of one field.
+    **This never raises.** It is the thing that says what the run was, so a moved
+    torch internal or an object with unusual attribute behaviour must come back as
+    `None` rather than as a traceback that kills the measurement for the sake of
+    one field.
     """
     if model is None:
         return None
 
-    exact = _exact_wrapper_check(model)
-    if exact is not None:
-        return exact
-
-    # Only a positive is reported from here. Without the authoritative probe there
-    # is no reliable negative to report, so a marker that says "no" is still "not
-    # observed" — `False` would be an assertion built on the weaker of two signals.
-    return True if _torch_specific_marker(model) is True else None
+    classes = _resolve_wrapper_classes()
+    if not classes:
+        return None
+    try:
+        return isinstance(model, classes)
+    except Exception:  # noqa: BLE001 - upholds the never-raises contract; a
+        # custom `__instancecheck__` or `__class__` is the only way here, and an
+        # ordinary object does not reach it.
+        return None
 
 
 def assert_no_autocast(device: Any) -> None:

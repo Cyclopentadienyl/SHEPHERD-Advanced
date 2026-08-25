@@ -190,32 +190,34 @@ def test_measuring_inside_an_autocast_block_is_refused(workspace):
 
 
 # ---------------------------------------------------------------------------
-# Observing the compile wrapper — the tri-state, and every way it can be reached
+# Observing the compile wrapper — isinstance, and the tri-state around it
 # ---------------------------------------------------------------------------
 #
-# `False` is only reported when both probes ran and both were negative. An
-# earlier version returned the attribute probe's own `False` when the exact
-# import raised, which converted "not observable" into "observed and not
-# compiled" — the one conversion a tri-state exists to prevent.
+# `isinstance` against the imported wrapper class is the only evidence used. Two
+# earlier versions accepted `_orig_mod` as a fallback signal and both were wrong:
+# any object may carry that attribute name, and pairing it with `__module__` did
+# not fix it, since `__module__` is assignable class metadata rather than
+# provenance. When the class cannot be imported, nothing was observed and the
+# answer is `None`.
 
 
 def _block_the_exact_probe(monkeypatch):
-    """Make **both** of the observer's import paths fail.
+    """Make both of the observer's import paths fail.
 
     `sys.modules[name] = None` is how the import system is told a module is
     absent; verified by execution to raise `ModuleNotFoundError`. This stands in
     for the real risk, which is torch moving these names between versions.
 
-    Both, because the observer tries the package-level export before the submodule
-    one — blocking only the submodule leaves the exact probe working, which is the
-    point of having two paths and is tested on its own below.
+    Both, because the observer aggregates every path that resolves — blocking one
+    leaves the observation exact, which is the point of having two and is tested
+    on its own below.
     """
     monkeypatch.setitem(sys.modules, "torch._dynamo", None)
     monkeypatch.setitem(sys.modules, "torch._dynamo.eval_frame", None)
 
 
-def test_an_exact_positive_is_observed(monkeypatch):
-    """Against a real `torch.compile` wrapper, not a stand-in with the right
+def test_an_exact_positive_is_observed():
+    """Against a real `torch.compile` wrapper, not a stand-in carrying the right
     attribute — a stand-in would test the test."""
     import torch.nn as nn
 
@@ -239,46 +241,13 @@ def test_no_model_is_not_observed_rather_than_not_compiled():
     assert observe_torch_compile_wrapper(None) is None
 
 
-def test_an_unavailable_private_probe_reports_not_observed(monkeypatch):
-    """The defect this rewrite fixes. With the exact probe gone and no wrapper
-    attribute, the old code answered `False` — an assertion built on one broken
-    probe and one negative."""
-    import torch.nn as nn
+def test_an_object_carrying_only_the_wrapper_attribute_is_not_a_wrapper():
+    """`_orig_mod` is a **necessary** marker of the known wrapper, never sufficient
+    evidence of wrapper identity: any object may legally carry that attribute name.
 
-    from src.evaluation.measurement import observe_torch_compile_wrapper
-
-    _block_the_exact_probe(monkeypatch)
-
-    assert observe_torch_compile_wrapper(nn.Linear(4, 4)) is None
-
-
-def test_the_attribute_probe_still_finds_a_wrapper_without_the_private_path(monkeypatch):
-    """A **real** wrapper survives both import paths being unavailable, because
-    its class still reports `torch._dynamo.eval_frame` as where it was defined —
-    the class travels on the instance. That is the torch-specific signal the
-    ordinary object above cannot produce."""
-    import torch.nn as nn
-
-    from src.evaluation.measurement import observe_torch_compile_wrapper
-
-    wrapped = torch.compile(nn.Linear(4, 4))
-    _block_the_exact_probe(monkeypatch)
-
-    assert observe_torch_compile_wrapper(wrapped) is True
-
-
-def test_the_exact_probe_is_not_overridden_by_an_attribute_match():
-    """`_orig_mod` is a **necessary** marker of the known wrapper, not sufficient
-    evidence of wrapper identity. Any object may legally carry an attribute of that
-    name.
-
-    An earlier version promoted any attribute match to `True`, and the test written
-    for it asserted exactly this object was a wrapper — freezing a false positive
-    as though it were a specification. What that demonstrated was not that another
-    torch wrapper would be recognised; it was that anything can opt into the
-    classification by naming a field.
-
-    While the exact probe answers, its answer is final.
+    An earlier version promoted the attribute to `True`, and the test written for
+    it asserted this very object *was* a wrapper — freezing a false positive as
+    though it were a specification.
     """
     from src.evaluation.measurement import observe_torch_compile_wrapper
 
@@ -288,28 +257,9 @@ def test_the_exact_probe_is_not_overridden_by_an_attribute_match():
     assert observe_torch_compile_wrapper(NotAWrapper()) is False
 
 
-def test_an_unrelated_attribute_is_not_promoted_even_without_the_exact_probe(monkeypatch):
-    """The fallback takes two signals, not one. With the authoritative probe gone,
-    an ordinary object carrying `_orig_mod` is still **not observed** rather than
-    classified: its class is defined wherever it was written, not under
-    `torch._dynamo`.
-
-    `None` and not `False`, because without the exact probe there is no reliable
-    negative to report either.
-    """
-    from src.evaluation.measurement import observe_torch_compile_wrapper
-
-    class NotAWrapper:
-        _orig_mod = object()
-
-    _block_the_exact_probe(monkeypatch)
-
-    assert observe_torch_compile_wrapper(NotAWrapper()) is None
-
-
 def test_the_package_level_path_keeps_the_probe_exact_on_its_own(monkeypatch):
     """Two import paths, so a torch release that moves one still leaves the
-    observation authoritative rather than dropping it to the fallback."""
+    observation exact rather than dropping it to `None`."""
     import torch.nn as nn
 
     from src.evaluation.measurement import observe_torch_compile_wrapper
@@ -319,15 +269,52 @@ def test_the_package_level_path_keeps_the_probe_exact_on_its_own(monkeypatch):
     assert observe_torch_compile_wrapper(nn.Linear(4, 4)) is False
 
 
-def test_hostile_attribute_access_does_not_raise(monkeypatch):
-    """`hasattr` swallows `AttributeError` and nothing else — verified by
-    execution, a `__getattr__` raising `RuntimeError` comes straight back out. The
-    observer says what a run was, so it must return data rather than a traceback.
+def test_no_resolvable_wrapper_class_is_not_observed(monkeypatch):
+    """The subject is a **real** compiled wrapper on purpose.
 
-    The private probe is blocked here **on purpose**. Without that the exact check
-    answers first and the attribute path is never reached, so the test would pass
-    against an implementation that does not guard `hasattr` at all — it would be
-    asserting a value, not the absence of a raise.
+    Even a genuine true positive becomes `None` once the classes cannot be
+    imported, because there is then no evidence — only guesses that an object
+    could arrange to satisfy. That is the whole reason the field is
+    `Optional[bool]` and not a bool with a default.
+    """
+    import torch.nn as nn
+
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    wrapped = torch.compile(nn.Linear(4, 4))
+    _block_the_exact_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(wrapped) is None
+
+
+def test_an_object_that_declares_torch_provenance_is_still_not_observed(monkeypatch):
+    """The counterexample that removed the fallback, pinned so it cannot return.
+
+    A second version of this observer accepted `_orig_mod` **plus** a class whose
+    `__module__` began with `torch._dynamo`. It failed twice: `startswith` also
+    matches `torch._dynamoevil`, and `__module__` is assignable class metadata —
+    any object can declare it, so it describes what a class says about itself, not
+    how it was built. This object satisfies both of those weak signals and was
+    never touched by `torch.compile`.
+    """
+    from src.evaluation.measurement import observe_torch_compile_wrapper
+
+    class Impostor:
+        __module__ = "torch._dynamo.fake"
+        _orig_mod = object()
+
+    _block_the_exact_probe(monkeypatch)
+
+    assert observe_torch_compile_wrapper(Impostor()) is None
+
+
+def test_hostile_attribute_access_does_not_raise():
+    """The observer says what a run was, so it must return data rather than a
+    traceback — a manifest field is not worth killing a measurement for.
+
+    With the attribute fallback gone the observer reads no attributes at all, so
+    this now pins the contract end to end rather than one probe inside it: an
+    object whose `__getattr__` raises comes back as an answer.
     """
     from src.evaluation.measurement import observe_torch_compile_wrapper
 
@@ -335,9 +322,7 @@ def test_hostile_attribute_access_does_not_raise(monkeypatch):
         def __getattr__(self, name):
             raise RuntimeError("attribute access is hostile")
 
-    _block_the_exact_probe(monkeypatch)
-
-    assert observe_torch_compile_wrapper(Hostile()) is None
+    assert observe_torch_compile_wrapper(Hostile()) is False
 
 
 def test_the_result_serialises_without_non_finite_values(workspace):
