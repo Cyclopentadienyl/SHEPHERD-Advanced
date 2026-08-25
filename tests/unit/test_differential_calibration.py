@@ -252,11 +252,55 @@ def test_a_one_shot_iterator_is_refused(cohort):
     drained by whichever path runs first; the second sees an empty stream, and on
     one of the two orderings that produces two empty cohorts and a cheerful
     `agreed=True`."""
-    with pytest.raises(TypeError, match="must be a list or tuple"):
+    with pytest.raises(TypeError, match="did not yield the same objects"):
         compare_trainer_against_mode_a(
             make_trainer(cohort), (b for b in cohort.batches), cohort.manifest,
             device=torch.device("cpu"),
         )
+
+
+def test_a_stateful_sequence_is_refused_although_it_is_a_list(cohort):
+    """The case a type gate cannot see.
+
+    An earlier version accepted any `list` or `tuple`. This **is** a list, and it
+    breaks the contract anyway: the second traversal hands back different objects,
+    so the two paths would score different tensors and compare the results as
+    though they had not.
+    """
+
+    class Rebuilding(list):
+        def __iter__(self):
+            return iter([dict(batch) for batch in list.__iter__(self)])
+
+    with pytest.raises(TypeError, match="did not yield the same objects"):
+        compare_trainer_against_mode_a(
+            make_trainer(cohort), Rebuilding(cohort.batches), cohort.manifest,
+            device=torch.device("cpu"),
+        )
+
+
+def test_a_well_behaved_re_iterable_is_accepted_although_it_is_neither(cohort):
+    """The other half, and the reason the type gate was the wrong check.
+
+    This is neither a list nor a tuple, and it satisfies the contract exactly: two
+    traversals, the same objects. Refusing it bought nothing — a real cohort may
+    reasonably arrive in a container of the caller's own.
+    """
+
+    class Holder:
+        def __init__(self, items):
+            self._items = items
+
+        def __iter__(self):
+            return iter(self._items)
+
+    result = compare_trainer_against_mode_a(
+        make_trainer(cohort), Holder(cohort.batches), cohort.manifest,
+        device=torch.device("cpu"),
+    )
+
+    assert result.agreed is True
+    assert result.n_samples > 0
 
 
 def test_an_empty_cohort_is_refused(cohort):

@@ -768,6 +768,21 @@ def diagnosis_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     return collated
 
 
+#: Hops the diagnosis loader expands each batch's subgraph by.
+#:
+#: **A constant with two readers, not a literal with two writers.** The manifest
+#: this project writes records `subgraph_hops` because Mode A's candidate universe
+#: *is* the expanded subgraph, so the number is part of what was measured rather
+#: than a tuning knob. `scripts/measure_scorer.build_manifest` used to write its
+#: own `2` beside this one; the manifest was then accurate only because two
+#: independent literals happened to agree, and editing one of them would have made
+#: it describe a run that never happened without anything failing.
+#:
+#: Not a `DataLoaderConfig` field: nothing varies it, and adding a knob nobody
+#: turns is a wider change than removing a duplicated literal.
+DIAGNOSIS_SUBGRAPH_HOPS = 2
+
+
 # =============================================================================
 # Main Data Loader
 # =============================================================================
@@ -834,7 +849,9 @@ class DiagnosisDataLoader:
         # 採樣子圖
         seed_nodes = self._get_seed_nodes(batch)
         subgraph_nodes, subgraph_edges, node_mapping = \
-            self.subgraph_sampler.sample_subgraph(seed_nodes, num_hops=2)
+            self.subgraph_sampler.sample_subgraph(
+                seed_nodes, num_hops=DIAGNOSIS_SUBGRAPH_HOPS
+            )
 
         # 準備子圖特徵
         subgraph_x_dict = {}

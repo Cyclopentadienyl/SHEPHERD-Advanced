@@ -174,6 +174,37 @@ def test_the_manifest_records_the_numeric_regime_not_only_the_boolean(workspace)
     assert manifest.torch_compile_wrapped is False
 
 
+def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, monkeypatch):
+    """`subgraph_hops` describes what was measured — Mode A's candidate universe
+    *is* the expanded subgraph — so a manifest that repeats the loader's literal
+    instead of reading it is accurate only by coincidence.
+
+    Both now read `DIAGNOSIS_SUBGRAPH_HOPS`. Moving it moves the manifest, which is
+    what makes the field a report rather than a second claim to keep in step.
+    """
+    import argparse
+
+    import src.kg.data_loader as data_loader
+    from scripts.measure_scorer import build_loader_config, build_manifest
+    from src.kg.storage.file_storage import read_graph_artifacts
+
+    _, data_dir, checkpoint = workspace
+    args = argparse.Namespace(
+        checkpoint=checkpoint, data_dir=data_dir, split="test",
+        batch_size=3, num_workers=0, seed=None,
+    )
+    graph_data = read_graph_artifacts(data_dir)
+    build = lambda: build_manifest(  # noqa: E731 - one expression, twice
+        args, graph_data, 6, torch.device("cpu"), build_loader_config(args)
+    )
+
+    assert build().subgraph_hops == data_loader.DIAGNOSIS_SUBGRAPH_HOPS
+
+    monkeypatch.setattr(data_loader, "DIAGNOSIS_SUBGRAPH_HOPS", 3)
+
+    assert build().subgraph_hops == 3
+
+
 def test_measuring_inside_an_autocast_block_is_refused(workspace):
     """The manifest's `amp_enabled=False` is a structural claim about this module
     — no traversal here opens an autocast context. A caller who wrapped the run in

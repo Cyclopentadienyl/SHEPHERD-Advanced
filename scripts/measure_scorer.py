@@ -238,6 +238,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         MeasurementManifest,
         observe_torch_compile_wrapper,
     )
+    from src.kg.data_loader import DIAGNOSIS_SUBGRAPH_HOPS
     from src.utils.fingerprint import compute_fingerprint
 
     return MeasurementManifest(
@@ -248,7 +249,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         negative_sampling_strategy=loader_config.negative_sampling_strategy,
         num_negative_samples=loader_config.num_negative_samples,
         subgraph_strategy=loader_config.sampling_strategy,
-        subgraph_hops=2,
+        subgraph_hops=DIAGNOSIS_SUBGRAPH_HOPS,
         num_neighbors=list(loader_config.num_neighbors),
         max_subgraph_nodes=loader_config.max_subgraph_nodes,
         batch_size=loader_config.batch_size,

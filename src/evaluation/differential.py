@@ -220,35 +220,55 @@ class DifferentialResult:
         }
 
 
-def _require_rerunnable(batches: Any) -> Sequence[Dict[str, Any]]:
-    """Refuse anything that can only be traversed once.
+def _require_rerunnable(batches: Any) -> List[Dict[str, Any]]:
+    """Refuse anything that does not hand out the same batches twice.
 
-    **This is the guard the whole module rests on.** Both paths iterate the batch
-    stream independently, so a generator would be drained by whichever ran first
-    and the second would see an empty stream. That does not fail loudly: Mode A's
+    **This is the guard the whole module rests on.** Both paths iterate the stream
+    independently, so a generator would be drained by whichever ran first and the
+    second would see an empty stream. That does not fail loudly: Mode A's
     `_assert_cohort_is_intact` would raise on one ordering, but on the other the
     trainer pass returns no predictions and an empty metric dict, and a comparison
     of two empty cohorts is trivially "agreed". A calibration that passes by
     measuring nothing is the exact failure this module exists to make impossible.
+
+    **The property is checked, not the type.** An earlier version accepted only
+    `list` and `tuple`. That was a gate on one shape of the hazard rather than on
+    the hazard: a `list` subclass with a stateful `__iter__` satisfied it and broke
+    the contract anyway, while a perfectly well-behaved re-iterable container was
+    turned away for not being either type. Two traversals are compared by **object
+    identity**, which is exactly what the two paths need — a container that rebuilt
+    its batch dicts on each pass would hand them different tensors, and that is the
+    same failure wearing a different shape.
+
+    Cheap: the comparison is over *batches*, tens to hundreds of them, not samples,
+    and it runs once per calibration.
+
+    Returns a plain list, so everything downstream traverses a container whose
+    behaviour is now known rather than the caller's.
     """
-    if not isinstance(batches, (list, tuple)):
+    try:
+        first = list(batches)
+        second = list(batches)
+    except TypeError as exc:
         raise TypeError(
-            f"batches must be a list or tuple, not {type(batches).__name__}. Both "
-            "paths traverse it independently, so a one-shot iterator would hand the "
-            "second caller an empty stream and the comparison would pass by "
-            "measuring nothing.\n\n"
-            "`Sequence` is deliberately *not* accepted, although an earlier draft "
-            "did: the protocol guarantees indexing and length, not that two "
-            "traversals yield the same objects with no side effects. A stateful "
-            "`Sequence` would satisfy the type and defeat the guard, which is the "
-            "one thing this check exists to prevent"
+            f"batches must be iterable; {type(batches).__name__} is not ({exc})"
+        ) from exc
+
+    if len(first) != len(second) or any(a is not b for a, b in zip(first, second)):
+        raise TypeError(
+            f"batches ({type(batches).__name__}) did not yield the same objects on "
+            f"a second traversal — {len(first)} then {len(second)}. Both paths "
+            "traverse it independently, so a one-shot iterator hands the second "
+            "caller an empty stream and the comparison passes by measuring nothing, "
+            "and a container that rebuilds its batches hands the two paths "
+            "different tensors"
         )
-    if len(batches) == 0:
+    if not first:
         raise ValueError(
             "no batches to compare; an empty cohort would report agreement without "
             "having compared anything"
         )
-    return batches
+    return first
 
 
 def _trainer_global_truths(

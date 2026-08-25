@@ -321,6 +321,25 @@ work is done in has no CUDA device. The CPU result is a genuine and necessary
 precondition — the two implementations agree when precision is held equal — and
 it is not a substitute for the institutional run.
 
+**And a gap item 7a must close before it runs, found on audit rather than in
+review.** On CUDA the trainer's defaults are `use_amp=True, amp_dtype=float16`, so
+a differential run left at its defaults compares an autocast trainer pass against
+an fp32 Mode A pass and will report `agreed=False` **by construction**. Nothing is
+wrong when that happens, and nothing currently says what a *passing* CUDA run
+looks like:
+
+| `TrainerConfig` | What the run answers | Pass criterion |
+|---|---|---|
+| `use_amp=False` | do the two implementations agree exactly | `agreed is True`, as on CPU |
+| `use_amp=True` (the CUDA default) | does autocast reorder anything near a tie | **undefined — 7a's to define** |
+
+So 7a must set `use_amp` explicitly rather than inherit it, and must state which
+of the two questions its acceptance turns on. Deciding a tolerance for the second
+is design work, not harness work, and is deliberately not done here. The
+mechanical part is already in place: `DifferentialResult` records the resolved
+`amp_enabled` / `amp_dtype` and `bit_exact_contract` says which question was
+asked.
+
 ### 3.2 Validation measures no unseen-disease generalisation at all
 
 M4 is the maximal case: **every** disease in val appears in train. The escalation
