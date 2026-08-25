@@ -430,6 +430,35 @@ def load_samples(data_dir: Path, split: str = "train") -> List[DiagnosisSample]:
     return samples
 
 
+def training_input_roles(data_dir: Path, *, with_validation: bool) -> Dict[str, Path]:
+    """The semantic input roles a training run consumes, by role name.
+
+    **Named rather than inlined so the tests can exercise this instead of
+    restating it.** A test that rebuilds the same dict beside the source proves
+    the test and the test's copy agree, which is not the contract anyone cares
+    about — the first version of these tests did exactly that and missed a scope
+    error in the caller.
+
+    `with_validation` is the caller's observation that validation actually ran, not
+    an assumption that a file exists. `create_dataloaders` returns `None` for the
+    validation loader when there are no validation samples, and a run in that state
+    trains without validation — recording the role anyway would claim an input the
+    run never opened.
+
+    Nothing globs the directory. An unrelated split appearing beside these files
+    must not change the record of a run that never read it.
+    """
+    roles = {
+        "train_samples": data_dir / "train_samples.json",
+        "node_features": data_dir / "node_features.pt",
+        "edge_indices": data_dir / "edge_indices.pt",
+        "num_nodes": data_dir / "num_nodes.json",
+    }
+    if with_validation:
+        roles["val_samples"] = data_dir / "val_samples.json"
+    return roles
+
+
 def create_dataloaders(
     config: TrainConfig,
     graph_data: Dict[str, Any],
@@ -651,11 +680,32 @@ def train(config: TrainConfig) -> Dict[str, float]:
         config=trainer_config,
     )
 
-    # Compute and attach data fingerprint for KG version tracking.
-    # This gets embedded in every checkpoint saved by Trainer and
-    # ModelCheckpoint callback (they read trainer.data_fingerprint).
-    from src.utils.fingerprint import compute_fingerprint
+    # Two identities, attached side by side, answering different questions.
+    #
+    #   data_fingerprint        is this checkpoint STRUCTURALLY COMPATIBLE with
+    #                           the graph in front of me?
+    #   training_input_digests  WHICH EXACT INPUTS produced it?
+    #
+    # The first cannot answer the second: it records node types, counts, feature
+    # dims and edge types, and sample files do not enter it at all. Two runs over
+    # different sample files therefore share a fingerprint, and a comparison
+    # between their checkpoints cannot attribute a difference to data rather than
+    # to configuration, randomness or training behaviour.
+    #
+    # Both are read by name in `ModelCheckpoint._save_checkpoint`; setting an
+    # attribute here is not enough on its own.
+    from src.utils.fingerprint import compute_fingerprint, compute_input_digests
+
     trainer.data_fingerprint = compute_fingerprint(graph_data)
+
+    # Only the roles this run consumed. `val_loader is None` is the observation
+    # that validation did not run — `create_dataloaders` returns it that way when
+    # the workspace has no validation samples, and it is what this scope actually
+    # holds. A first version read `val_samples`, which lives in
+    # `create_dataloaders` and is not in scope here at all.
+    trainer.training_input_digests = compute_input_digests(
+        training_input_roles(data_dir, with_validation=val_loader is not None)
+    )
 
     # Resume if specified
     if config.resume_from:

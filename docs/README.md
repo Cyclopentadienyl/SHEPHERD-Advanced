@@ -60,6 +60,7 @@ work shipped is stale, not authoritative.
 |---|---|
 | [`working/README.md`](working/README.md) | The convention, and the list of live phases |
 | [`working/BACKLOG.md`](working/BACKLOG.md) | The one ordered list across all live phases: what is open, in what order, what blocks what, and the measured facts that set that order. Ordering and dependencies only — the decisions themselves stay in the phase folders |
+| [`working/PLAN_CONFIGURABILITY_AND_PROVENANCE.md`](working/PLAN_CONFIGURABILITY_AND_PROVENANCE.md) | **Approved for implementation.** Configurability as a stated requirement — the system is a clinical model *and* a research framework — and the two places existing code works against it: a measurement refusal that could be a record, and a checkpoint whose provenance metadata cannot identify its training inputs. Proposals A and B, with what each explicitly does not do |
 | [`working/results-review/README.md`](working/results-review/README.md) | Results-review phase: what the specs cover, and how to run the closure audit |
 | [`working/results-review/SPEC_0_INDEX.md`](working/results-review/SPEC_0_INDEX.md) | Index, requirements traceability, gates, open institutional values, backlog |
 | [`working/results-review/SPEC_1_RESULTS_REVIEW.md`](working/results-review/SPEC_1_RESULTS_REVIEW.md) | Scorer/view authority, SP sort and filter policy, decomposition, two-surface UX, limits |

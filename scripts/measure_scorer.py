@@ -37,7 +37,6 @@ Module: scripts/measure_scorer.py
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import platform
@@ -54,26 +53,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.utils.fingerprint import compute_input_digests
+from src.utils.fingerprint import file_sha256 as _file_sha256
+
 logger = logging.getLogger(__name__)
 
 
-def file_sha256(path: Path) -> Optional[str]:
-    """Raw content digest, or ``None`` if the file is not there.
-
-    **Public and shared.** `scripts/calibrate_mode_a.py` hashes the same artifacts
-    before and after the two runs, and a second implementation there could differ
-    from this one in exactly the way the digests exist to detect.
-
-    `hashlib.file_digest` (stdlib, 3.11+) reads in chunks, so a multi-gigabyte
-    checkpoint is not loaded into memory to be identified. This hashes **bytes**
-    and nothing else: no canonical form, no key ordering, no serialisation policy.
-    Two runs quoting the same digest consumed the same file, which is the entire
-    claim being made.
-    """
-    if not path.exists():
-        return None
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
+#: Re-exported so `scripts/calibrate_mode_a.py`, `scripts/benchmark_sp_lookup.py`
+#: and the tests that import it from here keep working unchanged. The definition
+#: moved to `src/utils/fingerprint.py`, the bottom layer, because three consumers
+#: importing a hashing primitive **from a script** made an entry point into a
+#: library — and the SP benchmark, which has nothing to do with scorer
+#: measurement, should never have depended on this module to get it.
+file_sha256 = _file_sha256
 
 
 def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, Optional[str]]:
@@ -83,14 +75,24 @@ def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, 
     names a different file after every improvement — and the structural
     fingerprint is not one either, since two checkpoints trained on the same graph
     share it.
+
+    **This stays here, deliberately, while `file_sha256` moved.** The plan proposed
+    moving both into `src/utils/fingerprint.py`; doing so would put this function's
+    vocabulary — a *checkpoint*, a *split* — into a utility module that has no
+    business knowing what either is, and the training caller would then import a
+    measurement-shaped signature to hash its own inputs. The generic contract
+    (`compute_input_digests`) is shared; the **role vocabulary is not**, because
+    each run names the roles it consumed. This is one measurement script importing
+    another's domain concept, which is cohesion; the benchmark reaching in here for
+    a hash function was not.
     """
-    return {
-        "checkpoint": file_sha256(checkpoint),
-        "samples": file_sha256(data_dir / f"{split}_samples.json"),
-        "node_features": file_sha256(data_dir / "node_features.pt"),
-        "edge_indices": file_sha256(data_dir / "edge_indices.pt"),
-        "num_nodes": file_sha256(data_dir / "num_nodes.json"),
-    }
+    return compute_input_digests({
+        "checkpoint": checkpoint,
+        "samples": data_dir / f"{split}_samples.json",
+        "node_features": data_dir / "node_features.pt",
+        "edge_indices": data_dir / "edge_indices.pt",
+        "num_nodes": data_dir / "num_nodes.json",
+    })
 
 
 def _resolve_device(requested: str) -> Tuple[torch.device, bool]:

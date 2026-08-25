@@ -311,9 +311,20 @@ class ModelCheckpoint(Callback):
             if trainer.scheduler is not None:
                 checkpoint["scheduler_state_dict"] = trainer.scheduler.state_dict()
 
-        # Embed data fingerprint if the trainer has one (set by training script)
+        # Embed provenance if the trainer carries it (set by the training script).
+        #
+        # **Copied by name, both of them.** This callback does not generalise over
+        # trainer attributes, so a new one serialises nothing until it is named
+        # here. Placed after the weights-only/full branch on purpose: a
+        # weights-only checkpoint is still an artifact somebody will later have to
+        # identify, and the two questions it needs answered — is this structurally
+        # compatible, and which inputs produced it — do not stop mattering because
+        # the optimizer state was left out.
         if hasattr(trainer, "data_fingerprint") and trainer.data_fingerprint is not None:
             checkpoint["data_fingerprint"] = trainer.data_fingerprint
+        digests = getattr(trainer, "training_input_digests", None)
+        if digests is not None:
+            checkpoint["training_input_digests"] = digests
 
         torch.save(checkpoint, filepath)
         logger.info(f"ModelCheckpoint: saved to {filepath}")
