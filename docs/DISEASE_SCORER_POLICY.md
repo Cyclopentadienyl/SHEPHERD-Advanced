@@ -209,24 +209,34 @@ the default and that η must *earn* adoption with evidence. It was not derived f
 A future reader should not mistake it for an empirical finding, nor reopen it as though it were an
 unexamined default.
 
-### 3.5 Engineering inference — weigh accordingly, none is measured
+### 3.5 Engineering inference — weigh accordingly; one item is now measured, the rest are not
 
 - ~~Over the full disease universe most candidates fall outside the 5-hop table and receive the same
   floor value, so the SP term degenerates towards a binary reachability indicator.~~ **The premise is
-  measured and false.** On the deployment artifact the median phenotype reaches **19,216.5 of 29,866**
-  diseases within the configured 5 hops (**64.3%**), first quartile 51.2%, and only **270 of 19,836**
-  phenotypes reach none ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json), BACKLOG §2.4). The gap is
-  wider still for a real query: M5 counts per *phenotype*, and a patient presents several, whose
-  candidates draw on the union.
+  measured and false at the per-phenotype level.** On the deployment artifact the median phenotype
+  reaches **19,216.5 of 29,866** diseases within the configured 5 hops (**64.3%**), first quartile
+  51.2%, maximum 78.16%; **270 of 19,836** phenotypes (1.36%) reach none at all
+  ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json), BACKLOG §2.4).
 
-  **What does not follow, in either direction.** The conclusion no longer follows from that premise,
-  but is not thereby refuted. A candidate reachable at 5 hops scores `1/6` against a floor of `1/7`,
-  so near-degeneracy could still arise from the **distance distribution among reachable pairs**
-  rather than from unreachability. M5 records the hop bound and not a distance histogram, so this is
-  now unestablished both ways; settling it needs that distribution, which no current artifact
-  carries. The residual concern that survives intact is narrower than the original: candidates with
-  **no** KG path are still disadvantaged, and that is now a claim about 1.36% of phenotypes rather
-  than about most candidates.
+  **What that 1.36% does and does not size.** It counts phenotypes that reach *no* disease. It is
+  **not** the prevalence of unreachable phenotype–candidate pairs, and using it that way would
+  understate them by orders of magnitude: the median phenotype still leaves ~10,650 diseases
+  unreachable, and even the best-connected phenotype in the graph leaves ~6,522. Unreachable pairs
+  are common at every phenotype; M5 does not size them as a fraction of pairs.
+
+  **What M5 does not establish at all: the deployed, patient-level score.** M5 counts per phenotype.
+  The deployed scorer does not take a union over a patient's phenotypes and does not use the nearest
+  reachable one — for each candidate it iterates over **every** phenotype, gives each unreachable
+  pair `unreachable_distance`, and averages
+  (`src/inference/scoring.py::sp_mean_distances`). Per-phenotype reachability therefore cannot be
+  carried across to patient-level coverage in either direction.
+
+  **What does not follow, in either direction.** The conclusion no longer follows from the refuted
+  premise, but is not thereby refuted. A candidate whose **mean** distance is 5 scores `1/6` against
+  a floor of `1/7` — a five-hop path from one phenotype does not by itself produce that score — so
+  near-degeneracy could still arise from the distribution of mean distances rather than from
+  unreachability. Neither the reachable-distance distribution nor the patient-level mean-distance
+  distribution is measured, and no current artifact carries either.
 - Because the SP range is `[1/7, 1/2]` while the embedding term spans `[0, 1]`, η is not the
   effective weight. The **maximum theoretical spans** stand at 0.7 versus 0.107; the actual
   contribution of each term depends on their observed spread, which has not been measured.

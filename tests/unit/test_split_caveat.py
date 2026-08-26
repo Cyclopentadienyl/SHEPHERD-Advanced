@@ -71,14 +71,35 @@ def test_help_renders_at_all(script):
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_caveat_names_both_contamination_kinds(script):
-    """One reason was already there. M4 established the second, and a caveat that
-    names only checkpoint selection understates what the split cannot support."""
+def test_the_caveat_names_both_limits_and_keeps_them_distinct(script):
+    """One limit was already there. M4 established the second, and they are *not*
+    the same limit — the first says `val` cannot be an independent evaluation, the
+    second says it carries no unseen-disease evidence. A caveat that names only
+    one, or blurs them together, understates what the split cannot support."""
     _, help_text = _split_help(script)
 
     assert "early_stopping_monitor=val_mrr" in help_text, "checkpoint-selection contamination"
     assert "sample_generator" in help_text, "the generator's role"
-    assert "never partitions by disease" in help_text, "why the overlap is structural"
+    assert "does not enforce" in help_text, "non-enforcement, which is what the generator does"
+
+
+@pytest.mark.parametrize("script", ENTRY_POINTS)
+def test_the_caveat_does_not_claim_the_overlap_is_guaranteed(script):
+    """A negative assertion, because the overstatement is what had to be corrected.
+
+    The generator draws diseases independently, shuffles the samples and slices
+    them. It does not enforce disjointness, so overlap is permitted and in practice
+    near-certain at the deployed sample counts — but it is not logically entailed,
+    and this help is shown for *any* workspace including small ones. The structural
+    claim and the measured figure have to stay separate sentences."""
+    _, help_text = _split_help(script)
+
+    for overstatement in ("by construction", "guaranteed", "always share", "必然"):
+        assert overstatement not in help_text, (
+            f"{overstatement!r} claims the generator entails overlap; it only permits it"
+        )
+    # ...and the measured figure stays attributed to the workspace it came from.
+    assert "audited" in help_text and "workspace" in help_text
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)

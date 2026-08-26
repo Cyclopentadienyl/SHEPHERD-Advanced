@@ -208,10 +208,16 @@ system currently does — hides which one is speaking.
 enormous and overwhelmingly wrong set.
 
 *Corrected against measurement.* This paragraph used to say most diseases have no path to any given
-patient. They do: the median phenotype reaches 64.3% of diseases within 5 hops, and only 1.36% of
-phenotypes reach none ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json)). The cell's point stands for a
-different reason — a *reachable but distant* disease also scores near the floor, so a low SP score
-does not separate "unrelated" from "connected at five steps".
+patient, as though that were established. It is not, in either direction. What was measured is
+**per phenotype**: the median phenotype reaches 64.3% of diseases within 5 hops, the first quartile
+51.2% ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json)). That refutes "most candidates are outside the
+table" *for a phenotype*, and says nothing about a patient, because scoring a patient averages the
+distance from **every** one of their phenotypes to the candidate — an unreachable phenotype does not
+drop out, it contributes the largest distance. No measurement of that patient-level quantity exists.
+
+The cell's point stands regardless, and for a reason that does not depend on either figure: a
+*reachable but distant* disease also scores near the floor, so a low SP score does not separate
+"unrelated" from "connected at five steps".
 
 ## A warning that must not be softened
 
@@ -248,7 +254,7 @@ Specifically, it helps with:
 
 | Situation | Why |
 |---|---|
-| **Ranking the full disease universe** | Candidates beyond the five-step limit all receive the same floor value, so the number stops discriminating there. **Now measured**: on the deployment artifact the median phenotype leaves ~35.7% of diseases beyond the limit, not the great majority ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json)). It is a large minority, not the expected condition — and it is not the whole of the concern, since a disease reachable at five steps scores `1/6` against a floor of `1/7`. How much of the *reachable* mass sits near that floor is a distance distribution no artifact records. |
+| **Ranking the full disease universe** | Candidates beyond the five-step limit all receive the same floor value, so the number stops discriminating there. **Now measured, per phenotype**: the median phenotype leaves ~35.7% of diseases beyond the limit — roughly 10,650 — and even the best-connected phenotype leaves ~6,522 ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json)). A large minority at every phenotype, not the great majority. What a *patient* sees is not established: scoring averages over all their phenotypes, so this figure does not carry across. And it is not the whole concern either — a candidate whose mean distance is five scores `1/6` against a floor of `1/7`, and how much of the reachable mass sits near that floor is a distribution no artifact records. |
 | **Looking for undocumented or atypical presentations** | The score penalises exactly what you are looking for. |
 | **As evidence that a diagnosis is wrong** | No path found is not evidence of no relationship. See §1. |
 | **As an explanation of mechanism** | The score does not know what kinds of steps it counted. Use the reasoning paths instead. |

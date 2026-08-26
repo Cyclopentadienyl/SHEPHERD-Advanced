@@ -519,19 +519,29 @@ may claim**, and the bound is tighter than the caveat currently drafted.
 candidates fall outside the 5-hop table so the SP term degenerates to a
 reachability indicator.
 
-**The premise is refuted.** The median phenotype reaches 64.3% of diseases within
-the configured 5 hops, q1 51.2%, and 270 of 19,836 phenotypes (1.36%) reach none.
-Wider still for a real query, since M5 counts per phenotype and a patient presents
-several whose candidates draw on the union.
+**The premise is refuted, per phenotype.** The median phenotype reaches 64.3% of
+diseases within the configured 5 hops, q1 51.2%, max 78.16%; 270 of 19,836
+phenotypes (1.36%) reach none at all.
 
-**The conclusion is not refuted with it, and saying so would be the same error in
-the other direction.** A candidate reachable at 5 hops scores `1/6` against a
-floor of `1/7`, so near-degeneracy could still arise from the distance
-distribution among *reachable* pairs. M5 records the hop bound and no distance
-histogram, so that question is now open rather than answered, and no current
-artifact carries what would close it. What survives of the original concern is
-narrower and intact: candidates with **no** KG path are disadvantaged, and that is
-a claim about 1.36% of phenotypes.
+**1.36% sizes phenotypes that reach nothing — not unreachable candidates.** Using
+it for the second would understate them by orders of magnitude: the median
+phenotype still leaves ~10,650 diseases unreachable and the best-connected leaves
+~6,522. Unreachable pairs are common at every phenotype, and M5 does not size them
+as a fraction of pairs.
+
+**M5 does not reach the patient level at all.** The deployed scorer takes no union
+over a patient's phenotypes and does not use the nearest reachable one: for each
+candidate it iterates over every phenotype, gives each unreachable pair
+`unreachable_distance`, and averages (`src/inference/scoring.py::sp_mean_distances`).
+A per-phenotype distribution therefore cannot be carried across to what a patient
+sees, in either direction.
+
+**The conclusion is not refuted with the premise, and saying so would be the same
+error in the other direction.** A candidate whose *mean* distance is 5 scores `1/6`
+against a floor of `1/7` — one phenotype's five-hop path does not produce that
+score by itself — so near-degeneracy could still arise from the distribution of
+mean distances. Neither the reachable-distance distribution nor the patient-level
+mean-distance distribution is measured, and no current artifact carries either.
 
 The correction is factual and touches no normative statement. It also lands in
 `SP_SCORE_GUIDE.md`, which restated the same claim for operators in two places —
@@ -632,7 +642,7 @@ depends on is resolved.
 | **1e** | D2 manifest additions and the legal-truth equality test (§2.3) — **done**. `amp_dtype` + `torch_compile_wrapped` on the manifest and on `DifferentialResult`; `assert_no_autocast` turned the manifest's `amp_enabled=False` from a structural claim into an enforced one, in both traversals — **later superseded by Proposal B**, which records the observed regime rather than forbidding a non-default one. Legal-truth equality tested under a **non-identity** id map, which is the case 1d's identity-mapped cohorts could not distinguish. Found that `build_manifest` had `amp_enabled` **hardcoded**, and that the wrong-space mutation is refused by the loss rather than the harness | 1c, 1d | author | **done** |
 | **P** | **Configurability and provenance** — `PLAN_CONFIGURABILITY_AND_PROVENANCE.md`, both proposals **done and approved**. **A**: `training_input_digests` on the checkpoint, a sibling of `data_fingerprint`, covering the semantic roles a run consumed including a resume parent that was actually loaded; `file_sha256` moved to `src/utils/fingerprint.py`. **B**: the AMP regime is **recorded at the computation that produced each mode's numbers** rather than forbidden — `EncodedGraph` carries the embeddings with their regime into the B/C traversals, and the invariant enforced is `encoded.regime == manifest.regime == scoring regime`, checked per batch. Capture only: no current-workspace comparison, no registry, no AMP CLI, no threshold | — | author | **done** |
 | **2** | Contamination caveat updated to the measured 100% (§3.2). Both measurement entry points' `--split` help now names **two** independent reasons `val` is not held-out — checkpoint selection, and that `sample_generator.py` slices one shuffled pool and never partitions by disease, so the overlap is structural rather than incidental to one workspace. The figure cites `EVIDENCE_M4.json`, which carries both split digests, rather than inlining hashes that are workspace-specific into help shown for any workspace | 10 — satisfied | author | **done** |
-| **3** | `DISEASE_SCORER_POLICY.md` §3.5 corrected (§3.3), and the same claim where it was restated in `SP_SCORE_GUIDE.md`. **The premise is refuted, the conclusion is not** — see §3.3 | 10 — satisfied | author | **done** |
+| **3** | `DISEASE_SCORER_POLICY.md` §3.5 corrected (§3.3), and the same claim where it was restated in `SP_SCORE_GUIDE.md`. **The premise is refuted per phenotype; the conclusion is not, and neither is anything at the patient level** — see §3.3 | 10 — satisfied | author | **done** |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
 | **12** | **`evaluate([])` silently evaluates the val set** — `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an explicit empty list is falsy and becomes a full validation pass. Frozen by a 1b test marked *observed, not endorsed*. Kept out of 1c deliberately, since an extraction commit must stay behaviour-neutral; raised here so the frozen defect is **not stranded** as a permanent monument to a known bug | 1c | author | small, unscheduled |
@@ -765,7 +775,9 @@ zero-reach phenotypes were being dropped. Measured: **270 of 19,836 phenotypes
 (1.36%)** reach nothing — the mechanism is real, the direction was right, and the
 magnitude is nowhere near enough to explain a fifteen-point gap. The cause is the
 denominator, which came from a different artifact. §2.4 records what was measured
-and what the recorded figure actually was.
+and what the recorded figure actually was. That 1.36% counts *phenotypes reaching
+nothing*; it is not the prevalence of unreachable phenotype–candidate pairs, and
+§3.3 records why the two must not be substituted for each other.
 
 **No evidence database, registry or index.** Three files beside the plans they
 support, exactly as `EVIDENCE_B04_*.json` already sit beside `PLAN_B04.md`.
