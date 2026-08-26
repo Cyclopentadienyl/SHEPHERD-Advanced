@@ -1,16 +1,26 @@
 """
 Provenance vocabulary — what a person may assert about where evidence came from.
 ================================================================================
-The evidence scripts (``scripts/audit_*.py``) each write a JSON report that an
-institutional reader joins with the others: one machine, one run, three reports.
-That join only works if all three spell the machine's relationship to the
-deployment the same way, so the vocabulary lives here rather than being restated
-in each script.
+The evidence scripts (``scripts/audit_*.py``) each write a JSON report carrying
+one operator assertion: how the machine the report was produced on relates to the
+deployment. All three are read together, so all three must spell that assertion
+the same way — hence one vocabulary here rather than three copies.
+
+**It is an assertion, not an identity and not a key.** Nothing here identifies a
+machine, and nothing joins reports by one. There is no hostname, no serial, no
+run id, no registry; the value says only what kind of relationship a person is
+claiming, and no code verifies it.
+
+**Why it is worth recording at all.** Not determinism — these audits read files
+and count integers, so their numbers do not depend on which GPU is present. What
+they depend on is *which filesystem was in front of them*: M1-M3 reports the
+checkpoints a directory holds, M4 the splits a workspace holds, M5 the artifact a
+workspace holds. Whether that workspace is the deployment's is the one thing a
+reader cannot recover from the file and cannot check, so a person states it.
 
 Complement to ``src/utils/fingerprint.py``: that module answers *which inputs*
-produced an artifact, from bytes it can read. This module carries the part no
-code can read — whether the machine that produced the evidence is the one the
-system will run on.
+were read, from bytes it can hash. This module carries the claim about *where*
+they were read, which no hash can establish.
 
 No torch / PyG imports, and no I/O — safe to import from any script or service.
 

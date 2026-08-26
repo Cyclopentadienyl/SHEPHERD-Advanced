@@ -48,9 +48,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# The vocabulary is shared with the other evidence scripts rather than restated
-# here: an institutional reader joins these reports by machine, and that join
-# breaks the moment two scripts spell the same claim differently.
+# Shared with the other evidence scripts rather than restated here: all three
+# reports are read together, and a claim spelled differently in each cannot be
+# compared across them.
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -228,15 +228,18 @@ def summarise(records: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _runtime_facts() -> Dict[str, Any]:
-    """What this ran on, without saying **where** or **who**.
+    """The **reader's** environment, without saying where it is or whose it is.
 
-    §5.2 forbids operator and host names, and that is not in tension with
-    traceability: what an institutional reader needs is that the evidence came
-    from a machine of the deployment's kind, which is a statement about hardware
-    and software rather than about a hostname. The narrow checkable facts are
-    recorded here; the claim that this machine *is* equivalent to the deployment
-    is `--deployment-relationship`, chosen from a bounded vocabulary by a person
-    who can make it. The same split
+    Not a machine identity: architecture, OS, Python, torch, CUDA and the GPU
+    *model* name. No hostname, no serial, no device uuid — §5.2 forbids them and
+    none of them would add anything, since nothing here is a join key.
+
+    What these facts are for is narrower than "provenance". M1-M3 opens
+    checkpoints with `weights_only=True`, and whether a given checkpoint loads
+    that way is a property of the torch version doing the opening — so `n_loaded`
+    is only interpretable next to `torch`. The rest is context of the same kind.
+    They say nothing about whether this machine is the deployment's; that claim is
+    `--deployment-relationship`, made by a person, the same split
     `MeasurementManifest.cuda_executed` already uses.
     """
     import platform

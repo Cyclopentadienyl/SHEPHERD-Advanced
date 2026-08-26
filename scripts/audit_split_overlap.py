@@ -35,9 +35,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# The vocabulary is shared with the other evidence scripts rather than restated
-# here: an institutional reader joins these reports by machine, and that join
-# breaks the moment two scripts spell the same claim differently.
+# Shared with the other evidence scripts rather than restated here: all three
+# reports are read together, and a claim spelled differently in each cannot be
+# compared across them.
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,23 @@ def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[s
     train_ids = disease_ids(data_dir, train_split)
     eval_ids = disease_ids(data_dir, eval_split)
     train_set, eval_set = set(train_ids), set(eval_ids)
+
+    # **An empty split cannot establish the fact this file exists for.** M4 bounds
+    # what an evaluation metric can be evidence of, by measuring how much of the
+    # evaluation cohort's disease set the training split already contains. With no
+    # evaluation diseases the ratio has no denominator; with no training diseases
+    # the overlap is zero for a reason that is about the workspace, and either
+    # would be read as "no contamination" by someone citing the file later. The
+    # shared sample reader is left alone — a split that exists and is empty is a
+    # legitimate thing for it to return, and only this audit needs to refuse it.
+    for split, ids in ((train_split, train_ids), (eval_split, eval_ids)):
+        if not ids:
+            raise SystemExit(
+                f"the {split} split holds no samples. M4 compares two disease sets, "
+                "and an overlap involving an empty one says nothing about "
+                "contamination — only that this workspace has no such split."
+            )
+
     shared = eval_set & train_set
 
     return {
@@ -89,13 +106,14 @@ def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[s
         # The ratio is stated as a fraction as well as a percentage, because a
         # percentage alone loses the denominator and the denominator is half the
         # claim: "100%" of 7,970 and "100%" of 12 are not the same finding.
+        #
+        # Unguarded on purpose. `eval_set` cannot be empty here — the refusal above
+        # is what makes that true — and an `if eval_set else None` fallback would
+        # tell a reader the opposite, that this file can report an overlap with no
+        # denominator.
         "overlap": {
-            "shared_over_evaluation": (
-                len(shared) / len(eval_set) if eval_set else None
-            ),
-            "as_written": (
-                f"{len(shared)} of {len(eval_set)}" if eval_set else "no evaluation diseases"
-            ),
+            "shared_over_evaluation": len(shared) / len(eval_set),
+            "as_written": f"{len(shared)} of {len(eval_set)}",
         },
         "deployment_relationship": relationship,
         "excluded_by_design": [

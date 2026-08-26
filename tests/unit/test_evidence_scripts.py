@@ -16,6 +16,7 @@ Module: tests/unit/test_evidence_scripts.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -54,7 +55,11 @@ def _sp_workspace(root: Path, *, n_phenotypes=3, n_diseases=10, max_hops=5,
     """An artifact plus the sidecar the producer writes beside it.
 
     Phenotype 0 reaches three diseases, phenotype 1 reaches one, phenotype 2
-    reaches none and therefore appears nowhere in the table.
+    reaches none and therefore appears nowhere in the table. One row targets a
+    gene, so the disease mask has something to exclude.
+
+    Column dtypes match `compute_shortest_paths.py`: int64 indices and an int8
+    distance.
     """
     root.mkdir(parents=True, exist_ok=True)
     (root / "num_nodes.json").write_text(
@@ -70,15 +75,22 @@ def _sp_workspace(root: Path, *, n_phenotypes=3, n_diseases=10, max_hops=5,
         pheno, target, ttype, dist = pheno + [0], target + [n_diseases], ttype + [1], dist + [1]
 
     torch.save({
-        "phenotype_idx": torch.tensor(pheno),
-        "target_idx": torch.tensor(target),
-        "target_type": torch.tensor(ttype),
+        "phenotype_idx": torch.tensor(pheno, dtype=torch.int64),
+        "target_idx": torch.tensor(target, dtype=torch.int64),
+        "target_type": torch.tensor(ttype, dtype=torch.int64),
         "distance": torch.tensor(dist, dtype=torch.int8),
     }, root / "sp.pt")
+    # The sidecar mirrors what `save_shortest_paths` writes, `num_pairs` included:
+    # a fixture that omits a field the producer always writes would let an audit
+    # that cannot read real output still pass here.
     (root / "sp.meta.json").write_text(json.dumps({
         "max_hops": max_hops,
+        "num_pairs": len(pheno),
         "num_phenotypes": n_phenotypes,
+        "num_genes": 2,
         "num_diseases": n_diseases,
+        "kg_total_nodes": n_phenotypes + n_diseases + 2,
+        "kg_total_edges": len(pheno),
     }))
     return root
 
@@ -255,6 +267,19 @@ def test_the_overlap_denominator_is_recorded_beside_the_ratio(tmp_path):
     assert json.loads(out.read_text())["overlap"]["as_written"] == "1 of 1"
 
 
+@pytest.mark.parametrize("train,val", [([], [1]), ([0, 1], []), ([], [])])
+def test_an_empty_split_is_refused_rather_than_reported_as_no_overlap(tmp_path, train, val):
+    """With no evaluation diseases the ratio has no denominator; with no training
+    diseases the overlap is zero for a reason that is about the workspace. Either
+    would be cited later as "no contamination"."""
+    data_dir = _splits(tmp_path / "ws", train, val)
+    out = tmp_path / "m4.json"
+
+    with pytest.raises(SystemExit, match="holds no samples"):
+        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+    assert not out.exists()
+
+
 # ---------------------------------------------------------------------------
 # M5 — reachability
 # ---------------------------------------------------------------------------
@@ -348,17 +373,46 @@ def test_a_disease_index_outside_the_workspace_is_refused(tmp_path):
         _m5(tmp_path, bad_target=True)
 
 
-def test_a_sidecar_disagreeing_with_the_workspace_is_refused(tmp_path):
-    """Two independent records of the same graph. A disagreement means the
-    artifact was built from something other than what is being audited."""
-    root = _sp_workspace(tmp_path / "ws", n_diseases=10)
-    (root / "sp.meta.json").write_text(json.dumps(
-        {"max_hops": 5, "num_phenotypes": 3, "num_diseases": 99}))
+@pytest.mark.parametrize("field", ["num_pairs", "num_phenotypes", "num_diseases"])
+def test_a_sidecar_that_does_not_bind_to_the_artifact_is_refused(tmp_path, field):
+    """The digest names which sidecar was read; it does not prove the sidecar
+    belongs to the tensors beside it. `num_pairs` is what ties it to this table —
+    the node counts would match any artifact built from the same graph."""
+    root = _sp_workspace(tmp_path / "ws")
+    sidecar = json.loads((root / "sp.meta.json").read_text())
+    sidecar[field] = sidecar[field] + 7
+    (root / "sp.meta.json").write_text(json.dumps(sidecar))
 
-    with pytest.raises(SystemExit, match="different graphs"):
+    with pytest.raises(SystemExit, match="does not describe this artifact"):
         _run("audit_sp_reachability",
              ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
               "--output", str(tmp_path / "x.json")])
+    assert not (tmp_path / "x.json").exists()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("max_hops", "5"),          # a string where the producer writes an int
+    ("num_pairs", None),        # absent
+    ("max_hops", True),         # bool is an int in Python and valid JSON
+    ("max_hops", 0),            # outside the [1, 127] the producer validates
+    ("max_hops", 128),
+])
+def test_a_sidecar_outside_the_producers_schema_is_refused(tmp_path, field, value):
+    """Checked before the values are used, because a sidecar that fails any of this
+    did not come from `compute_shortest_paths.py` and describes nothing here."""
+    root = _sp_workspace(tmp_path / "ws")
+    sidecar = json.loads((root / "sp.meta.json").read_text())
+    if value is None:
+        del sidecar[field]
+    else:
+        sidecar[field] = value
+    (root / "sp.meta.json").write_text(json.dumps(sidecar))
+
+    with pytest.raises(SystemExit):
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+    assert not (tmp_path / "x.json").exists()
 
 
 def test_the_reachability_evidence_states_its_selection_rule(tmp_path):
@@ -368,6 +422,134 @@ def test_the_reachability_evidence_states_its_selection_rule(tmp_path):
 
     assert "no phenotype is selected as typical" in report["selection_rule"].lower()
     assert report["artifact_digest"]
+
+
+def test_the_scan_is_independent_of_how_it_is_chunked(tmp_path):
+    """The chunk size is a memory knob and nothing about the answer may depend on
+    it. Run at one row per chunk against a table whose disease rows straddle every
+    boundary, and compared against a single-chunk pass over the same table."""
+    from scripts.audit_sp_reachability import scan_table
+
+    root = _sp_workspace(tmp_path / "ws", duplicate=True)
+    table = torch.load(root / "sp.pt", weights_only=True)
+    n_rows = int(table["phenotype_idx"].numel())
+
+    whole = scan_table(table, n_rows, 3, 10, chunk_rows=n_rows + 5)
+    for chunk in (1, 2, 3, n_rows - 1):
+        part = scan_table(table, n_rows, 3, 10, chunk_rows=chunk)
+        assert torch.equal(part["counts"], whole["counts"]), chunk
+        assert part["n_disease_rows"] == whole["n_disease_rows"], chunk
+        assert part["n_distinct"] == whole["n_distinct"], chunk
+        assert part["observed_hops"] == whole["observed_hops"], chunk
+
+
+def test_the_scan_allocates_by_graph_size_and_not_by_row_count(tmp_path):
+    """The property the rewrite exists for: the working set is a function of the
+    graph, so a table with far more rows than cells costs no more memory. Asserted
+    against the presence matrix's own ceiling rather than by measuring RSS, which
+    would be a benchmark rather than a contract."""
+    from scripts.audit_sp_reachability import MAX_PRESENCE_CELLS, scan_table
+
+    root = _sp_workspace(tmp_path / "ws")
+    table = torch.load(root / "sp.pt", weights_only=True)
+
+    # 3 x 10 cells is far below the ceiling; a graph past it is refused rather
+    # than attempted, because being killed part-way through a one-shot run is the
+    # outcome this guard exists to prevent.
+    assert 3 * 10 < MAX_PRESENCE_CELLS
+    with pytest.raises(SystemExit, match="one-pass counter allocates"):
+        scan_table(table, 5, MAX_PRESENCE_CELLS, 2)
+
+
+class _RecordingMatrix:
+    """A presence matrix that remembers how large each slice reduced was."""
+
+    def __init__(self, real):
+        self._real = real
+        self.reduced = []
+
+    @property
+    def shape(self):
+        return self._real.shape
+
+    def __getitem__(self, key):
+        band = self._real[key]
+        self.reduced.append(band.numel())
+        return band
+
+
+def test_the_row_reduction_never_materialises_a_whole_matrix_intermediate():
+    """`presence.sum(dim=1)` on a bool matrix allocates eight bytes per cell —
+    measured at +551 MiB over a 69 MiB matrix, and `dtype=torch.int64` does not
+    avoid it. On the institutional graph that intermediate would be several
+    gigabytes: larger than the matrix `MAX_PRESENCE_CELLS` exists to bound, and
+    invisible to it.
+
+    Pinned structurally rather than by measuring RSS, which would be a flaky
+    benchmark. A whole-matrix reduction slices nothing and fails the coverage
+    assertion; a band larger than the budget fails the first."""
+    from scripts.audit_sp_reachability import REDUCTION_BUDGET_BYTES, _row_counts
+
+    n_diseases = 24_000
+    presence = torch.zeros((500, n_diseases), dtype=torch.bool)
+    presence[::3, ::7] = True
+
+    spy = _RecordingMatrix(presence)
+    counts = _row_counts(spy, n_diseases)
+
+    assert torch.equal(counts, presence.sum(dim=1)), "banding must not change the answer"
+    assert spy.reduced, "the reduction was not banded at all"
+    assert max(spy.reduced) * 8 <= REDUCTION_BUDGET_BYTES, spy.reduced
+    assert sum(spy.reduced) == presence.numel(), "every row must be reduced exactly once"
+
+
+@pytest.mark.parametrize("rows,n_diseases", [(1, 8), (7, 3), (129, 24_000)])
+def test_the_row_reduction_agrees_with_a_whole_matrix_sum(rows, n_diseases):
+    """Including shapes where the band does not divide the row count evenly."""
+    from scripts.audit_sp_reachability import _row_counts
+
+    presence = torch.zeros((rows, n_diseases), dtype=torch.bool)
+    presence[::2, ::5] = True
+    assert torch.equal(_row_counts(presence, n_diseases), presence.sum(dim=1))
+
+
+def test_a_float_index_column_is_refused_rather_than_truncated(tmp_path):
+    """0.5 converted to an index is phenotype 0, counted, and invisible in the
+    result. The refusal has to come before the cast."""
+    root = _sp_workspace(tmp_path / "ws")
+    table = torch.load(root / "sp.pt", weights_only=True)
+    table["target_idx"] = table["target_idx"].to(torch.float32) + 0.5
+    torch.save(table, root / "sp.pt")
+
+    with pytest.raises(SystemExit, match="would truncate"):
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+
+
+@pytest.mark.parametrize("column,replacement", [
+    ("phenotype_idx", "two_dimensional"),
+    ("target_type", "short"),
+    ("distance", "not_a_tensor"),
+])
+def test_a_column_outside_the_producers_shape_is_refused(tmp_path, column, replacement):
+    """The scan pairs row i of one column with row i of another. Columns that are
+    ragged, multi-dimensional or not tensors make that pairing arbitrary."""
+    root = _sp_workspace(tmp_path / "ws")
+    table = torch.load(root / "sp.pt", weights_only=True)
+    if replacement == "two_dimensional":
+        table[column] = table[column].reshape(-1, 1)
+    elif replacement == "short":
+        table[column] = table[column][:-1]
+    else:
+        table[column] = table[column].tolist()
+    torch.save(table, root / "sp.pt")
+
+    with pytest.raises(SystemExit):
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+    assert not (tmp_path / "x.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +566,59 @@ _REQUIRED = {
 
 #: Substrings that must not appear anywhere in a published artifact, whatever
 #: shape a future field takes.
+#:
+#: **A regression sentinel, not a proof.** Passing this does not establish that no
+#: absolute path or identifier can ever reach an artifact — it establishes that the
+#: ones these scripts were shown to leak, and the categories §5.2 names, do not
+#: reach one now. The refusals and the omissions in the scripts are what make the
+#: property true; this is defence in depth behind them.
 _FORBIDDEN_SUBSTRINGS = ("patient_id", "sample_id", "SECRET", "/home/", "/tmp/", "\\\\Users\\\\")
+
+#: Nested fields whose **type** is part of the contract, as `(path, predicate)`.
+#: Types and bounds only — no exact object equality, and no rule against a future
+#: additive aggregate, which would make the schema harder to extend than to freeze.
+_NESTED = {
+    "m1": [
+        (("summary", "n_loaded"), lambda v: isinstance(v, int) and v >= 1),
+        (("summary", "in_channels", "established"), lambda v: isinstance(v, bool)),
+        (("summary", "in_channels", "value_counts"), lambda v: isinstance(v, dict)),
+        (("summary", "filename_vs_logs", "agree"), lambda v: isinstance(v, int)),
+        (("runtime", "torch"), lambda v: isinstance(v, str) and v),
+    ],
+    "m4": [
+        (("counts", "train_diseases"), lambda v: isinstance(v, int) and v >= 1),
+        (("counts", "val_diseases"), lambda v: isinstance(v, int) and v >= 1),
+        (("counts", "shared_diseases"), lambda v: isinstance(v, int) and v >= 0),
+        (("overlap", "shared_over_evaluation"), lambda v: isinstance(v, float) and 0 <= v <= 1),
+        (("overlap", "as_written"), lambda v: isinstance(v, str) and " of " in v),
+    ],
+    "m5": [
+        (("hop_bound_configured",), lambda v: isinstance(v, int) and 1 <= v <= 127),
+        (("hop_bound_observed",), lambda v: v is None or isinstance(v, int)),
+        (("reachable_diseases_per_phenotype", "denominator_diseases"),
+         lambda v: isinstance(v, int) and v >= 1),
+        (("rows", "distinct_phenotype_disease_pairs"), lambda v: isinstance(v, int) and v >= 0),
+        (("rows", "duplicate_pairs_collapsed"), lambda v: isinstance(v, int) and v >= 0),
+        (("phenotype_coverage", "in_graph"), lambda v: isinstance(v, int) and v >= 1),
+    ],
+}
+
+#: Where each report records a SHA-256 of a file, as `(path-to-the-digest, filename)`.
+#: The expected value is recomputed in the test from the bytes on disk through a
+#: different hashlib entry point than `file_sha256` uses, so a digest of the wrong
+#: file — or of nothing — cannot pass.
+_DIGEST_SITES = {
+    "m4": [(("digests", "train_samples"), "train_samples.json"),
+           (("digests", "val_samples"), "val_samples.json")],
+    "m5": [(("artifact_digest",), "sp.pt"),
+           (("sidecar_digest",), "sp.meta.json")],
+}
+
+
+def _at(report, path):
+    for key in path:
+        report = report[key]
+    return report
 
 
 def test_every_artifact_carries_its_required_contract(tmp_path):
@@ -406,6 +640,23 @@ def test_every_artifact_carries_its_required_contract(tmp_path):
         missing = [key for key in required if key not in report]
         assert not missing, f"{name} is missing {missing}"
         assert report["deployment_relationship"] == "unstated"
+
+        for path, ok in _NESTED[name]:
+            assert ok(_at(report, path)), f"{name}{list(path)} = {_at(report, path)!r}"
+
+    # Digests are what the reports are cited by, so each is checked against the
+    # bytes it claims to describe rather than merely for being a hex string.
+    sources = {"m4": tmp_path / "ws4", "m5": root}
+    for name, sites in _DIGEST_SITES.items():
+        report = json.loads((tmp_path / f"{name}.json").read_text())
+        for path, filename in sites:
+            expected = hashlib.sha256((sources[name] / filename).read_bytes()).hexdigest()
+            assert _at(report, path) == expected, f"{name}{list(path)} is not {filename}"
+
+    m1 = json.loads((tmp_path / "m1.json").read_text())
+    assert m1["checkpoint_digests"] == {
+        "model-1-0.5000.pt": hashlib.sha256((ck / "model-1-0.5000.pt").read_bytes()).hexdigest()
+    }
 
 
 def test_no_artifact_carries_a_forbidden_identifier_or_path(tmp_path):
@@ -450,27 +701,43 @@ def test_the_deployment_relationship_is_a_bounded_vocabulary(tmp_path):
     assert "identical-sibling" in DEPLOYMENT_RELATIONSHIPS
 
 
-def test_all_three_scripts_share_one_vocabulary_object(tmp_path):
-    """An institutional reader joins the three reports by machine. If M1 accepted a
-    spelling M4 rejected, that join would break silently — and a per-script copy of
-    the tuple is exactly how that happens. Asserted by identity, not equality: two
-    equal-but-separate tuples are the state this test exists to forbid."""
+def test_the_three_scripts_offer_one_vocabulary(tmp_path):
+    """An institutional reader reads all three reports for one machine. If M1
+    accepted a spelling M4 rejected, or the two disagreed on what silence looks
+    like, the claims could not be compared.
+
+    Asserted through the parsers — the published behaviour — rather than through
+    object identity. A shared constant is how this is implemented today, and the
+    equality check below catches a re-duplication the moment it drifts, but a
+    faithful re-export or an enum wrapper would be a legitimate refactor and this
+    contract is about what the scripts accept, not about how they store it."""
     import importlib
 
     from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP
 
-    modules = [importlib.import_module(f"scripts.{name}") for name in
-               ("audit_checkpoint_family", "audit_split_overlap", "audit_sp_reachability")]
-    for module in modules:
-        assert module.DEPLOYMENT_RELATIONSHIPS is DEPLOYMENT_RELATIONSHIPS, module.__name__
+    scripts = {
+        "audit_checkpoint_family": ["--checkpoint-dir", "."],
+        "audit_split_overlap": ["--data-dir", "."],
+        "audit_sp_reachability": ["--data-dir", ".", "--artifact", "sp.pt"],
+    }
+    out = ["--output", str(tmp_path / "unused.json")]
 
-    # ...and every parser agrees on what silence looks like, so three reports from an
-    # operator who said nothing are joinable rather than three different blanks.
-    for module, args in zip(modules, (["--checkpoint-dir", "."],
-                                      ["--data-dir", "."],
-                                      ["--data-dir", ".", "--artifact", "sp.pt"])):
-        namespace = module.parse_args([*args, "--output", str(tmp_path / "unused.json")])
-        assert namespace.deployment_relationship == UNSTATED_RELATIONSHIP, module.__name__
+    for name, args in scripts.items():
+        module = importlib.import_module(f"scripts.{name}")
+
+        # Every valid value is accepted by every script...
+        for value in DEPLOYMENT_RELATIONSHIPS:
+            chosen = module.parse_args([*args, *out, "--deployment-relationship", value])
+            assert chosen.deployment_relationship == value, name
+
+        # ...an invalid one by none...
+        with pytest.raises(SystemExit):
+            module.parse_args([*args, *out, "--deployment-relationship", "lab-host-42"])
+
+        # ...and silence means the same thing in all three.
+        assert module.parse_args([*args, *out]).deployment_relationship == UNSTATED_RELATIONSHIP
+
+        assert tuple(module.DEPLOYMENT_RELATIONSHIPS) == tuple(DEPLOYMENT_RELATIONSHIPS), name
 
 
 @pytest.mark.parametrize("script,args", [
