@@ -247,33 +247,74 @@ container. The extra one is `TestFactoryFunctions::test_create_index_auto`, and
 the direction is backwards from the usual: a test that *passes* without CUDA
 *skips* with it.
 
-**The mechanism.** `resolve_backend("auto")` resolves to `cuvs` when
-`is_gpu_available()` is true (`src/retrieval/vector_index.py:145`). The block
-below it is commented *"Verify it can actually be instantiated"* and *"Quick
-validation check"*, and the only thing it validates is whether the platform is
-Windows. A `cuvs` package that is absent therefore raises nothing, `"cuvs"` is
-returned, and `create_index` fails on `import cuvs`. The `["cuvs", "voyager"]`
-fallback chain immediately beneath cannot run, because nothing before it throws.
+**The mechanism — and the seam this file first named wrongly.** The visible
+symptom is in `resolve_backend`: it resolves to `cuvs` when `is_gpu_available()`
+is true, and the block beneath it, commented *"Verify it can actually be
+instantiated"*, validates only whether the platform is Windows. That description
+is accurate and it is not where the defect was.
 
-**The test converts that into green.** It catches `ImportError` and skips with
-*"No vector backend available"* — which was false on that machine: voyager was
-installed, and `test_create_index_voyager` passed in the same run.
+`_register_backends` guarded on whether a backend's **module** imports. Neither
+backend imports its dependency at module level — `CuVSIndex` imports
+`cuvs.neighbors` and `cupy` inside `_validate_cuvs`, `VoyagerIndex` imports
+`voyager` inside a method — so that guard never fired for **either** backend and
+every backend was registered on every host. `resolve_backend` then behaved
+correctly given a registry that was wrong: `"cuvs"` was in it, so it was returned,
+and the `["cuvs", "voyager"]` fallback beneath never ran because nothing raised.
 
-**What this is and is not.** It is not on the clinical path: the vector index was
+Registration was the seam because selection, fallback *and* the operator report
+all read the same registry: `scripts/build_index.py` printed
+`Available backends: ['voyager', 'cuvs']` on a host with neither cuvs nor cupy.
+
+**The test converted that into green.** It caught `ImportError` and skipped with
+*"No vector backend available"* — false on that machine: voyager was installed,
+and `test_create_index_voyager` passed in the same run.
+
+**What this is and is not.** Not on the clinical path: the vector index was
 detached from diagnosis by institutional decision and the
 `diagnosis-retrieval-detachment` contract still enforces that. It is on the path
-of the planned natural-language / vector-mapping work, and it is invisible on
+of the planned natural-language / vector-mapping work, and it was invisible on
 every machine except one with CUDA and without cuVS — which describes the
-deployment target and describes no CPU development box.
+deployment target and no CPU development box.
 
-**Not fixed here.** Two candidate changes, and they are not the same size:
+**It also contradicted a completed stage.** Stage 5 was *honest cuVS reporting and
+orphan removal*. Its result lives in `scripts/validate_installation.py`, whose
+comment forbids claiming availability on the strength of `import cuvs` alone —
+*"a combination observed on a real deployment machine"*. That honesty was applied
+there and not here, so two files answered the same question differently on the
+same host. `_is_cuvs_available` was left behind by the same stage with zero
+callers.
 
-  - *Test honesty* — distinguish "no backend available" from "auto selected an
-    uninstalled one". Small, and correct regardless of the second.
-  - *`resolve_backend`* — wire in `cuvs_backend._is_cuvs_available`, which already
-    does the real `import cuvs` probe behind a platform gate, so the fallback
-    chain becomes reachable. This changes production behaviour in a subsystem
-    that was detached by decision, so it takes a decision, not a commit.
+#### What was fixed, and what was deliberately left
+
+Registration now asks whether each backend's **immediate required packages are
+discoverable** — `voyager` for Voyager, `cuvs` **and** `cupy` for cuVS, since
+`_validate_cuvs` imports both and cuvs-without-cupy is the state already observed
+on a deployment machine. cuVS stays unregistered on Windows whatever is
+discoverable; Voyager is gated on every platform. The registry is rebuilt rather
+than accumulated, and cleared in place rather than rebound so a caller holding it
+is not left reading a detached copy. Discovery fails closed: `find_spec` raises
+for ordinary conditions, and an optional-dependency probe must never be the
+reason `import src.retrieval` fails. `_is_cuvs_available` is deleted.
+`resolve_backend` is unchanged.
+
+**Discovery is the ceiling of the claim, on purpose.** It says the package is
+findable. It does not say the package imports, that a CUDA build matches the
+driver, that an index can be constructed, or that a search returns anything.
+`validate_installation.py` remains the place where the deeper states are
+distinguished, and this does not duplicate it into the import path.
+
+Three limitations, recorded rather than discovered later:
+
+  - **Discoverable is weaker than importable.** A package that is findable but
+    raises on import still registers, and still fails at construction.
+  - **Availability is inferred by the registry, not answered by the backend.** The
+    structural fix is a `VectorIndexBase.is_available()` classmethod so each
+    backend states its own contract. That is a design change to a detached
+    subsystem and belongs with the natural-language retrieval integration, when
+    its real support contract is known — not here.
+  - **The probe logic still lives in two places**, here and in
+    `validate_installation.py`. Consolidating them is worth doing and is not this
+    fix.
 
 ## 3. What these facts broke
 
@@ -560,7 +601,7 @@ depends on is resolved.
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
 | **12** | **`evaluate([])` silently evaluates the val set** — `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an explicit empty list is falsy and becomes a full validation pass. Frozen by a 1b test marked *observed, not endorsed*. Kept out of 1c deliberately, since an extraction commit must stay behaviour-neutral; raised here so the frozen defect is **not stranded** as a permanent monument to a known bug | 1c | author | small, unscheduled |
-| **13** | **`resolve_backend("auto")` returns an uninstalled backend on the deployment hardware.** `vector_index.py:145` picks `cuvs` whenever CUDA is present, and the check beneath it — commented *"Verify it can actually be instantiated"* — tests only `sys.platform == "win32"`, so a missing `cuvs` package never raises and the documented `["cuvs", "voyager"]` fallback is unreachable. `create_index(backend="auto")` then raises `ImportError` although voyager is installed and working. **A real probe already exists and is not wired in**: `cuvs_backend._is_cuvs_available`. Not on the diagnosis path — retrieval is detached by decision and the contract holds — but it is on the planned NLP/vector-mapping path, and it fails *only* where CUDA is present and cuVS is not, which is the deployment machine and no CPU dev box. See §2.5 | — | needs review | small, found by the item-10 run |
+| **13** | **Backend registration did not check dependencies**, so `auto` could select an unusable backend, the fallback chain beneath it could never run, and `build_index.py` printed backends the host did not have. Affected **both** backends: neither imports its dependency at module level, so the module-import guard never fired. Not on the diagnosis path — retrieval is detached by decision and the contract holds. See §2.5 | — | author | **done** — registration gated on discoverable dependencies; three limitations recorded, not closed |
 | **5a** | **B-0.4 productionisation** — wire A into `_load_shortest_paths` and `sp_mean_distances`, then `PLAN_B04.md` §13's gate. **Production code: needs its own plan and review before any edit.** Its *implementation* depends on no calibration, split or checkpoint decision; its **acceptance does need a designated loadable checkpoint** plus compatible graph and SP artifacts — see §3.5 | 5; acceptance also needs a loadable checkpoint | author + institution | not started |
 | **11** | **Decide the evaluation-holdout protocol** (M9, §3.4) — **first** which claim each phase needs, then the unit that supports it: held-out sample views, disease-disjoint, or an external cohort. A **protocol decision**, not a code fix; the mechanical guards are already in and the tools already accept a supplied `test` split. Blocks 8a, `scorer-retraining` acceptance, and any held-out or generalisation claim. Does **not** block 1b/1c/1d | 2, 10 | needs review | design question |
 | **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, 10 — **satisfied**, `EVIDENCE_M1_M3_hgt.json` and `EVIDENCE_M1_M3_gat.json` | institution | question, **unblocked** |

@@ -228,11 +228,20 @@ class TestFactoryFunctions:
     """Tests for index creation factory functions."""
 
     def test_resolve_backend_auto(self):
-        """resolve_backend('auto') should return available backend."""
-        from src.retrieval.vector_index import resolve_backend
+        """resolve_backend('auto') returns a backend that is actually registered.
 
-        backend = resolve_backend("auto")
-        assert backend in ("cuvs", "voyager")
+        Both backends are optional in the current deployment, so this asserts
+        against the registry rather than against a hardcoded pair — and refuses to
+        be satisfied by a name that is not in it, which is the defect that stood
+        here. `TestBackendRegistrationGating` drives the same call with controlled
+        observations instead of installed packages."""
+        from src.retrieval.vector_index import list_available_backends, resolve_backend
+
+        available = list_available_backends()
+        if not available:
+            pytest.skip("no vector index backend is installed")
+
+        assert resolve_backend("auto") in available
 
     def test_resolve_backend_explicit(self):
         """resolve_backend should accept explicit backend names."""
@@ -266,14 +275,23 @@ class TestFactoryFunctions:
         assert index.backend_name == "voyager"
 
     def test_create_index_auto(self):
-        """create_index('auto') should create best available backend."""
-        from src.retrieval.vector_index import create_index
+        """create_index('auto') builds the backend `auto` resolved to.
 
-        try:
-            index = create_index(backend="auto", dim=128)
-            assert index.backend_name in ("cuvs", "voyager")
-        except ImportError:
-            pytest.skip("No vector backend available")
+        **No ImportError is caught here.** The previous version wrapped this call
+        and skipped with "No vector backend available" — which on the deployment
+        machine was false: voyager was installed and `test_create_index_voyager`
+        passed in the same run. What had actually happened was that `auto`
+        resolved to an unregistered cuVS. Swallowing the error turned that into
+        green, and it is the reason the defect lived on the one platform where it
+        mattered. An ImportError here is now a failure."""
+        from src.retrieval.vector_index import list_available_backends, create_index
+
+        available = list_available_backends()
+        if not available:
+            pytest.skip("no vector index backend is installed")
+
+        index = create_index(backend="auto", dim=128)
+        assert index.backend_name in available
 
 
 # ==============================================================================
@@ -351,3 +369,150 @@ class TestEdgeCases:
         mock_index.build_index(embeddings)
 
         assert len(mock_index) == 10
+
+
+# ==============================================================================
+# Test: Backend registration is gated on discoverable dependencies
+# ==============================================================================
+# Found on the deployment machine: `test_create_index_auto` skipped there and
+# passed on a CPU container — a test running backwards, because `auto` resolves to
+# cuVS when CUDA is present and cuVS was registered without being installed.
+#
+# The cause was that `_register_backends` guarded on whether the backend *module*
+# imports. Both backends import their dependency lazily inside a method, so that
+# guard never fired for either of them and every backend was always registered.
+# Registration feeds selection, the fallback chain and the operator report, so one
+# wrong registration was three wrong answers.
+#
+# These drive registration through **controlled observations** — a fake
+# discoverability answer, a fake platform, a fake GPU answer — rather than through
+# what happens to be installed in CI. A test that depends on the environment is
+# how this defect stayed invisible on every machine but one.
+# ==============================================================================
+class TestBackendRegistrationGating:
+    """`_register_backends` must register only what could actually be built."""
+
+    @staticmethod
+    def _reregister(monkeypatch, *, present, platform="linux"):
+        """Rebuild the registry against a stated set of discoverable packages."""
+        from src.retrieval import vector_index as vi
+
+        monkeypatch.setattr(vi.sys, "platform", platform)
+        monkeypatch.setattr(vi, "_discoverable", lambda pkg: pkg in present)
+        vi._register_backends()
+        return vi
+
+    @pytest.fixture(autouse=True)
+    def _restore_registry(self):
+        """The registry is module state, so every case here puts it back."""
+        from src.retrieval import vector_index as vi
+
+        saved = dict(vi._BACKEND_REGISTRY)
+        yield
+        vi._BACKEND_REGISTRY.clear()
+        vi._BACKEND_REGISTRY.update(saved)
+
+    def test_auto_selects_voyager_when_a_gpu_is_present_but_cuvs_is_not(self, monkeypatch):
+        """The observed failure. CUDA presence routes `auto` to cuVS, so cuVS being
+        absent must be visible at registration or the fallback chain never runs."""
+        vi = self._reregister(monkeypatch, present={"voyager"})
+        monkeypatch.setattr(vi, "is_gpu_available", lambda: True)
+
+        assert vi.list_available_backends() == ["voyager"]
+        assert vi.resolve_backend("auto") == "voyager"
+
+    def test_cuvs_without_cupy_is_not_registered(self, monkeypatch):
+        """`CuVSIndex._validate_cuvs` imports cuvs.neighbors **and** cupy, and
+        `validate_installation.py` records cuvs-without-cupy as a state observed on
+        a real deployment machine. Discovering cuvs alone would preserve exactly
+        that failure."""
+        vi = self._reregister(monkeypatch, present={"voyager", "cuvs"})
+        monkeypatch.setattr(vi, "is_gpu_available", lambda: True)
+
+        assert "cuvs" not in vi.list_available_backends()
+        assert vi.resolve_backend("auto") == "voyager"
+
+    def test_cuvs_is_registered_when_both_packages_are_discoverable(self, monkeypatch):
+        """The positive case, so the gate is not merely refusing everything."""
+        vi = self._reregister(monkeypatch, present={"voyager", "cuvs", "cupy"})
+        monkeypatch.setattr(vi, "is_gpu_available", lambda: True)
+
+        assert sorted(vi.list_available_backends()) == ["cuvs", "voyager"]
+        assert vi.resolve_backend("auto") == "cuvs"
+
+    def test_voyager_absent_is_not_listed(self, monkeypatch):
+        """Voyager is gated by discovery on every platform. It is installed
+        everywhere looked at so far, which is why its identical latent bug was
+        invisible — not a reason to exempt it."""
+        vi = self._reregister(monkeypatch, present={"cuvs", "cupy"})
+
+        assert "voyager" not in vi.list_available_backends()
+
+    def test_no_backend_at_all_raises_rather_than_returning_one(self, monkeypatch):
+        """The existing no-backend RuntimeError, which was unreachable while every
+        backend was registered unconditionally."""
+        vi = self._reregister(monkeypatch, present=set())
+        monkeypatch.setattr(vi, "is_gpu_available", lambda: False)
+
+        assert vi.list_available_backends() == []
+        with pytest.raises(RuntimeError, match="No available vector index backend"):
+            vi.resolve_backend("auto")
+
+    def test_an_explicitly_requested_absent_backend_fails_early(self, monkeypatch):
+        """Previously this returned "cuvs" and failed later inside `create_index`
+        on `import cuvs`. Failing at resolution names the problem where the caller
+        asked the question, and lists what it could have asked for instead."""
+        vi = self._reregister(monkeypatch, present={"voyager"})
+
+        with pytest.raises(ValueError, match="not available") as caught:
+            vi.resolve_backend("cuvs")
+        assert "cuvs" not in str(caught.value).split("Valid options:")[1]
+
+    def test_cuvs_stays_unregistered_on_windows_even_when_discoverable(self, monkeypatch):
+        """A support statement, not a dependency one: cuVS does not run on Windows
+        whatever pip reports."""
+        vi = self._reregister(monkeypatch, present={"voyager", "cuvs", "cupy"},
+                              platform="win32")
+
+        assert vi.list_available_backends() == ["voyager"]
+
+    def test_registration_drops_a_backend_whose_dependency_has_gone(self, monkeypatch):
+        """Rebuilt, not accumulated. A backend registered by an earlier call must
+        not survive as falsely available once discovery says it is gone."""
+        vi = self._reregister(monkeypatch, present={"voyager", "cuvs", "cupy"})
+        assert "cuvs" in vi.list_available_backends()
+
+        registry_before = vi._BACKEND_REGISTRY
+        self._reregister(monkeypatch, present={"voyager"})
+
+        assert "cuvs" not in vi.list_available_backends()
+        # Cleared in place rather than rebound, so a caller holding the dict is not
+        # left reading a detached copy of the old answer.
+        assert vi._BACKEND_REGISTRY is registry_before
+
+    def test_a_discovery_error_fails_closed_without_breaking_registration(self, monkeypatch):
+        """`find_spec` raises for ordinary conditions — ModuleNotFoundError when a
+        parent package is absent, ValueError for an imported module with no
+        __spec__. An optional-dependency probe must never be the reason
+        `import src.retrieval` fails."""
+        from src.retrieval import vector_index as vi
+
+        def exploding(package):
+            if package == "voyager":
+                return True
+            raise ModuleNotFoundError(f"No module named {package!r}")
+
+        monkeypatch.setattr(vi.importlib.util, "find_spec", exploding)
+        vi._register_backends()
+
+        assert vi.list_available_backends() == ["voyager"]
+
+    @pytest.mark.parametrize("raised", [ImportError("x"), ValueError("no __spec__")])
+    def test_discoverable_swallows_the_discovery_exceptions(self, monkeypatch, raised):
+        from src.retrieval import vector_index as vi
+
+        def exploding(_package):
+            raise raised
+
+        monkeypatch.setattr(vi.importlib.util, "find_spec", exploding)
+        assert vi._discoverable("anything") is False

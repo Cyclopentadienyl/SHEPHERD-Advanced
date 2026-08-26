@@ -46,17 +46,6 @@ from src.retrieval.backends.base import VectorIndexBase
 logger = logging.getLogger(__name__)
 
 
-def _is_cuvs_available() -> bool:
-    """檢查 cuVS 是否可用"""
-    if sys.platform == "win32":
-        return False
-    try:
-        import cuvs  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 class CuVSIndex(VectorIndexBase):
     """
     cuVS (NVIDIA RAPIDS) GPU 加速向量索引。
