@@ -1,0 +1,52 @@
+{
+  "artifact_digest": "7268900c49541369edcf5c7a7e3167d2af423c9ac272047df6076be30f577be1",
+  "deployment_relationship": "identical-sibling",
+  "excluded_by_design": [
+    "per-phenotype rows (only the distribution is recorded)"
+  ],
+  "fact": "M5",
+  "hop_bound_configured": 5,
+  "hop_bound_observed": 5,
+  "phenotype_coverage": {
+    "in_graph": 19836,
+    "reaching_none": 270,
+    "with_at_least_one_reachable_disease": 19566
+  },
+  "reachable_diseases_per_phenotype": {
+    "denominator_diseases": 29866,
+    "max": {
+      "diseases": 23344.0,
+      "fraction_of_all_diseases": 0.7816245898345945
+    },
+    "mean": {
+      "diseases": 16845.49263964509,
+      "fraction_of_all_diseases": 0.5640357811439459
+    },
+    "median": {
+      "diseases": 19216.5,
+      "fraction_of_all_diseases": 0.6434239603562579
+    },
+    "min": {
+      "diseases": 0.0,
+      "fraction_of_all_diseases": 0.0
+    },
+    "n_phenotypes": 19836,
+    "q1": {
+      "diseases": 15277.0,
+      "fraction_of_all_diseases": 0.5115181142436215
+    },
+    "q3": {
+      "diseases": 20573.0,
+      "fraction_of_all_diseases": 0.6888435009710038
+    }
+  },
+  "rows": {
+    "disease_targets": 334147192,
+    "distinct_phenotype_disease_pairs": 334147192,
+    "duplicate_pairs_collapsed": 0,
+    "total": 430585772
+  },
+  "selection_rule": "none \u2014 every phenotype in the graph is counted, including those that reach no disease and therefore appear nowhere in the artifact, and the distribution is reported. No phenotype is selected as typical, because no rule for selecting one is justified and the spread is what says whether reachability is dense in the graph or in one node.",
+  "sidecar_digest": "83ba638ea9bb6eab4a384fce9b124719bde0cdae09394ff2704bcbb86668d59e",
+  "what_this_shows": "how many distinct diseases each phenotype reaches within the artifact's configured hop bound, summarised over every phenotype in the graph"
+}
