@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""
+r"""
 Measure the disease scorer — Mode A.
 ====================================
 The offline counterpart to `scripts/evaluate_model.py`, which this replaces once
