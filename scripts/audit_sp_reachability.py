@@ -60,6 +60,7 @@ import argparse
 import json
 import logging
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -75,7 +76,14 @@ from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP
 logger = logging.getLogger(__name__)
 
 #: `scripts/compute_shortest_paths.py` writes `target_type` as 0 = gene, 1 = disease.
+GENE_TARGET_TYPE = 0
 DISEASE_TARGET_TYPE = 1
+
+#: The whole domain, so a third value is a refusal rather than a silent gene row.
+#: The disease mask is `== DISEASE_TARGET_TYPE`, which sends every unrecognised
+#: code — 2, -1, a sentinel from another producer — into the gene branch, where it
+#: vanishes from a reachability count instead of stopping the run.
+VALID_TARGET_TYPES = (GENE_TARGET_TYPE, DISEASE_TARGET_TYPE)
 
 REQUIRED_COLUMNS = ("phenotype_idx", "target_idx", "target_type", "distance")
 
@@ -213,6 +221,16 @@ def _validate_columns(table: Any, artifact: Path) -> int:
     """
     import torch
 
+    # Before `c not in table`, because that is a `Tensor.__contains__` on a bare
+    # tensor and raises a RuntimeError about container types — a stack trace where
+    # the operator needs to be told they pointed at the wrong `.pt`.
+    if not isinstance(table, Mapping):
+        raise SystemExit(
+            f"{artifact} holds a {type(table).__name__}, not a table of named columns. "
+            "`scripts/compute_shortest_paths.py` writes a mapping of "
+            f"{list(REQUIRED_COLUMNS)}; this is a different kind of file."
+        )
+
     missing = [c for c in REQUIRED_COLUMNS if c not in table]
     if missing:
         raise SystemExit(
@@ -248,7 +266,7 @@ def _validate_columns(table: Any, artifact: Path) -> int:
 
 
 def scan_table(table: Any, n_rows: int, n_phenotypes: int, n_diseases: int,
-               chunk_rows: int = SCAN_CHUNK_ROWS) -> Dict[str, Any]:
+               configured_hops: int, chunk_rows: int = SCAN_CHUNK_ROWS) -> Dict[str, Any]:
     """One pass over the table, in memory bounded by the graph rather than the rows.
 
     Every per-row quantity M5 needs is collected here — the reachable set, the
@@ -262,8 +280,16 @@ def scan_table(table: Any, n_rows: int, n_phenotypes: int, n_diseases: int,
     row and sorted it, which on the institutional artifact would have been several
     copies of several gigabytes each, discovered during a one-shot run.
 
-    Index ranges are checked here rather than up front, for the same reason: a
-    bounds check over the whole column needs the whole column.
+    Index ranges and value domains are checked here rather than up front, for the
+    same reason: a check over a whole column needs the whole column, and this is
+    the pass that already has it.
+
+    **Both value domains, not just the index ranges.** `target_type` is masked
+    with `== DISEASE_TARGET_TYPE`, so an unrecognised code falls into the gene
+    branch and disappears from the count rather than stopping the run — a 2 or a
+    -1 would lower a reachability figure invisibly. `distance` is bounded on both
+    ends against the configured hop count, because comparing only the maximum
+    against it leaves 0 and -1 admissible, and neither is a hop count.
     """
     import torch
 
@@ -289,10 +315,33 @@ def scan_table(table: Any, n_rows: int, n_phenotypes: int, n_diseases: int,
 
         distance_chunk = table["distance"][start:stop]
         if distance_chunk.numel():
+            chunk_min = int(distance_chunk.min().item())
             chunk_max = int(distance_chunk.max().item())
+            if chunk_min < 1 or chunk_max > configured_hops:
+                raise SystemExit(
+                    f"distance spans [{chunk_min}, {chunk_max}]; the producer writes a "
+                    f"hop count in [1, {configured_hops}] and this sidecar configures "
+                    f"{configured_hops}. A distance of 0 or below is not a hop count, "
+                    "and one above the bound contradicts the artifact's own record."
+                )
             observed_hops = chunk_max if observed_hops is None else max(observed_hops, chunk_max)
 
-        is_disease = table["target_type"][start:stop] == DISEASE_TARGET_TYPE
+        type_chunk = table["target_type"][start:stop]
+        is_disease = type_chunk == DISEASE_TARGET_TYPE
+        # Enumerated rather than bounds-checked, so the refusal survives a producer
+        # that one day writes a non-contiguous set of type codes.
+        recognised = is_disease.clone()
+        for value in VALID_TARGET_TYPES:
+            if value != DISEASE_TARGET_TYPE:
+                recognised |= type_chunk == value
+        if not bool(recognised.all()):
+            unknown = type_chunk[~recognised]
+            raise SystemExit(
+                f"target_type carries {int(unknown[0].item())}, outside the "
+                f"{list(VALID_TARGET_TYPES)} the producer writes. The disease mask "
+                "would have read it as a gene row and dropped it from the count."
+            )
+
         # Gene rows index the gene universe, so their target_idx is deliberately
         # not checked against the disease count and deliberately not counted.
         target_chunk = table["target_idx"][start:stop][is_disease]
@@ -406,19 +455,17 @@ def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str,
                 "would be about what it claims to be about."
             )
 
-    scan = scan_table(table, n_rows, n_phenotypes, n_diseases)
+    scan = scan_table(table, n_rows, n_phenotypes, n_diseases, configured_hops)
     counts = scan["counts"]
     n_disease_rows = scan["n_disease_rows"]
     n_distinct = scan["n_distinct"]
 
     # Over the whole table, gene targets included: this is the artifact's own bound,
-    # cross-checked against the sidecar, not a statistic about the disease rows.
+    # not a statistic about the disease rows. Reported, not re-checked — the scan
+    # bounds every distance against `configured_hops` as it reads it, so a check
+    # here could not fire, and one that cannot fire tells a reader the scan lets
+    # an over-long distance through.
     observed_hops = scan["observed_hops"]
-    if observed_hops is not None and observed_hops > configured_hops:
-        raise SystemExit(
-            f"the table holds a distance of {observed_hops} while the sidecar "
-            f"configured {configured_hops}. The artifact does not match its own record."
-        )
 
     n_with_any = int((counts > 0).sum().item())
 

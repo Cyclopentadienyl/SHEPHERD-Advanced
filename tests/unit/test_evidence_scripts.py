@@ -434,9 +434,9 @@ def test_the_scan_is_independent_of_how_it_is_chunked(tmp_path):
     table = torch.load(root / "sp.pt", weights_only=True)
     n_rows = int(table["phenotype_idx"].numel())
 
-    whole = scan_table(table, n_rows, 3, 10, chunk_rows=n_rows + 5)
+    whole = scan_table(table, n_rows, 3, 10, 5, chunk_rows=n_rows + 5)
     for chunk in (1, 2, 3, n_rows - 1):
-        part = scan_table(table, n_rows, 3, 10, chunk_rows=chunk)
+        part = scan_table(table, n_rows, 3, 10, 5, chunk_rows=chunk)
         assert torch.equal(part["counts"], whole["counts"]), chunk
         assert part["n_disease_rows"] == whole["n_disease_rows"], chunk
         assert part["n_distinct"] == whole["n_distinct"], chunk
@@ -458,7 +458,7 @@ def test_the_scan_allocates_by_graph_size_and_not_by_row_count(tmp_path):
     # outcome this guard exists to prevent.
     assert 3 * 10 < MAX_PRESENCE_CELLS
     with pytest.raises(SystemExit, match="one-pass counter allocates"):
-        scan_table(table, 5, MAX_PRESENCE_CELLS, 2)
+        scan_table(table, 5, MAX_PRESENCE_CELLS, 2, 5)
 
 
 class _RecordingMatrix:
@@ -527,6 +527,48 @@ def test_a_float_index_column_is_refused_rather_than_truncated(tmp_path):
               "--output", str(tmp_path / "x.json")])
 
 
+@pytest.mark.parametrize("column,value,why", [
+    ("target_type", -1, "an unrecognised code below the domain"),
+    ("target_type", 2, "an unrecognised code above the domain"),
+    ("distance", -1, "a negative hop count"),
+    ("distance", 0, "a zero hop count"),
+    ("distance", 6, "a distance beyond the sidecar's configured 5"),
+])
+def test_a_value_outside_the_producers_domain_is_refused(tmp_path, column, value, why):
+    """dtype and shape do not constrain values.
+
+    A `target_type` of 2 or -1 is not a disease, so the mask sends it to the gene
+    branch and it *lowers a reachability figure invisibly* — the failure mode this
+    whole file exists to prevent. A `distance` of 0 or -1 is not a hop count, and
+    comparing only the observed maximum against the configured bound admits both.
+    """
+    root = _sp_workspace(tmp_path / "ws", max_hops=5)
+    table = torch.load(root / "sp.pt", weights_only=True)
+    table[column] = table[column].clone()
+    table[column][0] = value
+    torch.save(table, root / "sp.pt")
+
+    with pytest.raises(SystemExit) as caught:
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+    assert column in str(caught.value), why
+    assert not (tmp_path / "x.json").exists()
+
+
+def test_a_pt_file_that_is_not_a_table_is_refused_rather_than_traced(tmp_path):
+    """`"phenotype_idx" not in <tensor>` is a `Tensor.__contains__` and raises a
+    RuntimeError about container types — a stack trace where the operator needs to
+    be told they pointed at the wrong `.pt`."""
+    root = _sp_workspace(tmp_path / "ws")
+    torch.save(torch.zeros(4), root / "sp.pt")
+
+    with pytest.raises(SystemExit, match="not a table of named columns"):
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+
+
 @pytest.mark.parametrize("column,replacement", [
     ("phenotype_idx", "two_dimensional"),
     ("target_type", "short"),
@@ -564,6 +606,11 @@ _REQUIRED = {
            "reachable_diseases_per_phenotype", "selection_rule", "deployment_relationship"),
 }
 
+#: Which backlog fact each report claims to be. Pinned by value: three files whose
+#: `fact` keys merely exist are not distinguishable from each other, and the whole
+#: point of the field is that a reader can tell which claim they are holding.
+_FACT = {"m1": "M1-M3", "m4": "M4", "m5": "M5"}
+
 #: Substrings that must not appear anywhere in a published artifact, whatever
 #: shape a future field takes.
 #:
@@ -579,27 +626,27 @@ _FORBIDDEN_SUBSTRINGS = ("patient_id", "sample_id", "SECRET", "/home/", "/tmp/",
 #: additive aggregate, which would make the schema harder to extend than to freeze.
 _NESTED = {
     "m1": [
-        (("summary", "n_loaded"), lambda v: isinstance(v, int) and v >= 1),
+        (("summary", "n_loaded"), lambda v: _is_int(v) and v >= 1),
         (("summary", "in_channels", "established"), lambda v: isinstance(v, bool)),
         (("summary", "in_channels", "value_counts"), lambda v: isinstance(v, dict)),
-        (("summary", "filename_vs_logs", "agree"), lambda v: isinstance(v, int)),
+        (("summary", "filename_vs_logs", "agree"), lambda v: _is_int(v)),
         (("runtime", "torch"), lambda v: isinstance(v, str) and v),
     ],
     "m4": [
-        (("counts", "train_diseases"), lambda v: isinstance(v, int) and v >= 1),
-        (("counts", "val_diseases"), lambda v: isinstance(v, int) and v >= 1),
-        (("counts", "shared_diseases"), lambda v: isinstance(v, int) and v >= 0),
-        (("overlap", "shared_over_evaluation"), lambda v: isinstance(v, float) and 0 <= v <= 1),
+        (("counts", "train_diseases"), lambda v: _is_int(v) and v >= 1),
+        (("counts", "val_diseases"), lambda v: _is_int(v) and v >= 1),
+        (("counts", "shared_diseases"), lambda v: _is_int(v) and v >= 0),
+        (("overlap", "shared_over_evaluation"), lambda v: type(v) is float and 0 <= v <= 1),
         (("overlap", "as_written"), lambda v: isinstance(v, str) and " of " in v),
     ],
     "m5": [
-        (("hop_bound_configured",), lambda v: isinstance(v, int) and 1 <= v <= 127),
-        (("hop_bound_observed",), lambda v: v is None or isinstance(v, int)),
+        (("hop_bound_configured",), lambda v: _is_int(v) and 1 <= v <= 127),
+        (("hop_bound_observed",), lambda v: v is None or _is_int(v)),
         (("reachable_diseases_per_phenotype", "denominator_diseases"),
-         lambda v: isinstance(v, int) and v >= 1),
-        (("rows", "distinct_phenotype_disease_pairs"), lambda v: isinstance(v, int) and v >= 0),
-        (("rows", "duplicate_pairs_collapsed"), lambda v: isinstance(v, int) and v >= 0),
-        (("phenotype_coverage", "in_graph"), lambda v: isinstance(v, int) and v >= 1),
+         lambda v: _is_int(v) and v >= 1),
+        (("rows", "distinct_phenotype_disease_pairs"), lambda v: _is_int(v) and v >= 0),
+        (("rows", "duplicate_pairs_collapsed"), lambda v: _is_int(v) and v >= 0),
+        (("phenotype_coverage", "in_graph"), lambda v: _is_int(v) and v >= 1),
     ],
 }
 
@@ -613,6 +660,15 @@ _DIGEST_SITES = {
     "m5": [(("artifact_digest",), "sp.pt"),
            (("sidecar_digest",), "sp.meta.json")],
 }
+
+
+def _is_int(value) -> bool:
+    """A JSON integer, and not a JSON `true`.
+
+    `isinstance(True, int)` is True, and `true` is valid JSON, so a boolean where
+    the schema promises a count would pass an `isinstance` check and read as 1.
+    """
+    return type(value) is int
 
 
 def _at(report, path):
@@ -639,6 +695,7 @@ def test_every_artifact_carries_its_required_contract(tmp_path):
         report = json.loads((tmp_path / f"{name}.json").read_text())
         missing = [key for key in required if key not in report]
         assert not missing, f"{name} is missing {missing}"
+        assert report["fact"] == _FACT[name], f"{name} claims {report['fact']!r}"
         assert report["deployment_relationship"] == "unstated"
 
         for path, ok in _NESTED[name]:
