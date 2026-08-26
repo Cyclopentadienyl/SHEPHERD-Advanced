@@ -202,11 +202,16 @@ system currently does — hides which one is speaking.
 |  | **High SP** (closely connected in the graph) | **Low SP** (weakly or not connected) |
 |---|---|---|
 | **High model score** | **Expected.** Model agreement plus a short recorded connection. Usually quick to check against known criteria. | **Model-supported, weakly connected in the current graph.** May warrant review for a novel presentation, a source-coverage gap, a mapping problem, or model error. |
-| **Low model score** | Recorded connection, but the pattern does not fit this patient. | **Neither score provides positive support.** This is the great majority of the ~27,990 diseases. |
+| **Low model score** | Recorded connection, but the pattern does not fit this patient. | **Neither score provides positive support.** |
 
-**The bottom-right cell is why a low SP score alone is useless.** Most diseases have no path to any
-given patient simply because they are unrelated. Selecting on "low SP" returns an enormous and
-overwhelmingly wrong set.
+**The bottom-right cell is why a low SP score alone is useless.** Selecting on "low SP" returns an
+enormous and overwhelmingly wrong set.
+
+*Corrected against measurement.* This paragraph used to say most diseases have no path to any given
+patient. They do: the median phenotype reaches 64.3% of diseases within 5 hops, and only 1.36% of
+phenotypes reach none ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json)). The cell's point stands for a
+different reason — a *reachable but distant* disease also scores near the floor, so a low SP score
+does not separate "unrelated" from "connected at five steps".
 
 ## A warning that must not be softened
 
@@ -243,7 +248,7 @@ Specifically, it helps with:
 
 | Situation | Why |
 |---|---|
-| **Ranking the full disease universe** | Candidates beyond the five-step limit all receive the same floor value, so the number stops discriminating and becomes little more than a reachability flag. Over ~27,990 diseases this is the expected condition, but **how large that group actually is has not been measured on this deployment**. |
+| **Ranking the full disease universe** | Candidates beyond the five-step limit all receive the same floor value, so the number stops discriminating there. **Now measured**: on the deployment artifact the median phenotype leaves ~35.7% of diseases beyond the limit, not the great majority ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json)). It is a large minority, not the expected condition — and it is not the whole of the concern, since a disease reachable at five steps scores `1/6` against a floor of `1/7`. How much of the *reachable* mass sits near that floor is a distance distribution no artifact records. |
 | **Looking for undocumented or atypical presentations** | The score penalises exactly what you are looking for. |
 | **As evidence that a diagnosis is wrong** | No path found is not evidence of no relationship. See §1. |
 | **As an explanation of mechanism** | The score does not know what kinds of steps it counted. Use the reasoning paths instead. |

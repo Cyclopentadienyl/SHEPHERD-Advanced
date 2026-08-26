@@ -340,7 +340,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--split", required=True,
                         choices=["train", "val", "test"],
-                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. `val` is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated and are not held-out generalisation.')
+                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. `val` is not held-out generalisation, for two independent reasons. (1) It is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated. (2) `sample_generator.py` draws one sample pool, shuffles it and slices it into train and val — it never partitions by disease, so the two share diseases by construction. Audited on the deployment workspace at 100%%: all 7,970 val diseases appear in train (docs/working/EVIDENCE_M4.json, which records both split digests).')
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the measurement JSON is written")
     parser.add_argument("--predictions-output", type=Path, default=None,

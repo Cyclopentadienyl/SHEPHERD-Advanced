@@ -211,10 +211,22 @@ unexamined default.
 
 ### 3.5 Engineering inference — weigh accordingly, none is measured
 
-- Over the full disease universe most candidates fall outside the 5-hop table and receive the same
-  floor value, so the SP term degenerates towards a binary reachability indicator. That
-  systematically disadvantages candidates with no KG path — the cases GNN generalisation exists to
-  surface.
+- ~~Over the full disease universe most candidates fall outside the 5-hop table and receive the same
+  floor value, so the SP term degenerates towards a binary reachability indicator.~~ **The premise is
+  measured and false.** On the deployment artifact the median phenotype reaches **19,216.5 of 29,866**
+  diseases within the configured 5 hops (**64.3%**), first quartile 51.2%, and only **270 of 19,836**
+  phenotypes reach none ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json), BACKLOG §2.4). The gap is
+  wider still for a real query: M5 counts per *phenotype*, and a patient presents several, whose
+  candidates draw on the union.
+
+  **What does not follow, in either direction.** The conclusion no longer follows from that premise,
+  but is not thereby refuted. A candidate reachable at 5 hops scores `1/6` against a floor of `1/7`,
+  so near-degeneracy could still arise from the **distance distribution among reachable pairs**
+  rather than from unreachability. M5 records the hop bound and not a distance histogram, so this is
+  now unestablished both ways; settling it needs that distribution, which no current artifact
+  carries. The residual concern that survives intact is narrower than the original: candidates with
+  **no** KG path are still disadvantaged, and that is now a claim about 1.36% of phenotypes rather
+  than about most candidates.
 - Because the SP range is `[1/7, 1/2]` while the embedding term spans `[0, 1]`, η is not the
   effective weight. The **maximum theoretical spans** stand at 0.7 versus 0.107; the actual
   contribution of each term depends on their observed spread, which has not been measured.
@@ -228,7 +240,7 @@ unexamined default.
 
 | Alternative | Why not chosen |
 |---|---|
-| **Keep η in ranking, applied to the full universe** | Requires SP over ~27,990 candidates, where the term degenerates towards a reachability indicator (§3.5). Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
+| **Keep η in ranking, applied to the full universe** | Requires SP over the whole disease universe — ~27,990 when this table was written, 29,866 on the audited deployment workspace. The degeneracy this row relied on is **no longer an established reason**: §3.5's premise was measured and refuted, and what remains of the concern is unsettled rather than supported. Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
 | **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** |
 | **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. |

@@ -513,12 +513,30 @@ says it is total.
 This does not invalidate any engineering result. It **bounds what every number
 may claim**, and the bound is tighter than the caveat currently drafted.
 
-### 3.3 A policy inference is contradicted
+### 3.3 A policy inference is contradicted — in its premise, not its conclusion
 
-`DISEASE_SCORER_POLICY.md` §3.5 records, explicitly as unmeasured, that most
+`DISEASE_SCORER_POLICY.md` §3.5 recorded, explicitly as unmeasured, that most
 candidates fall outside the 5-hop table so the SP term degenerates to a
-reachability indicator. M5 says the opposite. The correction is factual and
-touches no normative statement.
+reachability indicator.
+
+**The premise is refuted.** The median phenotype reaches 64.3% of diseases within
+the configured 5 hops, q1 51.2%, and 270 of 19,836 phenotypes (1.36%) reach none.
+Wider still for a real query, since M5 counts per phenotype and a patient presents
+several whose candidates draw on the union.
+
+**The conclusion is not refuted with it, and saying so would be the same error in
+the other direction.** A candidate reachable at 5 hops scores `1/6` against a
+floor of `1/7`, so near-degeneracy could still arise from the distance
+distribution among *reachable* pairs. M5 records the hop bound and no distance
+histogram, so that question is now open rather than answered, and no current
+artifact carries what would close it. What survives of the original concern is
+narrower and intact: candidates with **no** KG path are disadvantaged, and that is
+a claim about 1.36% of phenotypes.
+
+The correction is factual and touches no normative statement. It also lands in
+`SP_SCORE_GUIDE.md`, which restated the same claim for operators in two places —
+one of them saying in as many words that the size of the group "has not been
+measured on this deployment".
 
 ### 3.4 No accepted holdout protocol, and nothing owned that
 
@@ -613,8 +631,8 @@ depends on is resolved.
 | **1d** | Same-batch differential calibration — `src/evaluation/differential.py`, 20 bounded tests. One materialised batch list to both paths; per-sample top-20, truth, reciprocal rank, then aggregate MRR. Five legs mutation-checked (scoring, pooling, truth, truncation, aggregate-only). Review round 1 upheld three findings — the aggregate did not gate the verdict, the supplied-`mode_a_result` seam let an acceptance gate accept evidence about itself, and the import contract was directional; two further sub-requests were declined with citations (§6). Found that **bit-exactness is a contract only when AMP is off** (§3.1.3), and that the shared synthetic cohort is too narrow to exercise the truncation at all — so the fixture gained size parameters and a second, wider cohort | 1c | author | **done** |
 | **1e** | D2 manifest additions and the legal-truth equality test (§2.3) — **done**. `amp_dtype` + `torch_compile_wrapped` on the manifest and on `DifferentialResult`; `assert_no_autocast` turned the manifest's `amp_enabled=False` from a structural claim into an enforced one, in both traversals — **later superseded by Proposal B**, which records the observed regime rather than forbidding a non-default one. Legal-truth equality tested under a **non-identity** id map, which is the case 1d's identity-mapped cohorts could not distinguish. Found that `build_manifest` had `amp_enabled` **hardcoded**, and that the wrong-space mutation is refused by the loss rather than the harness | 1c, 1d | author | **done** |
 | **P** | **Configurability and provenance** — `PLAN_CONFIGURABILITY_AND_PROVENANCE.md`, both proposals **done and approved**. **A**: `training_input_digests` on the checkpoint, a sibling of `data_fingerprint`, covering the semantic roles a run consumed including a resume parent that was actually loaded; `file_sha256` moved to `src/utils/fingerprint.py`. **B**: the AMP regime is **recorded at the computation that produced each mode's numbers** rather than forbidden — `EncodedGraph` carries the embeddings with their regime into the B/C traversals, and the invariant enforced is `encoded.regime == manifest.regime == scoring regime`, checked per batch. Capture only: no current-workspace comparison, no registry, no AMP CLI, no threshold | — | author | **done** |
-| **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | 10 — **satisfied**, `EVIDENCE_M4.json` | author | small, **unblocked** |
-| **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3). The §3.5 inference — that most candidates fall outside the 5-hop table — is refuted under either reading of the old denominator: median 64.3%, q1 51.2%. Use the measured distribution, **not** the retired 71.3% | 10 — **satisfied**, `EVIDENCE_M5.json` | author | ~5 lines, **unblocked** |
+| **2** | Contamination caveat updated to the measured 100% (§3.2). Both measurement entry points' `--split` help now names **two** independent reasons `val` is not held-out — checkpoint selection, and that `sample_generator.py` slices one shuffled pool and never partitions by disease, so the overlap is structural rather than incidental to one workspace. The figure cites `EVIDENCE_M4.json`, which carries both split digests, rather than inlining hashes that are workspace-specific into help shown for any workspace | 10 — satisfied | author | **done** |
+| **3** | `DISEASE_SCORER_POLICY.md` §3.5 corrected (§3.3), and the same claim where it was restated in `SP_SCORE_GUIDE.md`. **The premise is refuted, the conclusion is not** — see §3.3 | 10 — satisfied | author | **done** |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
 | **12** | **`evaluate([])` silently evaluates the val set** — `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an explicit empty list is falsy and becomes a full validation pass. Frozen by a 1b test marked *observed, not endorsed*. Kept out of 1c deliberately, since an extraction commit must stay behaviour-neutral; raised here so the frozen defect is **not stranded** as a permanent monument to a known bug | 1c | author | small, unscheduled |
