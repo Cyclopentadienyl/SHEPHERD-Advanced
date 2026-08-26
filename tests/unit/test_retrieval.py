@@ -390,7 +390,13 @@ class TestEdgeCases:
 # how this defect stayed invisible on every machine but one.
 # ==============================================================================
 class TestBackendRegistrationGating:
-    """`_register_backends` must register only what could actually be built."""
+    """`_register_backends` must register only backends whose immediate required
+    packages are discoverable.
+
+    Deliberately narrower than "could actually be built": discovery does not prove
+    a package imports, that a CUDA build matches the driver, or that an index
+    constructs. Saying the wider thing here would misdescribe the contract the
+    implementation was scoped to."""
 
     @staticmethod
     def _reregister(monkeypatch, *, present, platform="linux"):

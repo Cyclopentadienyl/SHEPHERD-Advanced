@@ -236,6 +236,23 @@ are never silently compared.
 third, of a newer vintage: **0 duplicate pairs collapsed** out of 334,147,192
 disease rows.
 
+**The run's resource cost is recorded separately and more weakly.**
+[`EVIDENCE_ITEM10_run_metrics.json`](EVIDENCE_ITEM10_run_metrics.json)
+`305fb1a2…` holds the wall time, peak RSS, major page faults and bytes read
+for the four runs. It is **transcribed by hand** from `/usr/bin/time -v` rather
+than emitted by a committed script, so it is a weaker class of artifact than the
+four beside it and says so in its own text. The console transcripts it was taken
+from are not committed: §5.2 forbids absolute paths in evidence, and both the
+`.out` and `.time` files carry them.
+
+Two things in it are worth more than operational curiosity. The shortest-path scan
+read **10.78 GB** from the filesystem against an artifact of **10.76 GB** — that
+the whole table was read is established by disk traffic, independently of the
+sidecar's `num_pairs` check, which concludes the same thing from tensor length.
+And it took **21,846 major page faults** against 0-8 on the three runs that read
+no large artifact, which is what a mapped read produces and a resident read does
+not.
+
 
 ### 2.5 A defect that only the deployment hardware could show
 

@@ -262,23 +262,33 @@ class TestBackendResolution:
     """Test automatic backend selection."""
 
     def test_resolve_auto_returns_valid_backend(self):
-        """resolve_backend('auto') should return an available backend."""
+        """resolve_backend('auto') returns something that is actually registered.
+
+        Registration is gated on discoverable dependencies, so a host with neither
+        voyager nor cuvs is a valid host: retrieval is detached from diagnosis and
+        both backends are optional. The empty case is not simulated here —
+        `TestBackendRegistrationGating` already drives it with controlled
+        observations and asserts the no-backend `RuntimeError`.
+        """
         from src.retrieval import resolve_backend, list_available_backends
 
-        backend = resolve_backend("auto")
         available = list_available_backends()
+        if not available:
+            pytest.skip("no vector index backend is installed")
 
-        assert backend in available
+        assert resolve_backend("auto") in available
 
     def test_list_available_backends(self):
-        """list_available_backends() should return non-empty list."""
+        """list_available_backends() returns a list.
+
+        It asserted `len >= 1` and `"voyager" in backends` on the grounds that
+        "Voyager is always available after deployment". That is not the contract:
+        registration is gated on discovery, and an installation without either
+        backend is legitimate.
+        """
         from src.retrieval import list_available_backends
 
-        backends = list_available_backends()
-
-        assert isinstance(backends, list)
-        assert len(backends) >= 1  # At least voyager should be available
-        assert "voyager" in backends  # Voyager is always available after deployment
+        assert isinstance(list_available_backends(), list)
 
 
 # ==============================================================================
