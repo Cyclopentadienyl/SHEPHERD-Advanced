@@ -1,14 +1,22 @@
 # Evaluation cohorts — findings, and the division of labour
 
-**Type:** findings report plus one institutional decision · **Date:** 2026-08
+**Type:** findings report plus institutional decisions · **Date:** 2026-08
 
-**Status:** §1–§2 established, now including the published article (§1.6); §3 decided; §5 open and narrowed by §6.0's default path; §6 under
-discussion except where a passage marks itself settled; §6.8 cleared to proceed with one item under
-re-review. **Two institutional questions gate the rest — see §6.0.**
+**Status:** §1–§2 established, including the published article (§1.6); §3 decided; §5's two gating
+questions **answered**, its partition questions still open; §6.0 fixed; §6.8 cleared to proceed
+with one item under re-review.
 
 <details>
 <summary><b>Revision history</b></summary>
 
+- **8** — the two gating questions are answered (§5): no direct synthetic unseen-disease result is
+  required for the deployed weights, and option **B** is accepted, both on the institution's policy
+  of staying aligned with the published method. §6.0 collapses to five steps with no refit and one
+  model identity; §6.4 loses its subject and shrinks to a road-not-taken note; §6.1's default path
+  uses four roles; §6.6 lists what is not built. §4.2 added: the reference cohort's inclusion
+  criteria are completeness and diagnostic certainty, not difficulty, and its hard-case analysis is
+  a post-hoc stratification of which two of four subsets are computed rather than curated — with
+  what to ask the institution for.
 - **7** — the published article is now a source. §1.6 records what it reports: two simulated
   partitions and no synthetic test set, disease-disjoint by design and stated as such, with the
   real cohorts as the evaluation and unseen-disease evidence stratified inside them. Its patient
@@ -243,7 +251,7 @@ association groups and 67–86% for the expert-flagged novel groups.
 |---|---|
 | **The structure of §6.0 is the published reference design, not an engineering preference** | Disease-disjoint synthetic validation for selection, real cohorts for evaluation, no synthetic test partition. A peer-reviewed instance of exactly that path exists |
 | **The statistical power does not transfer with the structure** | They evaluated on 2,042 real patients across three cohorts. This project has MyGene2 at 146 and an institutional cohort accumulating at ten to twenty per batch. §4's bounds are unchanged by this section |
-| **They did not refit on all diseases** | No refit path exists in the repository (`hparams.py:181-187`), so the model they describe is option **B** of §3.1 and carries the withheld diseases' loss. §6.0 step 3 is therefore a *deviation* from the reference, not a reproduction of it — see §6.0 |
+| **They did not refit on all diseases** | No refit path exists in the repository (`hparams.py:181-187`), so the model they describe is option **B** of §3.1 and ships carrying the withheld diseases' loss. §5 records the institution's decision to do the same |
 
 #### One caveat that cuts against using MyGene2 naively
 
@@ -301,21 +309,26 @@ is currently two of them.
 | Cohort | Answers | Standing |
 |---|---|---|
 | **MyGene2** | Does the model hold up against **real phenotype recording** — incomplete, coarse-grained, noisy — and how large is the gap between synthetic and real? | **Research comparison.** Not an acceptance gate |
-| **Disease-disjoint synthetic split** | Does the model generalise to diseases with **no labelled patient examples in training**? (Their KG nodes and edges are still present — §3.1) | Requires a generator change; two tiers, see below |
+| **Disease-disjoint synthetic split** | Does the model generalise to diseases with **no labelled patient examples in training**? (Their KG nodes and edges are still present — §3.1) | **Validation and model selection.** Requires a generator change (§6.2); no separate test tier is built (§5) |
 | **Institutional offline cohort** | Does the chosen model hold up on **this hospital's population**? | **Acceptance benchmark** |
 
-**Confining MyGene2 to research comparison is the right call for two reasons beyond preference**
-— and note from §1.6 that it is *stricter* than the paper, which additionally trains on MyGene2
-for the causal gene discovery task.
+**Confining MyGene2 to research comparison is the right call for two reasons beyond preference.**
 Its disease distribution is that of a self-selected family-upload platform and has no relation to
 the deploying hospital's case mix, so accepting a model on its evidence would be accepting on
 evidence about a different population. And it keeps the dataset in the use it was published for:
 using a research cohort as a clinical deployment gate is a different use, and would raise consent
 and licensing questions that this division avoids entirely.
 
-### 3.1 The synthetic split is two decisions, and the first is not free either
+Note from §1.6 that treating MyGene2 as untouched is **stricter than the paper**, which also
+trains on MyGene2 and DDD for the causal gene discovery task. The direction is right, and it means
+our MyGene2 numbers are not directly comparable to the published ones on that task.
 
-§1.2 separates them. Before the trade-off can be weighed, one word has to be unpacked.
+### 3.1 What a disjoint split costs, and which option was taken
+
+§1.2 raises two separable decisions — restore a disjoint validation set, and add a third disjoint
+test partition. §5 has since closed the second (not built) and the first (option **B**). What
+follows is the reasoning that produced those answers, kept because the cost it describes is real
+and will be asked about again. Before the trade-off can be weighed, one word has to be unpacked.
 
 #### What a disease being "held out" does and does not remove
 
@@ -375,13 +388,14 @@ The committed upstream design corresponds to **B**. **C** appears nowhere in tha
 is recorded here as a real option rather than a recommendation — its cost lands in a place the
 other two do not touch.
 
-Under review, **B** is the option carried forward *for discussion*, and **C is explicitly not
-prohibited**: refitting on all diseases for deployment is a legitimate engineering choice, and
-what §6.4 requires of it is attribution discipline, not abandonment. §6.4 also records a variant
-of **C** that keeps a direct unseen-disease measurement of the deployed weights.
+**The institution has chosen B** (§5), on its policy of staying aligned with the published
+method, which is itself B. **C** is not prohibited in principle — it is a legitimate engineering
+choice with the attribution discipline §6.4 describes — but it is not the path being built, and no
+surface for it should exist.
 
-The second decision, a third disjoint test partition, sits on top of whichever of these is chosen
-and is the one needing the partition judgement in §5.1.
+The second decision — a third disjoint test partition — is **not taken** (§5). What remains open
+is not whether to cut the disease universe but how: the fraction and the stratification, which
+§5.1 records and §6.8 measures.
 
 ---
 
@@ -446,6 +460,54 @@ synthetic test partition is dropped — it is inherent to any acceptance gate, a
 does not report disease overlap between its simulated training set and its real evaluation
 cohorts; its leakage argument is temporal and concerns the knowledge graph.
 
+### 4.2 How the reference cohort was assembled — and what to ask the institution for
+
+A natural reading of §1.6 is that experts hand-picked a list of never-before-seen disease
+mechanisms to serve as the test set. **That is not what happened, and the difference changes the
+ask.**
+
+**The UDN cohort's inclusion criteria are about completeness and ground-truth reliability, not
+difficulty.** A patient is included if they have (1) at least one phenotype term, (2) at least five
+candidate genes, and (3) a diagnosis classified as *certain* or *highly likely* under the UDN's own
+diagnostic-certainty annotations. Everyone meeting those bars is in — N = 465. Nobody was selected
+for being hard.
+
+**The hard-case analysis is a post-hoc stratification of that cohort into four subsets**, and only
+two of the four need a clinician:
+
+| | Subset | Who determines it |
+|---|---|---|
+| 1 | Causal gene has **no known phenotype association** in the knowledge graph | Computed from the KG |
+| 2 | Causal gene has **no known disease association** in the knowledge graph | Computed from the KG |
+| 3 | Patient has a **novel disease**, per UDN experts | Clinician |
+| 4 | Patient has a **novel disease gene**, per UDN experts | Clinician |
+
+**Why this matters for the acceptance gate.** Selecting cases *for* difficulty and calling the
+result the test set would break §4.1(5): the number would describe the selection, not the
+hospital's population, and it could not answer "does this hold up on our patients". Selection on
+difficulty is a legitimate way to build a *stress* cohort, but it is a different instrument from an
+acceptance cohort and cannot stand in for one.
+
+#### What to ask for
+
+| Ask | Why |
+|---|---|
+| **Consecutive or otherwise unselected** cases within whatever extraction limit applies | §4.1(5). The moment cases are chosen on a criterion correlated with difficulty, the acceptance number stops describing the population |
+| A **diagnostic-certainty label** per case, and a stated bar | §4.1(1). The reference bar is "certain or highly likely"; a cohort with uncertain ground truth cannot be an acceptance gate |
+| Phenotypes as **structured HPO codes**, with the HPO version recorded | §4.1(2) |
+| One optional clinician field: **novel disease / novel disease gene / neither** | The only part of the stratification that needs expert judgement, and it is one field per case, not a curation exercise |
+
+#### What this project computes itself, with no clinical labour
+
+Subsets 1 and 2 above, from the knowledge graph. The disease-overlap report of §4.1(7), against the
+diseases that had synthetic patient supervision. And the paper's distance stratum — it reports that
+77.8% of patients whose phenotype terms sit **more than two hops** from their causal gene are still
+resolved in the top five — which the existing shortest-path artifacts and
+`scripts/compute_shortest_paths.py` already support without new machinery.
+
+The practical consequence is that the ask on the institution is **small**: an unselected batch, a
+certainty label, structured phenotypes, and one optional field. Not a curated novel-disease list.
+
 **MyGene2 and the institutional cohort are reported separately, never pooled.** Their populations
 and their recording processes differ, so a single "real-world accuracy" over the two would be an
 average across two different questions.
@@ -454,9 +516,20 @@ average across two different questions.
 
 ## 5. Open
 
-Recorded rather than resolved. Most of these turn on institutional judgement; where a question
-or sub-question belongs to engineering instead, the text says so — and in §5.1 engineering owes
-two of the five answers before the institution can usefully give the other three.
+Recorded rather than resolved, except where marked **answered**. Most of these turn on
+institutional judgement; where a question or sub-question belongs to engineering instead, the text
+says so.
+
+**Two questions have been answered**, on the institution's standing policy of staying aligned with
+the published method (§1.6), and are to be confirmed at the next review meeting:
+
+| Question | Answer |
+|---|---|
+| Must the deployed weights carry a **direct synthetic unseen-disease result**? | **No.** The paper's deployed model has none either. `synthetic_test_unseen` is not built |
+| Is a permanent loss of patient supervision for the withheld diseases acceptable in the shipped model — option **B** — or is refitting on all diseases required? | **B is accepted**, matching the reference implementation, which has no refit path |
+
+Together these fix §6.0's path and remove §6.4's subject. What remains open below is how the
+disease universe is cut, not whether.
 
 1. **How the disease universe is partitioned, and what that costs.** Applies to §3.1's second
    tier — restoring a disjoint *validation* set is parity with the original design and carries the
@@ -466,23 +539,21 @@ two of the five answers before the institution can usefully give the other three
    three are unavailable here.
 
    Review split this into five questions, because they have different answerers and only the last
-   two are engineering questions at all. **On the default path (§6.0), (i), (ii), (iii) and (iv)
-   are live** — they apply to the disease-disjoint *validation* set, which that path does need.
-   (iii) is live because §6.0's refit step is itself optional and the published reference does not
-   take it. (v) does not arise, because there is no permanent synthetic test partition to burn:
+   two are engineering questions at all. **On the default path (§6.0) only (i), (ii) and (iv)
+   remain live** — they apply to the disease-disjoint *validation* set, which that path does need.
+   (iii) is **answered: option B** (see the table above). (v) does not arise, because there is no
+   permanent synthetic test partition to burn:
 
    | | Question | Whose |
    |---|---|---|
    | i | **How many** diseases are withheld from patient supervision | Institution |
    | ii | **Which strata** they are drawn from — prevalence band, phenotype count, gene count, KG degree — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit |
-   | iii | Whether a **permanent** loss of supervision for the withheld diseases is acceptable in a deployed model (option **B**, what the paper ships — §1.6), or whether refitting on all diseases is required (option **C**) | Institution |
+   | iii | ~~Whether a **permanent** loss of supervision for the withheld diseases is acceptable, or whether refitting on all diseases is required~~ — **answered: option B**, matching §1.6 | Institution — done |
    | iv | Whether the generator is faithful enough (§1.5) for a disjoint split to mean what it appears to mean — item 6 below asks the sequencing question, this one asks the sufficiency question | Engineering, then institution |
    | v | What happens when a test cohort is **burned** — inspected during selection — and how the protocol regenerates from that point | Engineering, and it must be decided *before* the first cohort exists |
 
-   (v) is the one that expires, *if it becomes live at all*. A cohort that has been looked at
-   cannot be restored to uninspected by relabelling it, so the replacement path has to exist
-   before anybody has a reason to want it. On the default path the same hazard applies to the
-   institutional cohort instead, where §4.1(6) locates it.
+   (v) does not arise on the chosen path. The same hazard applies to the institutional cohort
+   instead, where §4.1(6) locates it and §4.2 says what to ask for.
 2. **Whether to apply for the larger institutional database — answered as a condition, not yet
    as a decision.** The ten-to-twenty figure is the single-batch extraction limit. A substantially
    larger database does exist in-hospital, behind an application and approval process.
@@ -543,52 +614,44 @@ permanent test partitions, protocol state machinery, evidence-attribution surfac
 claim the institution has not asked for: *that the exact deployed weights carry a direct synthetic
 unseen-disease result*.
 
-Absent that requirement, the path is short:
+**Both gating questions are now answered** (§5), and the path is short:
 
 | | Step | Cohort |
 |---|---|---|
-| 1 | Train and select with a **disease-disjoint synthetic validation** set | `synthetic_train`, `synthetic_val_unseen` |
-| 2 | Freeze the recipe | — |
-| 3 | Refit the deployment checkpoint on **all** eligible diseases | — |
-| 4 | Freeze the exact checkpoint digest | — |
-| 5 | Evaluate that checkpoint as external research comparison | MyGene2 |
-| 6 | Evaluate that checkpoint as the acceptance gate | institutional offline cohort |
+| 1 | Train with a **disease-disjoint synthetic validation** set | `synthetic_train`, `synthetic_val_unseen` |
+| 2 | Select the checkpoint on that validation set | `synthetic_val_unseen` |
+| 3 | Freeze the selected checkpoint's digest — **this is the model that ships** | — |
+| 4 | Evaluate that checkpoint as external research comparison | MyGene2 |
+| 5 | Evaluate that checkpoint as the acceptance gate | institutional offline cohort |
 
-**Steps 1, 2, 5 and 6 are the published reference design.** §1.6 establishes that the paper does
-exactly this: disease-disjoint synthetic validation for hyperparameter selection, real cohorts for
-evaluation, no synthetic test partition anywhere. This path is not an engineering preference; a
-peer-reviewed instance of it exists.
+**This is the published reference design, step for step.** §1.6 establishes that the paper does
+exactly this: disease-disjoint synthetic validation for selection, real cohorts for evaluation, no
+synthetic test partition and no refit. The path is not an engineering preference; a peer-reviewed
+instance of it exists, and the institution's stated policy is to stay aligned with it.
 
-**Steps 3 and 4 are a deviation, and their necessity is open.** The upstream repository has no
-refit path (`hparams.py:181-187`), so the model the paper describes is option **B** of §3.1: it
-ships with ~15% of diseases lacking patient supervision, on the argument the paper's own thesis
-makes — that a disease's graph structure suffices when patient labels do not exist.
+**There is no refit, so there is one model identity.** The checkpoint selected in step 2 is the
+checkpoint evaluated in steps 4–5 and the checkpoint that ships. Every number describes the weights
+that are deployed. This is option **B** of §3.1, and its cost is real and accepted: roughly 15% of
+diseases ship with no patient supervision, retaining only their knowledge-graph structure — which
+is precisely the condition the paper's few-shot thesis is about.
 
-| | Deployed model | Costs |
-|---|---|---|
-| **Without steps 3–4 (option B, matches the reference)** | Identical to the selected checkpoint | ~15% of diseases ship with no patient supervision |
-| **With steps 3–4 (option C)** | A new identity, refit on every disease | No direct synthetic unseen-disease number of its own; §6.4's attribution rules become load-bearing |
-
-Dropping steps 3 and 4 collapses §6.4 entirely — one model identity, every number describing the
-deployed weights, no sibling attribution to govern. Keeping them buys patient supervision for
-every disease in a clinical tool. **This is §5.1(iii) and it is a live institutional question, not
-one that refit-on-all quietly answers.** Both branches leave `synthetic_test_unseen` unnecessary.
-
-If the institution requires a direct synthetic unseen-disease number *for the deployed weights*,
-§6.3's trade-off returns in full and the conditional machinery below becomes necessary. **That
-requirement does not currently exist**, and nothing conditional on it should be built.
+**What this removes.** No permanent `synthetic_test_unseen` partition. No refit sibling, and so no
+sibling-attribution rules (§6.4 is correspondingly short). No protocol state machinery, no burned
+synthetic cohort, no allocation generations. The remaining engineering is one interface change in
+the generator (§6.2) and the evaluation record (§6.5).
 
 ### 6.1 Roles, named separately
 
 One ambiguous val/test pair is what let two different quantities share the name `val_mrr` in §1.2.
 Six roles, each answering one question. **This is a vocabulary, not a required set of six pipeline
-components**. The default path in §6.0 does not use `synthetic_test_unseen` at all:
+components**. The default path in §6.0 uses **four** of them — the two marked optional are not on
+it:
 
 | Role | Contains | Used for |
 |---|---|---|
 | `synthetic_train` | — | Patient-supervised training |
-| `synthetic_val_seen` | New presentations of **training** diseases | Training health, early stopping. Within-disease generalisation, which is a real thing and not nothing |
-| `synthetic_val_unseen` | Diseases with **no** labelled patients in training; KG nodes and edges still present | Architecture, configuration and model selection |
+| `synthetic_val_seen` *(optional)* | New presentations of **training** diseases | A within-disease training-health signal. The paper has no such partition and the default path does not use one — early stopping runs on `synthetic_val_unseen`, as it does upstream |
+| `synthetic_val_unseen` | Diseases with **no** labelled patients in training; KG nodes and edges still present | Architecture, configuration, early stopping and checkpoint selection. **The deployed checkpoint is the one this selects** |
 | `synthetic_test_unseen` *(optional)* | Disease-disjoint, **not inspected** during selection | Required **only** for a direct exact-checkpoint synthetic unseen-disease claim (§6.0). Not on the default path |
 | `MyGene2` | Real records | External research comparison. Not the acceptance gate |
 | `institutional_acceptance` | In-hospital offline cohort | The exact checkpoint bytes proposed for deployment |
@@ -636,40 +699,19 @@ identity* each claim attaches to.
 - **Exact-checkpoint evidence** — results produced by a specific checkpoint digest on MyGene2 or
   the institutional cohort.
 
-A deployment checkpoint refitted on all diseases is a **new model identity**. It shares a recipe
-with the selection checkpoints and does not share weights: the training data differ, so the
-gradient sequence differs, so the weights differ. Recipe evidence may be recorded against it *as
-recipe evidence, naming the sibling checkpoint's digest*, and must never be displayed as a
-measurement of its own weights.
+**On the default path these coincide, and that is the point of taking it.** With no refit, the
+selected checkpoint is the deployed checkpoint, so its `synthetic_val_unseen` result *is*
+exact-checkpoint evidence and not an inheritance from a sibling. Nothing needs attributing across
+model identities.
 
-**One structure avoids the dilemma for the unseen-disease claim.** If `synthetic_test_unseen` is
-still held out after refitting on train plus `synthetic_val_unseen`, the refit checkpoint can be
-measured on it **directly** — recovering the validation diseases' supervision while keeping a real
-unseen-disease measurement of the exact deployed weights. Only if the test partition is also folded
-back does the deployed model lose direct unseen-disease evidence entirely, and only then does the
-recipe-attribution fallback become the whole of the story.
-
-**When the fallback is the whole story, three rules constrain how it is presented.** They were
-settled in review and are recorded as settled, not as proposals.
-
-- **A shared seed is not a bridge.** An earlier draft reasoned that a sibling trained from the
-  same seed is close enough for its numbers to describe the deployed weights. That is rejected:
-  different training data produce a different gradient sequence and therefore different weights,
-  and seed equality changes nothing about it. There is no partial credit here — the sibling's
-  numbers are the sibling's.
-- **Sibling performance is never written into the checkpoint's provenance fingerprint.** The
-  fingerprint identifies *these* weights and their inputs. Admitting another checkpoint's metric
-  into it makes the fingerprint claim something it did not measure, which is the exact failure the
-  `data_fingerprint` / `training_input_digests` separation exists to prevent.
-- **The absence is stated first, and the recipe evidence second.** Where a deployed checkpoint has
-  no direct unseen-disease measurement, the surface says so in those terms —
-
-  > No direct synthetic unseen-disease evaluation is recorded for these checkpoint weights.
-
-  — and then presents recipe evidence as a separately labelled block naming the checkpoint digests
-  it came from. That block may cite **several** fold checkpoints; a recipe measured across folds is
-  stronger evidence about the recipe than any single fold, and nothing about citing more than one
-  weakens the separation, because none of them is being claimed as these weights.
+The distinction is kept because it stops being free the moment a refit is introduced. A checkpoint
+refitted on all diseases would be a **new model identity**: same recipe, different training data,
+therefore a different gradient sequence and different weights, which a shared seed does not change.
+Were that ever adopted, its selection-time numbers could be recorded only as recipe evidence naming
+the sibling's digest, never displayed as a measurement of its own weights, and never written into
+its provenance fingerprint — for the reason the `data_fingerprint` / `training_input_digests`
+separation exists. **The institution has decided against the refit** (§5), so this paragraph
+describes a road not taken, and no surface should be built for it.
 
 ### 6.5 Evaluation records live beside the checkpoint, not inside it
 
@@ -686,16 +728,17 @@ these weights*.
 
 ### 6.6 Order, and what is explicitly last
 
-**On the default path (§6.0):** correct this document; run the split feasibility audit (§6.8);
-partition the disease universe before generation, so that validation is disease-disjoint;
-characterise the current generator against the upstream simulator on one frozen allocation; record
-the deployment checkpoint's evaluations beside it (§6.5).
+1. Correct this document.
+2. Run the split feasibility audit (§6.8) — it is what makes §5.1(i) and (ii) answerable.
+3. Partition the disease universe before generation, so validation is disease-disjoint (§6.2).
+4. Characterise the current generator against the upstream simulator on one frozen allocation
+   (§1.5 is the reason).
+5. Record the deployed checkpoint's evaluations beside it (§6.5).
+6. UI last (§6.7).
 
-**Conditional on the institution requiring a direct exact-checkpoint synthetic unseen claim, and
-not before:** a permanent `synthetic_test_unseen` partition, allocation generations for burned
-cohorts, and any UI that manipulates cohort roles.
-
-**Last in either case:** UI (§6.7).
+**Not built:** `synthetic_test_unseen`, refit siblings, allocation generations for burned synthetic
+cohorts, and any surface that attributes one checkpoint's numbers to another. §5 closed the
+questions those depended on.
 
 The upstream simulator should first be used as a **pinned external tool** — fixed commit,
 recorded configuration, source digests, adapter into the current schema, and counts of identifiers
