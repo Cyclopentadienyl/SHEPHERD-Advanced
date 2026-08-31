@@ -2,13 +2,20 @@
 
 **Type:** findings report plus one institutional decision · **Date:** 2026-08
 
-**Status:** §1–§2 established; §3 decided; §5 open and narrowed by §6.0's default path; §6 under
+**Status:** §1–§2 established, now including the published article (§1.6); §3 decided; §5 open and narrowed by §6.0's default path; §6 under
 discussion except where a passage marks itself settled; §6.8 cleared to proceed with one item under
-re-review. **One institutional question gates the rest — see §6.0.**
+re-review. **Two institutional questions gate the rest — see §6.0.**
 
 <details>
 <summary><b>Revision history</b></summary>
 
+- **7** — the published article is now a source. §1.6 records what it reports: two simulated
+  partitions and no synthetic test set, disease-disjoint by design and stated as such, with the
+  real cohorts as the evaluation and unseen-disease evidence stratified inside them. Its patient
+  counts corroborate §1.2's reading of the committed code. Consequences: §6.0's shape is the
+  published design rather than an engineering preference, its refit steps are a deviation the
+  reference does not take, §5.1(iii) reopens, §3 notes that the paper trains on MyGene2 for one
+  task, and §4.1(7) is marked as this project's own requirement.
 - **6** — scope correction. §6 had grown a deployment-claim architecture in answer to a
   selection-quality defect. §6.0 records the short default path; `synthetic_test_unseen` is marked
   optional; everything conditional on a direct exact-checkpoint synthetic unseen claim is gated
@@ -105,9 +112,14 @@ So the `val_mrr` their code is **designed** to produce measures generalisation t
 no labelled patient examples in training, while ours measures recognition of new phenotype subsets
 of diseases that do have them. Different quantities under one name.
 
-*Bounded claim.* Everything said here about the original arrangement is about the **committed
-source's intended design**. That module does not run (§1.4) and the released split artifacts were
-not inspected, so nothing here establishes what their shipped files actually contain.
+*Bounded claim, now partly discharged.* Everything said here was read from **committed source**,
+which does not run (§1.4) and whose released split artifacts were not inspected. The paper (§1.6)
+corroborates both halves independently: it states the disease-level disjointness of train and
+validation in words, and its patient counts — 36,224 train, 6,400 validation, 42,624 total —
+are **85.0% / 15.0%**, exactly the proportions the merge above produces from a 70/15/15 slice.
+The proportions alone do not prove the three-way slice happened, since a direct 85/15 split gives
+the same numbers; together with the code's own comment about post-hoc merging, the reading is
+coherent and the design and the release agree.
 
 **This is where the deviation actually is, and it runs the opposite way to the obvious reading.**
 Nothing in this project added a separation the original design lacks. The original design has a
@@ -195,7 +207,63 @@ What follows is therefore conditional: to whatever extent diseases are drawn pas
 repeated model-visible content exists in the generated population, and whether any of it crosses
 into a test split is an open question rather than a consequence.
 
-### 1.6 What this project's guards are, and are not
+### 1.6 What the paper reports, and what it actually used as a test set
+
+Source: Alsentzer et al., *Few shot learning for phenotype-driven diagnosis of patients with rare
+genetic diseases*, **npj Digital Medicine** 8:380 (2025), DOI
+[`10.1038/s41746-025-01749-1`](https://doi.org/10.1038/s41746-025-01749-1). This section is the
+answer to an obvious question: if the third partition was folded back, how did a peer-reviewed
+paper evaluate anything?
+
+**It never claimed a synthetic test set.** The Methods describe two simulated partitions and no
+more — "we split the list of diseases represented by the simulated patient cohort into training
+and validation … patients with the same disease are either entirely in the training or fully in
+the validation set", giving **36,224 train and 6,400 validation** patients out of 42,624 total.
+The purpose is stated outright: the disease-stratified split exists "to enable SHEPHERD to
+generalize to diseases unseen during training."
+
+**The synthetic validation set selects hyperparameters.** "We select task-specific hyperparameters
+to optimize the mean reciprocal rank of the correct genes, diseases, or patients on the
+disease-split simulated validation set."
+
+**The test set is three real cohorts.** UDN (N = 465), MyGene2 (N = 146) and DDD (N = 1,431), with
+the separation stated explicitly: "the validation set containing simulated patients is entirely
+independent of the evaluation dataset, which includes patients from the Undiagnosed Diseases
+Network."
+
+**The unseen-disease evidence is stratified inside the real cohort, not drawn from a synthetic
+holdout.** They identify UDN patients whose causal genes have no known phenotype or disease
+associations in the knowledge graph, and patients UDN experts flagged as having novel diseases or
+novel disease genes, then report win rates on those subsets — up to 82–83% for the no-known-
+association groups and 67–86% for the expert-flagged novel groups.
+
+#### Three consequences for this project
+
+| | |
+|---|---|
+| **The structure of §6.0 is the published reference design, not an engineering preference** | Disease-disjoint synthetic validation for selection, real cohorts for evaluation, no synthetic test partition. A peer-reviewed instance of exactly that path exists |
+| **The statistical power does not transfer with the structure** | They evaluated on 2,042 real patients across three cohorts. This project has MyGene2 at 146 and an institutional cohort accumulating at ten to twenty per batch. §4's bounds are unchanged by this section |
+| **They did not refit on all diseases** | No refit path exists in the repository (`hparams.py:181-187`), so the model they describe is option **B** of §3.1 and carries the withheld diseases' loss. §6.0 step 3 is therefore a *deviation* from the reference, not a reproduction of it — see §6.0 |
+
+#### One caveat that cuts against using MyGene2 naively
+
+For causal gene discovery they **also train** on MyGene2 and DDD patients — "these additional
+cohorts constitute 3.6% of the training data" — while for patients-like-me retrieval "the
+simulated cohort is used for training, and the UDN and MyGene2 cohorts are used for validation."
+So MyGene2 is not a clean external cohort for every task in the paper. Using it purely as an
+untouched research comparison (§3) is **stricter** than what the paper did, which is the right
+direction, but it also means our MyGene2 numbers are not directly comparable to theirs on the gene
+task.
+
+#### What the paper does not report
+
+It does not report the overlap between the 2,132 simulated training diseases and the diseases
+present in the real cohorts. Its leakage argument is temporal and concerns the knowledge graph —
+that recently diagnosed UDN patients show no performance drop — not disease overlap between
+training and evaluation. §4.1(7) is therefore this project's own requirement, not an inherited
+one.
+
+### 1.7 What this project's guards are, and are not
 
 Two guards were added earlier in this phase and should not be confused with the boundary above:
 `--split` is required with no default on both measurement entry points, and `read_samples` refuses
@@ -236,7 +304,9 @@ is currently two of them.
 | **Disease-disjoint synthetic split** | Does the model generalise to diseases with **no labelled patient examples in training**? (Their KG nodes and edges are still present — §3.1) | Requires a generator change; two tiers, see below |
 | **Institutional offline cohort** | Does the chosen model hold up on **this hospital's population**? | **Acceptance benchmark** |
 
-**Confining MyGene2 to research comparison is the right call for two reasons beyond preference.**
+**Confining MyGene2 to research comparison is the right call for two reasons beyond preference**
+— and note from §1.6 that it is *stricter* than the paper, which additionally trains on MyGene2
+for the causal gene discovery task.
 Its disease distribution is that of a self-selected family-upload platform and has no relation to
 the deploying hospital's case mix, so accepting a model on its evidence would be accepting on
 evidence about a different population. And it keeps the dataset in the use it was published for:
@@ -372,6 +442,10 @@ being real:
 synthetic test partition is dropped — it is inherent to any acceptance gate, and it is an
 **operating rule for the institution**, not a piece of software.
 
+(7) is this project's own requirement rather than an inherited one. §1.6 records that the paper
+does not report disease overlap between its simulated training set and its real evaluation
+cohorts; its leakage argument is temporal and concerns the knowledge graph.
+
 **MyGene2 and the institutional cohort are reported separately, never pooled.** Their populations
 and their recording processes differ, so a single "real-world accuracy" over the two would be an
 average across two different questions.
@@ -392,16 +466,16 @@ two of the five answers before the institution can usefully give the other three
    three are unavailable here.
 
    Review split this into five questions, because they have different answerers and only the last
-   two are engineering questions at all. **On the default path (§6.0) only (i), (ii) and (iv) are
-   live** — they apply to the disease-disjoint *validation* set, which that path does need. (iii)
-   is answered by refit-on-all, and (v) does not arise, because there is no permanent synthetic
-   test partition to burn:
+   two are engineering questions at all. **On the default path (§6.0), (i), (ii), (iii) and (iv)
+   are live** — they apply to the disease-disjoint *validation* set, which that path does need.
+   (iii) is live because §6.0's refit step is itself optional and the published reference does not
+   take it. (v) does not arise, because there is no permanent synthetic test partition to burn:
 
    | | Question | Whose |
    |---|---|---|
    | i | **How many** diseases are withheld from patient supervision | Institution |
    | ii | **Which strata** they are drawn from — prevalence band, phenotype count, gene count, KG degree — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit |
-   | iii | Whether a **permanent** loss of supervision for the withheld diseases is acceptable in a deployed model, or whether option **C** is required | Institution |
+   | iii | Whether a **permanent** loss of supervision for the withheld diseases is acceptable in a deployed model (option **B**, what the paper ships — §1.6), or whether refitting on all diseases is required (option **C**) | Institution |
    | iv | Whether the generator is faithful enough (§1.5) for a disjoint split to mean what it appears to mean — item 6 below asks the sequencing question, this one asks the sufficiency question | Engineering, then institution |
    | v | What happens when a test cohort is **burned** — inspected during selection — and how the protocol regenerates from that point | Engineering, and it must be decided *before* the first cohort exists |
 
@@ -480,17 +554,29 @@ Absent that requirement, the path is short:
 | 5 | Evaluate that checkpoint as external research comparison | MyGene2 |
 | 6 | Evaluate that checkpoint as the acceptance gate | institutional offline cohort |
 
-**Two consequences.** A permanent `synthetic_test_unseen` partition is **not** required on this
-path; disease-disjoint synthetic evaluation remains available as a recipe-level research
-instrument. And step 3 removes the only cost §3.1 charged against option **B**: the diseases
-withheld during selection get their supervision back in the model that ships, because the shipped
-model is refit on everything. Under this path **B is close to free**, and it is the fix for the
-defect that started §6.
+**Steps 1, 2, 5 and 6 are the published reference design.** §1.6 establishes that the paper does
+exactly this: disease-disjoint synthetic validation for hyperparameter selection, real cohorts for
+evaluation, no synthetic test partition anywhere. This path is not an engineering preference; a
+peer-reviewed instance of it exists.
 
-What it costs: the deployed checkpoint has no direct synthetic unseen-disease number of its own.
-§6.4 governs how that absence is stated. If the institution requires such a number for the deployed
-weights, §6.3's trade-off returns in full and the conditional machinery below becomes necessary.
-**That requirement does not currently exist**, and nothing conditional on it should be built.
+**Steps 3 and 4 are a deviation, and their necessity is open.** The upstream repository has no
+refit path (`hparams.py:181-187`), so the model the paper describes is option **B** of §3.1: it
+ships with ~15% of diseases lacking patient supervision, on the argument the paper's own thesis
+makes — that a disease's graph structure suffices when patient labels do not exist.
+
+| | Deployed model | Costs |
+|---|---|---|
+| **Without steps 3–4 (option B, matches the reference)** | Identical to the selected checkpoint | ~15% of diseases ship with no patient supervision |
+| **With steps 3–4 (option C)** | A new identity, refit on every disease | No direct synthetic unseen-disease number of its own; §6.4's attribution rules become load-bearing |
+
+Dropping steps 3 and 4 collapses §6.4 entirely — one model identity, every number describing the
+deployed weights, no sibling attribution to govern. Keeping them buys patient supervision for
+every disease in a clinical tool. **This is §5.1(iii) and it is a live institutional question, not
+one that refit-on-all quietly answers.** Both branches leave `synthetic_test_unseen` unnecessary.
+
+If the institution requires a direct synthetic unseen-disease number *for the deployed weights*,
+§6.3's trade-off returns in full and the conditional machinery below becomes necessary. **That
+requirement does not currently exist**, and nothing conditional on it should be built.
 
 ### 6.1 Roles, named separately
 
@@ -694,6 +780,10 @@ Repository claims were located by search and then re-read in the file before bei
 file and line references are to `mims-harvard/SHEPHERD` at `e95433a` and to
 `EmilyAlsentzer/rare-disease-simulation` at its default branch. The syntax error in §1.4 was
 confirmed by running `ast.parse`.
+
+§1.6 is read from the published article — Alsentzer et al., npj Digital Medicine 8:380 (2025), DOI
+`10.1038/s41746-025-01749-1` — and every quotation in it is verbatim from that text. The 85.0% /
+15.0% figure is arithmetic on the patient counts the paper states.
 
 §4's intervals are Wilson intervals. Its paired figures are a normal approximation to McNemar's
 test, computed for this document at illustrative discordance rates of 20% and 30% — the rate itself
