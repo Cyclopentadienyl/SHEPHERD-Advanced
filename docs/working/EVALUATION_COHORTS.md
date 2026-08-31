@@ -1,7 +1,7 @@
 # Evaluation cohorts — findings, and the division of labour
 
 **Type:** findings report plus one institutional decision · **Date:** 2026-08 ·
-**Status:** §1–§2 established; §3 decided; §5 open. **Revision 2** — §1.2 corrected: the original design's validation set is disease-disjoint and stays that way, so the deviation is this project's, not an addition to theirs; §5.2 answered as a condition
+**Status:** §1–§2 established; §3 decided; §5 open. **Revision 3** — §3.1 now states what holding a disease out actually removes, and that the first decision has a cost. **Revision 2** — §1.2 corrected: the original design's validation set is disease-disjoint and stays that way, so the deviation is this project's, not an addition to theirs; §5.2 answered as a condition
 
 ---
 
@@ -189,17 +189,68 @@ evidence about a different population. And it keeps the dataset in the use it wa
 using a research cohort as a clinical deployment gate is a different use, and would raise consent
 and licensing questions that this division avoids entirely.
 
-### 3.1 The synthetic split is two decisions, not one
+### 3.1 The synthetic split is two decisions, and the first is not free either
 
-§1.2 separates them, and they carry very different weight:
+§1.2 separates them. Before the trade-off can be weighed, one word has to be unpacked.
 
-| | What it is | Cost | Standing |
-|---|---|---|---|
-| **Restore a disease-disjoint validation set** | Returning to the original design, which partitions the disease set and keeps validation disjoint | Validation diseases leave training — 15% in the original | Parity with the design being reimplemented. If the separation concern in §1.2 is real, this is what would address it |
-| **Add a third disjoint test partition** | Going beyond the original design | A further slice of diseases leaves training | The original team built this and then removed it, in favour of training breadth. They had external real-patient cohorts to cover what they gave up; two of those three are unavailable here |
+#### What a disease being "held out" does and does not remove
 
-The first needs no justification beyond parity with the design being reimplemented. The second is
-the one that needs the reserve-fraction judgement in §5.
+Patients are not nodes in the knowledge graph. Its node types are `gene/protein`,
+`effect/phenotype` and `disease` (`shepherd/preprocess.py:27-32`); a patient is an input to the
+model, not part of the graph. Holding a disease out of the *patient* split therefore removes one
+thing only:
+
+| | A held-out disease's status |
+|---|---|
+| Its KG node, and its phenotype and gene edges | **Present**, and used |
+| A labelled patient example of it | **Absent** |
+
+Its embedding still comes from the graph — `patient_nca_model.py:70` indexes disease embeddings
+out of the GNN's node outputs — and it stays in the candidate pool, which is every disease in the
+KG (`dataset.py:194-197`). What it never gets is a supervised "this phenotype set → this disease".
+
+One precision about "used". Patient training propagates over a **random 80%** of KG edges:
+`train.py:156` passes `all_data.edge_index[:, train_mask]` as the sampler's graph, while
+validation (`:167`) and inference (`:183`, `predict.py:116`) pass the full `edge_index`. That
+80/10/10 mask is shuffled over all edges (`prepare_graph.py:57-62`) and is **independent of the
+patient disease split**, so a held-out disease's neighbourhood is present during training at
+exactly the same rate as any other disease's. It is not a second holdout aimed at the same
+diseases.
+
+**This is why a disease-disjoint validation set is a measuring instrument rather than a
+mutilation.** The paper's claim is few-shot: that a disease with no patient examples can still be
+ranked, from its graph structure. Withholding patient labels for 15% of diseases and then scoring
+them is that claim's measurement. A model that does well has shown it does not merely recognise
+what it was shown; a model that does badly has shown it does.
+
+#### But the cost is real, and the original team's own action says so
+
+The deployed model genuinely has no patient supervision for those diseases. That is not zero.
+
+The strongest evidence that it is not zero is what the original team did with it: they built three
+partitions and then gave the third one back, and said why —
+`preprocess_patients_and_kg.py:295`, "to be able to train on more diseases". They treated lost
+training coverage as a cost worth a held-out test set. They did **not** treat it as worth their
+validation set.
+
+No refit path exists in that repository: `hparams.py:181-187` maps to train and validation files
+only, and no script retrains on the union. So they accepted the loss for the model they shipped.
+(That is a statement about the repository. Whether anything was done outside it is not
+establishable from here.)
+
+#### The three options, and what each costs
+
+| | Gets | Costs |
+|---|---|---|
+| **A — status quo (total overlap)** | Every disease keeps patient supervision | `val_mrr` measures recognition of new phenotype subsets of known diseases. It is not a generalisation measure, and it is the metric currently selecting the batch representative |
+| **B — disjoint validation** | A metric that measures what the paper claims, and can separate models on it | ~15% of diseases lose patient supervision in the model that ships |
+| **C — disjoint validation for selection, refit on all for deployment** | Both the measurement and full coverage | **The deployed model is not the measured one.** Standard practice in ML; for a clinical system, accepting a model on a different model's numbers may be a worse trade than either A or B |
+
+The original team took **B**. Option **C** is not something they did, and is recorded here as a
+real option rather than a recommendation — its cost lands in a place the other two do not touch.
+
+The second decision, a third disjoint test partition, sits on top of whichever of these is chosen
+and is the one needing the reserve-fraction judgement in §5.
 
 ---
 
