@@ -1,7 +1,7 @@
 # Evaluation cohorts — findings, and the division of labour
 
 **Type:** findings report plus one institutional decision · **Date:** 2026-08 ·
-**Status:** §1–§2 established; §3 decided; §5 open
+**Status:** §1–§2 established; §3 decided; §5 open. **Revision 2** — §1.2 corrected: the original design's validation set is disease-disjoint and stays that way, so the deviation is this project's, not an addition to theirs; §5.2 answered as a condition
 
 ---
 
@@ -46,7 +46,7 @@ dx_split_train_patients = [p for p in filtered_patients if p['disease_id'] in dx
 Patients are assigned by their disease's membership, so the partitions are disease-disjoint by
 construction. **This is the primitive worth taking.**
 
-### 1.2 They then folded the test partition back into train, deliberately
+### 1.2 They folded the *third* partition back into train — validation stayed disjoint
 
 Same file, `:294-297`, their own comment:
 
@@ -57,8 +57,33 @@ dx_split_train_patient_ids = pd.concat([]dx_split_train_patient_ids, dx_split_te
 ```
 
 The function returns train and val only, and `main()` writes exactly two files (`:356-357`).
-**The released design has no third, disease-disjoint partition.** Disease-disjointness survives
-between train and val alone.
+**The released design has no third, disease-disjoint partition.**
+
+**What it does still have is a disease-disjoint validation set, and that distinction is the whole
+point.** The slicing at `:281-283` cuts the disease list into three non-overlapping ranges, so
+merging any two of them cannot intersect the third: train ends up with the first 70% plus the last
+15%, validation with the middle 15%. This follows from the arithmetic and does not depend on the
+code running — which, per §1.4, it does not. The shipped data files were not inspected:
+
+| | train ∩ val, at the disease level |
+|---|---|
+| **Original team** | **empty** — disjoint by construction, and the merge does not touch it |
+| **This project** | **7,970 of 7,970 — total overlap** ([`EVIDENCE_M4.json`](EVIDENCE_M4.json)) |
+
+So their `val_mrr` measures generalisation to diseases the model has never seen, and ours measures
+recognition of new phenotype subsets of diseases it has. Those are different quantities carrying
+the same name.
+
+**This is where the deviation actually is, and it runs the opposite way to the obvious reading.**
+Nothing in this project added a separation the original design lacks. The original design has a
+separation this project lost.
+
+*Inference, not measurement.* A concern raised in discussion — that candidate models within one
+training batch may fail to separate on validation — would follow naturally from a metric measured
+on a totally-overlapping split, since such a metric rewards recognition rather than
+generalisation and has less room to differ between models. **Neither the saturation nor the
+failure to separate has been measured here**, and this document does not treat either as
+established.
 
 ### 1.3 At inference, `test_data` points at everything
 
@@ -119,6 +144,17 @@ with `P` phenotypes admits exactly `C(P, k)` distinct samples: **1** for `P = 2`
 about 11 per disease, so by the pigeonhole principle low-phenotype diseases produce **byte-identical
 duplicates**. A test split generated the same way would contain exact copies of training samples.
 
+### 1.6 What this project's guards are, and are not
+
+Two guards were added earlier in this phase and should not be confused with the boundary above:
+`--split` is required with no default on both measurement entry points, and `read_samples` refuses
+a missing split and lists what exists rather than substituting one.
+
+Neither separates validation from test. They prevent a number being produced on a split the caller
+did not ask for — which is a defect the original repository does have, at `hparams.py:184`, where
+`test_data` silently resolves to the all-patients file. The guards are unrelated to
+disease-disjointness and nothing here argues for removing them.
+
 ---
 
 ## 2. What is actually obtainable
@@ -143,7 +179,7 @@ Three cohorts, three different questions. None substitutes for another.
 | Cohort | Answers | Standing |
 |---|---|---|
 | **MyGene2** | Does the model hold up against **real phenotype recording** — incomplete, coarse-grained, noisy — and how large is the gap between synthetic and real? | **Research comparison.** Not an acceptance gate |
-| **Disease-disjoint synthetic test** | Does the model generalise to diseases it **never saw in training**? | Requires a generator change; see §5 |
+| **Disease-disjoint synthetic split** | Does the model generalise to diseases it **never saw in training**? | Requires a generator change; two tiers, see below |
 | **Institutional offline cohort** | Does the chosen model hold up on **this hospital's population**? | **Acceptance benchmark** |
 
 **Confining MyGene2 to research comparison is the right call for two reasons beyond preference.**
@@ -152,6 +188,18 @@ the deploying hospital's case mix, so accepting a model on its evidence would be
 evidence about a different population. And it keeps the dataset in the use it was published for:
 using a research cohort as a clinical deployment gate is a different use, and would raise consent
 and licensing questions that this division avoids entirely.
+
+### 3.1 The synthetic split is two decisions, not one
+
+§1.2 separates them, and they carry very different weight:
+
+| | What it is | Cost | Standing |
+|---|---|---|---|
+| **Restore a disease-disjoint validation set** | Returning to the original design, which partitions the disease set and keeps validation disjoint | Validation diseases leave training — 15% in the original | Parity with the design being reimplemented. If the separation concern in §1.2 is real, this is what would address it |
+| **Add a third disjoint test partition** | Going beyond the original design | A further slice of diseases leaves training | The original team built this and then removed it, in favour of training breadth. They had external real-patient cohorts to cover what they gave up; two of those three are unavailable here |
+
+The first needs no justification beyond parity with the design being reimplemented. The second is
+the one that needs the reserve-fraction judgement in §5.
 
 ---
 
@@ -195,14 +243,22 @@ stay the same size.
 
 Recorded rather than resolved. None of these is an engineering judgement.
 
-1. **How many diseases to reserve for a disjoint test split.** Reserved diseases leave training,
-   so the model sees fewer. This is precisely the trade-off the original team resolved in favour
-   of training breadth (§1.2) — but they had UDN, MyGene2 and DDD as external real-patient
-   evaluation to cover what they gave up, and two of those three are unavailable here.
-2. **Whether the institutional database is larger in-hospital than the extraction limit
-   suggests.** The ten-to-twenty figure describes what can be *taken out*. If evaluation could run
-   inside the hospital against a larger set, §4's bounds change substantially and the cohort could
-   rank as well as accept. This has not been established.
+1. **How many diseases to reserve for a third, disjoint test partition.** Applies to §3.1's
+   second tier only — restoring a disjoint *validation* set is parity with the original design and
+   carries the original's own 15%. Reserved diseases leave training, which is the trade-off the
+   original team resolved in favour of training breadth; they had UDN, MyGene2 and DDD to cover
+   what they gave up, and two of those three are unavailable here.
+2. **Whether to apply for the larger institutional database — answered as a condition, not yet
+   as a decision.** The ten-to-twenty figure is the single-batch extraction limit. A substantially
+   larger database does exist in-hospital, behind an application and approval process.
+
+   That makes this calculable rather than unknown. From §4: an acceptance cohort accumulating at
+   ten to twenty per batch is adequate for a **floor check** on an already-chosen model and never
+   becomes adequate for **ranking** until roughly 120 cases. Under the division of labour in §3,
+   ranking belongs to MyGene2 and the synthetic split, so **the application is not required** —
+   unless ranking *on this hospital's own population* is held to be a requirement that cannot be
+   delegated to the other two cohorts. That is a value judgement for the institution, not an
+   engineering one.
 3. **Which criterion of record selects a model.** The built-in auto-selection reads the ranking
    metric from a checkpoint's own logs (`src/api/routes/pipeline.py:225`, priority
    `("val_mrr", "val_hits@10", "val_hits@1")` at `src/utils/checkpoint_paths.py:45`), which the
