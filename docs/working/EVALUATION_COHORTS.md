@@ -1,7 +1,7 @@
 # Evaluation cohorts — findings, and the division of labour
 
 **Type:** findings report plus one institutional decision · **Date:** 2026-08 ·
-**Status:** §1–§2 established; §3 decided; §5 open. **Revision 4** — two precision corrections found in review (the duplicate claim was about model-visible content, not bytes, and the cohort-size threshold assumed an unpaired design where the comparison is paired), and §6 records the protocol shape under discussion. **Revision 3** — §3.1 now states what holding a disease out actually removes, and that the first decision has a cost. **Revision 2** — §1.2 corrected: the original design's validation set is disease-disjoint and stays that way, so the deviation is this project's, not an addition to theirs; §5.2 answered as a condition
+**Status:** §1–§2 established; §3 decided; §5 open, with §5.1 itemised into five decisions; §6 under discussion except where a passage marks itself settled; §6.8 cleared to proceed. **Revision 5** — eight internal-consistency corrections from review (upstream claims bounded to the committed source's intended design; the removed cohort-size threshold and the saturation claim; `C(P, k)` repetition distinguished from cross-split leakage), and the settled review conclusions recorded: §5.1's five decision dimensions, §6.4's sibling-evidence rules, §6.7's UI bounds, and §6.8's approved next step. **Revision 4** — two precision corrections found in review (the duplicate claim was about model-visible content, not bytes, and the cohort-size threshold assumed an unpaired design where the comparison is paired), and §6 records the protocol shape under discussion. **Revision 3** — §3.1 now states what holding a disease out actually removes, and that the first decision has a cost. **Revision 2** — §1.2 corrected: the original design's validation set is disease-disjoint and stays that way, so the deviation is this project's, not an addition to theirs; §5.2 answered as a condition
 
 ---
 
@@ -11,7 +11,8 @@
 test data — read from their repository, not recalled — what of it is obtainable, and how the
 three candidate evaluation cohorts divide the work.
 
-**Is not:** an implementation plan. Nothing here specifies code, file formats, or a schedule.
+**Is not:** an implementation plan. §6 records a protocol shape under discussion and §6.8 bounds
+the scope of one audit script, but nothing here specifies file formats, interfaces or a schedule.
 The generator change §5 implies has not been designed, and no code has been written on the
 strength of this document.
 
@@ -70,9 +71,13 @@ code running — which, per §1.4, it does not. The shipped data files were not 
 | **Original team** | **empty** — disjoint by construction, and the merge does not touch it |
 | **This project** | **7,970 of 7,970 — total overlap** ([`EVIDENCE_M4.json`](EVIDENCE_M4.json)) |
 
-So their `val_mrr` measures generalisation to diseases the model has never seen, and ours measures
-recognition of new phenotype subsets of diseases it has. Those are different quantities carrying
-the same name.
+So the `val_mrr` their code is **designed** to produce measures generalisation to diseases with
+no labelled patient examples in training, while ours measures recognition of new phenotype subsets
+of diseases that do have them. Different quantities under one name.
+
+*Bounded claim.* Everything said here about the original arrangement is about the **committed
+source's intended design**. That module does not run (§1.4) and the released split artifacts were
+not inspected, so nothing here establishes what their shipped files actually contain.
 
 **This is where the deviation actually is, and it runs the opposite way to the obvious reading.**
 Nothing in this project added a separation the original design lacks. The original design has a
@@ -143,16 +148,22 @@ phenotypes admits exactly `C(P, k)` distinct phenotype subsets: **1** for `P = 2
 6 for `P = 4`, 15 for `P = 6`. Any disease drawn more often than its own `C(P, k)` must therefore
 repeat a subset, and a disease with `P = 2` repeats on the second draw.
 
-**Two precisions, because the first version of this paragraph overstated both.** The repeats are
-identical in *model-visible content* — the phenotype set and the disease id — and not in the
-record, which carries a distinct `patient_id` (`sample_generator.py:212`). And the workspace's
+**Three precisions, because earlier versions of this paragraph overstated the consequence.**
+The repeats are identical in *model-visible content* — the phenotype set and the disease id — and
+not in the record, which carries a distinct `patient_id` (`sample_generator.py:212`). And the
+workspace's
 aggregate of 115,000 samples over 10,576 diseases, about 11 per disease on average, does **not**
 establish which diseases were actually drawn more often than their combination count. The bound is
 exact; how many diseases cross it here is unmeasured.
 
-What follows is therefore conditional and still worth stating: to whatever extent diseases are
-drawn past that bound, a test split generated by the same method contains samples whose
-model-visible content already appeared in training.
+Third: exceeding `C(P, k)` guarantees a repeated signature **somewhere in the generated
+population**. It does not guarantee that any repeated signature straddles a train/test boundary —
+that depends on where the repeats land, which the slicing decides. **Cross-split leakage is
+unmeasured** and would need a canonical-signature audit over the generated cohorts to establish.
+
+What follows is therefore conditional: to whatever extent diseases are drawn past that bound,
+repeated model-visible content exists in the generated population, and whether any of it crosses
+into a test split is an open question rather than a consequence.
 
 ### 1.6 What this project's guards are, and are not
 
@@ -189,7 +200,7 @@ Three cohorts, three different questions. None substitutes for another.
 | Cohort | Answers | Standing |
 |---|---|---|
 | **MyGene2** | Does the model hold up against **real phenotype recording** — incomplete, coarse-grained, noisy — and how large is the gap between synthetic and real? | **Research comparison.** Not an acceptance gate |
-| **Disease-disjoint synthetic split** | Does the model generalise to diseases it **never saw in training**? | Requires a generator change; two tiers, see below |
+| **Disease-disjoint synthetic split** | Does the model generalise to diseases with **no labelled patient examples in training**? (Their KG nodes and edges are still present — §3.1) | Requires a generator change; two tiers, see below |
 | **Institutional offline cohort** | Does the chosen model hold up on **this hospital's population**? | **Acceptance benchmark** |
 
 **Confining MyGene2 to research comparison is the right call for two reasons beyond preference.**
@@ -223,9 +234,10 @@ One precision about "used". Patient training propagates over a **random 80%** of
 `train.py:156` passes `all_data.edge_index[:, train_mask]` as the sampler's graph, while
 validation (`:167`) and inference (`:183`, `predict.py:116`) pass the full `edge_index`. That
 80/10/10 mask is shuffled over all edges (`prepare_graph.py:57-62`) and is **independent of the
-patient disease split**, so a held-out disease's neighbourhood is present during training at
-exactly the same rate as any other disease's. It is not a second holdout aimed at the same
-diseases.
+patient disease split**, so a held-out disease's neighbourhood is present during training under
+the same random masking mechanism, and therefore at the same *expected* retention rate, as any
+other disease's — not necessarily at the same realised rate in a given draw. It is not a second
+holdout aimed at the same diseases.
 
 **This is why a disease-disjoint validation set is a measuring instrument rather than a
 mutilation.** The paper's claim is few-shot: that a disease with no patient examples can still be
@@ -244,23 +256,29 @@ training coverage as a cost worth a held-out test set. They did **not** treat it
 validation set.
 
 No refit path exists in that repository: `hparams.py:181-187` maps to train and validation files
-only, and no script retrains on the union. So they accepted the loss for the model they shipped.
-(That is a statement about the repository. Whether anything was done outside it is not
-establishable from here.)
+only, and no script retrains on the union. So the committed design carries that loss into the
+model it produces. Whether the artifacts they released were produced that way is not establishable
+from here: the module does not run, and the released files were not inspected.
 
 #### The three options, and what each costs
 
 | | Gets | Costs |
 |---|---|---|
-| **A — status quo (total overlap)** | Every disease keeps patient supervision | `val_mrr` measures recognition of new phenotype subsets of known diseases. It is not a generalisation measure, and it is the metric currently selecting the batch representative |
+| **A — status quo (total overlap)** | Every disease keeps patient supervision | `val_mrr` measures recognition of new phenotype subsets of diseases that have labelled examples. That is within-disease generalisation, which is a real property — it is **not unseen-disease** generalisation, and it is the metric currently selecting the batch representative |
 | **B — disjoint validation** | A metric that measures what the paper claims, and can separate models on it | ~15% of diseases lose patient supervision in the model that ships |
 | **C — disjoint validation for selection, refit on all for deployment** | Both the measurement and full coverage | **The deployed model is not the measured one.** Standard practice in ML; for a clinical system, accepting a model on a different model's numbers may be a worse trade than either A or B |
 
-The original team took **B**. Option **C** is not something they did, and is recorded here as a
-real option rather than a recommendation — its cost lands in a place the other two do not touch.
+The committed upstream design corresponds to **B**. **C** appears nowhere in that repository and
+is recorded here as a real option rather than a recommendation — its cost lands in a place the
+other two do not touch.
+
+Under review, **B** is the option carried forward *for discussion*, and **C is explicitly not
+prohibited**: refitting on all diseases for deployment is a legitimate engineering choice, and
+what §6.4 requires of it is attribution discipline, not abandonment. §6.4 also records a variant
+of **C** that keeps a direct unseen-disease measurement of the deployed weights.
 
 The second decision, a third disjoint test partition, sits on top of whichever of these is chosen
-and is the one needing the reserve-fraction judgement in §5.
+and is the one needing the partition judgement in §5.1.
 
 ---
 
@@ -305,32 +323,50 @@ result record its **dataset version**.
 
 ## 5. Open
 
-Recorded rather than resolved. None of these is an engineering judgement.
+Recorded rather than resolved. Most of these turn on institutional judgement; where a question
+or sub-question belongs to engineering instead, the text says so — and in §5.1 engineering owes
+two of the five answers before the institution can usefully give the other three.
 
-1. **How many diseases to reserve for a third, disjoint test partition.** Applies to §3.1's
-   second tier only — restoring a disjoint *validation* set is parity with the original design and
-   carries the original's own 15%. Reserved diseases leave training, which is the trade-off the
-   original team resolved in favour of training breadth; they had UDN, MyGene2 and DDD to cover
-   what they gave up, and two of those three are unavailable here.
+1. **How the disease universe is partitioned, and what that costs.** Applies to §3.1's second
+   tier — restoring a disjoint *validation* set is parity with the original design and carries the
+   original's own 15%. Reserved diseases leave training, which is the trade-off the original team
+   resolved in favour of training breadth; they had UDN, MyGene2 and DDD to cover what they gave
+   up, and two of those three are unavailable here.
+
+   Review split this into five questions, because they have different answerers and only the last
+   two are engineering questions at all:
+
+   | | Question | Whose |
+   |---|---|---|
+   | i | **How many** diseases are withheld from patient supervision | Institution |
+   | ii | **Which strata** they are drawn from — prevalence band, phenotype count, gene count, KG degree — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit |
+   | iii | Whether a **permanent** loss of supervision for the withheld diseases is acceptable in a deployed model, or whether option **C** is required | Institution |
+   | iv | Whether the generator is faithful enough (§1.5) for a disjoint split to mean what it appears to mean — item 6 below asks the sequencing question, this one asks the sufficiency question | Engineering, then institution |
+   | v | What happens when a test cohort is **burned** — inspected during selection — and how the protocol regenerates from that point | Engineering, and it must be decided *before* the first cohort exists |
+
+   (v) is the one that expires. A cohort that has been looked at cannot be restored to
+   uninspected by relabelling it, so the replacement path has to exist before anybody has a
+   reason to want it.
 2. **Whether to apply for the larger institutional database — answered as a condition, not yet
    as a decision.** The ten-to-twenty figure is the single-batch extraction limit. A substantially
    larger database does exist in-hospital, behind an application and approval process.
 
-   That makes this calculable rather than unknown. From §4: an acceptance cohort accumulating at
-   ten to twenty per batch is adequate for a **floor check** on an already-chosen model and never
-   becomes adequate for **ranking** until roughly 120 cases. Under the division of labour in §3,
-   ranking belongs to MyGene2 and the synthetic split, so **the application is not required** —
-   unless ranking *on this hospital's own population* is held to be a requirement that cannot be
-   delegated to the other two cohorts. That is a value judgement for the institution, not an
-   engineering one.
+   §4 bounds what an accumulating cohort supports without fixing a size: a floor check is
+   dependable at any size the interval permits, and the size needed to *rank* depends on a
+   discordance rate nobody has measured. **No threshold is stated here, and no decision is derived
+   from one.** Under the division of labour in §3 ranking belongs to MyGene2 and the synthetic
+   split, so whether to apply turns on a different question — whether ranking *on this hospital's
+   own population* is held to be non-delegable. A value judgement for the institution.
 3. **Which criterion of record selects a model.** The built-in auto-selection reads the ranking
    metric from a checkpoint's own logs (`src/api/routes/pipeline.py:225`, priority
    `("val_mrr", "val_hits@10", "val_hits@1")` at `src/utils/checkpoint_paths.py:45`), which the
    M1–M3 audit found to be `val_mrr` in all fifteen checkpoints. That matches the institution's
    stated first stage — best validation model as the batch representative — so the two are a
    pipeline rather than competing rules. What is open is that the representative is chosen by a
-   metric measured on a split with 100% disease overlap, which is the same saturation that makes
-   models fail to separate on validation in the first place.
+   metric measured on a split with 100% disease overlap — a metric that, per §1.2, measures
+   within-disease recognition rather than unseen-disease generalisation. Whether that costs it
+   discriminating power between candidates is **not measured**, here or anywhere in this
+   document.
 4. **Where a test result is recorded, and how it binds to a checkpoint.** A result cannot be
    written into the `.pt` without changing its SHA-256, and the M1–M5 evidence chain cites
    checkpoints by digest. A sidecar beside the checkpoint keeps the digest stable and makes
@@ -358,8 +394,10 @@ Recorded rather than resolved. None of these is an engineering judgement.
 
 ## 6. Recommended protocol, under discussion
 
-Not decided, and recorded so the discussion has a fixed reference. The shape below came out of
-review of §1–§5.
+The shape below came out of review of §1–§5 and is recorded so the discussion has a fixed
+reference. Most of it is **not decided**. Three parts are: the sibling-evidence rules in §6.4, the
+bounds on any UI control in §6.7, and the scope of the audit in §6.8, which is cleared to proceed.
+Each says so where it appears; everything else here is a proposal.
 
 ### 6.1 Roles, named separately
 
@@ -384,7 +422,8 @@ like `generate_samples(disease_ids, config, seed, …)` rather than
 A frozen disease-allocation artifact comes first, recording the disease-universe digest, per-
 partition digests, allocation seed and schema version, KG/HPO/Orphanet versions, disease counts,
 empty-intersection assertions and stratification summaries. **A seed alone is not enough**, because
-the disease universe itself changes between KG vintages — the same lesson as §2.4 of the backlog,
+the disease universe itself changes between KG vintages — the same lesson as
+[`BACKLOG.md`](BACKLOG.md) §2.4,
 where a figure was divided by a denominator from a different artifact.
 
 70/15/15 is acceptable as a *pilot* for characterisation. It is not a deployment default: it
@@ -411,9 +450,9 @@ identity* each claim attaches to.
 
 A deployment checkpoint refitted on all diseases is a **new model identity**. It shares a recipe
 with the selection checkpoints and does not share weights: the training data differ, so the
-gradient sequence differs, so the weights differ — a shared seed does not change that. Recipe
-evidence may be recorded against it *as recipe evidence, naming the sibling checkpoint's digest*,
-and must never be displayed as a measurement of its own weights.
+gradient sequence differs, so the weights differ. Recipe evidence may be recorded against it *as
+recipe evidence, naming the sibling checkpoint's digest*, and must never be displayed as a
+measurement of its own weights.
 
 **One structure avoids the dilemma for the unseen-disease claim.** If `synthetic_test_unseen` is
 still held out after refitting on train plus `synthetic_val_unseen`, the refit checkpoint can be
@@ -421,6 +460,28 @@ measured on it **directly** — recovering the validation diseases' supervision 
 unseen-disease measurement of the exact deployed weights. Only if the test partition is also folded
 back does the deployed model lose direct unseen-disease evidence entirely, and only then does the
 recipe-attribution fallback become the whole of the story.
+
+**When the fallback is the whole story, three rules constrain how it is presented.** They were
+settled in review and are recorded as settled, not as proposals.
+
+- **A shared seed is not a bridge.** An earlier draft reasoned that a sibling trained from the
+  same seed is close enough for its numbers to describe the deployed weights. That is rejected:
+  different training data produce a different gradient sequence and therefore different weights,
+  and seed equality changes nothing about it. There is no partial credit here — the sibling's
+  numbers are the sibling's.
+- **Sibling performance is never written into the checkpoint's provenance fingerprint.** The
+  fingerprint identifies *these* weights and their inputs. Admitting another checkpoint's metric
+  into it makes the fingerprint claim something it did not measure, which is the exact failure the
+  `data_fingerprint` / `training_input_digests` separation exists to prevent.
+- **The absence is stated first, and the recipe evidence second.** Where a deployed checkpoint has
+  no direct unseen-disease measurement, the surface says so in those terms —
+
+  > No direct synthetic unseen-disease evaluation is recorded for these checkpoint weights.
+
+  — and then presents recipe evidence as a separately labelled block naming the checkpoint digests
+  it came from. That block may cite **several** fold checkpoints; a recipe measured across folds is
+  stronger evidence about the recipe than any single fold, and nothing about citing more than one
+  weakens the separation, because none of them is being claimed as these weights.
 
 ### 6.5 Evaluation records live beside the checkpoint, not inside it
 
@@ -431,18 +492,62 @@ metric schema version, allocation provenance and runtime revision keeps the dige
 
 ### 6.6 Order, and what is explicitly last
 
-Correct this document; add an aggregate-only split feasibility audit; add the disease-allocation
-manifest; make generation consume a partition; characterise the current generator against the
-upstream simulator on one frozen allocation; add the seen/unseen validation roles to the trainer;
-define the evaluation sidecar; **build any UI last**. No preprocessing page, stop-training
-checkbox, or automatic post-stop evaluation before the roles and the sidecar contract are frozen —
-a control that changes what a cohort *is* has to write that change into the manifest, or "was this
-model trained with a holdout?" stops being answerable after the fact.
+Correct this document; run the aggregate-only split feasibility audit (§6.8); add the
+disease-allocation manifest; make generation consume a partition; characterise the current
+generator against the upstream simulator on one frozen allocation; add the seen/unseen validation
+roles to the trainer; define the evaluation sidecar; **build any UI last** (§6.7).
 
 The upstream simulator should first be used as a **pinned external tool** — fixed commit,
 recorded configuration, source digests, adapter into the current schema, and counts of identifiers
 that failed to map — rather than reimplemented into `src`. Its code is MIT; the licences and
 permitted uses of HPO, Orphanet and any patient-derived dataset are separate questions.
+
+### 6.7 What a preprocessing or training control may and may not do
+
+The institution asked for a preprocessing page and a stop-training checkbox with automatic
+post-stop evaluation. Both are reasonable; neither should be built before the roles (§6.1) and the
+sidecar contract (§6.5) are frozen, and both are bounded by two rules that came out of review.
+
+**Reuse the provenance that exists.** A cohort's identity, and a model's relationship to it, are
+already expressible through `training_input_digests` and the checkpoint provenance record. A page
+that introduces its own parallel notion of "which dataset this run used" creates a second source of
+truth that will drift from the first. Whatever a preprocessing page records, it records *into*
+those structures.
+
+**A control that changes a cohort's role is a protocol state transition, not a display setting.**
+Moving a partition from held-out to trained-on, or evaluating on a partition that selection has
+already touched, changes what every subsequent number means. Such a change has to be written into
+the allocation manifest as a transition, with what changed and when, or "was this model trained
+with a holdout?" stops being answerable after the fact.
+
+The sharp case is a **burned** test cohort — one inspected during model selection. It cannot be
+returned to untouched by a checkbox, a rename, or a new run label. Once inspected it is a
+selection cohort permanently, and a fresh unseen-disease measurement needs a fresh partition. A UI
+that permits the relabelling silently is worse than no UI, because it produces evidence that looks
+clean and is not.
+
+### 6.8 The approved next step: an aggregate-only split feasibility audit
+
+This is the one concrete engineering step cleared to proceed, and it is deliberately narrow: it
+tells the institution what the choices in §5.1 would actually cost, without making any of them.
+
+**It reports:**
+
+- the disease universe size and how many diseases are eligible for patient generation at all;
+- the distribution of phenotype counts and of gene counts per disease;
+- generator capacity bands derived from `C(P, k)` — how many diseases can support how many
+  distinct samples, which is §1.5's bound turned into a histogram;
+- counts of zero-degree and low-degree diseases in the KG;
+- identifier-mapping success rates and the reasons for exclusions;
+- aggregate stratification balance under 85/10/5, 80/10/10 and 70/15/15;
+- the digests of its inputs and of the data version it ran against.
+
+**It does not emit** patient identifiers, disease identifiers, per-disease listings, host or
+operator names, or absolute paths — [`BACKLOG.md`](BACKLOG.md) §5.2 governs what an evidence
+artifact may contain, and applies here unchanged.
+
+**It does not decide.** It selects no reserve fraction, modifies no generator behaviour, writes no
+allocation manifest, and builds no UI. Its output is an input to §5.1, not an answer to it.
 
 ---
 
@@ -451,9 +556,15 @@ permitted uses of HPO, Orphanet and any patient-derived dataset are separate que
 Repository claims were located by search and then re-read in the file before being written here;
 file and line references are to `mims-harvard/SHEPHERD` at `e95433a` and to
 `EmilyAlsentzer/rare-disease-simulation` at its default branch. The syntax error in §1.4 was
-confirmed by running `ast.parse`. The intervals and power figures in §4 are Wilson intervals and
-a two-proportion normal approximation, computed for this document; they describe sample sizes, not
-any measurement of this system.
+confirmed by running `ast.parse`.
+
+§4's intervals are Wilson intervals. Its paired figures are a normal approximation to McNemar's
+test, computed for this document at illustrative discordance rates of 20% and 30% — the rate itself
+is unmeasured, and the illustration exists to show that the answer depends on it rather than to
+supply a number. An earlier revision used an independent-samples two-proportion approximation,
+which is the wrong model for candidates scored on the same cases; those figures and the threshold
+derived from them have been removed. All of it describes sample sizes, not any measurement of this
+system.
 
 `mims-harvard/OptimusKG` was examined and is **not relevant** to either question: it is a
 knowledge-graph construction pipeline with no model, no training loop, no split logic, and no
