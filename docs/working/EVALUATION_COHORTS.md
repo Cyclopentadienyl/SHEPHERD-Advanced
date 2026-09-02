@@ -9,6 +9,15 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **11** — one real mathematical error corrected and one contract strengthened. §6.8 now defines an
+  **integer withheld count `W`** and states every formula against it; the earlier hypergeometric
+  mean `f · n_s` was wrong wherever `f · N` is not integral, and the quota/expectation gap has two
+  sources, not one. §6.2's coverage contract becomes **constructive**: a sufficient budget does not
+  guarantee coverage under replacement sampling, so one sample per allocated disease is emitted
+  first, the realised set is derived from the emitted records rather than copied from the
+  allocation, and the generation algorithm's version is recorded because that pass changes the
+  sampling distribution. §6.0 and §6.2 no longer appear to contradict each other on allocation
+  artifacts, and predecessor lineage is explicitly not required absent a consumer.
 - **10** — corrections from implementation review. §6.2 records that **allocation is a separate
   step** and that **allocated is not realised**: generation draws with replacement, so an allocated
   disease is not guaranteed a sample, and "85% supervised" holds only where the budget reaches every
@@ -697,8 +706,13 @@ is precisely the condition the paper's few-shot thesis is about.
 
 **What this removes.** No permanent `synthetic_test_unseen` partition. No refit sibling, and so no
 sibling-attribution rules (§6.4 is correspondingly short). No protocol state machinery, no burned
-synthetic cohort, no allocation generations. The remaining engineering is one interface change in
-the generator (§6.2) and the evaluation record (§6.5).
+synthetic cohort, and **no rotation machinery for replacing one**. The remaining engineering is the
+allocation step and one interface change in the generator (§6.2), plus the evaluation record (§6.5).
+
+*Not to be confused with §6.2's immutability rule.* "No rotation machinery" means nothing is built
+to retire and replace a burned test cohort, because there is no such cohort. It does not mean an
+allocation may be edited: a genuinely new cut of the disease universe still writes a **new
+artifact** rather than mutating the old one, which is a file-writing convention, not machinery.
 
 ### 6.1 Roles, named separately
 
@@ -725,13 +739,30 @@ producing explicit train and validation disease collections, which the generator
 the minimum seam that lets a later stratified allocation replace a uniform one without redesigning
 generation; it is not a split framework.
 
-**Allocation is not the same as realised supervision, and the difference has to be recorded.**
+**Allocation is not the same as realised supervision, and a budget alone does not close the gap.**
 Sample generation draws diseases **with replacement** from whichever collection it is given
 (`sample_generator.py:199`), so allocating a disease to the training partition does not guarantee it
-receives any training sample. A partition described as "85% supervised" is only that if the sample
-budget is large enough to reach every allocated disease. Two figures are therefore distinct
-throughout: **allocated** and **realised**. Whether a given budget can close the gap is one of the
-questions §6.8 answers.
+receives any training sample — and **raising the budget does not guarantee it either**, because
+replacement sampling can miss a disease at any budget. Two figures are therefore distinct
+throughout: **allocated** and **realised**.
+
+Coverage is made true by construction rather than by hoping:
+
+1. **Refuse** when a partition's sample budget is smaller than its allocated disease count, naming
+   both numbers.
+2. **Emit one sample for every allocated disease first**, in a deterministic order.
+3. **Distribute only the remainder** by the sampling rule.
+4. **Derive the realised disease set from the emitted sample records**, never by copying the
+   allocation.
+5. **Assert** that the realised set equals the allocated set.
+6. **Record both counts and both set digests independently** in the manifest.
+
+Step 4 is what makes the manifest evidence rather than restatement: a realised field populated from
+allocation metadata proves nothing, and a test for the coverage pass has to fail when that pass is
+removed. Step 2 changes the sample distribution relative to pure replacement sampling — every
+allocated disease now has at least one sample where before it might have had none — so the
+**generation algorithm and its version are recorded** alongside the counts. Two workspaces produced
+under different generation rules are not comparable, and the manifest is where that is visible.
 
 A frozen disease-allocation artifact comes first, recording the disease-universe digest, per-
 partition digests, allocation seed and schema version, KG/HPO/Orphanet versions, disease counts,
@@ -743,10 +774,14 @@ where a figure was divided by a denominator from a different artifact.
 **Frozen means immutable, and nothing is ever written back into it.** An allocation records how the
 disease universe was cut, once. What each run then *did* with that cut — which partitions it
 trained on, which it scored — belongs to the run and checkpoint provenance that already exists, not
-to the allocation. When a partition is burned or the universe is recut, the answer is a **new
-allocation generation** that links to its predecessor, never an edit to the old one. An allocation
-that can be edited is not evidence of anything, because the thing it described has changed while
-keeping its identity.
+to the allocation. When the universe is recut, the answer is a **new artifact**, never an edit to
+the old one. An allocation that can be edited is not evidence of anything, because the thing it
+described has changed while keeping its identity.
+
+**Predecessor lineage is deliberately not required.** Recording a link to a previous allocation is
+permitted where something actually reads it, and is not built on the chance that something might:
+the digests already distinguish one cut from another, which is what provenance needs. This is a
+naming and immutability convention, not a versioning system (§6.0).
 
 70/15/15 is acceptable as a *pilot* for characterisation. It is not a deployment default: it
 withholds supervision for about 30% of diseases, more aggressive than the upstream arrangement of
@@ -864,7 +899,21 @@ a partition.
   distinct samples, which is §1.5's bound turned into a histogram;
 - counts of zero-degree and low-degree diseases in the KG;
 - identifier-mapping success rates and the reasons for exclusions;
-- the digests of its inputs and of the data version it ran against.
+- the digests of its inputs and of the data version it ran against;
+- **the budget each coverage contract would require**: `|allocated| × k` for a few values of `k`,
+  against each partition's current budget. One column, from figures the audit already computes.
+
+That last line exists to settle a design question by measurement instead of argument. §6.2's
+coverage contract is "one sample per allocated disease, then distribute the remainder", which needs
+six mechanisms — a budget refusal, a coverage pass, a remainder rule, a realised-set derivation, an
+assertion, and two manifest fields. The upstream simulator instead generates a **fixed `k` samples
+per disease** (§1.5: `PATIENTS_PER_DISEASE`, 20 in the manuscript), under which coverage and balance
+are definitional and the first three mechanisms disappear.
+
+**This is recorded as a question, not a proposal.** Whether the second shape is affordable depends
+on `|allocated| × k` against the budgets actually in use, which nobody has computed. If it is
+affordable the contract simplifies; if it is not, §6.2 stands as written. The audit reports the
+number either way, and no interface changes on the strength of this paragraph.
 
 **Plus a withheld-fraction sensitivity curve, approved and now fully specified.** Option B still
 requires choosing a disease-disjoint validation fraction, so this arithmetic is needed whatever else
@@ -880,17 +929,31 @@ identical curves and an implied difference that is not there.
 
 **What is reported, per `f`, per stratum — all closed-form, with no sampling and no seeds:**
 
+**Everything below is defined against an integer withheld count `W`, not against `f` directly.**
+A withheld cohort has an integer size; `f · N` generally is not one. Fixing `W` first is what makes
+the rest well defined:
+
+```
+N  = number of eligible diseases
+W  = min(max(floor(f · N + 0.5), 1), N − 1)      # round half up, then clamp
+```
+
+The clamp is the §6.2 guard in arithmetic form: neither side may be empty. `N < 2` is refused
+rather than clamped. **Every quantity below uses `W`, never `f · N`**, and the audit reports `W`
+alongside `f` so the rounding is visible rather than implied.
+
 | | Quantity | Form |
 |---|---|---|
-| 1 | Largest-remainder **quota** for the stratum | Integer, deterministic |
-| 2 | **Expected** diseases withheld under a uniform draw | Hypergeometric mean `f · n_s` — **generally fractional, and not equal to (1)** |
-| 3 | **Standard deviation** of (2) | Hypergeometric, closed form |
-| 4 | **P(stratum contributes zero withheld diseases)** under a uniform draw | Closed form |
-| 5 | **P(stratum retains zero diseases)** under a uniform draw | Closed form |
+| 1 | Largest-remainder **quota** for the stratum | Integer, deterministic, summing to `W` |
+| 2 | **Expected** diseases withheld under a uniform draw | `E[X_s] = W · n_s / N` — hypergeometric mean, **generally fractional** |
+| 3 | **Variance** of (2) | `W · (n_s/N) · (1 − n_s/N) · (N − W)/(N − 1)` |
+| 4 | **P(stratum contributes zero withheld diseases)** | `C(N − n_s, W) / C(N, W)` |
+| 5 | **P(stratum retains zero diseases)** | `C(n_s, W) / C(N, W)`, zero when `W < n_s` |
 
 **(1) and (2) are reported separately and must not be conflated.** An earlier draft called them
-identical; an integer quota and a fractional expectation are not the same object, and the difference
-is exactly the rounding the quota performs.
+identical and gave the mean as `f · n_s`; both were wrong. An integer quota and a fractional
+expectation are different objects, and the gap between them has **two** sources, not one — the
+per-stratum quota rounding, and the initial rounding of `f · N` to `W`.
 
 **The quotas are independent diagnostic targets, not an allocation.** Quotas computed marginally
 over the phenotype-count, gene-count, KG-degree and capacity stratifications are in general **not
