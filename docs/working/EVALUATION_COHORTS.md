@@ -9,6 +9,14 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **10** — corrections from implementation review. §6.2 records that **allocation is a separate
+  step** and that **allocated is not realised**: generation draws with replacement, so an allocated
+  disease is not guaranteed a sample, and "85% supervised" holds only where the budget reaches every
+  allocated disease. §6.8's arithmetic is corrected — the largest-remainder quota is an integer and
+  the hypergeometric expectation is fractional, so they are reported separately and never called
+  identical; marginal quotas over four stratifications are **independent diagnostic targets**, not a
+  jointly realisable allocation; `C(P, k)` uses the generator's own configured `k`; and eligibility
+  comes from one shared exported helper rather than two implementations.
 - **9** — factual corrections from independent verification of §1.6 against the article. **The
   claim that the paper reports no training/evaluation overlap was wrong**: it reports 109 of 319
   UDN diseases and 220 of 378 UDN causal genes as represented in the simulated cohort. What it does
@@ -712,7 +720,18 @@ it:
 
 The generator should consume a disease partition rather than own split policy — an interface shaped
 like `generate_samples(disease_ids, config, seed, …)` rather than
-`generate_training_samples(num_train, num_val, …)`.
+`generate_training_samples(num_train, num_val, …)`. Allocation is therefore a **separate step**
+producing explicit train and validation disease collections, which the generator is handed. This is
+the minimum seam that lets a later stratified allocation replace a uniform one without redesigning
+generation; it is not a split framework.
+
+**Allocation is not the same as realised supervision, and the difference has to be recorded.**
+Sample generation draws diseases **with replacement** from whichever collection it is given
+(`sample_generator.py:199`), so allocating a disease to the training partition does not guarantee it
+receives any training sample. A partition described as "85% supervised" is only that if the sample
+budget is large enough to reach every allocated disease. Two figures are therefore distinct
+throughout: **allocated** and **realised**. Whether a given budget can close the gap is one of the
+questions §6.8 answers.
 
 A frozen disease-allocation artifact comes first, recording the disease-universe digest, per-
 partition digests, allocation seed and schema version, KG/HPO/Orphanet versions, disease counts,
@@ -863,11 +882,21 @@ identical curves and an implied difference that is not there.
 
 | | Quantity | Form |
 |---|---|---|
-| 1 | Diseases withheld under **proportional** allocation | Deterministic, largest-remainder rounding |
-| 2 | Expected diseases withheld under a **uniform** draw | Hypergeometric mean, identical to (1) |
+| 1 | Largest-remainder **quota** for the stratum | Integer, deterministic |
+| 2 | **Expected** diseases withheld under a uniform draw | Hypergeometric mean `f · n_s` — **generally fractional, and not equal to (1)** |
 | 3 | **Standard deviation** of (2) | Hypergeometric, closed form |
 | 4 | **P(stratum contributes zero withheld diseases)** under a uniform draw | Closed form |
 | 5 | **P(stratum retains zero diseases)** under a uniform draw | Closed form |
+
+**(1) and (2) are reported separately and must not be conflated.** An earlier draft called them
+identical; an integer quota and a fractional expectation are not the same object, and the difference
+is exactly the rounding the quota performs.
+
+**The quotas are independent diagnostic targets, not an allocation.** Quotas computed marginally
+over the phenotype-count, gene-count, KG-degree and capacity stratifications are in general **not
+jointly realisable by any single disease subset** — one subset cannot generally hit four marginals
+at once. Each column answers "what would balance on *this* axis cost?", and the audit describes them
+as such. It does not describe, propose or implement a stratified allocation.
 
 (4) and (5) are the decision-relevant pair, and the reason the choice between uniform and stratified
 is not merely stylistic: a thin stratum that lands entirely on one side of the cut has **no
@@ -881,6 +910,12 @@ a number, not a preference.
 - **Strata, reported marginally and never crossed:** phenotype-count band, gene-count band,
   KG-degree band, and `C(P, k)` generator-capacity band. Crossed cells would be mostly empty at
   these sizes and would turn one table into a combinatorial one.
+- **`k` is the generator's own configured rule**, not a nominal value: `C(P, k)` is computed with
+  the same `k = min(max(min_phenotypes, int(P · (1 − drop_rate))), max_phenotypes, P)` the generator
+  applies. A capacity band computed from a different `k` would describe a generator we do not run.
+- **Eligibility comes from one shared helper**, exported from `src.kg`, which the generator and the
+  audit both call. A second implementation of "which diseases are eligible" would be able to
+  disagree with the first, which is the failure this whole document exists to prevent.
 - **Missing values get their own explicit bucket.** Never imputed, never silently dropped.
 - **Rounding is largest-remainder**; ties break by ascending position in the digest-ordered disease
   universe, so the result is reproducible without a seed.
