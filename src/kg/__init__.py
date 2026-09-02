@@ -55,6 +55,7 @@ from src.kg.preprocessing import (
 from src.kg.sample_generator import (
     build_eligible_disease_profiles,
     generate_training_samples,
+    retained_phenotype_count,
 )
 
 __all__ = [
@@ -72,4 +73,5 @@ __all__ = [
     # Sample generation
     "build_eligible_disease_profiles",
     "generate_training_samples",
+    "retained_phenotype_count",
 ]

@@ -42,7 +42,7 @@ import logging
 import math
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -68,12 +68,113 @@ DEFAULT_SAMPLES_PER_DISEASE: Tuple[int, ...] = (1, 5, 10, 20)
 #: is what makes the largest-remainder tie-break deterministic.
 PHENOTYPE_COUNT_BANDS: Tuple[int, ...] = (0, 2, 4, 6, 11, 21, 51)
 GENE_COUNT_BANDS: Tuple[int, ...] = (0, 1, 2, 4, 11)
-PROFILE_DEGREE_BANDS: Tuple[int, ...] = (0, 1, 2, 5, 11, 26, 51)
+PROFILE_SUPPORT_BANDS: Tuple[int, ...] = (0, 1, 2, 5, 11, 26, 51)
 CAPACITY_BANDS: Tuple[int, ...] = (1, 2, 6, 21, 101, 1001)
 
 #: Where a value that could not be computed is placed. Sorted **after** every
 #: numeric band, ahead of any label tie-break, so bucket order is total.
 MISSING_LABEL = "missing"
+
+
+# --------------------------------------------------------------------------
+# The input boundary
+# --------------------------------------------------------------------------
+
+
+class AuditSettings(NamedTuple):
+    """Validated, normalised audit inputs — the single source for every caller.
+
+    Returned frozen so nothing downstream re-derives a value differently from
+    what the report echoes under ``assumptions``.
+    """
+
+    min_phenotypes: int
+    max_phenotypes: int
+    phenotype_drop_rate: float
+    train_budget: int
+    val_budget: int
+    fractions: Tuple[float, ...]
+    samples_per_disease: Tuple[int, ...]
+
+
+def _integer(name: str, value: Any, minimum: int) -> int:
+    """An ``int`` that is not a ``bool``. ``True`` would otherwise pass as 1."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    return value
+
+
+def _dedupe(values: Sequence[Any]) -> List[Any]:
+    """Preserve first-seen order. Repeats would only duplicate report rows."""
+    seen, unique = set(), []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
+
+
+def validate_settings(
+    *,
+    min_phenotypes: int,
+    max_phenotypes: int,
+    phenotype_drop_rate: float,
+    train_budget: int,
+    val_budget: int,
+    fractions: Sequence[float],
+    samples_per_disease: Sequence[int],
+) -> AuditSettings:
+    """Refuse inputs that would produce plausible-looking but meaningless evidence.
+
+    **This runs before the knowledge graph is loaded and before anything is
+    written.** An evidence artifact that silently clamped a fraction of ``-1`` to
+    a legal value, or reported a budget as sufficient because
+    ``samples_per_disease`` was zero, would be worse than no artifact: the
+    numbers would look reportable. Every domain below is checked here rather than
+    at the argparse layer, so the same guarantees hold for an API caller.
+    """
+    min_phenotypes = _integer("min_phenotypes", min_phenotypes, 1)
+    max_phenotypes = _integer("max_phenotypes", max_phenotypes, min_phenotypes)
+    train_budget = _integer("train_budget", train_budget, 0)
+    val_budget = _integer("val_budget", val_budget, 0)
+
+    if isinstance(phenotype_drop_rate, bool) or not isinstance(
+        phenotype_drop_rate, (int, float)
+    ):
+        raise ValueError(f"phenotype_drop_rate must be a number, got {phenotype_drop_rate!r}")
+    if not math.isfinite(phenotype_drop_rate) or not 0.0 <= phenotype_drop_rate <= 1.0:
+        raise ValueError(
+            f"phenotype_drop_rate must be finite and in [0, 1], got {phenotype_drop_rate}"
+        )
+
+    unique_fractions = _dedupe(list(fractions))
+    if not unique_fractions:
+        raise ValueError("at least one fraction is required")
+    for value in unique_fractions:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"fraction must be a number, got {value!r}")
+        if not math.isfinite(value) or not 0.0 < value < 1.0:
+            raise ValueError(
+                f"fraction must be finite and strictly between 0 and 1, got {value}"
+            )
+
+    unique_per_disease = _dedupe(list(samples_per_disease))
+    if not unique_per_disease:
+        raise ValueError("at least one samples_per_disease value is required")
+    for value in unique_per_disease:
+        _integer("samples_per_disease", value, 1)
+
+    return AuditSettings(
+        min_phenotypes=min_phenotypes,
+        max_phenotypes=max_phenotypes,
+        phenotype_drop_rate=float(phenotype_drop_rate),
+        train_budget=train_budget,
+        val_budget=val_budget,
+        fractions=tuple(float(value) for value in unique_fractions),
+        samples_per_disease=tuple(int(value) for value in unique_per_disease),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -209,19 +310,6 @@ def largest_remainder_quotas(
     return quotas
 
 
-def retained_phenotype_count(
-    n_phenotypes: int, min_phenotypes: int, max_phenotypes: int, drop_rate: float
-) -> int:
-    """The generator's own ``k``, restated nowhere else.
-
-    Mirrors ``_generate_samples`` exactly (``sample_generator.py``): a capacity
-    band computed from a different ``k`` would describe a generator that is not
-    run. This is the only meaning ``k`` carries in this file.
-    """
-    keep = max(min_phenotypes, int(n_phenotypes * (1.0 - drop_rate)))
-    return min(keep, max_phenotypes, n_phenotypes)
-
-
 # --------------------------------------------------------------------------
 # Banding
 # --------------------------------------------------------------------------
@@ -314,56 +402,53 @@ def stratification_report(
     ]
 
 
-def build_report(
-    kg_path: Path,
-    *,
-    min_phenotypes: int,
-    max_phenotypes: int,
-    phenotype_drop_rate: float,
-    train_budget: int,
-    val_budget: int,
-    fractions: Sequence[float],
-    samples_per_disease: Sequence[int],
-    relationship: str,
-) -> Dict[str, Any]:
-    from src.kg import build_eligible_disease_profiles
+def build_report(kg_path: Path, settings: AuditSettings, relationship: str) -> Dict[str, Any]:
+    """The report. ``settings`` is already validated — see ``validate_settings``."""
+    from src.kg import build_eligible_disease_profiles, retained_phenotype_count
     from src.kg.graph import KnowledgeGraph
     from src.utils.fingerprint import file_sha256
 
     kg = KnowledgeGraph.load_json(str(kg_path))
     disease_nodes = len(kg.get_node_id_mapping().get("disease", {}))
-    eligible = build_eligible_disease_profiles(kg, min_phenotypes)
+    eligible = build_eligible_disease_profiles(kg, settings.min_phenotypes)
     n_eligible = len(eligible)
 
     if n_eligible < 2:
         raise SystemExit(
             f"only {n_eligible} of {disease_nodes} disease nodes are eligible at "
-            f"min_phenotypes={min_phenotypes}; a split needs at least 2. Nothing "
-            "was written."
+            f"min_phenotypes={settings.min_phenotypes}; a split needs at least 2. "
+            "Nothing was written."
         )
 
     phenotype_counts = [len(profile["phenotype_ids"]) for _, profile in eligible]
     gene_counts = [len(profile["gene_ids"]) for _, profile in eligible]
-    degrees = [p + g for p, g in zip(phenotype_counts, gene_counts)]
+    support_sizes = [p + g for p, g in zip(phenotype_counts, gene_counts)]
     capacities = [
         math.comb(
             n_phen,
             retained_phenotype_count(
-                n_phen, min_phenotypes, max_phenotypes, phenotype_drop_rate
+                n_phen,
+                settings.min_phenotypes,
+                settings.max_phenotypes,
+                settings.phenotype_drop_rate,
             ),
         )
         for n_phen in phenotype_counts
     ]
 
     strata = {
-        "phenotype_count": (bucket(phenotype_counts, PHENOTYPE_COUNT_BANDS), PHENOTYPE_COUNT_BANDS),
+        "phenotype_count": (
+            bucket(phenotype_counts, PHENOTYPE_COUNT_BANDS), PHENOTYPE_COUNT_BANDS
+        ),
         "gene_count": (bucket(gene_counts, GENE_COUNT_BANDS), GENE_COUNT_BANDS),
-        "profile_degree": (bucket(degrees, PROFILE_DEGREE_BANDS), PROFILE_DEGREE_BANDS),
+        "profile_support_size": (
+            bucket(support_sizes, PROFILE_SUPPORT_BANDS), PROFILE_SUPPORT_BANDS
+        ),
         "generator_capacity": (bucket(capacities, CAPACITY_BANDS), CAPACITY_BANDS),
     }
 
     sensitivity = []
-    for fraction in fractions:
+    for fraction in settings.fractions:
         withheld = withheld_count(n_eligible, fraction)
         sensitivity.append(
             {
@@ -379,19 +464,19 @@ def build_report(
         )
 
     coverage = []
-    for per_disease in samples_per_disease:
-        for fraction in fractions:
+    for per_disease in settings.samples_per_disease:
+        for fraction in settings.fractions:
             withheld = withheld_count(n_eligible, fraction)
+            train_required = (n_eligible - withheld) * per_disease
+            val_required = withheld * per_disease
             coverage.append(
                 {
                     "samples_per_disease": per_disease,
                     "fraction_requested": fraction,
-                    "train_required": (n_eligible - withheld) * per_disease,
-                    "val_required": withheld * per_disease,
-                    "train_budget_sufficient": (
-                        train_budget >= (n_eligible - withheld) * per_disease
-                    ),
-                    "val_budget_sufficient": val_budget >= withheld * per_disease,
+                    "train_required": train_required,
+                    "val_required": val_required,
+                    "train_budget_sufficient": settings.train_budget >= train_required,
+                    "val_budget_sufficient": settings.val_budget >= val_required,
                 }
             )
 
@@ -405,22 +490,51 @@ def build_report(
                 "generation manifest exists yet, so the configuration an existing "
                 "workspace was built under is not readable from it."
             ),
-            "min_phenotypes": min_phenotypes,
-            "max_phenotypes": max_phenotypes,
-            "phenotype_drop_rate": phenotype_drop_rate,
-            "current_train_budget": train_budget,
-            "current_val_budget": val_budget,
+            "min_phenotypes": settings.min_phenotypes,
+            "max_phenotypes": settings.max_phenotypes,
+            "phenotype_drop_rate": settings.phenotype_drop_rate,
+            "current_train_budget": settings.train_budget,
+            "current_val_budget": settings.val_budget,
         },
         "inputs": {"kg": file_sha256(kg_path)},
         "universe": {
             "disease_nodes": disease_nodes,
             "eligible_diseases": n_eligible,
-            "excluded_diseases": disease_nodes - n_eligible,
-            "eligibility_rule": f"phenotype_count >= {min_phenotypes}",
+            "eligibility_rule": (
+                f"profile phenotype support >= {settings.min_phenotypes}"
+            ),
+            "exclusions": {
+                "below_min_phenotypes": disease_nodes - n_eligible,
+                "note": (
+                    "The only exclusion reason observable from a materialised "
+                    "kg.json. Identifier-mapping outcomes happen during KG "
+                    "construction and leave no trace in the artifact, so no "
+                    "mapping success rate is reported here."
+                ),
+            },
         },
         "distributions": {
             name: [{"band": label, "diseases": size} for label, size in bands]
             for name, (bands, _) in strata.items()
+        },
+        "axis_definitions": {
+            "phenotype_count": (
+                "Phenotypes in the disease's generator profile. Includes phenotypes "
+                "reached through an associated gene, not only those directly linked "
+                "to the disease."
+            ),
+            "gene_count": "Genes associated with the disease.",
+            "profile_support_size": (
+                "phenotype_count + gene_count. **Not the disease node's direct KG "
+                "degree**, because phenotype_count is propagated through genes. "
+                "Direct degree is a different quantity and is not measured here; a "
+                "disease with no incident edges at all has an empty profile and is "
+                "already counted under exclusions."
+            ),
+            "generator_capacity": (
+                "C(P, k) distinct phenotype subsets the generator can draw, with k "
+                "from the production rule in src.kg.retained_phenotype_count."
+            ),
         },
         "coverage_budgets": coverage,
         "sensitivity": sensitivity,
@@ -478,17 +592,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 
-    report = build_report(
-        args.kg_path,
-        min_phenotypes=args.min_phenotypes,
-        max_phenotypes=args.max_phenotypes,
-        phenotype_drop_rate=args.phenotype_drop_rate,
-        train_budget=args.train_budget,
-        val_budget=args.val_budget,
-        fractions=args.fractions,
-        samples_per_disease=args.samples_per_disease,
-        relationship=args.deployment_relationship,
-    )
+    # Before the knowledge graph is loaded and before anything is written.
+    try:
+        settings = validate_settings(
+            min_phenotypes=args.min_phenotypes,
+            max_phenotypes=args.max_phenotypes,
+            phenotype_drop_rate=args.phenotype_drop_rate,
+            train_budget=args.train_budget,
+            val_budget=args.val_budget,
+            fractions=args.fractions,
+            samples_per_disease=args.samples_per_disease,
+        )
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
+    report = build_report(args.kg_path, settings, args.deployment_relationship)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     logger.info(

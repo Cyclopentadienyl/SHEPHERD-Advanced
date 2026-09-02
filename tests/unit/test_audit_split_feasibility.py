@@ -226,7 +226,7 @@ def test_bucket_order_is_total_and_ascending():
 
 
 # --------------------------------------------------------------------------
-# k, which is the phenotype count and nothing else
+# k, which is the phenotype count and nothing else — and lives in production
 # --------------------------------------------------------------------------
 
 
@@ -237,26 +237,53 @@ def test_bucket_order_is_total_and_ascending():
         (10, 2, 15, 0.3, 7),
         (100, 2, 15, 0.3, 15),   # capped by max_phenotypes
         (3, 5, 15, 0.3, 3),      # capped by P itself
+        (10, 2, 15, 0.0, 10),    # nothing dropped
+        (10, 2, 15, 1.0, 2),     # everything droppable, floored at the minimum
     ],
 )
-def test_retained_phenotype_count_mirrors_the_generator(
-    n_phenotypes, min_p, max_p, drop, expected
-):
-    assert audit.retained_phenotype_count(n_phenotypes, min_p, max_p, drop) == expected
+def test_retained_phenotype_count_boundaries(n_phenotypes, min_p, max_p, drop, expected):
+    from src.kg import retained_phenotype_count
+
+    assert retained_phenotype_count(n_phenotypes, min_p, max_p, drop) == expected
 
 
-def test_retained_phenotype_count_matches_the_generator_on_a_sweep():
-    """Restating the rule is the failure this guards against.
+def test_the_audit_uses_the_production_rule_rather_than_a_copy():
+    """No transcribed formula here, and none in the audit.
 
-    The comparison is against ``_generate_samples``' own arithmetic, transcribed
-    once here. If the generator's rule changes and this is not updated, capacity
-    bands would describe a generator nobody runs.
+    A copied rule would let production generation change while the audit and its
+    tests stayed green, reporting capacity for a generator that no longer exists.
+    The check is identity, not equality of two transcriptions.
     """
-    for n_phen in range(2, 60):
-        for drop in (0.0, 0.3, 0.5, 0.9):
-            keep = max(2, int(n_phen * (1.0 - drop)))
-            keep = min(keep, 15, n_phen)
-            assert audit.retained_phenotype_count(n_phen, 2, 15, drop) == keep
+    import src.kg as kg_package
+
+    source = Path(audit.__file__).read_text(encoding="utf-8")
+    assert "retained_phenotype_count(" in source
+    assert "1.0 - " not in source.split("def build_report")[1].split("strata =")[0], (
+        "the audit must not recompute the retained-phenotype rule inline"
+    )
+    assert hasattr(kg_package, "retained_phenotype_count")
+
+
+def test_generation_actually_calls_the_shared_rule(monkeypatch, tiny_kg_path):
+    """Pins that ``_generate_samples`` routes through the helper.
+
+    Without this, extracting the helper and leaving the inline arithmetic behind
+    would look identical to having done the work.
+    """
+    from src.kg import graph as graph_module
+    from src.kg import sample_generator
+
+    calls = []
+    original = sample_generator.retained_phenotype_count
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sample_generator, "retained_phenotype_count", spy)
+    kg = graph_module.KnowledgeGraph.load_json(str(tiny_kg_path))
+    sample_generator.generate_training_samples(kg, num_train=4, num_val=0, min_phenotypes=2)
+    assert calls, "generation did not go through the shared retained-phenotype rule"
 
 
 # --------------------------------------------------------------------------
@@ -337,16 +364,14 @@ def tiny_kg_path(tmp_path):
 
 def test_report_is_aggregate_only_and_decides_nothing(tiny_kg_path):
     report = audit.build_report(
-        tiny_kg_path,
-        min_phenotypes=2, max_phenotypes=15, phenotype_drop_rate=0.3,
-        train_budget=100, val_budget=20,
-        fractions=[0.25, 0.5], samples_per_disease=[1, 5],
-        relationship=audit.UNSTATED_RELATIONSHIP,
+        tiny_kg_path, settings(fractions=[0.25, 0.5], samples_per_disease=[1, 5]),
+        audit.UNSTATED_RELATIONSHIP,
     )
 
     assert report["universe"]["disease_nodes"] == 4
     assert report["universe"]["eligible_diseases"] == 3
-    assert report["universe"]["excluded_diseases"] == 1
+    assert report["universe"]["exclusions"]["below_min_phenotypes"] == 1
+    assert "no mapping success rate is reported" in report["universe"]["exclusions"]["note"]
 
     # The assumptions are echoed and labelled as assumptions, not observations.
     assert report["assumptions"]["min_phenotypes"] == 2
@@ -364,11 +389,8 @@ def test_report_is_aggregate_only_and_decides_nothing(tiny_kg_path):
 def test_no_identifier_reaches_the_report(tiny_kg_path):
     """BACKLOG §5.2. The tiny KG's ids are distinctive so a leak would show."""
     report = audit.build_report(
-        tiny_kg_path,
-        min_phenotypes=2, max_phenotypes=15, phenotype_drop_rate=0.3,
-        train_budget=100, val_budget=20,
-        fractions=[0.25], samples_per_disease=[1],
-        relationship=audit.UNSTATED_RELATIONSHIP,
+        tiny_kg_path, settings(fractions=[0.25], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
     )
     rendered = json.dumps(report)
     for identifier in ("MONDO:", "HP:000", "GENE_A", "GENE_B", str(tiny_kg_path)):
@@ -377,12 +399,7 @@ def test_no_identifier_reaches_the_report(tiny_kg_path):
 
 def test_the_report_serialises_without_nan_or_infinity(tiny_kg_path):
     report = audit.build_report(
-        tiny_kg_path,
-        min_phenotypes=2, max_phenotypes=15, phenotype_drop_rate=0.3,
-        train_budget=100, val_budget=20,
-        fractions=list(audit.DEFAULT_FRACTIONS),
-        samples_per_disease=list(audit.DEFAULT_SAMPLES_PER_DISEASE),
-        relationship=audit.UNSTATED_RELATIONSHIP,
+        tiny_kg_path, settings(), audit.UNSTATED_RELATIONSHIP,
     )
     json.dumps(report, allow_nan=False, sort_keys=True)
 
@@ -413,3 +430,179 @@ def test_no_quota_ever_exceeds_its_bucket():
         quotas = audit.largest_remainder_quotas(sizes, withheld, keys_for(labels))
         assert sum(quotas) == withheld
         assert all(q <= s for q, s in zip(quotas, sizes))
+
+
+def settings(**overrides):
+    """Validated defaults for the end-to-end tests, overridable per case."""
+    base = dict(
+        min_phenotypes=2, max_phenotypes=15, phenotype_drop_rate=0.3,
+        train_budget=100, val_budget=20,
+        fractions=list(audit.DEFAULT_FRACTIONS),
+        samples_per_disease=list(audit.DEFAULT_SAMPLES_PER_DISEASE),
+    )
+    base.update(overrides)
+    return audit.validate_settings(**base)
+
+
+# --------------------------------------------------------------------------
+# The input boundary
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field,value,message",
+    [
+        ("min_phenotypes", 0, "min_phenotypes must be >= 1"),
+        ("min_phenotypes", 2.0, "must be an integer"),
+        ("min_phenotypes", True, "must be an integer"),
+        ("max_phenotypes", 1, "max_phenotypes must be >= 2"),
+        ("phenotype_drop_rate", -0.1, "finite and in"),
+        ("phenotype_drop_rate", 1.5, "finite and in"),
+        ("phenotype_drop_rate", float("nan"), "finite and in"),
+        ("phenotype_drop_rate", float("inf"), "finite and in"),
+        ("phenotype_drop_rate", "0.3", "must be a number"),
+        ("train_budget", -1, "train_budget must be >= 0"),
+        ("val_budget", -1, "val_budget must be >= 0"),
+        ("fractions", [], "at least one fraction"),
+        ("fractions", [0.0], "strictly between 0 and 1"),
+        ("fractions", [1.0], "strictly between 0 and 1"),
+        ("fractions", [-0.2], "strictly between 0 and 1"),
+        ("fractions", [1.4], "strictly between 0 and 1"),
+        ("fractions", [float("nan")], "strictly between 0 and 1"),
+        ("fractions", [float("inf")], "strictly between 0 and 1"),
+        ("samples_per_disease", [], "at least one samples_per_disease"),
+        ("samples_per_disease", [0], "samples_per_disease must be >= 1"),
+        ("samples_per_disease", [-3], "samples_per_disease must be >= 1"),
+        ("samples_per_disease", [1.5], "must be an integer"),
+        ("samples_per_disease", [True], "must be an integer"),
+    ],
+)
+def test_invalid_assumptions_are_refused_at_the_api(field, value, message):
+    """Refused at the API, not only at argparse — the audit is importable."""
+    with pytest.raises(ValueError, match=message):
+        settings(**{field: value})
+
+
+def test_repeats_are_deduplicated_deterministically():
+    got = settings(fractions=[0.15, 0.05, 0.15], samples_per_disease=[5, 5, 1])
+    assert got.fractions == (0.15, 0.05)
+    assert got.samples_per_disease == (5, 1)
+
+
+def test_validated_settings_are_frozen():
+    with pytest.raises(AttributeError):
+        settings().min_phenotypes = 99
+
+
+def test_a_zero_samples_per_disease_can_never_report_a_sufficient_budget():
+    """The defect this boundary exists for: 0 required is trivially affordable."""
+    with pytest.raises(ValueError):
+        settings(samples_per_disease=[0])
+
+
+# --------------------------------------------------------------------------
+# Propagated support is not direct KG degree
+# --------------------------------------------------------------------------
+
+
+def test_profile_support_is_propagated_and_is_not_claimed_to_be_kg_degree(tmp_path):
+    """One disease, one direct gene, and that gene carries many phenotypes.
+
+    The disease has **one** directly incident neighbour. Its profile support is
+    far larger, because ``_build_disease_profiles`` propagates the gene's
+    phenotypes onto the disease. The report must band the propagated figure and
+    must not call it KG degree.
+    """
+    from src.core.types import DataSource, Node, NodeID, NodeType
+    from src.kg.graph import Edge, EdgeType, KnowledgeGraph
+
+    kg = KnowledgeGraph()
+    gene = NodeID(source=DataSource.DISGENET, local_id="HUB_GENE")
+    kg.add_node(Node(id=gene, node_type=NodeType.GENE, name="HUB_GENE"))
+    for i in range(12):
+        hp = NodeID(source=DataSource.HPO, local_id=f"HP:009{i:04d}")
+        kg.add_node(Node(id=hp, node_type=NodeType.PHENOTYPE, name=str(hp.local_id)))
+        kg.add_edge(Edge(source_id=gene, target_id=hp,
+                         edge_type=EdgeType.GENE_HAS_PHENOTYPE))
+
+    # Two diseases so the universe can be cut; both borrow the hub gene's
+    # phenotypes and neither has a phenotype edge of its own.
+    for mondo in ("MONDO:0009001", "MONDO:0009002"):
+        disease = NodeID(source=DataSource.MONDO, local_id=mondo)
+        kg.add_node(Node(id=disease, node_type=NodeType.DISEASE, name=mondo))
+        kg.add_edge(Edge(source_id=gene, target_id=disease,
+                         edge_type=EdgeType.GENE_ASSOCIATED_WITH_DISEASE))
+
+    path = tmp_path / "kg.json"
+    kg.save_json(str(path))
+
+    from src.kg import build_eligible_disease_profiles
+
+    eligible = build_eligible_disease_profiles(
+        KnowledgeGraph.load_json(str(path)), min_phenotypes=2
+    )
+    assert len(eligible) == 2
+    for _, profile in eligible:
+        # One direct neighbour, twelve propagated phenotypes.
+        assert len(profile["gene_ids"]) == 1
+        assert len(profile["phenotype_ids"]) == 12
+
+    report = audit.build_report(
+        path, settings(fractions=[0.5], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
+    )
+    support = {row["band"]: row["diseases"] for row in
+               report["distributions"]["profile_support_size"]}
+    assert support["11-25"] == 2, support   # 12 phenotypes + 1 gene = 13
+
+    definition = report["axis_definitions"]["profile_support_size"]
+    assert "Not the disease node's direct KG degree" in definition
+    assert "profile_degree" not in json.dumps(report)
+
+
+# --------------------------------------------------------------------------
+# main
+# --------------------------------------------------------------------------
+
+
+def _argv(kg_path, out):
+    return ["--kg-path", str(kg_path), "--output", str(out),
+            "--train-budget", "100", "--val-budget", "20"]
+
+
+def test_main_writes_finite_valid_json(tiny_kg_path, tmp_path):
+    out = tmp_path / "report.json"
+    assert audit.main(_argv(tiny_kg_path, out)) == 0
+    report = json.loads(out.read_text())
+    assert report["audit"] == "split_feasibility"
+    json.dumps(report, allow_nan=False)
+
+
+def test_main_refuses_an_existing_output_and_preserves_its_bytes(tiny_kg_path, tmp_path):
+    out = tmp_path / "report.json"
+    out.write_bytes(b'{"existing": true}')
+    with pytest.raises(SystemExit, match="Pass --overwrite"):
+        audit.main(_argv(tiny_kg_path, out))
+    assert out.read_bytes() == b'{"existing": true}'
+
+
+def test_main_overwrites_when_told_to(tiny_kg_path, tmp_path):
+    out = tmp_path / "report.json"
+    out.write_bytes(b'{"existing": true}')
+    assert audit.main(_argv(tiny_kg_path, out) + ["--overwrite"]) == 0
+    assert json.loads(out.read_text())["audit"] == "split_feasibility"
+
+
+def test_main_rejects_invalid_assumptions_before_writing(tiny_kg_path, tmp_path):
+    out = tmp_path / "report.json"
+    with pytest.raises(SystemExit, match="strictly between 0 and 1"):
+        audit.main(_argv(tiny_kg_path, out) + ["--fractions", "1.5"])
+    assert not out.exists(), "nothing may be written when the inputs are refused"
+
+
+def test_an_unknown_deployment_relationship_is_rejected(tiny_kg_path, tmp_path):
+    out = tmp_path / "report.json"
+    with pytest.raises(SystemExit):
+        audit.parse_args(
+            _argv(tiny_kg_path, out) + ["--deployment-relationship", "definitely-not-a-choice"]
+        )

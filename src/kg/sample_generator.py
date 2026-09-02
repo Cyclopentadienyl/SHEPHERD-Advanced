@@ -27,6 +27,29 @@ from src.kg.graph import KnowledgeGraph
 logger = logging.getLogger(__name__)
 
 
+def retained_phenotype_count(
+    n_phenotypes: int,
+    min_phenotypes: int,
+    max_phenotypes: int,
+    phenotype_drop_rate: float,
+) -> int:
+    """How many phenotypes a generated sample keeps — the ``k`` in ``C(P, k)``.
+
+    **The one definition, called rather than restated.** ``_generate_samples``
+    uses it to build every sample, and the split feasibility audit uses it to
+    compute generator-capacity bands. A second copy of this arithmetic would let
+    the audit report the capacity of a generator nobody runs, and the copy would
+    stay green while doing so — which is exactly the failure mode a shared
+    ``build_eligible_disease_profiles`` already rules out for eligibility.
+
+    The floor is ``min_phenotypes`` and the ceilings are ``max_phenotypes`` and
+    the disease's own phenotype count, so the result is always in
+    ``[min(min_phenotypes, n_phenotypes), n_phenotypes]``.
+    """
+    keep = max(min_phenotypes, int(n_phenotypes * (1.0 - phenotype_drop_rate)))
+    return min(keep, max_phenotypes, n_phenotypes)
+
+
 def generate_training_samples(
     kg: KnowledgeGraph,
     num_train: int = 5000,
@@ -223,12 +246,11 @@ def _generate_samples(
         disease_idx, profile = rng.choice(eligible_diseases)
         all_phenos = profile["phenotype_ids"]
 
-        # Randomly drop phenotypes
-        n_keep = max(
-            min_phenotypes,
-            int(len(all_phenos) * (1.0 - phenotype_drop_rate)),
+        # Randomly drop phenotypes. The count comes from the shared rule so the
+        # feasibility audit's capacity bands cannot describe a different generator.
+        n_keep = retained_phenotype_count(
+            len(all_phenos), min_phenotypes, max_phenotypes, phenotype_drop_rate
         )
-        n_keep = min(n_keep, max_phenotypes, len(all_phenos))
 
         selected_phenos = rng.sample(all_phenos, n_keep)
 

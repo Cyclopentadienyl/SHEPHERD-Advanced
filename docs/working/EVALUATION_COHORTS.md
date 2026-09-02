@@ -9,6 +9,12 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **14** — corrections from implementation review of the audit. §6.8 no longer promises
+  **identifier-mapping success rates**, which a materialised `kg.json` cannot evidence — mapping
+  happens during KG construction and leaves no trace — and no longer claims to report **KG degree**:
+  the generator's profile builder propagates a gene's phenotypes onto its diseases, so the axis is a
+  **propagated support size**, which is now what it is called. The audit also validates every numeric
+  input before loading the graph or writing anything.
 - **13** — the audit is implemented (`scripts/audit_split_feasibility.py`), and five bounded
   specification corrections land with it: the quota-versus-expectation gap has **one** source, not
   two, since both use the same `W` (the `f · N → W` rounding explains a different comparison);
@@ -918,8 +924,16 @@ a partition.
 - the distribution of phenotype counts and of gene counts per disease;
 - generator capacity bands derived from `C(P, k)` — how many diseases can support how many
   distinct samples, which is §1.5's bound turned into a histogram;
-- counts of zero-degree and low-degree diseases in the KG;
-- identifier-mapping success rates and the reasons for exclusions;
+- the **profile support size** distribution — a disease's phenotype count plus its gene count.
+  Note carefully what this is *not*: the generator's profile builder propagates a gene's phenotypes
+  onto the diseases that gene is associated with, so this is a **propagated support size, not the
+  disease node's direct KG degree**. Direct degree is a different quantity and is not measured;
+  what the audit can say about connectivity at the low end is that a disease with no incident edges
+  at all has an empty profile and is therefore counted as excluded;
+- the **exclusion count**, by the one reason a materialised `kg.json` can actually evidence:
+  falling below `min_phenotypes`. An earlier draft of this list promised *identifier-mapping
+  success rates*, which cannot be honoured from this input — mapping happens during KG construction
+  and leaves no trace in the artifact. The promise is withdrawn rather than approximated;
 - the digests of its inputs and of the data version it ran against;
 - **the budget each coverage contract would require**: `|allocated| × samples_per_disease`, for a
   few values of `samples_per_disease`, against each partition's current budget. One column, from
@@ -1014,6 +1028,10 @@ stratum both failures carry real probability, and each is a number rather than a
 
 - `f ∈ {0.05, 0.10, 0.15, 0.20, 0.25, 0.30}`. 0.15 is the upstream value (§1.6) and the working
   default; the rest bound it on both sides.
+- **Every numeric input is validated before the graph is loaded and before anything is written.**
+  An evidence artifact that silently clamped a fraction of `−1`, or called a budget sufficient
+  because `samples_per_disease` was zero, would be worse than no artifact: the numbers would look
+  reportable. The domains are checked at the API, not only at the command line.
 - **Strata, reported marginally and never crossed:** phenotype-count band, gene-count band,
   KG-degree band, and `C(P, k)` generator-capacity band. Crossed cells would be mostly empty at
   these sizes and would turn one table into a combinatorial one.
