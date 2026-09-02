@@ -52,7 +52,10 @@ from src.kg.preprocessing import (
     compute_degree_features,
     preprocess_for_gnn,
 )
-from src.kg.sample_generator import generate_training_samples
+from src.kg.sample_generator import (
+    build_eligible_disease_profiles,
+    generate_training_samples,
+)
 
 __all__ = [
     # Core graph
@@ -67,5 +70,6 @@ __all__ = [
     "compute_rwse",
     "compute_degree_features",
     # Sample generation
+    "build_eligible_disease_profiles",
     "generate_training_samples",
 ]

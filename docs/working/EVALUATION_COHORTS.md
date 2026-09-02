@@ -9,6 +9,12 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **13** — the audit is implemented (`scripts/audit_split_feasibility.py`), and five bounded
+  specification corrections land with it: the quota-versus-expectation gap has **one** source, not
+  two, since both use the same `W` (the `f · N → W` rounding explains a different comparison);
+  `X_s = 0` and `X_s = n_s` are named as **two different failures** — no validation representation
+  and no training representation — with distinct JSON keys; the `samples_per_disease` rename is
+  complete; and the missing bucket's position in the canonical order is fixed as last.
 - **12** — one blocking probability error corrected. §6.8 gave
   P(stratum retains zero) as `C(n_s, W)/C(N, W)`, which is the probability that the *whole withheld
   set came from that stratum* — a different event. The correct form is
@@ -928,7 +934,8 @@ patients per disease** (§1.5: `PATIENTS_PER_DISEASE`, 20 in the manuscript), un
 and balance are definitional and the first three mechanisms disappear.
 
 **This is recorded as a question, not a proposal.** Whether the second shape is affordable depends
-on `|allocated| × k` against the budgets actually in use, which nobody has computed. If it is
+on `|allocated| × samples_per_disease` against the budgets actually in use, which nobody has
+computed. If it is
 affordable the contract simplifies; if it is not, §6.2 stands as written. The audit reports the
 number either way, and no interface changes on the strength of this paragraph.
 
@@ -981,8 +988,10 @@ coincidence.
 
 **(1) and (2) are reported separately and must not be conflated.** An earlier draft called them
 identical and gave the mean as `f · n_s`; both were wrong. An integer quota and a fractional
-expectation are different objects, and the gap between them has **two** sources, not one — the
-per-stratum quota rounding, and the initial rounding of `f · N` to `W`.
+expectation are different objects, and — a further correction — the gap between *them* has exactly
+**one** source: the per-bucket integer rounding the quota performs. Both are computed from the same
+`W`, so nothing else can separate them. The rounding of `f · N` to `W` explains a **different**
+comparison: the gap between an ideal `f · n_s` and the realised-draw expectation `W · n_s / N`.
 
 **The quotas are independent diagnostic targets, not an allocation.** Quotas computed marginally
 over the phenotype-count, gene-count, KG-degree and capacity stratifications are in general **not
@@ -990,10 +999,16 @@ jointly realisable by any single disease subset** — one subset cannot generall
 at once. Each column answers "what would balance on *this* axis cost?", and the audit describes them
 as such. It does not describe, propose or implement a stratified allocation.
 
-(4) and (5) are the decision-relevant pair, and the reason the choice between uniform and stratified
-is not merely stylistic: a thin stratum that lands entirely on one side of the cut has **no
-validation representation at all**, and the validation metric is then silent about it. That risk is
-a number, not a preference.
+(4) and (5) are the decision-relevant pair, and they name **two different failures** that must not
+be described in the same words:
+
+| Event | What is lost | JSON key |
+|---|---|---|
+| `X_s = 0` — nothing from the stratum is withheld | **No validation representation.** The validation metric is silent about this stratum | `p_no_validation_representation` |
+| `X_s = n_s` — the whole stratum is withheld | **No training representation.** The deployed model has no patient supervision anywhere in this stratum | `p_no_training_representation` |
+
+This is why the choice between a uniform and a stratified draw is not merely stylistic: for a thin
+stratum both failures carry real probability, and each is a number rather than a preference.
 
 **Settled parameters, stated here so nothing is left to negotiate:**
 
@@ -1015,10 +1030,11 @@ a number, not a preference.
   history. No generation manifest exists yet (§6.2 introduces the first one), so the configuration
   an existing workspace was built under is **not recoverable from that workspace** and must not be
   presented as if it were.
-- **Rounding is largest-remainder over the stratum buckets**, whose quotas sum to `W`. Equal
-  fractional remainders break on a **canonical bucket key** — ascending band lower bound, then band
-  label — because the quota is assigned to a *bucket*, not to a disease. Reproducible without a
-  seed.
+- **Rounding is largest-remainder over the stratum buckets**, whose quotas sum to `W` and none of
+  which may exceed its own bucket size. Equal fractional remainders break on a **canonical bucket
+  key**: numeric bands by ascending lower bound, the explicit **missing bucket last**, and the band
+  label as the final tie-break so the order is total. The quota is assigned to a *bucket*, not to a
+  disease. Reproducible without a seed.
 - **No joint-imbalance scalar.** A single number over crossed strata does not help choose `f`, and
   a composite score invites exactly the menu-reading this section removed. Cheap to add later if it
   is ever wanted; it buys nothing now.

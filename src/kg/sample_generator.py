@@ -60,16 +60,8 @@ def generate_training_samples(
         (train_samples, val_samples) as lists of dicts.
     """
     rng = random.Random(seed)
-    node_mapping = kg.get_node_id_mapping()
 
-    disease_profiles = _build_disease_profiles(kg, node_mapping)
-
-    # Filter diseases with enough phenotypes
-    eligible_diseases = [
-        (disease_idx, profile)
-        for disease_idx, profile in disease_profiles.items()
-        if len(profile["phenotype_ids"]) >= min_phenotypes
-    ]
+    eligible_diseases = build_eligible_disease_profiles(kg, min_phenotypes)
 
     if not eligible_diseases:
         logger.warning(
@@ -112,6 +104,38 @@ def generate_training_samples(
         logger.info(f"Samples saved to {output_dir}")
 
     return train_samples, val_samples
+
+
+def build_eligible_disease_profiles(
+    kg: KnowledgeGraph,
+    min_phenotypes: int = 2,
+) -> List[Tuple[int, Dict[str, Any]]]:
+    """Disease profiles filtered to those a sample can actually be generated from.
+
+    **The one definition of "eligible", shared rather than restated.** Sample
+    generation and the split feasibility audit must describe the *same* disease
+    universe: an audit that measured a different universe from the one the
+    generator partitions would report costs for a split nobody runs. Two
+    implementations of one filter can disagree; one cannot.
+
+    Returned as a list of ``(disease_index, profile)`` pairs, in dictionary order.
+    A profile is ``{"phenotype_ids": [...], "gene_ids": [...]}``.
+
+    Args:
+        kg: KnowledgeGraph with nodes and edges loaded.
+        min_phenotypes: A disease needs at least this many phenotypes to be
+            eligible, because a sample keeps at least this many of them.
+
+    Returns:
+        Eligible ``(disease_index, profile)`` pairs; empty when none qualify.
+    """
+    node_mapping = kg.get_node_id_mapping()
+    disease_profiles = _build_disease_profiles(kg, node_mapping)
+    return [
+        (disease_idx, profile)
+        for disease_idx, profile in disease_profiles.items()
+        if len(profile["phenotype_ids"]) >= min_phenotypes
+    ]
 
 
 def _build_disease_profiles(
