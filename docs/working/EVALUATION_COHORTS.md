@@ -9,6 +9,18 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **9** — factual corrections from independent verification of §1.6 against the article. **The
+  claim that the paper reports no training/evaluation overlap was wrong**: it reports 109 of 319
+  UDN diseases and 220 of 378 UDN causal genes as represented in the simulated cohort. What it does
+  not report is how that divides between the training and validation partitions, which makes
+  §4.1(7) a more specific requirement rather than a new one. The simulated cohort's disease count is
+  inconsistent in the article (2,134 vs 2132) and the 42,624 discrepancy is recorded as unexplained.
+  §4.2 revised: the UDN *source population* is difficulty-selected, so the ask is unselected cases
+  from the intended deployment workflow, not from the hospital at large; Figure 3e's subset sizes
+  (40, 78, 7, 7) are recorded, and the expert-labelled strata are the small ones. §6.0 no longer
+  calls the paper a deployment protocol — the single-checkpoint rule is this project's own. §6.8's
+  sensitivity curve is fully specified, and its earlier promise of "share shifts" is withdrawn as
+  wrong under proportional allocation.
 - **8** — the two gating questions are answered (§5): no direct synthetic unseen-disease result is
   required for the deployed weights, and option **B** is accepted, both on the institution's policy
   of staying aligned with the published method. §6.0 collapses to five steps with no refit and one
@@ -187,6 +199,13 @@ The recipe, verified in that repository's `config.py` and
 
 `PATIENTS_PER_DISEASE = 1` in the repository, with the comment "We use 20 for the manuscript".
 
+*A note on the simulated cohort's disease count.* The paper gives **two inconsistent figures** —
+"2,134 unique rare diseases" in one passage and "2132 unique Mendelian disorders" in another — and
+neither multiplies by the stated 20 patients per disease to the stated 42,624 total. The
+discrepancy is recorded as **unexplained**; no reconciliation is offered here, and neither figure
+should be cited as "the number of simulated *training* diseases", since both describe the complete
+cohort before the split.
+
 **Against this, `src/kg/sample_generator.py` is a degenerate case.** It picks a disease, keeps
 `int(P × (1 − drop_rate))` of its phenotypes, and stops: no frequency weighting, no hierarchy
 corruption, no noise phenotypes, no negative phenotypes, no distractor genes — `gene_ids` is the
@@ -263,13 +282,25 @@ untouched research comparison (§3) is **stricter** than what the paper did, whi
 direction, but it also means our MyGene2 numbers are not directly comparable to theirs on the gene
 task.
 
-#### What the paper does not report
+#### What the paper reports about overlap, and what it does not
 
-It does not report the overlap between the 2,132 simulated training diseases and the diseases
-present in the real cohorts. Its leakage argument is temporal and concerns the knowledge graph —
-that recently diagnosed UDN patients show no performance drop — not disease overlap between
-training and evaluation. §4.1(7) is therefore this project's own requirement, not an inherited
-one.
+It **does** report cohort-level overlap, in the same Methods paragraph as the cohort size:
+
+> Of the 378 unique causal genes and 319 unique MONDO diseases found in patients in the UDN
+> cohort, 220 and 109 are represented in the simulated patient cohort, respectively. Furthermore,
+> 81.8% of the phenotype terms found across UDN patients are also found in the simulated patient
+> cohort […] but also emphasizes the need for developing models that can generalize to genes,
+> diseases, and phenotype terms unseen at training time.
+
+**What it does not report is how those overlaps divide between the training partition and the
+disease-disjoint validation partition.** A disease counted as "represented in the simulated cohort"
+may have been in either. §4.1(7) — overlap against the diseases that actually received patient
+supervision — is therefore a **more specific** requirement than the paper's, not a substitute for
+a missing one.
+
+Separately, the paper's leakage argument is temporal and concerns the knowledge graph: recently
+diagnosed UDN patients show no performance drop. That is a different question from partition
+overlap.
 
 ### 1.7 What this project's guards are, and are not
 
@@ -456,9 +487,10 @@ being real:
 synthetic test partition is dropped — it is inherent to any acceptance gate, and it is an
 **operating rule for the institution**, not a piece of software.
 
-(7) is this project's own requirement rather than an inherited one. §1.6 records that the paper
-does not report disease overlap between its simulated training set and its real evaluation
-cohorts; its leakage argument is temporal and concerns the knowledge graph.
+(7) is a **more specific** requirement than the paper's, not a new one. §1.6 records that the
+paper reports overlap between the *whole* simulated cohort and UDN (109 of 319 diseases, 220 of
+378 causal genes) but not how that divides between the training and validation partitions. Only
+the training-partition figure bounds what patient supervision could have contributed.
 
 ### 4.2 How the reference cohort was assembled — and what to ask the institution for
 
@@ -466,11 +498,18 @@ A natural reading of §1.6 is that experts hand-picked a list of never-before-se
 mechanisms to serve as the test set. **That is not what happened, and the difference changes the
 ask.**
 
-**The UDN cohort's inclusion criteria are about completeness and ground-truth reliability, not
-difficulty.** A patient is included if they have (1) at least one phenotype term, (2) at least five
-candidate genes, and (3) a diagnosis classified as *certain* or *highly likely* under the UDN's own
-diagnostic-certainty annotations. Everyone meeting those bars is in — N = 465. Nobody was selected
-for being hard.
+**The final evaluation cohort was not post-hoc selected for the four hard-case strata.** A
+patient is included if they have (1) at least one phenotype term, (2) at least five candidate
+genes, and (3) a diagnosis classified as *certain* or *highly likely* under the UDN's own
+diagnostic-certainty annotations — completeness and ground-truth reliability, nothing about
+novelty. Everyone meeting those bars is in, N = 465.
+
+**But the source population is itself difficulty-selected, and this matters for the ask.**
+Admission to the UDN requires objective findings *and* that prior clinical testing has failed to
+produce a diagnosis. So the reference cohort is an unselected sample **of a hard-to-diagnose
+referral population** — not an unselected sample of general clinical genetics. The correct analogue
+is therefore consecutive cases from **the workflow the tool will actually be used in**, not
+consecutive cases from the hospital at large.
 
 **The hard-case analysis is a post-hoc stratification of that cohort into four subsets**, and only
 two of the four need a clinician:
@@ -482,6 +521,13 @@ two of the four need a clinician:
 | 3 | Patient has a **novel disease**, per UDN experts | Clinician |
 | 4 | Patient has a **novel disease gene**, per UDN experts | Clinician |
 
+Figure 3e gives their sizes in the UDN cohort: **N = 40** and **N = 78** for the two KG-derived
+strata, **N = 7** and **N = 7** for the two expert-labelled ones. **The expert-labelled strata are
+the small ones.** If 465 referral-population patients yielded seven of each, a cohort accumulating
+at ten to twenty per batch will produce approximately none for a long time. The practical
+conclusion is to spend little clinical labour there and to compute the two KG-derived strata, which
+are five to eleven times larger, ourselves.
+
 **Why this matters for the acceptance gate.** Selecting cases *for* difficulty and calling the
 result the test set would break §4.1(5): the number would describe the selection, not the
 hospital's population, and it could not answer "does this hold up on our patients". Selection on
@@ -492,7 +538,7 @@ acceptance cohort and cannot stand in for one.
 
 | Ask | Why |
 |---|---|
-| **Consecutive or otherwise unselected** cases within whatever extraction limit applies | §4.1(5). The moment cases are chosen on a criterion correlated with difficulty, the acceptance number stops describing the population |
+| **Consecutive or otherwise unselected** cases **from the intended deployment workflow**, within whatever extraction limit applies | §4.1(5). Choosing cases on a criterion correlated with difficulty makes the number describe the selection. Drawing from a *different* population than the tool will serve makes it describe the wrong population — the reference cohort is unselected within a hard-to-diagnose referral stream, not within general genetics |
 | A **diagnostic-certainty label** per case, and a stated bar | §4.1(1). The reference bar is "certain or highly likely"; a cohort with uncertain ground truth cannot be an acceptance gate |
 | Phenotypes as **structured HPO codes**, with the HPO version recorded | §4.1(2) |
 | One optional clinician field: **novel disease / novel disease gene / neither** | The only part of the stratification that needs expert judgement, and it is one field per case, not a curation exercise |
@@ -624,10 +670,16 @@ unseen-disease result*.
 | 4 | Evaluate that checkpoint as external research comparison | MyGene2 |
 | 5 | Evaluate that checkpoint as the acceptance gate | institutional offline cohort |
 
-**This is the published reference design, step for step.** §1.6 establishes that the paper does
-exactly this: disease-disjoint synthetic validation for selection, real cohorts for evaluation, no
-synthetic test partition and no refit. The path is not an engineering preference; a peer-reviewed
-instance of it exists, and the institution's stated policy is to stay aligned with it.
+**This adopts the paper's central evaluation structure, and adds one rule of its own.** The
+structure — disease-disjoint synthetic validation for selection, real cohorts for final evaluation,
+no synthetic test partition and no refit — is §1.6's, and the institution's stated policy is to stay
+aligned with it.
+
+**The single-checkpoint deployment rule is this project's decision, not the paper's.** The article
+reports task-specific research models, several cohort roles, and results averaged over multiple
+random seeds; it does not describe a clinical deployment protocol and there is no "published
+deployed model" to point at. Steps 3–5 below are an operational rule this project is choosing, and
+they must be defended on their own terms rather than by citation.
 
 **There is no refit, so there is one model identity.** The checkpoint selected in step 2 is the
 checkpoint evaluated in steps 4–5 and the checkpoint that ships. Every number describes the weights
@@ -795,18 +847,46 @@ a partition.
 - identifier-mapping success rates and the reasons for exclusions;
 - the digests of its inputs and of the data version it ran against.
 
-**Plus one derived figure, under re-review.** Review proposed deferring all split-ratio arithmetic
-until the institution confirms it wants a synthetic unseen test. That is deferred too far, for a
-reason independent of the test question: **the default path in §6.0 still needs a disease-disjoint
-validation set**, and choosing one means choosing a withheld fraction and deciding whether the draw
-is uniform or stratified. The cost of that choice is the same arithmetic.
+**Plus a withheld-fraction sensitivity curve, approved and now fully specified.** Option B still
+requires choosing a disease-disjoint validation fraction, so this arithmetic is needed whatever else
+is decided. Rather than "balance under 85/10/5, 80/10/10, 70/15/15" — three named ratios that read
+as a menu of protocols — one axis: `f`, the fraction of eligible diseases withheld from patient
+supervision.
 
-What is dropped is the framing, not the computation. Rather than "balance under 85/10/5, 80/10/10,
-70/15/15" — three named ratios that read as a menu of protocols — the audit reports a
-**withheld-fraction sensitivity curve**: for `f` across a range, how many diseases leave patient
-supervision, and how each stratum's share shifts, under a uniform draw and under a stratified one.
-One axis instead of three candidate protocols. It is pure arithmetic over the disease universe,
-commits to nothing, and is exactly what §5.1(i) and §5.1(ii) need in order to be answerable at all.
+**One correction to an earlier draft of this section, which was wrong.** It promised to show "how
+each stratum's share shifts" between a uniform and a stratified draw. Under *proportional*
+stratified allocation the expected shares are the same as under a uniform draw; what stratification
+buys is lower **variance**, not a different mean. Promising a shift would have produced two nearly
+identical curves and an implied difference that is not there.
+
+**What is reported, per `f`, per stratum — all closed-form, with no sampling and no seeds:**
+
+| | Quantity | Form |
+|---|---|---|
+| 1 | Diseases withheld under **proportional** allocation | Deterministic, largest-remainder rounding |
+| 2 | Expected diseases withheld under a **uniform** draw | Hypergeometric mean, identical to (1) |
+| 3 | **Standard deviation** of (2) | Hypergeometric, closed form |
+| 4 | **P(stratum contributes zero withheld diseases)** under a uniform draw | Closed form |
+| 5 | **P(stratum retains zero diseases)** under a uniform draw | Closed form |
+
+(4) and (5) are the decision-relevant pair, and the reason the choice between uniform and stratified
+is not merely stylistic: a thin stratum that lands entirely on one side of the cut has **no
+validation representation at all**, and the validation metric is then silent about it. That risk is
+a number, not a preference.
+
+**Settled parameters, stated here so nothing is left to negotiate:**
+
+- `f ∈ {0.05, 0.10, 0.15, 0.20, 0.25, 0.30}`. 0.15 is the upstream value (§1.6) and the working
+  default; the rest bound it on both sides.
+- **Strata, reported marginally and never crossed:** phenotype-count band, gene-count band,
+  KG-degree band, and `C(P, k)` generator-capacity band. Crossed cells would be mostly empty at
+  these sizes and would turn one table into a combinatorial one.
+- **Missing values get their own explicit bucket.** Never imputed, never silently dropped.
+- **Rounding is largest-remainder**; ties break by ascending position in the digest-ordered disease
+  universe, so the result is reproducible without a seed.
+- **No joint-imbalance scalar.** A single number over crossed strata does not help choose `f`, and
+  a composite score invites exactly the menu-reading this section removed. Cheap to add later if it
+  is ever wanted; it buys nothing now.
 
 **It does not emit** patient identifiers, disease identifiers, per-disease listings, host or
 operator names, or absolute paths — [`BACKLOG.md`](BACKLOG.md) §5.2 governs what an evidence
