@@ -107,13 +107,49 @@ def _integer(name: str, value: Any, minimum: int) -> int:
 
 
 def _dedupe(values: Sequence[Any]) -> List[Any]:
-    """Preserve first-seen order. Repeats would only duplicate report rows."""
+    """Preserve first-seen order. Repeats would only duplicate report rows.
+
+    **Only ever called on already-validated, canonical values.** Deduplicating
+    first would hide an illegal element behind a legal one, because Python's
+    equality and hashing make ``True == 1 == 1.0``: ``[1, True]`` collapsed to
+    ``[1]`` and the ``True`` was never checked, while ``[True, 1]`` collapsed to
+    ``[True]`` and was correctly refused. The same multiset, opposite outcomes,
+    decided by input order — which is how the ordering bug was found.
+    """
     seen, unique = set(), []
     for value in values:
         if value not in seen:
             seen.add(value)
             unique.append(value)
     return unique
+
+
+def _fraction(value: Any) -> float:
+    """A finite fraction strictly inside ``(0, 1)``, canonicalised to ``float``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"fraction must be a number, got {value!r}")
+    if not math.isfinite(value) or not 0.0 < value < 1.0:
+        raise ValueError(
+            f"fraction must be finite and strictly between 0 and 1, got {value}"
+        )
+    return float(value)
+
+
+def validate_relationship(relationship: Any) -> str:
+    """Membership of the bounded vocabulary, checked at the report boundary too.
+
+    ``argparse`` constrains the flag, but a programmatic caller reaches
+    ``build_report`` directly, and this string is written verbatim into the
+    evidence artifact. An unchecked value is a hole in the schema that forbids
+    host and operator names — the check belongs where the artifact is produced,
+    not only where the command line is parsed.
+    """
+    if relationship not in DEPLOYMENT_RELATIONSHIPS:
+        raise ValueError(
+            f"deployment_relationship must be one of {DEPLOYMENT_RELATIONSHIPS}, "
+            f"got {relationship!r}"
+        )
+    return relationship
 
 
 def validate_settings(
@@ -149,22 +185,17 @@ def validate_settings(
             f"phenotype_drop_rate must be finite and in [0, 1], got {phenotype_drop_rate}"
         )
 
-    unique_fractions = _dedupe(list(fractions))
-    if not unique_fractions:
+    # **Validate every original element, then canonicalise, then deduplicate.**
+    # The order is load-bearing; see `_dedupe`.
+    if not list(fractions):
         raise ValueError("at least one fraction is required")
-    for value in unique_fractions:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"fraction must be a number, got {value!r}")
-        if not math.isfinite(value) or not 0.0 < value < 1.0:
-            raise ValueError(
-                f"fraction must be finite and strictly between 0 and 1, got {value}"
-            )
+    checked_fractions = [_fraction(value) for value in fractions]
 
-    unique_per_disease = _dedupe(list(samples_per_disease))
-    if not unique_per_disease:
+    if not list(samples_per_disease):
         raise ValueError("at least one samples_per_disease value is required")
-    for value in unique_per_disease:
-        _integer("samples_per_disease", value, 1)
+    checked_per_disease = [
+        _integer("samples_per_disease", value, 1) for value in samples_per_disease
+    ]
 
     return AuditSettings(
         min_phenotypes=min_phenotypes,
@@ -172,8 +203,8 @@ def validate_settings(
         phenotype_drop_rate=float(phenotype_drop_rate),
         train_budget=train_budget,
         val_budget=val_budget,
-        fractions=tuple(float(value) for value in unique_fractions),
-        samples_per_disease=tuple(int(value) for value in unique_per_disease),
+        fractions=tuple(_dedupe(checked_fractions)),
+        samples_per_disease=tuple(_dedupe(checked_per_disease)),
     )
 
 
@@ -403,7 +434,19 @@ def stratification_report(
 
 
 def build_report(kg_path: Path, settings: AuditSettings, relationship: str) -> Dict[str, Any]:
-    """The report. ``settings`` is already validated — see ``validate_settings``."""
+    """The report, and a validating boundary in its own right.
+
+    **Immutability is not validity.** ``AuditSettings`` is a public
+    ``NamedTuple``, so any caller can construct one holding a negative
+    ``min_phenotypes`` or a ``samples_per_disease`` of zero and hand it over. The
+    settings and the deployment relationship are therefore re-checked here,
+    before the knowledge graph is loaded and long before anything is written —
+    validation is pure arithmetic on a handful of scalars, and it is idempotent,
+    so paying for it twice on the command-line path costs nothing worth counting.
+    """
+    settings = validate_settings(**settings._asdict())
+    relationship = validate_relationship(relationship)
+
     from src.kg import build_eligible_disease_profiles, retained_phenotype_count
     from src.kg.graph import KnowledgeGraph
     from src.utils.fingerprint import file_sha256

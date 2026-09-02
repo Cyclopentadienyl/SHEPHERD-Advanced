@@ -606,3 +606,86 @@ def test_an_unknown_deployment_relationship_is_rejected(tiny_kg_path, tmp_path):
         audit.parse_args(
             _argv(tiny_kg_path, out) + ["--deployment-relationship", "definitely-not-a-choice"]
         )
+
+
+# --------------------------------------------------------------------------
+# Validation happens before deduplication, and at every boundary
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "values", [[1, True], [True, 1], [1, 1.0], [1.0, 1], [1, 1, True]],
+    ids=["int-then-bool", "bool-then-int", "int-then-float", "float-then-int",
+         "repeat-then-bool"],
+)
+def test_an_illegal_element_cannot_hide_behind_a_legal_duplicate(values):
+    """``True == 1 == 1.0`` with matching hashes, so order used to decide this.
+
+    Deduplicating first collapsed ``[1, True]`` to ``[1]`` and never checked the
+    ``True``, while ``[True, 1]`` collapsed to ``[True]`` and was refused. Same
+    multiset, opposite outcomes.
+    """
+    with pytest.raises(ValueError, match="must be an integer"):
+        settings(samples_per_disease=values)
+
+
+def test_legal_repeats_still_deduplicate():
+    got = settings(samples_per_disease=[5, 5, 1], fractions=[0.15, 0.15, 0.05])
+    assert got.samples_per_disease == (5, 1)
+    assert got.fractions == (0.15, 0.05)
+
+
+def test_validation_is_idempotent():
+    """``build_report`` revalidates, so a second pass must not change anything."""
+    once = settings()
+    twice = audit.validate_settings(**once._asdict())
+    assert twice == once
+
+
+def test_build_report_refuses_invalid_settings_before_loading_the_graph(monkeypatch):
+    """Immutability is not validity: the constructor is public and unchecked."""
+    from src.kg import graph as graph_module
+
+    def explode(*_args, **_kwargs):  # pragma: no cover - must never be reached
+        raise AssertionError("the knowledge graph must not be loaded")
+
+    monkeypatch.setattr(graph_module.KnowledgeGraph, "load_json", staticmethod(explode))
+
+    hand_built = audit.AuditSettings(
+        min_phenotypes=-5, max_phenotypes=1, phenotype_drop_rate=9.9,
+        train_budget=-1, val_budget=-1, fractions=(5.0,), samples_per_disease=(0,),
+    )
+    with pytest.raises(ValueError, match="min_phenotypes must be >= 1"):
+        audit.build_report(Path("unused.json"), hand_built, audit.UNSTATED_RELATIONSHIP)
+
+
+@pytest.mark.parametrize(
+    "relationship",
+    ["nozomi", "chung@nozomi", "/home/chung/workspaces", "", "identical_sibling"],
+)
+def test_build_report_refuses_a_relationship_outside_the_vocabulary(
+    monkeypatch, relationship
+):
+    """The privacy schema forbids host and operator names; argparse is not enough.
+
+    ``build_report`` writes this string verbatim into the artifact, and a
+    programmatic caller never passes through ``parse_args``.
+    """
+    from src.kg import graph as graph_module
+
+    def explode(*_args, **_kwargs):  # pragma: no cover - must never be reached
+        raise AssertionError("the knowledge graph must not be loaded")
+
+    monkeypatch.setattr(graph_module.KnowledgeGraph, "load_json", staticmethod(explode))
+
+    with pytest.raises(ValueError, match="deployment_relationship must be one of"):
+        audit.build_report(Path("unused.json"), settings(), relationship)
+
+
+def test_every_permitted_relationship_is_accepted(tiny_kg_path):
+    for relationship in audit.DEPLOYMENT_RELATIONSHIPS:
+        report = audit.build_report(
+            tiny_kg_path, settings(fractions=[0.5], samples_per_disease=[1]),
+            relationship,
+        )
+        assert report["deployment_relationship"] == relationship

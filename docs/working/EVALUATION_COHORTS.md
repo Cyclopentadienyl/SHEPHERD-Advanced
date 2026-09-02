@@ -9,6 +9,13 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **15** — three validation-boundary defects fixed in the audit, and the last two passages that
+  still said "KG degree" now say **profile support size**, so the document agrees with the JSON
+  schema. The defects: deduplication ran *before* per-element validation, so `True == 1 == 1.0`
+  let an illegal element hide behind a legal duplicate — `[1, True]` was accepted while
+  `[True, 1]` was refused; `AuditSettings` is a public constructor, so immutability was being
+  mistaken for validity; and the deployment relationship was constrained only at the command line
+  while `build_report` wrote any string verbatim into the artifact.
 - **14** — corrections from implementation review of the audit. §6.8 no longer promises
   **identifier-mapping success rates**, which a materialised `kg.json` cannot evidence — mapping
   happens during KG construction and leaves no trace — and no longer claims to report **KG degree**:
@@ -633,7 +640,7 @@ disease universe is cut, not whether.
    | | Question | Whose |
    |---|---|---|
    | i | **How many** diseases are withheld from patient supervision | Institution |
-   | ii | **Which strata** they are drawn from — prevalence band, phenotype count, gene count, KG degree — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit |
+   | ii | **Which strata** they are drawn from — phenotype count, gene count, profile support size, generator capacity — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit |
    | iii | ~~Whether a **permanent** loss of supervision for the withheld diseases is acceptable, or whether refitting on all diseases is required~~ — **answered: option B**, matching §1.6 | Institution — done |
    | iv | Whether the generator is faithful enough (§1.5) for a disjoint split to mean what it appears to mean — item 6 below asks the sequencing question, this one asks the sufficiency question | Engineering, then institution |
    | v | What happens when a test cohort is **burned** — inspected during selection — and how the protocol regenerates from that point | Engineering, and it must be decided *before* the first cohort exists |
@@ -1008,7 +1015,7 @@ expectation are different objects, and — a further correction — the gap betw
 comparison: the gap between an ideal `f · n_s` and the realised-draw expectation `W · n_s / N`.
 
 **The quotas are independent diagnostic targets, not an allocation.** Quotas computed marginally
-over the phenotype-count, gene-count, KG-degree and capacity stratifications are in general **not
+over the phenotype-count, gene-count, profile-support-size and capacity stratifications are in general **not
 jointly realisable by any single disease subset** — one subset cannot generally hit four marginals
 at once. Each column answers "what would balance on *this* axis cost?", and the audit describes them
 as such. It does not describe, propose or implement a stratified allocation.
@@ -1033,7 +1040,7 @@ stratum both failures carry real probability, and each is a number rather than a
   because `samples_per_disease` was zero, would be worse than no artifact: the numbers would look
   reportable. The domains are checked at the API, not only at the command line.
 - **Strata, reported marginally and never crossed:** phenotype-count band, gene-count band,
-  KG-degree band, and `C(P, k)` generator-capacity band. Crossed cells would be mostly empty at
+  profile-support-size band, and `C(P, k)` generator-capacity band. Crossed cells would be mostly empty at
   these sizes and would turn one table into a combinatorial one.
 - **`k` is the generator's own configured rule**, not a nominal value: `C(P, k)` is computed with
   the same `k = min(max(min_phenotypes, int(P · (1 − drop_rate))), max_phenotypes, P)` the generator
