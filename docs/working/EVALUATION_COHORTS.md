@@ -9,6 +9,17 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **12** — one blocking probability error corrected. §6.8 gave
+  P(stratum retains zero) as `C(n_s, W)/C(N, W)`, which is the probability that the *whole withheld
+  set came from that stratum* — a different event. The correct form is
+  `C(N − n_s, W − n_s)/C(N, W)`, zero when `W < n_s`. The two coincide only at `W = n_s`, which is
+  precisely the case the previous revision's brute-force check used, so the test confirmed a
+  coincidence rather than the formula; the audit's tests must now enumerate `W < n_s`, `W = n_s` and
+  `W > n_s`. Also: the output contract is the **standard deviation**, not the variance; largest-
+  remainder ties break on a canonical **bucket** key rather than a disease ordering; `k` is reserved
+  for `C(P, k)` and the budget dimension is `samples_per_disease`; the audit's generator parameters
+  are recorded as **assumptions** since no workspace records them yet; and the comparability claim
+  is narrowed to sample-derived validation metrics.
 - **11** — one real mathematical error corrected and one contract strengthened. §6.8 now defines an
   **integer withheld count `W`** and states every formula against it; the earlier hypergeometric
   mean `f · n_s` was wrong wherever `f · N` is not integral, and the quota/expectation gap has two
@@ -761,8 +772,12 @@ Step 4 is what makes the manifest evidence rather than restatement: a realised f
 allocation metadata proves nothing, and a test for the coverage pass has to fail when that pass is
 removed. Step 2 changes the sample distribution relative to pure replacement sampling — every
 allocated disease now has at least one sample where before it might have had none — so the
-**generation algorithm and its version are recorded** alongside the counts. Two workspaces produced
-under different generation rules are not comparable, and the manifest is where that is visible.
+**generation algorithm and its version are recorded** alongside the counts. What this protects is
+narrow and worth stating precisely: two workspaces built under different generation rules do not
+yield **sample-derived validation metrics that measure the same cohort regime**, so `val_mrr` from
+one is not a like-for-like reading against `val_mrr` from the other. Checkpoints trained on them
+remain perfectly comparable on a *shared external cohort*, or inside a controlled experiment where
+the generator itself is the variable. The manifest is where the difference is visible.
 
 A frozen disease-allocation artifact comes first, recording the disease-universe digest, per-
 partition digests, allocation seed and schema version, KG/HPO/Orphanet versions, disease counts,
@@ -900,15 +915,17 @@ a partition.
 - counts of zero-degree and low-degree diseases in the KG;
 - identifier-mapping success rates and the reasons for exclusions;
 - the digests of its inputs and of the data version it ran against;
-- **the budget each coverage contract would require**: `|allocated| × k` for a few values of `k`,
-  against each partition's current budget. One column, from figures the audit already computes.
+- **the budget each coverage contract would require**: `|allocated| × samples_per_disease`, for a
+  few values of `samples_per_disease`, against each partition's current budget. One column, from
+  figures the audit already computes. (`k` is reserved throughout for the retained-phenotype count
+  in `C(P, k)` and is never the budget dimension.)
 
 That last line exists to settle a design question by measurement instead of argument. §6.2's
 coverage contract is "one sample per allocated disease, then distribute the remainder", which needs
 six mechanisms — a budget refusal, a coverage pass, a remainder rule, a realised-set derivation, an
-assertion, and two manifest fields. The upstream simulator instead generates a **fixed `k` samples
-per disease** (§1.5: `PATIENTS_PER_DISEASE`, 20 in the manuscript), under which coverage and balance
-are definitional and the first three mechanisms disappear.
+assertion, and two manifest fields. The upstream simulator instead generates a **fixed number of
+patients per disease** (§1.5: `PATIENTS_PER_DISEASE`, 20 in the manuscript), under which coverage
+and balance are definitional and the first three mechanisms disappear.
 
 **This is recorded as a question, not a proposal.** Whether the second shape is affordable depends
 on `|allocated| × k` against the budgets actually in use, which nobody has computed. If it is
@@ -946,9 +963,21 @@ alongside `f` so the rounding is visible rather than implied.
 |---|---|---|
 | 1 | Largest-remainder **quota** for the stratum | Integer, deterministic, summing to `W` |
 | 2 | **Expected** diseases withheld under a uniform draw | `E[X_s] = W · n_s / N` — hypergeometric mean, **generally fractional** |
-| 3 | **Variance** of (2) | `W · (n_s/N) · (1 − n_s/N) · (N − W)/(N − 1)` |
-| 4 | **P(stratum contributes zero withheld diseases)** | `C(N − n_s, W) / C(N, W)` |
-| 5 | **P(stratum retains zero diseases)** | `C(n_s, W) / C(N, W)`, zero when `W < n_s` |
+| 3 | **Standard deviation** of (2) | `sqrt( W · (n_s/N) · (1 − n_s/N) · (N − W)/(N − 1) )` |
+| 4 | **P(stratum contributes zero withheld diseases)** — `X_s = 0` | `C(N − n_s, W) / C(N, W)` |
+| 5 | **P(stratum retains zero diseases)** — `X_s = n_s` | `C(N − n_s, W − n_s) / C(N, W)`, zero when `W < n_s` |
+
+**(3) is reported as a standard deviation, not a variance**, because it is then in disease-count
+units and directly comparable to (2). The document, the JSON key and the tests all use the standard
+deviation; reporting both would let them drift.
+
+**(5) was wrong in an earlier revision and is worth naming, because of how it survived.** It was
+given as `C(n_s, W) / C(N, W)`, which is the probability that the *entire withheld set came from
+this stratum* — the event `X_s = W`, not `X_s = n_s`. The two coincide only when `W = n_s`, and the
+brute-force check that was supposed to catch it used exactly that case. **The audit's tests must
+therefore enumerate small universes across all three regimes — `W < n_s`, `W = n_s`, `W > n_s` —
+and check both (4) and (5).** A single case is not a check when the failure mode is a degenerate
+coincidence.
 
 **(1) and (2) are reported separately and must not be conflated.** An earlier draft called them
 identical and gave the mean as `f · n_s`; both were wrong. An integer quota and a fractional
@@ -980,8 +1009,16 @@ a number, not a preference.
   audit both call. A second implementation of "which diseases are eligible" would be able to
   disagree with the first, which is the failure this whole document exists to prevent.
 - **Missing values get their own explicit bucket.** Never imputed, never silently dropped.
-- **Rounding is largest-remainder**; ties break by ascending position in the digest-ordered disease
-  universe, so the result is reproducible without a seed.
+- **Generator parameters are audit *inputs*, and are recorded as such.** `min_phenotypes`,
+  `max_phenotypes`, `phenotype_drop_rate`, and the current train and validation budgets are supplied
+  to the audit and echoed into its output under a name that marks them **assumptions**, not observed
+  history. No generation manifest exists yet (§6.2 introduces the first one), so the configuration
+  an existing workspace was built under is **not recoverable from that workspace** and must not be
+  presented as if it were.
+- **Rounding is largest-remainder over the stratum buckets**, whose quotas sum to `W`. Equal
+  fractional remainders break on a **canonical bucket key** — ascending band lower bound, then band
+  label — because the quota is assigned to a *bucket*, not to a disease. Reproducible without a
+  seed.
 - **No joint-imbalance scalar.** A single number over crossed strata does not help choose `f`, and
   a composite score invites exactly the menu-reading this section removed. Cheap to add later if it
   is ever wanted; it buys nothing now.
