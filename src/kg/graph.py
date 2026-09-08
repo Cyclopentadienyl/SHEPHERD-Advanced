@@ -38,6 +38,7 @@ from src.core.types import (
     NodeType,
 )
 from src.core.schema import KnowledgeGraphSchema, get_kg_schema
+from src.kg.artifacts import GRAPH_ARTIFACTS
 
 if TYPE_CHECKING:
     pass
@@ -568,9 +569,9 @@ class KnowledgeGraph:
         if output_dir is not None:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(x_dict, output_dir / "node_features.pt")
-            torch.save(edge_index_dict, output_dir / "edge_indices.pt")
-            with open(output_dir / "num_nodes.json", "w") as f:
+            torch.save(x_dict, output_dir / GRAPH_ARTIFACTS["node_features"])
+            torch.save(edge_index_dict, output_dir / GRAPH_ARTIFACTS["edge_indices"])
+            with open(output_dir / GRAPH_ARTIFACTS["num_nodes"], "w") as f:
                 json.dump(num_nodes_dict, f)
             logger.info(
                 f"Graph data exported to {output_dir}: "

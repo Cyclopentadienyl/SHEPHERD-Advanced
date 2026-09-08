@@ -254,6 +254,22 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
     allocation step is refused at the measurement, not recorded with a null.
     """
     manifest = report["manifest"]
+    # **A run with no recorded RNG identity cannot be a ledger record.** Two
+    # unseeded runs consume different worker streams, different negatives and a
+    # different candidate universe while hashing to the same semantics digest, so
+    # the ledger would see one measurement with two answers and refuse the second
+    # as a contradiction. `measure_scorer` seeds by default, so this is a floor
+    # for any other caller rather than a case the CLI can produce.
+    unseeded = [
+        field for field in ("python_seed", "numpy_seed", "torch_seed")
+        if manifest.get(field) is None
+    ]
+    if unseeded:
+        raise ValueError(
+            f"this measurement records no {', '.join(unseeded)}, so its random "
+            "stream has no identity and a repeat of it cannot be told apart from "
+            "a materially different run. Re-measure with a stated --seed."
+        )
     digests = manifest["artifact_digests"]
     metrics = dict(report["authoritative_metrics"])
     return {

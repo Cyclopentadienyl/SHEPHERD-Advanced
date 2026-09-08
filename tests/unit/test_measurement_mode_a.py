@@ -21,6 +21,7 @@ from src.evaluation.measurement import (  # noqa: E402
     LEGACY_TRUNCATION_K,
     run_mode_a,
 )
+from scripts.measure_scorer import DEFAULT_MEASUREMENT_SEED  # noqa: E402
 from tests.fixtures.synthetic_workspace import (  # noqa: E402
     assert_candidate_universe_is_stable,
     build_workspace,
@@ -51,7 +52,7 @@ def _run(data_dir, checkpoint, batch_size=3):
     model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
         checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
-        batch_size=batch_size, num_workers=0, seed=None,
+        batch_size=batch_size, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
     )
     # One config object to both consumers, exactly as the CLI does it — otherwise
     # this helper would be testing a wiring the CLI does not use.
@@ -193,7 +194,7 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
     _, data_dir, checkpoint = workspace
     args = argparse.Namespace(
         checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
-        batch_size=3, num_workers=0, seed=None,
+        batch_size=3, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
     )
     graph_data = read_graph_artifacts(data_dir)
     build = lambda: build_manifest(  # noqa: E731 - one expression, twice
@@ -262,7 +263,7 @@ def test_a_manifest_recording_a_different_regime_is_refused(workspace):
     model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
         checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
-        batch_size=3, num_workers=0, seed=None,
+        batch_size=3, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
     )
     loader_config = build_loader_config(args)
 
@@ -660,6 +661,36 @@ def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
     assert file_sha256(tmp_path / "absent.bin") is None
 
 
+class TestTheRandomStreamHasAnIdentity:
+    """An unseeded measurement is not reproducible, so it cannot be evidence.
+
+    `--seed` defaulted to `None` and the RNGs were seeded only when a value was
+    supplied, so a default run wrote three nulls into the manifest. Two such runs
+    consumed different worker streams -- PyTorch seeds each worker as
+    `base_seed + worker_id` -- different negatives and a different candidate
+    universe, while hashing to the same measurement semantics. The ledger then saw
+    one measurement with two answers and refused the second as a contradiction.
+    """
+
+    def test_the_default_run_is_seeded_and_records_the_applied_value(self):
+        from scripts.measure_scorer import DEFAULT_MEASUREMENT_SEED, parse_args
+
+        args = parse_args(["--checkpoint", "c.pt", "--data-dir", "d",
+                           "--split", "val", "--output", "o.json"])
+
+        assert args.seed == DEFAULT_MEASUREMENT_SEED
+        assert isinstance(args.seed, int) and not isinstance(args.seed, bool)
+
+    def test_the_manifest_never_records_a_null_rng_identity(self, workspace):
+        """The three seed fields are what give the stream an identity in the
+        semantics digest; a null there makes two different runs look alike."""
+        _, data_dir, checkpoint = workspace
+        result = _run(data_dir, checkpoint)
+
+        for field in ("python_seed", "numpy_seed", "torch_seed"):
+            assert getattr(result.manifest, field) is not None, field
+
+
 class TestTheRolesAMeasurementRecords:
     """Which files a number is bound to, and the one that says what `val` means.
 
@@ -679,6 +710,10 @@ class TestTheRolesAMeasurementRecords:
         )
 
         root.mkdir(parents=True, exist_ok=True)
+        # Written before the manifest, so the manifest binds these bytes rather
+        # than being overwritten by them afterwards.
+        for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
+            (root / name).write_bytes(b"content-of-" + name.encode())
         profiles = profiles_for([0, 1, 2])
         if manifest:
             write_generated_workspace(root, train_ids=[0, 1], val_ids=[2],
@@ -692,8 +727,6 @@ class TestTheRolesAMeasurementRecords:
             (root / "test_samples.json").write_text(json.dumps(
                 one_sample_per_disease("test", [0], profiles)
             ))
-        for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
-            (root / name).write_bytes(b"content-of-" + name.encode())
         (root / "ckpt.pt").write_bytes(b"weights")
         return root
 

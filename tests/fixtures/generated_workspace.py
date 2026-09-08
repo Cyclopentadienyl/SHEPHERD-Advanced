@@ -44,7 +44,7 @@ def write_generated_workspace(
     train_samples: Optional[List[Dict[str, Any]]] = None,
     val_samples: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
-    kg_digest: Optional[str] = None,
+    graph_bytes: Optional[Dict[str, bytes]] = None,
 ) -> Tuple[Path, Dict[str, Any]]:
     """Write `train_samples.json`, `val_samples.json` and a real manifest.
 
@@ -53,11 +53,20 @@ def write_generated_workspace(
     satisfies `verify_generated_cohorts` without the fixture knowing what that
     checks.
     """
+    from src.kg.artifacts import GRAPH_ARTIFACTS
     from src.kg.disease_allocation import DiseaseAllocation, universe_digest
     from src.kg.sample_generator import build_split_manifest
     from src.utils.fingerprint import file_sha256
 
     root.mkdir(parents=True, exist_ok=True)
+    # The graph export is part of the production event the manifest binds, so a
+    # fixture that omitted it would build a workspace no consumer accepts. Written
+    # first, then digested, exactly as `build_knowledge_graph` does it.
+    supplied = dict(graph_bytes or {})
+    for role, filename in GRAPH_ARTIFACTS.items():
+        path = root / filename
+        if role in supplied or not path.exists():
+            path.write_bytes(supplied.get(role, f"{role}-of-{root.name}".encode()))
     train_ids, val_ids = [int(d) for d in train_ids], [int(d) for d in val_ids]
     profiles = profiles or profiles_for(train_ids + val_ids)
     rows = {
@@ -83,9 +92,10 @@ def write_generated_workspace(
         config=dict(config or DEFAULT_CONFIG),
         num_train=len(rows["train"]), num_val=len(rows["val"]),
         artifacts={
-            "kg": kg_digest,
             "train_samples": file_sha256(root / "train_samples.json"),
             "val_samples": file_sha256(root / "val_samples.json"),
+            **{role: file_sha256(root / filename)
+               for role, filename in GRAPH_ARTIFACTS.items()},
         },
     )
     (root / "split_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))

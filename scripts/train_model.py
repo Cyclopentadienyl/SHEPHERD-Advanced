@@ -72,7 +72,11 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
-from src.evaluation.cohort import MANIFEST_FILENAME, verify_generated_cohorts
+from src.evaluation.cohort import (
+    MANIFEST_FILENAME,
+    verify_generated_cohorts,
+    verify_graph_artifacts,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -530,6 +534,7 @@ def training_input_roles(
     # different cut entirely. `verify_generated_cohorts` binds the manifest to the
     # exact sample bytes and to the disease sets they hold, so the checkpoint this
     # run produces can be characterised afterwards.
+    verify_graph_artifacts(data_dir)
     verify_generated_cohorts(data_dir)
     roles["split_manifest"] = data_dir / MANIFEST_FILENAME
     return roles

@@ -85,8 +85,11 @@ def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
     ``manifest`` is a parameter because its **absence** is now a refusal rather
     than a variant: a workspace without one was built before the disease
     allocation step, and training on it is what the refusal exists to stop.
-    Built through the shared fixture so the manifest is bound to the sample bytes
-    the way a real one is — an existence check is no longer what training does.
+
+    **Everything is written before the manifest**, because the manifest binds the
+    bytes on disk — the graph export as well as the cohorts. Writing a tensor
+    afterwards produces exactly the mixed workspace `verify_graph_artifacts`
+    exists to refuse, which is the right behaviour and the wrong fixture.
     """
     from tests.fixtures.generated_workspace import (
         one_sample_per_disease,
@@ -95,6 +98,14 @@ def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
     )
 
     tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "kg.json").write_text(json.dumps({"synthetic": tmp_path.name}))
+    (tmp_path / "num_nodes.json").write_text(json.dumps({"disease": 2}))
+    torch.save({"disease": torch.zeros(2, 4)}, tmp_path / "node_features.pt")
+    torch.save({("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
+               tmp_path / "edge_indices.pt")
+    if extra_split:
+        (tmp_path / f"{extra_split}_samples.json").write_text("[]")
+
     if manifest:
         write_generated_workspace(
             tmp_path, train_ids=list(train_ids), val_ids=list(val_ids)
@@ -105,12 +116,6 @@ def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
             (tmp_path / f"{split}_samples.json").write_text(json.dumps(
                 one_sample_per_disease(split, list(ids), profiles)
             ))
-    (tmp_path / "num_nodes.json").write_text(json.dumps({"disease": 2}))
-    torch.save({"disease": torch.zeros(2, 4)}, tmp_path / "node_features.pt")
-    torch.save({("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
-               tmp_path / "edge_indices.pt")
-    if extra_split:
-        (tmp_path / f"{extra_split}_samples.json").write_text("[]")
     return tmp_path
 
 
@@ -148,7 +153,10 @@ def test_a_workspace_without_a_manifest_cannot_be_trained_on(tmp_path):
         tmp_path / "ws", manifest=False
     )
 
-    with pytest.raises(ValueError, match="generated before the disease allocation"):
+    # The graph contract is checked first here, and both refusals name the same
+    # remedy. The test pins the message a caller actually sees rather than an
+    # ordering the code does not promise.
+    with pytest.raises(ValueError, match="Rebuild it with"):
         _training_roles(data_dir, with_val=True)
 
 

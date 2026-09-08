@@ -237,15 +237,26 @@ def build_knowledge_graph(
     kg.save_json(str(kg_path))
     logger.info(f"KG saved to {kg_path}")
 
-    # **The digest of the artifact this function just wrote, from this graph.**
-    # Only the writer can vouch for that binding; generation hashing kg.json on
-    # its own would happily digest a file some other graph produced and record it
-    # beside this allocation's universe digest as one provenance chain.
-    kg_digest = file_sha256(kg_path)
-
     # Export PyG graph data
     logger.info(f"Exporting graph data (feature_dim={feature_dim})...")
     kg.export_graph_data(output_dir=workspace, feature_dim=feature_dim)
+
+    # **The digests of the artifacts this function just wrote, from this graph.**
+    # Only the writer can vouch for that binding; generation hashing them on its
+    # own would happily digest files some other graph produced and record them
+    # beside this allocation's universe digest as one provenance chain.
+    #
+    # The three tensors matter as much as kg.json and used to be omitted. A model
+    # never opens kg.json — it consumes `node_features.pt` and `edge_indices.pt` —
+    # so binding only the JSON left the artifacts the training actually reads
+    # bound to nothing. `graph_fingerprint` does not close it either: it is
+    # structural, so a same-shaped tensor file from another workspace shares it.
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+
+    graph_digests = {
+        role: file_sha256(workspace / filename)
+        for role, filename in GRAPH_ARTIFACTS.items()
+    }
 
     # --- Generate training samples ---
     if generate_samples:
@@ -258,7 +269,7 @@ def build_knowledge_graph(
             num_train=num_train,
             num_val=num_val,
             output_dir=workspace,
-            kg_digest=kg_digest,
+            graph_digests=graph_digests,
         )
         logger.info(
             "Generated %d train samples over %d diseases, %d val over %d — "

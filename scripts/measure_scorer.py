@@ -59,11 +59,21 @@ from src.evaluation.cohort import (
     DEFAULT_COHORT_KIND,
     resolve_cohort,
     verify_generated_cohorts,
+    verify_graph_artifacts,
 )
 from src.utils.fingerprint import compute_input_digests
 from src.utils.fingerprint import file_sha256 as _file_sha256
 
 logger = logging.getLogger(__name__)
+
+#: The seed applied when the operator states none.
+#:
+#: **A documented constant rather than `None`.** An unseeded measurement is not
+#: reproducible, so it cannot be evidence; and its manifest recorded three null
+#: RNG identities, which made two materially different runs indistinguishable to
+#: the ledger's contradiction check. With a default seed the default run is
+#: reproducible and a repeat of it must agree.
+DEFAULT_MEASUREMENT_SEED = 0
 
 
 #: Re-exported so callers that import the name from here keep working. The
@@ -102,6 +112,12 @@ def artifact_digests(
     a hash function was not.
     """
     cohort = resolve_cohort(data_dir, split, cohort_kind)
+    # **Every graph consumer, regardless of cohort kind.** A supplied
+    # institutional cohort is scored against `node_features.pt` and
+    # `edge_indices.pt` exactly like a generated one, so binding the graph only
+    # for generated cohorts would protect validation while leaving institutional
+    # evaluation free to consume a mixed workspace.
+    verify_graph_artifacts(data_dir)
     if cohort.is_generated:
         # The manifest must describe these exact files, not merely exist beside
         # them. Without this a legacy overlapping workspace passes by having any
@@ -400,8 +416,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
                              "cuda_executed=false in the manifest")
-    parser.add_argument("--seed", type=int, default=None,
-                        help="Seeds Python, NumPy and torch. Recorded in the manifest")
+    parser.add_argument("--seed", type=int, default=DEFAULT_MEASUREMENT_SEED,
+                        help=f"Seeds Python, NumPy and torch, and is recorded in the "
+                             f"manifest as the applied value. Defaults to "
+                             f"{DEFAULT_MEASUREMENT_SEED}: an unseeded run is not "
+                             "reproducible and cannot be evidence, and two of them "
+                             "would carry identical recorded semantics while having "
+                             "consumed different random streams")
     parser.add_argument("--modes", default="A",
                         help="One of: A, A,B, C, A,B,C. Default A, which is the "
                              "calibration path and must stay the default. "
@@ -487,10 +508,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
 
-    if args.seed is not None:
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
+    # **Always seeded, and the applied value is what the manifest records.**
+    # `--seed` used to default to `None`, which left the RNGs at whatever state
+    # the process started in and wrote three nulls into the manifest. Two such
+    # runs consumed different worker streams, different negatives and different
+    # candidate universes while producing an identical semantics digest — so the
+    # ledger saw one measurement with two answers and refused the second as a
+    # contradiction. A default that is a number makes the default run
+    # reproducible; a repeat of it *must* agree, and if it does not, the
+    # contradiction is real and worth surfacing.
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     device, cuda_executed = _resolve_device(args.device)
     logger.info("Device: %s (%s)", device, platform.platform())

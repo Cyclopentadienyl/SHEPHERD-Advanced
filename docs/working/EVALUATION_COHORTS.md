@@ -9,6 +9,15 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **24** — the graph a run consumes is now bound to the workspace that produced it. The manifest
+  binds `node_features.pt`, `edge_indices.pt` and `num_nodes.json` alongside `kg.json`, digested by
+  the writer that exported them; split-manifest schema is **2**, and schema 1 is refused with a
+  rebuild instruction rather than migrated, because the missing digests cannot be recovered after
+  the fact. The contract is separate from cohort binding and applies to every graph consumer,
+  including a supplied institutional measurement (§6.1). Also: split names are validated as
+  identifiers rather than interpolated as path fragments; both disjointness checks are scoped to
+  when both generated cohorts are consumed; and a measurement's seed defaults to a constant so its
+  random stream has an identity (§6.5).
 - **23** — three corrections and one narrowed claim. Verification is **scoped** to what a caller
   reads, so a supplied-cohort audit is no longer blocked by a generated `val` it never opens, and
   the report names the gate that actually ran rather than the one it assumed (§6.1). The ledger's
@@ -852,9 +861,27 @@ Two rules follow, and both are enforced rather than advised:
 - **Verification is scoped to what a caller consumes**, and its report names that scope. A
   supplied-cohort overlap audit binds generated `train` and never opens generated `val`; requiring
   `val` there would let a corrupt file block an institutional measurement it has nothing to do
-  with. Disjointness is *measured* only when both cohorts are in scope, since measuring it needs
-  both — but the manifest's own `disjoint` claim is checked at every scope, because a manifest
-  asserting a non-disjoint cut describes a broken workspace from any direction.
+  with. **Both** disjointness checks are scoped, not just the measurement: `disjoint` describes the
+  generated train/val relationship, which a train-versus-supplied overlap does not consume, so
+  refusing on it at narrow scope would be the same over-validation arriving through a claim instead
+  of a file. The report records it as the unverified claim it is, and says which checks ran.
+- **Two contracts, and the split is load-bearing.** *Workspace graph binding* — `kg.json` and the
+  three exported tensors match the writer-recorded digests — applies to **every graph consumer,
+  whatever the cohort kind**, because a supplied institutional cohort is scored against those same
+  tensors. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
+  disjointness — applies only to generated cohorts. Had the graph half lived inside the cohort
+  verifier, generated validation would have been protected while institutional evaluation went on
+  consuming a mixed workspace.
+- **A split name is an identifier, not a path fragment.** Lifting the three-value `choices` list
+  kept `mygene2` and `institutional_acceptance` reachable, and turned the value into free text
+  interpolated into a filename — where an absolute value replaces the whole path and `../` leaves
+  the workspace. The alphabet is bounded rather than the values enumerated, so arbitrary
+  institutional roles stay representable and no path can be one.
+- **A measurement's random stream must have an identity.** `--seed` defaulted to `None` and the
+  RNGs were seeded only when a value was given, so a default run recorded three nulls; two such
+  runs consumed different worker streams while hashing to the same semantics, and the ledger
+  refused the second as a contradiction. The default is now a documented constant, and the ledger
+  refuses any record whose seeds are null.
 - **One exception, named rather than glossed.** `scripts/evaluate_model.py` has no such preflight
   and will not get one. It is the behaviourally frozen artefact Mode A is calibrated against, and
   editing it makes it no longer the thing being compared; `tests/unit/test_frozen_evaluator.py`

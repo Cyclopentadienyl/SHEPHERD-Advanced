@@ -424,7 +424,7 @@ class TestSampleGenerator:
         allocation = self.allocate(demo_kg)
         generate_training_samples(
             demo_kg, allocation, num_train=5, num_val=3, min_phenotypes=1,
-            output_dir=tmp_dir,
+            output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
         )
         assert (tmp_dir / "train_samples.json").exists()
         assert (tmp_dir / "val_samples.json").exists()
@@ -694,7 +694,7 @@ class TestSplitRegimeBoundary:
         with pytest.raises(FileExistsError, match="two split regimes"):
             generate_training_samples(
                 demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-                min_phenotypes=1, output_dir=tmp_dir,
+                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
             )
 
     def test_the_refusal_writes_nothing(self, demo_kg, tmp_dir):
@@ -702,7 +702,7 @@ class TestSplitRegimeBoundary:
         with pytest.raises(FileExistsError):
             generate_training_samples(
                 demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-                min_phenotypes=1, output_dir=tmp_dir,
+                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
             )
         assert not (tmp_dir / "train_samples.json").exists()
         assert not (tmp_dir / "split_manifest.json").exists()
@@ -712,14 +712,14 @@ class TestSplitRegimeBoundary:
         (tmp_dir / "checkpoints").mkdir()
         generate_training_samples(
             demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-            min_phenotypes=1, output_dir=tmp_dir,
+            min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
         )
         assert (tmp_dir / "split_manifest.json").exists()
 
     def test_a_fresh_workspace_is_unaffected(self, demo_kg, tmp_dir):
         generate_training_samples(
             demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-            min_phenotypes=1, output_dir=tmp_dir,
+            min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
         )
         assert (tmp_dir / "train_samples.json").exists()
 
@@ -955,107 +955,119 @@ class TestAllocationBoundary:
             )
 
 
+def _stub_graph_digests(root):
+    """Stand-in graph artifacts plus their digests, as the export writer supplies.
+
+    A workspace-writing call now binds the whole graph export, so a test that
+    writes one has to produce it. The bytes are arbitrary: what is under test is
+    the binding, not the tensors.
+    """
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.utils.fingerprint import file_sha256
+
+    root.mkdir(parents=True, exist_ok=True)
+    digests = {}
+    for role, filename in GRAPH_ARTIFACTS.items():
+        (root / filename).write_bytes(f"{role}-bytes".encode())
+        digests[role] = file_sha256(root / filename)
+    return digests
+
+
 class TestManifestBinding:
     """The manifest must describe the bytes on disk, not an equivalent object."""
 
-    def test_the_manifest_digests_the_sample_files_that_were_written(
-        self, wide_kg, tmp_dir
-    ):
+    @staticmethod
+    def _graph_digests(root, *, roles=None):
+        """Write stand-in graph artifacts and digest them, as the writer does."""
+        from src.kg.artifacts import GRAPH_ARTIFACTS
         from src.utils.fingerprint import file_sha256
 
+        digests = {}
+        for role, filename in GRAPH_ARTIFACTS.items():
+            if roles is not None and role not in roles:
+                continue
+            (root / filename).write_bytes(f"{role}-bytes".encode())
+            digests[role] = file_sha256(root / filename)
+        return digests
+
+    def test_the_manifest_digests_the_files_that_were_written(self, wide_kg, tmp_dir):
+        from src.utils.fingerprint import file_sha256
+
+        digests = self._graph_digests(tmp_dir)
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir,
+            output_dir=tmp_dir, graph_digests=digests,
         )
         for role, filename in (
             ("train_samples", "train_samples.json"),
             ("val_samples", "val_samples.json"),
+            ("kg", "kg.json"),
+            ("node_features", "node_features.pt"),
+            ("edge_indices", "edge_indices.pt"),
+            ("num_nodes", "num_nodes.json"),
         ):
             assert manifest["artifacts"][role] == file_sha256(tmp_dir / filename)
 
-    def test_an_unvouched_kg_file_is_not_digested(self, wide_kg, tmp_dir):
+    def test_generation_does_not_hash_the_graph_files_itself(self, wide_kg, tmp_dir):
         """**The first version of this test demonstrated the hole it should close.**
 
         It placed arbitrary bytes at ``kg.json`` and asserted that those unrelated
         bytes were hashed — recording one graph's universe digest beside another
         file's digest as if they were one provenance chain. Generation cannot
-        vouch for a file it did not write, so it no longer hashes one.
+        vouch for files it did not write, so it hashes none of them: the digests
+        it records are the ones the export writer handed it.
         """
+        digests = self._graph_digests(tmp_dir)
         (tmp_dir / "kg.json").write_bytes(b'{"some other": "graph"}')
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir,
+            output_dir=tmp_dir, graph_digests=digests,
         )
-        assert manifest["artifacts"]["kg"] is None
+        assert manifest["artifacts"]["kg"] == digests["kg"]
 
-    def test_a_vouched_kg_digest_is_recorded(self, wide_kg, tmp_dir):
-        """The writer serialises the graph and states the digest of what it wrote."""
-        from src.utils.fingerprint import file_sha256
-
-        wide_kg.save_json(str(tmp_dir / "kg.json"))
-        vouched = file_sha256(tmp_dir / "kg.json")
+    @pytest.mark.parametrize(
+        "present", [("kg",), ("kg", "node_features"),
+                    ("kg", "node_features", "edge_indices"), ()],
+    )
+    def test_a_workspace_binding_only_part_of_the_export_is_refused(
+        self, wide_kg, tmp_dir, present
+    ):
+        """The four artifacts are one call to `export_graph_data` from one graph.
+        A manifest binding some of them describes half a production event, and the
+        half it omits is the half a model consumes."""
+        digests = self._graph_digests(tmp_dir, roles=present)
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
-        _, _, manifest = generate_training_samples(
-            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir, kg_digest=vouched,
-        )
-        assert manifest["artifacts"]["kg"] == vouched
+        with pytest.raises(ValueError, match="would leave"):
+            generate_training_samples(
+                wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
+                output_dir=tmp_dir, graph_digests=digests,
+            )
 
     def test_tampering_with_a_sample_file_breaks_its_recorded_digest(
         self, wide_kg, tmp_dir
     ):
         from src.utils.fingerprint import file_sha256
 
+        digests = self._graph_digests(tmp_dir)
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir,
+            output_dir=tmp_dir, graph_digests=digests,
         )
         (tmp_dir / "train_samples.json").write_bytes(b'[{"tampered": true}]')
         assert file_sha256(tmp_dir / "train_samples.json") != manifest["artifacts"]["train_samples"]
 
-    def test_digests_are_null_when_nothing_was_written(self, wide_kg):
+    def test_an_in_memory_manifest_binds_nothing_and_is_not_asked_to(self, wide_kg):
+        """No workspace was produced, so there is no export to bind. The binding
+        requirement belongs where a workspace is written, not where a cut is
+        inspected."""
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2
         )
-        assert manifest["artifacts"] == {
-            "train_samples": None, "val_samples": None, "kg": None
-        }
-
-    def test_the_universe_digest_reaches_the_manifest(self, wide_kg):
-        eligible = build_eligible_disease_profiles(wide_kg, 2)
-        allocation = allocate_diseases(eligible, 0.2, seed=42)
-        _, _, manifest = generate_training_samples(
-            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2
-        )
-        assert manifest["allocation"]["universe_digest"] == universe_digest(eligible)
-
-
-def test_training_records_the_cut_it_trained_under(tmp_dir):
-    """Otherwise a checkpoint cannot be tied to the cut it was trained under, and
-    a workspace with no cut at all cannot be trained on."""
-    import scripts.train_model as train_model
-
-    from tests.fixtures.generated_workspace import (
-        one_sample_per_disease,
-        profiles_for,
-        write_generated_workspace,
-    )
-
-    profiles = profiles_for([0, 1, 2])
-    for split, ids in (("train", [0, 1]), ("val", [2])):
-        (tmp_dir / f"{split}_samples.json").write_text(
-            json.dumps(one_sample_per_disease(split, ids, profiles))
-        )
-    with pytest.raises(ValueError, match="generated before the disease allocation"):
-        train_model.training_input_roles(tmp_dir, with_validation=True)
-
-    write_generated_workspace(tmp_dir, train_ids=[0, 1], val_ids=[2], profiles=profiles)
-    roles = train_model.training_input_roles(tmp_dir, with_validation=True)
-    assert roles["split_manifest"] == tmp_dir / "split_manifest.json"
+        assert manifest["artifacts"] == {"train_samples": None, "val_samples": None}
 
 
 class TestSharedBudgetDomain:
@@ -1366,6 +1378,15 @@ class TestBuildPathOrdering:
             val_disease_fraction=0.15, sample_seed=42,
         )
         manifest = _json.loads((tmp_dir / "split_manifest.json").read_text())
-        assert manifest["artifacts"]["kg"] == file_sha256(tmp_dir / "kg.json")
         assert manifest["allocation"]["universe_digest"] == universe_digest(eligible)
         assert manifest["disjoint"] is True
+
+        # **The writer computed these, and they are the bytes it exported.** The
+        # tensors are what a model consumes and used to be bound to nothing; this
+        # is the orchestration that closes it, not a helper in isolation.
+        from src.evaluation.cohort import verify_graph_artifacts
+        from src.kg.artifacts import GRAPH_ARTIFACTS
+
+        for role, filename in GRAPH_ARTIFACTS.items():
+            assert manifest["artifacts"][role] == file_sha256(tmp_dir / filename)
+        assert set(verify_graph_artifacts(tmp_dir)) == set(GRAPH_ARTIFACTS)

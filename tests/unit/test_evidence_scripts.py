@@ -876,14 +876,16 @@ def test_a_verified_workspace_records_what_was_bound(tmp_path):
     _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
     report = json.loads(out.read_text())
 
-    assert report["schema_version"] == 4
+    assert report["schema_version"] == 5
     assert report["counts"]["shared_diseases"] == 0
     assert report["evaluation_cohort_kind"] == "generated"
     verification = report["manifest_verification"]
     assert verification["verified_splits"] == ["train", "val"]
-    assert verification["claimed_disjoint"] is True
+    assert verification["manifest_disjointness_claim"] is True
     assert verification["measured_disjoint"] is True
+    assert verification["manifest_disjointness_claim_checked"] is True
     assert any("SHA-256" in line for line in verification["verified_against"])
+    assert any("measured between" in line for line in verification["verified_against"])
 
 
 @pytest.mark.parametrize("split", ["train", "val"])
@@ -1077,16 +1079,41 @@ def test_the_report_names_the_scope_the_verifier_actually_ran(tmp_path):
     assert verification["disjointness_was_measured"] is True
 
 
-def test_a_manifest_claiming_a_non_disjoint_cut_is_refused_at_any_scope(tmp_path):
-    """The manifest's own claim is checked whatever the caller reads: a workspace
-    whose manifest says its cohorts overlap is broken from every direction."""
+def test_a_supplied_audit_is_not_blocked_by_the_generated_disjointness_claim(tmp_path):
+    """`disjoint` describes the generated train/val relationship, which a
+    train-versus-supplied overlap does not consume.
+
+    Refusing here would block an institutional measurement on the state of a claim
+    about an input the run never reads — the same over-validation the scoping was
+    introduced to remove, arriving through a claim instead of a file. The report
+    says the claim was not checked rather than silently ignoring it.
+    """
     data_dir = _splits(tmp_path / "ws", [0, 1], [1])
     manifest = json.loads((data_dir / "split_manifest.json").read_text())
     manifest["disjoint"] = False
     (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
+    out = tmp_path / "m4.json"
+
+    _supplied(data_dir, out)
+    verification = json.loads(out.read_text())["manifest_verification"]
+
+    assert verification["manifest_disjointness_claim_checked"] is False
+    assert verification["manifest_disjointness_claim"] is False, (
+        "recorded as the unverified claim it is, not omitted"
+    )
+    assert not any("disjoint" in line for line in verification["verified_against"])
+
+
+def test_a_generated_audit_is_blocked_by_that_same_claim(tmp_path):
+    """Both generated cohorts are in scope there, so the claim is about an input
+    the run does consume."""
+    data_dir, manifest = _allocated_workspace(tmp_path / "ws")
+    manifest["disjoint"] = False
+    (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
 
     with pytest.raises(SystemExit, match="claims disjoint=False"):
-        _supplied(data_dir, tmp_path / "m4.json")
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
 
 
 def test_overlap_with_a_supplied_cohort_is_reported_not_refused(tmp_path):
@@ -1118,6 +1145,55 @@ def test_a_supplied_cohort_may_not_wear_a_generated_name(tmp_path):
             "--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json"),
             "--splits", "train", "val", "--evaluation-cohort-kind", "supplied",
         ])
+
+
+@pytest.mark.parametrize(
+    "escape",
+    ["/tmp/elsewhere", "../outside", "a/b", "C:\\windows", "..", ".", ".hidden"],
+)
+def test_a_split_name_that_is_a_path_is_refused_not_resolved(tmp_path, escape):
+    """Lifting the three-value `choices` list turned `--split` into free text that
+    is interpolated into `data_dir / f"{split}_samples.json"`.
+
+    `pathlib` lets an absolute value replace the whole path, so `/tmp/x` leaves
+    the workspace entirely and `../x` traverses out of it — and the same string
+    reaches the measurement manifest and the ledger's `cohort_role`, so a path
+    could re-enter an evidence artifact as an identity.
+    """
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+
+    with pytest.raises(SystemExit, match="must be an identifier"):
+        _run("audit_split_overlap", [
+            "--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json"),
+            "--splits", "train", escape, "--evaluation-cohort-kind", "supplied",
+        ])
+
+
+@pytest.mark.parametrize(
+    "escape",
+    ["/tmp/x", "../x", "a/b", "C:\\x", "\\\\host\\share", "..", ".", ".hidden",
+     "-leading", "x" * 65, "with space", "", "tab\tname", 5, None],
+)
+def test_every_non_identifier_form_is_refused_at_the_boundary(escape):
+    """The CLI cannot reach some of these — argparse eats a leading hyphen as an
+    option — so the alphabet is checked where it is enforced rather than only
+    through the one entry point that happens to pass a value through."""
+    from src.evaluation.cohort import validate_split_name
+
+    with pytest.raises(ValueError, match="must be an identifier"):
+        validate_split_name(escape)
+
+
+@pytest.mark.parametrize(
+    "role", ["mygene2", "institutional_acceptance", "udn.v2", "ddd-2019", "test"]
+)
+def test_arbitrary_institutional_roles_remain_reachable(tmp_path, role):
+    """The alphabet is bounded rather than the values enumerated, which is what
+    keeps `mygene2` and `institutional_acceptance` distinct rather than collapsing
+    both into `test`."""
+    from src.evaluation.cohort import validate_split_name
+
+    assert validate_split_name(role) == role
 
 
 def test_a_supplied_cohort_claimed_as_generated_is_refused(tmp_path):

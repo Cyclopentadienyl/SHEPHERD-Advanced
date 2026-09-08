@@ -100,7 +100,7 @@ def disease_ids(data_dir: Path, split: str) -> List[int]:
 
 #: Bumped when this report's shape changes. Version 1 is the unversioned shape
 #: ``EVIDENCE_M4.json`` carries, kept readable rather than redefined in place.
-REPORT_SCHEMA_VERSION = 4
+REPORT_SCHEMA_VERSION = 5
 
 
 
@@ -127,29 +127,39 @@ def manifest_verification(
     # gate that ran, and the artifact would then misdescribe itself — which is the
     # defect this parameter exists to remove.
     manifest = verified.manifest
+    # **The list describes the gate that ran, not the gate in general.** It used
+    # to name disjointness unconditionally while the report also said
+    # `disjointness_was_measured: false` three lines below — an artifact
+    # contradicting itself about its own verification.
+    checks = [
+        "the sample files' SHA-256, against the manifest's artifact digests",
+        "the realised disease sets, recomputed from the records",
+        "the manifest's realised digests against its own allocated ones",
+    ]
+    if verified.disjointness_measured:
+        checks.append("disjointness, measured between the two generated cohorts")
+    if verified.disjointness_claim_checked:
+        checks.append("the manifest's own disjointness claim")
+
     section = {
         "verified_splits": list(verified.verified),
-        "verified_against": [
-            "the sample files' SHA-256, against the manifest's artifact digests",
-            "the realised disease sets, recomputed from the records",
-            "the manifest's realised digests against its own allocated ones",
-            "disjointness, measured and compared with the manifest's claim",
-        ],
+        "verified_against": checks,
         "manifest_schema_version": manifest.get("schema_version"),
-        "claimed_disjoint": manifest.get("disjoint"),
+        "manifest_disjointness_claim": manifest.get("disjoint"),
         "allocation_algorithm": manifest.get("allocation", {}).get("algorithm"),
         "generation_algorithm": manifest.get("generation", {}).get("algorithm"),
     }
-    if evaluation_kind == "generated":
+    section["disjointness_was_measured"] = verified.disjointness_measured
+    section["manifest_disjointness_claim_checked"] = verified.disjointness_claim_checked
+    if verified.disjointness_measured:
         section["measured_disjoint"] = not (measured[train_split] & measured[eval_split])
-        section["disjointness_was_measured"] = True
     else:
-        section["disjointness_was_measured"] = False
         section["why_the_evaluation_split_is_not_verified"] = (
             f"{eval_split} is a supplied cohort; this manifest describes the "
             "generated splits and says nothing about it. Generated val was not "
-            "read either, so its state neither blocks nor supports this report — "
-            "only the manifest's own disjointness claim was checked"
+            "read, and the manifest's `disjoint` field describes the generated "
+            "train/val relationship rather than this overlap, so neither the "
+            "state of val nor that claim blocks or supports this report"
         )
     return section
 

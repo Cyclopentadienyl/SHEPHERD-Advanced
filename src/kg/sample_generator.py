@@ -22,6 +22,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from src.kg.artifacts import GRAPH_ARTIFACTS
 from src.kg.disease_allocation import (
     DiseaseAllocation,
     derive_stream,
@@ -43,7 +44,14 @@ logger = logging.getLogger(__name__)
 GENERATION_ALGORITHM = "coverage-first-then-replacement"
 GENERATION_ALGORITHM_VERSION = 1
 
-SPLIT_MANIFEST_SCHEMA_VERSION = 1
+#: v2 — the manifest binds the **exported graph artifacts** (`node_features.pt`,
+#: `edge_indices.pt`, `num_nodes.json`) as well as `kg.json` and the sample files.
+#: v1 bound only `kg.json` and the samples, so a workspace built under it cannot
+#: show that the tensors a model consumes are this graph's export. Bumped rather
+#: than extended in place, and refused rather than migrated: the missing digests
+#: cannot be recovered after the fact, because only the writer could have vouched
+#: for them.
+SPLIT_MANIFEST_SCHEMA_VERSION = 2
 
 
 def retained_phenotype_count(
@@ -78,7 +86,7 @@ def generate_training_samples(
     max_phenotypes: int = 15,
     phenotype_drop_rate: float = 0.3,
     output_dir: Optional[Path] = None,
-    kg_digest: Optional[str] = None,
+    graph_digests: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """Generate simulated patients from a **disease allocation**.
 
@@ -101,6 +109,12 @@ def generate_training_samples(
         min_phenotypes / max_phenotypes / phenotype_drop_rate: generation config.
         output_dir: when given, writes ``train_samples.json``,
             ``val_samples.json`` and ``split_manifest.json``.
+        graph_digests: the digests of the graph artifacts, **computed by whoever
+            wrote them**, keyed by manifest role. Required when writing a
+            manifest. This function does not hash them itself and must not: it
+            would be digesting whatever files happen to sit in ``output_dir``,
+            which is a statement about the directory rather than about the export
+            this allocation was cut from. Only the writer can make that binding.
 
     Returns:
         ``(train_samples, val_samples, manifest)``.
@@ -157,9 +171,7 @@ def generate_training_samples(
     # landed.** Hashing a separately reconstructed representation would record a
     # digest of something no reader can obtain — the manifest has to describe the
     # files on disk, not an equivalent-looking serialisation of the same objects.
-    artifacts: Dict[str, Optional[str]] = {
-        "train_samples": None, "val_samples": None, "kg": None,
-    }
+    artifacts: Dict[str, Optional[str]] = {"train_samples": None, "val_samples": None}
     if output_dir is not None:
         output_dir = Path(output_dir)
         refuse_if_checkpoints_exist(output_dir)
@@ -173,14 +185,33 @@ def generate_training_samples(
         artifacts["train_samples"] = file_sha256(output_dir / "train_samples.json")
         artifacts["val_samples"] = file_sha256(output_dir / "val_samples.json")
 
-    # **The KG digest is supplied by whoever wrote the file, never taken here.**
-    # Hashing `output_dir/kg.json` would digest whatever happens to sit there,
-    # which need not be a serialisation of the graph this allocation was cut
+    # **The graph digests are supplied by whoever wrote those files, never taken
+    # here.** Hashing `output_dir/*.pt` would digest whatever happens to sit
+    # there, which need not be the export of the graph this allocation was cut
     # from: a caller can pass graph A with its allocation while the directory
-    # holds graph B, and the manifest would record A's universe digest beside
-    # B's file digest as one provenance chain. Only the writer can vouch for that
-    # binding, so only the writer may state it. `None` means unvouched.
-    artifacts["kg"] = kg_digest
+    # holds graph B's tensors, and the manifest would record A's universe digest
+    # beside B's file digests as one provenance chain. Only the writer of an
+    # export can vouch that these are the artifacts it just produced.
+    #
+    # All four are required together. They are one call to `export_graph_data`
+    # from one in-memory graph, so a manifest binding some of them describes half
+    # a production event — and the half it omits is the half a model consumes.
+    # **A written workspace must bind its whole graph export.** All four roles are
+    # one call to `export_graph_data` from one in-memory graph, so a manifest
+    # binding some of them describes half a production event — and the half it
+    # omits is the half a model consumes. Only checked when a workspace is being
+    # written: an in-memory manifest describes a cut, not a directory.
+    artifacts.update(graph_digests or {})
+    if output_dir is not None:
+        unbound = [role for role in GRAPH_ARTIFACTS if artifacts.get(role) is None]
+        if unbound:
+            raise ValueError(
+                f"this workspace would leave {', '.join(sorted(unbound))} unbound. "
+                "Only the writer of the graph export can vouch for those digests, "
+                "so they are supplied rather than recomputed here — and a manifest "
+                "without them cannot show that the tensors a model consumes are "
+                "this graph's."
+            )
 
     manifest = build_split_manifest(
         allocation=allocation,
@@ -323,7 +354,13 @@ def build_split_manifest(
     the allocation.** A realised field populated from allocation metadata would
     restate the allocation rather than evidence it, and the coverage assertion
     below would be checking a value against itself.
+
+    ``artifacts`` is recorded as given. Whether it binds the whole graph export is
+    checked where a **workspace** is produced — ``generate_training_samples`` with
+    an ``output_dir`` — because that is where the claim is made. Building a
+    manifest in memory to inspect a cut produces no graph export to bind.
     """
+
     realised_train = {int(sample["disease_id"]) for sample in train_samples}
     realised_val = {int(sample["disease_id"]) for sample in val_samples}
 

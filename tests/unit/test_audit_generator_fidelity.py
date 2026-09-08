@@ -66,6 +66,10 @@ def _workspace(
                 weight=1.0 if weights is None else weights[(d, p)],
             ))
     kg.save_json(str(root / "kg.json"))
+    # The tensors are never opened by this audit, but the workspace binds them, so
+    # a fixture that omitted them would build one no consumer accepts.
+    for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
+        (root / name).write_bytes(f"{name}-of-{root.name}".encode())
 
     rows = {
         split: [
@@ -95,8 +99,7 @@ def _workspace(
 
 
 def _run(root: Path, out: Path, **kwargs):
-    args = ["--kg-path", str(root / "kg.json"), "--data-dir", str(root),
-            "--output", str(out)]
+    args = ["--data-dir", str(root), "--output", str(out)]
     for key, value in kwargs.items():
         args += [f"--{key.replace('_', '-')}", str(value)]
     fidelity.main(args)
@@ -163,7 +166,11 @@ def test_a_workspace_without_a_manifest_is_refused(tmp_path):
     reads such a workspace any more."""
     root = _workspace(tmp_path / "ws", diseases=[[0, 1], [2, 3]],
                       train=[(0, [0, 1])], val=[(1, [2, 3])], manifest=False)
-    with pytest.raises(SystemExit, match="generated before the disease allocation"):
+    # The graph contract is checked first here, because this audit opens the graph
+    # before it opens a cohort. Either refusal is correct and both name the same
+    # remedy; the test pins the earlier one rather than asserting an order the
+    # code does not promise elsewhere.
+    with pytest.raises(SystemExit, match="Rebuild it with"):
         _run(root, tmp_path / "f.json")
 
 

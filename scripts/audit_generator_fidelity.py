@@ -40,7 +40,6 @@ the institution, informed by what the upstream cohort looks like.
 
 Usage:
     python scripts/audit_generator_fidelity.py \\
-        --kg-path data/workspaces/<ws>/kg.json \\
         --data-dir data/workspaces/<ws> \\
         --external-dir data/external \\
         --output docs/working/EVIDENCE_generator_fidelity.json
@@ -61,9 +60,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.kg.artifacts import GRAPH_ARTIFACTS  # noqa: E402
 from src.evaluation.cohort import (  # noqa: E402
     MANIFEST_FILENAME,
     verify_generated_cohorts,
+    verify_graph_artifacts,
 )
 from src.utils.banding import CAPACITY_BANDS, bucket  # noqa: E402
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
@@ -463,8 +464,16 @@ def frequency_section(
 
 
 def build_report(
-    kg_path: Path, data_dir: Path, external_dir: Optional[Path], relationship: str,
+    data_dir: Path, external_dir: Optional[Path], relationship: str,
 ) -> Dict[str, Any]:
+    """The workspace is the unit, so the graph is the one this workspace holds.
+
+    ``--kg-path`` used to be separate, which let a graph from one workspace be
+    characterised against cohorts from another — the very mixing the artifact
+    binding exists to refuse.
+    """
+    kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
+
     from src.core.types import EdgeType
     from src.kg.graph import KnowledgeGraph
     from src.kg.sample_generator import build_eligible_disease_profiles
@@ -480,6 +489,7 @@ def build_report(
     # **Both cohorts must be this project's own.** This audit characterises *our*
     # generator, so a supplied cohort has nothing here to be measured against —
     # its samples were not produced by the rule whose capacity is being priced.
+    graph_digests = verify_graph_artifacts(data_dir)
     verify_generated_cohorts(data_dir)
     config = generation_config(data_dir)
     kg = KnowledgeGraph.load_json(str(kg_path))
@@ -524,11 +534,9 @@ def build_report(
     # file, so a report citing them has to say which bytes it read.
     hpoa_digest = file_sha256(hpoa) if hpoa is not None else None
 
-    artifacts = {
-        "kg": file_sha256(kg_path),
-        "train_samples": file_sha256(data_dir / "train_samples.json"),
-        "val_samples": file_sha256(data_dir / "val_samples.json"),
-    }
+    artifacts = dict(graph_digests)
+    artifacts["train_samples"] = file_sha256(data_dir / "train_samples.json")
+    artifacts["val_samples"] = file_sha256(data_dir / "val_samples.json")
     artifacts["split_manifest"] = file_sha256(data_dir / MANIFEST_FILENAME)
     if hpoa_digest is not None:
         artifacts["phenotype_hpoa"] = hpoa_digest
@@ -566,8 +574,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generator fidelity — EVALUATION_COHORTS §6.6 step 4"
     )
-    parser.add_argument("--kg-path", type=Path, required=True)
-    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, required=True,
+                        help="The workspace. Its kg.json, graph tensors, cohorts "
+                             "and manifest are one production event and are read "
+                             "as one; there is no separate --kg-path, because a "
+                             "graph from elsewhere is exactly what the artifact "
+                             "binding refuses.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--external-dir", type=Path, default=None,
                         help="Directory holding phenotype.hpoa. Optional: without it "
@@ -591,7 +603,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         report = build_report(
-            args.kg_path, args.data_dir, args.external_dir, args.deployment_relationship
+            args.data_dir, args.external_dir, args.deployment_relationship
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc

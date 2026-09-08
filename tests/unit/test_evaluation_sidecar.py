@@ -43,9 +43,9 @@ def _report(**overrides):
         "batch_size": 3,
         "shuffle": False,
         "num_workers": 4,
-        "python_seed": None,
-        "numpy_seed": None,
-        "torch_seed": None,
+        "python_seed": 0,
+        "numpy_seed": 0,
+        "torch_seed": 0,
         "torch_version": "2.5.0",
         "cuda_version": "12.4",
         "cudnn_benchmark": False,
@@ -262,6 +262,18 @@ def test_a_record_missing_a_key_field_is_refused(tmp_path):
 # ---------------------------------------------------------------------------
 # What a record carries
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("missing", ["python_seed", "numpy_seed", "torch_seed"])
+def test_a_run_with_no_recorded_rng_identity_cannot_be_a_record(missing):
+    """Two unseeded runs consume different worker streams, different negatives and
+    a different candidate universe while hashing to the same semantics digest --
+    so the ledger would see one measurement with two answers and refuse the second
+    as a contradiction. The stream has to have an identity."""
+    report = _report(manifest={missing: None})
+
+    with pytest.raises(ValueError, match=f"records no {missing}"):
+        build_record(report, None)
+
+
 def test_the_record_is_derived_from_the_manifest_not_asserted(tmp_path):
     """A run's own manifest says which checkpoint, cohort and mode it was."""
     record = build_record(_report(), "d" * 64)
