@@ -15,18 +15,31 @@ training. A metric measured on such a split reports recognition of new phenotype
 subsets of diseases the model has labelled examples of — not generalisation to
 diseases it has none for.
 
-**Uniform only, for now.** The split feasibility audit
-(``scripts/audit_split_feasibility.py``) exists to price the alternative, and a
-pre-deployment run of it found no stratum close to losing validation
-representation under a uniform draw — the worst case across four stratifications
-was 2.9% for a 69-disease band at f = 0.05, and 0.0013% for the same band at
-f = 0.15.
+**Uniform only, and now on evidence rather than expectation.** The split
+feasibility audit (``scripts/audit_split_feasibility.py``) exists to price the
+alternative, and ``docs/working/EVIDENCE_split_feasibility_homelab.json`` —
+schema 2, `deployment_relationship: identical-sibling`, over the graph whose
+digest is ``6889ed11…`` — finds no stratum close to losing validation
+representation under a uniform draw. Across four stratifications and 10,577
+eligible diseases of 29,866 disease nodes, the worst case is a 69-disease
+``gene_count 11+`` band: **2.9% at f = 0.05, 0.0013% at f = 0.15**, and below
+2e-7 at every larger fraction. The worst *training*-side risk anywhere in the
+report is 2e-92 at f = 0.05.
 
-**Those figures are not yet backed by a committed evidence artifact.** They come
-from a run on a pre-deployment machine whose report was not retained, so the
-uniform-versus-stratified decision is provisional until the institutional
-artifact lands. Stratified allocation is not built, and this module is where it
-would go if that artifact overturns the reading.
+At the value this project uses, f = 0.15, one band in a thousand runs would go
+unrepresented in validation. Stratifying to remove that would cost a fixed quota
+per band and buy a difference of that size, so it is **not built** — and this
+module is where it would go if a later artifact overturns the reading.
+
+**What the artifact does and does not settle.** It measures one knowledge graph:
+the eligible universe, the band populations and the probabilities all belong to
+that MONDO vintage, and the institute's own graph is fetched days apart and will
+differ slightly. What transfers is the shape of the answer, since the mechanism
+is hypergeometric over band sizes and a few diseases either way cannot move a
+margin of that order. A run on the institutional graph is worth having as a
+second vintage rather than as a second machine — the operator states the two are
+an identical hardware and software build, and these audits read files and count
+integers, so no number here depends on which machine produced it.
 
 Module: src/kg/disease_allocation.py
 """

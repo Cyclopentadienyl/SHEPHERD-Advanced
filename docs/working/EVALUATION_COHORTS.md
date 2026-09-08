@@ -9,6 +9,13 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **28** — §6.8's audit has a committed artifact, and §6.2's uniform draw stops being provisional.
+  `EVIDENCE_split_feasibility_homelab.json` (schema 2, `identical-sibling`, KG `6889ed11…`) puts the
+  worst validation-representation risk at a 69-disease `gene_count 11+` band: 2.9% at f = 0.05 and
+  0.0013% at f = 0.15, with the worst training-side risk anywhere at 2e-92. Stratified allocation
+  stays unbuilt on that evidence rather than on expectation. The figures belong to one MONDO
+  vintage — a run on the institute's graph is a **second vintage, not a second machine**, since
+  these audits read files and count integers and the two machines are an identical build.
 - **27** — the composition check is required rather than offered. `kg_path` was optional, so the
   crossing stayed reachable for any caller that omitted it — and `scripts/test_gnn_inference.py`
   was exactly such a caller. It is now required for every file-backed use, and that script builds a
