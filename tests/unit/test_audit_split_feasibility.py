@@ -272,6 +272,7 @@ def test_generation_actually_calls_the_shared_rule(monkeypatch, tiny_kg_path):
     """
     from src.kg import graph as graph_module
     from src.kg import sample_generator
+    from src.kg.disease_allocation import train_only_allocation
 
     calls = []
     original = sample_generator.retained_phenotype_count
@@ -282,7 +283,11 @@ def test_generation_actually_calls_the_shared_rule(monkeypatch, tiny_kg_path):
 
     monkeypatch.setattr(sample_generator, "retained_phenotype_count", spy)
     kg = graph_module.KnowledgeGraph.load_json(str(tiny_kg_path))
-    sample_generator.generate_training_samples(kg, num_train=4, num_val=0, min_phenotypes=2)
+    eligible = sample_generator.build_eligible_disease_profiles(kg, 2)
+    allocation = train_only_allocation(eligible, seed=42)
+    sample_generator.generate_training_samples(
+        kg, allocation, num_train=len(eligible), num_val=0, min_phenotypes=2
+    )
     assert calls, "generation did not go through the shared retained-phenotype rule"
 
 

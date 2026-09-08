@@ -99,6 +99,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # One hashing implementation, shared. A second one here could differ from the
 # harness's in exactly the way the digests exist to detect.
 from scripts.measure_scorer import artifact_digests  # noqa: E402
+from src.evaluation.caveats import SPLIT_ARGUMENT_HELP  # noqa: E402
 
 logger = logging.getLogger("calibrate_mode_a")
 
@@ -343,7 +344,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--split", required=True,
                         choices=["train", "val", "test"],
-                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. Two distinct limits apply to `val`, and they are not the same limit. (1) **Not an independent evaluation**: it is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated. (2) **No unseen-disease generalisation evidence**: `sample_generator.py` shuffles one sample pool and slices it, and does not enforce disease-disjoint splits — overlap is permitted, not prevented, and in the audited deployment workspace it was total, all 7,970 val diseases also appearing in train (docs/working/EVIDENCE_M4.json, which records both split digests). This bounds claims about unseen diseases; it does not by itself invalidate every sample-level claim.')
+                        help=SPLIT_ARGUMENT_HELP)
     parser.add_argument("--workdir", type=Path, required=True,
                         help="Where both runs write. Created if absent")
     parser.add_argument("--seed", type=int, required=True,

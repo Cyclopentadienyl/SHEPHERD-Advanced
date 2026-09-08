@@ -79,27 +79,35 @@ def test_the_caveat_names_both_limits_and_keeps_them_distinct(script):
     _, help_text = _split_help(script)
 
     assert "early_stopping_monitor=val_mrr" in help_text, "checkpoint-selection contamination"
-    assert "sample_generator" in help_text, "the generator's role"
-    assert "does not enforce" in help_text, "non-enforcement, which is what the generator does"
+    assert "property of the workspace" in help_text, "overlap is workspace-dependent"
+    assert "audit_split_overlap.py" in help_text, "how to establish it for this workspace"
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
 def test_the_caveat_does_not_claim_the_overlap_is_guaranteed(script):
-    """A negative assertion, because the overstatement is what had to be corrected.
+    """A negative assertion, because this claim inverted and must not overshoot again.
 
-    The generator draws diseases independently, shuffles the samples and slices
-    them. It does not enforce disjointness, so overlap is permitted and in practice
-    near-certain at the deployed sample counts — but it is not logically entailed,
-    and this help is shown for *any* workspace including small ones. The structural
-    claim and the measured figure have to stay separate sentences."""
+    It once said the generator "does not enforce" disjointness, which was true of
+    a pooled draw sliced by index. Generation now consumes a disease allocation
+    and the partitions *are* disjoint by construction — but only for workspaces
+    built since. This help is shown for whatever workspace it is pointed at, and
+    cannot know which kind that is, so it must assert neither.
+
+    The forbidden claims are therefore about *this* workspace, in either
+    direction."""
     _, help_text = _split_help(script)
 
-    for overstatement in ("by construction", "guaranteed", "always share", "必然"):
+    for overstatement in (
+        "this workspace", "your split is", "the split is disjoint",
+        "always share", "必然",
+    ):
         assert overstatement not in help_text, (
-            f"{overstatement!r} claims the generator entails overlap; it only permits it"
+            f"{overstatement!r} asserts a property the help cannot know"
         )
-    # ...and the measured figure stays attributed to the workspace it came from.
-    assert "audited" in help_text and "workspace" in help_text
+    # The conditional framing, and the measured figure attributed to one workspace.
+    assert "Workspaces generated from a disease allocation" in help_text
+    assert "may overlap completely" in help_text
+    assert "audited workspace" in help_text
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)

@@ -58,6 +58,8 @@ def build_knowledge_graph(
     generate_samples: bool = False,
     num_train: int = 5000,
     num_val: int = 1000,
+    val_disease_fraction: float = 0.15,
+    sample_seed: int = 42,
     ontology_cache_dir: Path | None = None,
 ) -> None:
     """
@@ -158,14 +160,28 @@ def build_knowledge_graph(
         logger.info("Generating training samples...")
         from src.kg.sample_generator import generate_training_samples
 
-        train_samples, val_samples = generate_training_samples(
+        from src.kg import allocate_diseases, build_eligible_disease_profiles
+
+        # **The split is decided here, before generation, and at the disease
+        # level.** The generator consumes the allocation; it does not own split
+        # policy (EVALUATION_COHORTS §6.2). A sample-level slice, which is what
+        # this used to be, leaves every multi-sample disease on both sides.
+        eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
+        allocation = allocate_diseases(eligible, val_disease_fraction, seed=sample_seed)
+
+        train_samples, val_samples, manifest = generate_training_samples(
             kg=kg,
+            allocation=allocation,
             num_train=num_train,
             num_val=num_val,
             output_dir=workspace,
         )
         logger.info(
-            f"Generated {len(train_samples)} train, {len(val_samples)} val samples"
+            "Generated %d train samples over %d diseases, %d val over %d — "
+            "disjoint: %s",
+            len(train_samples), manifest["realised"]["train_diseases"],
+            len(val_samples), manifest["realised"]["val_diseases"],
+            manifest["disjoint"],
         )
 
     elapsed = time.time() - t0
@@ -238,6 +254,22 @@ def main():
         help="Number of training samples (default: 5000)",
     )
     parser.add_argument(
+        "--val-disease-fraction",
+        type=float, default=0.15,
+        help="Fraction of eligible diseases withheld from training and used for "
+             "validation. 0.15 is the upstream value (EVALUATION_COHORTS 1.6). "
+             "The split is at the DISEASE level: a withheld disease keeps its "
+             "knowledge-graph node and edges and loses only its labelled patient "
+             "examples.",
+    )
+    parser.add_argument(
+        "--sample-seed",
+        type=int, default=42,
+        help="Root seed for allocation and generation. Allocation, training and "
+             "validation draw from independent derived streams, so changing a "
+             "sample budget cannot move the disease cut.",
+    )
+    parser.add_argument(
         "--num-val",
         type=int,
         default=1000,
@@ -252,6 +284,8 @@ def main():
         generate_samples=args.generate_samples,
         num_train=args.num_train,
         num_val=args.num_val,
+        val_disease_fraction=args.val_disease_fraction,
+        sample_seed=args.sample_seed,
         ontology_cache_dir=Path(args.ontology_cache_dir) if args.ontology_cache_dir else None,
     )
 

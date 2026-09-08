@@ -52,6 +52,11 @@ from src.kg.preprocessing import (
     compute_degree_features,
     preprocess_for_gnn,
 )
+from src.kg.disease_allocation import (
+    DiseaseAllocation,
+    allocate_diseases,
+    train_only_allocation,
+)
 from src.kg.sample_generator import (
     build_eligible_disease_profiles,
     generate_training_samples,
@@ -71,7 +76,10 @@ __all__ = [
     "compute_rwse",
     "compute_degree_features",
     # Sample generation
+    "DiseaseAllocation",
+    "allocate_diseases",
     "build_eligible_disease_profiles",
+    "train_only_allocation",
     "generate_training_samples",
     "retained_phenotype_count",
 ]

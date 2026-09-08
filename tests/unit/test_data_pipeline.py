@@ -4,7 +4,6 @@ Unit Tests for Data Pipeline
 Tests for HPOAnnotationParser, generate_training_samples,
 and build_knowledge_graph validation logic.
 """
-import json
 import pytest
 import tempfile
 from pathlib import Path
@@ -18,7 +17,15 @@ from src.core.types import (
     NodeType,
 )
 from src.kg.graph import KnowledgeGraph
-from src.kg.sample_generator import generate_training_samples
+from src.kg.disease_allocation import (
+    allocate_diseases,
+    derive_stream,
+    train_only_allocation,
+)
+from src.kg.sample_generator import (
+    build_eligible_disease_profiles,
+    generate_training_samples,
+)
 from src.data_sources.hpo_annotations import HPOAnnotationParser
 
 
@@ -316,114 +323,221 @@ gene_id	gene_symbol	hpo_id	hpo_name	frequency	disease_id
 # Sample Generator Tests
 # =============================================================================
 class TestSampleGenerator:
-    """Tests for generate_training_samples"""
+    """Tests for allocation-driven sample generation.
+
+    The interface changed with the disease-disjoint split: generation consumes an
+    allocation rather than deciding one. These tests were rewritten rather than
+    adapted, because several of them pinned the superseded contract — a pooled
+    draw sliced by index — which is the defect the change removes.
+    """
+
+    @staticmethod
+    def allocate(kg, min_phenotypes=1, val_fraction=0.5, seed=42):
+        eligible = build_eligible_disease_profiles(kg, min_phenotypes)
+        return allocate_diseases(eligible, val_fraction, seed=seed)
 
     def test_generate_samples_basic(self, demo_kg):
-        """Generate samples from demo KG."""
-        train, val = generate_training_samples(
-            demo_kg, num_train=10, num_val=5, min_phenotypes=1
+        allocation = self.allocate(demo_kg)
+        train, val, _ = generate_training_samples(
+            demo_kg, allocation, num_train=10, num_val=5, min_phenotypes=1
         )
         assert len(train) == 10
         assert len(val) == 5
 
     def test_sample_format(self, demo_kg):
-        """Each sample has required fields with correct types."""
-        train, _ = generate_training_samples(
-            demo_kg, num_train=5, num_val=0, min_phenotypes=1
+        allocation = self.allocate(demo_kg)
+        train, _, _ = generate_training_samples(
+            demo_kg, allocation, num_train=10, num_val=5, min_phenotypes=1
         )
-
         for sample in train:
-            assert "patient_id" in sample
-            assert "phenotype_ids" in sample
-            assert "disease_id" in sample
             assert isinstance(sample["patient_id"], str)
             assert isinstance(sample["phenotype_ids"], list)
             assert isinstance(sample["disease_id"], int)
             assert len(sample["phenotype_ids"]) > 0
 
     def test_sample_ids_are_valid_indices(self, demo_kg):
-        """Phenotype and disease IDs should be valid node indices."""
-        node_mapping = demo_kg.get_node_id_mapping()
-        n_phenotypes = len(node_mapping.get("phenotype", {}))
-        n_diseases = len(node_mapping.get("disease", {}))
-
-        train, _ = generate_training_samples(
-            demo_kg, num_train=20, num_val=0, min_phenotypes=1
+        allocation = self.allocate(demo_kg)
+        train, val, _ = generate_training_samples(
+            demo_kg, allocation, num_train=10, num_val=5, min_phenotypes=1
         )
-
-        for sample in train:
+        mapping = demo_kg.get_node_id_mapping()
+        n_diseases = len(mapping.get("disease", {}))
+        n_phenotypes = len(mapping.get("phenotype", {}))
+        for sample in train + val:
             assert 0 <= sample["disease_id"] < n_diseases
             for pid in sample["phenotype_ids"]:
                 assert 0 <= pid < n_phenotypes
 
     def test_deterministic_with_seed(self, demo_kg):
-        """Same seed should produce same samples."""
-        t1, v1 = generate_training_samples(
-            demo_kg, num_train=5, num_val=2, min_phenotypes=1, seed=42
+        first = generate_training_samples(
+            demo_kg, self.allocate(demo_kg, seed=7), num_train=10, num_val=5,
+            min_phenotypes=1,
         )
-        t2, v2 = generate_training_samples(
-            demo_kg, num_train=5, num_val=2, min_phenotypes=1, seed=42
+        second = generate_training_samples(
+            demo_kg, self.allocate(demo_kg, seed=7), num_train=10, num_val=5,
+            min_phenotypes=1,
         )
-        assert t1 == t2
-        assert v1 == v2
+        assert first == second
 
     def test_different_seed_different_results(self, demo_kg):
-        """Different seeds should produce different samples."""
-        t1, _ = generate_training_samples(
-            demo_kg, num_train=20, num_val=0, min_phenotypes=1, seed=1
-        )
-        t2, _ = generate_training_samples(
-            demo_kg, num_train=20, num_val=0, min_phenotypes=1, seed=2
-        )
-        assert t1 != t2
+        # A different seed must move the cut, and with it the cohorts.
+        one = self.allocate(demo_kg, seed=1)
+        two = self.allocate(demo_kg, seed=2)
+        assert one.val_ids != two.val_ids or one.train_ids != two.train_ids
 
-    def test_output_files(self, demo_kg, tmp_dir):
-        """Samples should be saved to JSON files when output_dir is given."""
+    def test_output_files_include_the_split_manifest(self, demo_kg, tmp_dir):
+        allocation = self.allocate(demo_kg)
         generate_training_samples(
-            demo_kg, num_train=5, num_val=3, min_phenotypes=1,
+            demo_kg, allocation, num_train=5, num_val=3, min_phenotypes=1,
             output_dir=tmp_dir,
         )
-
         assert (tmp_dir / "train_samples.json").exists()
         assert (tmp_dir / "val_samples.json").exists()
+        assert (tmp_dir / "split_manifest.json").exists()
 
-        with open(tmp_dir / "train_samples.json") as f:
-            train = json.load(f)
-        with open(tmp_dir / "val_samples.json") as f:
-            val = json.load(f)
+    def test_an_empty_kg_cannot_be_allocated(self):
+        """A universe with no eligible disease is refused, not silently emptied.
 
-        assert len(train) == 5
-        assert len(val) == 3
-
-    def test_empty_kg_returns_empty(self):
-        """KG with no disease-phenotype edges should return empty lists."""
+        The superseded generator returned two empty lists here, which reads as a
+        successful run that produced nothing.
+        """
         kg = KnowledgeGraph()
         kg.add_node(Node(
             id=NodeID(source=DataSource.MONDO, local_id="MONDO:0000001"),
             node_type=NodeType.DISEASE,
             name="Test",
         ))
+        with pytest.raises(ValueError, match="two non-empty partitions"):
+            self.allocate(kg)
 
-        train, val = generate_training_samples(kg, num_train=5, num_val=2)
-        assert train == []
-        assert val == []
-
-    def test_min_phenotypes_filter(self, demo_kg):
-        """Diseases with fewer phenotypes than min_phenotypes should be excluded."""
-        # With min_phenotypes=10, no disease qualifies in the small demo KG
-        train, val = generate_training_samples(
-            demo_kg, num_train=5, num_val=2, min_phenotypes=10
-        )
-        assert train == []
-        assert val == []
+    def test_min_phenotypes_filter_leaves_nothing_to_allocate(self, demo_kg):
+        with pytest.raises(ValueError, match="two non-empty partitions"):
+            self.allocate(demo_kg, min_phenotypes=10)
 
     def test_gene_ids_included_when_available(self, demo_kg):
-        """Samples should include gene_ids if the disease has associated genes."""
-        train, _ = generate_training_samples(
-            demo_kg, num_train=20, num_val=0, min_phenotypes=1
+        allocation = self.allocate(demo_kg)
+        train, _, _ = generate_training_samples(
+            demo_kg, allocation, num_train=20, num_val=5, min_phenotypes=1
         )
-        samples_with_genes = [s for s in train if "gene_ids" in s]
-        assert len(samples_with_genes) > 0
+        assert [s for s in train if "gene_ids" in s]
+
+
+class TestDiseaseDisjointness:
+    """The property the change exists to establish."""
+
+    def test_no_disease_appears_in_both_cohorts(self, demo_kg):
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        train, val, manifest = generate_training_samples(
+            demo_kg, allocation, num_train=40, num_val=20, min_phenotypes=1
+        )
+        train_diseases = {s["disease_id"] for s in train}
+        val_diseases = {s["disease_id"] for s in val}
+        assert not (train_diseases & val_diseases)
+        assert manifest["disjoint"] is True
+
+    def test_patient_ids_do_not_collide_across_cohorts(self, demo_kg):
+        """Each partition has its own namespace; a shared counter restarts."""
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        train, val, _ = generate_training_samples(
+            demo_kg, allocation, num_train=10, num_val=10, min_phenotypes=1
+        )
+        train_ids = {s["patient_id"] for s in train}
+        val_ids = {s["patient_id"] for s in val}
+        assert len(train_ids) == len(train)
+        assert len(val_ids) == len(val)
+        assert not (train_ids & val_ids)
+
+    def test_changing_the_training_budget_does_not_move_the_validation_cohort(
+        self, demo_kg
+    ):
+        """Independent streams. One shared generator would shift every later draw."""
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        _, val_small, _ = generate_training_samples(
+            demo_kg, allocation, num_train=10, num_val=8, min_phenotypes=1
+        )
+        _, val_large, _ = generate_training_samples(
+            demo_kg, allocation, num_train=90, num_val=8, min_phenotypes=1
+        )
+        assert val_small == val_large
+
+    def test_every_allocated_disease_receives_a_sample(self, demo_kg):
+        """Coverage by construction, not by a large enough budget."""
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        train, val, manifest = generate_training_samples(
+            demo_kg, allocation, num_train=len(allocation.train),
+            num_val=len(allocation.val), min_phenotypes=1,
+        )
+        assert {s["disease_id"] for s in train} == set(allocation.train_ids)
+        assert {s["disease_id"] for s in val} == set(allocation.val_ids)
+        assert manifest["realised"]["train_diseases"] == len(allocation.train)
+
+    def test_a_budget_too_small_to_cover_the_partition_is_refused(self, demo_kg):
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        with pytest.raises(ValueError, match="cannot cover"):
+            generate_training_samples(
+                demo_kg, allocation, num_train=0, num_val=5, min_phenotypes=1
+            )
+
+    def test_a_zero_budget_against_a_populated_partition_is_refused(self, demo_kg):
+        """An early return on count == 0 used to skip the coverage check, so a
+        partition with diseases and no budget produced nothing and still looked
+        like a successful run."""
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        assert allocation.val, "the fixture must allocate a validation partition"
+        # Caught by the earlier intent guard, which names the mismatch precisely:
+        # a validation partition was withheld and then asked for no samples.
+        with pytest.raises(ValueError, match="num_val is 0 but the allocation"):
+            generate_training_samples(
+                demo_kg, allocation, num_train=20, num_val=0, min_phenotypes=1
+            )
+
+    def test_train_only_is_explicit_rather_than_a_fraction_of_zero(self, demo_kg):
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = train_only_allocation(eligible, seed=42)
+        train, val, manifest = generate_training_samples(
+            demo_kg, allocation, num_train=20, num_val=0, min_phenotypes=1
+        )
+        assert val == []
+        assert manifest["realised"]["val_diseases"] == 0
+        assert len(train) == 20
+        with pytest.raises(ValueError, match="strictly between 0 and 1"):
+            allocate_diseases(eligible, 0.0, seed=42)
+
+    def test_a_validation_budget_without_a_validation_partition_is_refused(
+        self, demo_kg
+    ):
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        with pytest.raises(ValueError, match="no validation partition"):
+            generate_training_samples(
+                demo_kg, train_only_allocation(eligible, seed=42),
+                num_train=20, num_val=5, min_phenotypes=1,
+            )
+
+    def test_profile_lists_are_sorted(self, demo_kg):
+        """Canonical order, so sampling cannot depend on set layout."""
+        for _, profile in build_eligible_disease_profiles(demo_kg, 1):
+            assert profile["phenotype_ids"] == sorted(profile["phenotype_ids"])
+            assert profile["gene_ids"] == sorted(profile["gene_ids"])
+
+    def test_the_manifest_derives_realised_sets_from_the_emitted_records(
+        self, demo_kg
+    ):
+        """Copying allocation metadata would restate it, not evidence it."""
+        eligible = build_eligible_disease_profiles(demo_kg, 1)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        _, _, manifest = generate_training_samples(
+            demo_kg, allocation, num_train=20, num_val=10, min_phenotypes=1
+        )
+        assert manifest["realised"]["derived_from"].startswith("the emitted")
+        assert manifest["allocation"]["allocated"]["train_digest"] == \
+            manifest["realised"]["train_digest"]
+        assert manifest["generation"]["algorithm_version"] >= 1
 
 
 # =============================================================================
@@ -530,3 +644,138 @@ class TestDiseaseTruthRangeInvariant:
         DiagnosisDataLoader._assert_disease_truth_in_range(
             {"disease_ids": torch.tensor([0])}, {}
         )
+
+
+class TestSplitRegimeBoundary:
+    """Two split regimes must not share a checkpoint directory."""
+
+    @staticmethod
+    def _allocation(kg):
+        return allocate_diseases(build_eligible_disease_profiles(kg, 1), 0.5, seed=42)
+
+    def test_regenerating_where_checkpoints_exist_is_refused(self, demo_kg, tmp_dir):
+        (tmp_dir / "checkpoints" / "hgt").mkdir(parents=True)
+        (tmp_dir / "checkpoints" / "hgt" / "model-01-0.5000.pt").write_bytes(b"x")
+        with pytest.raises(FileExistsError, match="two split regimes"):
+            generate_training_samples(
+                demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
+                min_phenotypes=1, output_dir=tmp_dir,
+            )
+
+    def test_the_refusal_writes_nothing(self, demo_kg, tmp_dir):
+        (tmp_dir / "checkpoints" / "gat").mkdir(parents=True)
+        with pytest.raises(FileExistsError):
+            generate_training_samples(
+                demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
+                min_phenotypes=1, output_dir=tmp_dir,
+            )
+        assert not (tmp_dir / "train_samples.json").exists()
+        assert not (tmp_dir / "split_manifest.json").exists()
+
+    def test_an_empty_checkpoint_directory_does_not_block(self, demo_kg, tmp_dir):
+        """Nothing was trained there, so nothing can be mixed."""
+        (tmp_dir / "checkpoints").mkdir()
+        generate_training_samples(
+            demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
+            min_phenotypes=1, output_dir=tmp_dir,
+        )
+        assert (tmp_dir / "split_manifest.json").exists()
+
+    def test_a_fresh_workspace_is_unaffected(self, demo_kg, tmp_dir):
+        generate_training_samples(
+            demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
+            min_phenotypes=1, output_dir=tmp_dir,
+        )
+        assert (tmp_dir / "train_samples.json").exists()
+
+
+@pytest.fixture
+def wide_kg():
+    """A universe big enough that coincidences stop hiding defects.
+
+    The demo KG has two eligible diseases and phenotype indices 0-2, which is
+    small enough that ``list(set(...))`` comes out sorted by accident and
+    replacement sampling covers everything by accident. Three mutation tests
+    passed against it while the guarantees they check were removed. This fixture
+    has twelve diseases and non-contiguous phenotype ids, where neither
+    coincidence holds.
+    """
+    kg = KnowledgeGraph()
+    # Sixty-four phenotypes, so the *indices* a profile holds are large and
+    # scattered. Index magnitude is what matters, not the HPO string: the profile
+    # stores node indices assigned by insertion order, and a handful of small
+    # contiguous ones come out of a set already sorted.
+    for i in range(64):
+        hp_id = f"HP:{i:07d}"
+        kg.add_node(Node(id=NodeID(source=DataSource.HPO, local_id=hp_id),
+                         node_type=NodeType.PHENOTYPE, name=hp_id))
+    for i in range(12):
+        mondo = f"MONDO:{i:07d}"
+        kg.add_node(Node(id=NodeID(source=DataSource.MONDO, local_id=mondo),
+                         node_type=NodeType.DISEASE, name=mondo))
+        for offset in (0, 17, 33, 49):
+            kg.add_edge(Edge(
+                source_id=NodeID(
+                    source=DataSource.HPO, local_id=f"HP:{(i * 5 + offset) % 64:07d}"
+                ),
+                target_id=NodeID(source=DataSource.MONDO, local_id=mondo),
+                edge_type=EdgeType.PHENOTYPE_OF_DISEASE,
+            ))
+    return kg
+
+
+class TestGuaranteesThatNeedAWideUniverse:
+    """The three properties a two-disease fixture cannot distinguish."""
+
+    def test_coverage_gives_every_allocated_disease_exactly_one_sample(self, wide_kg):
+        """At ``count == len(partition)`` the coverage pass makes this exact.
+
+        Replacement sampling would hit every disease of a 10-disease partition in
+        10 draws with probability 10!/10^10, about 0.036%. The assertion is
+        deterministic under coverage-first and effectively impossible without it.
+        """
+        eligible = build_eligible_disease_profiles(wide_kg, 2)
+        allocation = allocate_diseases(eligible, 0.2, seed=42)
+        train, val, _ = generate_training_samples(
+            wide_kg, allocation, num_train=len(allocation.train),
+            num_val=len(allocation.val), min_phenotypes=2,
+        )
+        assert len(allocation.train) >= 8, "the fixture must be wide enough to matter"
+        assert sorted(s["disease_id"] for s in train) == sorted(allocation.train_ids)
+        assert sorted(s["disease_id"] for s in val) == sorted(allocation.val_ids)
+
+    def test_profile_lists_are_sorted_at_realistic_identifier_magnitudes(self, wide_kg):
+        """``list(set(...))`` is sorted for tiny ints and is not for these."""
+        profiles = build_eligible_disease_profiles(wide_kg, 2)
+        # The fixture must actually exercise the failure: without sorting, most
+        # of these profiles come out of their set in a non-ascending order.
+        unsorted_without_the_fix = sum(
+            1 for _, p in profiles if list(set(p["phenotype_ids"])) != sorted(p["phenotype_ids"])
+        )
+        assert unsorted_without_the_fix >= 8, (
+            "the fixture no longer distinguishes sorted from set order"
+        )
+        for _, profile in profiles:
+            assert profile["phenotype_ids"] == sorted(profile["phenotype_ids"])
+
+
+class TestRandomStreams:
+    """The derivation contract, tested where it lives rather than through effects."""
+
+    def test_named_streams_are_independent(self):
+        one = derive_stream(42, "train").random()
+        two = derive_stream(42, "val").random()
+        three = derive_stream(42, "allocation").random()
+        assert len({one, two, three}) == 3
+
+    def test_the_same_name_and_seed_reproduce(self):
+        assert derive_stream(42, "train").random() == derive_stream(42, "train").random()
+
+    def test_a_different_root_seed_moves_every_stream(self):
+        for name in ("allocation", "train", "val"):
+            assert derive_stream(1, name).random() != derive_stream(2, name).random()
+
+    def test_the_separator_cannot_be_smuggled_into_a_stream_name(self):
+        """``f"{seed}|{name}"`` is only unambiguous if names carry no separator."""
+        with pytest.raises(ValueError, match="must not contain"):
+            derive_stream(42, "train|val")

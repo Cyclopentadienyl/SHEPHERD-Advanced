@@ -18,13 +18,27 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from src.kg.disease_allocation import (
+    DiseaseAllocation,
+    derive_stream,
+    disease_set_digest,
+)
 from src.kg.graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
+
+#: Bumped when generation changes in a way that makes two cohorts from the same
+#: allocation, budgets and seed differ. Recorded in the split manifest: the
+#: coverage-first pass changes the sample distribution relative to pure
+#: replacement sampling, and a reader comparing two workspaces has to be able to
+#: see that they were produced under different rules.
+GENERATION_ALGORITHM = "coverage-first-then-replacement"
+GENERATION_ALGORITHM_VERSION = 1
+
+SPLIT_MANIFEST_SCHEMA_VERSION = 1
 
 
 def retained_phenotype_count(
@@ -52,81 +66,184 @@ def retained_phenotype_count(
 
 def generate_training_samples(
     kg: KnowledgeGraph,
+    allocation: DiseaseAllocation,
     num_train: int = 5000,
     num_val: int = 1000,
     min_phenotypes: int = 2,
     max_phenotypes: int = 15,
     phenotype_drop_rate: float = 0.3,
-    seed: int = 42,
     output_dir: Optional[Path] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Generate training and validation samples from a KnowledgeGraph.
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """Generate simulated patients from a **disease allocation**.
 
-    For each sample:
-      1. Pick a random disease that has at least `min_phenotypes` phenotypes
-      2. Randomly drop some phenotypes (simulating incomplete observation)
-      3. Record the disease index as ground truth
-      4. Optionally collect associated genes
+    **The allocation is supplied, not decided here** (§6.2). Each partition is
+    generated separately from its own diseases and its own random stream, so the
+    two cohorts are disease-disjoint by construction rather than by luck. The
+    superseded version drew one pooled set and sliced it by index, which splits
+    patients and leaves every multi-sample disease on both sides.
+
+    ``kg`` is still taken because the manifest records the graph the allocation
+    was cut from; the samples themselves come from the allocation's profiles.
 
     Args:
-        kg: KnowledgeGraph instance with nodes and edges loaded.
-        num_train: Number of training samples.
-        num_val: Number of validation samples.
-        min_phenotypes: Minimum phenotypes a disease must have to be eligible.
-        max_phenotypes: Maximum phenotypes to include per sample.
-        phenotype_drop_rate: Fraction of phenotypes to randomly drop per sample.
-        seed: Random seed for reproducibility.
-        output_dir: If provided, save train_samples.json and val_samples.json.
+        kg: the KnowledgeGraph the allocation was built from.
+        allocation: from ``allocate_diseases`` or ``train_only_allocation``.
+        num_train: training sample budget. Must reach every allocated training
+            disease — see ``_generate_partition``.
+        num_val: validation sample budget. ``0`` means no validation cohort, and
+            then the allocation must have no validation partition either.
+        min_phenotypes / max_phenotypes / phenotype_drop_rate: generation config.
+        output_dir: when given, writes ``train_samples.json``,
+            ``val_samples.json`` and ``split_manifest.json``.
 
     Returns:
-        (train_samples, val_samples) as lists of dicts.
+        ``(train_samples, val_samples, manifest)``.
     """
-    rng = random.Random(seed)
-
-    eligible_diseases = build_eligible_disease_profiles(kg, min_phenotypes)
-
-    if not eligible_diseases:
-        logger.warning(
-            "No diseases with enough phenotypes found. "
-            f"Need >= {min_phenotypes} phenotypes per disease."
+    if num_train < 0 or num_val < 0:
+        raise ValueError(f"sample budgets must be >= 0, got {num_train} and {num_val}")
+    if num_val == 0 and allocation.val:
+        raise ValueError(
+            f"num_val is 0 but the allocation withholds {len(allocation.val)} "
+            "diseases; use train_only_allocation, or ask for validation samples"
         )
-        return [], []
+    if num_val > 0 and not allocation.val:
+        raise ValueError(
+            f"num_val is {num_val} but the allocation has no validation partition"
+        )
 
-    logger.info(
-        f"Found {len(eligible_diseases)} eligible diseases "
-        f"(with >= {min_phenotypes} phenotypes)"
-    )
-
-    total = num_train + num_val
-    samples = _generate_samples(
-        eligible_diseases=eligible_diseases,
-        total=total,
+    config = dict(
         min_phenotypes=min_phenotypes,
         max_phenotypes=max_phenotypes,
         phenotype_drop_rate=phenotype_drop_rate,
-        rng=rng,
     )
 
-    rng.shuffle(samples)
-    train_samples = samples[:num_train]
-    val_samples = samples[num_train:]
+    train_samples = _generate_partition(
+        allocation.train, num_train, "train", allocation.seed, **config
+    )
+    val_samples = _generate_partition(
+        allocation.val, num_val, "val", allocation.seed, **config
+    )
 
     logger.info(
-        f"Generated {len(train_samples)} train, {len(val_samples)} val samples"
+        "Generated %d train and %d val samples", len(train_samples), len(val_samples)
+    )
+
+    manifest = build_split_manifest(
+        allocation=allocation,
+        train_samples=train_samples,
+        val_samples=val_samples,
+        config=config,
+        num_train=num_train,
+        num_val=num_val,
     )
 
     if output_dir is not None:
         output_dir = Path(output_dir)
+        refuse_if_checkpoints_exist(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+        for name, payload in (
+            ("train_samples.json", train_samples),
+            ("val_samples.json", val_samples),
+            ("split_manifest.json", manifest),
+        ):
+            with open(output_dir / name, "w") as handle:
+                json.dump(payload, handle, indent=2 if name.endswith("manifest.json") else None,
+                          sort_keys=name.endswith("manifest.json"))
+        logger.info("Samples and split manifest saved to %s", output_dir)
 
-        with open(output_dir / "train_samples.json", "w") as f:
-            json.dump(train_samples, f)
-        with open(output_dir / "val_samples.json", "w") as f:
-            json.dump(val_samples, f)
-        logger.info(f"Samples saved to {output_dir}")
+    return train_samples, val_samples, manifest
 
-    return train_samples, val_samples
+
+def refuse_if_checkpoints_exist(workspace: Path) -> None:
+    """Refuse to regenerate samples where trained checkpoints already live.
+
+    **A split regime is not a label, and this makes that an enforced fact rather
+    than a policy.** Checkpoints trained on a sample-level split carry a
+    ``val_mrr`` measuring recognition of new phenotype subsets of diseases they
+    have labelled examples of. Checkpoints trained on a disease-disjoint split
+    carry a ``val_mrr`` measuring generalisation to diseases they have none for.
+    Two different quantities under one name.
+
+    They meet in ``src/utils/checkpoint_paths.py``, whose selector reads the raw
+    ranking metric out of each checkpoint's own logs and has no way to tell the
+    regimes apart. Regenerating samples in place would leave both kinds in one
+    directory for it to compare.
+
+    There is no override flag, and none is wanted: a fresh workspace is cheap.
+    The graph artifacts can simply be copied, which is better than rebuilding
+    them — an identical ``kg.json`` digest proves both workspaces were cut from
+    the same graph.
+    """
+    checkpoints = workspace / "checkpoints"
+    if not checkpoints.is_dir():
+        return
+    existing = sorted(path.name for path in checkpoints.iterdir())
+    if not existing:
+        return
+    raise FileExistsError(
+        f"{workspace} already holds trained checkpoints ({', '.join(existing[:3])}"
+        f"{'...' if len(existing) > 3 else ''}). Regenerating samples here would "
+        "put two split regimes in one checkpoint directory, where the ranking-"
+        "metric selector cannot tell them apart. Generate into a fresh workspace "
+        "and copy the graph artifacts across."
+    )
+
+
+def build_split_manifest(
+    *,
+    allocation: DiseaseAllocation,
+    train_samples: Sequence[Dict[str, Any]],
+    val_samples: Sequence[Dict[str, Any]],
+    config: Dict[str, Any],
+    num_train: int,
+    num_val: int,
+) -> Dict[str, Any]:
+    """What the sample digests cannot say: how this workspace was cut.
+
+    Two byte-different sample files could have been cut the same way or
+    differently, and their digests cannot tell them apart. The manifest can.
+
+    **The realised sets are derived from the emitted records, never copied from
+    the allocation.** A realised field populated from allocation metadata would
+    restate the allocation rather than evidence it, and the coverage assertion
+    below would be checking a value against itself.
+    """
+    realised_train = {int(sample["disease_id"]) for sample in train_samples}
+    realised_val = {int(sample["disease_id"]) for sample in val_samples}
+
+    if realised_train != set(allocation.train_ids):
+        raise AssertionError(
+            f"training coverage broken: {len(set(allocation.train_ids) - realised_train)} "
+            "allocated diseases received no sample"
+        )
+    if realised_val != set(allocation.val_ids):
+        raise AssertionError(
+            f"validation coverage broken: {len(set(allocation.val_ids) - realised_val)} "
+            "allocated diseases received no sample"
+        )
+
+    manifest = {
+        "schema_version": SPLIT_MANIFEST_SCHEMA_VERSION,
+        "generation": {
+            "algorithm": GENERATION_ALGORITHM,
+            "algorithm_version": GENERATION_ALGORITHM_VERSION,
+            "num_train": num_train,
+            "num_val": num_val,
+            **config,
+        },
+        "allocation": allocation.provenance(),
+        "realised": {
+            "train_diseases": len(realised_train),
+            "val_diseases": len(realised_val),
+            "train_digest": disease_set_digest(sorted(realised_train)),
+            "val_digest": disease_set_digest(sorted(realised_val)),
+            "derived_from": "the emitted sample records, not the allocation",
+        },
+        "disjoint": not (realised_train & realised_val),
+    }
+    if not manifest["disjoint"]:  # pragma: no cover - impossible from one allocation
+        raise AssertionError("train and validation partitions overlap at the disease level")
+    return manifest
 
 
 def build_eligible_disease_profiles(
@@ -181,10 +298,6 @@ def _build_disease_profiles(
     for d_idx in disease_mapping.values():
         profiles[d_idx] = {"phenotype_ids": set(), "gene_ids": set()}
 
-    # Reverse lookups: node_id_str -> idx
-    disease_strs = {v: k for k, v in disease_mapping.items()}
-    gene_strs = {v: k for k, v in gene_mapping.items()}
-
     # Two-pass edge traversal:
     # Pass 1: collect direct edges (phenotype-disease, gene-disease)
     gene_phenotype_edges: List[Tuple[int, int]] = []
@@ -224,45 +337,80 @@ def _build_disease_profiles(
 
     return {
         d_idx: {
-            "phenotype_ids": list(prof["phenotype_ids"]),
-            "gene_ids": list(prof["gene_ids"]),
+            # **Sorted, so sampling cannot depend on set iteration order.** For
+            # the integer ids used today CPython's order is already stable across
+            # processes, so this is canonicalisation and defence in depth rather
+            # than a live bug fix: it makes order-independence a structural fact
+            # instead of an implementation detail, keeps serialised profiles
+            # byte-stable, and survives a future move to string identifiers.
+            "phenotype_ids": sorted(prof["phenotype_ids"]),
+            "gene_ids": sorted(prof["gene_ids"]),
         }
         for d_idx, prof in profiles.items()
     }
 
 
-def _generate_samples(
-    eligible_diseases: List[Tuple[int, Dict[str, Any]]],
-    total: int,
+def _generate_partition(
+    diseases: Sequence[Tuple[int, Dict[str, Any]]],
+    count: int,
+    id_prefix: str,
+    seed: int,
+    *,
     min_phenotypes: int,
     max_phenotypes: int,
     phenotype_drop_rate: float,
-    rng: random.Random,
 ) -> List[Dict[str, Any]]:
-    """Generate simulated patient samples."""
-    samples = []
+    """One cohort, from one partition, with coverage made true by construction.
 
-    for i in range(total):
-        disease_idx, profile = rng.choice(eligible_diseases)
+    **A budget alone does not guarantee coverage.** Drawing ``count`` diseases
+    with replacement can miss one at any budget, so every allocated disease is
+    emitted once first and only the remainder is drawn. Refusing a budget smaller
+    than the partition is the other half: without it the guarantee is unachievable
+    rather than merely unmet.
+
+    **Each partition gets its own patient-id namespace.** A shared
+    ``sim_patient_%06d`` counter restarts per call, so two partitions generated
+    separately would both begin at zero and collide.
+
+    The order is shuffled before ids are assigned, so file order carries no
+    signal about which pass produced a record.
+    """
+    if not diseases:
+        if count:
+            raise ValueError(
+                f"cannot generate {count} {id_prefix} samples from no diseases"
+            )
+        return []
+    # A budget of zero against a non-empty partition falls through to the coverage
+    # check below and is refused there. An early return on ``count == 0`` used to
+    # skip it, so a partition with diseases and no budget produced nothing while
+    # the run still looked successful.
+    if count < len(diseases):
+        raise ValueError(
+            f"{id_prefix} budget of {count} cannot cover {len(diseases)} allocated "
+            "diseases; every allocated disease must receive at least one sample"
+        )
+
+    rng = derive_stream(seed, id_prefix)
+    picks = list(diseases) + [
+        rng.choice(diseases) for _ in range(count - len(diseases))
+    ]
+    rng.shuffle(picks)
+
+    samples: List[Dict[str, Any]] = []
+    for index, (disease_idx, profile) in enumerate(picks):
         all_phenos = profile["phenotype_ids"]
-
-        # Randomly drop phenotypes. The count comes from the shared rule so the
-        # feasibility audit's capacity bands cannot describe a different generator.
         n_keep = retained_phenotype_count(
             len(all_phenos), min_phenotypes, max_phenotypes, phenotype_drop_rate
         )
-
-        selected_phenos = rng.sample(all_phenos, n_keep)
-
         sample: Dict[str, Any] = {
-            "patient_id": f"sim_patient_{i:06d}",
-            "phenotype_ids": selected_phenos,
+            "patient_id": f"sim_{id_prefix}_{index:06d}",
+            "phenotype_ids": rng.sample(all_phenos, n_keep),
             "disease_id": disease_idx,
         }
-
         if profile["gene_ids"]:
             sample["gene_ids"] = profile["gene_ids"]
-
         samples.append(sample)
-
     return samples
+
+

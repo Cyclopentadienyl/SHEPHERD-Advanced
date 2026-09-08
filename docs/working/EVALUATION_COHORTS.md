@@ -9,6 +9,13 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **18** — §6.2 is implemented. Allocation is a separate step
+  (`src/kg/disease_allocation.py`), generation consumes it, and the two cohorts are
+  disease-disjoint by construction. §6.8's audit settled two questions in the process, so
+  **stratified allocation is not built** — a uniform draw's worst zero-representation risk across
+  four stratifications was 2.9% at f = 0.05 and 0.0013% at f = 0.15 — and the coverage contract
+  stays as §6.2 describes rather than moving to a fixed samples-per-disease, which the measured
+  budgets cannot afford at the upstream value of 20.
 - **17** — the report schema is **v2**, defined as the nullable empty-band contract; v1 was not
   redefined in place because a v1 artifact already existed and had been relied on. Two wordings
   narrowed: a matching band structure makes reports *structurally alignable*, not scientifically
