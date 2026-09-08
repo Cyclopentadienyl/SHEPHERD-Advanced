@@ -200,6 +200,40 @@ def generate_training_samples(
     return train_samples, val_samples, manifest
 
 
+def validate_sample_budgets(num_train: Any, num_val: Any) -> None:
+    """The sample budgets, checked against their whole domain — the one copy.
+
+    **Phase one of a two-phase preflight, and the reason it is here rather than
+    in the build script.** Whether a budget is a usable number is knowable from
+    the budget alone, so it is knowable before an ontology is read; whether it is
+    *large enough* needs the allocation, so it cannot be. Splitting the check on
+    that line is what lets the cheap half run first.
+
+    A second copy in the script would be the failure this exists to prevent. The
+    build path used to check only "not ``None``" and "not smaller than the
+    partition", and ``50000.0`` and ``True`` slip through both: a float is never
+    less than a disease count, and ``True`` covers a one-disease partition. The
+    graph was then written and the generator refused afterwards — the half-built
+    workspace the preflight is for. One validator called from both places cannot
+    drift into that shape again.
+
+    ``None`` is refused here rather than by a separate "explicit budgets" check,
+    because a missing budget and a nonsensical one are the same event to every
+    caller: no usable number was supplied.
+    """
+    for name, value in (("num_train", num_train), ("num_val", num_val)):
+        if value is None:
+            raise ValueError(
+                f"{name} is required and has no default; every allocated disease "
+                "must receive at least one sample, so any fixed default would "
+                "fail on a real disease universe"
+            )
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer, got {value!r}")
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0, got {value}")
+
+
 def _validate_generation_inputs(
     num_train: Any,
     num_val: Any,
@@ -214,11 +248,7 @@ def _validate_generation_inputs(
     ``1`` while a non-finite drop rate would surface as an obscure failure deep
     inside sampling.
     """
-    for name, value in (("num_train", num_train), ("num_val", num_val)):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{name} must be an integer, got {value!r}")
-        if value < 0:
-            raise ValueError(f"{name} must be >= 0, got {value}")
+    validate_sample_budgets(num_train, num_val)
     for name, value, minimum in (
         ("min_phenotypes", min_phenotypes, 1),
         ("max_phenotypes", max_phenotypes, min_phenotypes),

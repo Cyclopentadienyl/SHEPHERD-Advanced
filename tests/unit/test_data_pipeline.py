@@ -1013,37 +1013,96 @@ def test_a_workspace_with_a_split_manifest_records_it_as_a_training_input(tmp_di
     assert roles["split_manifest"] == tmp_dir / "split_manifest.json"
 
 
-@pytest.mark.parametrize("num_train,num_val", [(None, None), (100, None), (None, 20)])
-def test_sample_budgets_must_be_stated_explicitly(demo_kg, num_train, num_val):
-    """The former 5,000 / 1,000 defaults could not satisfy full coverage.
+class TestSharedBudgetDomain:
+    """One validator, called from both entry points.
 
-    A default that always fails is worse than none, and it would have failed
-    only after the graph was already built. The refusal names the workspace's
-    actual minimums so the operator does not have to derive them.
+    The two-phase preflight is only sound if its cheap half knows the *whole*
+    domain of a budget. The build path previously knew two facts — not ``None``,
+    not smaller than the partition — and a large float satisfies both, so the
+    graph was written before the generator refused it.
     """
-    import scripts.build_knowledge_graph as build
 
-    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
-    with pytest.raises(SystemExit, match="are required with --generate-samples"):
-        build.require_explicit_budgets(num_train, num_val, allocation, 0.15)
+    @pytest.mark.parametrize(
+        "num_train,num_val,message",
+        [
+            (None, 5, "num_train is required"),
+            (10, None, "num_val is required"),
+            (50000.0, 5, "num_train must be an integer"),
+            (10, 5.0, "num_val must be an integer"),
+            (True, 5, "num_train must be an integer"),
+            (10, True, "num_val must be an integer"),
+            (-1, 5, "num_train must be >= 0"),
+            (10, -1, "num_val must be >= 0"),
+        ],
+    )
+    def test_the_library_refuses_every_unusable_budget(self, num_train, num_val, message):
+        from src.kg.sample_generator import validate_sample_budgets
 
+        with pytest.raises(ValueError, match=message):
+            validate_sample_budgets(num_train, num_val)
 
-def test_stated_budgets_are_accepted(demo_kg):
-    import scripts.build_knowledge_graph as build
+    def test_usable_budgets_pass(self):
+        from src.kg.sample_generator import validate_sample_budgets
 
-    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
-    build.require_explicit_budgets(10, 5, allocation, 0.15)
+        validate_sample_budgets(0, 0)
+        validate_sample_budgets(10, 5)
 
+    @pytest.mark.parametrize(
+        "num_train,num_val",
+        [(None, 5), (10, None), (50000.0, 5), (10, 5.0), (True, 5), (10, True),
+         (-1, 5), (10, -1)],
+    )
+    def test_the_script_refuses_the_same_set(self, num_train, num_val):
+        """Phase one delegates rather than restating, so the sets cannot drift.
 
-def test_the_refusal_names_the_actual_minimums(demo_kg):
-    import scripts.build_knowledge_graph as build
+        Parametrised identically to the library case on purpose: were the script
+        to grow its own copy of the rules, one of these pairs would diverge.
+        """
+        import scripts.build_knowledge_graph as build
 
-    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
-    with pytest.raises(SystemExit) as excinfo:
-        build.require_explicit_budgets(None, None, allocation, 0.15)
-    message = str(excinfo.value)
-    assert f"{len(allocation.train)} training" in message
-    assert f"{len(allocation.val)} validation" in message
+        with pytest.raises(SystemExit, match="must both be supplied with --generate-samples"):
+            build.require_usable_budgets(num_train, num_val)
+
+    def test_the_script_accepts_what_the_library_accepts(self):
+        import scripts.build_knowledge_graph as build
+
+        build.require_usable_budgets(0, 0)
+        build.require_usable_budgets(10, 5)
+
+    def test_both_entry_points_route_through_the_one_validator(
+        self, monkeypatch, demo_kg
+    ):
+        """Not "both refuse the same inputs" — both run the *same code*.
+
+        Two independent copies would agree on today's rules and pass the
+        parametrised pairs above; they would diverge the first time one is
+        extended. Replacing the single definition and watching both paths change
+        behaviour is what distinguishes sharing from coincidence.
+        """
+        import scripts.build_knowledge_graph as build
+        import src.kg.sample_generator as generator
+
+        class _Sentinel(Exception):
+            pass
+
+        seen = []
+
+        def _refuse(num_train, num_val):
+            seen.append((num_train, num_val))
+            raise _Sentinel("replaced")
+
+        monkeypatch.setattr(generator, "validate_sample_budgets", _refuse)
+
+        allocation = allocate_diseases(
+            build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42
+        )
+        with pytest.raises(_Sentinel):
+            generator.generate_training_samples(
+                demo_kg, allocation, num_train=4, num_val=2
+            )
+        with pytest.raises(_Sentinel):
+            build.require_usable_budgets(7, 3)
+        assert seen == [(4, 2), (7, 3)]
 
 
 class TestBudgetPreflight:
@@ -1157,12 +1216,27 @@ class TestBuildPathOrdering:
 
     @pytest.mark.parametrize(
         "num_train,num_val,expected",
-        [(None, None, "are required"), (1, 1, "cannot cover")],
-        ids=["missing", "insufficient"],
+        [
+            (None, None, "must both be supplied"),
+            (50000.0, 5, "num_train must be an integer"),
+            (5, 50000.0, "num_val must be an integer"),
+            (True, 5, "num_train must be an integer"),
+            (5, True, "num_val must be an integer"),
+            (-1, 5, "num_train must be >= 0"),
+            (1, 1, "cannot cover"),
+        ],
+        ids=["missing", "float-train", "float-val", "bool-train", "bool-val",
+             "negative", "insufficient"],
     )
     def test_a_budget_refusal_leaves_the_workspace_untouched(
         self, monkeypatch, tmp_dir, wide_kg, num_train, num_val, expected
     ):
+        """A large float and a ``True`` used to reach the generator.
+
+        Both cleared the old build-path checks — a float is never less than a
+        disease count, and ``True`` covers a one-disease partition — so kg.json
+        and the graph tensors were written and only then was the run refused.
+        """
         build = self._stub_build_stages(monkeypatch, wide_kg)
         self._satisfy_input_validation(tmp_dir)
         before = {"kg.json": b'{"pre-existing": true}'}
@@ -1180,6 +1254,52 @@ class TestBuildPathOrdering:
         for written in ("node_features.pt", "edge_indices.pt", "num_nodes.json",
                         "train_samples.json", "split_manifest.json"):
             assert not (tmp_dir / written).exists(), f"{written} should not exist"
+
+    def test_phase_one_refuses_before_anything_is_read(self, monkeypatch, tmp_dir):
+        """The cheap half must precede the expensive stages, not merely precede
+        the writes.
+
+        Ordering is the whole value of splitting the preflight: a budget's own
+        domain needs no ontology, so an operator who mistypes one should not pay
+        for a MONDO load, an HPO load, two annotation parses and a KG build first.
+        The stubs here refuse to be constructed, so any of those stages running
+        is a failure rather than a slow success.
+        """
+        import scripts.build_knowledge_graph as build
+
+        class _MustNotRun:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError(
+                    "an expensive build stage ran before the budgets were checked"
+                )
+
+        for name in ("OntologyLoader", "HPOAnnotationParser", "KnowledgeGraphBuilder"):
+            monkeypatch.setattr(build, name, _MustNotRun)
+        self._satisfy_input_validation(tmp_dir)
+
+        with pytest.raises(SystemExit, match="must both be supplied"):
+            build.build_knowledge_graph(
+                external_dir=tmp_dir, workspace=tmp_dir, generate_samples=True,
+                num_train=None, num_val=None,
+            )
+        assert sorted(path.name for path in tmp_dir.iterdir()) == [
+            "genes_to_phenotype.txt", "phenotype.hpoa"
+        ]
+
+    def test_a_build_without_samples_needs_no_budgets(self, monkeypatch, tmp_dir, wide_kg):
+        """Phase one is gated on ``--generate-samples``, as the flags are.
+
+        Without it there is no allocation and no cohort, so requiring budgets
+        would refuse a legitimate graph-only build.
+        """
+        build = self._stub_build_stages(monkeypatch, wide_kg)
+        self._satisfy_input_validation(tmp_dir)
+
+        build.build_knowledge_graph(
+            external_dir=tmp_dir, workspace=tmp_dir, generate_samples=False,
+        )
+        assert (tmp_dir / "kg.json").exists()
+        assert not (tmp_dir / "split_manifest.json").exists()
 
     def test_a_sufficient_build_writes_a_manifest_bound_to_the_graph_it_wrote(
         self, monkeypatch, tmp_dir, wide_kg

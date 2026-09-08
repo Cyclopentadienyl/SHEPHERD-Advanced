@@ -53,43 +53,42 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def require_explicit_budgets(
-    num_train: Optional[int],
-    num_val: Optional[int],
-    allocation: Any,
-    val_disease_fraction: float,
-) -> None:
-    """No default sample budgets, and the message carries the real minimums.
+def require_usable_budgets(num_train: Optional[int], num_val: Optional[int]) -> None:
+    """Preflight phase one: are these budgets numbers at all?
 
-    **A default that cannot succeed is worse than no default.** The full-coverage
-    contract requires every allocated disease to receive at least one sample, and
-    the audited universe allocates roughly 8,990 training and 1,586 validation
-    diseases at f = 0.15 — so the former 5,000 / 1,000 could never work on a real
-    workspace, and would have failed only after the graph was already built.
+    Runs before an ontology is opened, because it needs nothing but the two
+    arguments. **A default that cannot succeed is worse than no default** — full
+    coverage requires one sample per allocated disease, and the audited universe
+    allocates roughly 8,990 training and 1,586 validation diseases at f = 0.15,
+    so the former 5,000 / 1,000 could never work on a real workspace.
 
-    Named rather than inlined so it can be tested. Inline it was unfalsifiable:
-    removing the check broke nothing.
+    The domain rules live in ``validate_sample_budgets``, shared with the
+    generator, so the entry point and the library cannot disagree about what a
+    budget is. This adds only what the library must not know: the flag names, and
+    the exit convention of a command-line tool.
     """
-    if num_train is not None and num_val is not None:
-        return
-    raise SystemExit(
-        "--num-train and --num-val are required with --generate-samples. This "
-        f"workspace allocates {len(allocation.train)} training and "
-        f"{len(allocation.val)} validation diseases at --val-disease-fraction "
-        f"{val_disease_fraction}, and every allocated disease must receive at "
-        "least one sample, so those are the minimums."
-    )
+    from src.kg.sample_generator import validate_sample_budgets
+
+    try:
+        validate_sample_budgets(num_train, num_val)
+    except ValueError as exc:
+        raise SystemExit(
+            f"{exc}. --num-train and --num-val must both be supplied with "
+            "--generate-samples, as non-negative integers; their minimums are "
+            "the allocated disease counts, which this build reports once the "
+            "graph exists. Nothing was read or written."
+        ) from exc
 
 
 def require_sufficient_budgets(
     num_train: int, num_val: int, allocation: Any
 ) -> None:
-    """Budgets must cover their partitions, checked before anything is written.
+    """Preflight phase two: are these budgets large enough?
 
-    ``_generate_partition`` refuses an under-sized budget too, but by then the
-    graph artifacts have been saved. Full coverage needs one sample per allocated
-    disease, and that requirement is knowable from the allocation alone — so it
-    is knowable before the workspace is touched.
+    Split from phase one because this is the half that *cannot* run early: the
+    partition sizes exist only once the graph has been built and cut. It still
+    runs before the first workspace write. ``_generate_partition`` refuses an
+    under-sized budget too, but by then the graph artifacts have been saved.
     """
     for budget, partition, flag in (
         (num_train, allocation.train, "--num-train"),
@@ -134,6 +133,14 @@ def build_knowledge_graph(
     from src.kg.sample_generator import refuse_if_checkpoints_exist
 
     refuse_if_checkpoints_exist(Path(workspace))
+
+    # **Phase one of the budget preflight, before anything is read.** A budget's
+    # own domain — supplied, integral, non-negative — needs no ontology, no
+    # parser and no graph, so refusing here costs the operator seconds instead of
+    # the minutes an ontology load and KG build take. Phase two, which needs the
+    # allocation, runs below.
+    if generate_samples:
+        require_usable_budgets(num_train, num_val)
 
     # --- Validate annotation files exist (fail fast before expensive ontology loading) ---
     required_files = {
@@ -208,11 +215,11 @@ def build_knowledge_graph(
     stats = kg.get_statistics()
 
     # **Everything that can refuse, refuses before the first workspace byte.**
-    # The allocation and both budget checks need only the in-memory graph, so
-    # they run here rather than after `kg.save_json`. The earlier ordering wrote
-    # the graph, then discovered the budgets were missing or too small — leaving
-    # a rebuilt graph beside stale samples, which is the same class of half-
-    # written workspace the checkpoint preflight exists to prevent.
+    # The allocation and phase two of the budget preflight need only the
+    # in-memory graph, so they run here rather than after `kg.save_json`. The
+    # earlier ordering wrote the graph, then discovered the budgets were too
+    # small — leaving a rebuilt graph beside stale samples, which is the same
+    # class of half-written workspace the checkpoint preflight exists to prevent.
     allocation = None
     if generate_samples:
         from src.kg import allocate_diseases, build_eligible_disease_profiles
@@ -223,9 +230,6 @@ def build_knowledge_graph(
         # this used to be, leaves every multi-sample disease on both sides.
         eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
         allocation = allocate_diseases(eligible, val_disease_fraction, seed=sample_seed)
-        require_explicit_budgets(
-            num_train, num_val, allocation, val_disease_fraction
-        )
         require_sufficient_budgets(num_train, num_val, allocation)
 
     # Save KG
