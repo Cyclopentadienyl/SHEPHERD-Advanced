@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
-from src.kg.artifacts import verify_graph_artifacts, verify_graph_source
+from src.kg.artifacts import verify_graph_source
 from src.core.types import (
     DataSource,
     DiagnosisCandidate,
@@ -235,7 +235,8 @@ class DiagnosisPipeline:
             data_dir: Path to processed data directory containing
                      node_features.pt, edge_indices.pt, num_nodes.json.
                      Alternative to graph_data for GNN inference.
-            kg_path: Where `kg` was loaded from. Optional, and checked when given:
+            kg_path: Where `kg` was loaded from. **Required whenever `data_dir`
+                     is used for GNN inference**, and checked:
                      `data_dir` proves a workspace is internally consistent, and
                      two consistent workspaces can still be crossed — one's
                      `kg.json` paired with the other's tensors, so embedding rows
@@ -368,10 +369,26 @@ class DiagnosisPipeline:
             # Only for the file-backed path. A caller supplying `graph_data`
             # directly makes no claim about a persisted workspace, so there is no
             # manifest for it to match and nothing to verify.
-            if self._kg_path is not None:
-                verify_graph_source(Path(self._kg_path), Path(data_dir))
-            else:
-                verify_graph_artifacts(Path(data_dir))
+            # **`kg_path` is required here, not optional.** Verifying only that
+            # `data_dir` is internally consistent leaves the `kg` object bound to
+            # nothing: a caller can still pair workspace B's graph with workspace
+            # A's tensors and get embeddings read through the wrong node
+            # identifiers. An optional check is no check for the caller who omits
+            # it, and that caller is the one this exists for.
+            #
+            # Nothing legitimate is lost. A caller who built its graph in memory
+            # never had a source file and belongs on the `graph_data` seam above,
+            # which makes no persisted-workspace claim; a caller who loaded one
+            # from disk knows where from and can say so.
+            if self._kg_path is None:
+                raise ValueError(
+                    "loading graph data from a workspace requires kg_path — where "
+                    "the `kg` object came from. Without it the graph object is "
+                    "bound to nothing, and this workspace's tensors could belong "
+                    "to a different graph entirely. Pass kg_path, or pass "
+                    "graph_data directly if the graph was not loaded from a file."
+                )
+            verify_graph_source(Path(self._kg_path), Path(data_dir))
             self._graph_data = self._load_graph_data(data_dir)
 
         if self._graph_data is None:

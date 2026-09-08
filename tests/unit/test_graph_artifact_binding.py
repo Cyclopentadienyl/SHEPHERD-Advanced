@@ -183,6 +183,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         with pytest.raises(ValueError, match="is not the node_features artifact"):
             pipeline.DiagnosisPipeline(
                 kg=KnowledgeGraph(), data_dir=str(root),
+                kg_path=str(root / "kg.json"),
                 checkpoint_path=str(root / "ckpt.pt"),
             )
 
@@ -197,10 +198,36 @@ class TestTheClinicalPathIsAGraphConsumer:
 
         pipeline.DiagnosisPipeline(
             kg=KnowledgeGraph(), data_dir=str(root),
+            kg_path=str(root / "kg.json"),
             checkpoint_path=str(root / "ckpt.pt"),
         )
 
         assert reached == ["_load_graph_data"]
+
+    def test_a_file_backed_pipeline_without_a_kg_path_is_refused(
+        self, monkeypatch, tmp_path
+    ):
+        """An optional check is no check for the caller who omits it, and that
+        caller is the one it exists for.
+
+        `verify_graph_artifacts` alone proves only that `data_dir` is consistent
+        with itself; the `kg` object stays bound to nothing, so workspace B's
+        graph can still be paired with workspace A's tensors. Nothing legitimate
+        is lost by requiring it: a graph built in memory belongs on the
+        `graph_data` seam, and a graph loaded from disk has a path to state.
+        """
+        reached: list = []
+        pipeline = self._pipeline_module(monkeypatch, reached)
+        root = _workspace(tmp_path / "ws")
+        (root / "ckpt.pt").write_bytes(b"weights")
+
+        with pytest.raises(ValueError, match="requires kg_path"):
+            pipeline.DiagnosisPipeline(
+                kg=KnowledgeGraph(), data_dir=str(root),
+                checkpoint_path=str(root / "ckpt.pt"),
+            )
+
+        assert reached == [], "graph loading was reached without a source binding"
 
     def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
         """A caller supplying the graph directly is not pointing at a persisted
@@ -359,6 +386,34 @@ class TestTheCompositionMustNotCrossWorkspaces:
         )
 
         assert reached == ["_load_graph_data"]
+
+    def test_a_late_initialization_failure_publishes_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        """A failure between two publications would leave a pipeline visible while
+        the caller reports that initialization failed. Everything is computed
+        first, then published together."""
+        import src.api.main as api
+
+        pipeline = TestTheClinicalPathIsAGraphConsumer._pipeline_module(
+            monkeypatch, []
+        )
+        a, _ = self._two_workspaces(tmp_path)
+        monkeypatch.setattr(api.app_state, "kg", None, raising=False)
+        monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline, "get_pipeline_config",
+            lambda self: (_ for _ in ()).throw(RuntimeError("late failure")),
+        )
+        monkeypatch.setenv("SHEPHERD_KG_PATH", str(a / "kg.json"))
+        monkeypatch.setenv("SHEPHERD_DATA_DIR", str(a))
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(a / "ckpt.pt"))
+
+        with pytest.raises(RuntimeError, match="late failure"):
+            api.initialize_pipeline()
+
+        assert api.app_state.pipeline is None, "a pipeline was published anyway"
+        assert api.app_state.kg is None
 
     def test_the_api_commits_no_state_before_the_composition_is_checked(
         self, monkeypatch, tmp_path

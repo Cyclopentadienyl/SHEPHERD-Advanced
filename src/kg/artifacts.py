@@ -79,6 +79,12 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
     types, counts, feature dimensions — so a same-shaped ``node_features.pt`` from
     another workspace shares it and passes.
 
+    **A bounded limitation, stated rather than engineered around.** The digest is
+    taken at one instant and the loader reads at another, so a file replaced
+    between the two is not detected. Closing that needs locking or a read-then-
+    hash of the same handle, and neither is built: the failure this exists to stop
+    is a workspace assembled wrongly, not one edited mid-run.
+
     Raises:
         ValueError: naming the artifact whose bytes are not the ones recorded.
     """

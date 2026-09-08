@@ -9,6 +9,12 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **27** — the composition check is required rather than offered. `kg_path` was optional, so the
+  crossing stayed reachable for any caller that omitted it — and `scripts/test_gnn_inference.py`
+  was exactly such a caller. It is now required for every file-backed use, and that script builds a
+  genuine bound workspace through the real pipeline instead of writing three loose tensors, which
+  makes it an end-to-end test rather than a fixture-shaped one (§6.1). The hash-then-load window is
+  documented as the bounded limitation it is; no locking is built for it.
 - **26** — the composition, not just the components. Two internally consistent workspaces could
   still be crossed at the API, whose `SHEPHERD_KG_PATH` and `SHEPHERD_DATA_DIR` are resolved
   independently — embeddings from one graph's tensors, node identifiers from another's. A caller
@@ -895,8 +901,10 @@ Two rules follow, and both are enforced rather than advised:
   knows where its graph object came from states it (`kg_path`), and `verify_graph_source` compares
   that file's digest with the one the workspace's manifest binds. **By digest, not by path**:
   requiring `kg_path` to *be* `data_dir/kg.json` would also close it and would break a deployment
-  that mounts the file elsewhere, and a path is not an identity in this project. A caller holding
-  only an in-memory graph cannot be checked and is not pretended to be.
+  that mounts the file elsewhere, and a path is not an identity in this project. **Required, not
+  optional**, for any file-backed use: an optional check is no check for the caller who omits it,
+  and that caller is the one it exists for. A caller holding only an in-memory graph belongs on the
+  `graph_data` seam, which makes no persisted-workspace claim and is checked for nothing.
 - **A knowable refusal precedes the side effects.** Both training and inference verify before they
   create anything: `train` before the run directories, `config.yaml` and the checkpoint directory;
   `DiagnosisPipeline` before the graph is loaded, a checkpoint is paired with it, embeddings are

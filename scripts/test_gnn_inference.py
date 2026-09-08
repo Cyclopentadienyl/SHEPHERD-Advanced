@@ -130,18 +130,54 @@ def build_test_kg() -> KnowledgeGraph:
     return kg
 
 
-def generate_graph_data(
-    kg: KnowledgeGraph,
-    hidden_dim: int = 64,
-    data_dir: Path = None,
-) -> dict:
-    """
-    Generate synthetic graph data files matching the KG structure.
+def build_workspace(kg: KnowledgeGraph, data_dir: Path, hidden_dim: int = 64) -> Path:
+    """Write a workspace the production pipeline will accept, and return kg.json.
 
-    Delegates to KnowledgeGraph.export_graph_data() which is the single
-    source of truth for graph data generation.
+    The same order `scripts/build_knowledge_graph.py` uses, for the same reason:
+    the writer serialises the graph, exports the tensors, digests what it just
+    wrote, and only then generates cohorts whose manifest binds those digests.
+    Nothing here hashes a file it did not write.
     """
-    return kg.export_graph_data(output_dir=data_dir, feature_dim=hidden_dim)
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.kg.disease_allocation import allocate_diseases
+    from src.kg.sample_generator import (
+        build_eligible_disease_profiles,
+        generate_training_samples,
+    )
+    from src.utils.fingerprint import file_sha256
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
+    kg.save_json(str(kg_path))
+    kg.export_graph_data(output_dir=data_dir, feature_dim=hidden_dim)
+
+    graph_digests = {
+        role: file_sha256(data_dir / filename)
+        for role, filename in GRAPH_ARTIFACTS.items()
+    }
+    eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
+    allocation = allocate_diseases(eligible, val_fraction=0.34, seed=20260818)
+    generate_training_samples(
+        kg=kg, allocation=allocation,
+        num_train=len(allocation.train), num_val=len(allocation.val),
+        output_dir=data_dir, graph_digests=graph_digests,
+    )
+    return kg_path
+
+
+def load_graph_data_for_training(data_dir: Path) -> dict:
+    """Read back what the export wrote, so training uses the workspace's bytes."""
+    import json as _json
+
+    x_dict = torch.load(data_dir / "node_features.pt", weights_only=False)
+    edge_index_dict = torch.load(data_dir / "edge_indices.pt", weights_only=False)
+    with open(data_dir / "num_nodes.json") as handle:
+        num_nodes_dict = _json.load(handle)
+    return {
+        "x_dict": x_dict,
+        "edge_index_dict": edge_index_dict,
+        "num_nodes_dict": num_nodes_dict,
+    }
 
 
 # =============================================================================
@@ -265,9 +301,17 @@ def test_gnn_inference():
         kg = build_test_kg()
         logger.info(f"  KG: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
-        # --- Step 2: Generate graph data ---
-        logger.info("\n[Step 2] Generating graph data...")
-        graph_data = generate_graph_data(kg, hidden_dim=hidden_dim, data_dir=data_dir)
+        # --- Step 2: Build a real workspace ---
+        #
+        # **Not just the tensors.** A file-backed pipeline now requires a
+        # workspace whose manifest binds its graph export, and requires the caller
+        # to say where the graph object came from — so an integration test that
+        # wrote three loose tensors was testing a shape production no longer
+        # accepts. Building the workspace through the real pipeline is what makes
+        # step 5 below an end-to-end test rather than a fixture-shaped one.
+        logger.info("\n[Step 2] Building a bound workspace...")
+        kg_path = build_workspace(kg, data_dir, hidden_dim=hidden_dim)
+        graph_data = load_graph_data_for_training(data_dir)
         logger.info(f"  Node types: {list(graph_data['x_dict'].keys())}")
         logger.info(f"  Edge types: {len(graph_data['edge_index_dict'])}")
 
@@ -315,6 +359,7 @@ def test_gnn_inference():
             kg=kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             device="cpu",
         )
 

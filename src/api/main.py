@@ -430,10 +430,12 @@ def initialize_pipeline(
             kg_path=str(kg_file),
             device=device,
         )
+        # **Everything computed, then published together.** A failure between
+        # the two publications would otherwise leave a pipeline visible in app
+        # state while this function reports that initialization failed.
+        config = pipeline.get_pipeline_config()
         app_state.kg = kg
         app_state.pipeline = pipeline
-
-        config = pipeline.get_pipeline_config()
         app_state.model_version = config.get("version", "unknown")
         logger.info(
             f"Pipeline initialized: scoring_mode={config.get('scoring_mode')}, "

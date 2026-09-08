@@ -331,7 +331,8 @@ def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, A
     unexamined. Whether the difference is a defect or variation the regime
     permits is a question for a person: `measurement_semantics_digest` records
     that a seed controls this harness's streams and not CUDA determinism, so
-    `deterministic_algorithms` and the cuDNN fields are what decide which it is.
+    `deterministic_algorithms` and the cuDNN fields inform that investigation
+    rather than settling it.
     """
     key = record_key(record)
     for existing in ledger["records"]:
