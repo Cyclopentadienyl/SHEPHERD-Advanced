@@ -13,7 +13,7 @@ Usage:
     python scripts/build_knowledge_graph.py \\
         --workspace data/workspaces/hpo_2026/ \\
         --external-dir data/external/ \\
-        --generate-samples --num-train 5000 --num-val 1000
+        --generate-samples --num-train 100000 --num-val 15000
 
     # Build KG only (no training samples)
     python scripts/build_knowledge_graph.py \\
@@ -35,6 +35,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any, Optional
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -51,13 +52,41 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def require_explicit_budgets(
+    num_train: Optional[int],
+    num_val: Optional[int],
+    allocation: Any,
+    val_disease_fraction: float,
+) -> None:
+    """No default sample budgets, and the message carries the real minimums.
+
+    **A default that cannot succeed is worse than no default.** The full-coverage
+    contract requires every allocated disease to receive at least one sample, and
+    the audited universe allocates roughly 8,990 training and 1,586 validation
+    diseases at f = 0.15 — so the former 5,000 / 1,000 could never work on a real
+    workspace, and would have failed only after the graph was already built.
+
+    Named rather than inlined so it can be tested. Inline it was unfalsifiable:
+    removing the check broke nothing.
+    """
+    if num_train is not None and num_val is not None:
+        return
+    raise SystemExit(
+        "--num-train and --num-val are required with --generate-samples. This "
+        f"workspace allocates {len(allocation.train)} training and "
+        f"{len(allocation.val)} validation diseases at --val-disease-fraction "
+        f"{val_disease_fraction}, and every allocated disease must receive at "
+        "least one sample, so those are the minimums."
+    )
+
+
 def build_knowledge_graph(
     external_dir: Path,
     workspace: Path,
     feature_dim: int = 128,
     generate_samples: bool = False,
-    num_train: int = 5000,
-    num_val: int = 1000,
+    num_train: Optional[int] = None,
+    num_val: Optional[int] = None,
     val_disease_fraction: float = 0.15,
     sample_seed: int = 42,
     ontology_cache_dir: Path | None = None,
@@ -73,6 +102,15 @@ def build_knowledge_graph(
     """
     workspace.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
+
+    # **Refuse before the first byte, not before the last.** The generator
+    # carries the same check, but by the time it runs kg.json and the graph
+    # tensors have already been overwritten — leaving old checkpoints paired with
+    # a new graph and only then refusing to regenerate samples. A workspace half
+    # rebuilt under trained checkpoints is worse than one not rebuilt at all.
+    from src.kg.sample_generator import refuse_if_checkpoints_exist
+
+    refuse_if_checkpoints_exist(Path(workspace))
 
     # --- Validate annotation files exist (fail fast before expensive ontology loading) ---
     required_files = {
@@ -169,6 +207,10 @@ def build_knowledge_graph(
         eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
         allocation = allocate_diseases(eligible, val_disease_fraction, seed=sample_seed)
 
+        require_explicit_budgets(
+            num_train, num_val, allocation, val_disease_fraction
+        )
+
         train_samples, val_samples, manifest = generate_training_samples(
             kg=kg,
             allocation=allocation,
@@ -248,10 +290,11 @@ def main():
         help="Generate training/validation samples from the KG",
     )
     parser.add_argument(
-        "--num-train",
-        type=int,
-        default=5000,
-        help="Number of training samples (default: 5000)",
+        "--num-train", type=int, default=None,
+        help="Training sample budget. Required with --generate-samples: it must "
+             "be at least the number of diseases allocated to training, and that "
+             "count depends on the workspace. There is no default, because any "
+             "fixed one would fail on a real disease universe.",
     )
     parser.add_argument(
         "--val-disease-fraction",
@@ -270,10 +313,10 @@ def main():
              "sample budget cannot move the disease cut.",
     )
     parser.add_argument(
-        "--num-val",
-        type=int,
-        default=1000,
-        help="Number of validation samples (default: 1000)",
+        "--num-val", type=int, default=None,
+        help="Validation sample budget. Required with --generate-samples, and at "
+             "least the number of diseases allocated to validation. No default, "
+             "for the same reason as --num-train.",
     )
     args = parser.parse_args()
 

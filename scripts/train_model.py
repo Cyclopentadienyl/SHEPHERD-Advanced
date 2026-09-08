@@ -517,6 +517,16 @@ def training_input_roles(
         roles["val_samples"] = data_dir / "val_samples.json"
     if resumed_from is not None:
         roles["resume_checkpoint"] = Path(resumed_from)
+
+    # **The manifest says how the workspace was cut, which the sample digests
+    # cannot.** Two byte-different sample files could have been split at the
+    # disease level or at the sample level, and nothing in their digests
+    # distinguishes those regimes. Recorded only when the file exists: a
+    # workspace generated before the allocation step has none, and it stays
+    # readable with the role simply absent rather than present-and-null.
+    split_manifest = data_dir / "split_manifest.json"
+    if split_manifest.is_file():
+        roles["split_manifest"] = split_manifest
     return roles
 
 

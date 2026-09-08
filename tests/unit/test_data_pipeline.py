@@ -18,9 +18,11 @@ from src.core.types import (
 )
 from src.kg.graph import KnowledgeGraph
 from src.kg.disease_allocation import (
+    DiseaseAllocation,
     allocate_diseases,
     derive_stream,
     train_only_allocation,
+    universe_digest,
 )
 from src.kg.sample_generator import (
     build_eligible_disease_profiles,
@@ -779,3 +781,226 @@ class TestRandomStreams:
         """``f"{seed}|{name}"`` is only unambiguous if names carry no separator."""
         with pytest.raises(ValueError, match="must not contain"):
             derive_stream(42, "train|val")
+
+
+class TestWorkspaceSafety:
+    """Refusal must happen before the first byte, not before the last."""
+
+    @staticmethod
+    def _prepopulate(workspace):
+        """A workspace as it would be after a real build plus training."""
+        (workspace / "checkpoints" / "hgt").mkdir(parents=True)
+        payload = {
+            "kg.json": b'{"original": "graph"}',
+            "node_features.pt": b"ORIGINAL-FEATURES",
+            "edge_indices.pt": b"ORIGINAL-EDGES",
+            "num_nodes.json": b'{"disease": 1}',
+            "train_samples.json": b'[{"original": true}]',
+            "val_samples.json": b'[{"original": true}]',
+            "checkpoints/hgt/model-01-0.5000.pt": b"ORIGINAL-WEIGHTS",
+        }
+        for name, data in payload.items():
+            (workspace / name).write_bytes(data)
+        return payload
+
+    def test_a_rebuild_refuses_before_touching_any_workspace_byte(self, tmp_dir):
+        """The defect: kg.json and the graph tensors were written first.
+
+        The generator's guard fired only just before the sample files, so a
+        rebuild overwrote the graph under trained checkpoints and *then* refused
+        — leaving old weights paired with a new graph, which is worse than either
+        rebuilding cleanly or not rebuilding at all.
+        """
+        import scripts.build_knowledge_graph as build
+
+        payload = self._prepopulate(tmp_dir)
+        with pytest.raises(FileExistsError, match="two split regimes"):
+            build.build_knowledge_graph(
+                external_dir=tmp_dir / "no_such_external_dir",
+                workspace=tmp_dir,
+            )
+        for name, original in payload.items():
+            assert (tmp_dir / name).read_bytes() == original, f"{name} was modified"
+
+    def test_the_preflight_precedes_input_validation(self, tmp_dir):
+        """Ordering matters: a missing-input error would mask the real problem.
+
+        With no annotation files present, the build would normally fail on input
+        validation. The checkpoint refusal must win, so the operator is told the
+        thing that determines what they should do next.
+        """
+        import scripts.build_knowledge_graph as build
+
+        self._prepopulate(tmp_dir)
+        with pytest.raises(FileExistsError):
+            build.build_knowledge_graph(
+                external_dir=tmp_dir / "no_such_external_dir",
+                workspace=tmp_dir,
+            )
+
+
+class TestAllocationBoundary:
+    """DiseaseAllocation is publicly constructible; immutability is not validity."""
+
+    @staticmethod
+    def _eligible(kg):
+        return build_eligible_disease_profiles(kg, 1)
+
+    def test_a_hand_built_overlapping_allocation_is_refused(self, demo_kg):
+        eligible = self._eligible(demo_kg)
+        overlapping = DiseaseAllocation(
+            train=tuple(eligible), val=tuple(eligible[:1]),
+            val_fraction_requested=0.5, seed=42,
+            universe_digest=universe_digest(eligible),
+        )
+        with pytest.raises(ValueError, match="appear in both partitions"):
+            generate_training_samples(
+                demo_kg, overlapping, num_train=10, num_val=5, min_phenotypes=1
+            )
+
+    def test_duplicate_disease_ids_within_a_partition_are_refused(self, demo_kg):
+        eligible = self._eligible(demo_kg)
+        duplicated = DiseaseAllocation(
+            train=tuple(eligible) + (eligible[0],), val=(),
+            val_fraction_requested=0.0, seed=42,
+            universe_digest=universe_digest(eligible),
+        )
+        with pytest.raises(ValueError, match="duplicate disease ids"):
+            generate_training_samples(
+                demo_kg, duplicated, num_train=10, num_val=0, min_phenotypes=1
+            )
+
+    def test_a_bool_disease_id_is_refused(self, demo_kg):
+        eligible = self._eligible(demo_kg)
+        bad = DiseaseAllocation(
+            train=((True, eligible[0][1]),), val=(),
+            val_fraction_requested=0.0, seed=42, universe_digest="unused",
+        )
+        with pytest.raises(ValueError, match="must be an integer"):
+            generate_training_samples(demo_kg, bad, num_train=5, num_val=0)
+
+    def test_an_allocation_from_a_different_graph_is_refused(self, demo_kg, wide_kg):
+        """Same disease indices, different phenotype content."""
+        foreign = allocate_diseases(self._eligible(wide_kg), 0.5, seed=42)
+        with pytest.raises(ValueError, match="different disease universe"):
+            generate_training_samples(
+                demo_kg, foreign, num_train=10, num_val=5, min_phenotypes=1
+            )
+
+    def test_modified_profile_content_is_refused(self, demo_kg):
+        """An id-only digest would not catch this; the content digest does."""
+        eligible = self._eligible(demo_kg)
+        allocation = allocate_diseases(eligible, 0.5, seed=42)
+        tampered = [(d, {**p, "phenotype_ids": p["phenotype_ids"][:1] + [999]})
+                    for d, p in allocation.train]
+        # Caught by self-consistency, which names the cause precisely: the
+        # contents no longer match the digest recorded when the cut was made.
+        with pytest.raises(ValueError, match="modified since it was cut"):
+            generate_training_samples(
+                demo_kg,
+                allocation._replace(train=tuple(tampered)),
+                num_train=10, num_val=5, min_phenotypes=1,
+            )
+
+    def test_an_under_eligible_profile_is_refused(self, wide_kg):
+        """Cut at one min_phenotypes, generated at a stricter one."""
+        allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        with pytest.raises(ValueError, match="below the min_phenotypes"):
+            generate_training_samples(
+                wide_kg, allocation, num_train=20, num_val=5, min_phenotypes=99
+            )
+
+
+class TestManifestBinding:
+    """The manifest must describe the bytes on disk, not an equivalent object."""
+
+    def test_the_manifest_digests_the_files_that_were_written(self, wide_kg, tmp_dir):
+        from src.utils.fingerprint import file_sha256
+
+        (tmp_dir / "kg.json").write_bytes(b'{"graph": "here"}')
+        allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        _, _, manifest = generate_training_samples(
+            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
+            output_dir=tmp_dir,
+        )
+        for role, filename in (
+            ("train_samples", "train_samples.json"),
+            ("val_samples", "val_samples.json"),
+            ("kg", "kg.json"),
+        ):
+            assert manifest["artifacts"][role] == file_sha256(tmp_dir / filename)
+
+    def test_tampering_with_a_sample_file_breaks_its_recorded_digest(
+        self, wide_kg, tmp_dir
+    ):
+        from src.utils.fingerprint import file_sha256
+
+        allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        _, _, manifest = generate_training_samples(
+            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
+            output_dir=tmp_dir,
+        )
+        (tmp_dir / "train_samples.json").write_bytes(b'[{"tampered": true}]')
+        assert file_sha256(tmp_dir / "train_samples.json") != manifest["artifacts"]["train_samples"]
+
+    def test_digests_are_null_when_nothing_was_written(self, wide_kg):
+        allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        _, _, manifest = generate_training_samples(
+            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2
+        )
+        assert manifest["artifacts"] == {
+            "train_samples": None, "val_samples": None, "kg": None
+        }
+
+    def test_the_universe_digest_reaches_the_manifest(self, wide_kg):
+        eligible = build_eligible_disease_profiles(wide_kg, 2)
+        allocation = allocate_diseases(eligible, 0.2, seed=42)
+        _, _, manifest = generate_training_samples(
+            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2
+        )
+        assert manifest["allocation"]["universe_digest"] == universe_digest(eligible)
+
+
+def test_a_workspace_with_a_split_manifest_records_it_as_a_training_input(tmp_dir):
+    """Otherwise a checkpoint cannot be tied to the cut it was trained under."""
+    import scripts.train_model as train_model
+
+    roles = train_model.training_input_roles(tmp_dir, with_validation=True)
+    assert "split_manifest" not in roles, "absent file must not become a role"
+
+    (tmp_dir / "split_manifest.json").write_text("{}")
+    roles = train_model.training_input_roles(tmp_dir, with_validation=True)
+    assert roles["split_manifest"] == tmp_dir / "split_manifest.json"
+
+
+@pytest.mark.parametrize("num_train,num_val", [(None, None), (100, None), (None, 20)])
+def test_sample_budgets_must_be_stated_explicitly(demo_kg, num_train, num_val):
+    """The former 5,000 / 1,000 defaults could not satisfy full coverage.
+
+    A default that always fails is worse than none, and it would have failed
+    only after the graph was already built. The refusal names the workspace's
+    actual minimums so the operator does not have to derive them.
+    """
+    import scripts.build_knowledge_graph as build
+
+    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
+    with pytest.raises(SystemExit, match="are required with --generate-samples"):
+        build.require_explicit_budgets(num_train, num_val, allocation, 0.15)
+
+
+def test_stated_budgets_are_accepted(demo_kg):
+    import scripts.build_knowledge_graph as build
+
+    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
+    build.require_explicit_budgets(10, 5, allocation, 0.15)
+
+
+def test_the_refusal_names_the_actual_minimums(demo_kg):
+    import scripts.build_knowledge_graph as build
+
+    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
+    with pytest.raises(SystemExit) as excinfo:
+        build.require_explicit_budgets(None, None, allocation, 0.15)
+    message = str(excinfo.value)
+    assert f"{len(allocation.train)} training" in message
+    assert f"{len(allocation.val)} validation" in message

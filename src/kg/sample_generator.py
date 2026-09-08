@@ -25,8 +25,12 @@ from src.kg.disease_allocation import (
     DiseaseAllocation,
     derive_stream,
     disease_set_digest,
+    require_eligible,
+    universe_digest,
+    validate_allocation,
 )
 from src.kg.graph import KnowledgeGraph
+from src.utils.fingerprint import file_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +71,8 @@ def retained_phenotype_count(
 def generate_training_samples(
     kg: KnowledgeGraph,
     allocation: DiseaseAllocation,
-    num_train: int = 5000,
-    num_val: int = 1000,
+    num_train: int,
+    num_val: int,
     min_phenotypes: int = 2,
     max_phenotypes: int = 15,
     phenotype_drop_rate: float = 0.3,
@@ -99,6 +103,24 @@ def generate_training_samples(
     Returns:
         ``(train_samples, val_samples, manifest)``.
     """
+    validate_allocation(allocation)
+    require_eligible(allocation, min_phenotypes)
+
+    # **The allocation must have been cut from the graph now being generated
+    # from.** ``kg`` was previously accepted and never read, so an allocation
+    # built from one knowledge graph could be generated against another: same
+    # disease indices, different phenotype content, and samples drawn from
+    # profiles the allocation never saw. Recomputing eligibility here and
+    # comparing content digests is what makes the docstring's claim true.
+    observed = universe_digest(build_eligible_disease_profiles(kg, min_phenotypes))
+    if observed != allocation.universe_digest:
+        raise ValueError(
+            "this allocation was cut from a different disease universe than the "
+            f"graph supplied ({allocation.universe_digest[:12]}... vs "
+            f"{observed[:12]}...). Re-allocate from this graph, or generate "
+            "against the graph the allocation was cut from."
+        )
+
     if num_train < 0 or num_val < 0:
         raise ValueError(f"sample budgets must be >= 0, got {num_train} and {num_val}")
     if num_val == 0 and allocation.val:
@@ -128,15 +150,13 @@ def generate_training_samples(
         "Generated %d train and %d val samples", len(train_samples), len(val_samples)
     )
 
-    manifest = build_split_manifest(
-        allocation=allocation,
-        train_samples=train_samples,
-        val_samples=val_samples,
-        config=config,
-        num_train=num_train,
-        num_val=num_val,
-    )
-
+    # **Write the sample files first, then digest the bytes that actually
+    # landed.** Hashing a separately reconstructed representation would record a
+    # digest of something no reader can obtain — the manifest has to describe the
+    # files on disk, not an equivalent-looking serialisation of the same objects.
+    artifacts: Dict[str, Optional[str]] = {
+        "train_samples": None, "val_samples": None, "kg": None,
+    }
     if output_dir is not None:
         output_dir = Path(output_dir)
         refuse_if_checkpoints_exist(output_dir)
@@ -144,11 +164,28 @@ def generate_training_samples(
         for name, payload in (
             ("train_samples.json", train_samples),
             ("val_samples.json", val_samples),
-            ("split_manifest.json", manifest),
         ):
             with open(output_dir / name, "w") as handle:
-                json.dump(payload, handle, indent=2 if name.endswith("manifest.json") else None,
-                          sort_keys=name.endswith("manifest.json"))
+                json.dump(payload, handle)
+        artifacts["train_samples"] = file_sha256(output_dir / "train_samples.json")
+        artifacts["val_samples"] = file_sha256(output_dir / "val_samples.json")
+        # The workspace's own graph, when it has one. `None` records that nothing
+        # was there to hash rather than that the graph is unknown.
+        artifacts["kg"] = file_sha256(output_dir / "kg.json")
+
+    manifest = build_split_manifest(
+        allocation=allocation,
+        train_samples=train_samples,
+        val_samples=val_samples,
+        config=config,
+        num_train=num_train,
+        num_val=num_val,
+        artifacts=artifacts,
+    )
+
+    if output_dir is not None:
+        with open(output_dir / "split_manifest.json", "w") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
         logger.info("Samples and split manifest saved to %s", output_dir)
 
     return train_samples, val_samples, manifest
@@ -197,6 +234,7 @@ def build_split_manifest(
     config: Dict[str, Any],
     num_train: int,
     num_val: int,
+    artifacts: Dict[str, Optional[str]],
 ) -> Dict[str, Any]:
     """What the sample digests cannot say: how this workspace was cut.
 
@@ -239,6 +277,7 @@ def build_split_manifest(
             "val_digest": disease_set_digest(sorted(realised_val)),
             "derived_from": "the emitted sample records, not the allocation",
         },
+        "artifacts": artifacts,
         "disjoint": not (realised_train & realised_val),
     }
     if not manifest["disjoint"]:  # pragma: no cover - impossible from one allocation

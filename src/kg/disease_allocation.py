@@ -15,12 +15,18 @@ training. A metric measured on such a split reports recognition of new phenotype
 subsets of diseases the model has labelled examples of — not generalisation to
 diseases it has none for.
 
-**Uniform only, deliberately.** The split feasibility audit measured the
-alternative's value: at every fraction of practical interest no stratum comes
-close to losing validation representation under a uniform draw — the worst case
-across four stratifications was 2.9% for a 69-disease band at f = 0.05, and
-0.0013% for the same band at f = 0.15. Stratified allocation is therefore not
-built. This module is where it would go.
+**Uniform only, for now.** The split feasibility audit
+(``scripts/audit_split_feasibility.py``) exists to price the alternative, and a
+pre-deployment run of it found no stratum close to losing validation
+representation under a uniform draw — the worst case across four stratifications
+was 2.9% for a 69-disease band at f = 0.05, and 0.0013% for the same band at
+f = 0.15.
+
+**Those figures are not yet backed by a committed evidence artifact.** They come
+from a run on a pre-deployment machine whose report was not retained, so the
+uniform-versus-stratified decision is provisional until the institutional
+artifact lands. Stratified allocation is not built, and this module is where it
+would go if that artifact overturns the reading.
 
 Module: src/kg/disease_allocation.py
 """
@@ -68,6 +74,27 @@ def derive_stream(seed: int, name: str) -> random.Random:
     return random.Random(f"{seed}|{name}")
 
 
+def universe_digest(profiles: Sequence["DiseaseProfile"]) -> str:
+    """SHA-256 over the eligible universe's **ids and their profile contents**.
+
+    An id-only digest binds an allocation to *which* diseases were cut, not to
+    *what they contained*. Two knowledge graphs can agree on every disease index
+    and disagree on every phenotype list, and generation would then draw samples
+    from profiles the allocation never saw. This digest is what lets generation
+    refuse that, by recomputing eligibility from the graph it was actually handed
+    and comparing.
+
+    Order-independent by construction: diseases sorted by id, and each profile's
+    lists sorted before joining.
+    """
+    parts = []
+    for disease_id, profile in sorted(profiles, key=lambda pair: pair[0]):
+        phenotypes = ",".join(str(int(p)) for p in sorted(profile["phenotype_ids"]))
+        genes = ",".join(str(int(g)) for g in sorted(profile["gene_ids"]))
+        parts.append(f"{int(disease_id)}:{phenotypes}:{genes}")
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
 def disease_set_digest(disease_ids: Sequence[int]) -> str:
     """SHA-256 of a disease set, order-independent.
 
@@ -95,6 +122,7 @@ class DiseaseAllocation(NamedTuple):
     val: Tuple[DiseaseProfile, ...]
     val_fraction_requested: float
     seed: int
+    universe_digest: str
 
     @property
     def train_ids(self) -> Tuple[int, ...]:
@@ -113,6 +141,7 @@ class DiseaseAllocation(NamedTuple):
             "stream_derivation": "random.Random(f'{seed}|{stream_name}')",
             "val_fraction_requested": self.val_fraction_requested,
             "eligible_diseases": len(self.train) + len(self.val),
+            "universe_digest": self.universe_digest,
             "allocated": {
                 "train_diseases": len(self.train),
                 "val_diseases": len(self.val),
@@ -136,6 +165,73 @@ def withheld_count(n_eligible: int, val_fraction: float) -> int:
             "partitions; at least 2 eligible diseases are required"
         )
     return min(max(math.floor(val_fraction * n_eligible + 0.5), 1), n_eligible - 1)
+
+
+def validate_allocation(allocation: DiseaseAllocation) -> DiseaseAllocation:
+    """Check a ``DiseaseAllocation`` that may not have come from this module.
+
+    **Immutability is not validity.** ``DiseaseAllocation`` is a public
+    ``NamedTuple``, so any caller can build one by hand — with duplicate disease
+    ids, or with the same id on both sides — and the "disjoint by construction"
+    claim would then be a claim about a code path that was not taken. The
+    checks run wherever an allocation is consumed, not only where one is built.
+
+    A duplicate id is the sharp case: the same disease appearing in both
+    partitions is exactly the defect this whole change removes, arriving through
+    the front door instead.
+    """
+    for partition, name in ((allocation.train, "train"), (allocation.val, "val")):
+        for disease_id, profile in partition:
+            if isinstance(disease_id, bool) or not isinstance(disease_id, int):
+                raise ValueError(
+                    f"{name} disease id must be an integer, got {disease_id!r}"
+                )
+            if not isinstance(profile, dict) or "phenotype_ids" not in profile:
+                raise ValueError(f"{name} profile for disease {disease_id} is malformed")
+
+    train_ids, val_ids = allocation.train_ids, allocation.val_ids
+    for ids, name in ((train_ids, "train"), (val_ids, "val")):
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"{name} partition contains duplicate disease ids")
+    overlap = set(train_ids) & set(val_ids)
+    if overlap:
+        raise ValueError(
+            f"{len(overlap)} disease(s) appear in both partitions; an allocation "
+            "must be disjoint"
+        )
+
+    # **Self-consistency: the partitions must still be what the digest says.**
+    # The recorded digest is compared against the graph elsewhere, but that only
+    # catches an allocation cut from a *different* universe. Tampering with the
+    # profiles *inside* an allocation leaves both the ids and the recorded digest
+    # untouched, and the graph comparison passes. Recomputing over the current
+    # contents is what closes that.
+    observed = universe_digest(tuple(allocation.train) + tuple(allocation.val))
+    if observed != allocation.universe_digest:
+        raise ValueError(
+            "allocation contents do not match its recorded universe digest "
+            f"({allocation.universe_digest[:12]}... vs {observed[:12]}...); it has "
+            "been modified since it was cut"
+        )
+    return allocation
+
+
+def require_eligible(allocation: DiseaseAllocation, min_phenotypes: int) -> None:
+    """Every allocated disease must satisfy the eligibility rule generation uses.
+
+    An allocation cut at one ``min_phenotypes`` and generated at a stricter one
+    would ask ``retained_phenotype_count`` for more phenotypes than a profile
+    holds. The rule is checked against the value generation is about to apply,
+    not against the one allocation happened to use.
+    """
+    for partition, name in ((allocation.train, "train"), (allocation.val, "val")):
+        for disease_id, profile in partition:
+            if len(profile["phenotype_ids"]) < min_phenotypes:
+                raise ValueError(
+                    f"{name} disease {disease_id} has "
+                    f"{len(profile['phenotype_ids'])} phenotypes, below the "
+                    f"min_phenotypes={min_phenotypes} generation will apply"
+                )
 
 
 def allocate_diseases(
@@ -181,9 +277,10 @@ def allocate_diseases(
         "realised %.4f)",
         len(train), len(val), val_fraction, len(val) / len(ordered),
     )
-    return DiseaseAllocation(
-        train=train, val=val, val_fraction_requested=float(val_fraction), seed=seed
-    )
+    return validate_allocation(DiseaseAllocation(
+        train=train, val=val, val_fraction_requested=float(val_fraction), seed=seed,
+        universe_digest=universe_digest(ordered),
+    ))
 
 
 def train_only_allocation(
@@ -197,6 +294,7 @@ def train_only_allocation(
     from a boundary value.
     """
     ordered = tuple(sorted(eligible, key=lambda pair: pair[0]))
-    return DiseaseAllocation(
-        train=ordered, val=(), val_fraction_requested=0.0, seed=seed
-    )
+    return validate_allocation(DiseaseAllocation(
+        train=ordered, val=(), val_fraction_requested=0.0, seed=seed,
+        universe_digest=universe_digest(ordered),
+    ))
