@@ -19,6 +19,7 @@ import pytest
 
 from src.evaluation.sidecar import (
     LEDGER_SCHEMA_VERSION,
+    write_ledger,
     find_checkpoint,
     ledger_digest,
     measurement_semantics_digest,
@@ -40,6 +41,16 @@ def _report(**overrides):
         "cohort_kind": "generated",
         "metric_schema_version": 1,
         "batch_size": 3,
+        "shuffle": False,
+        "num_workers": 4,
+        "python_seed": None,
+        "numpy_seed": None,
+        "torch_seed": None,
+        "torch_version": "2.5.0",
+        "cuda_version": "12.4",
+        "cudnn_benchmark": False,
+        "cudnn_deterministic": True,
+        "torch_compile_wrapped": None,
         "candidate_construction": "2-hop subgraph",
         "device": "cuda",
         "dtype": "float32",
@@ -143,6 +154,56 @@ def test_a_changed_graph_artifact_is_a_separate_measurement(tmp_path):
     ledger = append_record(empty_ledger(), build_record(_report(), None))
 
     assert len(append_record(ledger, build_record(other, None))["records"]) == 2
+
+
+def test_every_manifest_field_is_decided_one_way_or_the_other():
+    """The claim "this list holds everything that can move a metric" is only worth
+    making if it is checkable.
+
+    Five score-affecting fields were missing from the first version -- `shuffle`,
+    `num_workers` and the three seeds -- while the docstring claimed completeness.
+    A new field on `MeasurementManifest` now fails here until someone decides
+    which side it falls on, so omission has to be a decision rather than an
+    oversight.
+    """
+    from dataclasses import fields
+
+    from src.evaluation.measurement import MeasurementManifest
+    from src.evaluation.sidecar import NON_SEMANTIC_FIELDS, SEMANTIC_MANIFEST_FIELDS
+
+    declared = {f.name for f in fields(MeasurementManifest)}
+    semantic, excluded = set(SEMANTIC_MANIFEST_FIELDS), set(NON_SEMANTIC_FIELDS)
+
+    assert not declared - semantic - excluded, "undecided manifest field(s)"
+    assert not semantic & excluded, "a field cannot be both"
+    assert not (semantic | excluded) - declared, "names no manifest field has"
+    assert all(NON_SEMANTIC_FIELDS.values()), "every exclusion states its reason"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("num_workers", 8),
+        ("shuffle", True),
+        ("python_seed", 7),
+        ("numpy_seed", 7),
+        ("torch_seed", 7),
+        ("torch_version", "2.6.0"),
+        ("cuda_version", "12.8"),
+        ("cudnn_benchmark", True),
+        ("cudnn_deterministic", False),
+        ("torch_compile_wrapped", True),
+    ],
+)
+def test_loader_and_numerical_semantics_change_the_digest(field, value):
+    """`num_workers` is the sharpest: PyTorch seeds each worker as
+    `base_seed + worker_id`, so a different worker count consumes a different
+    random stream and produces a different candidate universe."""
+    base = _report()["manifest"]
+
+    assert measurement_semantics_digest(base) != measurement_semantics_digest(
+        {**base, field: value}
+    )
 
 
 def test_a_descriptive_field_does_not_change_the_semantics_digest():
@@ -276,7 +337,7 @@ def test_records_for_returns_only_that_checkpoints_results(tmp_path):
 def test_a_written_ledger_reads_back_identically(tmp_path):
     path = tmp_path / "checkpoints" / "evaluations.json"
     ledger = append_record(empty_ledger(), build_record(_report(), "d" * 64))
-    write_ledger(path, ledger)
+    write_ledger(path, ledger, None)
 
     assert read_ledger(path) == ledger
 
@@ -288,7 +349,7 @@ def test_a_failed_write_leaves_the_previous_ledger_intact(tmp_path, monkeypatch)
 
     path = tmp_path / "evaluations.json"
     first = append_record(empty_ledger(), build_record(_report(), None))
-    write_ledger(path, first)
+    write_ledger(path, first, None)
     before = path.read_bytes()
 
     def _explode(*args, **kwargs):
@@ -297,7 +358,7 @@ def test_a_failed_write_leaves_the_previous_ledger_intact(tmp_path, monkeypatch)
     monkeypatch.setattr(sidecar.json, "dump", _explode)
     with pytest.raises(OSError):
         write_ledger(path, append_record(first, build_record(
-            _report(manifest={"mode": "C"}), None)))
+            _report(manifest={"mode": "C"}), None)), ledger_digest(path))
 
     assert path.read_bytes() == before
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")], (
@@ -350,22 +411,51 @@ def test_duplicate_checkpoint_bytes_are_acceptable(tmp_path):
     assert (checkpoints / "evaluations.json").exists()
 
 
-def test_a_concurrent_writer_is_refused_rather_than_silently_erased(tmp_path):
-    """Two processes read one ledger, both append, and the second replace erases
-    the first with no trace. Optimistic concurrency turns that into a refusal."""
-    from src.evaluation.sidecar import write_ledger as _write
+def test_a_writer_holding_a_stale_read_is_refused(tmp_path):
+    """Best-effort stale-write detection, and only that.
 
+    **What this proves:** a writer that read the ledger, had another writer
+    replace it, and then writes, is refused instead of erasing that append.
+    That is the ordinary accident -- two terminals, one after the other.
+
+    **What it does not prove, and what the implementation does not provide:**
+    safety under overlapping writers. Two processes whose check-then-replace
+    windows interleave both pass the comparison and the second replacement still
+    erases the first. Closing that needs real mutual exclusion, which is not
+    built; the ledger is single-writer by operational rule.
+    """
     path = tmp_path / "evaluations.json"
     first = append_record(empty_ledger(), build_record(_report(), None))
-    _write(path, first)
+    write_ledger(path, first, None)
     stale = ledger_digest(path)
 
     other = append_record(first, build_record(_report(manifest={"mode": "C"}), None))
-    _write(path, other, expected_digest=stale)
+    write_ledger(path, other, stale)
 
     with pytest.raises(ValueError, match="changed since it was read"):
-        _write(path, first, expected_digest=stale)
+        write_ledger(path, first, stale)
     assert len(read_ledger(path)["records"]) == 2
+
+
+def test_a_writer_expecting_no_file_is_refused_when_one_appeared(tmp_path):
+    """`None` is a claim -- *I read no file* -- not a request to skip the check.
+    A ledger created by another writer in the meantime is that writer's append."""
+    path = tmp_path / "evaluations.json"
+    write_ledger(path, append_record(empty_ledger(), build_record(_report(), None)), None)
+
+    with pytest.raises(ValueError, match="expected no file to exist"):
+        write_ledger(path, empty_ledger(), None)
+
+
+def test_the_expected_digest_cannot_be_skipped_by_omission(tmp_path):
+    """Required rather than defaulted: a caller that forgets it would otherwise
+    silently lose the detection."""
+    import inspect
+
+    from src.evaluation.sidecar import write_ledger as writer
+
+    parameter = inspect.signature(writer).parameters["expected_digest"]
+    assert parameter.default is inspect.Parameter.empty
 
 
 def test_the_cli_records_and_then_reads_back(tmp_path, capsys):

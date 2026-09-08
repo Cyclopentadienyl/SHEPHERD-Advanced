@@ -12,12 +12,34 @@ Data files available from: http://purl.obolibrary.org/obo/hp/hpoa/
 """
 from __future__ import annotations
 
+import math
 import csv
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _valid_frequency(value: float) -> float:
+    """A parsed frequency, or the malformed-token fallback if it is not one.
+
+    **`float()` parses more than a frequency.** `"200%"` becomes `2.0`, `"-5%"`
+    becomes `-0.05`, `"3/2"` becomes `1.5`, and `"nan%"` and `"inf%"` become
+    non-finite — all of which `parse_frequency` used to return while documenting
+    a `[0, 1]` range. Two things depended on that range and neither checked it:
+    `KnowledgeGraphBuilder.add_phenotype_disease_annotations` writes the value
+    straight onto the edge as `weight`, and the generator audit reads any value
+    other than `1.0` as a *certainly usable* frequency, so an out-of-range token
+    inflated the lower bound of the measurement rather than its ambiguous middle.
+
+    An invalid computed value is a malformed token, so it takes the same `1.0`
+    fallback an unparseable one does. That lands it in the audit's ambiguous
+    bucket, which is where "this token told us nothing" belongs.
+    """
+    if math.isfinite(value) and 0.0 <= value <= 1.0:
+        return value
+    raise ValueError(f"frequency {value!r} is outside [0, 1] or not finite")
 
 
 class HPOAnnotationParser:
@@ -292,7 +314,7 @@ class HPOAnnotationParser:
         # Percentage: "45%"
         if freq_str.endswith("%"):
             try:
-                return float(freq_str[:-1]) / 100.0
+                return _valid_frequency(float(freq_str[:-1]) / 100.0)
             except ValueError:
                 pass
 
@@ -300,7 +322,7 @@ class HPOAnnotationParser:
         if "/" in freq_str:
             try:
                 num, den = freq_str.split("/")
-                return float(num) / float(den)
+                return _valid_frequency(float(num) / float(den))
             except (ValueError, ZeroDivisionError):
                 pass
 

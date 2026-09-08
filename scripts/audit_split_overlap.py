@@ -105,7 +105,7 @@ REPORT_SCHEMA_VERSION = 4
 
 
 def manifest_verification(
-    data_dir: Path, splits: List[str], evaluation_kind: str, measured: Dict[str, set]
+    verified: Any, splits: List[str], evaluation_kind: str, measured: Dict[str, set]
 ) -> Dict[str, Any]:
     """What ``verify_generated_cohorts`` established, written into the report.
 
@@ -122,11 +122,13 @@ def manifest_verification(
     about a cut it was never part of.
     """
     train_split, eval_split = splits
-    manifest = json.loads((data_dir / MANIFEST_FILENAME).read_text())
-    compared = list(GENERATED_SPLITS) if evaluation_kind == "generated" else [train_split]
-
+    # **From the verifier's own return value, not recomputed here.** A section
+    # naming a scope this function derived independently could disagree with the
+    # gate that ran, and the artifact would then misdescribe itself — which is the
+    # defect this parameter exists to remove.
+    manifest = verified.manifest
     section = {
-        "verified_splits": compared,
+        "verified_splits": list(verified.verified),
         "verified_against": [
             "the sample files' SHA-256, against the manifest's artifact digests",
             "the realised disease sets, recomputed from the records",
@@ -140,10 +142,14 @@ def manifest_verification(
     }
     if evaluation_kind == "generated":
         section["measured_disjoint"] = not (measured[train_split] & measured[eval_split])
+        section["disjointness_was_measured"] = True
     else:
+        section["disjointness_was_measured"] = False
         section["why_the_evaluation_split_is_not_verified"] = (
             f"{eval_split} is a supplied cohort; this manifest describes the "
-            "generated splits and says nothing about it"
+            "generated splits and says nothing about it. Generated val was not "
+            "read either, so its state neither blocks nor supports this report — "
+            "only the manifest's own disjointness claim was checked"
         )
     return section
 
@@ -160,11 +166,14 @@ def build_report(
     # name, a generated one with no manifest, and a workspace built before the
     # allocation step.
     resolve_cohort(data_dir, eval_split, evaluation_kind)
-    # **Refuses before a single count is taken.** The generated cohorts must be the
-    # ones their manifest describes — same bytes, same disease sets, disjoint — and
-    # that is established by the one verifier the whole pipeline uses. A report
-    # produced over an unverified workspace would look like a measurement.
-    verify_generated_cohorts(data_dir)
+    # **Refuses before a single count is taken, over exactly what it reads.** The
+    # generated cohorts must be the ones their manifest describes — same bytes,
+    # same disease sets — and that is established by the one verifier the whole
+    # pipeline uses. The scope is what this run consumes: a supplied-cohort audit
+    # never opens generated `val`, so a missing or corrupt one there must not
+    # block an institutional measurement it has nothing to do with.
+    scope = GENERATED_SPLITS if evaluation_kind == "generated" else (train_split,)
+    verified = verify_generated_cohorts(data_dir, scope)
     train_ids = disease_ids(data_dir, train_split)
     eval_ids = disease_ids(data_dir, eval_split)
     train_set, eval_set = set(train_ids), set(eval_ids)
@@ -220,7 +229,8 @@ def build_report(
             "as_written": f"{len(shared)} of {len(eval_set)}",
         },
         "manifest_verification": manifest_verification(
-            data_dir, splits, evaluation_kind, {train_split: train_set, eval_split: eval_set}
+            verified, splits, evaluation_kind,
+            {train_split: train_set, eval_split: eval_set},
         ),
         "evaluation_cohort_kind": evaluation_kind,
         "deployment_relationship": relationship,

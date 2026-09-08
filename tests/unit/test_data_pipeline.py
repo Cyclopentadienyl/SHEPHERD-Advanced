@@ -239,6 +239,38 @@ class TestHPOAnnotationParser:
         assert parse("") == 1.0                  # Empty -> default
         assert parse("unknown_value") == 1.0     # Unknown -> default
 
+    @pytest.mark.parametrize(
+        "token",
+        ["200%", "-5%", "3/2", "nan%", "inf%", "-inf%", "1/0"],
+    )
+    def test_a_computed_frequency_outside_the_documented_range_is_malformed(self, token):
+        """`float()` parses more than a frequency.
+
+        These all used to be returned as-is while the docstring promised [0, 1].
+        Two consumers depended on that promise and neither checked it: the KG
+        builder writes the value straight onto the edge as `weight`, and the
+        generator audit reads any value other than 1.0 as a *certainly usable*
+        frequency -- so an out-of-range token inflated the lower bound of that
+        measurement rather than its ambiguous middle.
+
+        An invalid computed value is a malformed token and takes the same 1.0
+        fallback an unparseable one does, which puts it in the ambiguous bucket
+        where "this told us nothing" belongs.
+        """
+        from src.data_sources.hpo_annotations import HPOAnnotationParser
+
+        assert HPOAnnotationParser.parse_frequency(token) == 1.0
+
+    def test_valid_boundary_frequencies_still_parse(self):
+        """The range check must not reject the ends of the range it enforces."""
+        from src.data_sources.hpo_annotations import HPOAnnotationParser
+
+        parse = HPOAnnotationParser.parse_frequency
+        assert parse("0%") == 0.0
+        assert parse("100%") == 1.0
+        assert parse("0/5") == 0.0
+        assert parse("12/12") == 1.0
+
     def test_parse_genes_to_phenotype(self, genes_to_phenotype_file):
         """Parse genes_to_phenotype.txt into gene-pheno and gene-disease lists."""
         parser = HPOAnnotationParser()

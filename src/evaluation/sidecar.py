@@ -63,8 +63,13 @@ LEDGER_FILENAME = "evaluations.json"
 #: batch sizes collided and the second was refused as a contradiction.
 #:
 #: Explicit rather than "every field", so that adding a non-semantic field later
-#: does not churn every key and silence the contradiction check.
+#: does not churn every key and silence the contradiction check. That claim is
+#: only worth making if it is checkable: this list and ``NON_SEMANTIC_FIELDS``
+#: below must together cover every field of ``MeasurementManifest``, and
+#: ``tests/unit/test_evaluation_sidecar.py`` fails if a new field belongs to
+#: neither. A field cannot be omitted by oversight, only by decision.
 SEMANTIC_MANIFEST_FIELDS: Tuple[str, ...] = (
+    # what was ranked, and against what
     "mode",
     "cohort_kind",
     "candidate_construction",
@@ -74,20 +79,67 @@ SEMANTIC_MANIFEST_FIELDS: Tuple[str, ...] = (
     "subgraph_hops",
     "num_neighbors",
     "max_subgraph_nodes",
+    # how the batches were formed. `num_workers` is semantics, not performance:
+    # PyTorch seeds each worker as base_seed + worker_id, so a different worker
+    # count consumes a different random stream and yields a different candidate
+    # universe — which `measure_scorer`'s own --num-workers help says.
     "batch_size",
+    "shuffle",
+    "num_workers",
+    "python_seed",
+    "numpy_seed",
+    "torch_seed",
+    # how scores became numbers
     "score_semantics",
     "model_construction",
     "legacy_truncation_k",
     "legacy_tie_policy",
     "canonical_tie_policy_version",
     "metric_schema_version",
+    # the numerical regime. `torch_compile_wrapped` is included although `None`
+    # means "not observed" rather than "not compiled": two runs where one was
+    # observed and one was not are not provably the same measurement, and the
+    # asymmetry above says include.
     "software_revision",
+    "torch_version",
+    "cuda_version",
     "device",
     "dtype",
     "amp_enabled",
     "amp_dtype",
+    "torch_compile_wrapped",
     "deterministic_algorithms",
+    "cudnn_deterministic",
+    "cudnn_benchmark",
 )
+
+#: Manifest fields deliberately outside the digest, each for a stated reason.
+#:
+#: Present so that "the list covers everything that can move a metric" is a
+#: checkable claim rather than an assertion. Adding a field to
+#: ``MeasurementManifest`` without deciding which side it falls on fails a test.
+NON_SEMANTIC_FIELDS: Dict[str, str] = {
+    "split": "the cohort role, already a key field in its own right",
+    "n_samples": (
+        "derived from the cohort, which the cohort digest already identifies; it "
+        "cannot differ between two runs over the same cohort digest"
+    ),
+    "checkpoint_path": "a path is not an identity; the checkpoint digest is",
+    "data_dir": "a path is not an identity; the artifact digests are",
+    "graph_fingerprint": (
+        "structural identity — node types, counts, feature dims. The graph "
+        "artifact digests below are strictly stronger: identical bytes imply "
+        "identical structure, and two graphs can share a fingerprint and differ"
+    ),
+    "artifact_digests": (
+        "hashed selectively rather than wholesale: checkpoint and samples are "
+        "already key fields, and the rest are covered by SEMANTIC_ARTIFACT_ROLES"
+    ),
+    "cuda_executed": (
+        "implied by `device`, which is in the digest; `_resolve_device` sets the "
+        "two together, so it cannot vary independently"
+    ),
+}
 
 #: Artifact roles whose bytes change what was measured. The graph tensors and the
 #: allocation are as much a part of the measurement as the checkpoint is.
@@ -313,31 +365,39 @@ def ledger_digest(path: Path) -> Optional[str]:
 
 
 def write_ledger(
-    path: Path, ledger: Dict[str, Any], expected_digest: Optional[str] = None
+    path: Path, ledger: Dict[str, Any], expected_digest: Optional[str]
 ) -> None:
     """Write the ledger, replacing the old file only once the new one is complete.
 
-    Two different failures, and this closes both without a locking framework.
+    **A partial write is closed; concurrent append is not, and that is stated
+    rather than implied.** Writing to a temporary file in the same directory and
+    renaming it makes the replacement atomic on every platform this runs on, so
+    an interruption cannot leave unparseable JSON where a directory's entire
+    evaluation history used to be — records that are not recoverable from the
+    checkpoints.
 
-    **A partial write** would leave unparseable JSON where a directory's entire
-    evaluation history used to be, and those records are not recoverable from the
-    checkpoints. Writing to a temporary file in the same directory and renaming it
-    makes the replacement atomic on every platform this runs on.
+    ``expected_digest`` is **best-effort stale-write detection, not mutual
+    exclusion.** It catches the ordinary accident: a writer that read the ledger,
+    another writer replaced it, and the first then writes over that. It does
+    **not** make concurrent append safe — two writers whose check-then-replace
+    windows overlap both pass the comparison and the second replacement still
+    erases the first append, with no trace. Closing that needs real exclusion,
+    which is not built: the ledger is **single-writer by operational rule**, and
+    locking earns its place only if the institutional workflow actually appends
+    concurrently.
 
-    **A concurrent writer** is not a corruption but a silent loss: two processes
-    read the same ledger, each appends its own record, and the second replace
-    erases the first append with no trace. ``expected_digest`` — the bytes the
-    caller read — turns that into a refusal. It is optimistic concurrency, not
-    locking: no lock file, no timeout, no recovery path, five lines. The ledger
-    remains **single-writer by design**; this detects a violation rather than
-    supporting one, and if the institutional workflow ever appends concurrently
-    that is when locking earns its place.
+    The parameter is required rather than defaulted, so a caller cannot skip the
+    check by forgetting it, and ``None`` carries a claim of its own: *I read no
+    file*. A ledger appearing under a writer that expected none is another
+    writer's creation, and is refused for the same reason.
     """
-    if expected_digest is not None and ledger_digest(path) != expected_digest:
+    if ledger_digest(path) != expected_digest:
         raise ValueError(
-            f"{path} changed since it was read, so appending would erase whatever "
-            "the other writer added. The ledger is single-writer by design: "
-            "re-read it and append again."
+            f"{path} changed since it was read"
+            + ("" if expected_digest is not None else " (this writer expected no "
+               "file to exist there)")
+            + ", so appending would erase whatever the other writer added. The "
+            "ledger is single-writer: re-read it and append again."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -356,6 +416,7 @@ def write_ledger(
 
 __all__ = [
     "KEY_FIELDS",
+    "NON_SEMANTIC_FIELDS",
     "ledger_digest",
     "SEMANTIC_ARTIFACT_ROLES",
     "SEMANTIC_MANIFEST_FIELDS",

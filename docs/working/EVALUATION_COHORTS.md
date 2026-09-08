@@ -9,6 +9,18 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **23** — three corrections and one narrowed claim. Verification is **scoped** to what a caller
+  reads, so a supplied-cohort audit is no longer blocked by a generated `val` it never opens, and
+  the report names the gate that actually ran rather than the one it assumed (§6.1). The ledger's
+  semantics digest gained the loader and RNG fields it was missing — `shuffle`, `num_workers` and
+  the three seeds, where a different worker count consumes a different random stream — and the
+  claim that the list is complete is now **checkable**: every `MeasurementManifest` field must be
+  declared semantic or non-semantic with a reason, and a new one fails a test until someone
+  decides (§6.5). `HPOAnnotationParser.parse_frequency` promised `[0, 1]` and returned `2.0` for
+  `"200%"`, `1.5` for `"3/2"` and non-finite values for `"nan%"` — which the KG builder wrote
+  straight onto an edge as `weight` and the fidelity audit counted as a *certainly usable*
+  frequency, inflating the lower bound rather than the ambiguous middle. Fixed at the parser, where
+  both consumers get it.
 - **22** — the verification behind the refusals, and the ledger's identity. A generated
   workspace is now *verified* rather than found to have a manifest: exact sample-file digests,
   recomputed disease sets, the manifest's internal consistency, and disjointness, from one
@@ -834,9 +846,15 @@ Two rules follow, and both are enforced rather than advised:
 
 - **A generated cohort with no manifest is refused** at training, measurement, calibration and
   both audits — and *refused* means verified, not merely present: the manifest is checked against
-  the sample files' exact SHA-256, against the disease sets recomputed from those records, against
-  its own allocated digests, and for disjointness. Existence alone would let any
-  `split_manifest.json` dropped beside a legacy workspace through.
+  the sample files' exact SHA-256, against the disease sets recomputed from those records, and
+  against its own allocated digests. Existence alone would let any `split_manifest.json` dropped
+  beside a legacy workspace through.
+- **Verification is scoped to what a caller consumes**, and its report names that scope. A
+  supplied-cohort overlap audit binds generated `train` and never opens generated `val`; requiring
+  `val` there would let a corrupt file block an institutional measurement it has nothing to do
+  with. Disjointness is *measured* only when both cohorts are in scope, since measuring it needs
+  both — but the manifest's own `disjoint` claim is checked at every scope, because a manifest
+  asserting a non-disjoint cut describes a broken workspace from any direction.
 - **One exception, named rather than glossed.** `scripts/evaluate_model.py` has no such preflight
   and will not get one. It is the behaviourally frozen artefact Mode A is calibrated against, and
   editing it makes it no longer the thing being compared; `tests/unit/test_frozen_evaluator.py`
@@ -979,11 +997,13 @@ Three points where the implementation had to decide something this section left 
 - **The ledger must be beside the weights it describes.** `record_evaluation` hashes the `.pt`
   files in the target directory and refuses unless one matches the report's checkpoint digest.
   Several files with identical bytes are fine — the digest is the identity, not the name.
-- **Single-writer, and the violation is detected rather than supported.** Atomic replace protects
-  an interrupted write; it does nothing about two writers, where the second replace erases the
-  first append silently. The writer compares the ledger's bytes against what the reader saw and
-  refuses if they moved. That is five lines of optimistic concurrency, not a locking framework;
-  locking earns its place only if the institutional workflow actually appends concurrently.
+- **Single-writer, and the boundary is stated rather than implied.** Atomic replace closes an
+  interrupted write. The digest the reader saw is **best-effort stale-write detection**: it catches
+  the ordinary accident — one writer read, another replaced, the first then wrote — and it does
+  *not* make concurrent append safe, since two writers whose check-then-replace windows overlap
+  both pass and the second replacement still erases the first. Real exclusion is not built. The
+  ledger is single-writer by operational rule, and locking earns its place only if the
+  institutional workflow actually appends concurrently.
 - **The allocation provenance had to be added upstream first.** A measurement's
   `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
   which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace
@@ -1238,7 +1258,8 @@ no existing weights.
 - **Generator parameters are audit *inputs*, and are recorded as such.** `min_phenotypes`,
   `max_phenotypes`, `phenotype_drop_rate`, and the current train and validation budgets are supplied
   to the audit and echoed into its output under a name that marks them **assumptions**, not observed
-  history. No generation manifest exists yet (§6.2 introduces the first one), so the configuration
+  history. This audit prices allocations that have not been made and reads a bare `kg.json`, so
+  the configuration
   an existing workspace was built under is **not recoverable from that workspace** and must not be
   presented as if it were.
 - **Rounding is largest-remainder over the stratum buckets**, whose quotas sum to `W` and none of

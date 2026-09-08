@@ -997,9 +997,12 @@ def test_a_manifest_present_but_unbound_does_not_let_a_legacy_workspace_through(
 
 def test_non_disjoint_generated_cohorts_are_refused_by_the_verifier(tmp_path):
     """Disjointness is a contract of the allocation step, so this is a broken
-    workspace rather than a measurement. The manifest here honestly records the
-    overlapping cut, so the byte and disease-set checks pass and the disjointness
-    check is the only thing left."""
+    workspace rather than a measurement.
+
+    The manifest here is forged consistently -- correct byte digests, correct
+    realised sets for the overlapping files, realised matching allocated, and
+    `disjoint: true` -- so every other check passes and the measured comparison
+    is the only thing left."""
     from tests.fixtures.generated_workspace import write_generated_workspace
 
     data_dir, _ = write_generated_workspace(
@@ -1019,12 +1022,71 @@ def test_non_disjoint_generated_cohorts_are_refused_by_the_verifier(tmp_path):
     manifest["realised"]["val_digest"] = digest
     manifest["allocation"]["allocated"]["val_digest"] = digest
     manifest["artifacts"]["val_samples"] = file_sha256(data_dir / "val_samples.json")
-    manifest["disjoint"] = False
+    # `disjoint` stays True on purpose. A manifest admitting the overlap is caught
+    # by the claim check above this one, which would leave the *measured*
+    # disjointness check untested -- and it is the only thing standing between a
+    # consistently forged manifest and a cohort pair that overlaps.
     (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
 
     with pytest.raises(SystemExit, match="does not hold disease-disjoint cohorts"):
         _run("audit_split_overlap",
              ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
+
+
+def test_a_supplied_cohort_audit_does_not_depend_on_generated_val(tmp_path):
+    """Generated val is not an input to a train-versus-supplied measurement, so
+    its state must neither block nor support one.
+
+    A corrupt or missing val_samples.json is a real defect in that workspace and
+    every path that *reads* val still refuses it. This path does not read it, and
+    refusing here would block an institutional measurement for a reason unrelated
+    to it.
+    """
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    (data_dir / "val_samples.json").write_text("corrupted, not even json")
+    out = tmp_path / "m4.json"
+
+    _supplied(data_dir, out)
+    verification = json.loads(out.read_text())["manifest_verification"]
+
+    assert verification["verified_splits"] == ["train"]
+    assert verification["disjointness_was_measured"] is False
+
+
+def test_a_generated_audit_over_the_same_workspace_still_refuses(tmp_path):
+    """The scope narrows what is read, not what soundness means. The same corrupt
+    val that a supplied audit ignores stops a generated one dead."""
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    (data_dir / "val_samples.json").write_text("corrupted, not even json")
+
+    with pytest.raises(SystemExit, match="is not the file"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
+
+
+def test_the_report_names_the_scope_the_verifier_actually_ran(tmp_path):
+    """The section is built from the verifier's own return value. Deriving it
+    independently would let the artifact claim a gate that did not run."""
+    data_dir, _ = _allocated_workspace(tmp_path / "ws")
+    out = tmp_path / "m4.json"
+
+    _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+    verification = json.loads(out.read_text())["manifest_verification"]
+
+    assert verification["verified_splits"] == ["train", "val"]
+    assert verification["disjointness_was_measured"] is True
+
+
+def test_a_manifest_claiming_a_non_disjoint_cut_is_refused_at_any_scope(tmp_path):
+    """The manifest's own claim is checked whatever the caller reads: a workspace
+    whose manifest says its cohorts overlap is broken from every direction."""
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    manifest = json.loads((data_dir / "split_manifest.json").read_text())
+    manifest["disjoint"] = False
+    (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(SystemExit, match="claims disjoint=False"):
+        _supplied(data_dir, tmp_path / "m4.json")
 
 
 def test_overlap_with_a_supplied_cohort_is_reported_not_refused(tmp_path):

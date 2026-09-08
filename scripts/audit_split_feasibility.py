@@ -531,9 +531,10 @@ def build_report(kg_path: Path, settings: AuditSettings, relationship: str) -> D
         "deployment_relationship": relationship,
         "assumptions": {
             "note": (
-                "Supplied to this audit, not recovered from the workspace. No "
-                "generation manifest exists yet, so the configuration an existing "
-                "workspace was built under is not readable from it."
+                "Supplied to this audit, not recovered from the workspace. This "
+                "audit prices allocations that have not been made and reads a bare "
+                "kg.json, so there is no generated workspace to recover a "
+                "configuration from."
             ),
             "min_phenotypes": settings.min_phenotypes,
             "max_phenotypes": settings.max_phenotypes,

@@ -402,6 +402,34 @@ def test_the_source_column_gives_the_exact_figure(tmp_path):
     assert report["artifacts"]["phenotype_hpoa"] == expected
 
 
+def test_an_invalid_numeric_token_does_not_inflate_the_lower_bound(tmp_path):
+    """A percentage above 100, a fraction above one and a non-finite value are
+    malformed, not usable frequencies. They belong in the ambiguous middle."""
+    external = tmp_path / "ext"
+    external.mkdir()
+    (external / "phenotype.hpoa").write_text("\n".join([
+        "OMIM:1\tA\t\tHP:0000001\tR\tE\t\t200%\t",
+        "OMIM:1\tA\t\tHP:0000002\tR\tE\t\t-5%\t",
+        "OMIM:1\tA\t\tHP:0000003\tR\tE\t\t3/2\t",
+        "OMIM:1\tA\t\tHP:0000004\tR\tE\t\tnan%\t",
+        "OMIM:1\tA\t\tHP:0000005\tR\tE\t\tinf%\t",
+        "OMIM:1\tA\t\tHP:0000006\tR\tE\t\t3/12\t",
+    ]) + "\n")
+    root = _workspace(tmp_path / "ws", diseases=[[0, 1], [2, 3]],
+                      train=[(0, [0, 1])], val=[(1, [2, 3])],
+                      manifest_config=DEFAULTS)
+
+    exact = _run(root, tmp_path / "f.json",
+                 external_dir=external)["frequency_signal"]["from_the_source"]
+
+    assert exact["rows"] == 6
+    assert exact["rows_whose_token_parses_below_one"] == 1, (
+        "only 3/12 is a usable frequency here"
+    )
+    assert exact["rows_whose_token_parses_to_one"] == 5
+    assert exact["usable_frequency_fraction_lower_bound"] == 1 / 6
+
+
 def test_an_obligate_token_is_ambiguous_and_widens_the_bounds(tmp_path):
     """`HP:0040280`, `100%` and `12/12` all parse to 1.0, which is also what an
     unparseable token returns. Reporting either bound alone would overstate."""
