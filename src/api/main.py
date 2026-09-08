@@ -411,16 +411,26 @@ def initialize_pipeline(
 
         logger.info(f"Loading knowledge graph from {kg_file}...")
         kg = KnowledgeGraph.load_json(str(kg_file))
-        app_state.kg = kg
         logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
         # Step 2: Create pipeline (with optional GNN)
+        #
+        # **`kg_path` is passed, and nothing is committed to app state until it
+        # has been checked against `data_dir`.** These two settings are resolved
+        # independently from the environment, so a deployment can point them at
+        # two different workspaces — each internally consistent, and together
+        # producing embeddings from one graph's tensors read through the other
+        # graph's node identifiers. The pipeline refuses that composition; this
+        # ordering is what stops a refused one leaving a graph published in
+        # `app_state.kg` as though it had been accepted.
         pipeline = create_diagnosis_pipeline(
             kg=kg,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
+            kg_path=str(kg_file),
             device=device,
         )
+        app_state.kg = kg
         app_state.pipeline = pipeline
 
         config = pipeline.get_pipeline_config()

@@ -26,7 +26,8 @@ from pathlib import Path
 
 import pytest
 
-from src.kg.graph import KnowledgeGraph
+from src.core.types import DataSource, NodeType
+from src.kg.graph import Edge, KnowledgeGraph, Node, NodeID
 from src.evaluation.cohort import (
     GRAPH_ARTIFACTS,
     verify_generated_cohorts,
@@ -40,6 +41,14 @@ from tests.fixtures.generated_workspace import (
 
 
 def _workspace(root: Path, *, supplied=False):
+    # A real, loadable `kg.json` — the API path opens it before the pipeline is
+    # built, so a stand-in byte string would fail there for the wrong reason.
+    # Written before the manifest, which binds these bytes.
+    root.mkdir(parents=True, exist_ok=True)
+    kg = KnowledgeGraph()
+    kg.add_node(Node(id=NodeID(source=DataSource.MONDO, local_id=f"MONDO:{root.name}"),
+                     node_type=NodeType.DISEASE, name=root.name))
+    kg.save_json(str(root / "kg.json"))
     write_generated_workspace(root, train_ids=[0, 1, 2], val_ids=[3])
     if supplied:
         (root / "institutional_acceptance_samples.json").write_text(
@@ -274,3 +283,101 @@ def test_a_manifest_at_the_current_schema_missing_a_graph_role_is_refused(tmp_pa
 
     with pytest.raises(ValueError, match="records no digest for node_features"):
         verify_graph_artifacts(root)
+
+
+class TestTheCompositionMustNotCrossWorkspaces:
+    """Two internally valid workspaces, paired.
+
+    `verify_graph_artifacts` proves a workspace is consistent with itself. It
+    cannot see a caller that takes one workspace's `kg.json` and another's
+    tensors -- which is exactly what the API allowed, since `SHEPHERD_KG_PATH` and
+    `SHEPHERD_DATA_DIR` are resolved independently. Embedding rows then come from
+    one graph and the node-id mapping that reads them from another, and
+    same-shaped workspaces pass every structural check on the way.
+    """
+
+    @staticmethod
+    def _two_workspaces(tmp_path):
+        a = _workspace(tmp_path / "a")
+        b = _workspace(tmp_path / "b")
+        for root in (a, b):
+            (root / "ckpt.pt").write_bytes(b"weights")
+        return a, b
+
+    def test_a_crossed_pair_is_refused(self, monkeypatch, tmp_path):
+        reached: list = []
+        pipeline = TestTheClinicalPathIsAGraphConsumer._pipeline_module(
+            monkeypatch, reached
+        )
+        a, b = self._two_workspaces(tmp_path)
+
+        with pytest.raises(ValueError, match="is not the graph"):
+            pipeline.DiagnosisPipeline(
+                kg=KnowledgeGraph(), data_dir=str(a),
+                kg_path=str(b / "kg.json"), checkpoint_path=str(a / "ckpt.pt"),
+            )
+
+        assert reached == [], "graph loading was reached on a crossed pair"
+
+    def test_each_workspace_is_valid_on_its_own(self, tmp_path):
+        """Otherwise the test above would prove only that one of them is broken."""
+        from src.kg.artifacts import verify_graph_artifacts as verify
+
+        a, b = self._two_workspaces(tmp_path)
+        assert set(verify(a)) == set(GRAPH_ARTIFACTS)
+        assert set(verify(b)) == set(GRAPH_ARTIFACTS)
+
+    def test_a_matching_pair_proceeds(self, monkeypatch, tmp_path):
+        reached: list = []
+        pipeline = TestTheClinicalPathIsAGraphConsumer._pipeline_module(
+            monkeypatch, reached
+        )
+        a, _ = self._two_workspaces(tmp_path)
+
+        pipeline.DiagnosisPipeline(
+            kg=KnowledgeGraph(), data_dir=str(a),
+            kg_path=str(a / "kg.json"), checkpoint_path=str(a / "ckpt.pt"),
+        )
+
+        assert reached == ["_load_graph_data"]
+
+    def test_the_bound_graph_may_live_at_another_path(self, monkeypatch, tmp_path):
+        """A path is not an identity in this project; the bytes are. Requiring
+        `kg_path` to *be* `data_dir/kg.json` would also close the crossing, and
+        would break a deployment that mounts or copies the file elsewhere."""
+        reached: list = []
+        pipeline = TestTheClinicalPathIsAGraphConsumer._pipeline_module(
+            monkeypatch, reached
+        )
+        a, _ = self._two_workspaces(tmp_path)
+        elsewhere = tmp_path / "mounted_kg.json"
+        elsewhere.write_bytes((a / "kg.json").read_bytes())
+
+        pipeline.DiagnosisPipeline(
+            kg=KnowledgeGraph(), data_dir=str(a),
+            kg_path=str(elsewhere), checkpoint_path=str(a / "ckpt.pt"),
+        )
+
+        assert reached == ["_load_graph_data"]
+
+    def test_the_api_commits_no_state_before_the_composition_is_checked(
+        self, monkeypatch, tmp_path
+    ):
+        """A refused composition must not leave a graph published in app state as
+        though it had been accepted."""
+        import src.api.main as api
+
+        a, b = self._two_workspaces(tmp_path)
+        monkeypatch.setattr(api.app_state, "kg", None, raising=False)
+        monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
+        monkeypatch.setenv("SHEPHERD_KG_PATH", str(b / "kg.json"))
+        monkeypatch.setenv("SHEPHERD_DATA_DIR", str(a))
+        # Without a checkpoint the pipeline consumes no graph at all and verifies
+        # nothing, which is correct and would make this test vacuous.
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(a / "ckpt.pt"))
+
+        with pytest.raises(ValueError, match="is not the graph"):
+            api.initialize_pipeline()
+
+        assert api.app_state.kg is None, "a refused graph reached app state"
+        assert api.app_state.pipeline is None

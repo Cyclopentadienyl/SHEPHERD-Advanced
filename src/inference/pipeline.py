@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
-from src.kg.artifacts import verify_graph_artifacts
+from src.kg.artifacts import verify_graph_artifacts, verify_graph_source
 from src.core.types import (
     DataSource,
     DiagnosisCandidate,
@@ -216,6 +216,7 @@ class DiagnosisPipeline:
         checkpoint_path: Optional[str] = None,
         graph_data: Optional[Dict[str, Any]] = None,
         data_dir: Optional[str] = None,
+        kg_path: Optional[str] = None,
         device: Optional[str] = None,
     ):
         """
@@ -234,6 +235,14 @@ class DiagnosisPipeline:
             data_dir: Path to processed data directory containing
                      node_features.pt, edge_indices.pt, num_nodes.json.
                      Alternative to graph_data for GNN inference.
+            kg_path: Where `kg` was loaded from. Optional, and checked when given:
+                     `data_dir` proves a workspace is internally consistent, and
+                     two consistent workspaces can still be crossed — one's
+                     `kg.json` paired with the other's tensors, so embedding rows
+                     are read through another graph's node identifiers. Only the
+                     caller knows where the object came from, so only the caller
+                     can state it; an in-memory graph has no source digest and is
+                     not pretended to have one.
             device: Device for GNN inference ("cpu", "cuda", or None for auto).
         """
         self.kg = kg
@@ -244,6 +253,7 @@ class DiagnosisPipeline:
         self._node_embeddings: Optional[Dict[str, Any]] = None
         self._node_id_to_idx: Optional[Dict[str, Dict[str, int]]] = None
         self._graph_data: Optional[Dict[str, Any]] = graph_data
+        self._kg_path: Optional[str] = kg_path
         self._gnn_ready = False
 
         # Shortest path lookup state (populated by _load_shortest_paths)
@@ -358,7 +368,10 @@ class DiagnosisPipeline:
             # Only for the file-backed path. A caller supplying `graph_data`
             # directly makes no claim about a persisted workspace, so there is no
             # manifest for it to match and nothing to verify.
-            verify_graph_artifacts(Path(data_dir))
+            if self._kg_path is not None:
+                verify_graph_source(Path(self._kg_path), Path(data_dir))
+            else:
+                verify_graph_artifacts(Path(data_dir))
             self._graph_data = self._load_graph_data(data_dir)
 
         if self._graph_data is None:
@@ -1420,6 +1433,7 @@ def create_diagnosis_pipeline(
     checkpoint_path: Optional[str] = None,
     graph_data: Optional[Dict[str, Any]] = None,
     data_dir: Optional[str] = None,
+    kg_path: Optional[str] = None,
     device: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
@@ -1432,6 +1446,7 @@ def create_diagnosis_pipeline(
         checkpoint_path: Path to trained model checkpoint
         graph_data: Pre-loaded graph data dict
         data_dir: Path to processed data directory
+        kg_path: Where `kg` was loaded from, so the composition can be checked
         device: Device for GNN inference
 
     Returns:
@@ -1444,5 +1459,6 @@ def create_diagnosis_pipeline(
         checkpoint_path=checkpoint_path,
         graph_data=graph_data,
         data_dir=data_dir,
+        kg_path=kg_path,
         device=device,
     )

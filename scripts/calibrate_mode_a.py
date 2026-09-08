@@ -101,6 +101,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.measure_scorer import artifact_digests  # noqa: E402
 from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP  # noqa: E402
 from src.evaluation.cohort import COHORT_KINDS, DEFAULT_COHORT_KIND  # noqa: E402
+from src.evaluation.measurement import validate_measurement_seed  # noqa: E402
 
 logger = logging.getLogger("calibrate_mode_a")
 
@@ -366,6 +367,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
+
+    # **Before the workdir, the device, the artifact reads and two subprocesses.**
+    # `argparse` accepts any integer, and a negative or oversized one is rejected
+    # only by NumPy inside the seeded bootstrap — after this run has created a
+    # directory, resolved a device, hashed the inputs and launched the frozen
+    # evaluator. The same validator `measure_scorer` uses, called at the same
+    # point in the run: as early as the value is knowable.
+    validate_measurement_seed(args.seed, "--seed")
 
     args.checkpoint = args.checkpoint.resolve()
     args.data_dir = args.data_dir.resolve()

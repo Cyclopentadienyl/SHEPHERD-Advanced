@@ -9,6 +9,14 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **26** — the composition, not just the components. Two internally consistent workspaces could
+  still be crossed at the API, whose `SHEPHERD_KG_PATH` and `SHEPHERD_DATA_DIR` are resolved
+  independently — embeddings from one graph's tensors, node identifiers from another's. A caller
+  states where its graph came from and `verify_graph_source` checks it against the manifest-bound
+  digest, before anything reaches app state (§6.1). The calibration entry point now calls the same
+  seed validator the measurement one does, before it creates a workdir or launches a subprocess;
+  and the ledger's contradiction message no longer says one run is wrong, which contradicted the
+  determinism claim narrowed in revision 25 (§6.5).
 - **25** — the guarantee reaches the clinical path, and refuses before it acts. `DiagnosisPipeline`
   loaded graph tensors, paired a checkpoint with them, precomputed embeddings and could serve
   without ever verifying the workspace; `train` verified only after writing its run directories and
@@ -880,6 +888,15 @@ Two rules follow, and both are enforced rather than advised:
   A supplied institutional cohort is scored against those same tensors, and so is a served
   diagnosis. Only the file-backed path is checked — a caller supplying graph data in memory makes
   no claim about a persisted workspace, so there is no manifest for it to match.
+- **A consistent workspace is not a consistent composition.** `SHEPHERD_KG_PATH` and
+  `SHEPHERD_DATA_DIR` are resolved independently, so a deployment can pair one workspace's
+  `kg.json` with another's tensors — each internally sound, and together producing embedding rows
+  read through the wrong graph's node identifiers, which no structural check can see. A caller that
+  knows where its graph object came from states it (`kg_path`), and `verify_graph_source` compares
+  that file's digest with the one the workspace's manifest binds. **By digest, not by path**:
+  requiring `kg_path` to *be* `data_dir/kg.json` would also close it and would break a deployment
+  that mounts the file elsewhere, and a path is not an identity in this project. A caller holding
+  only an in-memory graph cannot be checked and is not pretended to be.
 - **A knowable refusal precedes the side effects.** Both training and inference verify before they
   create anything: `train` before the run directories, `config.yaml` and the checkpoint directory;
   `DiagnosisPipeline` before the graph is loaded, a checkpoint is paired with it, embeddings are

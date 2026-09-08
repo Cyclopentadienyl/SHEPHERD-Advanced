@@ -885,3 +885,55 @@ def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
 
     assert result.n_ranked == len(samples)
     assert all(rank >= 1 for rank in result.canonical_ranks)
+
+
+class TestTheCalibrationCliSharesTheSeedValidator:
+    """The same rule, called at the same point in the run.
+
+    `calibrate_mode_a` accepted any argparse integer and created its workdir,
+    resolved a device, hashed the artifacts and launched the frozen-oracle
+    subprocess before NumPy rejected a negative or oversized seed inside the seed
+    bootstrap. A second validator would be worse than none; the fix is to call the
+    one that already exists, as early as the value is knowable.
+    """
+
+    @staticmethod
+    def _argv(tmp_path, seed):
+        return ["--checkpoint", str(tmp_path / "c.pt"), "--data-dir", str(tmp_path),
+                "--split", "val", "--workdir", str(tmp_path / "wd"),
+                "--seed", str(seed)]
+
+    @pytest.mark.parametrize("bad", [-1, 2 ** 32])
+    def test_an_out_of_domain_seed_starts_nothing(self, monkeypatch, tmp_path, bad):
+        import scripts.calibrate_mode_a as calibrate
+
+        launched: list = []
+        for name in ("run_oracle", "run_harness", "artifact_digests"):
+            monkeypatch.setattr(
+                calibrate, name,
+                lambda *a, _n=name, **k: launched.append(_n),
+            )
+
+        with pytest.raises(ValueError, match="must be an integer in"):
+            calibrate.main(self._argv(tmp_path, bad))
+
+        assert launched == [], "work started before the seed was checked"
+        assert not (tmp_path / "wd").exists(), "the workdir was created"
+
+    @pytest.mark.parametrize("good", [0, 2 ** 32 - 1])
+    def test_both_endpoints_are_accepted(self, monkeypatch, tmp_path, good):
+        """The domain check must not reject the ends of the domain it enforces."""
+        import scripts.calibrate_mode_a as calibrate
+
+        reached: list = []
+        monkeypatch.setattr(
+            calibrate, "_resolve_device",
+            lambda *a, **k: reached.append("device") or (_ for _ in ()).throw(
+                RuntimeError("stop here")
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="stop here"):
+            calibrate.main(self._argv(tmp_path, good))
+
+        assert reached == ["device"], "a valid endpoint was refused"

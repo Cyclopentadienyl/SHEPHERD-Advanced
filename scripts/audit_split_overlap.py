@@ -143,7 +143,7 @@ def manifest_verification(
     if len(verified.verified) == 1:
         checks = [
             line.replace("the sample files'", f"the {verified.verified[0]} file's")
-            .replace("the realised disease sets, recomputed", 
+            .replace("the realised disease sets, recomputed",
                      f"the realised {verified.verified[0]} disease set, recomputed")
             .replace("realised digests against its own allocated ones",
                      f"realised {verified.verified[0]} digest against its own allocated one")

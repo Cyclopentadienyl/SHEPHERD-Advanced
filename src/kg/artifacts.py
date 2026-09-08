@@ -121,12 +121,59 @@ def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> No
     if version != SPLIT_MANIFEST_SCHEMA_VERSION:
         raise ValueError(
             f"{manifest_path} is split-manifest schema {version!r}; this code "
-            f"reads {SPLIT_MANIFEST_SCHEMA_VERSION}. Schema 1 did not bind the "
-            "exported graph artifacts, so a workspace built under it cannot show "
-            "that its tensors are this graph's export. Rebuild it with "
-            "scripts/build_knowledge_graph.py --generate-samples; there is no "
-            "migration and no unbound-digest path."
+            f"reads {SPLIT_MANIFEST_SCHEMA_VERSION}. "
+            + (
+                "Schema 1 did not bind the exported graph artifacts, so a "
+                "workspace built under it cannot show that its tensors are this "
+                "graph's export. "
+                if version == 1
+                else "That version is not one this revision knows how to read, so "
+                "which of its fields still mean what they say is a guess. "
+            )
+            + "Rebuild it with scripts/build_knowledge_graph.py "
+            "--generate-samples; there is no migration and no unbound-digest path."
         )
+
+
+def verify_graph_source(kg_path: Path, data_dir: Path) -> Dict[str, str]:
+    """The graph object's source file must be this workspace's bound `kg.json`.
+
+    **The composition, not the components.** ``verify_graph_artifacts`` proves a
+    workspace is internally consistent, and two workspaces can each be internally
+    consistent while a caller pairs one's `kg.json` with the other's tensors. The
+    clinical path did exactly that: the API resolves ``SHEPHERD_KG_PATH`` and
+    ``SHEPHERD_DATA_DIR`` independently, loads the ``KnowledgeGraph`` from the
+    first and hands it to a pipeline pointed at the second. Embedding rows then
+    come from one graph and the node-id mapping that interprets them from another,
+    and same-shaped workspaces pass every structural check on the way.
+
+    **Compared by digest rather than by path.** Requiring ``kg_path`` to *be*
+    ``data_dir/kg.json`` would also close it, and would break a deployment that
+    mounts or copies the file elsewhere for reasons of its own. A path is not an
+    identity in this project; the bytes are. Any location holding the bound bytes
+    is the bound graph.
+
+    This is the one thing a caller must state rather than the code recover: an
+    in-memory ``KnowledgeGraph`` has no source digest, so a caller who has only an
+    object cannot be checked and is not pretended to be.
+
+    Raises:
+        ValueError: if the workspace is unsound, or if ``kg_path``'s bytes are not
+            the ones its manifest binds.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    bound = verify_graph_artifacts(data_dir)
+    observed = file_sha256(kg_path)
+    if observed != bound["kg"]:
+        raise ValueError(
+            f"{kg_path} is not the graph {data_dir} was built from "
+            f"({str(observed)[:12]}... vs {str(bound['kg'])[:12]}...). Its "
+            "embeddings would be computed from one graph's tensors and read "
+            "through another graph's node identifiers, which no structural check "
+            "can see. Point both at one workspace."
+        )
+    return bound
 
 
 __all__ = [
@@ -135,4 +182,5 @@ __all__ = [
     "SPLIT_MANIFEST_SCHEMA_VERSION",
     "require_manifest_schema",
     "verify_graph_artifacts",
+    "verify_graph_source",
 ]

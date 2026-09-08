@@ -324,10 +324,14 @@ def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, A
     Re-appending an identical record is a no-op rather than a duplicate row: a
     ledger rebuilt from the same artifacts twice should be the same ledger.
 
-    A **contradiction** — one key, two metric sets — is refused with the differing
-    names in the message. It means one of the two runs is wrong about what it
-    measured, and that is a finding, not a merge conflict to resolve by taking the
-    newer value.
+    Two records under one key carry differing numbers for a measurement whose
+    recorded semantics are identical, seeds included. The second is refused with
+    the differing names in the message — not because one of them is provably
+    wrong, but because the ledger cannot choose between them and neither may stand
+    unexamined. Whether the difference is a defect or variation the regime
+    permits is a question for a person: `measurement_semantics_digest` records
+    that a seed controls this harness's streams and not CUDA determinism, so
+    `deterministic_algorithms` and the cuDNN fields are what decide which it is.
     """
     key = record_key(record)
     for existing in ledger["records"]:
@@ -350,7 +354,9 @@ def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, A
                 if differing
                 else "two differ outside their metrics. "
             )
-            + "One of them is wrong about what it measured. Nothing was written."
+            + "The ledger cannot choose between them, and neither may stand "
+            "unexamined: whether this is a defect or variation the recorded "
+            "regime permits is for a person to determine. Nothing was written."
         )
     return {**ledger, "records": ledger["records"] + [record]}
 

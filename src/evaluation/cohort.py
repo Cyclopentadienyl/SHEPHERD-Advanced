@@ -252,8 +252,9 @@ def verify_generated_cohorts(
        scope would be the same over-validation this scoping removes, arriving
        through a claim instead of a file.
 
-    Reads both sample files, so it costs one pass over the workspace's cohorts.
-    Called once per run, before hours of training or minutes of measurement.
+    Reads the sample files in scope, so it costs one pass over the cohorts the
+    caller consumes. Called once per run, before hours of training or minutes of
+    measurement.
 
     Raises:
         ValueError: naming which of the four failed, and for which split.
