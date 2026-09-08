@@ -814,3 +814,164 @@ def test_no_evidence_file_is_replaced_silently(tmp_path, script, args):
 
     with pytest.raises(SystemExit, match="exists"):
         _run(script, argv)
+
+
+# ---------------------------------------------------------------------------
+# M4 — the manifest cross-check, and the disjointness gate
+# ---------------------------------------------------------------------------
+def _allocated_workspace(root: Path, n_diseases: int = 8, val_fraction: float = 0.25):
+    """A workspace as the current pipeline leaves it: two cohorts and a manifest.
+
+    Built through ``allocate_diseases`` and ``build_split_manifest`` rather than
+    by writing a plausible-looking manifest by hand. A hand-written one would
+    encode this test's belief about the manifest's shape, and would keep passing
+    after the real shape changed — which is the failure mode the audit exists to
+    catch, reproduced inside its own test.
+    """
+    from src.kg.disease_allocation import allocate_diseases
+    from src.kg.sample_generator import build_split_manifest
+
+    profiles = [
+        (i, {"phenotype_ids": [i, i + 100], "gene_ids": [i]}) for i in range(n_diseases)
+    ]
+    allocation = allocate_diseases(profiles, val_fraction, seed=42)
+
+    def _samples(partition, tag):
+        return [
+            {"patient_id": f"SECRET-{tag}-{k}", "phenotype_ids": list(p["phenotype_ids"]),
+             "disease_id": d}
+            for k, (d, p) in enumerate(partition)
+        ]
+
+    train, val = _samples(allocation.train, "t"), _samples(allocation.val, "v")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "train_samples.json").write_text(json.dumps(train))
+    (root / "val_samples.json").write_text(json.dumps(val))
+    manifest = build_split_manifest(
+        allocation=allocation, train_samples=train, val_samples=val,
+        config={"min_phenotypes": 2, "max_phenotypes": 15, "phenotype_drop_rate": 0.3},
+        num_train=len(train), num_val=len(val), artifacts={"kg": None},
+    )
+    (root / "split_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    return root, manifest
+
+
+def test_a_disjoint_workspace_agrees_with_its_manifest_and_passes_the_gate(tmp_path):
+    data_dir, _ = _allocated_workspace(tmp_path / "ws")
+    out = tmp_path / "m4.json"
+
+    _run("audit_split_overlap",
+         ["--data-dir", str(data_dir), "--output", str(out), "--require-disjoint"])
+    report = json.loads(out.read_text())
+
+    assert report["schema_version"] == 2
+    assert report["counts"]["shared_diseases"] == 0
+    agreement = report["manifest_agreement"]
+    assert agreement["compared"] is True and agreement["agrees"] is True
+    assert agreement["claimed_disjoint"] is True
+    assert agreement["measured_disjoint"] is True
+    assert all(agreement["files_match_manifest_realised"].values())
+    assert all(agreement["manifest_realised_matches_allocated"].values())
+
+
+def test_replaced_sample_files_are_caught_by_the_manifest_comparison(tmp_path):
+    """The check `build_split_manifest` structurally cannot make about itself.
+
+    It derives the realised sets from records held in its own memory. Once those
+    files are replaced, its verdict describes a cohort that is no longer there,
+    and every digest inside it still agrees with every other digest inside it.
+    """
+    data_dir, _ = _allocated_workspace(tmp_path / "ws")
+    out = tmp_path / "m4.json"
+
+    (data_dir / "val_samples.json").write_text(json.dumps(
+        [{"patient_id": "x", "phenotype_ids": [0], "disease_id": 900}]
+    ))
+    with pytest.raises(SystemExit, match="does not describe the sample files"):
+        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+
+    # The refusal happens after the artifact is written: a failed audit's evidence
+    # is the report describing the failure.
+    report = json.loads(out.read_text())
+    assert report["manifest_agreement"]["agrees"] is False
+    assert report["manifest_agreement"]["files_match_manifest_realised"]["val"] is False
+    assert report["manifest_agreement"]["files_match_manifest_realised"]["train"] is True
+
+
+def test_a_manifest_whose_realised_contradicts_its_allocation_is_caught(tmp_path):
+    """Internal to the file, and still a workspace nothing may be trained on."""
+    data_dir, manifest = _allocated_workspace(tmp_path / "ws")
+    out = tmp_path / "m4.json"
+
+    manifest["allocation"]["allocated"]["val_digest"] = "0" * 64
+    (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(SystemExit, match="does not describe the sample files"):
+        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+    agreement = json.loads(out.read_text())["manifest_agreement"]
+    assert agreement["manifest_realised_matches_allocated"]["val"] is False
+    assert all(agreement["files_match_manifest_realised"].values()), (
+        "the files are untouched; only the manifest contradicts itself"
+    )
+
+
+def test_a_workspace_without_a_manifest_is_reported_not_refused(tmp_path):
+    """The M4 baseline was measured on exactly such a workspace."""
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    out = tmp_path / "m4.json"
+
+    _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+    agreement = json.loads(out.read_text())["manifest_agreement"]
+
+    assert agreement["manifest"] == "absent"
+    assert agreement["compared"] is False
+    assert agreement["agrees"] is None
+    assert "predates the allocation step" in agreement["why"]
+
+
+def test_overlap_refuses_only_under_the_flag(tmp_path):
+    """Measurable without refusal, because the baseline run must measure a
+    workspace whose overlap is total and expected."""
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    reported, gated = tmp_path / "a.json", tmp_path / "b.json"
+
+    _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(reported)])
+    assert json.loads(reported.read_text())["overlap"]["as_written"] == "1 of 1"
+
+    with pytest.raises(SystemExit, match="--require-disjoint"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(gated), "--require-disjoint"])
+    assert json.loads(gated.read_text())["counts"]["shared_diseases"] == 1
+
+
+def test_the_manifest_comparison_is_skipped_for_other_split_pairs(tmp_path):
+    """The manifest describes train and val; silently comparing it against some
+    other pair would be a verdict about cohorts it never saw."""
+    data_dir, _ = _allocated_workspace(tmp_path / "ws")
+    (data_dir / "holdout_samples.json").write_text(
+        (data_dir / "val_samples.json").read_text()
+    )
+    out = tmp_path / "m4.json"
+
+    _run("audit_split_overlap",
+         ["--data-dir", str(data_dir), "--output", str(out),
+          "--splits", "train", "holdout"])
+    agreement = json.loads(out.read_text())["manifest_agreement"]
+
+    assert agreement["manifest"] == "present"
+    assert agreement["compared"] is False
+    assert "describes train and val" in agreement["why"]
+
+
+def test_the_manifest_section_carries_no_identifiers(tmp_path):
+    """§5.2 applies to every section of the artifact, including the new one."""
+    data_dir, _ = _allocated_workspace(tmp_path / "ws")
+    out = tmp_path / "m4.json"
+
+    _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+    text = out.read_text()
+
+    assert "SECRET" not in text
+    assert "patient_id" not in text
+    section = json.dumps(json.loads(text)["manifest_agreement"])
+    assert "phenotype_ids" not in section and "disease_id" not in section

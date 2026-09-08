@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-M4 evidence — how much of the validation cohort's disease set is in training.
+M4 — the disease overlap between two splits, measured from the files on disk.
 =============================================================================
 Backlog item 10. M4 was measured once in a review thread: **100% of validation
 diseases appear in training**, 7,970 of 7,970, over 100,000 training samples
@@ -10,6 +10,37 @@ That figure bounds every number this project reports on `val`, and item 2 puts i
 into user-facing help — which is exactly why it must be reproducible from an
 artifact rather than quoted from a conversation.
 
+**What changed, and why this script did not become redundant.**
+``src/kg/disease_allocation.py`` now cuts the disease universe before generation,
+so a workspace built by the current pipeline is disease-disjoint by construction
+and `split_manifest.json` records that. It would be easy to conclude that
+measuring the overlap is now pointless. It is not, for one reason: every
+disjointness claim in the manifest is made **in the generating process, about
+values held in its own memory**. `build_split_manifest` derives the realised sets
+from the records it is about to write, asserts coverage, and writes both the
+verdict and the files. Nothing afterwards reads those files back.
+
+So the manifest cannot distinguish "these are the cohorts that allocation
+produced" from "a manifest is sitting next to two sample files it does not
+describe" — a workspace whose samples were replaced, or whose manifest was copied
+in from elsewhere. This script re-reads the sample files with the same reader the
+trainer uses, recomputes the disease sets, and compares them against what the
+manifest claims. That is an **independent** check, not a second copy of the
+generator's own.
+
+Two verdicts, deliberately given different force:
+
+- A manifest that disagrees with the files beside it is a broken workspace under
+  any reading, so the disagreement is always fatal.
+- Non-zero overlap is fatal only under ``--require-disjoint``. It has to stay
+  measurable without refusal, because reproducing the M4 baseline means running
+  this over a pre-split workspace where the overlap is total and expected.
+
+**Schema.** The report is ``schema_version`` 2. Version 1 is the unversioned
+shape ``EVIDENCE_M4.json`` carries; it was not redefined in place, for the reason
+§6.8's audit gives for the same situation — a v1 artifact already exists and has
+been relied on.
+
 **Counts and hashes only.** BACKLOG §5.2 forbids patient ids, sample ids and
 per-disease lists here, and nothing in the claim needs them: it is two set sizes
 and the size of their intersection. The split digests are what let a later reader
@@ -18,7 +49,8 @@ confirm the numbers describe the files they have.
 Usage:
     python scripts/audit_split_overlap.py \\
         --data-dir data/workspaces/<workspace> \\
-        --output docs/working/EVIDENCE_M4_split_overlap.json
+        --output docs/working/EVIDENCE_M4_split_overlap.json \\
+        --require-disjoint
 
 Module: scripts/audit_split_overlap.py
 """
@@ -58,6 +90,105 @@ def disease_ids(data_dir: Path, split: str) -> List[int]:
     return [int(sample.disease_id) for sample in read_samples(data_dir, split)]
 
 
+#: Bumped when this report's shape changes. Version 1 is the unversioned shape
+#: ``EVIDENCE_M4.json`` carries, kept readable rather than redefined in place.
+REPORT_SCHEMA_VERSION = 2
+
+#: The manifest section's verdict when there is nothing to compare against.
+NO_MANIFEST = "absent"
+
+
+def manifest_agreement(
+    data_dir: Path, splits: List[str], measured: Dict[str, set]
+) -> Dict[str, Any]:
+    """Do the sample files on disk match what ``split_manifest.json`` claims?
+
+    **The one check the generator structurally cannot perform on itself.**
+    ``build_split_manifest`` computes the realised disease sets from the records
+    it is about to write and asserts coverage against the allocation — all in one
+    process, over values in memory. That establishes the manifest describes the
+    records *it produced*. It cannot establish that the files still sitting in
+    the workspace are those records.
+
+    Two comparisons, both against digests computed by ``disease_set_digest``
+    rather than by a private copy of the same arithmetic:
+
+    - **measured vs. the manifest's realised digests** — the files are the
+      cohorts this manifest describes;
+    - **the manifest's realised vs. its own allocated digests** — a check
+      internal to the file, which under the full-coverage contract must agree,
+      and which makes the transitive claim "these files are the cohorts this
+      *allocation* cut" available to a reader who has only the report.
+
+    Returns a section rather than raising, so a disagreement is written into the
+    artifact before the caller refuses on it. A workspace with no manifest is not
+    a failure: that is precisely the pre-split workspace the M4 baseline was
+    measured on.
+    """
+    from src.kg.disease_allocation import disease_set_digest
+
+    manifest_path = data_dir / "split_manifest.json"
+    if not manifest_path.exists():
+        return {
+            "manifest": NO_MANIFEST,
+            "compared": False,
+            "why": (
+                "no split_manifest.json in this workspace; it predates the "
+                "allocation step, which is the regime the M4 baseline measured"
+            ),
+            "agrees": None,
+        }
+
+    if splits != ["train", "val"]:
+        return {
+            "manifest": "present",
+            "compared": False,
+            "why": (
+                f"split_manifest.json describes train and val; this run compared "
+                f"{splits[0]} and {splits[1]}"
+            ),
+            "agrees": None,
+        }
+
+    train_split, eval_split = splits
+    manifest = json.loads(manifest_path.read_text())
+    realised = manifest.get("realised", {})
+    allocated = manifest.get("allocation", {}).get("allocated", {})
+
+    measured_digests = {
+        split: disease_set_digest(sorted(measured[split])) for split in splits
+    }
+    files_match = {
+        split: measured_digests[split] == realised.get(f"{split}_digest")
+        for split in splits
+    }
+    # Internal to the manifest, and therefore not evidence about the files. It is
+    # reported so a reader holding only this artifact can chain "files are the
+    # realised cohorts" to "realised is what the allocation cut" without opening
+    # the manifest themselves.
+    realised_matches_allocated = {
+        split: realised.get(f"{split}_digest") == allocated.get(f"{split}_digest")
+        for split in splits
+    }
+
+    return {
+        "manifest": "present",
+        "compared": True,
+        "manifest_schema_version": manifest.get("schema_version"),
+        "claimed_disjoint": manifest.get("disjoint"),
+        "measured_disjoint": not (measured[train_split] & measured[eval_split]),
+        "files_match_manifest_realised": files_match,
+        "manifest_realised_matches_allocated": realised_matches_allocated,
+        "allocation_algorithm": manifest.get("allocation", {}).get("algorithm"),
+        "generation_algorithm": manifest.get("generation", {}).get("algorithm"),
+        "agrees": (
+            all(files_match.values())
+            and all(realised_matches_allocated.values())
+            and manifest.get("disjoint") == (not (measured[train_split] & measured[eval_split]))
+        ),
+    }
+
+
 def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[str, Any]:
     from src.utils.fingerprint import file_sha256
 
@@ -85,6 +216,7 @@ def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[s
     shared = eval_set & train_set
 
     return {
+        "schema_version": REPORT_SCHEMA_VERSION,
         "fact": "M4",
         "what_this_shows": (
             f"how much of the {eval_split} cohort's disease set already appears in "
@@ -115,6 +247,9 @@ def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[s
             "shared_over_evaluation": len(shared) / len(eval_set),
             "as_written": f"{len(shared)} of {len(eval_set)}",
         },
+        "manifest_agreement": manifest_agreement(
+            data_dir, splits, {train_split: train_set, eval_split: eval_set}
+        ),
         "deployment_relationship": relationship,
         "excluded_by_design": [
             "patient ids",
@@ -136,6 +271,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "as the second argument.")
     parser.add_argument("--overwrite", action="store_true",
                         help="Replace an existing --output. Off by default.")
+    parser.add_argument("--require-disjoint", action="store_true",
+                        help="Exit non-zero if any disease appears in both splits. "
+                             "Opt-in rather than the default, because reproducing "
+                             "the M4 baseline means measuring a pre-split workspace "
+                             "where the overlap is total and expected. Use it on any "
+                             "workspace built by the current pipeline, where "
+                             "disjointness is a contract rather than an observation.")
     parser.add_argument("--deployment-relationship", default=UNSTATED_RELATIONSHIP,
                         choices=DEPLOYMENT_RELATIONSHIPS,
                         help="How this machine relates to the deployment. A bounded "
@@ -156,6 +298,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     logger.info("%s -> %s", report["overlap"]["as_written"], args.output)
+
+    # **The report is written first, then the verdict refuses.** A failed audit's
+    # evidence is the artifact describing the failure; discarding it on the way
+    # out would leave the operator with an exit code and nothing to cite.
+    agreement = report["manifest_agreement"]
+    if agreement["compared"] and not agreement["agrees"]:
+        raise SystemExit(
+            f"{args.output} records a workspace whose split_manifest.json does not "
+            "describe the sample files beside it. The manifest is written by the "
+            "process that emits the samples, so a disagreement means the files "
+            "changed afterwards or the manifest came from another workspace; "
+            "neither is a workspace anything may be trained on or measured from."
+        )
+    if args.require_disjoint and report["counts"]["shared_diseases"]:
+        raise SystemExit(
+            f"--require-disjoint: {report['overlap']['as_written']} "
+            f"{args.splits[1]} diseases also appear in {args.splits[0]}. A metric "
+            "measured on this split reports recognition of new phenotype subsets "
+            f"of diseases the model has labelled examples of. See {args.output}."
+        )
     return 0
 
 
