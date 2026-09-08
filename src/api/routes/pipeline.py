@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -149,19 +151,18 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
 # =============================================================================
 # Endpoints
 # =============================================================================
-@router.get("/pipeline/status", response_model=PipelineStatusResponse)
-async def get_pipeline_status() -> PipelineStatusResponse:
-    """Get current pipeline status."""
-    from src.api.main import app_state
-
-    if app_state.pipeline is None:
+def _status_of(
+    config: Optional[Dict[str, Any]],
+    data_dir: Optional[str],
+    checkpoint_path: Optional[str],
+) -> PipelineStatusResponse:
+    """Render one pipeline configuration as a status response."""
+    if config is None:
         return PipelineStatusResponse(
             initialized=False,
-            current_data_dir=app_state._current_data_dir if hasattr(app_state, "_current_data_dir") else None,
-            current_checkpoint_path=app_state._current_checkpoint_path if hasattr(app_state, "_current_checkpoint_path") else None,
+            current_data_dir=data_dir,
+            current_checkpoint_path=checkpoint_path,
         )
-
-    config = app_state.pipeline.get_pipeline_config()
     return PipelineStatusResponse(
         initialized=True,
         gnn_ready=config.get("gnn_ready", False),
@@ -175,9 +176,49 @@ async def get_pipeline_status() -> PipelineStatusResponse:
         has_model=config.get("has_model", False),
         fingerprint_warnings=config.get("fingerprint_warnings", []),
         checkpoint_meta=config.get("checkpoint_meta", {}),
-        current_data_dir=getattr(app_state, "_current_data_dir", None),
-        current_checkpoint_path=getattr(app_state, "_current_checkpoint_path", None),
+        current_data_dir=data_dir,
+        current_checkpoint_path=checkpoint_path,
     )
+
+
+def _still_serving() -> str:
+    """The tail every rejected-candidate message carries.
+
+    Empty when nothing was loaded to begin with: a service that has never built
+    a pipeline is not "still serving" one, and a reassurance that is sometimes
+    false is worth less than no reassurance.
+    """
+    from src.api.main import app_state
+
+    if app_state.pipeline is None:
+        return ""
+    return " The previously loaded pipeline is still being served."
+
+
+def _live_status() -> PipelineStatusResponse:
+    """The pipeline this service is serving at this moment.
+
+    **Every failed reload reports this, not `initialized=False`.** A rejected
+    candidate never becomes the served pipeline, so answering "not initialized"
+    would tell an operator the service is down when it is still diagnosing
+    patients out of the workspace it had before — and, on the path that used to
+    tear the old pipeline down first, that answer was true only because the
+    teardown had already happened.
+    """
+    from src.api.main import app_state
+
+    pipeline = app_state.pipeline
+    return _status_of(
+        None if pipeline is None else pipeline.get_pipeline_config(),
+        app_state._current_data_dir,
+        app_state._current_checkpoint_path,
+    )
+
+
+@router.get("/pipeline/status", response_model=PipelineStatusResponse)
+async def get_pipeline_status() -> PipelineStatusResponse:
+    """Get current pipeline status."""
+    return _live_status()
 
 
 @router.post("/pipeline/reload", response_model=PipelineReloadResponse)
@@ -185,10 +226,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     """
     Reload the diagnosis pipeline with new data directory and/or checkpoint.
 
-    This releases the current pipeline (if any) and initializes a new one.
+    Builds the replacement first and swaps it in only once it is complete and
+    verified; a rejected candidate leaves the running pipeline serving.
     """
-    from src.api.main import app_state, initialize_pipeline
-
     data_dir = request.data_dir
     checkpoint_path = request.checkpoint_path
     device = request.device
@@ -201,7 +241,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         return PipelineReloadResponse(
             success=False,
             message=f"Missing required files in {data_dir}: {missing_required}",
-            status=PipelineStatusResponse(initialized=False),
+            status=_live_status(),
             files_found=files,
         )
 
@@ -249,7 +289,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
                 return PipelineReloadResponse(
                     success=False,
                     message=str(exc),
-                    status=PipelineStatusResponse(initialized=False),
+                    status=_live_status(),
                     files_found=files,
                     selection_reason="invalid conv_type",
                 )
@@ -287,24 +327,33 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         return PipelineReloadResponse(
             success=False,
             message=f"No checkpoint found ({selection_reason}). {hint}",
-            status=PipelineStatusResponse(initialized=False),
+            status=_live_status(),
             files_found=files,
             architecture=architecture,
             selection_reason=selection_reason,
         )
 
-    # Release existing pipeline
-    if app_state.pipeline is not None:
-        logger.info("Releasing existing pipeline for reload...")
-        app_state.pipeline = None
-        app_state.kg = None
-
     # Derive kg_path from data_dir
     kg_path = str(Path(data_dir) / "kg.json")
 
+    # **Build the candidate before touching what is being served.** Everything
+    # that can reject this reload happens inside `build_pipeline`: a crossed
+    # graph source, a replaced graph artifact, a manifest at an unsupported
+    # schema, an unreadable checkpoint, a configuration that fails to read back.
+    # Releasing the running pipeline first — as this endpoint used to — meant
+    # every one of those rejections landed on a service that had already
+    # discarded a healthy pipeline, and turned a refused workspace into a
+    # clinical outage. A swap of references is the whole mechanism; there is no
+    # rollback path to get wrong because nothing is undone.
+    #
+    # The cost is a window where both pipelines are resident. That is the right
+    # trade: an allocation failure in that window fails the *reload* and leaves
+    # the served pipeline exactly as it was, whereas freeing first buys headroom
+    # by making every later failure unrecoverable.
+    from src.api.main import build_pipeline, publish_pipeline
+
     try:
-        # Force re-initialization (bypass the "already initialized" guard)
-        initialize_pipeline(
+        candidate = build_pipeline(
             kg_path=kg_path,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
@@ -314,24 +363,23 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         logger.error(f"Pipeline reload failed: {e}")
         return PipelineReloadResponse(
             success=False,
-            message=f"Pipeline initialization failed: {e}",
-            status=PipelineStatusResponse(initialized=False),
+            message=f"Pipeline initialization failed: {e}.{_still_serving()}",
+            status=_live_status(),
             files_found=files,
         )
 
-    if app_state.pipeline is None:
+    if candidate is None:
         return PipelineReloadResponse(
             success=False,
-            message="Pipeline initialization returned but pipeline is still None. Check server logs.",
-            status=PipelineStatusResponse(initialized=False),
+            message=f"No pipeline could be built from {data_dir}. "
+            f"Check server logs.{_still_serving()}",
+            status=_live_status(),
             files_found=files,
         )
 
-    # Store current paths for status reporting
-    app_state._current_data_dir = data_dir
-    app_state._current_checkpoint_path = checkpoint_path
+    publish_pipeline(candidate)
 
-    config = app_state.pipeline.get_pipeline_config()
+    config = candidate.config
     fp_warns = config.get("fingerprint_warnings", [])
 
     msg = "Pipeline reloaded successfully."
@@ -340,22 +388,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     if fp_warns:
         msg += f" WARNING: {len(fp_warns)} fingerprint mismatch(es) detected."
 
-    status_resp = PipelineStatusResponse(
-        initialized=True,
-        gnn_ready=config.get("gnn_ready", False),
-        sp_ready=config.get("sp_ready", False),
-        scoring_mode=config.get("scoring_mode", "unknown"),
-        eta_configured=config.get("eta_configured", 0.7),
-        eta_effective=config.get("eta_effective", 0.0),
-        sp_max_hops=config.get("sp_max_hops"),
-        kg_nodes=config.get("kg_nodes", 0),
-        kg_edges=config.get("kg_edges", 0),
-        has_model=config.get("has_model", False),
-        fingerprint_warnings=fp_warns,
-        checkpoint_meta=config.get("checkpoint_meta", {}),
-        current_data_dir=data_dir,
-        current_checkpoint_path=checkpoint_path,
-    )
+    status_resp = _status_of(config, data_dir, checkpoint_path)
 
     return PipelineReloadResponse(
         success=True,
@@ -384,10 +417,32 @@ async def get_ui_config() -> UIConfigResponse:
 
 @router.post("/pipeline/config", response_model=UIConfigResponse)
 async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
-    """Save UI configuration to .shepherd_ui_config.json."""
+    """Save UI configuration to .shepherd_ui_config.json.
+
+    **Written beside the target and renamed onto it**, so an interrupted write
+    leaves the previous selection intact instead of a truncated file. This is
+    the same rule as the reload above, applied to the persisted form of the same
+    fact: which workspace this deployment serves. The consequence is milder —
+    `get_ui_config` falls back to the default workspace on an unreadable file,
+    and the operator sees that default in the path field rather than being
+    served from it silently — but the failure it removes is a real one, and
+    losing an operator's workspace selection has no upside.
+    """
     try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config.model_dump(), f, indent=2)
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            "w", dir=str(CONFIG_FILE.parent), prefix=CONFIG_FILE.name,
+            suffix=".tmp", delete=False,
+        )
+        try:
+            with handle:
+                json.dump(config.model_dump(), handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(handle.name, CONFIG_FILE)
+        except BaseException:
+            Path(handle.name).unlink(missing_ok=True)
+            raise
         logger.info(f"UI config saved to {CONFIG_FILE}")
         return config
     except Exception as e:

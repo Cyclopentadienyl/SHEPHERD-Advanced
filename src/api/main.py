@@ -52,7 +52,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,6 +80,13 @@ class AppState:
         self.start_time = None
         self.version = "1.0.0"
         self.model_version = "unknown"
+        # Which workspace and checkpoint the loaded pipeline was built from.
+        # Declared here rather than attached by whoever loaded it, so "what is
+        # being served?" has an answer from the first moment it can be asked —
+        # including after an environment-configured startup, which used to
+        # publish a pipeline and leave these reading as unknown.
+        self._current_data_dir = None
+        self._current_checkpoint_path = None
 
 
 app_state = AppState()
@@ -357,17 +364,37 @@ def get_app_state() -> AppState:
     return app_state
 
 
-def initialize_pipeline(
+class PipelineBundle(NamedTuple):
+    """A constructed, fully checked pipeline that nothing is serving yet.
+
+    Construction is the part that can fail: the graph is loaded, the workspace
+    is checked against the composition it claims, a checkpoint is opened and a
+    model is rebuilt from it. Naming the finished product lets that whole
+    sequence happen in local variables, so a caller replacing a live pipeline
+    can decide *after* it succeeded.
+    """
+
+    kg: Any
+    pipeline: Any
+    config: Dict[str, Any]
+    data_dir: Optional[str]
+    checkpoint_path: Optional[str]
+
+
+def build_pipeline(
     kg_path: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
     data_dir: Optional[str] = None,
     device: Optional[str] = None,
-):
+) -> Optional[PipelineBundle]:
     """
-    Initialize diagnosis pipeline.
+    Build a diagnosis pipeline without publishing it.
 
-    Loads the knowledge graph and creates the DiagnosisPipeline with optional
-    GNN model. Called lazily on first diagnosis request or explicitly at startup.
+    Loads the knowledge graph, creates the DiagnosisPipeline with optional GNN,
+    and reads back its configuration — everything that can fail. **Application
+    state is not touched.** Returns the finished bundle, or ``None`` when there
+    is nothing to build because no KG path is configured or the configured one
+    does not exist; raises when a configured pipeline fails to build.
 
     Configuration is read from environment variables if not passed directly:
         SHEPHERD_KG_PATH: Path to KG JSON file
@@ -380,11 +407,12 @@ def initialize_pipeline(
         checkpoint_path: Path to trained model checkpoint (overrides env var)
         data_dir: Path to processed data directory (overrides env var)
         device: Inference device (overrides env var)
-    """
-    if app_state.pipeline is not None:
-        return
 
-    logger.info("Initializing diagnosis pipeline...")
+    Returns:
+        The built pipeline and the paths it was built from, or None if the
+        service is not configured to serve one.
+    """
+    logger.info("Building diagnosis pipeline...")
 
     # Resolve paths from args or environment
     kg_path = kg_path or os.environ.get("SHEPHERD_KG_PATH")
@@ -397,7 +425,7 @@ def initialize_pipeline(
             "No KG path configured. Set SHEPHERD_KG_PATH or pass kg_path. "
             "Pipeline will not be available."
         )
-        return
+        return None
 
     try:
         from src.kg.graph import KnowledgeGraph
@@ -407,7 +435,7 @@ def initialize_pipeline(
         kg_file = Path(kg_path)
         if not kg_file.exists():
             logger.error(f"KG file not found: {kg_file}")
-            return
+            return None
 
         logger.info(f"Loading knowledge graph from {kg_file}...")
         kg = KnowledgeGraph.load_json(str(kg_file))
@@ -415,14 +443,13 @@ def initialize_pipeline(
 
         # Step 2: Create pipeline (with optional GNN)
         #
-        # **`kg_path` is passed, and nothing is committed to app state until it
-        # has been checked against `data_dir`.** These two settings are resolved
-        # independently from the environment, so a deployment can point them at
-        # two different workspaces — each internally consistent, and together
-        # producing embeddings from one graph's tensors read through the other
-        # graph's node identifiers. The pipeline refuses that composition; this
-        # ordering is what stops a refused one leaving a graph published in
-        # `app_state.kg` as though it had been accepted.
+        # **`kg_path` is passed, and the composition is checked here.** These two
+        # settings are resolved independently from the environment, so a
+        # deployment can point them at two different workspaces — each internally
+        # consistent, and together producing embeddings from one graph's tensors
+        # read through the other graph's node identifiers. The pipeline refuses
+        # that composition, and because this function publishes nothing, a
+        # refused one cannot leave a graph visible as though it had been accepted.
         pipeline = create_diagnosis_pipeline(
             kg=kg,
             checkpoint_path=checkpoint_path,
@@ -430,22 +457,76 @@ def initialize_pipeline(
             kg_path=str(kg_file),
             device=device,
         )
-        # **Everything computed, then published together.** A failure between
-        # the two publications would otherwise leave a pipeline visible in app
-        # state while this function reports that initialization failed.
+        # Read the configuration back **before returning**, not after publishing.
+        # It is the last thing that can fail, and a caller that published first
+        # would have to undo the publication to report the failure honestly.
         config = pipeline.get_pipeline_config()
-        app_state.kg = kg
-        app_state.pipeline = pipeline
-        app_state.model_version = config.get("version", "unknown")
-        logger.info(
-            f"Pipeline initialized: scoring_mode={config.get('scoring_mode')}, "
-            f"gnn_ready={config.get('gnn_ready')}, "
-            f"sp_ready={config.get('sp_ready')}"
+        return PipelineBundle(
+            kg=kg,
+            pipeline=pipeline,
+            config=config,
+            data_dir=data_dir,
+            checkpoint_path=checkpoint_path,
         )
 
     except Exception as e:
-        logger.error(f"Failed to initialize pipeline: {e}")
+        logger.error(f"Failed to build pipeline: {e}")
         raise
+
+
+def publish_pipeline(bundle: PipelineBundle) -> None:
+    """Make a built pipeline the one this service serves.
+
+    **The only writer of the served-pipeline fields, and it writes all of them.**
+    They answer one question together — what is being served, and out of which
+    workspace — so a caller that set some of them would leave the service
+    describing a pipeline that is not the one loaded. Everything that can fail
+    happened in `build_pipeline`; these assignments cannot.
+    """
+    app_state.kg = bundle.kg
+    app_state.pipeline = bundle.pipeline
+    app_state.model_version = bundle.config.get("version", "unknown")
+    app_state._current_data_dir = bundle.data_dir
+    app_state._current_checkpoint_path = bundle.checkpoint_path
+    logger.info(
+        f"Pipeline published: scoring_mode={bundle.config.get('scoring_mode')}, "
+        f"gnn_ready={bundle.config.get('gnn_ready')}, "
+        f"sp_ready={bundle.config.get('sp_ready')}"
+    )
+
+
+def initialize_pipeline(
+    kg_path: Optional[str] = None,
+    checkpoint_path: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    device: Optional[str] = None,
+):
+    """
+    Initialize the diagnosis pipeline if one is not already loaded.
+
+    Called at startup, or lazily on first diagnosis request. Reloading a running
+    service does not go through here: it must build its candidate first and keep
+    serving the current pipeline until that succeeds, so it calls
+    `build_pipeline` and `publish_pipeline` itself.
+
+    Args:
+        kg_path: Path to KG JSON file (overrides env var)
+        checkpoint_path: Path to trained model checkpoint (overrides env var)
+        data_dir: Path to processed data directory (overrides env var)
+        device: Inference device (overrides env var)
+    """
+    if app_state.pipeline is not None:
+        return
+
+    bundle = build_pipeline(
+        kg_path=kg_path,
+        checkpoint_path=checkpoint_path,
+        data_dir=data_dir,
+        device=device,
+    )
+    if bundle is None:
+        return
+    publish_pipeline(bundle)
 
 
 def initialize_ontology():
