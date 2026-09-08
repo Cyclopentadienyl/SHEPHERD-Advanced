@@ -48,6 +48,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.utils.banding import (  # noqa: E402
+    CAPACITY_BANDS,
+    MISSING_LABEL,
+    band_label,
+    band_sort_key,
+    bucket,
+)
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -82,11 +89,10 @@ DEFAULT_SAMPLES_PER_DISEASE: Tuple[int, ...] = (1, 5, 10, 20)
 PHENOTYPE_COUNT_BANDS: Tuple[int, ...] = (0, 2, 4, 6, 11, 21, 51)
 GENE_COUNT_BANDS: Tuple[int, ...] = (0, 1, 2, 4, 11)
 PROFILE_SUPPORT_BANDS: Tuple[int, ...] = (0, 1, 2, 5, 11, 26, 51)
-CAPACITY_BANDS: Tuple[int, ...] = (1, 2, 6, 21, 101, 1001)
-
-#: Where a value that could not be computed is placed. Sorted **after** every
-#: numeric band, ahead of any label tie-break, so bucket order is total.
-MISSING_LABEL = "missing"
+#: ``CAPACITY_BANDS`` and the banding mechanism live in ``src.utils.banding``:
+#: the generator audit reports draws against the same bands this audit reports
+#: capacity in, and two copies of the bounds would make those two reports look
+#: alignable while silently not being.
 
 
 # --------------------------------------------------------------------------
@@ -359,51 +365,7 @@ def largest_remainder_quotas(
 # --------------------------------------------------------------------------
 
 
-def band_label(value: Optional[int], bounds: Sequence[int]) -> str:
-    """Which band a value falls in, as a stable label.
 
-    ``None`` goes to the explicit missing bucket. It is never imputed and never
-    silently dropped — and for the strata computed here it is structurally
-    unreachable, since every eligible disease has both counts. The bucket exists
-    so that the ordering rule is total rather than conditional on the data.
-    """
-    if value is None:
-        return MISSING_LABEL
-    for lower, upper in zip(bounds, list(bounds[1:]) + [None]):
-        if value >= lower and (upper is None or value < upper):
-            return f"{lower}+" if upper is None else (
-                str(lower) if upper == lower + 1 else f"{lower}-{upper - 1}"
-            )
-    return MISSING_LABEL
-
-
-def band_sort_key(label: str, bounds: Sequence[int]) -> Tuple[int, int, str]:
-    """Canonical bucket order: ascending lower bound, missing last, then label.
-
-    The first element separates numeric bands (0) from the missing bucket (1),
-    which is what puts missing after every band regardless of its lower bound.
-    The label is the final tie-break so the ordering is total even if two bands
-    were ever given the same bound.
-    """
-    if label == MISSING_LABEL:
-        return (1, 0, label)
-    head = label.rstrip("+").split("-")[0]
-    try:
-        return (0, int(head), label)
-    except ValueError:  # pragma: no cover - labels are generated, not parsed
-        return (1, 0, label)
-
-
-def bucket(values: Sequence[Optional[int]], bounds: Sequence[int]) -> List[Tuple[str, int]]:
-    """Band populations, in canonical bucket order, empty bands included."""
-    counts: Dict[str, int] = {}
-    for value in values:
-        label = band_label(value, bounds)
-        counts[label] = counts.get(label, 0) + 1
-    for lower in bounds:
-        counts.setdefault(band_label(lower, bounds), 0)
-    counts.setdefault(MISSING_LABEL, 0)
-    return sorted(counts.items(), key=lambda kv: band_sort_key(kv[0], bounds))
 
 
 # --------------------------------------------------------------------------

@@ -9,6 +9,12 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **19** — §6.6 step 4 is delivered in the half that needs no external tool, and the other half is
+  deferred rather than dropped (§6.6). The three statements §1.5 left unmeasured now have an
+  instrument, and the third of them is restated for the disease-disjoint regime: a cut at the
+  disease level cannot leak a `(phenotypes, disease)` signature, but it does not close the channel
+  where one phenotype set carries two different labels across the cut. Recorded here because the
+  audit measures it and the document previously implied the cut settled the question.
 - **18** — §6.2 is implemented. Allocation is a separate step
   (`src/kg/disease_allocation.py`), generation consumes it, and the two cohorts are
   disease-disjoint by construction. §6.8's audit settled two questions in the process, so
@@ -297,6 +303,14 @@ unmeasured** and would need a canonical-signature audit over the generated cohor
 What follows is therefore conditional: to whatever extent diseases are drawn past that bound,
 repeated model-visible content exists in the generated population, and whether any of it crosses
 into a test split is an open question rather than a consequence.
+
+**Each of those three open statements now has an instrument** —
+`scripts/audit_generator_fidelity.py`, §6.6 step 4 — and the third one changed shape when the split
+became disease-disjoint. Partitions with disjoint disease sets cannot share a
+`(phenotypes, disease)` signature at all. What they can share is a **phenotype set under two
+different labels**, which is a validation input the model has already seen in training with a
+different answer. The audit reports that both as drawn (what this cohort contains) and as
+structural (what the knowledge graph makes possible regardless of seed).
 
 ### 1.6 What the paper reports, and what it actually used as a test set
 
@@ -901,6 +915,36 @@ The upstream simulator should first be used as a **pinned external tool** — fi
 recorded configuration, source digests, adapter into the current schema, and counts of identifiers
 that failed to map — rather than reimplemented into `src`. Its code is MIT; the licences and
 permitted uses of HPO, Orphanet and any patient-derived dataset are separate questions.
+
+#### Step 4 as delivered, and the half of it that was deferred
+
+`scripts/audit_generator_fidelity.py` measures **our** generator. It does not run the upstream one.
+That split is deliberate and the reason is that the two halves of step 4 have different costs and
+different prerequisites:
+
+- The **qualitative** comparison was already complete. §1.5 established stage by stage, from the
+  upstream source, what our generator does not do — frequency-weighted initialisation, hierarchy
+  corruption, noise phenotypes, negative phenotypes, ~13 distractor genes per patient. No
+  measurement was needed for any of it, and none is added.
+- The **quantitative** half needs the upstream simulator pinned as an external tool, with the
+  adapter and identifier-mapping accounting the paragraph above specifies. That is its own plan and
+  its own review. It is **deferred**, not dropped.
+- What was measurable with neither is what §1.5 itself named as unmeasured, and that is what the
+  audit reports: how many diseases were drawn past their own `C(P, k)`, how many distinct
+  model-visible signatures each cohort actually contains, and — the question the disease-level cut
+  raises rather than settles — how often one phenotype set appears on both sides of the cut under
+  two different disease labels.
+
+A fourth section prices the single largest divergence rather than measuring it. Frequency-weighted
+initialisation is the upstream simulator's first stage; whether it can be adopted at all depends on
+whether the annotation source carries a frequency. **The knowledge graph cannot answer that**, and
+the audit says so instead of guessing: `_parse_frequency` returns `1.0` both for a missing
+annotation and for a real one (`HP:0040280` Obligate, `"100%"`, `"12/12"`), so a graph weight of
+`1.0` conflates the two. The graph therefore supports only a lower bound, and the exact figure is
+read from `phenotype.hpoa` when it is supplied.
+
+The audit applies no threshold and issues no verdict. Whether a redundancy figure is acceptable is
+a question for the institution, and one that the deferred upstream comparison is what would inform.
 
 ### 6.7 What a preprocessing or training control may and may not do
 
