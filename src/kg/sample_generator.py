@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -77,6 +78,7 @@ def generate_training_samples(
     max_phenotypes: int = 15,
     phenotype_drop_rate: float = 0.3,
     output_dir: Optional[Path] = None,
+    kg_digest: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """Generate simulated patients from a **disease allocation**.
 
@@ -103,6 +105,9 @@ def generate_training_samples(
     Returns:
         ``(train_samples, val_samples, manifest)``.
     """
+    _validate_generation_inputs(
+        num_train, num_val, min_phenotypes, max_phenotypes, phenotype_drop_rate
+    )
     validate_allocation(allocation)
     require_eligible(allocation, min_phenotypes)
 
@@ -121,8 +126,6 @@ def generate_training_samples(
             "against the graph the allocation was cut from."
         )
 
-    if num_train < 0 or num_val < 0:
-        raise ValueError(f"sample budgets must be >= 0, got {num_train} and {num_val}")
     if num_val == 0 and allocation.val:
         raise ValueError(
             f"num_val is 0 but the allocation withholds {len(allocation.val)} "
@@ -169,9 +172,15 @@ def generate_training_samples(
                 json.dump(payload, handle)
         artifacts["train_samples"] = file_sha256(output_dir / "train_samples.json")
         artifacts["val_samples"] = file_sha256(output_dir / "val_samples.json")
-        # The workspace's own graph, when it has one. `None` records that nothing
-        # was there to hash rather than that the graph is unknown.
-        artifacts["kg"] = file_sha256(output_dir / "kg.json")
+
+    # **The KG digest is supplied by whoever wrote the file, never taken here.**
+    # Hashing `output_dir/kg.json` would digest whatever happens to sit there,
+    # which need not be a serialisation of the graph this allocation was cut
+    # from: a caller can pass graph A with its allocation while the directory
+    # holds graph B, and the manifest would record A's universe digest beside
+    # B's file digest as one provenance chain. Only the writer can vouch for that
+    # binding, so only the writer may state it. `None` means unvouched.
+    artifacts["kg"] = kg_digest
 
     manifest = build_split_manifest(
         allocation=allocation,
@@ -189,6 +198,45 @@ def generate_training_samples(
         logger.info("Samples and split manifest saved to %s", output_dir)
 
     return train_samples, val_samples, manifest
+
+
+def _validate_generation_inputs(
+    num_train: Any,
+    num_val: Any,
+    min_phenotypes: Any,
+    max_phenotypes: Any,
+    phenotype_drop_rate: Any,
+) -> None:
+    """Narrow domain checks, before the graph is walked or anything is written.
+
+    The same reason the audit validates at its API rather than only at argparse:
+    this function is importable, and a budget of ``True`` would otherwise pass as
+    ``1`` while a non-finite drop rate would surface as an obscure failure deep
+    inside sampling.
+    """
+    for name, value in (("num_train", num_train), ("num_val", num_val)):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer, got {value!r}")
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0, got {value}")
+    for name, value, minimum in (
+        ("min_phenotypes", min_phenotypes, 1),
+        ("max_phenotypes", max_phenotypes, min_phenotypes),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer, got {value!r}")
+        if value < minimum:
+            raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    if isinstance(phenotype_drop_rate, bool) or not isinstance(
+        phenotype_drop_rate, (int, float)
+    ):
+        raise ValueError(
+            f"phenotype_drop_rate must be a number, got {phenotype_drop_rate!r}"
+        )
+    if not math.isfinite(phenotype_drop_rate) or not 0.0 <= phenotype_drop_rate <= 1.0:
+        raise ValueError(
+            f"phenotype_drop_rate must be finite and in [0, 1], got {phenotype_drop_rate}"
+        )
 
 
 def refuse_if_checkpoints_exist(workspace: Path) -> None:

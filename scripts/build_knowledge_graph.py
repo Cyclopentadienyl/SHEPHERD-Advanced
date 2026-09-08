@@ -44,6 +44,7 @@ from src.core.types import DataSource, NodeType
 from src.kg.builder import KnowledgeGraphBuilder, KGBuilderConfig
 from src.data_sources.hpo_annotations import HPOAnnotationParser
 from src.ontology.loader import OntologyLoader
+from src.utils.fingerprint import file_sha256
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,6 +79,28 @@ def require_explicit_budgets(
         f"{val_disease_fraction}, and every allocated disease must receive at "
         "least one sample, so those are the minimums."
     )
+
+
+def require_sufficient_budgets(
+    num_train: int, num_val: int, allocation: Any
+) -> None:
+    """Budgets must cover their partitions, checked before anything is written.
+
+    ``_generate_partition`` refuses an under-sized budget too, but by then the
+    graph artifacts have been saved. Full coverage needs one sample per allocated
+    disease, and that requirement is knowable from the allocation alone — so it
+    is knowable before the workspace is touched.
+    """
+    for budget, partition, flag in (
+        (num_train, allocation.train, "--num-train"),
+        (num_val, allocation.val, "--num-val"),
+    ):
+        if budget < len(partition):
+            raise SystemExit(
+                f"{flag}={budget} cannot cover {len(partition)} allocated "
+                "diseases; every allocated disease must receive at least one "
+                "sample. Nothing was written."
+            )
 
 
 def build_knowledge_graph(
@@ -180,14 +203,41 @@ def build_knowledge_graph(
     )
     logger.info(f"  -> {n_gp_edges} gene-phenotype edges")
 
-    # --- Finalize KG ---
+    # --- Finalize KG, in memory ---
     kg = builder.build()
     stats = kg.get_statistics()
+
+    # **Everything that can refuse, refuses before the first workspace byte.**
+    # The allocation and both budget checks need only the in-memory graph, so
+    # they run here rather than after `kg.save_json`. The earlier ordering wrote
+    # the graph, then discovered the budgets were missing or too small — leaving
+    # a rebuilt graph beside stale samples, which is the same class of half-
+    # written workspace the checkpoint preflight exists to prevent.
+    allocation = None
+    if generate_samples:
+        from src.kg import allocate_diseases, build_eligible_disease_profiles
+
+        # The split is decided here, before generation, and at the disease
+        # level. The generator consumes the allocation; it does not own split
+        # policy (EVALUATION_COHORTS §6.2). A sample-level slice, which is what
+        # this used to be, leaves every multi-sample disease on both sides.
+        eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
+        allocation = allocate_diseases(eligible, val_disease_fraction, seed=sample_seed)
+        require_explicit_budgets(
+            num_train, num_val, allocation, val_disease_fraction
+        )
+        require_sufficient_budgets(num_train, num_val, allocation)
 
     # Save KG
     kg_path = workspace / "kg.json"
     kg.save_json(str(kg_path))
     logger.info(f"KG saved to {kg_path}")
+
+    # **The digest of the artifact this function just wrote, from this graph.**
+    # Only the writer can vouch for that binding; generation hashing kg.json on
+    # its own would happily digest a file some other graph produced and record it
+    # beside this allocation's universe digest as one provenance chain.
+    kg_digest = file_sha256(kg_path)
 
     # Export PyG graph data
     logger.info(f"Exporting graph data (feature_dim={feature_dim})...")
@@ -198,25 +248,13 @@ def build_knowledge_graph(
         logger.info("Generating training samples...")
         from src.kg.sample_generator import generate_training_samples
 
-        from src.kg import allocate_diseases, build_eligible_disease_profiles
-
-        # **The split is decided here, before generation, and at the disease
-        # level.** The generator consumes the allocation; it does not own split
-        # policy (EVALUATION_COHORTS §6.2). A sample-level slice, which is what
-        # this used to be, leaves every multi-sample disease on both sides.
-        eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
-        allocation = allocate_diseases(eligible, val_disease_fraction, seed=sample_seed)
-
-        require_explicit_budgets(
-            num_train, num_val, allocation, val_disease_fraction
-        )
-
         train_samples, val_samples, manifest = generate_training_samples(
             kg=kg,
             allocation=allocation,
             num_train=num_train,
             num_val=num_val,
             output_dir=workspace,
+            kg_digest=kg_digest,
         )
         logger.info(
             "Generated %d train samples over %d diseases, %d val over %d — "

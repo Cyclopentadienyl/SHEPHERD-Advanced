@@ -691,6 +691,11 @@ class TestSplitRegimeBoundary:
         assert (tmp_dir / "train_samples.json").exists()
 
 
+def _wide_kg_object():
+    """The wide fixture as a plain callable, for tests outside its scope."""
+    return _build_wide_kg()
+
+
 @pytest.fixture
 def wide_kg():
     """A universe big enough that coincidences stop hiding defects.
@@ -724,6 +729,9 @@ def wide_kg():
                 edge_type=EdgeType.PHENOTYPE_OF_DISEASE,
             ))
     return kg
+
+
+_build_wide_kg = wide_kg.__wrapped__ if hasattr(wide_kg, "__wrapped__") else None
 
 
 class TestGuaranteesThatNeedAWideUniverse:
@@ -905,19 +913,23 @@ class TestAllocationBoundary:
     def test_an_under_eligible_profile_is_refused(self, wide_kg):
         """Cut at one min_phenotypes, generated at a stricter one."""
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        # max_phenotypes must stay >= min_phenotypes, or the input validator
+        # fires first and names that instead — a different, also-real problem.
         with pytest.raises(ValueError, match="below the min_phenotypes"):
             generate_training_samples(
-                wide_kg, allocation, num_train=20, num_val=5, min_phenotypes=99
+                wide_kg, allocation, num_train=20, num_val=5,
+                min_phenotypes=99, max_phenotypes=99,
             )
 
 
 class TestManifestBinding:
     """The manifest must describe the bytes on disk, not an equivalent object."""
 
-    def test_the_manifest_digests_the_files_that_were_written(self, wide_kg, tmp_dir):
+    def test_the_manifest_digests_the_sample_files_that_were_written(
+        self, wide_kg, tmp_dir
+    ):
         from src.utils.fingerprint import file_sha256
 
-        (tmp_dir / "kg.json").write_bytes(b'{"graph": "here"}')
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
@@ -926,9 +938,37 @@ class TestManifestBinding:
         for role, filename in (
             ("train_samples", "train_samples.json"),
             ("val_samples", "val_samples.json"),
-            ("kg", "kg.json"),
         ):
             assert manifest["artifacts"][role] == file_sha256(tmp_dir / filename)
+
+    def test_an_unvouched_kg_file_is_not_digested(self, wide_kg, tmp_dir):
+        """**The first version of this test demonstrated the hole it should close.**
+
+        It placed arbitrary bytes at ``kg.json`` and asserted that those unrelated
+        bytes were hashed — recording one graph's universe digest beside another
+        file's digest as if they were one provenance chain. Generation cannot
+        vouch for a file it did not write, so it no longer hashes one.
+        """
+        (tmp_dir / "kg.json").write_bytes(b'{"some other": "graph"}')
+        allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        _, _, manifest = generate_training_samples(
+            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
+            output_dir=tmp_dir,
+        )
+        assert manifest["artifacts"]["kg"] is None
+
+    def test_a_vouched_kg_digest_is_recorded(self, wide_kg, tmp_dir):
+        """The writer serialises the graph and states the digest of what it wrote."""
+        from src.utils.fingerprint import file_sha256
+
+        wide_kg.save_json(str(tmp_dir / "kg.json"))
+        vouched = file_sha256(tmp_dir / "kg.json")
+        allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
+        _, _, manifest = generate_training_samples(
+            wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
+            output_dir=tmp_dir, kg_digest=vouched,
+        )
+        assert manifest["artifacts"]["kg"] == vouched
 
     def test_tampering_with_a_sample_file_breaks_its_recorded_digest(
         self, wide_kg, tmp_dir
@@ -1004,3 +1044,163 @@ def test_the_refusal_names_the_actual_minimums(demo_kg):
     message = str(excinfo.value)
     assert f"{len(allocation.train)} training" in message
     assert f"{len(allocation.val)} validation" in message
+
+
+class TestBudgetPreflight:
+    """Budget refusals must precede every workspace write, not follow them."""
+
+    @staticmethod
+    def _existing(workspace):
+        payload = {"kg.json": b'{"before": true}', "train_samples.json": b"[]"}
+        for name, data in payload.items():
+            (workspace / name).write_bytes(data)
+        return payload
+
+    def test_a_budget_too_small_for_its_partition_is_refused_before_writing(self):
+        """`_generate_partition` refuses too, but only after the graph is saved."""
+        import scripts.build_knowledge_graph as build
+
+        allocation = allocate_diseases(
+            build_eligible_disease_profiles(_wide_kg_object(), 2), 0.2, seed=42
+        )
+        with pytest.raises(SystemExit, match="cannot cover"):
+            build.require_sufficient_budgets(1, 999, allocation)
+        with pytest.raises(SystemExit, match="--num-val"):
+            build.require_sufficient_budgets(999, 0, allocation)
+
+    def test_sufficient_budgets_pass(self):
+        import scripts.build_knowledge_graph as build
+
+        allocation = allocate_diseases(
+            build_eligible_disease_profiles(_wide_kg_object(), 2), 0.2, seed=42
+        )
+        build.require_sufficient_budgets(len(allocation.train), len(allocation.val), allocation)
+
+    def test_the_refusal_states_that_nothing_was_written(self):
+        import scripts.build_knowledge_graph as build
+
+        allocation = allocate_diseases(
+            build_eligible_disease_profiles(_wide_kg_object(), 2), 0.2, seed=42
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            build.require_sufficient_budgets(1, 1, allocation)
+        assert "Nothing was written" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "field,value,message",
+    [
+        ("num_train", True, "must be an integer"),
+        ("num_train", 1.5, "must be an integer"),
+        ("num_train", -1, "must be >= 0"),
+        ("num_val", True, "must be an integer"),
+        ("min_phenotypes", 0, "must be >= 1"),
+        ("min_phenotypes", True, "must be an integer"),
+        ("max_phenotypes", 1, "must be >= 2"),
+        ("phenotype_drop_rate", -0.1, "finite and in"),
+        ("phenotype_drop_rate", 1.5, "finite and in"),
+        ("phenotype_drop_rate", float("nan"), "finite and in"),
+        ("phenotype_drop_rate", "0.3", "must be a number"),
+    ],
+)
+def test_generation_inputs_are_validated_at_the_api(demo_kg, field, value, message):
+    """Importable, so argparse is not the only entry point that must be sound."""
+    allocation = allocate_diseases(build_eligible_disease_profiles(demo_kg, 1), 0.5, seed=42)
+    kwargs = dict(num_train=10, num_val=5, min_phenotypes=2, max_phenotypes=15,
+                  phenotype_drop_rate=0.3)
+    kwargs[field] = value
+    with pytest.raises(ValueError, match=message):
+        generate_training_samples(demo_kg, allocation, **kwargs)
+
+
+class TestBuildPathOrdering:
+    """The wiring, not just the helpers.
+
+    Testing ``require_sufficient_budgets`` in isolation leaves the call site
+    untested: removing it from the build path broke no test, which is how this
+    gap was found. These stub the expensive stages so the ordering itself can be
+    exercised.
+    """
+
+    @staticmethod
+    def _stub_build_stages(monkeypatch, kg):
+        import scripts.build_knowledge_graph as build
+
+        class _Loader:
+            def __init__(self, *a, **k): pass
+            def load_mondo(self): return object()
+            def load_hpo(self): return object()
+
+        class _Parser:
+            def __init__(self, *a, **k): pass
+            def parse_phenotype_hpoa(self, *a, **k): return []
+            def parse_genes_to_phenotype(self, *a, **k): return ([], [])
+
+        class _Builder:
+            def __init__(self, *a, **k): pass
+            def add_ontology(self, *a, **k): return 0
+            def add_phenotype_disease_annotations(self, *a, **k): return 0
+            def add_gene_disease_associations(self, *a, **k): return (0, 0)
+            def add_gene_phenotype_associations(self, *a, **k): return 0
+            def build(self): return kg
+
+        monkeypatch.setattr(build, "OntologyLoader", _Loader)
+        monkeypatch.setattr(build, "HPOAnnotationParser", _Parser)
+        monkeypatch.setattr(build, "KnowledgeGraphBuilder", _Builder)
+        return build
+
+    @staticmethod
+    def _satisfy_input_validation(external_dir):
+        """The annotation files the build checks for before doing anything."""
+        for name in ("phenotype.hpoa", "genes_to_phenotype.txt"):
+            (external_dir / name).write_text("")
+
+    @pytest.mark.parametrize(
+        "num_train,num_val,expected",
+        [(None, None, "are required"), (1, 1, "cannot cover")],
+        ids=["missing", "insufficient"],
+    )
+    def test_a_budget_refusal_leaves_the_workspace_untouched(
+        self, monkeypatch, tmp_dir, wide_kg, num_train, num_val, expected
+    ):
+        build = self._stub_build_stages(monkeypatch, wide_kg)
+        self._satisfy_input_validation(tmp_dir)
+        before = {"kg.json": b'{"pre-existing": true}'}
+        for name, data in before.items():
+            (tmp_dir / name).write_bytes(data)
+
+        with pytest.raises(SystemExit, match=expected):
+            build.build_knowledge_graph(
+                external_dir=tmp_dir, workspace=tmp_dir, generate_samples=True,
+                num_train=num_train, num_val=num_val,
+            )
+
+        for name, original in before.items():
+            assert (tmp_dir / name).read_bytes() == original, f"{name} was rewritten"
+        for written in ("node_features.pt", "edge_indices.pt", "num_nodes.json",
+                        "train_samples.json", "split_manifest.json"):
+            assert not (tmp_dir / written).exists(), f"{written} should not exist"
+
+    def test_a_sufficient_build_writes_a_manifest_bound_to_the_graph_it_wrote(
+        self, monkeypatch, tmp_dir, wide_kg
+    ):
+        """The vouched digest reaches the manifest through the orchestration."""
+        import json as _json
+
+        from src.utils.fingerprint import file_sha256
+
+        build = self._stub_build_stages(monkeypatch, wide_kg)
+        self._satisfy_input_validation(tmp_dir)
+        eligible = build_eligible_disease_profiles(wide_kg, 2)
+        allocation = allocate_diseases(eligible, 0.15, seed=42)
+
+        build.build_knowledge_graph(
+            external_dir=tmp_dir, workspace=tmp_dir, generate_samples=True,
+            num_train=max(30, len(allocation.train)),
+            num_val=max(10, len(allocation.val)),
+            val_disease_fraction=0.15, sample_seed=42,
+        )
+        manifest = _json.loads((tmp_dir / "split_manifest.json").read_text())
+        assert manifest["artifacts"]["kg"] == file_sha256(tmp_dir / "kg.json")
+        assert manifest["allocation"]["universe_digest"] == universe_digest(eligible)
+        assert manifest["disjoint"] is True
