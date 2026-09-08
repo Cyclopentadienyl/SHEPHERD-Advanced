@@ -144,21 +144,17 @@ def test_the_recorded_roles_are_the_semantic_inputs_a_run_consumes(tmp_path):
     assert all(value is not None for value in digests.values())
 
 
-def test_a_workspace_without_a_manifest_cannot_be_trained_on(tmp_path):
-    """It was cut before the allocation step, so its train and validation disease
-    sets overlap and a `val_mrr` from it measures something else entirely. The
-    refusal is here rather than in a caveat because the run would otherwise
-    produce a checkpoint nothing can characterise afterwards."""
-    data_dir = _workspace(
-        tmp_path / "ws", manifest=False
-    )
+def test_the_manifest_is_recorded_as_a_training_input(tmp_path):
+    """Its digest belongs in the role map. Whether it *describes* this workspace
+    is checked at the top of `train`, ahead of the run directories and the config
+    file -- see tests/unit/test_graph_artifact_binding.py, which owns that
+    ordering. Running the check here as well would read both cohorts a second
+    time to re-establish what has already been established."""
+    data_dir = _workspace(tmp_path / "ws")
 
-    # The graph contract is checked first here, and both refusals name the same
-    # remedy. The test pins the message a caller actually sees rather than an
-    # ordering the code does not promise.
-    with pytest.raises(ValueError, match="Rebuild it with"):
-        _training_roles(data_dir, with_val=True)
+    roles = _training_roles(data_dir, with_val=True)
 
+    assert roles["split_manifest"] == data_dir / "split_manifest.json"
 
 def test_an_unrelated_split_beside_the_inputs_is_not_recorded(tmp_path):
     """Nothing globs the data directory. A `test_samples.json` appearing next to

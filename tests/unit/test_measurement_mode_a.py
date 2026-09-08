@@ -681,6 +681,25 @@ class TestTheRandomStreamHasAnIdentity:
         assert args.seed == DEFAULT_MEASUREMENT_SEED
         assert isinstance(args.seed, int) and not isinstance(args.seed, bool)
 
+    @pytest.mark.parametrize("bad", [-1, 2 ** 32])
+    def test_the_cli_refuses_a_seed_outside_its_domain(self, bad):
+        """Checked at the CLI as well as at the ledger: neither boundary can rely
+        on the other having run, and a value NumPy's seeder rejects would seed
+        nothing usable here. A non-integer never reaches this check -- argparse's
+        `type=int` is the right layer for that, and the next case pins it."""
+        from scripts.measure_scorer import main
+
+        with pytest.raises(ValueError, match="must be an integer in"):
+            main(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                  "--output", "o.json", "--seed", str(bad)])
+
+    def test_a_non_integer_seed_is_refused_by_argparse(self):
+        from scripts.measure_scorer import parse_args
+
+        with pytest.raises(SystemExit):
+            parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                        "--output", "o.json", "--seed", "not-a-number"])
+
     def test_the_manifest_never_records_a_null_rng_identity(self, workspace):
         """The three seed fields are what give the stream an identity in the
         semantics digest; a null there makes two different runs look alike."""

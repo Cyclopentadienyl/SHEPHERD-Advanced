@@ -9,6 +9,14 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **25** — the guarantee reaches the clinical path, and refuses before it acts. `DiagnosisPipeline`
+  loaded graph tensors, paired a checkpoint with them, precomputed embeddings and could serve
+  without ever verifying the workspace; `train` verified only after writing its run directories and
+  config. Both now refuse first (§6.1). Split names are lowercase-only, matched with `fullmatch` —
+  the alphabet admitted uppercase while the reserved-name check compared exactly, so `TRAIN` passed
+  and aliases `train` on a case-insensitive filesystem; and `$` accepts a trailing newline. Seeds
+  are validated for domain, not only presence. And what a seed establishes is stated narrowly: it
+  controls this harness's streams, not CUDA determinism (§6.5).
 - **24** — the graph a run consumes is now bound to the workspace that produced it. The manifest
   binds `node_features.pt`, `edge_indices.pt` and `num_nodes.json` alongside `kg.json`, digested by
   the writer that exported them; split-manifest schema is **2**, and schema 1 is refused with a
@@ -867,8 +875,16 @@ Two rules follow, and both are enforced rather than advised:
   of a file. The report records it as the unverified claim it is, and says which checks ran.
 - **Two contracts, and the split is load-bearing.** *Workspace graph binding* — `kg.json` and the
   three exported tensors match the writer-recorded digests — applies to **every graph consumer,
-  whatever the cohort kind**, because a supplied institutional cohort is scored against those same
-  tensors. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
+  whatever the cohort kind**: training, measurement, calibration, the fidelity audit, and the
+  **clinical inference pipeline**, which was outside it and is the costliest one to leave there.
+  A supplied institutional cohort is scored against those same tensors, and so is a served
+  diagnosis. Only the file-backed path is checked — a caller supplying graph data in memory makes
+  no claim about a persisted workspace, so there is no manifest for it to match.
+- **A knowable refusal precedes the side effects.** Both training and inference verify before they
+  create anything: `train` before the run directories, `config.yaml` and the checkpoint directory;
+  `DiagnosisPipeline` before the graph is loaded, a checkpoint is paired with it, embeddings are
+  precomputed or the pipeline reports itself ready. No rollback and no transactional writing — the
+  check simply moves ahead of the work. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
   disjointness — applies only to generated cohorts. Had the graph half lived inside the cohort
   verifier, generated validation would have been protected while institutional evaluation went on
   consuming a mixed workspace.
@@ -877,11 +893,19 @@ Two rules follow, and both are enforced rather than advised:
   interpolated into a filename — where an absolute value replaces the whole path and `../` leaves
   the workspace. The alphabet is bounded rather than the values enumerated, so arbitrary
   institutional roles stay representable and no path can be one.
-- **A measurement's random stream must have an identity.** `--seed` defaulted to `None` and the
-  RNGs were seeded only when a value was given, so a default run recorded three nulls; two such
-  runs consumed different worker streams while hashing to the same semantics, and the ledger
-  refused the second as a contradiction. The default is now a documented constant, and the ledger
-  refuses any record whose seeds are null.
+- **A measurement's random stream must have an identity, in a stated domain.** `--seed` defaulted
+  to `None` and the RNGs were seeded only when a value was given, so a default run recorded three
+  nulls; two such runs consumed different worker streams while hashing to the same semantics. The
+  default is a documented constant, and both the CLI and the ledger check the value is an integer
+  in `[0, 2**32 - 1]` — `bool` is an `int` subclass, and one seed drives all three RNGs, so
+  NumPy's range is the binding one.
+- **What a seed establishes, stated narrowly.** It identifies and controls the random streams this
+  harness owns; it does **not** make CUDA execution bit-deterministic, which is why the manifest
+  records `deterministic_algorithms`, `cudnn_deterministic` and `cudnn_benchmark` as separate
+  facts. A seeded rerun that disagrees is a finding to investigate, and a proven contradiction only
+  when those fields say the regime was deterministic. The ledger refuses the second record either
+  way — two answers under one identity cannot both stand — but the refusal is an instruction to
+  look, not a proof of a defect.
 - **One exception, named rather than glossed.** `scripts/evaluate_model.py` has no such preflight
   and will not get one. It is the behaviourally frozen artefact Mode A is calibrated against, and
   editing it makes it no longer the thing being compared; `tests/unit/test_frozen_evaluator.py`

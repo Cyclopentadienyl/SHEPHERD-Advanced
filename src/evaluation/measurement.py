@@ -467,6 +467,35 @@ def assert_manifest_describes_regime(
 #: rule change. Lives beside `_authoritative`, which is what it versions.
 METRIC_SCHEMA_VERSION = 1
 
+#: The domain a measurement seed must fall in.
+#:
+#: One seed drives Python, NumPy and torch, and NumPy's legacy seeder accepts only
+#: ``[0, 2**32 - 1]`` — so a value outside it is not a seed for this harness even
+#: where one of the three would take it. ``bool`` is an ``int`` subclass, so
+#: ``True`` would otherwise pass as ``1`` and record a run's RNG identity as a
+#: flag; the type is checked exactly.
+MAX_MEASUREMENT_SEED = 2 ** 32 - 1
+
+
+def validate_measurement_seed(value: Any, where: str) -> int:
+    """A seed that actually identifies this harness's random streams.
+
+    Checked at both boundaries it crosses — the measurement CLI, where a bad value
+    would seed nothing usable, and the ledger, where it would stand as the
+    recorded identity of a stream. Neither can rely on the other having run.
+
+    Raises:
+        ValueError: for a non-integer, a bool, or a value outside
+            ``[0, MAX_MEASUREMENT_SEED]``.
+    """
+    if type(value) is not int or not 0 <= value <= MAX_MEASUREMENT_SEED:
+        raise ValueError(
+            f"{where} must be an integer in [0, {MAX_MEASUREMENT_SEED}], got "
+            f"{value!r}. One seed drives Python, NumPy and torch, and it is what "
+            "gives this run's random streams an identity."
+        )
+    return value
+
 
 @dataclass(frozen=True)
 class MeasurementManifest:

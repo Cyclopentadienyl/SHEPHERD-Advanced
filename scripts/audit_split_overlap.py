@@ -140,6 +140,15 @@ def manifest_verification(
         checks.append("disjointness, measured between the two generated cohorts")
     if verified.disjointness_claim_checked:
         checks.append("the manifest's own disjointness claim")
+    if len(verified.verified) == 1:
+        checks = [
+            line.replace("the sample files'", f"the {verified.verified[0]} file's")
+            .replace("the realised disease sets, recomputed", 
+                     f"the realised {verified.verified[0]} disease set, recomputed")
+            .replace("realised digests against its own allocated ones",
+                     f"realised {verified.verified[0]} digest against its own allocated one")
+            for line in checks
+        ]
 
     section = {
         "verified_splits": list(verified.verified),

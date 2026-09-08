@@ -1172,16 +1172,37 @@ def test_a_split_name_that_is_a_path_is_refused_not_resolved(tmp_path, escape):
 @pytest.mark.parametrize(
     "escape",
     ["/tmp/x", "../x", "a/b", "C:\\x", "\\\\host\\share", "..", ".", ".hidden",
-     "-leading", "x" * 65, "with space", "", "tab\tname", 5, None],
+     "-leading", "x" * 65, "with space", "", "tab\tname", 5, None,
+     "TRAIN", "Val", "MyGene2", "mygene2\n", "mygene2\ntrain"],
 )
 def test_every_non_identifier_form_is_refused_at_the_boundary(escape):
     """The CLI cannot reach some of these — argparse eats a leading hyphen as an
     option — so the alphabet is checked where it is enforced rather than only
-    through the one entry point that happens to pass a value through."""
+    through the one entry point that happens to pass a value through.
+
+    Two families beyond the paths. **Uppercase**: on a case-insensitive
+    filesystem `TRAIN_samples.json` *is* `train_samples.json`, which defeats the
+    reservation outright, and even where the filesystem keeps them apart two roles
+    differing only in case read as one identity to a person. **A trailing
+    newline**: `re.match` with `$` accepts one, so `"mygene2\n"` passed an
+    alphabet that contains no newline — `fullmatch` is what closes it.
+    """
     from src.evaluation.cohort import validate_split_name
 
     with pytest.raises(ValueError, match="must be an identifier"):
         validate_split_name(escape)
+
+
+def test_a_supplied_cohort_cannot_alias_a_generated_split_by_case(tmp_path):
+    """The reservation compares through casefold as well, so widening the alphabet
+    later cannot silently reopen the alias."""
+    from src.evaluation.cohort import GENERATED_SPLITS, resolve_cohort
+
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    for reserved in GENERATED_SPLITS:
+        (data_dir / f"{reserved.upper()}_samples.json").write_text("[]")
+        with pytest.raises(ValueError, match="must be an identifier"):
+            resolve_cohort(data_dir, reserved.upper(), "supplied")
 
 
 @pytest.mark.parametrize(

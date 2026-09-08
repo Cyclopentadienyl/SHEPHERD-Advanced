@@ -44,7 +44,12 @@ from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
 # `src.kg` writes these files, so it owns their names; importing the map from
 # there keeps the layer order right and gives the writer and the verifier one
 # definition instead of two lists that can drift.
-from src.kg.artifacts import GRAPH_ARTIFACTS
+from src.kg.artifacts import (
+    GRAPH_ARTIFACTS,
+    MANIFEST_FILENAME,
+    require_manifest_schema,
+    verify_graph_artifacts,
+)
 
 #: The generator's own split names. Reserved: a supplied cohort using one would be
 #: indistinguishable from a generated one in every artifact downstream.
@@ -66,7 +71,9 @@ GENERATED_SPLITS: Tuple[str, ...] = ("train", "val")
 #: admits no separator, colon or backslash, which rules out POSIX and Windows
 #: traversal, drive letters and UNC paths in one condition rather than a list of
 #: special cases someone has to keep complete.
-SPLIT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+#: ``fullmatch`` at the call site, not ``$``: ``$`` also matches before a final
+#: newline, so ``"mygene2\n"`` would pass an alphabet that does not contain one.
+SPLIT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 
 #: What a caller may assert a cohort is.
 COHORT_KINDS: Tuple[str, ...] = ("generated", "supplied")
@@ -76,7 +83,6 @@ COHORT_KINDS: Tuple[str, ...] = ("generated", "supplied")
 #: generated one needs no ceremony.
 DEFAULT_COHORT_KIND = "generated"
 
-MANIFEST_FILENAME = "split_manifest.json"
 
 
 class CohortProvenance(NamedTuple):
@@ -101,16 +107,29 @@ class CohortProvenance(NamedTuple):
 def validate_split_name(split: Any) -> str:
     """A split name that can only ever address a file inside the workspace.
 
+    **Lowercase, and an uppercase form is refused rather than normalised.** The
+    alphabet admitted uppercase while the reserved-name check compared ``train``
+    and ``val`` exactly, so a supplied cohort called ``TRAIN`` passed — and on a
+    case-insensitive filesystem ``TRAIN_samples.json`` *is* ``train_samples.json``,
+    which is precisely the aliasing the reservation exists to prevent. Even where
+    the filesystem keeps them apart, two roles differing only in case are two
+    identities in the ledger that read as one to a person.
+
+    Refused rather than silently lowercased: normalising would mean the name a
+    caller passed and the name recorded in the manifest differ, and an operator
+    reading the artifact would have no way to tell.
+
     Raises:
-        ValueError: for anything that is not a bounded identifier token —
-            absolute paths, ``.``/``..``, any name containing ``/``, ``\\`` or
-            ``:``, and anything over 64 characters.
+        ValueError: for anything that is not a bounded lowercase identifier
+            token — absolute paths, ``.``/``..``, any name containing ``/``,
+            ``\\`` or ``:``, uppercase, a trailing newline, and anything over 64
+            characters.
     """
-    if not isinstance(split, str) or not SPLIT_NAME.match(split):
+    if not isinstance(split, str) or not SPLIT_NAME.fullmatch(split):
         raise ValueError(
-            f"split name must be an identifier — letters, digits, underscore, "
-            f"hyphen or dot, starting with a letter or digit, at most 64 "
-            f"characters — got {split!r}. It names a cohort, and it is "
+            f"split name must be an identifier — lowercase letters, digits, "
+            f"underscore, hyphen or dot, starting with a letter or digit, at most "
+            f"64 characters — got {split!r}. It names a cohort, and it is "
             "interpolated into a filename inside the workspace, so a path or a "
             "traversal is refused rather than resolved."
         )
@@ -140,7 +159,10 @@ def resolve_cohort(
         raise ValueError(f"{samples} does not exist")
 
     if kind == "supplied":
-        if split in GENERATED_SPLITS:
+        # Compared through casefold as well, defensively: the alphabet already
+        # rules uppercase out, so this cannot fire today — and it is the check
+        # that would still hold if the alphabet were ever widened.
+        if split.casefold() in {name.casefold() for name in GENERATED_SPLITS}:
             raise ValueError(
                 f"{split!r} is one of the generator's own split names "
                 f"({', '.join(GENERATED_SPLITS)}), so a supplied cohort may not use "
@@ -168,82 +190,6 @@ def resolve_cohort(
             "split name."
         )
     return CohortProvenance(kind, split, samples, manifest)
-
-
-def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
-    """The graph a run consumes must be the export this workspace's manifest names.
-
-    **A separate contract from the cohort one, and it applies to every graph
-    consumer.** A supplied institutional cohort carries no allocation and is never
-    subject to the generated splits' disjointness — but it is scored against
-    ``node_features.pt`` and ``edge_indices.pt`` exactly like a generated one. Had
-    graph binding lived inside ``verify_generated_cohorts``, generated validation
-    would have been protected while supplied evaluation went on consuming a mixed
-    workspace, which is the case the whole distinction exists to keep straight.
-
-    **Why the whole set rather than the roles a caller opens.** Cohort
-    verification is scoped because a *use* can legitimately not involve `val`.
-    No use can legitimately involve a workspace missing one of these four: they
-    are written together by one export from one graph, and a workspace that has a
-    manifest has all four. Verifying the set therefore blocks nothing, and it is
-    what makes the transitive claim available — training reads only the three
-    tensors, and only the manifest ties them to the `kg.json` they were exported
-    from.
-
-    ``graph_fingerprint`` does not substitute for this. It is structural — node
-    types, counts, feature dimensions — so a same-shaped ``node_features.pt`` from
-    another workspace shares it and passes.
-
-    Raises:
-        ValueError: naming the artifact whose bytes are not the ones recorded.
-    """
-    from src.utils.fingerprint import file_sha256
-
-    manifest_path = data_dir / MANIFEST_FILENAME
-    if not manifest_path.is_file():
-        raise ValueError(
-            f"{data_dir} has no {MANIFEST_FILENAME}, so nothing records which "
-            "graph export its artifacts are. Rebuild it with "
-            "scripts/build_knowledge_graph.py --generate-samples."
-        )
-    manifest = json.loads(manifest_path.read_text())
-    _require_schema(manifest, manifest_path)
-    artifacts = manifest.get("artifacts", {})
-
-    observed: Dict[str, str] = {}
-    for role, filename in GRAPH_ARTIFACTS.items():
-        recorded = artifacts.get(role)
-        if recorded is None:
-            raise ValueError(
-                f"{manifest_path} records no digest for {role}. A manifest that "
-                "does not bind the graph its cohorts were cut from cannot say the "
-                "tensors beside it are that graph's export. Rebuild the workspace."
-            )
-        digest = file_sha256(data_dir / filename)
-        if digest != recorded:
-            raise ValueError(
-                f"{data_dir / filename} is not the {role} artifact "
-                f"{manifest_path} records ({str(recorded)[:12]}... vs "
-                f"{str(digest)[:12]}...). The graph export, the allocation and the "
-                "samples are one production event; this file came from another."
-            )
-        observed[role] = digest
-    return observed
-
-
-def _require_schema(manifest: Dict[str, Any], manifest_path: Path) -> None:
-    from src.kg.sample_generator import SPLIT_MANIFEST_SCHEMA_VERSION
-
-    version = manifest.get("schema_version")
-    if version != SPLIT_MANIFEST_SCHEMA_VERSION:
-        raise ValueError(
-            f"{manifest_path} is split-manifest schema {version!r}; this code "
-            f"reads {SPLIT_MANIFEST_SCHEMA_VERSION}. Schema 1 did not bind the "
-            "exported graph artifacts, so a workspace built under it cannot show "
-            "that its tensors are this graph's export. Rebuild it with "
-            "scripts/build_knowledge_graph.py --generate-samples; there is no "
-            "migration and no unbound-digest path."
-        )
 
 
 class GeneratedCohorts(NamedTuple):
@@ -299,10 +245,12 @@ def verify_generated_cohorts(
        records through the reader training uses, against ``realised.*_digest``.
     3. **Its realised sets are what the allocation cut** — internal to the file,
        and what makes "these files are that allocation's cohorts" transitive.
-    4. **The cohorts are disjoint**, measured — only when both are in scope,
-       since measuring it needs both. The manifest's own ``disjoint`` claim is
-       checked either way: a manifest asserting a non-disjoint cut describes a
-       broken workspace whatever this caller happens to read.
+    4. **The cohorts are disjoint** — both the measurement and the manifest's own
+       ``disjoint`` claim, and **both only when both cohorts are in scope**. That
+       field describes the generated train/val relationship, which a
+       train-versus-supplied overlap does not consume; refusing on it at narrow
+       scope would be the same over-validation this scoping removes, arriving
+       through a claim instead of a file.
 
     Reads both sample files, so it costs one pass over the workspace's cohorts.
     Called once per run, before hours of training or minutes of measurement.
@@ -325,7 +273,7 @@ def verify_generated_cohorts(
     manifest_path = data_dir / MANIFEST_FILENAME
     manifest = json.loads(manifest_path.read_text())
 
-    _require_schema(manifest, manifest_path)
+    require_manifest_schema(manifest, manifest_path)
 
     artifacts = manifest.get("artifacts", {})
     realised = manifest.get("realised", {})

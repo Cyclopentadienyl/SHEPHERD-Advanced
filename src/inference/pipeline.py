@@ -50,6 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
+from src.kg.artifacts import verify_graph_artifacts
 from src.core.types import (
     DataSource,
     DiagnosisCandidate,
@@ -348,6 +349,16 @@ class DiagnosisPipeline:
 
         # Step 1: Load graph data
         if self._graph_data is None and data_dir is not None:
+            # **The clinical path is a graph consumer, and the costliest one.**
+            # A same-shaped `node_features.pt` from another workspace is refused
+            # by training and by measurement, and without this it would still be
+            # loaded here, paired with a checkpoint, precomputed into embeddings
+            # and served. The check runs before any of that.
+            #
+            # Only for the file-backed path. A caller supplying `graph_data`
+            # directly makes no claim about a persisted workspace, so there is no
+            # manifest for it to match and nothing to verify.
+            verify_graph_artifacts(Path(data_dir))
             self._graph_data = self._load_graph_data(data_dir)
 
         if self._graph_data is None:

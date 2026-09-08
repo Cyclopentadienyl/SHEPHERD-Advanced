@@ -168,7 +168,16 @@ def measurement_semantics_digest(manifest: Dict[str, Any]) -> str:
     reordered dict or an added descriptive field, so using it as identity would
     make every re-run a new record and the contradiction check would never fire.
     This hashes a named list of semantic fields, so two runs that differ in
-    nothing that matters produce the same digest and must agree.
+    nothing that matters produce the same digest.
+
+    **What "the same measurement" means here is narrower than bit-determinism.**
+    Two records under one digest were produced under identical recorded
+    semantics, seeds included. Whether they were therefore *bound* to agree
+    depends on the regime those fields describe: under `deterministic_algorithms`
+    a disagreement is a contradiction, and under a non-deterministic CUDA regime
+    it is a finding to investigate. The ledger refuses the second record either
+    way, because two answers filed under one identity cannot both stand — but the
+    refusal is an instruction to look, not a proof of a defect.
 
     A field the manifest does not carry is hashed as ``null`` rather than skipped,
     so a manifest that dropped one cannot collide with a manifest carrying a value
@@ -254,22 +263,28 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
     allocation step is refused at the measurement, not recorded with a null.
     """
     manifest = report["manifest"]
-    # **A run with no recorded RNG identity cannot be a ledger record.** Two
+    # **A run with no usable RNG identity cannot be a ledger record.** Two
     # unseeded runs consume different worker streams, different negatives and a
     # different candidate universe while hashing to the same semantics digest, so
     # the ledger would see one measurement with two answers and refuse the second
-    # as a contradiction. `measure_scorer` seeds by default, so this is a floor
-    # for any other caller rather than a case the CLI can produce.
-    unseeded = [
-        field for field in ("python_seed", "numpy_seed", "torch_seed")
-        if manifest.get(field) is None
-    ]
-    if unseeded:
-        raise ValueError(
-            f"this measurement records no {', '.join(unseeded)}, so its random "
-            "stream has no identity and a repeat of it cannot be told apart from "
-            "a materially different run. Re-measure with a stated --seed."
-        )
+    # as a contradiction.
+    #
+    # The domain is checked as well as presence: `True` is an `int`, so a manifest
+    # could otherwise record a stream's identity as a flag, and a value outside
+    # NumPy's `[0, 2**32 - 1]` is not a seed for this harness even where one of
+    # the three RNGs would take it. `measure_scorer` validates the same way, so
+    # this is a floor for other callers rather than a case the CLI can produce.
+    from src.evaluation.measurement import validate_measurement_seed
+
+    for field in ("python_seed", "numpy_seed", "torch_seed"):
+        value = manifest.get(field)
+        if value is None:
+            raise ValueError(
+                f"this measurement records no {field}, so its random stream has "
+                "no identity and a repeat of it cannot be told apart from a "
+                "materially different run. Re-measure with a stated --seed."
+            )
+        validate_measurement_seed(value, f"the recorded {field}")
     digests = manifest["artifact_digests"]
     metrics = dict(report["authoritative_metrics"])
     return {

@@ -262,6 +262,17 @@ def test_a_record_missing_a_key_field_is_refused(tmp_path):
 # ---------------------------------------------------------------------------
 # What a record carries
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("field", ["python_seed", "numpy_seed", "torch_seed"])
+@pytest.mark.parametrize("bad", [True, False, -1, 2 ** 32, 1.0, "42"])
+def test_a_seed_outside_its_domain_is_not_an_rng_identity(field, bad):
+    """`bool` is an `int` subclass, so `True` would record a stream's identity as
+    a flag; and one seed drives Python, NumPy and torch, so a value NumPy's
+    seeder would reject is not a seed for this harness even where torch takes it.
+    """
+    with pytest.raises(ValueError, match="must be an integer in"):
+        build_record(_report(manifest={field: bad}), None)
+
+
 @pytest.mark.parametrize("missing", ["python_seed", "numpy_seed", "torch_seed"])
 def test_a_run_with_no_recorded_rng_identity_cannot_be_a_record(missing):
     """Two unseeded runs consume different worker streams, different negatives and

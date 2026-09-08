@@ -22,7 +22,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from src.kg.artifacts import GRAPH_ARTIFACTS
+from src.kg.artifacts import GRAPH_ARTIFACTS, SPLIT_MANIFEST_SCHEMA_VERSION
 from src.kg.disease_allocation import (
     DiseaseAllocation,
     derive_stream,
@@ -44,14 +44,6 @@ logger = logging.getLogger(__name__)
 GENERATION_ALGORITHM = "coverage-first-then-replacement"
 GENERATION_ALGORITHM_VERSION = 1
 
-#: v2 — the manifest binds the **exported graph artifacts** (`node_features.pt`,
-#: `edge_indices.pt`, `num_nodes.json`) as well as `kg.json` and the sample files.
-#: v1 bound only `kg.json` and the samples, so a workspace built under it cannot
-#: show that the tensors a model consumes are this graph's export. Bumped rather
-#: than extended in place, and refused rather than migrated: the missing digests
-#: cannot be recovered after the fact, because only the writer could have vouched
-#: for them.
-SPLIT_MANIFEST_SCHEMA_VERSION = 2
 
 
 def retained_phenotype_count(

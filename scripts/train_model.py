@@ -528,14 +528,13 @@ def training_input_roles(
     # disease level or at the sample level, and nothing in their digests
     # distinguishes those regimes.
     #
-    # Required, and verified rather than merely present. A workspace built before
-    # the allocation step has overlapping cohorts; one with any `split_manifest`
-    # dropped beside it would satisfy an existence check while describing a
-    # different cut entirely. `verify_generated_cohorts` binds the manifest to the
-    # exact sample bytes and to the disease sets they hold, so the checkpoint this
-    # run produces can be characterised afterwards.
-    verify_graph_artifacts(data_dir)
-    verify_generated_cohorts(data_dir)
+    # **Recorded here, verified in `train`.** The manifest is a training input
+    # like any other and its digest belongs in this map — but the *check* that it
+    # describes this workspace belongs at the top of the run, ahead of the
+    # directories and the config file, not at the point where a role map is
+    # assembled two thirds of the way through. Running it here as well would read
+    # both cohorts a second time to re-establish what has already been
+    # established.
     roles["split_manifest"] = data_dir / MANIFEST_FILENAME
     return roles
 
@@ -662,6 +661,26 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
         logger.info(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
+    # **Refuse before the first run artifact exists.** Everything below this line
+    # creates or writes something: run directories, `config.yaml`, a checkpoint
+    # directory, then the graph tensors and a model built from them. Whether this
+    # workspace's graph is the export its manifest names, and whether its cohorts
+    # are the ones that manifest describes, is knowable from the files alone — so
+    # it is knowable before any of that. Verifying later left a run that had
+    # already written its configuration and loaded a mixed graph.
+    #
+    # No rollback and no transactional writing: the refusal simply moves ahead of
+    # the side effects.
+    data_dir = Path(config.data_dir)
+    if not data_dir.exists():
+        logger.error(f"Data directory not found: {data_dir}")
+        logger.info("Please run data preprocessing first:")
+        logger.info("  python scripts/preprocess_data.py")
+        return {}
+
+    verify_graph_artifacts(data_dir)
+    verify_generated_cohorts(data_dir)
+
     # Create output directories
     output_dir = Path(config.output_dir)
     # Auto-derive an architecture-scoped checkpoint dir
@@ -683,14 +702,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
         yaml.dump(asdict(config), f)
     logger.info(f"Configuration saved to {config_path}")
 
-    # Load data
-    data_dir = Path(config.data_dir)
-    if not data_dir.exists():
-        logger.error(f"Data directory not found: {data_dir}")
-        logger.info("Please run data preprocessing first:")
-        logger.info("  python scripts/preprocess_data.py")
-        return {}
-
+    # Load data — verified above, before anything was written.
     graph_data = load_graph_data(data_dir)
     train_loader, val_loader = create_dataloaders(config, graph_data)
 

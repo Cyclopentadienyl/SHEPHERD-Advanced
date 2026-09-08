@@ -54,6 +54,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP
+from src.evaluation.measurement import validate_measurement_seed
 from src.evaluation.cohort import (
     COHORT_KINDS,
     DEFAULT_COHORT_KIND,
@@ -72,7 +73,14 @@ logger = logging.getLogger(__name__)
 #: reproducible, so it cannot be evidence; and its manifest recorded three null
 #: RNG identities, which made two materially different runs indistinguishable to
 #: the ledger's contradiction check. With a default seed the default run is
-#: reproducible and a repeat of it must agree.
+#: reproducible in the streams this harness owns.
+#:
+#: **That is not the same as bit-determinism.** A seed controls Python, NumPy,
+#: torch and the per-worker streams torch derives; it says nothing about CUDA
+#: kernel non-determinism, which is why the manifest records
+#: `deterministic_algorithms`, `cudnn_deterministic` and `cudnn_benchmark`
+#: separately. A seeded rerun that disagrees is a finding to investigate, and a
+#: proven contradiction only when those fields say the regime was deterministic.
 DEFAULT_MEASUREMENT_SEED = 0
 
 
@@ -508,6 +516,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
 
+    validate_measurement_seed(args.seed, "--seed")
+
     # **Always seeded, and the applied value is what the manifest records.**
     # `--seed` used to default to `None`, which left the RNGs at whatever state
     # the process started in and wrote three nulls into the manifest. Two such
@@ -515,8 +525,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     # candidate universes while producing an identical semantics digest — so the
     # ledger saw one measurement with two answers and refused the second as a
     # contradiction. A default that is a number makes the default run
-    # reproducible; a repeat of it *must* agree, and if it does not, the
-    # contradiction is real and worth surfacing.
+    # reproducible.
+    #
+    # **What a seed does and does not establish.** It identifies and controls the
+    # random streams this harness owns — Python, NumPy, torch, and through torch
+    # the per-worker streams. It does not make CUDA execution bit-deterministic;
+    # that is why the manifest records `deterministic_algorithms`,
+    # `cudnn_deterministic` and `cudnn_benchmark` as separate facts. So a seeded
+    # rerun that disagrees is a finding to investigate, not a proven
+    # contradiction, unless those fields say the regime was deterministic.
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

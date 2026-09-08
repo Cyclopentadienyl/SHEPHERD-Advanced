@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from src.kg.graph import KnowledgeGraph
 from src.evaluation.cohort import (
     GRAPH_ARTIFACTS,
     verify_generated_cohorts,
@@ -71,14 +72,151 @@ def test_replacing_any_single_graph_artifact_is_refused(tmp_path, role):
         verify_graph_artifacts(root)
 
 
-def test_training_refuses_a_mixed_graph_workspace_before_it_starts(tmp_path):
-    import scripts.train_model as train_model
+class TestTrainingRefusesBeforeItActs:
+    """The refusal has to precede the side effects, not merely exist.
 
-    root = _workspace(tmp_path / "ws")
-    (root / "node_features.pt").write_bytes(b"from another workspace")
+    ``training_input_roles`` used to carry the verification, and a test calling it
+    directly proved only that the helper *can* reject. By the time `train` reached
+    it, the run directories existed, `config.yaml` was written, the graph tensors
+    were loaded, dataloaders and a model were built, a Trainer was constructed and
+    a resume checkpoint may have been loaded. Whether the workspace is sound is
+    knowable from the files alone, so it is knowable before any of that.
+    """
 
-    with pytest.raises(ValueError, match="is not the node_features artifact"):
-        train_model.training_input_roles(root, with_validation=True)
+    @staticmethod
+    def _forbid(monkeypatch, names):
+        """Replace each stage with a sentinel that fails if it is reached."""
+        import scripts.train_model as train_model
+
+        for name in names:
+            def _sentinel(*args, _name=name, **kwargs):
+                raise AssertionError(f"{_name} ran after a digest mismatch")
+
+            monkeypatch.setattr(train_model, name, _sentinel)
+        return train_model
+
+    def _config(self, train_model, root, tmp_path, **overrides):
+        return train_model.TrainConfig(
+            data_dir=str(root),
+            output_dir=str(tmp_path / "outputs"),
+            log_dir=str(tmp_path / "logs"),
+            **overrides,
+        )
+
+    @pytest.mark.parametrize(
+        "break_it,expected",
+        [
+            (lambda root: (root / "node_features.pt").write_bytes(b"another ws"),
+             "is not the node_features artifact"),
+            (lambda root: (root / "train_samples.json").write_text("[]"),
+             "is not the file"),
+            (lambda root: (root / "split_manifest.json").unlink(),
+             "Rebuild it with"),
+        ],
+        ids=["mixed-graph", "replaced-cohort", "no-manifest"],
+    )
+    def test_no_stage_and_no_run_artifact_is_reached(
+        self, monkeypatch, tmp_path, break_it, expected
+    ):
+        train_model = self._forbid(
+            monkeypatch,
+            ["load_graph_data", "create_dataloaders", "create_model_from_config",
+             "resolve_resume_checkpoint"],
+        )
+        root = _workspace(tmp_path / "ws")
+        break_it(root)
+
+        with pytest.raises(ValueError, match=expected):
+            train_model.train(self._config(train_model, root, tmp_path))
+
+        assert not (tmp_path / "outputs").exists(), "run directory was created"
+        assert not (tmp_path / "logs").exists(), "log directory was created"
+        assert not (root / "checkpoints").exists(), "checkpoint directory was created"
+
+    def test_a_sound_workspace_reaches_the_next_stage(self, monkeypatch, tmp_path):
+        """The refusal must be about the workspace, not about the ordering itself:
+        an unbroken workspace passes the preflight and goes on to load the graph."""
+        train_model = self._forbid(monkeypatch, ["load_graph_data"])
+        root = _workspace(tmp_path / "ws")
+
+        with pytest.raises(AssertionError, match="load_graph_data ran"):
+            train_model.train(self._config(train_model, root, tmp_path))
+
+
+class TestTheClinicalPathIsAGraphConsumer:
+    """The costliest consumer, and the one that was outside the contract.
+
+    `DiagnosisPipeline._initialize_gnn` called `_load_graph_data` directly. A
+    same-shaped `node_features.pt` from another workspace was refused by training
+    and by measurement and would still have been loaded here, paired with a
+    checkpoint, precomputed into embeddings and served.
+    """
+
+    @staticmethod
+    def _pipeline_module(monkeypatch, reached):
+        import src.inference.pipeline as pipeline
+
+        def _forbidden(self, *args, **kwargs):
+            reached.append("_load_graph_data")
+            return None
+
+        monkeypatch.setattr(pipeline.DiagnosisPipeline, "_load_graph_data", _forbidden)
+        return pipeline
+
+    def test_a_mixed_workspace_is_refused_before_the_graph_is_loaded(
+        self, monkeypatch, tmp_path
+    ):
+        reached: list = []
+        pipeline = self._pipeline_module(monkeypatch, reached)
+        root = _workspace(tmp_path / "ws")
+        (root / "node_features.pt").write_bytes(b"same shape, another workspace")
+
+        with pytest.raises(ValueError, match="is not the node_features artifact"):
+            pipeline.DiagnosisPipeline(
+                kg=KnowledgeGraph(), data_dir=str(root),
+                checkpoint_path=str(root / "ckpt.pt"),
+            )
+
+        assert reached == [], "graph loading was reached after a digest mismatch"
+
+    def test_a_sound_workspace_goes_on_to_load_the_graph(self, monkeypatch, tmp_path):
+        """The refusal is about the workspace, not about the ordering itself."""
+        reached: list = []
+        pipeline = self._pipeline_module(monkeypatch, reached)
+        root = _workspace(tmp_path / "ws")
+        (root / "ckpt.pt").write_bytes(b"weights")
+
+        pipeline.DiagnosisPipeline(
+            kg=KnowledgeGraph(), data_dir=str(root),
+            checkpoint_path=str(root / "ckpt.pt"),
+        )
+
+        assert reached == ["_load_graph_data"]
+
+    def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
+        """A caller supplying the graph directly is not pointing at a persisted
+        workspace, so there is no manifest for it to match and nothing to verify.
+        Refusing there would block a legitimate embedded use.
+
+        **Both are passed on purpose.** With `data_dir` omitted the check is
+        skipped for a second reason -- there is no directory -- and a version that
+        verified regardless would pass this test anyway. Supplying a `data_dir`
+        that *would* fail is what isolates the seam: the graph is already in hand,
+        so the files are never read and their state is irrelevant.
+        """
+        reached: list = []
+        pipeline = self._pipeline_module(monkeypatch, reached)
+        root = _workspace(tmp_path / "ws")
+        (root / "node_features.pt").write_bytes(b"would fail verification")
+
+        pipeline.DiagnosisPipeline(
+            kg=KnowledgeGraph(),
+            graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
+            data_dir=str(root),
+            checkpoint_path=str(root / "ckpt.pt"),
+        )
+
+        assert reached == [], "the file-backed loader is not used for in-memory data"
 
 
 def test_a_supplied_cohort_measurement_also_refuses_a_mixed_graph_workspace(tmp_path):
