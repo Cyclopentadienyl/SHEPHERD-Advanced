@@ -790,3 +790,40 @@ def test_nulls_serialise_and_are_not_nan(tiny_kg_path):
     rendered = json.dumps(report, allow_nan=False, sort_keys=True)
     assert '"p_no_training_representation": null' in rendered
     assert "NaN" not in rendered and "Infinity" not in rendered
+
+
+def test_the_schema_version_and_the_nullable_contract_move_together(tiny_kg_path):
+    """v2 *is* the nullable empty-band contract. Neither may drift alone.
+
+    A v1 artifact exists and was relied on, so v1 was not redefined in place:
+    doing that would have left a real file claiming a contract it does not
+    satisfy. This pins the pairing in both directions — a report announcing v2
+    must actually null its empty bands.
+    """
+    report = audit.build_report(
+        tiny_kg_path, settings(fractions=[0.5], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
+    )
+    assert report["schema_version"] == 2
+    empty = [
+        row
+        for entry in report["sensitivity"]
+        for rows in entry["strata"].values()
+        for row in rows
+        if row["diseases"] == 0
+    ]
+    assert empty, "the fixture must exercise at least one empty band"
+    assert all(row["p_no_validation_representation"] is None for row in empty)
+
+
+def test_the_audit_does_not_claim_to_describe_deployed_weights(tiny_kg_path):
+    """It selects no allocation, so it may not speak of a deployed model."""
+    report = audit.build_report(
+        tiny_kg_path, settings(fractions=[0.5], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
+    )
+    rendered = json.dumps(report)
+    assert "the deployed model" not in rendered
+    assert "hypothetical allocation" in report["axis_definitions"][
+        "p_no_training_representation"
+    ]

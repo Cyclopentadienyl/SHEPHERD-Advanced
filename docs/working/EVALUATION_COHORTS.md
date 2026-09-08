@@ -9,6 +9,12 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **17** — the report schema is **v2**, defined as the nullable empty-band contract; v1 was not
+  redefined in place because a v1 artifact already existed and had been relied on. Two wordings
+  narrowed: a matching band structure makes reports *structurally alignable*, not scientifically
+  comparable across KG vintages or assumptions; and the training-representation risk describes a
+  model trained under a *hypothetical* allocation, never "the deployed model", since this audit
+  selects no allocation.
 - **16** — first institutional-scale run of the audit, on a pre-deployment machine, and one
   presentation correction it exposed. An empty band printed `1.0` for both zero-representation
   probabilities: arithmetically right, and readable as certain harm. §6.8 now specifies `null` for
@@ -1044,8 +1050,19 @@ events**, collapse into the same event at `n_s = 0` and stop meaning what their 
 rule is **null the fields that become vacuous as a band empties, keep the fields that become zero** —
 so `quota`, `expected_withheld` and `sd_withheld` stay numeric, because zero is what they genuinely
 are. Empty bands are still listed rather than dropped: the band structure must be identical across
-workspaces or two reports cannot be compared, and a band empty in one KG vintage may be populated in
-the next.
+workspaces for two reports to be **structurally alignable**, row for row. *Alignability is not
+comparability* — two reports may still rest on different KG vintages or different assumptions, and a
+matching band structure does not make their numbers speak to the same question.
+
+**This changed the report schema, so the schema version moved with it: `v2` is the nullable
+contract, `v1` was numeric `1.0`.** v1 was not redefined in place, because a v1 artifact had already
+been produced and its figures relied on; redefining it would have left a real file claiming a
+contract it does not satisfy, which is the failure this document's provenance work exists to
+prevent. No migration path or compatibility reader exists, and none is wanted.
+
+One wording consequence: `p_no_training_representation` describes *a model trained under that
+hypothetical allocation*, never "the deployed model". The audit selects no allocation and describes
+no existing weights.
 
 **Settled parameters, stated here so nothing is left to negotiate:**
 

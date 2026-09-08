@@ -52,7 +52,20 @@ from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+#: Report schema.
+#:
+#: v2 — an empty band reports ``p_no_validation_representation`` and
+#:      ``p_no_training_representation`` as ``null``.
+#: v1 — those fields were numeric ``1.0`` on an empty band.
+#:
+#: Bumped rather than redefining v1, because a v1 artifact was produced and its
+#: figures were relied on before the change. Redefining v1 in place would leave
+#: that file claiming a contract it does not satisfy — a mislabelled artifact,
+#: which is the failure this project's provenance work exists to prevent. No
+#: migration path or compatibility reader is provided, and none is wanted: the
+#: two versions differ in one field's empty-band representation, and a reader can
+#: see which one a file holds.
+SCHEMA_VERSION = 2
 
 #: Withheld fractions the sensitivity curve is reported at. 0.15 is the upstream
 #: value (EVALUATION_COHORTS §1.6); the rest bound it on both sides.
@@ -429,8 +442,11 @@ def stratification_report(
     vacuous as a band empties, keep the fields that become zero.**
 
     Empty bands are still emitted rather than dropped. The band structure has to
-    be identical across workspaces or two reports cannot be compared, and a band
-    that is empty here may be populated in the next KG vintage.
+    be identical across workspaces for two reports to be **structurally
+    alignable** — row for row, band for band. Alignability is not comparability:
+    two reports may rest on different KG vintages or different assumptions, and
+    nothing about a matching band structure makes their numbers speak to the same
+    question. A band empty here may be populated in the next vintage.
     """
     labels = [label for label, _ in bands]
     sizes = [size for _, size in bands]
@@ -608,15 +624,20 @@ def build_report(kg_path: Path, settings: AuditSettings, relationship: str) -> D
             ),
             "p_no_training_representation": (
                 "Probability that a uniform draw withholds all of this band, "
-                "leaving the deployed model with no patient supervision anywhere "
-                "in it. A different event from the one above."
+                "leaving a model trained under that hypothetical allocation with "
+                "no patient supervision anywhere in it. A different event from "
+                "the one above. This audit selects no allocation and describes "
+                "no existing weights."
             ),
             "empty_bands": (
                 "A band with 0 diseases reports both probabilities as null. They "
                 "are not zero and not unknown: a stratum with no members has no "
                 "representation to lose, so the question the columns ask does not "
                 "apply. Empty bands are still listed so the band structure is "
-                "identical across workspaces and two reports stay comparable."
+                "identical across workspaces, which makes two reports "
+                "structurally alignable — not, on its own, scientifically "
+                "comparable, since they may rest on different KG vintages or "
+                "different assumptions."
             ),
         },
         "coverage_budgets": coverage,
