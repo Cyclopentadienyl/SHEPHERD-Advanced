@@ -125,11 +125,12 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
     the same reason ``build_loader_config``'s output is handed to both the
     dataloader and the manifest instead of being rebuilt.
 
-    ``split_manifest`` is carried through when the measured workspace had one. Its
-    absence is recorded as ``None`` here rather than by omitting the field,
-    because at this point the question has been asked and answered: this cohort
-    has no recorded allocation. That is a fact worth stating, and it is what
-    separates a pre-allocation `val` number from a disease-disjoint one.
+    The cohort's **kind** is derived from the roles the measurement recorded, not
+    re-asserted here. A generated cohort carries a ``split_manifest`` role because
+    ``resolve_cohort`` requires one; a supplied cohort has none because it was
+    never cut from this project's disease universe. Those are the only two
+    possibilities that reach a measurement artifact — a workspace built before the
+    allocation step is refused at the measurement, not recorded with a null.
     """
     manifest = report["manifest"]
     digests = manifest["artifact_digests"]
@@ -140,12 +141,14 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
         "cohort_digest": digests["samples"],
         "mode": manifest["mode"],
         "canonical_tie_policy_version": manifest["canonical_tie_policy_version"],
-        "allocation": {
+        "cohort": {
+            "kind": manifest["cohort_kind"],
             "split_manifest_digest": digests.get("split_manifest"),
             "why_this_is_here": (
-                "a val metric under a disease-disjoint cut and one under a "
-                "sample-level slice are different quantities; the sample digest "
-                "does not distinguish them"
+                "a generated cohort is disease-disjoint by construction and its "
+                "manifest says which cut produced it; a supplied cohort carries no "
+                "allocation, and its overlap with training is a measurement. The "
+                "sample digest alone distinguishes neither"
             ),
         },
         "metrics": metrics,

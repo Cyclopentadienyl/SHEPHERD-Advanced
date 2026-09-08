@@ -72,6 +72,7 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
+from src.evaluation.cohort import resolve_cohort
 
 # Configure logging
 logging.basicConfig(
@@ -521,12 +522,13 @@ def training_input_roles(
     # **The manifest says how the workspace was cut, which the sample digests
     # cannot.** Two byte-different sample files could have been split at the
     # disease level or at the sample level, and nothing in their digests
-    # distinguishes those regimes. Recorded only when the file exists: a
-    # workspace generated before the allocation step has none, and it stays
-    # readable with the role simply absent rather than present-and-null.
-    split_manifest = data_dir / "split_manifest.json"
-    if split_manifest.is_file():
-        roles["split_manifest"] = split_manifest
+    # distinguishes those regimes.
+    #
+    # Required, not conditional. Training consumes the generator's own splits, so
+    # a workspace without a manifest is one built before the allocation step,
+    # whose cohorts overlap — and `resolve_cohort` refuses it here rather than
+    # letting the run proceed and produce a checkpoint nothing can characterise.
+    roles["split_manifest"] = resolve_cohort(data_dir, "train").split_manifest
     return roles
 
 

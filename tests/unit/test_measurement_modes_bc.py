@@ -61,7 +61,7 @@ def world(tmp_path_factory):
 
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
     args = argparse.Namespace(
-        checkpoint=checkpoint_path, data_dir=data_dir, split="test",
+        checkpoint=checkpoint_path, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=BATCH_SIZE, num_workers=0, seed=None,
     )
     loader_config = build_loader_config(args)

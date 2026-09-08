@@ -61,6 +61,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.evaluation.cohort import MANIFEST_FILENAME, resolve_cohort  # noqa: E402
 from src.utils.banding import CAPACITY_BANDS, bucket  # noqa: E402
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
@@ -82,51 +83,29 @@ HPOA_PHENOTYPE_COLUMN = 3
 HPOA_FREQUENCY_COLUMN = 7
 
 
-def generation_config(
-    data_dir: Path, overrides: Dict[str, Any]
-) -> Tuple[Dict[str, Any], str]:
-    """The three parameters that determine `k`, and where they came from.
+def generation_config(data_dir: Path) -> Dict[str, Any]:
+    """The three parameters that determine `k`.
 
     **`k` is not observable from the samples.** A sample records the phenotypes it
     kept, not the rule that chose how many, so an audit that guessed the rule
     would report the capacity of a generator nobody ran. `split_manifest.json`
-    records the parameters the generator was actually given; where one exists it
-    is authoritative and the operator's flags are refused rather than silently
-    overridden, because a mismatch means one of the two is wrong and neither the
-    audit nor the operator can tell which.
-    """
-    manifest_path = data_dir / "split_manifest.json"
-    if manifest_path.exists():
-        generation = json.loads(manifest_path.read_text()).get("generation", {})
-        config = {
-            key: generation[key]
-            for key in ("min_phenotypes", "max_phenotypes", "phenotype_drop_rate")
-            if key in generation
-        }
-        if len(config) == 3:
-            stated = {k: v for k, v in overrides.items() if v is not None}
-            conflicting = {k: v for k, v in stated.items() if config[k] != v}
-            if conflicting:
-                raise SystemExit(
-                    f"{manifest_path} records {config}, and the command line asserts "
-                    f"{conflicting}. One of them is wrong about how this workspace was "
-                    "generated and this script cannot tell which. Drop the flags to "
-                    "use the manifest."
-                )
-            return config, "split_manifest.json"
-        raise SystemExit(
-            f"{manifest_path} exists but its generation section is missing "
-            f"{sorted({'min_phenotypes', 'max_phenotypes', 'phenotype_drop_rate'} - set(config))}"
-        )
+    records the parameters the generator was actually given, and it is the only
+    source accepted — there is no operator override, because the two could
+    disagree and neither the audit nor the operator could tell which was right.
 
-    missing = [name for name, value in overrides.items() if value is None]
+    A workspace without a manifest is refused upstream by ``resolve_cohort``.
+    """
+    manifest = json.loads((data_dir / MANIFEST_FILENAME).read_text())
+    generation = manifest.get("generation", {})
+    required = ("min_phenotypes", "max_phenotypes", "phenotype_drop_rate")
+    missing = [key for key in required if key not in generation]
     if missing:
         raise SystemExit(
-            f"this workspace has no split_manifest.json, so {', '.join(sorted(missing))} "
-            "must be supplied. `k` is not recoverable from the samples, and a guessed "
-            "`k` reports the capacity of a generator nobody ran."
+            f"{data_dir / MANIFEST_FILENAME} has no {', '.join(missing)} in its "
+            "generation section, so the retained-phenotype rule this workspace was "
+            "built under is unknown"
         )
-    return dict(overrides), "operator-asserted"
+    return {key: generation[key] for key in required}
 
 
 def capacity_section(
@@ -369,8 +348,7 @@ def frequency_section(kg_edge_weights: List[float], hpoa_path: Optional[Path]) -
 
 
 def build_report(
-    kg_path: Path, data_dir: Path, external_dir: Optional[Path],
-    overrides: Dict[str, Any], relationship: str,
+    kg_path: Path, data_dir: Path, external_dir: Optional[Path], relationship: str,
 ) -> Dict[str, Any]:
     from src.core.types import EdgeType
     from src.kg.graph import KnowledgeGraph
@@ -384,7 +362,12 @@ def build_report(
             f"got {relationship!r}"
         )
 
-    config, config_source = generation_config(data_dir, overrides)
+    # **Both cohorts must be this project's own.** This audit characterises *our*
+    # generator, so a supplied cohort has nothing here to be measured against —
+    # its samples were not produced by the rule whose capacity is being priced.
+    for split in ("train", "val"):
+        resolve_cohort(data_dir, split, "generated")
+    config = generation_config(data_dir)
     kg = KnowledgeGraph.load_json(str(kg_path))
 
     # Eligibility at the *generation* threshold, so the universe priced here is
@@ -429,9 +412,7 @@ def build_report(
         "train_samples": file_sha256(data_dir / "train_samples.json"),
         "val_samples": file_sha256(data_dir / "val_samples.json"),
     }
-    manifest_path = data_dir / "split_manifest.json"
-    if manifest_path.exists():
-        artifacts["split_manifest"] = file_sha256(manifest_path)
+    artifacts["split_manifest"] = file_sha256(data_dir / MANIFEST_FILENAME)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -444,7 +425,7 @@ def build_report(
             "no threshold is applied and no cohort is accepted or rejected here"
         ),
         "generation_config": config,
-        "generation_config_source": config_source,
+        "generation_config_source": MANIFEST_FILENAME,
         "artifacts": artifacts,
         "combinatorial_capacity": capacity_section(phenotype_counts, draws, config),
         "realised_redundancy": redundancy_section(cohorts),
@@ -473,11 +454,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                              "graph supports, and says so.")
     parser.add_argument("--overwrite", action="store_true",
                         help="Replace an existing --output. Off by default.")
-    parser.add_argument("--min-phenotypes", type=int, default=None,
-                        help="Only for a workspace with no split_manifest.json. Where "
-                             "a manifest exists it is authoritative and this is refused.")
-    parser.add_argument("--max-phenotypes", type=int, default=None)
-    parser.add_argument("--phenotype-drop-rate", type=float, default=None)
     parser.add_argument("--deployment-relationship", default=UNSTATED_RELATIONSHIP,
                         choices=DEPLOYMENT_RELATIONSHIPS,
                         help="How this machine relates to the deployment. A bounded "
@@ -493,11 +469,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 
     report = build_report(
-        args.kg_path, args.data_dir, args.external_dir,
-        {"min_phenotypes": args.min_phenotypes,
-         "max_phenotypes": args.max_phenotypes,
-         "phenotype_drop_rate": args.phenotype_drop_rate},
-        args.deployment_relationship,
+        args.kg_path, args.data_dir, args.external_dir, args.deployment_relationship
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))

@@ -99,7 +99,8 @@ if str(PROJECT_ROOT) not in sys.path:
 # One hashing implementation, shared. A second one here could differ from the
 # harness's in exactly the way the digests exist to detect.
 from scripts.measure_scorer import artifact_digests  # noqa: E402
-from src.evaluation.caveats import SPLIT_ARGUMENT_HELP  # noqa: E402
+from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP  # noqa: E402
+from src.evaluation.cohort import COHORT_KINDS, DEFAULT_COHORT_KIND  # noqa: E402
 
 logger = logging.getLogger("calibrate_mode_a")
 
@@ -345,6 +346,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--split", required=True,
                         choices=["train", "val", "test"],
                         help=SPLIT_ARGUMENT_HELP)
+    parser.add_argument("--cohort-kind", default=DEFAULT_COHORT_KIND,
+                        choices=COHORT_KINDS, help=COHORT_KIND_HELP)
     parser.add_argument("--workdir", type=Path, required=True,
                         help="Where both runs write. Created if absent")
     parser.add_argument("--seed", type=int, required=True,
@@ -375,14 +378,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     logger.info("seed=%d device=%s batch_size=%d workers=%d",
                 args.seed, device, args.batch_size, ORACLE_NUM_WORKERS)
 
-    digests_before = artifact_digests(args.checkpoint, args.data_dir, args.split)
+    digests_before = artifact_digests(args.checkpoint, args.data_dir, args.split, args.cohort_kind)
 
     logger.info("Running the frozen evaluator...")
     oracle_report, oracle_predictions = run_oracle(args.seed, workdir, args, device)
     logger.info("Running the Mode A harness...")
     measurement, harness_predictions = run_harness(args.seed, workdir, args, device)
 
-    digests_after = artifact_digests(args.checkpoint, args.data_dir, args.split)
+    digests_after = artifact_digests(args.checkpoint, args.data_dir, args.split, args.cohort_kind)
 
     failures = compare(
         oracle_report, oracle_predictions, measurement, harness_predictions, args,

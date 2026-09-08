@@ -1001,12 +1001,14 @@ class TestManifestBinding:
         assert manifest["allocation"]["universe_digest"] == universe_digest(eligible)
 
 
-def test_a_workspace_with_a_split_manifest_records_it_as_a_training_input(tmp_dir):
-    """Otherwise a checkpoint cannot be tied to the cut it was trained under."""
+def test_training_records_the_cut_it_trained_under(tmp_dir):
+    """Otherwise a checkpoint cannot be tied to the cut it was trained under, and
+    a workspace with no cut at all cannot be trained on."""
     import scripts.train_model as train_model
 
-    roles = train_model.training_input_roles(tmp_dir, with_validation=True)
-    assert "split_manifest" not in roles, "absent file must not become a role"
+    (tmp_dir / "train_samples.json").write_text("[]")
+    with pytest.raises(ValueError, match="generated before the disease allocation"):
+        train_model.training_input_roles(tmp_dir, with_validation=True)
 
     (tmp_dir / "split_manifest.json").write_text("{}")
     roles = train_model.training_input_roles(tmp_dir, with_validation=True)

@@ -78,10 +78,18 @@ def test_the_shared_contract_lives_below_the_scripts_that_use_it():
 # ---------------------------------------------------------------------------
 # What a training run records, and what it must not
 # ---------------------------------------------------------------------------
-def _workspace(tmp_path, *, samples_payload, extra_split=None):
+def _workspace(tmp_path, *, samples_payload, extra_split=None, manifest=True):
+    """A workspace as the generator leaves one.
+
+    ``manifest`` is a parameter because its **absence** is now a refusal rather
+    than a variant: a workspace without one was built before the disease
+    allocation step, and training on it is what the refusal exists to stop.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "train_samples.json").write_text(json.dumps(samples_payload))
     (tmp_path / "val_samples.json").write_text(json.dumps(samples_payload))
+    if manifest:
+        (tmp_path / "split_manifest.json").write_text(json.dumps({"disjoint": True}))
     (tmp_path / "num_nodes.json").write_text(json.dumps({"disease": 2}))
     torch.save({"disease": torch.zeros(2, 4)}, tmp_path / "node_features.pt")
     torch.save({("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
@@ -111,8 +119,22 @@ def test_the_recorded_roles_are_the_semantic_inputs_a_run_consumes(tmp_path):
 
     assert set(digests) == {
         "train_samples", "val_samples", "node_features", "edge_indices", "num_nodes",
+        "split_manifest",
     }
     assert all(value is not None for value in digests.values())
+
+
+def test_a_workspace_without_a_manifest_cannot_be_trained_on(tmp_path):
+    """It was cut before the allocation step, so its train and validation disease
+    sets overlap and a `val_mrr` from it measures something else entirely. The
+    refusal is here rather than in a caveat because the run would otherwise
+    produce a checkpoint nothing can characterise afterwards."""
+    data_dir = _workspace(
+        tmp_path / "ws", samples_payload=[{"patient_id": "p0"}], manifest=False
+    )
+
+    with pytest.raises(ValueError, match="generated before the disease allocation"):
+        _training_roles(data_dir, with_val=True)
 
 
 def test_an_unrelated_split_beside_the_inputs_is_not_recorded(tmp_path):

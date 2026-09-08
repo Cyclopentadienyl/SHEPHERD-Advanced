@@ -50,7 +50,7 @@ def _run(data_dir, checkpoint, batch_size=3):
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
     model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
-        checkpoint=checkpoint, data_dir=data_dir, split="test",
+        checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=batch_size, num_workers=0, seed=None,
     )
     # One config object to both consumers, exactly as the CLI does it — otherwise
@@ -192,7 +192,7 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
 
     _, data_dir, checkpoint = workspace
     args = argparse.Namespace(
-        checkpoint=checkpoint, data_dir=data_dir, split="test",
+        checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=3, num_workers=0, seed=None,
     )
     graph_data = read_graph_artifacts(data_dir)
@@ -261,7 +261,7 @@ def test_a_manifest_recording_a_different_regime_is_refused(workspace):
     samples = read_samples(data_dir, "test")
     model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
-        checkpoint=checkpoint, data_dir=data_dir, split="test",
+        checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=3, num_workers=0, seed=None,
     )
     loader_config = build_loader_config(args)
@@ -445,7 +445,7 @@ def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
 
     device = torch.device("cpu")
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=3, num_workers=0, seed=None)
     loader_config = build_loader_config(args)
     loader = create_diagnosis_dataloader(
@@ -482,7 +482,7 @@ def test_a_cohort_smaller_than_the_manifest_claims_is_an_error(workspace):
 
     device = torch.device("cpu")
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=3, num_workers=0, seed=None)
     loader_config = build_loader_config(args)
     loader = create_diagnosis_dataloader(
@@ -524,7 +524,7 @@ def test_every_way_the_cohort_can_shrink_is_refused(workspace, kwargs, expected)
     from src.evaluation.measurement import _assert_cohort_is_intact
 
     graph_data, _ = load_legacy_mode_a_inputs(data_dir, "test")
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=3, num_workers=0, seed=None)
     declared = kwargs.pop("declared", 6)
     manifest = build_manifest(
@@ -671,43 +671,58 @@ class TestTheRolesAMeasurementRecords:
     """
 
     @staticmethod
-    def _workspace(root, *, manifest: bool):
+    def _workspace(root, *, manifest: bool = True, supplied: bool = False):
         root.mkdir(parents=True, exist_ok=True)
-        for name in ("val_samples.json", "node_features.pt", "edge_indices.pt",
-                     "num_nodes.json"):
+        names = ["val_samples.json", "node_features.pt", "edge_indices.pt",
+                 "num_nodes.json"]
+        if supplied:
+            names.append("test_samples.json")
+        for name in names:
             (root / name).write_bytes(b"content-of-" + name.encode())
         (root / "ckpt.pt").write_bytes(b"weights")
         if manifest:
             (root / "split_manifest.json").write_bytes(b'{"disjoint": true}')
         return root
 
-    def test_the_split_manifest_is_recorded_when_the_workspace_has_one(self, tmp_path):
+    def test_a_generated_cohort_records_the_cut_it_came_from(self, tmp_path):
         from scripts.measure_scorer import artifact_digests
 
-        root = self._workspace(tmp_path / "ws", manifest=True)
-        digests = artifact_digests(root / "ckpt.pt", root, "val")
+        root = self._workspace(tmp_path / "ws")
+        digests = artifact_digests(root / "ckpt.pt", root, "val", "generated")
 
         assert digests["split_manifest"] is not None
         assert digests["split_manifest"] != digests["samples"]
 
-    def test_a_pre_allocation_workspace_leaves_the_role_absent_not_null(self, tmp_path):
-        """`None` is reserved for a file that was expected and missing. A
-        workspace generated before the allocation step never had one."""
+    def test_a_supplied_cohort_records_no_allocation(self, tmp_path):
+        """Not a missing file: nobody cut it from this disease universe, so there
+        is no allocation for it to name."""
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws", supplied=True)
+        digests = artifact_digests(root / "ckpt.pt", root, "test", "supplied")
+
+        assert "split_manifest" not in digests
+        assert (root / "split_manifest.json").exists(), (
+            "the workspace's own manifest is there and still does not apply"
+        )
+
+    def test_a_pre_allocation_workspace_cannot_be_measured(self, tmp_path):
+        """Its cohorts overlap, so a val number from it measures something else.
+        Refused rather than recorded with a null."""
         from scripts.measure_scorer import artifact_digests
 
         root = self._workspace(tmp_path / "ws", manifest=False)
-        digests = artifact_digests(root / "ckpt.pt", root, "val")
-
-        assert "split_manifest" not in digests
+        with pytest.raises(ValueError, match="generated before the disease allocation"):
+            artifact_digests(root / "ckpt.pt", root, "val", "generated")
 
     def test_nothing_else_in_the_directory_becomes_a_role(self, tmp_path):
         """A record of the directory is not a record of the run."""
         from scripts.measure_scorer import artifact_digests
 
-        root = self._workspace(tmp_path / "ws", manifest=True)
+        root = self._workspace(tmp_path / "ws")
         (root / "train_samples.json").write_bytes(b"an unrelated split")
         (root / "notes.txt").write_bytes(b"scratch")
-        digests = artifact_digests(root / "ckpt.pt", root, "val")
+        digests = artifact_digests(root / "ckpt.pt", root, "val", "generated")
 
         assert set(digests) == {
             "checkpoint", "samples", "node_features", "edge_indices", "num_nodes",
@@ -757,7 +772,7 @@ def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
         DiagnosisSample(patient_id="P-one", phenotype_ids=[0], disease_id=0),
         DiagnosisSample(patient_id="P-two", phenotype_ids=[0, 1], disease_id=1),
     ]
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=2, num_workers=0, seed=None)
     loader_config = build_loader_config(args)
     loader = create_diagnosis_dataloader(

@@ -2,8 +2,13 @@
 The `--split` caveat has to reach the person running the command.
 =================================================================
 Backlog item 2. Both measurement entry points warn that `val` is not held-out
-data, and the warning now names **two** independent reasons rather than one: the
-split selects the checkpoint, and the generator never partitions by disease.
+data. The warning named two reasons; it now names **three**, and one of them
+changed direction. The split still selects the checkpoint. The overlap reason is
+gone — generation consumes a disease allocation and `src/evaluation/cohort.py`
+refuses a workspace without a manifest, so a pre-allocation cohort cannot reach a
+measurement at all, and the help states disjointness as the contract it now is.
+In its place are the channel a disease-level cut does not close, and the fact
+that a *supplied* cohort's overlap with training is an open measurement.
 
 **Why this file exists at all.** The caveat lives in argparse `help=` text, which
 nothing rendered until now — and argparse interpolates that text with
@@ -71,53 +76,56 @@ def test_help_renders_at_all(script):
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_caveat_names_both_limits_and_keeps_them_distinct(script):
-    """One limit was already there. M4 established the second, and they are *not*
-    the same limit — the first says `val` cannot be an independent evaluation, the
-    second says it carries no unseen-disease evidence. A caveat that names only
-    one, or blurs them together, understates what the split cannot support."""
+def test_the_caveat_names_three_distinct_limits(script):
+    """They are not the same limit and must not blur together.
+
+    (1) `val` cannot be an independent evaluation, because it selects the
+    checkpoint. (2) `val` *is* disease-disjoint, so it carries unseen-disease
+    evidence -- but not for two diseases with identical phenotype content on
+    opposite sides. (3) A supplied cohort's overlap with training is measured,
+    never assumed.
+    """
     _, help_text = _split_help(script)
 
-    assert "early_stopping_monitor=val_mrr" in help_text, "checkpoint-selection contamination"
-    assert "property of the workspace" in help_text, "overlap is workspace-dependent"
-    assert "audit_split_overlap.py" in help_text, "how to establish it for this workspace"
+    assert "early_stopping_monitor=val_mrr" in help_text, "checkpoint selection"
+    assert "disease-disjoint from `train`, by construction" in help_text, "the contract"
+    assert "identical" in help_text and "phenotype content" in help_text, (
+        "the channel the disease-level cut does not close"
+    )
+    assert "measurement, not a contract" in help_text, "supplied cohorts"
+    assert "audit_split_overlap.py" in help_text, "how to measure a supplied cohort"
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_caveat_does_not_claim_the_overlap_is_guaranteed(script):
-    """A negative assertion, because this claim inverted and must not overshoot again.
+def test_the_caveat_no_longer_hedges_about_which_regime_it_describes(script):
+    """A negative assertion, because this claim has now inverted twice.
 
-    It once said the generator "does not enforce" disjointness, which was true of
-    a pooled draw sliced by index. Generation now consumes a disease allocation
-    and the partitions *are* disjoint by construction — but only for workspaces
-    built since. This help is shown for whatever workspace it is pointed at, and
-    cannot know which kind that is, so it must assert neither.
-
-    The forbidden claims are therefore about *this* workspace, in either
-    direction."""
+    It once said the generator "does not enforce" disjointness, then that overlap
+    was "a property of the workspace" because two regimes coexisted. Only one
+    regime exists: a pre-allocation workspace is refused before a measurement can
+    run. Hedging language would now describe a case the code makes unreachable,
+    which is the backward compatibility this pipeline no longer carries.
+    """
     _, help_text = _split_help(script)
 
-    for overstatement in (
-        "this workspace", "your split is", "the split is disjoint",
-        "always share", "必然",
+    for stale in (
+        "property of the workspace", "may overlap completely",
+        "workspaces generated before", "audited workspace", "7,970",
     ):
-        assert overstatement not in help_text, (
-            f"{overstatement!r} asserts a property the help cannot know"
+        assert stale not in help_text, (
+            f"{stale!r} describes a regime that can no longer reach a measurement"
         )
-    # The conditional framing, and the measured figure attributed to one workspace.
-    assert "Workspaces generated from a disease allocation" in help_text
-    assert "may overlap completely" in help_text
-    assert "audited workspace" in help_text
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_measured_figure_is_stated_and_attributed(script):
-    """BACKLOG §5.2's rule for this figure: it may reach user-facing help only
-    behind the evidence, and it arrives citing where the evidence is."""
-    _, help_text = _split_help(script)
+def test_the_cohort_kind_help_says_why_it_is_stated_rather_than_inferred(script):
+    """The presence test it replaces cannot tell a supplied cohort from a
+    workspace built before the allocation step."""
+    _, _ = _split_help(script)
+    from src.evaluation.caveats import COHORT_KIND_HELP
 
-    assert "7,970" in help_text
-    assert "EVIDENCE_M4.json" in help_text
+    assert "may not use a generated split's name" in COHORT_KIND_HELP
+    assert "before the allocation step" in COHORT_KIND_HELP
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)

@@ -9,6 +9,13 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **21** — one pipeline, not two. A workspace cut before the allocation step is now **refused**
+  at every entry point rather than tolerated behind a conditional, and the cohort **kind**
+  (generated / supplied) is stated by the caller instead of inferred from whether a manifest is
+  present — an inference that could not separate a legitimately manifest-free supplied cohort from
+  a pre-allocation defect (§6.1). The `--split` caveat loses its workspace-dependent hedge, which
+  described a case the code no longer admits, and `docs/working/EVIDENCE_M4.json` becomes purely a
+  record of the superseded regime rather than something the current script can reproduce.
 - **20** — §6.6 step 5 is implemented (§6.5 "As built"). Recording it needed one upstream fix
   first: a measurement's `artifact_digests` did not carry `split_manifest.json`, so a `val` number
   could not be placed in either split regime after the fact. Two of this section's fields were
@@ -795,6 +802,31 @@ it:
 | `synthetic_test_unseen` *(optional)* | Disease-disjoint, **not inspected** during selection | Required **only** for a direct exact-checkpoint synthetic unseen-disease claim (§6.0). Not on the default path |
 | `MyGene2` | Real records | External research comparison. Not the acceptance gate |
 | `institutional_acceptance` | In-hospital offline cohort | The exact checkpoint bytes proposed for deployment |
+
+#### The two kinds those six roles fall into, and why the code asks
+
+The six roles above answer *what a cohort is for*. Underneath them sit exactly two kinds of
+cohort, distinguished by whether this project cut it:
+
+| Kind | Roles | Carries an allocation? | Overlap with training |
+|---|---|---|---|
+| **generated** | `synthetic_*` | Yes — `split_manifest.json` | **Zero, by construction.** Any overlap is a broken workspace |
+| **supplied** | `MyGene2`, `institutional_acceptance` | No — nobody cut it | An open **measurement**. The upstream team reported 109 of 319 UDN diseases present in their simulated cohort (§1.6) |
+
+`src/evaluation/cohort.py` makes the kind an argument every entry point takes, rather than a
+property inferred from whether `split_manifest.json` happens to be present. The inference cannot
+tell three situations apart that must be told apart: a generated cohort, a supplied cohort — which
+correctly has no manifest — and a workspace built before the allocation step, which is a defect.
+Reading the first and third the same way is what keeps a superseded pipeline alive inside the
+current one.
+
+Two rules follow, and both are enforced rather than advised:
+
+- **A generated cohort with no manifest is refused, everywhere.** Training, measurement,
+  calibration and both audits. A pre-allocation workspace cannot reach a number.
+- **A supplied cohort may not be named `train` or `val`.** Written into `val_samples.json` it
+  would inherit the manifest of a cut it was never part of and be recorded as an ordinary
+  validation number — which is §6.7's role hazard, arriving through a filename.
 
 ### 6.2 Partition before generation
 

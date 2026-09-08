@@ -33,38 +33,57 @@ SELECTION_CONTAMINATION = (
     "selected at all."
 )
 
-#: Whether the split is disease-disjoint, which is now a property of the
-#: workspace rather than of the code.
+#: What `val` is under the current pipeline, and what it still is not.
 #:
-#: **This one stopped being a global fact.** Before the allocation step,
-#: `sample_generator` drew one pooled set and sliced it by index, so overlap was
-#: permitted everywhere and total in the audited workspace — all 7,970 validation
-#: diseases also in train (``docs/working/EVIDENCE_M4.json``). Generation now
-#: consumes a disease allocation and the partitions are disjoint by construction,
-#: but a workspace built before that change still has the old shape. A help
-#: string cannot know which one it is being pointed at, so it must not assert
-#: either.
-WORKSPACE_DEPENDENT_OVERLAP = (
-    "**Disease overlap is a property of the workspace, not of this script.** "
-    "Workspaces generated from a disease allocation have disease-disjoint train "
-    "and validation cohorts by construction; workspaces generated before that "
-    "change were sliced at the sample level and may overlap completely — in the "
-    "audited workspace the overlap was total, all 7,970 validation diseases also "
-    "present in train (docs/working/EVIDENCE_M4.json). Establish "
-    "which one you have with `scripts/audit_split_overlap.py`, and read "
-    "`split_manifest.json` if the workspace has one. Overlap bounds what a `val` "
-    "metric can be evidence of about unseen diseases; it does not by itself "
-    "invalidate every sample-level claim."
+#: **This used to be a workspace-dependent caveat and no longer is.** Before the
+#: allocation step, `sample_generator` drew one pooled set and sliced it by index,
+#: so a `val` cohort's disease overlap depended on which workspace you were
+#: pointed at — all 7,970 validation diseases were also in train in the audited
+#: one (``docs/working/EVIDENCE_M4.json``). Generation now consumes a disease
+#: allocation, `src/evaluation/cohort.py` refuses a workspace without a manifest,
+#: and a pre-allocation workspace therefore cannot reach a measurement at all. The
+#: help no longer has to hedge about which regime it is describing.
+GENERATED_VAL_IS_DISEASE_DISJOINT = (
+    "**`val` is disease-disjoint from `train`, by construction.** Generation "
+    "consumes a disease allocation, so no disease with labelled training examples "
+    "appears in the validation cohort, and `split_manifest.json` records the cut. "
+    "One channel a disease-level split does not close: two diseases with identical "
+    "phenotype content can fall on opposite sides, which "
+    "`scripts/audit_generator_fidelity.py` measures."
+)
+
+#: Why a supplied cohort's relationship to training is measured, not assumed.
+SUPPLIED_COHORT_OVERLAP = (
+    "**A supplied cohort's overlap with training is a measurement, not a "
+    "contract.** An institutional or external patient set was not cut from this "
+    "project's disease universe, so how much of it the model has labelled examples "
+    "for is an open number — the upstream team reported 109 of 319 UDN diseases "
+    "present in their simulated cohort. Establish it for yours with "
+    "`scripts/audit_split_overlap.py`; it bounds what the cohort can be evidence "
+    "of about unseen diseases."
+)
+
+#: Help for the cohort-kind argument, shared by every entry point that takes one.
+COHORT_KIND_HELP = (
+    "Whether this split was produced by this project's generator or supplied from "
+    "outside. `generated` covers `train` and `val` and requires the workspace's "
+    "`split_manifest.json`; `supplied` covers an institutional or external cohort, "
+    "which carries no allocation and may not use a generated split's name. Stated "
+    "rather than inferred from whether a manifest happens to be present, because "
+    "that test cannot tell a supplied cohort from a workspace built before the "
+    "allocation step."
 )
 
 #: The full `--split` help text. Assembled once so the two measurement entry
 #: points cannot drift apart.
 SPLIT_ARGUMENT_HELP = (
     "Which samples file to measure. **Required — there is no default.** "
-    "Generated workspaces normally contain train and val only; a test split "
-    "exists only where an evaluation protocol created one. Two distinct limits "
-    "apply to `val`, and they are not the same limit. (1) "
+    "Generated workspaces contain train and val only; a supplied cohort exists "
+    "only where an evaluation protocol provided one, and must carry its own name. "
+    "Two distinct limits apply, and they are not the same limit. (1) "
     + SELECTION_CONTAMINATION
     + " (2) "
-    + WORKSPACE_DEPENDENT_OVERLAP
+    + GENERATED_VAL_IS_DISEASE_DISJOINT
+    + " (3) "
+    + SUPPLIED_COHORT_OVERLAP
 )

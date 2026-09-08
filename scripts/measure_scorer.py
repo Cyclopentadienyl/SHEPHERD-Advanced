@@ -53,7 +53,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.evaluation.caveats import SPLIT_ARGUMENT_HELP
+from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP
+from src.evaluation.cohort import COHORT_KINDS, DEFAULT_COHORT_KIND, resolve_cohort
 from src.utils.fingerprint import compute_input_digests
 from src.utils.fingerprint import file_sha256 as _file_sha256
 
@@ -75,7 +76,9 @@ logger = logging.getLogger(__name__)
 file_sha256 = _file_sha256
 
 
-def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, Optional[str]]:
+def artifact_digests(
+    checkpoint: Path, data_dir: Path, split: str, cohort_kind: str = DEFAULT_COHORT_KIND
+) -> Dict[str, Optional[str]]:
     """Every file a Mode A number depends on, by role.
 
     Paths are recorded too, but a path is not an identity — `checkpoints/best.pt`
@@ -93,30 +96,27 @@ def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, 
     another's domain concept, which is cohesion; the benchmark reaching in here for
     a hash function was not.
     """
+    cohort = resolve_cohort(data_dir, split, cohort_kind)
     roles = {
         "checkpoint": checkpoint,
-        "samples": data_dir / f"{split}_samples.json",
+        "samples": cohort.samples,
         "node_features": data_dir / "node_features.pt",
         "edge_indices": data_dir / "edge_indices.pt",
         "num_nodes": data_dir / "num_nodes.json",
     }
 
-    # **The manifest says how the workspace was cut, which the sample digest
-    # cannot** — the same reason `training_input_roles` records it. Two
-    # byte-different `val_samples.json` could have been cut at the disease level
-    # or sliced at the sample level, and a `val_mrr` means a different thing under
-    # each: generalisation to diseases with no labelled examples, or recognition
-    # of new phenotype subsets of diseases that have them. Nothing in the sample
-    # digest distinguishes those, so a number recorded without this cannot be
-    # placed in either regime afterwards.
+    # **The manifest says how the cohort was cut, which the sample digest cannot.**
+    # Two byte-different `val_samples.json` could have been cut at the disease
+    # level or sliced at the sample level, and a `val_mrr` means a different thing
+    # under each: generalisation to diseases with no labelled examples, or
+    # recognition of new phenotype subsets of diseases that have them.
     #
-    # Recorded only when the file exists. A workspace generated before the
-    # allocation step has none, and the role is then simply absent rather than
-    # present-and-null — which is the distinction `compute_input_digests` reserves
-    # for a file that was expected and missing.
-    split_manifest = data_dir / "split_manifest.json"
-    if split_manifest.is_file():
-        roles["split_manifest"] = split_manifest
+    # Present for a generated cohort and absent for a supplied one — and that
+    # absence is a fact about the *kind*, checked by `resolve_cohort`, not a file
+    # that happened to be missing. A generated cohort without a manifest does not
+    # reach here.
+    if cohort.split_manifest is not None:
+        roles["split_manifest"] = cohort.split_manifest
     return compute_input_digests(roles)
 
 
@@ -306,6 +306,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     return MeasurementManifest(
         mode=mode,
         split=args.split,
+        cohort_kind=args.cohort_kind,
         n_samples=n_samples,
         candidate_construction=(
             subgraph_candidate_construction()
@@ -329,7 +330,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
-        artifact_digests=artifact_digests(args.checkpoint, args.data_dir, args.split),
+        artifact_digests=artifact_digests(
+            args.checkpoint, args.data_dir, args.split, args.cohort_kind
+        ),
         cuda_executed=(
             device.type == "cuda" if cuda_executed is None else cuda_executed
         ),
@@ -360,6 +363,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--split", required=True,
                         choices=["train", "val", "test"],
                         help=SPLIT_ARGUMENT_HELP)
+    parser.add_argument("--cohort-kind", default=DEFAULT_COHORT_KIND,
+                        choices=COHORT_KINDS, help=COHORT_KIND_HELP)
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the measurement JSON is written")
     parser.add_argument("--predictions-output", type=Path, default=None,

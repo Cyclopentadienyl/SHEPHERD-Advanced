@@ -129,28 +129,32 @@ def test_capacity_is_computed_at_the_generation_k_not_at_a_guessed_one(tmp_path)
     assert counts[0.5]["samples_in_excess_of_capacity"] == 0
 
 
-def test_a_manifest_and_a_conflicting_flag_are_refused_rather_than_reconciled(tmp_path):
-    """One of the two is wrong about this workspace and neither the audit nor the
-    operator can tell which."""
+def test_the_manifest_is_the_only_source_of_the_generation_rule(tmp_path):
+    """`k` is not recoverable from the samples, so there is nothing for an
+    operator flag to be checked against. There is no flag."""
     root = _workspace(tmp_path / "ws", diseases=[[0, 1]], train=[(0, [0, 1])],
                       val=[(0, [0, 1])], manifest_config=DEFAULTS)
-    with pytest.raises(SystemExit, match="cannot tell which"):
-        _run(root, tmp_path / "f.json", phenotype_drop_rate=0.9)
+    report = _run(root, tmp_path / "f.json")
 
-    report = _run(root, tmp_path / "ok.json", phenotype_drop_rate=0.3)
     assert report["generation_config_source"] == "split_manifest.json"
+    with pytest.raises(SystemExit):
+        _run(root, tmp_path / "g.json", phenotype_drop_rate=0.9)
 
 
-def test_a_workspace_without_a_manifest_needs_the_parameters_stated(tmp_path):
-    """`k` is not recoverable from the samples, and a guessed `k` prices a
-    generator nobody ran."""
+def test_a_workspace_without_a_manifest_is_refused(tmp_path):
+    """It was built before the allocation step, its cohorts overlap, and nothing
+    reads such a workspace any more."""
     root = _workspace(tmp_path / "ws", diseases=[[0, 1]], train=[(0, [0, 1])],
                       val=[(0, [0, 1])])
-    with pytest.raises(SystemExit, match="not recoverable from the samples"):
+    with pytest.raises(ValueError, match="generated before the disease allocation"):
         _run(root, tmp_path / "f.json")
 
-    report = _run(root, tmp_path / "g.json", **DEFAULTS)
-    assert report["generation_config_source"] == "operator-asserted"
+
+def test_a_manifest_missing_the_generation_rule_is_refused(tmp_path):
+    root = _workspace(tmp_path / "ws", diseases=[[0, 1]], train=[(0, [0, 1])],
+                      val=[(0, [0, 1])], manifest_config={"min_phenotypes": 2})
+    with pytest.raises(SystemExit, match="max_phenotypes"):
+        _run(root, tmp_path / "f.json")
 
 
 # ---------------------------------------------------------------------------

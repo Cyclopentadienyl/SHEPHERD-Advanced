@@ -34,6 +34,7 @@ def _report(**overrides):
     manifest = {
         "mode": "A",
         "split": "val",
+        "cohort_kind": "generated",
         "canonical_tie_policy_version": "v1",
         "artifact_digests": {
             "checkpoint": "c" * 64,
@@ -46,8 +47,10 @@ def _report(**overrides):
         "amp_enabled": False,
     }
     manifest.update(overrides.pop("manifest", {}))
-    if overrides.pop("no_split_manifest", False):
+    if overrides.pop("supplied", False):
         manifest["artifact_digests"].pop("split_manifest")
+        manifest["cohort_kind"] = "supplied"
+        manifest["split"] = "test"
     report = {
         "manifest": manifest,
         "authoritative_metrics": {"mrr": 0.5, "hits_at_1": 0.25},
@@ -157,26 +160,39 @@ def test_the_record_is_derived_from_the_manifest_not_asserted(tmp_path):
     assert record["source_artifact_digest"] == "d" * 64
 
 
-def test_the_allocation_digest_is_what_separates_the_two_val_regimes(tmp_path):
-    """A val metric under a disease-disjoint cut and one under a sample-level
-    slice are different quantities, and the sample digest is identical in shape
-    for both."""
-    disjoint = build_record(_report(), None)
-    legacy = build_record(_report(no_split_manifest=True), None)
+def test_the_cohort_section_separates_the_two_kinds(tmp_path):
+    """A generated cohort is disease-disjoint by construction and names the cut it
+    came from; a supplied cohort carries no allocation because nobody cut it, and
+    its overlap with training is an open measurement."""
+    generated = build_record(_report(), None)
+    supplied = build_record(_report(supplied=True), None)
 
-    assert disjoint["allocation"]["split_manifest_digest"] == "m" * 64
-    assert legacy["allocation"]["split_manifest_digest"] is None
-    assert disjoint["cohort_digest"] == legacy["cohort_digest"], (
-        "the sample digests match; only the allocation field tells them apart"
-    )
+    assert generated["cohort"]["kind"] == "generated"
+    assert generated["cohort"]["split_manifest_digest"] == "m" * 64
+    assert supplied["cohort"]["kind"] == "supplied"
+    assert supplied["cohort"]["split_manifest_digest"] is None
 
 
-def test_a_missing_allocation_is_stated_rather_than_omitted(tmp_path):
-    """At this point the question has been asked and answered: this cohort has no
-    recorded allocation. That differs from never having looked."""
-    record = build_record(_report(no_split_manifest=True), None)
+def test_the_kind_is_read_from_the_manifest_not_inferred_from_the_roles(tmp_path):
+    """Absence of a digest could mean several things later; the field means one.
 
-    assert "split_manifest_digest" in record["allocation"]
+    The report here is deliberately inconsistent — it claims `supplied` while
+    carrying a `split_manifest` digest — which `resolve_cohort` makes unreachable
+    in practice. It is what distinguishes reading the field from inferring the
+    kind, and the two implementations agree on every consistent input.
+    """
+    inconsistent = _report(manifest={"cohort_kind": "supplied"})
+    record = build_record(inconsistent, None)
+
+    assert record["cohort"]["kind"] == "supplied"
+    assert record["cohort"]["split_manifest_digest"] == "m" * 64
+
+
+def test_a_supplied_cohort_states_that_it_has_no_allocation(tmp_path):
+    record = build_record(_report(supplied=True), None)
+
+    assert "split_manifest_digest" in record["cohort"]
+    assert record["cohort"]["split_manifest_digest"] is None
 
 
 def test_the_record_does_not_copy_the_manifest(tmp_path):
