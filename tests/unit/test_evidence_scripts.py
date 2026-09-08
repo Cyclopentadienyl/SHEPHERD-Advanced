@@ -229,73 +229,32 @@ def test_a_family_where_nothing_loads_is_refused(tmp_path):
 # ---------------------------------------------------------------------------
 # M4 — split overlap
 # ---------------------------------------------------------------------------
-def _samples(split, ids):
-    return [
-        {"patient_id": f"SECRET-{split}-{i}", "phenotype_ids": [d, d + 100],
-         "disease_id": d}
-        for i, d in enumerate(ids)
-    ]
-
-
 def _splits(data_dir: Path, train_ids, supplied_ids):
-    """A generated workspace, plus a supplied evaluation cohort beside it.
+    """A verified generated workspace, plus a supplied evaluation cohort beside it.
 
     **The shape a real deployment has**, and the only shape M4's overlap question
-    is still open in. `train` and `val` come from the allocation step and are
-    disjoint by construction, with a manifest that says so. `test_samples.json` is
-    an institutional cohort that was never cut from this disease universe, so how
-    much of it the model has labelled examples for is exactly the number this
-    audit measures — the upstream team reported 109 of 319 for theirs.
-
-    `supplied_ids` may overlap `train_ids` freely; that is the finding, not a
-    defect.
+    is still open in. `train` and `val` come from the allocation step, are
+    disjoint, and their manifest is bound to their exact bytes.
+    `test_samples.json` is an institutional cohort that was never cut from this
+    disease universe, so how much of it the model has labelled examples for is
+    exactly what this audit measures -- the upstream team reported 109 of 319 for
+    theirs. `supplied_ids` may overlap `train_ids` freely; that is the finding.
     """
-    from src.kg.disease_allocation import (
-        DiseaseAllocation,
-        disease_set_digest,
-        universe_digest,
+    from tests.fixtures.generated_workspace import (
+        one_sample_per_disease,
+        profiles_for,
+        write_generated_workspace,
     )
 
-    data_dir.mkdir(parents=True, exist_ok=True)
+    train_ids = [int(d) for d in train_ids]
     val_ids = [max(train_ids, default=0) + 500 + i for i in range(2)]
-    profiles = {
-        d: {"phenotype_ids": [d, d + 100], "gene_ids": [d]}
-        for d in list(train_ids) + val_ids
-    }
-    allocation = DiseaseAllocation(
-        train=tuple((d, profiles[d]) for d in sorted(train_ids)),
-        val=tuple((d, profiles[d]) for d in sorted(val_ids)),
-        val_fraction_requested=0.25, seed=0,
-        universe_digest=universe_digest(
-            [(d, profiles[d]) for d in sorted(list(train_ids) + val_ids)]
-        ),
+    profiles = profiles_for(train_ids + val_ids + [int(d) for d in supplied_ids])
+    write_generated_workspace(
+        data_dir, train_ids=train_ids, val_ids=val_ids, profiles=profiles
     )
-    cohorts = {"train": _samples("train", train_ids), "val": _samples("val", val_ids)}
-    for split, rows in cohorts.items():
-        (data_dir / f"{split}_samples.json").write_text(json.dumps(rows))
-    (data_dir / "test_samples.json").write_text(
-        json.dumps(_samples("test", supplied_ids))
-    )
-    realised = {
-        split: sorted({row["disease_id"] for row in rows})
-        for split, rows in cohorts.items()
-    }
-    (data_dir / "split_manifest.json").write_text(json.dumps({
-        "schema_version": 1,
-        "generation": {"algorithm": "coverage-first-then-replacement"},
-        "allocation": {
-            "algorithm": "uniform-without-replacement",
-            "allocated": {
-                f"{split}_digest": disease_set_digest(ids)
-                for split, ids in realised.items()
-            },
-        },
-        "realised": {
-            f"{split}_digest": disease_set_digest(ids)
-            for split, ids in realised.items()
-        },
-        "disjoint": True,
-    }))
+    (data_dir / "test_samples.json").write_text(json.dumps(
+        one_sample_per_disease("test", [int(d) for d in supplied_ids], profiles)
+    ))
     return data_dir
 
 
@@ -337,18 +296,29 @@ def test_the_overlap_denominator_is_recorded_beside_the_ratio(tmp_path):
     assert json.loads(out.read_text())["overlap"]["as_written"] == "1 of 1"
 
 
-@pytest.mark.parametrize("empty", ["train", "test"])
-def test_an_empty_split_is_refused_rather_than_reported_as_no_overlap(tmp_path, empty):
-    """With no evaluation diseases the ratio has no denominator; with no training
-    diseases the overlap is zero for a reason that is about the workspace. Either
-    would be cited later as "no contamination"."""
+def test_an_empty_supplied_cohort_is_refused_rather_than_reported_as_no_overlap(tmp_path):
+    """With no evaluation diseases the ratio has no denominator, and a report of
+    zero overlap would be cited later as "no contamination".
+
+    Only the supplied side can reach this refusal. An emptied *generated* split
+    fails the manifest binding first, because the file no longer hashes to what
+    the manifest records — a stricter and earlier refusal for the same workspace.
+    """
     data_dir = _splits(tmp_path / "ws", [0, 1], [1])
-    (data_dir / f"{empty}_samples.json").write_text("[]")
+    (data_dir / "test_samples.json").write_text("[]")
     out = tmp_path / "m4.json"
 
     with pytest.raises(SystemExit, match="holds no samples"):
         _supplied(data_dir, out)
     assert not out.exists()
+
+
+def test_an_emptied_generated_split_is_caught_by_the_binding_first(tmp_path):
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    (data_dir / "train_samples.json").write_text("[]")
+
+    with pytest.raises(SystemExit, match="is not the file"):
+        _supplied(data_dir, tmp_path / "m4.json")
 
 
 # ---------------------------------------------------------------------------
@@ -884,101 +854,109 @@ def test_no_evidence_file_is_replaced_silently(tmp_path, script, args):
 # ---------------------------------------------------------------------------
 # M4 — the manifest cross-check, and the disjointness gate
 # ---------------------------------------------------------------------------
-def _allocated_workspace(root: Path, n_diseases: int = 8, val_fraction: float = 0.25):
+def _allocated_workspace(root: Path, n_diseases: int = 8, n_val: int = 2):
     """A workspace as the current pipeline leaves it: two cohorts and a manifest.
 
-    Built through ``allocate_diseases`` and ``build_split_manifest`` rather than
-    by writing a plausible-looking manifest by hand. A hand-written one would
-    encode this test's belief about the manifest's shape, and would keep passing
-    after the real shape changed — which is the failure mode the audit exists to
-    catch, reproduced inside its own test.
+    Built through the shared fixture, which builds it through
+    ``build_split_manifest`` -- so it satisfies ``verify_generated_cohorts``
+    without this file encoding what that checks.
     """
-    from src.kg.disease_allocation import allocate_diseases
-    from src.kg.sample_generator import build_split_manifest
+    from tests.fixtures.generated_workspace import write_generated_workspace
 
-    profiles = [
-        (i, {"phenotype_ids": [i, i + 100], "gene_ids": [i]}) for i in range(n_diseases)
-    ]
-    allocation = allocate_diseases(profiles, val_fraction, seed=42)
-
-    def _samples(partition, tag):
-        return [
-            {"patient_id": f"SECRET-{tag}-{k}", "phenotype_ids": list(p["phenotype_ids"]),
-             "disease_id": d}
-            for k, (d, p) in enumerate(partition)
-        ]
-
-    train, val = _samples(allocation.train, "t"), _samples(allocation.val, "v")
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "train_samples.json").write_text(json.dumps(train))
-    (root / "val_samples.json").write_text(json.dumps(val))
-    manifest = build_split_manifest(
-        allocation=allocation, train_samples=train, val_samples=val,
-        config={"min_phenotypes": 2, "max_phenotypes": 15, "phenotype_drop_rate": 0.3},
-        num_train=len(train), num_val=len(val), artifacts={"kg": None},
+    ids = list(range(n_diseases))
+    return write_generated_workspace(
+        root, train_ids=ids[n_val:], val_ids=ids[:n_val]
     )
-    (root / "split_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
-    return root, manifest
 
 
-def test_a_disjoint_workspace_agrees_with_its_manifest(tmp_path):
+def test_a_verified_workspace_records_what_was_bound(tmp_path):
     data_dir, _ = _allocated_workspace(tmp_path / "ws")
     out = tmp_path / "m4.json"
 
     _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
     report = json.loads(out.read_text())
 
-    assert report["schema_version"] == 3
+    assert report["schema_version"] == 4
     assert report["counts"]["shared_diseases"] == 0
     assert report["evaluation_cohort_kind"] == "generated"
-    agreement = report["manifest_agreement"]
-    assert agreement["agrees"] is True
-    assert agreement["compared_splits"] == ["train", "val"]
-    assert agreement["claimed_disjoint"] is True
-    assert agreement["measured_disjoint"] is True
-    assert all(agreement["files_match_manifest_realised"].values())
-    assert all(agreement["manifest_realised_matches_allocated"].values())
+    verification = report["manifest_verification"]
+    assert verification["verified_splits"] == ["train", "val"]
+    assert verification["claimed_disjoint"] is True
+    assert verification["measured_disjoint"] is True
+    assert any("SHA-256" in line for line in verification["verified_against"])
 
 
-def test_replaced_sample_files_are_caught_by_the_manifest_comparison(tmp_path):
-    """The check `build_split_manifest` structurally cannot make about itself.
-
-    It derives the realised sets from records held in its own memory. Once those
-    files are replaced, its verdict describes a cohort that is no longer there,
-    and every digest inside it still agrees with every other digest inside it.
-    """
+@pytest.mark.parametrize("split", ["train", "val"])
+def test_content_changed_under_a_preserved_disease_set_is_caught(tmp_path, split):
+    """A disease-set digest cannot see this, and that is the point of hashing the
+    file. Phenotypes, genes, patient ids, order and multiplicity can all move
+    while the disease set is preserved exactly."""
     data_dir, _ = _allocated_workspace(tmp_path / "ws")
-    out = tmp_path / "m4.json"
+    rows = json.loads((data_dir / f"{split}_samples.json").read_text())
+    rows[0]["phenotype_ids"] = [999, 998, 997]
+    (data_dir / f"{split}_samples.json").write_text(json.dumps(rows))
 
-    (data_dir / "val_samples.json").write_text(json.dumps(
-        [{"patient_id": "x", "phenotype_ids": [0], "disease_id": 900}]
-    ))
-    with pytest.raises(SystemExit, match="does not describe the sample files"):
-        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+    with pytest.raises(SystemExit, match="is not the file"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
+    assert not (tmp_path / "m4.json").exists()
 
-    # The refusal happens after the artifact is written: a failed audit's evidence
-    # is the report describing the failure.
-    report = json.loads(out.read_text())
-    assert report["manifest_agreement"]["agrees"] is False
-    assert report["manifest_agreement"]["files_match_manifest_realised"]["val"] is False
-    assert report["manifest_agreement"]["files_match_manifest_realised"]["train"] is True
+
+def test_a_manifest_from_another_workspace_is_caught(tmp_path):
+    """The generator writes the manifest in the same process as the samples, so a
+    disagreement means the files changed afterwards or the manifest is foreign."""
+    first, _ = _allocated_workspace(tmp_path / "a")
+    second, _ = _allocated_workspace(tmp_path / "b", n_diseases=6)
+    (first / "split_manifest.json").write_text(
+        (second / "split_manifest.json").read_text()
+    )
+
+    with pytest.raises(SystemExit, match="is not the file"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(first), "--output", str(tmp_path / "m4.json")])
+
+
+def test_a_manifest_recording_disease_sets_the_files_do_not_hold_is_caught(tmp_path):
+    """The recomputation's own test, isolated from the byte check above it.
+
+    Every other way of breaking this also changes the sample bytes, so the digest
+    comparison fires first and the recomputation is never reached — removing it
+    entirely passed a green run. Here the byte digests are correct and the
+    manifest agrees with itself; only its recorded disease sets are another
+    workspace's. That is the shape a hand-repaired legacy manifest takes: file
+    digests are easy to compute, so the tempting fix is to copy a consistent
+    realised/allocated pair from somewhere the tooling accepted.
+    """
+    data_dir, manifest = _allocated_workspace(tmp_path / "ws")
+    _, donor = _allocated_workspace(tmp_path / "donor", n_diseases=6)
+
+    for section in ("realised",):
+        for split in ("train", "val"):
+            manifest[section][f"{split}_digest"] = donor[section][f"{split}_digest"]
+            manifest["allocation"]["allocated"][f"{split}_digest"] = (
+                donor["allocation"]["allocated"][f"{split}_digest"]
+            )
+    (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
+    message = str(excinfo.value)
+    assert "is not the one" in message and "records as realised" in message
+    assert "is not the file" not in message, (
+        "the byte digests are correct here, or this is testing the wrong check"
+    )
 
 
 def test_a_manifest_whose_realised_contradicts_its_allocation_is_caught(tmp_path):
     """Internal to the file, and still a workspace nothing may be trained on."""
     data_dir, manifest = _allocated_workspace(tmp_path / "ws")
-    out = tmp_path / "m4.json"
-
     manifest["allocation"]["allocated"]["val_digest"] = "0" * 64
     (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
 
-    with pytest.raises(SystemExit, match="does not describe the sample files"):
-        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
-    agreement = json.loads(out.read_text())["manifest_agreement"]
-    assert agreement["manifest_realised_matches_allocated"]["val"] is False
-    assert all(agreement["files_match_manifest_realised"].values()), (
-        "the files are untouched; only the manifest contradicts itself"
-    )
+    with pytest.raises(SystemExit, match="contradicts itself"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
 
 
 def test_a_workspace_without_a_manifest_is_refused(tmp_path):
@@ -992,60 +970,61 @@ def test_a_workspace_without_a_manifest_is_refused(tmp_path):
             [{"patient_id": "p", "phenotype_ids": [0], "disease_id": 0}]
         ))
 
-    with pytest.raises(ValueError, match="generated before the disease allocation"):
+    with pytest.raises(SystemExit, match="generated before the disease allocation"):
         _run("audit_split_overlap",
              ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
 
 
-def test_overlap_between_generated_cohorts_is_a_broken_workspace(tmp_path):
-    """Disjointness is a contract of the allocation step, so an overlap here is
-    not a measurement anyone should record and carry on from."""
-    data_dir, _ = _allocated_workspace(tmp_path / "ws")
-    train = json.loads((data_dir / "train_samples.json").read_text())
-    val = json.loads((data_dir / "val_samples.json").read_text())
-    val[0]["disease_id"] = train[0]["disease_id"]
-    (data_dir / "val_samples.json").write_text(json.dumps(val))
-    out = tmp_path / "m4.json"
+def test_a_manifest_present_but_unbound_does_not_let_a_legacy_workspace_through(tmp_path):
+    """Existence is not binding: dropping any manifest beside overlapping cohorts
+    would otherwise satisfy the presence check, and training would proceed under a
+    manifest describing a different cut entirely."""
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    for split in ("train", "val"):
+        (legacy / f"{split}_samples.json").write_text(json.dumps(
+            [{"patient_id": "p", "phenotype_ids": [0, 100], "disease_id": 0}]
+        ))
+    donor, _ = _allocated_workspace(tmp_path / "donor")
+    (legacy / "split_manifest.json").write_text(
+        (donor / "split_manifest.json").read_text()
+    )
 
-    with pytest.raises(SystemExit) as excinfo:
-        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
-    assert "does not describe the sample files" in str(excinfo.value)
+    with pytest.raises(SystemExit, match="is not the file"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(legacy), "--output", str(tmp_path / "m4.json")])
 
 
-def test_the_overlap_gate_fires_even_when_the_manifest_agrees(tmp_path):
-    """The gate's own test, separated from the cross-check's.
+def test_non_disjoint_generated_cohorts_are_refused_by_the_verifier(tmp_path):
+    """Disjointness is a contract of the allocation step, so this is a broken
+    workspace rather than a measurement. The manifest here honestly records the
+    overlapping cut, so the byte and disease-set checks pass and the disjointness
+    check is the only thing left."""
+    from tests.fixtures.generated_workspace import write_generated_workspace
 
-    Overlapping the cohorts by editing a sample file also breaks the manifest
-    comparison, so that refusal fires first and the gate below it is never
-    reached — which is how removing the gate entirely passed a green run. Here the
-    manifest honestly records a non-disjoint cut, so the cross-check agrees and
-    the gate is the only thing left. `build_split_manifest` cannot produce such a
-    manifest; a hand-edited or foreign one can, and this is the last line against
-    it.
-    """
+    data_dir, _ = write_generated_workspace(
+        tmp_path / "ws", train_ids=[0, 1, 2], val_ids=[3]
+    )
+    rows = json.loads((data_dir / "val_samples.json").read_text())
+    rows[0]["disease_id"] = 0
+    (data_dir / "val_samples.json").write_text(json.dumps(rows))
+    # Rebuild the manifest so it describes the overlapping files honestly; only
+    # `build_split_manifest`'s own assertion stands between here and that, which
+    # is why it is bypassed rather than reused.
     from src.kg.disease_allocation import disease_set_digest
+    from src.utils.fingerprint import file_sha256
 
-    data_dir, manifest = _allocated_workspace(tmp_path / "ws")
-    val = json.loads((data_dir / "val_samples.json").read_text())
-    train = json.loads((data_dir / "train_samples.json").read_text())
-    val[0]["disease_id"] = train[0]["disease_id"]
-    (data_dir / "val_samples.json").write_text(json.dumps(val))
-
-    overlapping = disease_set_digest(sorted({row["disease_id"] for row in val}))
-    manifest["realised"]["val_digest"] = overlapping
-    manifest["allocation"]["allocated"]["val_digest"] = overlapping
+    manifest = json.loads((data_dir / "split_manifest.json").read_text())
+    digest = disease_set_digest(sorted({row["disease_id"] for row in rows}))
+    manifest["realised"]["val_digest"] = digest
+    manifest["allocation"]["allocated"]["val_digest"] = digest
+    manifest["artifacts"]["val_samples"] = file_sha256(data_dir / "val_samples.json")
     manifest["disjoint"] = False
     (data_dir / "split_manifest.json").write_text(json.dumps(manifest))
-    out = tmp_path / "m4.json"
 
-    with pytest.raises(SystemExit) as excinfo:
-        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
-    message = str(excinfo.value)
-    assert "disease-disjointness is a contract" in message
-    assert "does not describe the sample files" not in message, (
-        "the cross-check must agree here, or this is testing the wrong refusal"
-    )
-    assert json.loads(out.read_text())["manifest_agreement"]["agrees"] is True
+    with pytest.raises(SystemExit, match="does not hold disease-disjoint cohorts"):
+        _run("audit_split_overlap",
+             ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
 
 
 def test_overlap_with_a_supplied_cohort_is_reported_not_refused(tmp_path):
@@ -1058,13 +1037,13 @@ def test_overlap_with_a_supplied_cohort_is_reported_not_refused(tmp_path):
     report = json.loads(out.read_text())
 
     assert report["counts"]["shared_diseases"] == 1
-    agreement = report["manifest_agreement"]
-    assert agreement["compared_splits"] == ["train"], (
+    verification = report["manifest_verification"]
+    assert verification["verified_splits"] == ["train"], (
         "the manifest describes the generated splits and says nothing about a "
         "supplied cohort"
     )
-    assert "measured_disjoint" not in agreement
-    assert "supplied cohort" in agreement["why_the_evaluation_split_is_not_compared"]
+    assert "measured_disjoint" not in verification
+    assert "supplied cohort" in verification["why_the_evaluation_split_is_not_verified"]
 
 
 def test_a_supplied_cohort_may_not_wear_a_generated_name(tmp_path):
@@ -1072,7 +1051,7 @@ def test_a_supplied_cohort_may_not_wear_a_generated_name(tmp_path):
     never part of, and be recorded as an ordinary validation number."""
     data_dir = _splits(tmp_path / "ws", [0, 1], [1])
 
-    with pytest.raises(ValueError, match="may not use it"):
+    with pytest.raises(SystemExit, match="may not use it"):
         _run("audit_split_overlap", [
             "--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json"),
             "--splits", "train", "val", "--evaluation-cohort-kind", "supplied",
@@ -1082,7 +1061,7 @@ def test_a_supplied_cohort_may_not_wear_a_generated_name(tmp_path):
 def test_a_supplied_cohort_claimed_as_generated_is_refused(tmp_path):
     data_dir = _splits(tmp_path / "ws", [0, 1], [1])
 
-    with pytest.raises(ValueError, match="not one of the generator's splits"):
+    with pytest.raises(SystemExit, match="not one of the generator's splits"):
         _run("audit_split_overlap", [
             "--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json"),
             "--splits", "train", "test",
@@ -1099,5 +1078,5 @@ def test_the_manifest_section_carries_no_identifiers(tmp_path):
 
     assert "SECRET" not in text
     assert "patient_id" not in text
-    section = json.dumps(json.loads(text)["manifest_agreement"])
+    section = json.dumps(json.loads(text)["manifest_verification"])
     assert "phenotype_ids" not in section and "disease_id" not in section

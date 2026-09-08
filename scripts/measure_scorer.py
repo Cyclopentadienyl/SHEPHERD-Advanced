@@ -54,7 +54,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP
-from src.evaluation.cohort import COHORT_KINDS, DEFAULT_COHORT_KIND, resolve_cohort
+from src.evaluation.cohort import (
+    COHORT_KINDS,
+    DEFAULT_COHORT_KIND,
+    resolve_cohort,
+    verify_generated_cohorts,
+)
 from src.utils.fingerprint import compute_input_digests
 from src.utils.fingerprint import file_sha256 as _file_sha256
 
@@ -97,6 +102,12 @@ def artifact_digests(
     a hash function was not.
     """
     cohort = resolve_cohort(data_dir, split, cohort_kind)
+    if cohort.is_generated:
+        # The manifest must describe these exact files, not merely exist beside
+        # them. Without this a legacy overlapping workspace passes by having any
+        # manifest dropped into it, and the digest recorded below would name a cut
+        # the samples never came from.
+        verify_generated_cohorts(data_dir)
     roles = {
         "checkpoint": checkpoint,
         "samples": cohort.samples,
@@ -294,6 +305,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     """
     from src.evaluation.measurement import (
         LEGACY_TRUNCATION_K,
+        METRIC_SCHEMA_VERSION,
         MeasurementManifest,
         observe_autocast_regime,
         observe_torch_compile_wrapper,
@@ -306,6 +318,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     return MeasurementManifest(
         mode=mode,
         split=args.split,
+        metric_schema_version=METRIC_SCHEMA_VERSION,
         cohort_kind=args.cohort_kind,
         n_samples=n_samples,
         candidate_construction=(
@@ -360,9 +373,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Measure the disease scorer (Mode A)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--split", required=True,
-                        choices=["train", "val", "test"],
-                        help=SPLIT_ARGUMENT_HELP)
+    parser.add_argument("--split", required=True, help=SPLIT_ARGUMENT_HELP)
     parser.add_argument("--cohort-kind", default=DEFAULT_COHORT_KIND,
                         choices=COHORT_KINDS, help=COHORT_KIND_HELP)
     parser.add_argument("--output", type=Path, required=True,

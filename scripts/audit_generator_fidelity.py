@@ -61,7 +61,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.evaluation.cohort import MANIFEST_FILENAME, resolve_cohort  # noqa: E402
+from src.evaluation.cohort import (  # noqa: E402
+    MANIFEST_FILENAME,
+    verify_generated_cohorts,
+)
 from src.utils.banding import CAPACITY_BANDS, bucket  # noqa: E402
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
@@ -199,8 +202,70 @@ def redundancy_section(cohorts: Dict[str, List[Dict[str, Any]]]) -> Dict[str, An
     return section
 
 
+def _shared_input_is_possible(
+    val_profiles: Dict[int, frozenset],
+    train_profiles: Dict[int, frozenset],
+    k_of: Dict[int, int],
+) -> int:
+    """Validation diseases that could emit an input a training disease could too.
+
+    **The condition, exactly.** The generator emits a `k`-subset of a disease's
+    phenotype profile. Two diseases can therefore emit the *same* set iff they
+    retain the same number of phenotypes and share at least that many:
+
+        k_A == k_B == k   and   |A ∩ B| >= k
+
+    Identical full profiles are the special case `A == B`. Restricting to it — as
+    the first version of this section did — undercounts: with `A = {1,2,3}`,
+    `B = {1,2,4}` and `k = 2`, both can emit `{1,2}` while no profile is a
+    duplicate of any other.
+
+    **Why an inverted index rather than a pairwise scan.** Comparing every
+    (val, train) pair is |val| x |train| intersections — tens of millions on the
+    audited universe, each over sets of up to a hundred ids. Instead: within each
+    `k` group, walk the val disease's phenotypes, count how many of them each
+    training disease shares, and stop at the first disease reaching `k`. Diseases
+    that share no phenotype at all are never touched, which is the overwhelming
+    majority of pairs, and the early exit ends most val diseases after a handful
+    of increments. Memory is one counter dict per val disease, discarded
+    immediately.
+
+    Returns the count of affected validation diseases, not the number of pairs:
+    the question is how much of the validation cohort is compromised, and one
+    disease with forty possible partners is still one disease.
+    """
+    by_k: Dict[int, Dict[int, List[int]]] = {}
+    for disease, profile in train_profiles.items():
+        index = by_k.setdefault(k_of[disease], {})
+        for phenotype in profile:
+            index.setdefault(phenotype, []).append(disease)
+
+    affected = 0
+    for disease, profile in val_profiles.items():
+        k = k_of[disease]
+        index = by_k.get(k)
+        if not index:
+            continue
+        shared: Dict[int, int] = {}
+        for phenotype in profile:
+            for partner in index.get(phenotype, ()):
+                count = shared.get(partner, 0) + 1
+                if count >= k:
+                    break
+                shared[partner] = count
+            else:
+                continue
+            break
+        else:
+            continue
+        affected += 1
+    return affected
+
+
 def cross_split_section(
-    cohorts: Dict[str, List[Dict[str, Any]]], profiles: Dict[int, frozenset]
+    cohorts: Dict[str, List[Dict[str, Any]]],
+    profiles: Dict[int, frozenset],
+    config: Dict[str, Any],
 ) -> Dict[str, Any]:
     """The channel a disease-level cut leaves open.
 
@@ -214,6 +279,8 @@ def cross_split_section(
     knowledge graph makes possible regardless of what was drawn, and is therefore
     the figure that survives a regeneration with a different seed.
     """
+    from src.kg.sample_generator import retained_phenotype_count
+
     train_sets = {
         frozenset(int(p) for p in s["phenotype_ids"]) for s in cohorts["train"]
     }
@@ -229,12 +296,24 @@ def cross_split_section(
         for split, samples in cohorts.items()
     }
 
-    train_diseases = {int(s["disease_id"]) for s in cohorts["train"]}
-    val_diseases = {int(s["disease_id"]) for s in cohorts["val"]}
-    train_profiles = {profiles[d] for d in train_diseases if d in profiles}
-    structural = {
-        d for d in val_diseases if d in profiles and profiles[d] in train_profiles
+    train_diseases = {int(s["disease_id"]) for s in cohorts["train"]} & set(profiles)
+    val_diseases = {int(s["disease_id"]) for s in cohorts["val"]} & set(profiles)
+    k_of = {
+        disease: retained_phenotype_count(
+            len(profiles[disease]), config["min_phenotypes"],
+            config["max_phenotypes"], config["phenotype_drop_rate"],
+        )
+        for disease in train_diseases | val_diseases
     }
+    train_profile_set = {profiles[d] for d in train_diseases}
+    exact_duplicates = sum(
+        1 for d in val_diseases if profiles[d] in train_profile_set
+    )
+    possible = _shared_input_is_possible(
+        {d: profiles[d] for d in val_diseases},
+        {d: profiles[d] for d in train_diseases},
+        k_of,
+    )
 
     return {
         "what_this_shows": (
@@ -251,17 +330,24 @@ def cross_split_section(
         },
         "structural": {
             "what_this_shows": (
-                "validation diseases whose full knowledge-graph phenotype profile "
-                "is identical to some training disease's. Independent of what was "
+                "what the knowledge graph makes possible regardless of what was "
                 "drawn, so it survives regeneration under a different seed"
             ),
-            "val_diseases_with_a_duplicate_profile_in_train": len(structural),
-            "val_diseases_measured": len(val_diseases & set(profiles)),
+            "condition": "k_A == k_B == k and |A ∩ B| >= k",
+            "val_diseases_measured": len(val_diseases),
+            "val_diseases_that_could_share_an_input_with_train": possible,
+            "val_diseases_with_an_identical_profile_in_train": exact_duplicates,
+            "note": (
+                "the identical-profile count is the special case A == B and is "
+                "therefore a subset of the first figure, not an alternative to it"
+            ),
         },
     }
 
 
-def frequency_section(kg_edge_weights: List[float], hpoa_path: Optional[Path]) -> Dict[str, Any]:
+def frequency_section(
+    kg_edge_weights: List[float], hpoa_path: Optional[Path], hpoa_digest: Optional[str]
+) -> Dict[str, Any]:
     """Is there a frequency signal to weight by at all?
 
     The upstream simulator's first stage draws each phenotype with
@@ -269,14 +355,22 @@ def frequency_section(kg_edge_weights: List[float], hpoa_path: Optional[Path]) -
     needs a frequency per phenotype-disease edge, and this measures whether one
     exists.
 
-    **The knowledge graph cannot answer this on its own, and saying so is the
-    point.** `_parse_frequency` returns `1.0` both for an absent or unparseable
-    annotation *and* for a real one — `HP:0040280` (Obligate), `"100%"`,
-    `"12/12"`. A weight of `1.0` in the graph is therefore ambiguous, so the graph
-    supports only a **lower bound**: edges whose weight is not `1.0` certainly
-    carry a parsed frequency. The exact figure needs the source column, which is
-    why `--external-dir` is offered and why its absence is recorded rather than
-    papered over.
+    **The ambiguity is the finding, and it is reported as bounds rather than
+    resolved by guessing.** `HPOAnnotationParser.parse_frequency` returns `1.0`
+    both for an absent or unparseable annotation *and* for a real one --
+    `HP:0040280` (Obligate), `"100%"`, `"12/12"`. So neither the graph nor a token
+    count can give a single number, and the measurement is stated as a lower and
+    an upper bound with the ambiguous mass named between them:
+
+    - **lower** — rows whose token the shared parser turns into something other
+      than `1.0`. Certainly a usable frequency.
+    - **ambiguous** — rows with a non-empty token that parses to `1.0`. Obligate,
+      a literal 100%, an `n/n` fraction, or unparseable; this measurement cannot
+      separate them without duplicating the parser's rules.
+    - **upper** — lower + ambiguous.
+
+    Counted **through the parser the graph was built with**, not through a private
+    reimplementation of its rules, so the figure describes the parser that runs.
     """
     informative = sum(1 for w in kg_edge_weights if w != 1.0)
     section = {
@@ -284,29 +378,28 @@ def frequency_section(kg_edge_weights: List[float], hpoa_path: Optional[Path]) -
             "whether the annotation source carries the frequency the upstream "
             "simulator's first stage requires"
         ),
-        "lower_bound_from_kg": {
+        "from_the_graph": {
             "phenotype_disease_edges": len(kg_edge_weights),
             "edges_with_a_non_default_weight": informative,
             "fraction": informative / len(kg_edge_weights) if kg_edge_weights else None,
             "why_only_a_lower_bound": (
-                "_parse_frequency returns 1.0 both for a missing annotation and for "
+                "parse_frequency returns 1.0 both for a missing annotation and for "
                 "a real one (HP:0040280 Obligate, '100%', '12/12'), so the 1.0 "
                 "bucket conflates the two"
             ),
         },
     }
     if hpoa_path is None:
-        section["exact_from_source"] = {
+        section["from_the_source"] = {
             "measured": False,
             "why": "--external-dir was not supplied, so phenotype.hpoa was not read",
         }
         return section
 
-    # The same row filter `parse_phenotype_hpoa` applies — comment lines out,
-    # negated annotations out, and a real `HP:` term required, which is also what
-    # drops the header row. A denominator counted under looser rules would not be
-    # comparable to the annotation count the graph was built from.
-    annotated = total = 0
+    from src.data_sources.hpo_annotations import HPOAnnotationParser
+
+    parse = HPOAnnotationParser.parse_frequency
+    total = absent = parsed_below_one = ambiguous = 0
     with open(hpoa_path, encoding="utf-8") as handle:
         for line in handle:
             if line.startswith("#"):
@@ -318,25 +411,47 @@ def frequency_section(kg_edge_weights: List[float], hpoa_path: Optional[Path]) -
             parts = line.rstrip("\r\n").split("\t")
             if len(parts) <= HPOA_PHENOTYPE_COLUMN:
                 continue
+            # The same row filter `parse_phenotype_hpoa` applies -- NOT-qualified
+            # rows out, a real `HP:` term required, which is also what drops the
+            # header. A denominator counted under looser rules would not be
+            # comparable to the annotation count the graph was built from.
             if parts[HPOA_QUALIFIER_COLUMN] == "NOT":
                 continue
             if not parts[HPOA_PHENOTYPE_COLUMN].startswith("HP:"):
                 continue
             total += 1
-            # A short row is unannotated, not uncountable — the same reading
+            # A short row is unannotated, not uncountable -- the same reading
             # `parse_phenotype_hpoa` gives it.
-            frequency = (
+            token = (
                 parts[HPOA_FREQUENCY_COLUMN]
                 if len(parts) > HPOA_FREQUENCY_COLUMN else ""
-            )
-            if frequency.strip():
-                annotated += 1
-    section["exact_from_source"] = {
+            ).strip()
+            if not token:
+                absent += 1
+            elif parse(token) != 1.0:
+                parsed_below_one += 1
+            else:
+                ambiguous += 1
+
+    section["from_the_source"] = {
         "measured": True,
         "source": hpoa_path.name,
+        "digest": hpoa_digest,
         "rows": total,
-        "rows_with_a_frequency": annotated,
-        "fraction": annotated / total if total else None,
+        "rows_with_no_frequency_token": absent,
+        "rows_whose_token_parses_below_one": parsed_below_one,
+        "rows_whose_token_parses_to_one": ambiguous,
+        "usable_frequency_fraction_lower_bound": (
+            parsed_below_one / total if total else None
+        ),
+        "usable_frequency_fraction_upper_bound": (
+            (parsed_below_one + ambiguous) / total if total else None
+        ),
+        "why_two_bounds": (
+            "a token parsing to 1.0 is Obligate, a literal 100%, an n/n fraction, "
+            "or unparseable, and separating those would mean reimplementing "
+            "parse_frequency's rules here"
+        ),
         "note": (
             "rows of phenotype.hpoa that survive the parser's own filters (comment, "
             "NOT-qualified and non-HP rows dropped) but before MONDO resolution and "
@@ -365,8 +480,7 @@ def build_report(
     # **Both cohorts must be this project's own.** This audit characterises *our*
     # generator, so a supplied cohort has nothing here to be measured against —
     # its samples were not produced by the rule whose capacity is being priced.
-    for split in ("train", "val"):
-        resolve_cohort(data_dir, split, "generated")
+    verify_generated_cohorts(data_dir)
     config = generation_config(data_dir)
     kg = KnowledgeGraph.load_json(str(kg_path))
 
@@ -406,6 +520,9 @@ def build_report(
     hpoa = (external_dir / "phenotype.hpoa") if external_dir is not None else None
     if hpoa is not None and not hpoa.exists():
         raise SystemExit(f"{hpoa} does not exist")
+    # **A basename is not identity.** The frequency figures are read from this
+    # file, so a report citing them has to say which bytes it read.
+    hpoa_digest = file_sha256(hpoa) if hpoa is not None else None
 
     artifacts = {
         "kg": file_sha256(kg_path),
@@ -413,6 +530,8 @@ def build_report(
         "val_samples": file_sha256(data_dir / "val_samples.json"),
     }
     artifacts["split_manifest"] = file_sha256(data_dir / MANIFEST_FILENAME)
+    if hpoa_digest is not None:
+        artifacts["phenotype_hpoa"] = hpoa_digest
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -429,8 +548,10 @@ def build_report(
         "artifacts": artifacts,
         "combinatorial_capacity": capacity_section(phenotype_counts, draws, config),
         "realised_redundancy": redundancy_section(cohorts),
-        "cross_split_phenotype_sets": cross_split_section(cohorts, phenotype_profiles),
-        "frequency_signal": frequency_section(weights, hpoa),
+        "cross_split_phenotype_sets": cross_split_section(
+            cohorts, phenotype_profiles, config
+        ),
+        "frequency_signal": frequency_section(weights, hpoa, hpoa_digest),
         "deployment_relationship": relationship,
         "excluded_by_design": [
             "patient ids",
@@ -468,9 +589,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 
-    report = build_report(
-        args.kg_path, args.data_dir, args.external_dir, args.deployment_relationship
-    )
+    try:
+        report = build_report(
+            args.kg_path, args.data_dir, args.external_dir, args.deployment_relationship
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     logger.info("Generator fidelity -> %s", args.output)

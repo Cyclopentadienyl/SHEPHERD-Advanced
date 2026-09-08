@@ -72,7 +72,7 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
-from src.evaluation.cohort import resolve_cohort
+from src.evaluation.cohort import MANIFEST_FILENAME, verify_generated_cohorts
 
 # Configure logging
 logging.basicConfig(
@@ -524,11 +524,14 @@ def training_input_roles(
     # disease level or at the sample level, and nothing in their digests
     # distinguishes those regimes.
     #
-    # Required, not conditional. Training consumes the generator's own splits, so
-    # a workspace without a manifest is one built before the allocation step,
-    # whose cohorts overlap — and `resolve_cohort` refuses it here rather than
-    # letting the run proceed and produce a checkpoint nothing can characterise.
-    roles["split_manifest"] = resolve_cohort(data_dir, "train").split_manifest
+    # Required, and verified rather than merely present. A workspace built before
+    # the allocation step has overlapping cohorts; one with any `split_manifest`
+    # dropped beside it would satisfy an existence check while describing a
+    # different cut entirely. `verify_generated_cohorts` binds the manifest to the
+    # exact sample bytes and to the disease sets they hold, so the checkpoint this
+    # run produces can be characterised afterwards.
+    verify_generated_cohorts(data_dir)
+    roles["split_manifest"] = data_dir / MANIFEST_FILENAME
     return roles
 
 

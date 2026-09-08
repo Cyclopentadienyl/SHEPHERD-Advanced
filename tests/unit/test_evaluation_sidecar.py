@@ -19,6 +19,9 @@ import pytest
 
 from src.evaluation.sidecar import (
     LEDGER_SCHEMA_VERSION,
+    find_checkpoint,
+    ledger_digest,
+    measurement_semantics_digest,
     append_record,
     build_record,
     empty_ledger,
@@ -35,6 +38,12 @@ def _report(**overrides):
         "mode": "A",
         "split": "val",
         "cohort_kind": "generated",
+        "metric_schema_version": 1,
+        "batch_size": 3,
+        "candidate_construction": "2-hop subgraph",
+        "device": "cuda",
+        "dtype": "float32",
+        "deterministic_algorithms": True,
         "canonical_tie_policy_version": "v1",
         "artifact_digests": {
             "checkpoint": "c" * 64,
@@ -99,16 +108,59 @@ def test_a_ledger_without_a_records_list_is_refused(tmp_path):
 # ---------------------------------------------------------------------------
 # The key
 # ---------------------------------------------------------------------------
-def test_two_modes_over_one_checkpoint_and_cohort_are_two_records(tmp_path):
-    """Mode A and Mode C have different candidate universes. A key without the
-    mode would report them as a contradiction."""
-    ledger = empty_ledger()
-    ledger = append_record(ledger, build_record(_report(), None))
-    ledger = append_record(
-        ledger, build_record(_report(manifest={"mode": "C"}), None)
-    )
+@pytest.mark.parametrize(
+    "differing",
+    [
+        {"mode": "C"},
+        {"batch_size": 8},
+        {"amp_enabled": True, "amp_dtype": "bfloat16"},
+        {"software_revision": "def5678"},
+        {"device": "cpu"},
+        {"metric_schema_version": 2},
+        {"canonical_tie_policy_version": "v2"},
+        {"candidate_construction": "full disease set"},
+    ],
+    ids=lambda d: "-".join(sorted(d)),
+)
+def test_runs_differing_in_anything_score_affecting_are_separate_records(differing):
+    """Not one measurement with two answers -- two measurements.
 
-    assert len(ledger["records"]) == 2
+    The earlier key was (checkpoint, cohort, mode, tie policy), and every case
+    here except the first collided under it and was refused as a contradiction.
+    `batch_size` is the sharpest: the manifest documents it as semantics rather
+    than performance, because Mode A's candidate universe is the batch's subgraph.
+    """
+    ledger = append_record(empty_ledger(), build_record(_report(), None))
+    second = build_record(_report(manifest=differing), None)
+
+    assert len(append_record(ledger, second)["records"]) == 2
+
+
+def test_a_changed_graph_artifact_is_a_separate_measurement(tmp_path):
+    """The graph tensors are as much a part of a measurement as the weights."""
+    other = _report()
+    other["manifest"]["artifact_digests"]["node_features"] = "n" * 64
+    ledger = append_record(empty_ledger(), build_record(_report(), None))
+
+    assert len(append_record(ledger, build_record(other, None))["records"]) == 2
+
+
+def test_a_descriptive_field_does_not_change_the_semantics_digest():
+    """The digest is over a named list, not the whole manifest, so a field that
+    cannot move a number must not silence the contradiction check."""
+    base = _report()["manifest"]
+    embellished = {**base, "n_samples": 999, "data_dir": "/somewhere/else"}
+
+    assert measurement_semantics_digest(base) == measurement_semantics_digest(embellished)
+
+
+def test_a_semantic_field_a_manifest_lacks_does_not_collide_with_one_carrying_it():
+    """Hashed as null rather than skipped: a manifest that dropped `batch_size`
+    must not produce the digest of one that recorded a value for it."""
+    base = _report()["manifest"]
+    without = {k: v for k, v in base.items() if k != "batch_size"}
+
+    assert measurement_semantics_digest(base) != measurement_semantics_digest(without)
 
 
 def test_the_same_measurement_recorded_twice_does_not_duplicate(tmp_path):
@@ -122,7 +174,8 @@ def test_the_same_measurement_recorded_twice_does_not_duplicate(tmp_path):
 
 
 def test_one_key_with_two_answers_is_refused_and_names_the_difference(tmp_path):
-    """One of the two runs is wrong about what it measured. That is a finding."""
+    """Identical semantics, different numbers: one of the two runs is wrong about
+    what it measured. That is a finding, not a merge conflict."""
     ledger = append_record(empty_ledger(), build_record(_report(), None))
     contradicting = build_record(
         _report(authoritative_metrics={"mrr": 0.9, "hits_at_1": 0.25}), None
@@ -255,18 +308,79 @@ def test_a_failed_write_leaves_the_previous_ledger_intact(tmp_path, monkeypatch)
 # ---------------------------------------------------------------------------
 # The entry point
 # ---------------------------------------------------------------------------
+def _checkpoint_dir(tmp_path, *, digest_of=b"the weights"):
+    """A directory holding a checkpoint whose bytes the report claims to measure."""
+    import hashlib
+
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir(exist_ok=True)
+    (checkpoints / "model-1.pt").write_bytes(digest_of)
+    return checkpoints, hashlib.sha256(digest_of).hexdigest()
+
+
+def test_the_ledger_must_be_beside_the_weights_it_describes(tmp_path):
+    """A record filed in a directory that does not hold those weights is filed
+    under the wrong address, and the reader's reason for looking there is gone."""
+    import scripts.record_evaluation as record_evaluation
+
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    report_path = tmp_path / "mode_a.json"
+    report_path.write_text(json.dumps(_report()))
+
+    with pytest.raises(SystemExit, match="holds no checkpoint whose bytes"):
+        record_evaluation.main(["--checkpoint-dir", str(empty),
+                                "--report", str(report_path)])
+    assert not (empty / "evaluations.json").exists()
+
+
+def test_duplicate_checkpoint_bytes_are_acceptable(tmp_path):
+    """The digest is the identity, not the name."""
+    import scripts.record_evaluation as record_evaluation
+
+    checkpoints, digest = _checkpoint_dir(tmp_path)
+    (checkpoints / "best.pt").write_bytes(b"the weights")
+    report = _report()
+    report["manifest"]["artifact_digests"]["checkpoint"] = digest
+    report_path = tmp_path / "mode_a.json"
+    report_path.write_text(json.dumps(report))
+
+    record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                            "--report", str(report_path)])
+    assert (checkpoints / "evaluations.json").exists()
+
+
+def test_a_concurrent_writer_is_refused_rather_than_silently_erased(tmp_path):
+    """Two processes read one ledger, both append, and the second replace erases
+    the first with no trace. Optimistic concurrency turns that into a refusal."""
+    from src.evaluation.sidecar import write_ledger as _write
+
+    path = tmp_path / "evaluations.json"
+    first = append_record(empty_ledger(), build_record(_report(), None))
+    _write(path, first)
+    stale = ledger_digest(path)
+
+    other = append_record(first, build_record(_report(manifest={"mode": "C"}), None))
+    _write(path, other, expected_digest=stale)
+
+    with pytest.raises(ValueError, match="changed since it was read"):
+        _write(path, first, expected_digest=stale)
+    assert len(read_ledger(path)["records"]) == 2
+
+
 def test_the_cli_records_and_then_reads_back(tmp_path, capsys):
     import scripts.record_evaluation as record_evaluation
 
-    checkpoints = tmp_path / "checkpoints"
-    checkpoints.mkdir()
+    checkpoints, digest = _checkpoint_dir(tmp_path)
+    report = _report()
+    report["manifest"]["artifact_digests"]["checkpoint"] = digest
     report_path = tmp_path / "mode_a.json"
-    report_path.write_text(json.dumps(_report()))
+    report_path.write_text(json.dumps(report))
 
     record_evaluation.main(["--checkpoint-dir", str(checkpoints),
                             "--report", str(report_path)])
     capsys.readouterr()
-    record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show", "c" * 64])
+    record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show", digest])
 
     shown = json.loads(capsys.readouterr().out)
     assert len(shown) == 1 and shown[0]["mode"] == "A"

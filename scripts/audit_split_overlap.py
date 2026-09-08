@@ -73,8 +73,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.evaluation.cohort import (  # noqa: E402
     COHORT_KINDS,
     DEFAULT_COHORT_KIND,
+    GENERATED_SPLITS,
     MANIFEST_FILENAME,
     resolve_cohort,
+    verify_generated_cohorts,
 )
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
@@ -98,79 +100,48 @@ def disease_ids(data_dir: Path, split: str) -> List[int]:
 
 #: Bumped when this report's shape changes. Version 1 is the unversioned shape
 #: ``EVIDENCE_M4.json`` carries, kept readable rather than redefined in place.
-REPORT_SCHEMA_VERSION = 3
+REPORT_SCHEMA_VERSION = 4
 
 
 
-def manifest_agreement(
+def manifest_verification(
     data_dir: Path, splits: List[str], evaluation_kind: str, measured: Dict[str, set]
 ) -> Dict[str, Any]:
-    """Do the sample files on disk match what ``split_manifest.json`` claims?
+    """What ``verify_generated_cohorts`` established, written into the report.
 
-    **The one check the generator structurally cannot perform on itself.**
-    ``build_split_manifest`` computes the realised disease sets from the records
-    it is about to write and asserts coverage against the allocation — all in one
-    process, over values in memory. That establishes the manifest describes the
-    records *it produced*. It cannot establish that the files still sitting in
-    the workspace are those records.
+    **The verification itself is not repeated here.** It runs at every entry point
+    that consumes generated cohorts — training, measurement, calibration, this
+    audit — from one definition in ``src/evaluation/cohort.py``. A second copy in
+    the audit would be free to drift from the one the pipeline actually enforces,
+    and would then report a workspace as sound under rules nothing else applies.
 
-    Two comparisons, both against digests computed by ``disease_set_digest``
-    rather than by a private copy of the same arithmetic:
-
-    - **measured vs. the manifest's realised digests** — the files are the
-      cohorts this manifest describes;
-    - **the manifest's realised vs. its own allocated digests** — a check
-      internal to the file, which under the full-coverage contract must agree,
-      and which makes the transitive claim "these files are the cohorts this
-      *allocation* cut" available to a reader who has only the report.
-
-    The training split is always generated, so it is always compared. The
-    evaluation split is compared only when it is generated too: a supplied cohort
-    is not described by this manifest, and checking it against one would be a
-    verdict about a cut it was never part of.
-
-    Returns a section rather than raising, so a disagreement is written into the
-    artifact before the caller refuses on it.
+    What this adds is the *record*: a reader holding only the artifact can see
+    which splits were bound, on what, and what the manifest claimed. The
+    evaluation split appears only when it is generated — a supplied cohort is not
+    described by this manifest, and checking it against one would be a verdict
+    about a cut it was never part of.
     """
-    from src.kg.disease_allocation import disease_set_digest
-
     train_split, eval_split = splits
     manifest = json.loads((data_dir / MANIFEST_FILENAME).read_text())
-    realised = manifest.get("realised", {})
-    allocated = manifest.get("allocation", {}).get("allocated", {})
-
-    compared = [train_split] + ([eval_split] if evaluation_kind == "generated" else [])
-    files_match = {
-        split: disease_set_digest(sorted(measured[split])) == realised.get(f"{split}_digest")
-        for split in compared
-    }
-    # Internal to the manifest, and therefore not evidence about the files. It is
-    # reported so a reader holding only this artifact can chain "files are the
-    # realised cohorts" to "realised is what the allocation cut" without opening
-    # the manifest themselves.
-    realised_matches_allocated = {
-        split: realised.get(f"{split}_digest") == allocated.get(f"{split}_digest")
-        for split in compared
-    }
+    compared = list(GENERATED_SPLITS) if evaluation_kind == "generated" else [train_split]
 
     section = {
-        "compared_splits": compared,
+        "verified_splits": compared,
+        "verified_against": [
+            "the sample files' SHA-256, against the manifest's artifact digests",
+            "the realised disease sets, recomputed from the records",
+            "the manifest's realised digests against its own allocated ones",
+            "disjointness, measured and compared with the manifest's claim",
+        ],
         "manifest_schema_version": manifest.get("schema_version"),
         "claimed_disjoint": manifest.get("disjoint"),
-        "files_match_manifest_realised": files_match,
-        "manifest_realised_matches_allocated": realised_matches_allocated,
         "allocation_algorithm": manifest.get("allocation", {}).get("algorithm"),
         "generation_algorithm": manifest.get("generation", {}).get("algorithm"),
-        "agrees": all(files_match.values()) and all(realised_matches_allocated.values()),
     }
     if evaluation_kind == "generated":
-        measured_disjoint = not (measured[train_split] & measured[eval_split])
-        section["measured_disjoint"] = measured_disjoint
-        section["agrees"] = section["agrees"] and (
-            manifest.get("disjoint") == measured_disjoint
-        )
+        section["measured_disjoint"] = not (measured[train_split] & measured[eval_split])
     else:
-        section["why_the_evaluation_split_is_not_compared"] = (
+        section["why_the_evaluation_split_is_not_verified"] = (
             f"{eval_split} is a supplied cohort; this manifest describes the "
             "generated splits and says nothing about it"
         )
@@ -188,8 +159,12 @@ def build_report(
     # and `resolve_cohort` is what refuses a supplied cohort wearing a generated
     # name, a generated one with no manifest, and a workspace built before the
     # allocation step.
-    resolve_cohort(data_dir, train_split, "generated")
     resolve_cohort(data_dir, eval_split, evaluation_kind)
+    # **Refuses before a single count is taken.** The generated cohorts must be the
+    # ones their manifest describes — same bytes, same disease sets, disjoint — and
+    # that is established by the one verifier the whole pipeline uses. A report
+    # produced over an unverified workspace would look like a measurement.
+    verify_generated_cohorts(data_dir)
     train_ids = disease_ids(data_dir, train_split)
     eval_ids = disease_ids(data_dir, eval_split)
     train_set, eval_set = set(train_ids), set(eval_ids)
@@ -244,7 +219,7 @@ def build_report(
             "shared_over_evaluation": len(shared) / len(eval_set),
             "as_written": f"{len(shared)} of {len(eval_set)}",
         },
-        "manifest_agreement": manifest_agreement(
+        "manifest_verification": manifest_verification(
             data_dir, splits, evaluation_kind, {train_split: train_set, eval_split: eval_set}
         ),
         "evaluation_cohort_kind": evaluation_kind,
@@ -293,8 +268,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 
-    report = build_report(args.data_dir, args.splits, args.evaluation_cohort_kind,
-                          args.deployment_relationship)
+    # **Verification failures refuse before an artifact exists.** Earlier this
+    # audit wrote its report and then refused, so a failure left something to
+    # cite. That was right while this was the only gate; the same verifier now
+    # runs at training and measurement, where writing a report makes no sense, and
+    # a workspace that fails it is one to rebuild rather than to publish a
+    # measurement about. The refusal message names which check failed on which
+    # split, which is the citable content.
+    try:
+        report = build_report(args.data_dir, args.splits, args.evaluation_cohort_kind,
+                              args.deployment_relationship)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     logger.info("%s -> %s", report["overlap"]["as_written"], args.output)
@@ -302,26 +287,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     # **The report is written first, then the verdict refuses.** A failed audit's
     # evidence is the artifact describing the failure; discarding it on the way
     # out would leave the operator with an exit code and nothing to cite.
-    agreement = report["manifest_agreement"]
-    if not agreement["agrees"]:
-        raise SystemExit(
-            f"{args.output} records a workspace whose split_manifest.json does not "
-            "describe the sample files beside it. The manifest is written by the "
-            "process that emits the samples, so a disagreement means the files "
-            "changed afterwards or the manifest came from another workspace; "
-            "neither is a workspace anything may be trained on or measured from."
-        )
-    # **A supplied cohort's overlap is the finding; a generated one's is a defect.**
-    # Refusing on both would refuse the institutional measurement this audit
-    # exists to produce, and refusing on neither would let a broken allocation
-    # through with a number beside it.
-    if args.evaluation_cohort_kind == "generated" and report["counts"]["shared_diseases"]:
-        raise SystemExit(
-            f"{report['overlap']['as_written']} {args.splits[1]} diseases also "
-            f"appear in {args.splits[0]}. These are generated cohorts, where "
-            "disease-disjointness is a contract of the allocation step, so this is "
-            f"a broken workspace rather than a measurement. See {args.output}."
-        )
     return 0
 
 

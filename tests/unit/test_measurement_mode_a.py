@@ -672,16 +672,29 @@ class TestTheRolesAMeasurementRecords:
 
     @staticmethod
     def _workspace(root, *, manifest: bool = True, supplied: bool = False):
+        from tests.fixtures.generated_workspace import (
+            one_sample_per_disease,
+            profiles_for,
+            write_generated_workspace,
+        )
+
         root.mkdir(parents=True, exist_ok=True)
-        names = ["val_samples.json", "node_features.pt", "edge_indices.pt",
-                 "num_nodes.json"]
+        profiles = profiles_for([0, 1, 2])
+        if manifest:
+            write_generated_workspace(root, train_ids=[0, 1], val_ids=[2],
+                                      profiles=profiles)
+        else:
+            for split, ids in (("train", [0, 1]), ("val", [2])):
+                (root / f"{split}_samples.json").write_text(json.dumps(
+                    one_sample_per_disease(split, ids, profiles)
+                ))
         if supplied:
-            names.append("test_samples.json")
-        for name in names:
+            (root / "test_samples.json").write_text(json.dumps(
+                one_sample_per_disease("test", [0], profiles)
+            ))
+        for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
             (root / name).write_bytes(b"content-of-" + name.encode())
         (root / "ckpt.pt").write_bytes(b"weights")
-        if manifest:
-            (root / "split_manifest.json").write_bytes(b'{"disjoint": true}')
         return root
 
     def test_a_generated_cohort_records_the_cut_it_came_from(self, tmp_path):
@@ -720,8 +733,8 @@ class TestTheRolesAMeasurementRecords:
         from scripts.measure_scorer import artifact_digests
 
         root = self._workspace(tmp_path / "ws")
-        (root / "train_samples.json").write_bytes(b"an unrelated split")
         (root / "notes.txt").write_bytes(b"scratch")
+        (root / "mygene2_samples.json").write_bytes(b"[]")
         digests = artifact_digests(root / "ckpt.pt", root, "val", "generated")
 
         assert set(digests) == {

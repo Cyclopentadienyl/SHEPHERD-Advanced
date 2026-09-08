@@ -36,6 +36,7 @@ Module: src/evaluation/sidecar.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -50,21 +51,89 @@ LEDGER_SCHEMA_VERSION = 1
 #: The conventional file name, beside the checkpoints it describes.
 LEDGER_FILENAME = "evaluations.json"
 
+#: Manifest fields that can change a number, hashed into one semantics digest.
+#:
+#: **A false contradiction is worse than a missed one, and this list is chosen on
+#: that asymmetry.** A missed contradiction leaves two records the reader can
+#: compare; a false one *blocks a legitimate append*, so the rule is to include
+#: anything that could move a metric. An earlier key of
+#: (checkpoint, cohort, mode, tie policy) failed exactly this way: `batch_size` is
+#: documented on the manifest as semantics rather than performance — Mode A's
+#: candidate universe is the batch's subgraph — so two honest runs at different
+#: batch sizes collided and the second was refused as a contradiction.
+#:
+#: Explicit rather than "every field", so that adding a non-semantic field later
+#: does not churn every key and silence the contradiction check.
+SEMANTIC_MANIFEST_FIELDS: Tuple[str, ...] = (
+    "mode",
+    "cohort_kind",
+    "candidate_construction",
+    "negative_sampling_strategy",
+    "num_negative_samples",
+    "subgraph_strategy",
+    "subgraph_hops",
+    "num_neighbors",
+    "max_subgraph_nodes",
+    "batch_size",
+    "score_semantics",
+    "model_construction",
+    "legacy_truncation_k",
+    "legacy_tie_policy",
+    "canonical_tie_policy_version",
+    "metric_schema_version",
+    "software_revision",
+    "device",
+    "dtype",
+    "amp_enabled",
+    "amp_dtype",
+    "deterministic_algorithms",
+)
+
+#: Artifact roles whose bytes change what was measured. The graph tensors and the
+#: allocation are as much a part of the measurement as the checkpoint is.
+SEMANTIC_ARTIFACT_ROLES: Tuple[str, ...] = (
+    "node_features", "edge_indices", "num_nodes", "split_manifest",
+)
+
 #: What makes two records the same measurement.
 #:
-#: ``mode`` is in the key and §6.5's wording predates it: Mode A and Mode C over
-#: one checkpoint and one cohort are different measurements with different
-#: candidate universes, and a key without it would report them as a contradiction.
-#: ``canonical_tie_policy_version`` stands where §6.5 says "metric schema
-#: version" — it is the version of how ranks become numbers, which is the part of
-#: the metric schema that can change an answer.
+#: ``mode`` was in an earlier version of this key and is now inside the semantics
+#: digest with everything else that can move a number. What remains outside it are
+#: the two identities a reader looks a record up by: whose weights, and which
+#: cohort.
 KEY_FIELDS: Tuple[str, ...] = (
     "checkpoint_digest",
     "cohort_role",
     "cohort_digest",
-    "mode",
-    "canonical_tie_policy_version",
+    "measurement_semantics_digest",
 )
+
+
+def measurement_semantics_digest(manifest: Dict[str, Any]) -> str:
+    """SHA-256 over everything about a run that could change its numbers.
+
+    **Not the source artifact's digest.** That changes with a timestamp, a
+    reordered dict or an added descriptive field, so using it as identity would
+    make every re-run a new record and the contradiction check would never fire.
+    This hashes a named list of semantic fields, so two runs that differ in
+    nothing that matters produce the same digest and must agree.
+
+    A field the manifest does not carry is hashed as ``null`` rather than skipped,
+    so a manifest that dropped one cannot collide with a manifest carrying a value
+    there. An explicitly-null field and an absent one do hash alike, which is
+    correct for the fields that legitimately carry ``null`` — ``amp_dtype`` is
+    ``None`` exactly when AMP is off — and is not a case a well-formed manifest
+    produces otherwise.
+    """
+    artifacts = manifest.get("artifact_digests", {})
+    payload = {
+        field: manifest.get(field, None) for field in SEMANTIC_MANIFEST_FIELDS
+    }
+    payload["artifacts"] = {
+        role: artifacts.get(role, None) for role in SEMANTIC_ARTIFACT_ROLES
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def empty_ledger() -> Dict[str, Any]:
@@ -141,6 +210,8 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
         "cohort_digest": digests["samples"],
         "mode": manifest["mode"],
         "canonical_tie_policy_version": manifest["canonical_tie_policy_version"],
+        "metric_schema_version": manifest["metric_schema_version"],
+        "measurement_semantics_digest": measurement_semantics_digest(manifest),
         "cohort": {
             "kind": manifest["cohort_kind"],
             "split_manifest_digest": digests.get("split_manifest"),
@@ -189,7 +260,8 @@ def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, A
         raise ValueError(
             f"this ledger already holds a record for checkpoint "
             f"{record['checkpoint_digest'][:12]}... on cohort "
-            f"{record['cohort_digest'][:12]}... in mode {record['mode']}, and the "
+            f"{record['cohort_digest'][:12]}... under identical measurement "
+            f"semantics ({record['measurement_semantics_digest'][:12]}...), and the "
             + (
                 f"two disagree on: {', '.join(differing)}. "
                 if differing
@@ -198,6 +270,26 @@ def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, A
             + "One of them is wrong about what it measured. Nothing was written."
         )
     return {**ledger, "records": ledger["records"] + [record]}
+
+
+def find_checkpoint(directory: Path, digest: str) -> Optional[Path]:
+    """A file in this directory whose bytes are the ones the report measured.
+
+    **Otherwise "beside the checkpoint" is not a fact.** A ledger written into a
+    directory that does not hold the weights it describes is a record filed under
+    the wrong address, and the reader's whole reason for looking there is gone.
+
+    Candidates are hashed in sorted order and the search stops at the first match,
+    so the full scan is paid only when there is no match — the case that ends in a
+    refusal anyway. Several files with identical bytes are fine: the digest is the
+    identity, not the name.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    for candidate in sorted(directory.glob("*.pt")):
+        if candidate.is_file() and file_sha256(candidate) == digest:
+            return candidate
+    return None
 
 
 def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str, Any]]:
@@ -213,15 +305,40 @@ def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str
     ]
 
 
-def write_ledger(path: Path, ledger: Dict[str, Any]) -> None:
+def ledger_digest(path: Path) -> Optional[str]:
+    """The bytes a ledger held when it was read, or ``None`` if there was no file."""
+    from src.utils.fingerprint import file_sha256
+
+    return file_sha256(path)
+
+
+def write_ledger(
+    path: Path, ledger: Dict[str, Any], expected_digest: Optional[str] = None
+) -> None:
     """Write the ledger, replacing the old file only once the new one is complete.
 
-    A partial write is the failure mode that matters here: an interrupted append
-    would leave unparseable JSON where a directory's entire evaluation history
-    used to be, and the records it destroyed are not recoverable from the
-    checkpoints. Writing to a temporary file in the same directory and renaming
-    it makes the replacement atomic on every platform this runs on.
+    Two different failures, and this closes both without a locking framework.
+
+    **A partial write** would leave unparseable JSON where a directory's entire
+    evaluation history used to be, and those records are not recoverable from the
+    checkpoints. Writing to a temporary file in the same directory and renaming it
+    makes the replacement atomic on every platform this runs on.
+
+    **A concurrent writer** is not a corruption but a silent loss: two processes
+    read the same ledger, each appends its own record, and the second replace
+    erases the first append with no trace. ``expected_digest`` — the bytes the
+    caller read — turns that into a refusal. It is optimistic concurrency, not
+    locking: no lock file, no timeout, no recovery path, five lines. The ledger
+    remains **single-writer by design**; this detects a violation rather than
+    supporting one, and if the institutional workflow ever appends concurrently
+    that is when locking earns its place.
     """
+    if expected_digest is not None and ledger_digest(path) != expected_digest:
+        raise ValueError(
+            f"{path} changed since it was read, so appending would erase whatever "
+            "the other writer added. The ledger is single-writer by design: "
+            "re-read it and append again."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
         "w", dir=str(path.parent), prefix=path.name, suffix=".tmp", delete=False
@@ -239,11 +356,16 @@ def write_ledger(path: Path, ledger: Dict[str, Any]) -> None:
 
 __all__ = [
     "KEY_FIELDS",
+    "ledger_digest",
+    "SEMANTIC_ARTIFACT_ROLES",
+    "SEMANTIC_MANIFEST_FIELDS",
+    "measurement_semantics_digest",
     "LEDGER_FILENAME",
     "LEDGER_SCHEMA_VERSION",
     "append_record",
     "build_record",
     "empty_ledger",
+    "find_checkpoint",
     "read_ledger",
     "record_key",
     "records_for",

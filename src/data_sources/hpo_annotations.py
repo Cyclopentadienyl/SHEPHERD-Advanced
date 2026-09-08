@@ -172,7 +172,7 @@ class HPOAnnotationParser:
                 seen.add(pair)
 
                 # Parse frequency if available (column 7)
-                frequency = self._parse_frequency(parts[7] if len(parts) > 7 else "")
+                frequency = self.parse_frequency(parts[7] if len(parts) > 7 else "")
 
                 annotations.append({
                     "phenotype_id": hpo_id,
@@ -258,8 +258,20 @@ class HPOAnnotationParser:
         return gene_pheno, gene_disease
 
     @staticmethod
-    def _parse_frequency(freq_str: str) -> float:
-        """Parse HPO frequency annotation to a float in [0, 1]."""
+    def parse_frequency(freq_str: str) -> float:
+        """Parse HPO frequency annotation to a float in [0, 1].
+
+        Public because a second consumer exists: `scripts/audit_generator_fidelity.py`
+        prices whether the frequency-weighted initialisation the upstream simulator
+        opens with could be adopted, and asking that question through a private
+        copy of these rules would report the coverage of a parser nobody runs.
+
+        **`1.0` is ambiguous by construction and callers must treat it so.** It is
+        returned for an absent or unparseable annotation *and* for a real one --
+        `HP:0040280` (Obligate), `"100%"`, `"12/12"`. Any measurement of frequency
+        coverage that reads `1.0` as "annotated" or as "missing" is wrong in one
+        direction or the other.
+        """
         freq_str = freq_str.strip()
         if not freq_str:
             return 1.0

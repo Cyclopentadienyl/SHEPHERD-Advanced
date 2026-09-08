@@ -9,6 +9,16 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **22** — the verification behind the refusals, and the ledger's identity. A generated
+  workspace is now *verified* rather than found to have a manifest: exact sample-file digests,
+  recomputed disease sets, the manifest's internal consistency, and disjointness, from one
+  definition used by training, measurement, calibration and both audits (§6.1). The structural
+  cross-split measure is corrected — two diseases can emit the same input without having identical
+  profiles, and the condition is `k_A == k_B == k` with `|A ∩ B| >= k` (§6.6 step 4). Frequency
+  coverage is reported as a lower and an upper bound through the parser the graph was built with,
+  because a token parsing to `1.0` is Obligate, a literal 100%, an `n/n` fraction *or*
+  unparseable. The ledger keys on a semantics digest and carries its own metric schema version
+  (§6.5).
 - **21** — one pipeline, not two. A workspace cut before the allocation step is now **refused**
   at every entry point rather than tolerated behind a conditional, and the cohort **kind**
   (generated / supplied) is stated by the caller instead of inferred from whether a manifest is
@@ -822,8 +832,17 @@ current one.
 
 Two rules follow, and both are enforced rather than advised:
 
-- **A generated cohort with no manifest is refused, everywhere.** Training, measurement,
-  calibration and both audits. A pre-allocation workspace cannot reach a number.
+- **A generated cohort with no manifest is refused** at training, measurement, calibration and
+  both audits — and *refused* means verified, not merely present: the manifest is checked against
+  the sample files' exact SHA-256, against the disease sets recomputed from those records, against
+  its own allocated digests, and for disjointness. Existence alone would let any
+  `split_manifest.json` dropped beside a legacy workspace through.
+- **One exception, named rather than glossed.** `scripts/evaluate_model.py` has no such preflight
+  and will not get one. It is the behaviourally frozen artefact Mode A is calibrated against, and
+  editing it makes it no longer the thing being compared; `tests/unit/test_frozen_evaluator.py`
+  pins its bytes so the freeze is enforced rather than asserted. It is non-authoritative,
+  scheduled for deletion with the rest of the oracle-only surface, and nothing treats its output
+  as a supported production result.
 - **A supplied cohort may not be named `train` or `val`.** Written into `val_samples.json` it
   would inherit the manifest of a cut it was never part of and be recorded as an ordinary
   validation number — which is §6.7's role hazard, arriving through a filename.
@@ -945,10 +964,26 @@ Three points where the implementation had to decide something this section left 
 - **`mode` is part of the key.** This section predates the A/B/C/D modes. Mode A and Mode C over
   one checkpoint and one cohort are different measurements with different candidate universes, and
   a key without the mode would report them as a contradiction.
-- **`canonical_tie_policy_version` stands where this section says "metric schema version".** It is
-  the version of how ranks become numbers, which is the part of the metric schema that can change
-  an answer. Inventing a second version field nobody bumps would have been worse than reusing the
-  one that is already maintained.
+- **The key is a semantics digest, not a field list.** An earlier version keyed on
+  (checkpoint, cohort, mode, tie policy) and refused two honest runs at different batch sizes as a
+  contradiction — `batch_size` is documented on the manifest as *semantics*, since Mode A's
+  candidate universe is the batch's subgraph. `measurement_semantics_digest` hashes a named list
+  of score-affecting fields instead: construction, scoring, AMP state and dtype, device, software
+  revision, tie policy, metric schema, and the graph and allocation artifact digests. The list is
+  explicit rather than "the whole manifest", so a later descriptive field cannot churn every key
+  and silence the contradiction check. A false contradiction blocks a legitimate append; a missed
+  one leaves two comparable records — the list is chosen on that asymmetry.
+- **`metric_schema_version` is its own maintained field.** `canonical_tie_policy_version` versions
+  how equal scores become ranks and cannot stand in for which metric names are emitted, what each
+  denominator counts, which `K` values `hits@K` covers, or how per-sample values are aggregated.
+- **The ledger must be beside the weights it describes.** `record_evaluation` hashes the `.pt`
+  files in the target directory and refuses unless one matches the report's checkpoint digest.
+  Several files with identical bytes are fine — the digest is the identity, not the name.
+- **Single-writer, and the violation is detected rather than supported.** Atomic replace protects
+  an interrupted write; it does nothing about two writers, where the second replace erases the
+  first append silently. The writer compares the ledger's bytes against what the reader saw and
+  refuses if they moved. That is five lines of optimistic concurrency, not a locking framework;
+  locking earns its place only if the institutional workflow actually appends concurrently.
 - **The allocation provenance had to be added upstream first.** A measurement's
   `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
   which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace

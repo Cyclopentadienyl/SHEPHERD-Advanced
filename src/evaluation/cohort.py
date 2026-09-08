@@ -36,8 +36,9 @@ Module: src/evaluation/cohort.py
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any, NamedTuple, Optional, Tuple
+from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Tuple
 
 #: The generator's own split names. Reserved: a supplied cohort using one would be
 #: indistinguishable from a generated one in every artifact downstream.
@@ -125,12 +126,106 @@ def resolve_cohort(
     return CohortProvenance(kind, split, samples, manifest)
 
 
+class GeneratedCohorts(NamedTuple):
+    """A verified generated workspace: the manifest, and what its files hold."""
+
+    manifest: Dict[str, Any]
+    disease_sets: Dict[str, FrozenSet[int]]
+
+
+def verify_generated_cohorts(data_dir: Path) -> GeneratedCohorts:
+    """Refuse a workspace whose manifest does not describe the files beside it.
+
+    **Existence is not binding.** ``resolve_cohort`` establishes that a manifest
+    is present, which stops a pre-allocation workspace — but any
+    ``split_manifest.json`` dropped into such a workspace would satisfy it, and
+    training would then proceed on overlapping cohorts under a manifest that
+    describes a different cut entirely. This is the check that makes the manifest
+    mean something, and it runs at every entry point that consumes generated
+    cohorts, not only in the audit.
+
+    Four things are established, and they prove different facts:
+
+    1. **The files are the bytes the manifest describes** — SHA-256 against
+       ``artifacts.{split}_samples``. A disease-set digest alone cannot see this:
+       phenotypes, genes, patient ids, row order and multiplicity can all change
+       while the disease set is preserved.
+    2. **The disease sets are the ones it recorded** — recomputed from the
+       records through the reader training uses, against ``realised.*_digest``.
+    3. **Its realised sets are what the allocation cut** — internal to the file,
+       and what makes "these files are that allocation's cohorts" transitive.
+    4. **The cohorts are disjoint**, measured, and the manifest agrees.
+
+    Reads both sample files, so it costs one pass over the workspace's cohorts.
+    Called once per run, before hours of training or minutes of measurement.
+
+    Raises:
+        ValueError: naming which of the four failed, and for which split.
+    """
+    from src.kg.disease_allocation import disease_set_digest
+    from src.kg.sample_generator import SPLIT_MANIFEST_SCHEMA_VERSION
+    from src.kg.storage.file_storage import read_samples
+    from src.utils.fingerprint import file_sha256
+
+    cohorts = {split: resolve_cohort(data_dir, split) for split in GENERATED_SPLITS}
+    manifest_path = data_dir / MANIFEST_FILENAME
+    manifest = json.loads(manifest_path.read_text())
+
+    version = manifest.get("schema_version")
+    if version != SPLIT_MANIFEST_SCHEMA_VERSION:
+        raise ValueError(
+            f"{manifest_path} is split-manifest schema {version!r}; this code reads "
+            f"{SPLIT_MANIFEST_SCHEMA_VERSION}. Rebuild the workspace rather than "
+            "reading its fields under rules they were not written to."
+        )
+
+    artifacts = manifest.get("artifacts", {})
+    realised = manifest.get("realised", {})
+    allocated = manifest.get("allocation", {}).get("allocated", {})
+    disease_sets: Dict[str, FrozenSet[int]] = {}
+
+    for split, cohort in cohorts.items():
+        recorded = artifacts.get(f"{split}_samples")
+        observed = file_sha256(cohort.samples)
+        if recorded != observed:
+            raise ValueError(
+                f"{cohort.samples} is not the file {manifest_path} describes "
+                f"({str(recorded)[:12]}... vs {str(observed)[:12]}...). Either the "
+                "samples were replaced after the manifest was written, or the "
+                "manifest came from another workspace."
+            )
+        ids = frozenset(int(sample.disease_id) for sample in read_samples(data_dir, split))
+        disease_sets[split] = ids
+        if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
+            raise ValueError(
+                f"the {split} cohort's disease set is not the one {manifest_path} "
+                "records as realised"
+            )
+        if realised.get(f"{split}_digest") != allocated.get(f"{split}_digest"):
+            raise ValueError(
+                f"{manifest_path} contradicts itself: its realised {split} digest "
+                "is not its allocated one, so full coverage did not hold"
+            )
+
+    measured_disjoint = not (disease_sets["train"] & disease_sets["val"])
+    if not measured_disjoint or manifest.get("disjoint") is not True:
+        raise ValueError(
+            f"{data_dir} does not hold disease-disjoint cohorts "
+            f"(measured disjoint: {measured_disjoint}; manifest claims: "
+            f"{manifest.get('disjoint')!r}). Disjointness is a contract of the "
+            "allocation step, so this is a broken workspace, not a measurement."
+        )
+    return GeneratedCohorts(manifest, disease_sets)
+
+
 __all__ = [
     "COHORT_KINDS",
     "DEFAULT_COHORT_KIND",
     "GENERATED_SPLITS",
     "MANIFEST_FILENAME",
     "CohortProvenance",
+    "GeneratedCohorts",
     "resolve_cohort",
+    "verify_generated_cohorts",
     "validate_kind",
 ]

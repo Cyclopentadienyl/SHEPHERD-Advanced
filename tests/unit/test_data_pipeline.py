@@ -4,6 +4,7 @@ Unit Tests for Data Pipeline
 Tests for HPOAnnotationParser, generate_training_samples,
 and build_knowledge_graph validation logic.
 """
+import json
 import pytest
 import tempfile
 from pathlib import Path
@@ -228,7 +229,7 @@ class TestHPOAnnotationParser:
 
     def test_parse_frequency(self):
         """Test frequency parsing for various formats."""
-        parse = HPOAnnotationParser._parse_frequency
+        parse = HPOAnnotationParser.parse_frequency
 
         assert parse("HP:0040280") == 1.0       # Obligate
         assert parse("HP:0040281") == 0.90       # Very frequent
@@ -1006,11 +1007,21 @@ def test_training_records_the_cut_it_trained_under(tmp_dir):
     a workspace with no cut at all cannot be trained on."""
     import scripts.train_model as train_model
 
-    (tmp_dir / "train_samples.json").write_text("[]")
+    from tests.fixtures.generated_workspace import (
+        one_sample_per_disease,
+        profiles_for,
+        write_generated_workspace,
+    )
+
+    profiles = profiles_for([0, 1, 2])
+    for split, ids in (("train", [0, 1]), ("val", [2])):
+        (tmp_dir / f"{split}_samples.json").write_text(
+            json.dumps(one_sample_per_disease(split, ids, profiles))
+        )
     with pytest.raises(ValueError, match="generated before the disease allocation"):
         train_model.training_input_roles(tmp_dir, with_validation=True)
 
-    (tmp_dir / "split_manifest.json").write_text("{}")
+    write_generated_workspace(tmp_dir, train_ids=[0, 1], val_ids=[2], profiles=profiles)
     roles = train_model.training_input_roles(tmp_dir, with_validation=True)
     assert roles["split_manifest"] == tmp_dir / "split_manifest.json"
 

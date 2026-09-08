@@ -45,6 +45,8 @@ from src.evaluation.sidecar import (  # noqa: E402
     LEDGER_FILENAME,
     append_record,
     build_record,
+    find_checkpoint,
+    ledger_digest,
     read_ledger,
     records_for,
     write_ledger,
@@ -80,6 +82,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     ledger_path = args.checkpoint_dir / LEDGER_FILENAME
     ledger = read_ledger(ledger_path)
+    digest_at_read = ledger_digest(ledger_path)
 
     if args.show is not None:
         found = records_for(ledger, args.show)
@@ -103,6 +106,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "this can derive a record from"
         ) from exc
 
+    # **The ledger has to be beside the weights it describes.** Without this it
+    # can be written into any directory, including one holding no checkpoint at
+    # all, and a reader looking up a digest in the directory they were handed
+    # would find a record filed under the wrong address.
+    checkpoint = find_checkpoint(args.checkpoint_dir, record["checkpoint_digest"])
+    if checkpoint is None:
+        raise SystemExit(
+            f"{args.checkpoint_dir} holds no checkpoint whose bytes are "
+            f"{(record['checkpoint_digest'] or 'unknown')[:12]}..., which is what "
+            f"{args.report} measured. Point --checkpoint-dir at the directory "
+            "holding those weights; a ledger beside a different checkpoint is a "
+            "record filed under the wrong address."
+        )
+
     try:
         updated = append_record(ledger, record)
     except ValueError as exc:
@@ -112,11 +129,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.info("%s already holds this exact record; nothing written.", ledger_path)
         return 0
 
-    write_ledger(ledger_path, updated)
+    try:
+        write_ledger(ledger_path, updated, expected_digest=digest_at_read)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     logger.info(
-        "Recorded mode %s on cohort %s for checkpoint %s -> %s",
-        record["mode"], record["cohort_role"],
-        (record["checkpoint_digest"] or "unknown")[:12], ledger_path,
+        "Recorded mode %s on cohort %s for %s -> %s",
+        record["mode"], record["cohort_role"], checkpoint.name, ledger_path,
     )
     return 0
 

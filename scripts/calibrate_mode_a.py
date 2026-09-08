@@ -343,9 +343,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--split", required=True,
-                        choices=["train", "val", "test"],
-                        help=SPLIT_ARGUMENT_HELP)
+    parser.add_argument("--split", required=True, help=SPLIT_ARGUMENT_HELP)
     parser.add_argument("--cohort-kind", default=DEFAULT_COHORT_KIND,
                         choices=COHORT_KINDS, help=COHORT_KIND_HELP)
     parser.add_argument("--workdir", type=Path, required=True,

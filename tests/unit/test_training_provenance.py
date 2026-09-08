@@ -78,18 +78,33 @@ def test_the_shared_contract_lives_below_the_scripts_that_use_it():
 # ---------------------------------------------------------------------------
 # What a training run records, and what it must not
 # ---------------------------------------------------------------------------
-def _workspace(tmp_path, *, samples_payload, extra_split=None, manifest=True):
+def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
+               manifest=True):
     """A workspace as the generator leaves one.
 
     ``manifest`` is a parameter because its **absence** is now a refusal rather
     than a variant: a workspace without one was built before the disease
     allocation step, and training on it is what the refusal exists to stop.
+    Built through the shared fixture so the manifest is bound to the sample bytes
+    the way a real one is — an existence check is no longer what training does.
     """
+    from tests.fixtures.generated_workspace import (
+        one_sample_per_disease,
+        profiles_for,
+        write_generated_workspace,
+    )
+
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "train_samples.json").write_text(json.dumps(samples_payload))
-    (tmp_path / "val_samples.json").write_text(json.dumps(samples_payload))
     if manifest:
-        (tmp_path / "split_manifest.json").write_text(json.dumps({"disjoint": True}))
+        write_generated_workspace(
+            tmp_path, train_ids=list(train_ids), val_ids=list(val_ids)
+        )
+    else:
+        profiles = profiles_for(list(train_ids) + list(val_ids))
+        for split, ids in (("train", train_ids), ("val", val_ids)):
+            (tmp_path / f"{split}_samples.json").write_text(json.dumps(
+                one_sample_per_disease(split, list(ids), profiles)
+            ))
     (tmp_path / "num_nodes.json").write_text(json.dumps({"disease": 2}))
     torch.save({"disease": torch.zeros(2, 4)}, tmp_path / "node_features.pt")
     torch.save({("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
@@ -113,7 +128,7 @@ def _training_roles(data_dir: Path, *, with_val: bool):
 
 
 def test_the_recorded_roles_are_the_semantic_inputs_a_run_consumes(tmp_path):
-    data_dir = _workspace(tmp_path / "ws", samples_payload=[{"patient_id": "p0"}])
+    data_dir = _workspace(tmp_path / "ws")
 
     digests = compute_input_digests(_training_roles(data_dir, with_val=True))
 
@@ -130,7 +145,7 @@ def test_a_workspace_without_a_manifest_cannot_be_trained_on(tmp_path):
     refusal is here rather than in a caveat because the run would otherwise
     produce a checkpoint nothing can characterise afterwards."""
     data_dir = _workspace(
-        tmp_path / "ws", samples_payload=[{"patient_id": "p0"}], manifest=False
+        tmp_path / "ws", manifest=False
     )
 
     with pytest.raises(ValueError, match="generated before the disease allocation"):
@@ -142,7 +157,7 @@ def test_an_unrelated_split_beside_the_inputs_is_not_recorded(tmp_path):
     these files must not change the record of a run that never opened it —
     otherwise the artifact describes the directory rather than the run."""
     data_dir = _workspace(
-        tmp_path / "ws", samples_payload=[{"patient_id": "p0"}], extra_split="test",
+        tmp_path / "ws", extra_split="test",
     )
 
     digests = compute_input_digests(_training_roles(data_dir, with_val=True))
@@ -160,7 +175,7 @@ def test_a_run_without_validation_does_not_claim_a_validation_input(tmp_path):
     parsed before the loader becomes `None`. The claim is that the samples were
     not used by a validation pass, not that the file was never touched — and the
     file is not added to the role map merely because it was probed."""
-    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
+    data_dir = _workspace(tmp_path / "ws")
 
     digests = compute_input_digests(_training_roles(data_dir, with_val=False))
 
@@ -235,7 +250,7 @@ def test_the_decision_feeds_the_role_map_end_to_end(tmp_path):
     """The two halves joined: a real decision, then the role map built from it."""
     from scripts.train_model import resolve_resume_checkpoint, training_input_roles
 
-    data_dir = _workspace(tmp_path / "ws", samples_payload=[])
+    data_dir = _workspace(tmp_path / "ws")
     parent = tmp_path / "parent.pt"
     torch.save({"state_dict": {}}, parent)
     trainer = _RecordingTrainer()
@@ -256,7 +271,7 @@ def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
     parents. Without the parent role these two runs carried the same digest map."""
     from scripts.train_model import resolve_resume_checkpoint, training_input_roles
 
-    data_dir = _workspace(tmp_path / "ws", samples_payload=[{"patient_id": "p0"}])
+    data_dir = _workspace(tmp_path / "ws")
     first, second = tmp_path / "a.pt", tmp_path / "b.pt"
     torch.save({"state_dict": {"w": torch.zeros(1)}}, first)
     torch.save({"state_dict": {"w": torch.ones(1)}}, second)
@@ -289,8 +304,8 @@ def test_two_runs_over_different_samples_are_distinguishable_from_provenance(tmp
         "edge_index_dict": {("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
         "num_nodes_dict": {"disease": 2},
     }
-    first = _workspace(tmp_path / "a", samples_payload=[{"patient_id": "p0"}])
-    second = _workspace(tmp_path / "b", samples_payload=[{"patient_id": "p1"}])
+    first = _workspace(tmp_path / "a")
+    second = _workspace(tmp_path / "b", train_ids=(5, 6), val_ids=(7,))
 
     # Two independently constructed but equivalent graphs. A first version
     # compared `compute_fingerprint(graph)` with itself, which is true of any

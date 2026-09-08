@@ -462,6 +462,12 @@ def assert_manifest_describes_regime(
         )
 
 
+#: Bumped when the metric set or any metric's definition changes: a name added or
+#: removed, a denominator redefined, a `hits@K` membership change, an aggregation
+#: rule change. Lives beside `_authoritative`, which is what it versions.
+METRIC_SCHEMA_VERSION = 1
+
+
 @dataclass(frozen=True)
 class MeasurementManifest:
     """What has to be recorded for a number to mean anything later.
@@ -477,6 +483,15 @@ class MeasurementManifest:
 
     mode: str
     split: str
+    metric_schema_version: int
+    """Which set of metrics, under which definitions, `authoritative_metrics` holds.
+
+    **Separate from `canonical_tie_policy_version`, which cannot stand in for it.**
+    The tie policy versions how equal scores become ranks. It says nothing about
+    which metric names are emitted, what each denominator counts, which K values
+    `hits@K` covers, or how per-sample values are aggregated -- all of which change
+    what a number means while leaving the tie policy untouched. Bump this whenever
+    any of those changes; two records under one version must be comparable."""
     cohort_kind: str
     """Whether this cohort came from this project's generator or from outside.
 
