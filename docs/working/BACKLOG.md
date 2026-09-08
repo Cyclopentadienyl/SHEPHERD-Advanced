@@ -513,6 +513,18 @@ says it is total.
 This does not invalidate any engineering result. It **bounds what every number
 may claim**, and the bound is tighter than the caveat currently drafted.
 
+**Fixed under 11i, and `EVIDENCE_M4.json` is now a baseline rather than a
+description of the present.** Generation consumes a disease allocation, so the
+partitions are disjoint by construction. The M4 figure describes the regime that
+produced it and is kept unchanged for that reason; the audit that produced it
+gained a `--require-disjoint` gate and a cross-check of the sample files against
+`split_manifest.json`, which is the one claim the generating process cannot make
+about itself. Two consequences are **not** closed by the fix and are recorded
+rather than assumed away: every checkpoint in the repository was trained under
+the old regime, and a disease-level cut does not close the channel where one
+phenotype set carries two different labels across it — `scripts/audit_generator_fidelity.py`
+measures that.
+
 ### 3.3 A policy inference is contradicted — in its premise, not its conclusion
 
 `DISEASE_SCORER_POLICY.md` §3.5 recorded, explicitly as unmeasured, that most
@@ -652,6 +664,7 @@ depends on is resolved.
 | **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, 10 — **satisfied**, `EVIDENCE_M1_M3_hgt.json` and `EVIDENCE_M1_M3_gat.json` | institution | question, **unblocked** |
 | **7a** | Engineering differential calibration run | 1d, 10 — **satisfied**, and every scanned checkpoint carries a `data_fingerprint`; D5 artifact set; a designated loadable checkpoint | author | blocked on 1d and the checkpoint designation only |
 | **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
+| **11i** | **Item 11's implementation arm** — the ordered work in [`EVALUATION_COHORTS.md`](EVALUATION_COHORTS.md) §6.6, tracked here so "where are we" is answerable from one table. **1** correct the document — done, revision 20. **2** split feasibility audit (`scripts/audit_split_feasibility.py`) — code done; **the institutional evidence artifact is outstanding**, and uniform allocation with its withheld fraction stays provisional until it lands. **3** partition before generation (`src/kg/disease_allocation.py`, and `scripts/audit_split_overlap.py` reframed from a measurement into a gate) — done. **4** characterise the generator (`scripts/audit_generator_fidelity.py`) — done for the half needing no external tool; the upstream-simulator comparison is **deferred with its reason recorded** (§6.6). **5** evaluation records beside the checkpoint (`src/evaluation/sidecar.py`) — done. **6** UI — **explicitly last, and not started**. Note that 11i does **not** answer item 11: §5's (i), (ii) and (iv) are institutional questions, and this arm builds what makes them answerable | 11 | author | **5 of 6 done**; step 2's artifact outstanding |
 | **8a** | B-0.5 protocol and output-contract **design**. **Consumes item 11's holdout decision and may not redefine it** | 1, **11** | author | **before** any expensive run |
 | **8b** | B-0.5 institutional execution | 8a, 7b, 6, exact artifacts, production-path prerequisites | both | blocked |
 | **9** | Mechanical rename (~70 refs, 9 files), then rewrite the checklist, then delete the oracle-only surface | **1d passed review incl. its institutional CUDA run** | author | behaviour-neutral |
