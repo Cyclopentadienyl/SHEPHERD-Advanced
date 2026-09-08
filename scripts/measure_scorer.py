@@ -93,13 +93,31 @@ def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, 
     another's domain concept, which is cohesion; the benchmark reaching in here for
     a hash function was not.
     """
-    return compute_input_digests({
+    roles = {
         "checkpoint": checkpoint,
         "samples": data_dir / f"{split}_samples.json",
         "node_features": data_dir / "node_features.pt",
         "edge_indices": data_dir / "edge_indices.pt",
         "num_nodes": data_dir / "num_nodes.json",
-    })
+    }
+
+    # **The manifest says how the workspace was cut, which the sample digest
+    # cannot** — the same reason `training_input_roles` records it. Two
+    # byte-different `val_samples.json` could have been cut at the disease level
+    # or sliced at the sample level, and a `val_mrr` means a different thing under
+    # each: generalisation to diseases with no labelled examples, or recognition
+    # of new phenotype subsets of diseases that have them. Nothing in the sample
+    # digest distinguishes those, so a number recorded without this cannot be
+    # placed in either regime afterwards.
+    #
+    # Recorded only when the file exists. A workspace generated before the
+    # allocation step has none, and the role is then simply absent rather than
+    # present-and-null — which is the distinction `compute_input_digests` reserves
+    # for a file that was expected and missing.
+    split_manifest = data_dir / "split_manifest.json"
+    if split_manifest.is_file():
+        roles["split_manifest"] = split_manifest
+    return compute_input_digests(roles)
 
 
 def _resolve_device(requested: str) -> Tuple[torch.device, bool]:

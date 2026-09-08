@@ -660,6 +660,61 @@ def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
     assert file_sha256(tmp_path / "absent.bin") is None
 
 
+class TestTheRolesAMeasurementRecords:
+    """Which files a number is bound to, and the one that says what `val` means.
+
+    A `val_mrr` under a disease-disjoint cut measures generalisation to diseases
+    with no labelled examples. Under a sample-level slice it measures recognition
+    of new phenotype subsets of diseases that have them. Two different quantities
+    under one name, and nothing in `val_samples.json`'s digest separates them --
+    only `split_manifest.json` does.
+    """
+
+    @staticmethod
+    def _workspace(root, *, manifest: bool):
+        root.mkdir(parents=True, exist_ok=True)
+        for name in ("val_samples.json", "node_features.pt", "edge_indices.pt",
+                     "num_nodes.json"):
+            (root / name).write_bytes(b"content-of-" + name.encode())
+        (root / "ckpt.pt").write_bytes(b"weights")
+        if manifest:
+            (root / "split_manifest.json").write_bytes(b'{"disjoint": true}')
+        return root
+
+    def test_the_split_manifest_is_recorded_when_the_workspace_has_one(self, tmp_path):
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws", manifest=True)
+        digests = artifact_digests(root / "ckpt.pt", root, "val")
+
+        assert digests["split_manifest"] is not None
+        assert digests["split_manifest"] != digests["samples"]
+
+    def test_a_pre_allocation_workspace_leaves_the_role_absent_not_null(self, tmp_path):
+        """`None` is reserved for a file that was expected and missing. A
+        workspace generated before the allocation step never had one."""
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws", manifest=False)
+        digests = artifact_digests(root / "ckpt.pt", root, "val")
+
+        assert "split_manifest" not in digests
+
+    def test_nothing_else_in_the_directory_becomes_a_role(self, tmp_path):
+        """A record of the directory is not a record of the run."""
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws", manifest=True)
+        (root / "train_samples.json").write_bytes(b"an unrelated split")
+        (root / "notes.txt").write_bytes(b"scratch")
+        digests = artifact_digests(root / "ckpt.pt", root, "val")
+
+        assert set(digests) == {
+            "checkpoint", "samples", "node_features", "edge_indices", "num_nodes",
+            "split_manifest",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Oracle parity on padded phenotype ids
 # ---------------------------------------------------------------------------

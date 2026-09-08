@@ -9,6 +9,11 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **20** — §6.6 step 5 is implemented (§6.5 "As built"). Recording it needed one upstream fix
+  first: a measurement's `artifact_digests` did not carry `split_manifest.json`, so a `val` number
+  could not be placed in either split regime after the fact. Two of this section's fields were
+  under-specified and the choices are recorded rather than left implicit — `mode` belongs in the
+  key, and `canonical_tie_policy_version` is what "metric schema version" means here.
 - **19** — §6.6 step 4 is delivered in the half that needs no external tool, and the other half is
   deferred rather than dropped (§6.6). The three statements §1.5 left unmeasured now have an
   instrument, and the third of them is restated for the disease-disjoint regime: a cut at the
@@ -896,6 +901,36 @@ The wording matters and matches §6.4. A missing record does not establish that 
 never evaluated — this provenance system is not closed, and an evaluation can happen outside it.
 What the absence supports is the narrower and true statement that *this system holds no result for
 these weights*.
+
+#### As built
+
+`src/evaluation/sidecar.py` and `scripts/record_evaluation.py`. A ledger,
+`evaluations.json`, beside the checkpoints; a record per
+(checkpoint digest, cohort role, cohort digest, mode, tie-policy version).
+
+Three points where the implementation had to decide something this section left open:
+
+- **`mode` is part of the key.** This section predates the A/B/C/D modes. Mode A and Mode C over
+  one checkpoint and one cohort are different measurements with different candidate universes, and
+  a key without the mode would report them as a contradiction.
+- **`canonical_tie_policy_version` stands where this section says "metric schema version".** It is
+  the version of how ranks become numbers, which is the part of the metric schema that can change
+  an answer. Inventing a second version field nobody bumps would have been worse than reusing the
+  one that is already maintained.
+- **The allocation provenance had to be added upstream first.** A measurement's
+  `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
+  which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace
+  has one, mirroring `training_input_roles`. Without it the ledger would faithfully store two
+  incomparable quantities under one metric name.
+
+A contradiction — one key, two metric sets — is refused rather than merged, and no override flag is
+offered: correcting a bad record means editing a readable JSON file, which leaves a diff, rather
+than passing a flag that leaves nothing.
+
+Recording is a **separate entry point**, not a step inside `measure_scorer.py`. The checkpoint
+directory is the institution's and may be read-only to whoever runs a measurement, so writing into
+it is a decision someone makes rather than a side effect of measuring; and the ledger can then be
+built from artifacts that already exist.
 
 ### 6.6 Order, and what is explicitly last
 
