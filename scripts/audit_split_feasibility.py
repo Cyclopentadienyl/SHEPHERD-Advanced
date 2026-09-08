@@ -409,6 +409,28 @@ def stratification_report(
     rounding the quota performs. (The separate rounding of ``f · N`` to ``W``
     explains something else: the gap between an ideal ``f · n_s`` and the
     realised-draw expectation ``W · n_s / N``.)
+
+    **An empty band reports the two probabilities as ``null``, and this is a
+    reporting decision, not an arithmetic one.** The functions are untouched and
+    still return ``1.0`` at ``n_s = 0``, which is correct: the empty product says
+    a stratum with no members contributes none, with certainty. But the *columns*
+    mean "the risk that this stratum loses validation representation" and "…
+    training representation", and an empty stratum has nothing to lose. Two
+    things go wrong if ``1.0`` is printed under those headers. A reader scanning
+    the artifact sees a row asserting certain loss where there is no risk at all —
+    and this artifact exists to be read. And the two columns are defined as
+    *distinct events*, which is the whole subject of §6.8's correction and of the
+    oracle tests; at ``n_s = 0`` they collapse into the same event, so the row no
+    longer means what its headers say.
+
+    Only these two fields are nulled. ``quota``, ``expected_withheld`` and
+    ``sd_withheld`` stay ``0`` for an empty band, because zero is what they
+    genuinely are and reads correctly. The line is: **null the fields that become
+    vacuous as a band empties, keep the fields that become zero.**
+
+    Empty bands are still emitted rather than dropped. The band structure has to
+    be identical across workspaces or two reports cannot be compared, and a band
+    that is empty here may be populated in the next KG vintage.
     """
     labels = [label for label, _ in bands]
     sizes = [size for _, size in bands]
@@ -422,11 +444,13 @@ def stratification_report(
             "quota": quota,
             "expected_withheld": hypergeometric_mean(n_total, size, withheld),
             "sd_withheld": hypergeometric_sd(n_total, size, withheld),
-            "p_no_validation_representation": p_no_validation_representation(
-                n_total, size, withheld
+            "p_no_validation_representation": (
+                p_no_validation_representation(n_total, size, withheld)
+                if size else None
             ),
-            "p_no_training_representation": p_no_training_representation(
-                n_total, size, withheld
+            "p_no_training_representation": (
+                p_no_training_representation(n_total, size, withheld)
+                if size else None
             ),
         }
         for label, size, quota in zip(labels, sizes, quotas)
@@ -577,6 +601,22 @@ def build_report(kg_path: Path, settings: AuditSettings, relationship: str) -> D
             "generator_capacity": (
                 "C(P, k) distinct phenotype subsets the generator can draw, with k "
                 "from the production rule in src.kg.retained_phenotype_count."
+            ),
+            "p_no_validation_representation": (
+                "Probability that a uniform draw of W diseases withholds none of "
+                "this band, leaving the validation metric silent about it."
+            ),
+            "p_no_training_representation": (
+                "Probability that a uniform draw withholds all of this band, "
+                "leaving the deployed model with no patient supervision anywhere "
+                "in it. A different event from the one above."
+            ),
+            "empty_bands": (
+                "A band with 0 diseases reports both probabilities as null. They "
+                "are not zero and not unknown: a stratum with no members has no "
+                "representation to lose, so the question the columns ask does not "
+                "apply. Empty bands are still listed so the band structure is "
+                "identical across workspaces and two reports stay comparable."
             ),
         },
         "coverage_budgets": coverage,

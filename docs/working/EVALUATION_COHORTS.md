@@ -9,6 +9,10 @@ with one item under re-review.
 <details>
 <summary><b>Revision history</b></summary>
 
+- **16** — first institutional-scale run of the audit, on a pre-deployment machine, and one
+  presentation correction it exposed. An empty band printed `1.0` for both zero-representation
+  probabilities: arithmetically right, and readable as certain harm. §6.8 now specifies `null` for
+  those two fields on an empty band, with the arithmetic left exactly as verified.
 - **15** — three validation-boundary defects fixed in the audit, and the last two passages that
   still said "KG degree" now say **profile support size**, so the document agrees with the JSON
   schema. The defects: deduplication ran *before* per-element validation, so `True == 1 == 1.0`
@@ -1030,6 +1034,18 @@ be described in the same words:
 
 This is why the choice between a uniform and a stratified draw is not merely stylistic: for a thin
 stratum both failures carry real probability, and each is a number rather than a preference.
+
+**An empty band reports both as `null`.** The arithmetic is unchanged and still yields `1.0` at
+`n_s = 0` — the empty product correctly says a stratum with no members contributes none, with
+certainty — but the *columns* ask what a stratum risks losing, and an empty one has nothing to lose.
+Printing `1.0` under those headers fails twice: a reader scanning the artifact sees certain loss
+where there is no risk, and the two columns, which exist precisely because they are **different
+events**, collapse into the same event at `n_s = 0` and stop meaning what their headers say. The
+rule is **null the fields that become vacuous as a band empties, keep the fields that become zero** —
+so `quota`, `expected_withheld` and `sd_withheld` stay numeric, because zero is what they genuinely
+are. Empty bands are still listed rather than dropped: the band structure must be identical across
+workspaces or two reports cannot be compared, and a band empty in one KG vintage may be populated in
+the next.
 
 **Settled parameters, stated here so nothing is left to negotiate:**
 

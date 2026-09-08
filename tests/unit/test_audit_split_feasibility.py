@@ -689,3 +689,104 @@ def test_every_permitted_relationship_is_accepted(tiny_kg_path):
             relationship,
         )
         assert report["deployment_relationship"] == relationship
+
+
+# --------------------------------------------------------------------------
+# Empty bands: vacuous, not zero
+# --------------------------------------------------------------------------
+
+
+def test_the_arithmetic_still_returns_one_for_an_empty_stratum():
+    """The change is at the report layer. The functions are untouched.
+
+    ``1.0`` is the correct probability that a stratum with no members
+    contributes none — the empty product. The oracle tests pin it, and this
+    pins that they were not quietly weakened to make the report change easier.
+    """
+    assert audit.p_no_validation_representation(100, 0, 15) == 1.0
+    assert audit.p_no_training_representation(100, 0, 15) == 1.0
+
+
+def test_an_empty_band_reports_null_probabilities_and_zero_counts():
+    """Null the fields that become vacuous; keep the fields that become zero."""
+    bands = [("2-3", 0), ("4-5", 40), ("6-10", 60)]
+    rows = audit.stratification_report(bands, 100, 15, audit.PHENOTYPE_COUNT_BANDS)
+    empty = rows[0]
+
+    assert empty["diseases"] == 0
+    assert empty["p_no_validation_representation"] is None
+    assert empty["p_no_training_representation"] is None
+    # These are genuinely zero and read correctly, so they stay numeric.
+    assert empty["quota"] == 0
+    assert empty["expected_withheld"] == 0.0
+    assert empty["sd_withheld"] == 0.0
+
+
+def test_a_populated_band_still_reports_both_probabilities_as_numbers():
+    bands = [("2-3", 0), ("4-5", 40), ("6-10", 60)]
+    rows = audit.stratification_report(bands, 100, 15, audit.PHENOTYPE_COUNT_BANDS)
+    for row in rows[1:]:
+        assert isinstance(row["p_no_validation_representation"], float)
+        assert isinstance(row["p_no_training_representation"], float)
+        assert 0.0 <= row["p_no_validation_representation"] <= 1.0
+
+
+def test_no_report_row_claims_certain_loss_for_a_band_with_no_diseases(tiny_kg_path):
+    """The misreading this exists to prevent, asserted over a whole report.
+
+    A row saying "probability 1.0 of no training representation" beside
+    "0 diseases" is arithmetically true and reads as certain harm. This artifact
+    is meant to be read by people who will not stop to derive the empty product.
+    """
+    report = audit.build_report(
+        tiny_kg_path, settings(fractions=[0.5], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
+    )
+    empty_seen = 0
+    for entry in report["sensitivity"]:
+        for rows in entry["strata"].values():
+            for row in rows:
+                if row["diseases"] == 0:
+                    empty_seen += 1
+                    assert row["p_no_validation_representation"] is None, row
+                    assert row["p_no_training_representation"] is None, row
+                else:
+                    assert row["p_no_validation_representation"] is not None, row
+    assert empty_seen > 0, "the fixture must exercise at least one empty band"
+
+
+def test_empty_bands_are_listed_rather_than_dropped(tiny_kg_path):
+    """Band structure must be identical across workspaces, or reports cannot be
+    compared. A band empty in this KG vintage may be populated in the next."""
+    report = audit.build_report(
+        tiny_kg_path, settings(fractions=[0.5], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
+    )
+    labels = [row["band"] for row in report["distributions"]["phenotype_count"]]
+    expected = [
+        audit.band_label(bound, audit.PHENOTYPE_COUNT_BANDS)
+        for bound in audit.PHENOTYPE_COUNT_BANDS
+    ] + [audit.MISSING_LABEL]
+    assert labels == expected
+
+
+def test_the_null_convention_is_explained_in_the_artifact(tiny_kg_path):
+    """A reader must not have to consult the source to interpret a null."""
+    report = audit.build_report(
+        tiny_kg_path, settings(fractions=[0.5], samples_per_disease=[1]),
+        audit.UNSTATED_RELATIONSHIP,
+    )
+    note = report["axis_definitions"]["empty_bands"]
+    assert "null" in note
+    assert "not zero" in note
+    for key in ("p_no_validation_representation", "p_no_training_representation"):
+        assert key in report["axis_definitions"]
+
+
+def test_nulls_serialise_and_are_not_nan(tiny_kg_path):
+    report = audit.build_report(
+        tiny_kg_path, settings(), audit.UNSTATED_RELATIONSHIP,
+    )
+    rendered = json.dumps(report, allow_nan=False, sort_keys=True)
+    assert '"p_no_training_representation": null' in rendered
+    assert "NaN" not in rendered and "Infinity" not in rendered
