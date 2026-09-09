@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -216,8 +218,29 @@ def generate_training_samples(
     )
 
     if output_dir is not None:
-        with open(output_dir / "split_manifest.json", "w") as handle:
-            json.dump(manifest, handle, indent=2, sort_keys=True)
+        # **Serialised whole, then renamed into place.** `json.dump` writes as
+        # it walks, so a value it cannot encode leaves a manifest truncated at
+        # exactly that key -- a file that parses as nothing and reads as a
+        # workspace that has one. Every field reaching here is constrained
+        # today, but that is a property of the current field list, re-proved by
+        # hand every time someone adds one. Building the text first makes the
+        # failure mode structural instead: either the manifest is whole, or it
+        # was never written.
+        payload = json.dumps(manifest, indent=2, sort_keys=True)
+        target = output_dir / "split_manifest.json"
+        handle = tempfile.NamedTemporaryFile(
+            "w", dir=str(output_dir), prefix=target.name, suffix=".tmp",
+            delete=False,
+        )
+        try:
+            with handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(handle.name, target)
+        except BaseException:
+            Path(handle.name).unlink(missing_ok=True)
+            raise
         logger.info("Samples and split manifest saved to %s", output_dir)
 
     return train_samples, val_samples, manifest

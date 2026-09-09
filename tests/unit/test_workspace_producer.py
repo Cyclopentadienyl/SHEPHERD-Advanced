@@ -603,3 +603,209 @@ class TestEveryKnowableInputIsRefusedBeforeAWrite:
         # The export enforces the same function the writer checks ahead of it.
         source = Path(graph.__file__).read_text()
         assert "validate_feature_dim(feature_dim)" in source
+
+
+class TestTheSeedIsProvenanceNotOnlyRandomness:
+    """`derive_stream` stringifies the seed, so almost any value yields *a*
+    stream — which is why this looked bypassable and was reported as such.
+
+    It is not. `DiseaseAllocation` keeps the object it was handed and the
+    manifest serialises it, so a non-JSON seed was found by `json.dump` with the
+    graph, both cohorts and part of the manifest already on disk — and `json.dump`
+    writes as it walks, so it left a manifest truncated at exactly that key: a
+    file that parses as nothing and reads as a workspace that has one. An
+    `object()` whose repr carries a process address also makes the derived
+    stream unreproducible while looking deterministic.
+    """
+
+    @staticmethod
+    def _demo_kg():
+        from scripts.setup_demo import build_demo_kg
+
+        return build_demo_kg()
+
+    def _write(self, workspace, seed):
+        from src.kg.workspace import SampleBudget, write_workspace
+
+        return write_workspace(
+            self._demo_kg(), workspace, feature_dim=8,
+            samples=SampleBudget(
+                num_train=20, num_val=5, val_disease_fraction=0.2, seed=seed
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        "seed", [True, False, 1.5, "42", b"42", bytearray(b"42"), object(), None],
+        ids=["true", "false", "float", "str", "bytes", "bytearray", "object", "none"],
+    )
+    def test_a_seed_that_is_not_an_integer_writes_nothing(self, tmp_path, seed):
+        from src.kg.workspace import WorkspaceRefusal
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        (workspace / "kg.json").write_bytes(b'{"pre-existing": true}')
+        before = {
+            p.name: (p.stat().st_mtime_ns, p.read_bytes())
+            for p in workspace.iterdir()
+        }
+
+        with pytest.raises(WorkspaceRefusal, match="seed must be an integer"):
+            self._write(workspace, seed)
+
+        after = {
+            p.name: (p.stat().st_mtime_ns, p.read_bytes())
+            for p in workspace.iterdir()
+        }
+        assert after == before, "a refused seed wrote into the workspace"
+
+    @pytest.mark.parametrize("seed", [0, -1, 2 ** 128], ids=["zero", "negative", "huge"])
+    def test_any_integer_is_a_seed(self, tmp_path, seed):
+        """The stream comes from the decimal form and nothing downstream packs
+        it into a machine word, so a bound here would be invention. This is the
+        half that keeps the validator from becoming restrictive."""
+        from src.evaluation.cohort import verify_generated_cohorts
+
+        workspace = tmp_path / f"ws{abs(seed)}"
+        written = self._write(workspace, seed)
+
+        assert written.manifest["allocation"]["seed"] == seed
+        assert verify_generated_cohorts(workspace).verified == ("train", "val")
+
+    def test_the_allocation_refuses_a_bad_seed_for_direct_callers_too(self):
+        """The writer is not the only caller. `allocate_diseases` is public and
+        a manifest built from its result carries the same seed."""
+        from src.kg.disease_allocation import allocate_diseases
+        from src.kg.sample_generator import build_eligible_disease_profiles
+
+        eligible = build_eligible_disease_profiles(self._demo_kg(), 2)
+        with pytest.raises(ValueError, match="seed must be an integer"):
+            allocate_diseases(eligible, 0.2, seed=b"42")
+
+    def test_a_manifest_is_written_whole_or_not_at_all(self, tmp_path):
+        """What made a bad value corrupt a file rather than merely fail.
+
+        Every field reaching the manifest is constrained today, but that is a
+        property of the current field list — re-proved by hand each time someone
+        adds one. Serialising the text first makes it structural.
+        """
+        from src.kg.disease_allocation import DiseaseAllocation, allocate_diseases
+        from src.kg.sample_generator import (
+            build_eligible_disease_profiles,
+            generate_training_samples,
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        eligible = build_eligible_disease_profiles(self._demo_kg(), 2)
+        sound = allocate_diseases(eligible, 0.2, seed=42)
+        # A seed no encoder can take, past the validator by construction: the
+        # point is the writing, not the checking.
+        smuggled = DiseaseAllocation(
+            train=sound.train, val=sound.val,
+            val_fraction_requested=sound.val_fraction_requested,
+            seed=object(), universe_digest=sound.universe_digest,
+        )
+
+        with pytest.raises(TypeError):
+            generate_training_samples(
+                kg=self._demo_kg(), allocation=smuggled,
+                num_train=20, num_val=5, output_dir=workspace,
+                graph_digests={r: "0" * 64 for r in
+                               ("kg", "node_features", "edge_indices", "num_nodes")},
+            )
+
+        assert not (workspace / "split_manifest.json").exists(), (
+            "a manifest that could not be serialised was left on disk"
+        )
+        assert not list(workspace.glob("*.tmp")), "the temporary file was left behind"
+
+
+class TestThePreWriteBoundaryRefusesEarlyAndInOneVocabulary:
+    """Two properties the allocation's own checks do not give the writer.
+
+    `allocate_diseases` validates the seed and the fraction, and it runs before
+    any write — so removing the writer's copy of the seed check changes no
+    outcome. What it changes is *when*: the eligibility walk over every disease
+    in the graph happens first. On a real workspace that is tens of thousands of
+    diseases traversed to reach a refusal that was decidable from the argument.
+
+    And what the allocation raises is a plain `ValueError`, which the build
+    script does not catch — so a fraction outside (0, 1) or a universe too small
+    to split would reach an operator as a traceback rather than as the refusal
+    that says nothing was written.
+    """
+
+    @staticmethod
+    def _demo_kg():
+        from scripts.setup_demo import build_demo_kg
+
+        return build_demo_kg()
+
+    def test_a_bad_seed_is_refused_before_the_graph_is_walked(
+        self, monkeypatch, tmp_path
+    ):
+        import src.kg as kg_package
+        from src.kg.workspace import SampleBudget, WorkspaceRefusal, write_workspace
+
+        def _must_not_run(*args, **kwargs):
+            raise AssertionError("eligibility was computed for a refused seed")
+
+        monkeypatch.setattr(
+            kg_package, "build_eligible_disease_profiles", _must_not_run
+        )
+
+        with pytest.raises(WorkspaceRefusal, match="seed must be an integer"):
+            write_workspace(
+                self._demo_kg(), tmp_path / "ws", feature_dim=8,
+                samples=SampleBudget(num_train=20, num_val=5, seed="42"),
+            )
+
+    @pytest.mark.parametrize(
+        "kwargs,message",
+        [
+            ({"val_disease_fraction": 1.5}, "val_fraction must be finite"),
+            ({"val_disease_fraction": 0.0}, "val_fraction must be finite"),
+            ({"val_disease_fraction": True}, "val_fraction must be a number"),
+            ({"min_phenotypes": 50}, "cannot be cut into two non-empty"),
+        ],
+        ids=["fraction-above", "fraction-zero", "fraction-bool", "universe-too-small"],
+    )
+    def test_an_allocation_refusal_is_a_workspace_refusal(
+        self, tmp_path, kwargs, message
+    ):
+        """Translated at the one call that can raise them before a write. The
+        whole function is not wrapped: its later failures happen with the graph
+        already saved, and would inherit a promise that nothing was written."""
+        from src.kg.workspace import SampleBudget, WorkspaceRefusal, write_workspace
+
+        workspace = tmp_path / "ws"
+        with pytest.raises(WorkspaceRefusal, match=message):
+            write_workspace(
+                self._demo_kg(), workspace, feature_dim=8,
+                samples=SampleBudget(num_train=20, num_val=5, **kwargs),
+            )
+
+        assert not workspace.exists()
+
+    def test_the_build_reports_an_allocation_refusal_as_nothing_written(
+        self, monkeypatch, tmp_path
+    ):
+        """End to end: the CLI catches WorkspaceRefusal, so translating at the
+        writer is what turns these into operator-facing refusals."""
+        from tests.unit.test_data_pipeline import (
+            TestBuildPathOrdering,
+            _wide_kg_object,
+        )
+
+        build = TestBuildPathOrdering._stub_build_stages(monkeypatch, _wide_kg_object())
+        TestBuildPathOrdering._satisfy_input_validation(tmp_path)
+
+        with pytest.raises(SystemExit) as excinfo:
+            build.build_knowledge_graph(
+                external_dir=tmp_path, workspace=tmp_path / "ws",
+                generate_samples=True, num_train=60, num_val=20,
+                val_disease_fraction=1.5,
+            )
+        assert "val_fraction must be finite" in str(excinfo.value)
+        assert "Nothing was written" in str(excinfo.value)
+        assert not (tmp_path / "ws").exists()

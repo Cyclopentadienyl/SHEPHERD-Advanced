@@ -64,6 +64,27 @@ ALLOCATION_ALGORITHM_VERSION = 1
 DiseaseProfile = Tuple[int, Dict[str, Any]]
 
 
+def validate_allocation_seed(value: Any) -> None:
+    """The root seed an allocation is cut with.
+
+    **A seed is not only a source of randomness here; it is provenance.**
+    ``derive_stream`` stringifies it, so almost anything produces *a* stream —
+    but ``DiseaseAllocation`` keeps the object it was given and the manifest
+    serialises it, so a value that is not JSON is discovered by ``json.dump``
+    after the graph, both cohorts and part of the manifest are already on disk.
+    A ``bytes`` seed, or an ``object()`` whose ``repr`` carries a process
+    address, also makes the derived stream unreproducible while looking
+    deterministic.
+
+    Any Python integer is accepted, of any magnitude: the stream comes from the
+    decimal form and nothing downstream packs it into a machine word. ``True``
+    is refused for the usual reason — it is an ``int``, and "seed 1" is not what
+    a caller writing ``seed=True`` meant.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"seed must be an integer, got {value!r}")
+
+
 def derive_stream(seed: int, name: str) -> random.Random:
     """An independent, reproducible random stream from a root seed and a name.
 
@@ -269,6 +290,7 @@ def allocate_diseases(
     Returns:
         A ``DiseaseAllocation`` whose partitions are disjoint by construction.
     """
+    validate_allocation_seed(seed)
     if isinstance(val_fraction, bool) or not isinstance(val_fraction, (int, float)):
         raise ValueError(f"val_fraction must be a number, got {val_fraction!r}")
     if not math.isfinite(val_fraction) or not 0.0 < val_fraction < 1.0:
@@ -306,6 +328,7 @@ def train_only_allocation(
     "withhold a very small fraction", and one a reader should not have to infer
     from a boundary value.
     """
+    validate_allocation_seed(seed)
     ordered = tuple(sorted(eligible, key=lambda pair: pair[0]))
     return validate_allocation(DiseaseAllocation(
         train=ordered, val=(), val_fraction_requested=0.0, seed=seed,

@@ -164,14 +164,19 @@ def write_workspace(
     # rules are imported, not restated: `validate_feature_dim` is the one the
     # export enforces and `validate_phenotype_count` is the one generation
     # enforces, so neither can drift from what actually runs later.
+    from src.kg.disease_allocation import validate_allocation_seed
     from src.kg.graph import validate_feature_dim
 
     try:
         validate_feature_dim(feature_dim)
         if samples is not None:
-            validate_phenotype_count(
-                "min_phenotypes", samples.min_phenotypes, 1
-            )
+            validate_phenotype_count("min_phenotypes", samples.min_phenotypes, 1)
+            # **The seed is provenance, not only randomness.** `derive_stream`
+            # stringifies it so almost anything yields a stream, but the
+            # allocation keeps the object and the manifest serialises it -- so a
+            # non-JSON seed was discovered by `json.dump` with the graph, both
+            # cohorts and half the manifest already written.
+            validate_allocation_seed(samples.seed)
     except ValueError as exc:
         raise WorkspaceRefusal(str(exc)) from exc
 
@@ -200,9 +205,17 @@ def write_workspace(
         eligible = build_eligible_disease_profiles(
             kg, min_phenotypes=samples.min_phenotypes
         )
-        allocation = allocate_diseases(
-            eligible, samples.val_disease_fraction, seed=samples.seed
-        )
+        # **Only this call is translated.** Everything it refuses -- a fraction
+        # outside (0, 1), a universe too small to cut in two -- it refuses
+        # before returning, so nothing has been written and `WorkspaceRefusal`
+        # is telling the truth. Wrapping the whole function instead would
+        # attach that promise to failures that happen after the graph is saved.
+        try:
+            allocation = allocate_diseases(
+                eligible, samples.val_disease_fraction, seed=samples.seed
+            )
+        except ValueError as exc:
+            raise WorkspaceRefusal(str(exc)) from exc
         # Coverage needs the partition sizes, so it cannot run earlier than
         # this -- but it still runs before the first byte, and nothing runs
         # between it and the allocation it checks.
