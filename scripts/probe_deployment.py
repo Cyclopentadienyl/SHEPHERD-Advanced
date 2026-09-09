@@ -1071,7 +1071,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     work = args.work_dir
     if work.exists() and any(work.iterdir()):
-        print(f"--work-dir must be empty or absent; {work} is not", file=sys.stderr)
+        # **Refuse rather than clean.** The operator names this directory, and a
+        # probe that emptied whatever it was pointed at would be one typo away
+        # from deleting something that mattered. Saying what to do about it is
+        # this message's job, though: the usual reason it is not empty is that
+        # the previous run failed and kept its evidence on purpose.
+        print(
+            f"--work-dir must be empty or absent; {work} is not.\n"
+            f"A previous run that failed keeps its work directory so the "
+            f"failure can be inspected. Remove it with `rm -rf {work}` once you "
+            f"are done with it, or pass a different --work-dir.",
+            file=sys.stderr,
+        )
         return 2
     work.mkdir(parents=True, exist_ok=True)
     report_path = args.report or (work / "probe_report.json")
