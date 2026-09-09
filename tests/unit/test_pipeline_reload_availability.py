@@ -428,7 +428,59 @@ class TestNothingLeavesThisEndpointUnencodable:
     boundary, after the endpoint has returned.
     """
 
-    def test_a_metric_recorded_as_a_tensor_is_normalised_at_the_source(self):
+    def test_an_epoch_is_an_integer_or_it_is_nothing(self):
+        """`True` is an `int` and `1.9` truncates: both would report metadata
+        the checkpoint never contained. `inf` raises `OverflowError` from
+        `int()`, which is the conversion failure that matters, because this runs
+        after the model is built — raising here takes a working checkpoint out
+        of service over a number in a status panel."""
+        from src.inference.pipeline import _as_int
+
+        torch = pytest.importorskip("torch")
+
+        assert _as_int(3) == 3
+        assert _as_int(3.0) == 3, "a genuinely integral value, not a truncation"
+        assert _as_int(torch.tensor(7)) == 7
+        assert _as_int(torch.tensor(7.0)) == 7
+        for rejected in (True, False, 1.9, float("inf"), float("-inf"),
+                         float("nan"), torch.tensor([1, 2]), "7", None,
+                         complex(1, 2), 10 ** 400):
+            assert _as_int(rejected) is None, f"{rejected!r} became an epoch"
+
+    def test_a_metric_is_a_float_a_name_or_nothing(self):
+        from src.inference.pipeline import _as_metric
+
+        torch = pytest.importorskip("torch")
+
+        assert _as_metric(torch.tensor(0.25)) == pytest.approx(0.25)
+        assert isinstance(_as_metric(torch.tensor(0.25)), float)
+        assert _as_metric(torch.tensor(3)) == pytest.approx(3.0)
+        # Not valid JSON, but a fact about the run worth keeping.
+        assert _as_metric(float("nan")) == "nan"
+        assert _as_metric(torch.tensor(float("inf"))) == "inf"
+        assert _as_metric(float("-inf")) == "-inf"
+        # One number in any shape is still one number.
+        assert _as_metric(torch.tensor([[1.0]])) == pytest.approx(1.0)
+        for dropped in (torch.tensor([1.0, 2.0]), torch.tensor([[1.0, 2.0]]),
+                        complex(1, 2), True, "0.5", None):
+            assert _as_metric(dropped) is None, f"{dropped!r} became a metric"
+
+    def test_neither_normaliser_can_take_a_checkpoint_out_of_service(self):
+        """The contract that makes the two above safe to call where they are
+        called: after the model is built, on values nobody validated."""
+        from src.inference.pipeline import _as_int, _as_metric
+
+        class _Hostile:
+            def __float__(self):
+                raise RuntimeError("not on this device")
+
+            def __int__(self):
+                raise RuntimeError("not on this device")
+
+        assert _as_int(_Hostile()) is None
+        assert _as_metric(_Hostile()) is None
+
+    def test_the_normalised_values_encode(self):
         from fastapi.encoders import jsonable_encoder
 
         from src.api.routes.pipeline import PipelineStatusResponse
@@ -436,18 +488,14 @@ class TestNothingLeavesThisEndpointUnencodable:
 
         torch = pytest.importorskip("torch")
 
-        assert _as_metric(torch.tensor(0.25)) == pytest.approx(0.25)
-        assert isinstance(_as_metric(torch.tensor(0.25)), float)
-        assert _as_int(torch.tensor(7)) == 7
-        # Not one number, so there is nothing to report about it.
-        assert _as_metric(torch.tensor([1.0, 2.0])) is None
-        # Not valid JSON, but a fact about the run worth keeping.
-        assert _as_metric(float("nan")) == "nan"
-
         jsonable_encoder(
             PipelineStatusResponse(
                 initialized=True,
-                checkpoint_meta={"val_loss": _as_metric(torch.tensor(0.25))},
+                checkpoint_meta={
+                    "epoch": _as_int(torch.tensor(3)),
+                    "val_loss": _as_metric(torch.tensor(0.25)),
+                    "mrr": _as_metric(float("nan")),
+                },
             )
         )
 

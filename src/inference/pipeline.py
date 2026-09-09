@@ -182,29 +182,57 @@ class ValidationResult:
 # Diagnosis Pipeline
 # ==============================================================================
 def _as_int(value: Any) -> Optional[int]:
-    """One integer, or ``None`` if the value is not one.
+    """One integer, or ``None``.
 
-    Accepts what a trainer plausibly writes -- a Python int, a numpy integer, a
-    zero-dimensional tensor -- and refuses anything that is not a single number,
-    rather than passing it on to be discovered by a JSON encoder.
+    **This is display metadata, so it never raises.** It runs after the model
+    has been built and returned; an exception here would take a working
+    checkpoint out of service over a number shown in a status panel. Everything
+    it cannot interpret becomes ``None``, and the key simply carries no value.
+
+    Three refusals are deliberate rather than incidental:
+
+    * ``True`` is an ``int`` in Python. Reported as epoch 1, it would be
+      metadata the checkpoint never contained.
+    * ``1.9`` is not "epoch 1". Truncating it invents a value; ``3.0`` is
+      genuinely the integer 3 and is kept.
+    * ``inf`` raises ``OverflowError`` from ``int()`` — the conversion failure
+      that motivated writing this down.
+    * ``"7"`` parses, and parsing it reports a number the checkpoint did not
+      contain. A string is already JSON-safe; converting it is invention, not
+      protection.
     """
+    if isinstance(value, (bool, str, bytes)):
+        return None
     try:
+        as_float = float(value)
+        if not math.isfinite(as_float) or as_float != int(as_float):
+            return None
         return int(value)
-    except (TypeError, ValueError):
+    except Exception:  # noqa: BLE001 — see the docstring: display never raises
         return None
 
 
 def _as_metric(value: Any) -> Optional[Union[float, str]]:
     """One metric value, as a float where that is what it is.
 
-    A non-finite metric is kept as its name rather than dropped: a `nan`
-    validation loss is a fact about the run worth showing, and `NaN` is not
-    valid JSON. Values that are not numbers at all are dropped, because there is
-    nothing to say about them that the key's absence does not already say.
+    Non-raising for the same reason as ``_as_int``. Scalar conversion fails in
+    more ways than a type error: a multi-element tensor raises ``ValueError``, a
+    tensor that cannot be read on this device raises ``RuntimeError``, and an
+    out-of-range integer raises ``OverflowError``. None of them is a reason to
+    stop serving a model.
+
+    A non-finite metric is kept as its name rather than dropped: a ``nan``
+    validation loss is a fact about the run worth showing, and ``NaN`` is not
+    valid JSON. ``True`` is refused, as it is for epochs — reporting a loss of
+    1.0 because the trainer logged a flag is worse than reporting nothing. So
+    is a string: these read the numbers a trainer recorded, and a string is not
+    one of them.
     """
+    if isinstance(value, (bool, str, bytes)):
+        return None
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except Exception:  # noqa: BLE001 — see the docstring: display never raises
         return None
     return number if math.isfinite(number) else str(number)
 

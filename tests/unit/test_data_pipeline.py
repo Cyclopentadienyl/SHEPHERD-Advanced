@@ -1184,12 +1184,12 @@ class TestBudgetPreflight:
         The comparison lives in the writer, which is what runs it before the
         first byte; the script supplies the flag names its operator typed.
         """
-        from src.kg.workspace import BudgetRefusal, require_budget_coverage
+        from src.kg.workspace import WorkspaceRefusal, require_budget_coverage
 
         allocation = self._allocation()
-        with pytest.raises(BudgetRefusal, match="cannot cover"):
+        with pytest.raises(WorkspaceRefusal, match="cannot cover"):
             require_budget_coverage(1, 999, allocation)
-        with pytest.raises(BudgetRefusal, match="--num-val"):
+        with pytest.raises(WorkspaceRefusal, match="--num-val"):
             require_budget_coverage(
                 999, 0, allocation,
                 train_label="--num-train", val_label="--num-val",
@@ -1204,14 +1204,14 @@ class TestBudgetPreflight:
         )
 
     def test_the_refusal_is_the_kind_a_caller_may_call_unwritten(self):
-        """`BudgetRefusal` is what lets the build say "Nothing was written" and
+        """`WorkspaceRefusal` is what lets the build say "Nothing was written" and
         be right: every other failure in the writer can happen after the graph
         is on disk."""
-        from src.kg.workspace import BudgetRefusal, require_budget_coverage
+        from src.kg.workspace import WorkspaceRefusal, require_budget_coverage
 
-        with pytest.raises(BudgetRefusal):
+        with pytest.raises(WorkspaceRefusal):
             require_budget_coverage(1, 1, self._allocation())
-        assert issubclass(BudgetRefusal, ValueError)
+        assert issubclass(WorkspaceRefusal, ValueError)
 
 
 @pytest.mark.parametrize(

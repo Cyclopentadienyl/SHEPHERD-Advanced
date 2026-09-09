@@ -257,6 +257,24 @@ def validate_sample_budgets(num_train: Any, num_val: Any) -> None:
             raise ValueError(f"{name} must be >= 0, got {value}")
 
 
+def validate_phenotype_count(name: str, value: Any, minimum: int) -> None:
+    """One phenotype-count bound, checked against its own domain.
+
+    **Exposed rather than restated.** ``min_phenotypes`` decides which diseases
+    are eligible, so a caller that cuts an allocation from it acts on the value
+    long before generation validates it — and by then a workspace is on disk.
+    That caller needs this rule, not a copy of it: two copies agree until one is
+    extended.
+
+    ``True`` is refused explicitly. It is an ``int`` in Python, so a bare
+    ``isinstance`` check would read it as a phenotype floor of 1 and proceed.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+
+
 def _validate_generation_inputs(
     num_train: Any,
     num_val: Any,
@@ -272,14 +290,8 @@ def _validate_generation_inputs(
     inside sampling.
     """
     validate_sample_budgets(num_train, num_val)
-    for name, value, minimum in (
-        ("min_phenotypes", min_phenotypes, 1),
-        ("max_phenotypes", max_phenotypes, min_phenotypes),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{name} must be an integer, got {value!r}")
-        if value < minimum:
-            raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    validate_phenotype_count("min_phenotypes", min_phenotypes, 1)
+    validate_phenotype_count("max_phenotypes", max_phenotypes, min_phenotypes)
     if isinstance(phenotype_drop_rate, bool) or not isinstance(
         phenotype_drop_rate, (int, float)
     ):

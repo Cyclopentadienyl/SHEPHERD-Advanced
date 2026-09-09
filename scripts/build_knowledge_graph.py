@@ -44,7 +44,7 @@ from src.core.types import DataSource, NodeType
 from src.kg.builder import KnowledgeGraphBuilder, KGBuilderConfig
 from src.data_sources.hpo_annotations import HPOAnnotationParser
 from src.ontology.loader import OntologyLoader
-from src.kg.workspace import BudgetRefusal, SampleBudget, write_workspace
+from src.kg.workspace import WorkspaceRefusal, SampleBudget, write_workspace
 
 logging.basicConfig(
     level=logging.INFO,
@@ -222,8 +222,8 @@ def build_knowledge_graph(
             train_label="--num-train",
             val_label="--num-val",
         )
-    except BudgetRefusal as exc:
-        # **Only this exception, and that is the point.** `BudgetRefusal` is
+    except WorkspaceRefusal as exc:
+        # **Only this exception, and that is the point.** `WorkspaceRefusal` is
         # raised before the writer touches the workspace, so "Nothing was
         # written" is true by construction. Catching `ValueError` broadly would
         # attach the same sentence to failures that happen after the graph is

@@ -446,9 +446,9 @@ class TestTheRefusalOrderHasNoHookInIt:
         """What the hook existed for, without the hook: an operator sees the
         flag they typed, and the check that produced it is the writer's."""
         from scripts.setup_demo import build_demo_kg
-        from src.kg.workspace import BudgetRefusal, SampleBudget, write_workspace
+        from src.kg.workspace import WorkspaceRefusal, SampleBudget, write_workspace
 
-        with pytest.raises(BudgetRefusal, match=r"--num-val=0 cannot cover"):
+        with pytest.raises(WorkspaceRefusal, match=r"--num-val=0 cannot cover"):
             write_workspace(
                 build_demo_kg(), tmp_path / "ws", feature_dim=8,
                 samples=SampleBudget(num_train=50, num_val=0,
@@ -486,7 +486,7 @@ def test_a_failure_after_the_graph_is_written_is_not_called_unwritten(
 ):
     """"Nothing was written" has to be true when the build says it.
 
-    `BudgetRefusal` is raised only before the writer touches the workspace, so
+    `WorkspaceRefusal` is raised only before the writer touches the workspace, so
     catching it and adding that sentence is sound. Catching `ValueError` broadly
     would attach the same sentence to a generator failure, which happens with
     `kg.json` and three tensors already on disk.
@@ -510,3 +510,96 @@ def test_a_failure_after_the_graph_is_written_is_not_called_unwritten(
         )
 
     assert (workspace / "kg.json").exists(), "the premise of this test is gone"
+
+
+class TestEveryKnowableInputIsRefusedBeforeAWrite:
+    """The writer acts on its inputs in sequence, and the sequence is the trap.
+
+    `feature_dim` is used by the export, which runs after `kg.json` is saved;
+    `min_phenotypes` is used to build eligible profiles, and its domain was only
+    checked later still, inside generation. Both were fully knowable before any
+    of it. A value rejected at the point of use leaves a workspace half written
+    by an input that was wrong from the start.
+
+    `feature_dim=0` is the case that makes this more than tidiness: `torch.randn`
+    accepts it and writes real tensors with no features in them. That workspace
+    passes every digest check and every verifier, and the model built from it
+    has nothing to read.
+    """
+
+    @staticmethod
+    def _demo_kg():
+        from scripts.setup_demo import build_demo_kg
+
+        return build_demo_kg()
+
+    @pytest.mark.parametrize(
+        "kwargs,message",
+        [
+            ({"feature_dim": 0}, "feature_dim must be >= 1"),
+            ({"feature_dim": -1}, "feature_dim must be >= 1"),
+            ({"feature_dim": 1.5}, "feature_dim must be an integer"),
+            ({"feature_dim": True}, "feature_dim must be an integer"),
+            ({"min_phenotypes": True}, "min_phenotypes must be an integer"),
+            ({"min_phenotypes": 1.5}, "min_phenotypes must be an integer"),
+            ({"min_phenotypes": 0}, "min_phenotypes must be >= 1"),
+            ({"min_phenotypes": -1}, "min_phenotypes must be >= 1"),
+        ],
+        ids=["dim-zero", "dim-negative", "dim-fractional", "dim-bool",
+             "min-bool", "min-fractional", "min-zero", "min-negative"],
+    )
+    def test_it_writes_nothing(self, tmp_path, kwargs, message):
+        from src.kg.workspace import (
+            SampleBudget,
+            WorkspaceRefusal,
+            write_workspace,
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        (workspace / "kg.json").write_bytes(b'{"pre-existing": true}')
+        before = {
+            p.name: (p.stat().st_mtime_ns, p.read_bytes())
+            for p in workspace.iterdir()
+        }
+
+        budget_kwargs = {k: v for k, v in kwargs.items() if k == "min_phenotypes"}
+        write_kwargs = {k: v for k, v in kwargs.items() if k != "min_phenotypes"}
+        with pytest.raises(WorkspaceRefusal, match=message):
+            write_workspace(
+                self._demo_kg(),
+                workspace,
+                samples=SampleBudget(
+                    num_train=20, num_val=5, val_disease_fraction=0.2,
+                    **budget_kwargs,
+                ),
+                **{"feature_dim": 8, **write_kwargs},
+            )
+
+        after = {
+            p.name: (p.stat().st_mtime_ns, p.read_bytes())
+            for p in workspace.iterdir()
+        }
+        assert after == before, "a refused input wrote into the workspace"
+
+    def test_a_graph_only_write_is_refused_on_feature_dim_too(self, tmp_path):
+        """No budgets means no phenotype floor to check, and the export still
+        happens — so the width still has to be right."""
+        from src.kg.workspace import WorkspaceRefusal, write_workspace
+
+        workspace = tmp_path / "never"
+        with pytest.raises(WorkspaceRefusal, match="feature_dim must be >= 1"):
+            write_workspace(self._demo_kg(), workspace, feature_dim=0)
+
+        assert not workspace.exists()
+
+    def test_the_rules_are_the_ones_the_later_stages_enforce(self):
+        """Imported, not restated. Two copies agree until one is extended."""
+        import src.kg.graph as graph
+        import src.kg.sample_generator as generator
+        import src.kg.workspace as workspace
+
+        assert workspace.validate_phenotype_count is generator.validate_phenotype_count
+        # The export enforces the same function the writer checks ahead of it.
+        source = Path(graph.__file__).read_text()
+        assert "validate_feature_dim(feature_dim)" in source

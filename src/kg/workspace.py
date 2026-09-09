@@ -38,6 +38,11 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
 
+from src.kg.sample_generator import (
+    validate_phenotype_count,
+    validate_sample_budgets,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,13 +61,17 @@ class SampleBudget(NamedTuple):
     min_phenotypes: int = 2
 
 
-class BudgetRefusal(ValueError):
-    """A budget this writer will not honour, raised before it writes anything.
+class WorkspaceRefusal(ValueError):
+    """An input this writer will not act on, raised before it writes anything.
 
     Distinct from a plain ``ValueError`` for one reason: a caller can say
     "nothing was written" and be right. Every other failure inside
     ``write_workspace`` can happen after the graph is on disk, so a caller that
     caught them all would be attaching a true sentence to a false claim.
+
+    It covers every input whose domain is knowable up front — the two budgets,
+    their coverage of the allocation, the phenotype floor that decides
+    eligibility, and the feature width the export uses.
     """
 
 
@@ -86,7 +95,7 @@ def require_budget_coverage(
         (num_val, allocation.val, val_label),
     ):
         if budget < len(partition):
-            raise BudgetRefusal(
+            raise WorkspaceRefusal(
                 f"{label}={budget} cannot cover {len(partition)} allocated "
                 "diseases; every allocated disease must receive at least one "
                 "sample."
@@ -146,6 +155,26 @@ def write_workspace(
 
     workspace = Path(workspace)
 
+    # **Every input whose domain is knowable now is checked now.** Each of these
+    # is acted on before the one below it, and the last of them runs after
+    # `kg.json` is on disk -- so a value rejected at the point of use leaves a
+    # workspace half written by an input that was wrong from the start.
+    # `feature_dim` decides the export's tensor width; `min_phenotypes` decides
+    # which diseases are eligible and so the shape of the allocation itself. The
+    # rules are imported, not restated: `validate_feature_dim` is the one the
+    # export enforces and `validate_phenotype_count` is the one generation
+    # enforces, so neither can drift from what actually runs later.
+    from src.kg.graph import validate_feature_dim
+
+    try:
+        validate_feature_dim(feature_dim)
+        if samples is not None:
+            validate_phenotype_count(
+                "min_phenotypes", samples.min_phenotypes, 1
+            )
+    except ValueError as exc:
+        raise WorkspaceRefusal(str(exc)) from exc
+
     # **A workspace under trained checkpoints is not rewritable.** Rebuilding
     # the graph beneath them leaves those checkpoints paired with a graph they
     # were never trained on, and nothing in the checkpoint says so. Callers that
@@ -157,7 +186,6 @@ def write_workspace(
     allocation = None
     if samples is not None:
         from src.kg import allocate_diseases, build_eligible_disease_profiles
-        from src.kg.sample_generator import validate_sample_budgets
 
         # **The budgets' own domain, before an allocation is even cut.** The
         # same validator the generator uses, so the writer and the library
@@ -167,7 +195,7 @@ def write_workspace(
         try:
             validate_sample_budgets(samples.num_train, samples.num_val)
         except ValueError as exc:
-            raise BudgetRefusal(str(exc)) from exc
+            raise WorkspaceRefusal(str(exc)) from exc
 
         eligible = build_eligible_disease_profiles(
             kg, min_phenotypes=samples.min_phenotypes
@@ -222,7 +250,7 @@ def write_workspace(
 
 
 __all__ = [
-    "BudgetRefusal",
+    "WorkspaceRefusal",
     "SampleBudget",
     "WorkspaceWrite",
     "require_budget_coverage",

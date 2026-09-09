@@ -49,6 +49,26 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # Knowledge Graph
 # ==============================================================================
+def validate_feature_dim(value: Any) -> None:
+    """The width of the node feature vectors this export writes.
+
+    **Zero is the case that makes this necessary.** A negative width raises and
+    a fractional one raises, both loudly and both after `kg.json` is already on
+    disk — but ``feature_dim=0`` is accepted by ``torch.randn`` and produces
+    real tensors with no features in them. That workspace passes every digest
+    check and every verifier, and the model built from it has nothing to read.
+    An error that arrives at training time, from a workspace that looks correct,
+    is the expensive kind.
+
+    ``True`` is refused for the same reason it is refused elsewhere: it is an
+    ``int``, and a one-wide feature vector is not what the caller meant.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"feature_dim must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"feature_dim must be >= 1, got {value}")
+
+
 class KnowledgeGraph:
     """
     Heterogeneous Knowledge Graph
@@ -503,6 +523,7 @@ class KnowledgeGraph:
         Returns:
             Dict with keys "x_dict", "edge_index_dict", "num_nodes_dict".
         """
+        validate_feature_dim(feature_dim)
         try:
             import torch
         except ImportError:
