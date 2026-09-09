@@ -489,10 +489,26 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
         assert cohorts.disjointness_measured and cohorts.disjointness_claim_checked
         overlap = cohorts.disease_sets["train"] & cohorts.disease_sets["val"]
         assert not overlap, "the cohorts share a disease"
+        # **The cross-machine control.** The demo graph is written out in
+        # Python, so it is the same input everywhere — unlike a real build,
+        # whose MONDO vintage differs between two sites deployed days apart.
+        # Recording every file's digest here is what lets two reports isolate
+        # the machine from the data: identical inputs, and the only remaining
+        # variables are the architecture and the library versions.
+        #
+        # The open question it answers is whether a seeded `torch.Generator`
+        # draws the same bytes on two architectures. Nothing in this project
+        # asserts that it does; this measures it.
+        from src.utils.fingerprint import file_sha256
+
         return "every verifier accepted it", {
             # Counts and digests only: per-disease lists are forbidden in
             # evidence artifacts, and the identifiers are what those lists are.
             "kg_digest": digests["kg"],
+            "workspace_digests": {
+                path.name: file_sha256(path)
+                for path in sorted(sound.iterdir()) if path.is_file()
+            },
             "train_diseases": len(cohorts.disease_sets["train"]),
             "val_diseases": len(cohorts.disease_sets["val"]),
             "disease_overlap": len(overlap),
