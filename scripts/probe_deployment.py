@@ -974,23 +974,22 @@ def phase_real_build(
         "F1", "real_build", "a real workspace builds and verifies here", _build
     )
 
-    def _rebuild_is_the_same_graph() -> Tuple[str, Dict[str, Any]]:
-        """Two builds from the same annotation files, compared.
+    def _rebuild_is_the_same_workspace() -> Tuple[str, Dict[str, Any]]:
+        """Two builds from the same annotation files, compared file by file.
 
         **The manifest scheme rests on this and nothing tested it.** A digest
         binds artifacts to a production event; if the same inputs produced a
-        different graph each time, a digest would identify a run rather than a
-        graph, and comparing two workspaces would be meaningless.
+        different workspace each time, a digest would identify a run rather than
+        a graph, and two sites could not confirm they held the same one.
 
-        The three tensors are a different matter and are expected to differ:
-        `export_graph_data` initialises node features with `torch.randn` and no
-        seed, so they are new random values on every build. That is why a
-        workspace is copied rather than rebuilt — the identical `kg.json` digest
-        is what proves two copies were cut from the same graph. Recorded rather
-        than asserted, because "these differ" is a claim about randomness.
+        All seven files, not the four graph artifacts. The first version of this
+        probe checked only those, which would have called a workspace reproduced
+        while its cohorts were not — and the cohorts are what a measurement is
+        taken over. The digests are recorded so two reports from two machines
+        can be compared directly, which is the cross-site claim this exists for
+        and which one machine cannot settle.
         """
         from scripts.build_knowledge_graph import build_knowledge_graph
-        from src.kg.artifacts import GRAPH_ARTIFACTS
         from src.utils.fingerprint import file_sha256
 
         first = work / "real_workspace"
@@ -1002,29 +1001,31 @@ def phase_real_build(
             generate_samples=True, num_train=num_train, num_val=num_val,
             val_disease_fraction=0.15, sample_seed=SEED,
         )
-        digests = {
-            role: (
-                file_sha256(first / filename) == file_sha256(second / filename)
-            )
-            for role, filename in GRAPH_ARTIFACTS.items()
-        }
-        assert digests["kg"], (
-            "two builds from the same annotation files produced different "
-            "graphs: a digest would then identify a run rather than a graph"
+        names = sorted(path.name for path in first.iterdir() if path.is_file())
+        digests = {name: file_sha256(first / name) for name in names}
+        differing = sorted(
+            name for name in names
+            if file_sha256(second / name) != digests[name]
         )
-        return "the same inputs produced the same graph", {
-            "artifacts_reproduced": {
-                role: matched for role, matched in sorted(digests.items())
-            },
-            "tensors_are_seeded": all(
-                digests[role] for role in
-                ("node_features", "edge_indices", "num_nodes")
-            ),
+        missing = sorted(
+            name for name in names if not (second / name).exists()
+        )
+        assert not missing, f"the second build did not write {missing}"
+        assert not differing, (
+            f"two builds from the same annotation files differ in {differing}: "
+            "a digest would then identify a run rather than a workspace"
+        )
+        return "the same inputs produced the same workspace", {
+            "files_compared": len(names),
+            # Recorded so a report from another machine can be diffed against
+            # this one without rebuilding anything.
+            "digests": digests,
         }
 
     report.run(
         "F2", "real_build",
-        "the same annotation files produce the same graph", _rebuild_is_the_same_graph,
+        "the same annotation files produce the same workspace",
+        _rebuild_is_the_same_workspace,
     )
 
 

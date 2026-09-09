@@ -38,6 +38,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
 
+from src.kg.graph import DEFAULT_FEATURE_SEED
 from src.kg.sample_generator import (
     validate_phenotype_count,
     validate_sample_budgets,
@@ -117,6 +118,7 @@ def write_workspace(
     workspace: Path,
     *,
     feature_dim: int = 128,
+    feature_seed: int = DEFAULT_FEATURE_SEED,
     samples: Optional[SampleBudget] = None,
     train_label: str = "num_train",
     val_label: str = "num_val",
@@ -128,6 +130,11 @@ def write_workspace(
             it; the caller owns what goes into the graph.
         workspace: the directory to write. Created if absent.
         feature_dim: node feature width for the export.
+        feature_seed: the seed the node features are drawn from. Fixed by
+            default so a rebuild reproduces the workspace; name another to get a
+            different initialisation. Unrelated to `samples.seed`, which cuts the
+            allocation — independent streams, so changing one cannot move the
+            other.
         samples: when given, cut an allocation and generate cohorts with a
             `split_manifest.json`. When omitted, only the graph is written.
             That is a real mode, not a broken one — `compute_shortest_paths.py`
@@ -165,10 +172,11 @@ def write_workspace(
     # export enforces and `validate_phenotype_count` is the one generation
     # enforces, so neither can drift from what actually runs later.
     from src.kg.disease_allocation import validate_allocation_seed
-    from src.kg.graph import validate_feature_dim
+    from src.kg.graph import validate_feature_dim, validate_feature_seed
 
     try:
         validate_feature_dim(feature_dim)
+        validate_feature_seed(feature_seed)
         if samples is not None:
             validate_phenotype_count("min_phenotypes", samples.min_phenotypes, 1)
             # **The seed is provenance, not only randomness.** `derive_stream`
@@ -230,7 +238,9 @@ def write_workspace(
     kg.save_json(str(kg_path))
     logger.info("KG saved to %s", kg_path)
 
-    kg.export_graph_data(output_dir=workspace, feature_dim=feature_dim)
+    kg.export_graph_data(
+        output_dir=workspace, feature_dim=feature_dim, feature_seed=feature_seed
+    )
     logger.info("Graph data exported to %s (feature_dim=%d)", workspace, feature_dim)
 
     graph_digests = {
