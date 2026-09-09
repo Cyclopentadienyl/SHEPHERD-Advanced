@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,16 @@ class SampleBudget(NamedTuple):
     val_disease_fraction: float = 0.15
     seed: int = 42
     min_phenotypes: int = 2
+
+
+class BudgetRefusal(ValueError):
+    """A budget this writer will not honour, raised before it writes anything.
+
+    Distinct from a plain ``ValueError`` for one reason: a caller can say
+    "nothing was written" and be right. Every other failure inside
+    ``write_workspace`` can happen after the graph is on disk, so a caller that
+    caught them all would be attaching a true sentence to a false claim.
+    """
 
 
 def require_budget_coverage(
@@ -76,7 +86,7 @@ def require_budget_coverage(
         (num_val, allocation.val, val_label),
     ):
         if budget < len(partition):
-            raise ValueError(
+            raise BudgetRefusal(
                 f"{label}={budget} cannot cover {len(partition)} allocated "
                 "diseases; every allocated disease must receive at least one "
                 "sample."
@@ -99,7 +109,8 @@ def write_workspace(
     *,
     feature_dim: int = 128,
     samples: Optional[SampleBudget] = None,
-    preflight: Optional[Callable[[Any], None]] = None,
+    train_label: str = "num_train",
+    val_label: str = "num_val",
 ) -> WorkspaceWrite:
     """Write `kg.json`, the graph tensors, and — when asked — bound cohorts.
 
@@ -118,11 +129,13 @@ def write_workspace(
             again with budgets, not adding a manifest to what is already there:
             only the writer that exported the tensors can vouch for their
             digests.
-        preflight: called with the allocation once it is cut and **before any
-            byte is written**, for caller-specific wording or additional policy.
-            It is never the only check: this function validates the budgets'
-            domain before allocating and their coverage before writing, so a
-            caller that passes none gets the same refusals in library terms.
+        train_label / val_label: what to call the two budgets when refusing
+            them. **The vocabulary is the only part a caller supplies**; the
+            checks themselves are unconditional and belong here. This replaced a
+            `preflight` callback that carried the refusal for its caller: once
+            the writer's own check became authoritative and therefore had to run
+            first, the callback could no longer produce the message an operator
+            needed, and a hook with no remaining job is worse than none.
 
     Returns:
         The digests, the allocation, both cohorts and the manifest.
@@ -151,7 +164,10 @@ def write_workspace(
         # cannot disagree about what a budget is. A `True` or a large float used
         # to pass every comparison below it and be caught only by the generator,
         # with the graph already on disk.
-        validate_sample_budgets(samples.num_train, samples.num_val)
+        try:
+            validate_sample_budgets(samples.num_train, samples.num_val)
+        except ValueError as exc:
+            raise BudgetRefusal(str(exc)) from exc
 
         eligible = build_eligible_disease_profiles(
             kg, min_phenotypes=samples.min_phenotypes
@@ -159,12 +175,13 @@ def write_workspace(
         allocation = allocate_diseases(
             eligible, samples.val_disease_fraction, seed=samples.seed
         )
-        # Coverage needs the partition sizes, so it cannot run earlier than this
-        # -- but it still runs before the first byte. A caller's `preflight` may
-        # refuse first with a better message; this is what holds when none does.
-        if preflight is not None:
-            preflight(allocation)
-        require_budget_coverage(samples.num_train, samples.num_val, allocation)
+        # Coverage needs the partition sizes, so it cannot run earlier than
+        # this -- but it still runs before the first byte, and nothing runs
+        # between it and the allocation it checks.
+        require_budget_coverage(
+            samples.num_train, samples.num_val, allocation,
+            train_label=train_label, val_label=val_label,
+        )
 
     # Every refusal is behind us; this is the first thing that exists afterwards.
     workspace.mkdir(parents=True, exist_ok=True)
@@ -205,6 +222,7 @@ def write_workspace(
 
 
 __all__ = [
+    "BudgetRefusal",
     "SampleBudget",
     "WorkspaceWrite",
     "require_budget_coverage",

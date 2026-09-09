@@ -35,7 +35,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -44,11 +44,7 @@ from src.core.types import DataSource, NodeType
 from src.kg.builder import KnowledgeGraphBuilder, KGBuilderConfig
 from src.data_sources.hpo_annotations import HPOAnnotationParser
 from src.ontology.loader import OntologyLoader
-from src.kg.workspace import (
-    SampleBudget,
-    require_budget_coverage,
-    write_workspace,
-)
+from src.kg.workspace import BudgetRefusal, SampleBudget, write_workspace
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,29 +80,6 @@ def require_usable_budgets(num_train: Optional[int], num_val: Optional[int]) -> 
         ) from exc
 
 
-def require_sufficient_budgets(
-    num_train: int, num_val: int, allocation: Any
-) -> None:
-    """Preflight phase two: are these budgets large enough?
-
-    Split from phase one because this is the half that *cannot* run early: the
-    partition sizes exist only once the graph has been built and cut. It still
-    runs before the first workspace write.
-
-    **The comparison belongs to the writer; this adds the flag names and the
-    exit convention of a command-line tool.** The writer enforces it too, and
-    would refuse this run on its own — but in library terms, naming an argument
-    an operator never typed.
-    """
-    try:
-        require_budget_coverage(
-            num_train, num_val, allocation,
-            train_label="--num-train", val_label="--num-val",
-        )
-    except ValueError as exc:
-        raise SystemExit(f"{exc} Nothing was written.") from exc
-
-
 def build_knowledge_graph(
     external_dir: Path,
     workspace: Path,
@@ -127,7 +100,11 @@ def build_knowledge_graph(
       3. phenotype.hpoa (phenotype-disease edges)
       4. genes_to_phenotype.txt (gene nodes + gene-phenotype/gene-disease edges)
     """
-    workspace.mkdir(parents=True, exist_ok=True)
+    # **Not created here.** Every refusal below this line -- checkpoints already
+    # present, budgets out of domain or too small, annotation files missing --
+    # happens before anything is written, and an empty directory left behind by
+    # one of them is a small lie about what the run did. The writer creates it,
+    # immediately before the first file goes into it.
     t0 = time.time()
 
     # **Refuse before the first byte, not before the last.** The generator
@@ -222,31 +199,36 @@ def build_knowledge_graph(
     # **One writer produces a workspace, and this is a call to it.** Allocate,
     # refuse, write, digest, generate — that ordering is what binds the six
     # artifacts into one production event, and it lives in `src.kg.workspace`
-    # so this script is not the only place that knows it. `preflight` is where
-    # a refusal decidable from the allocation alone lands: before the first
-    # workspace byte, in this tool's own vocabulary. The superseded ordering
-    # wrote the graph and only then discovered the budgets were too small,
-    # leaving a rebuilt graph beside stale samples.
-    written = write_workspace(
-        kg,
-        workspace,
-        feature_dim=feature_dim,
-        samples=(
-            SampleBudget(
-                num_train=num_train,
-                num_val=num_val,
-                val_disease_fraction=val_disease_fraction,
-                seed=sample_seed,
-            )
-            if generate_samples
-            else None
-        ),
-        preflight=(
-            (lambda alloc: require_sufficient_budgets(num_train, num_val, alloc))
-            if generate_samples
-            else None
-        ),
-    )
+    # so this script is not the only place that knows it. The refusals that are
+    # decidable before the first workspace byte are the writer's, and this tool
+    # supplies only the names its operator typed. The superseded ordering wrote
+    # the graph and only then discovered the budgets were too small, leaving a
+    # rebuilt graph beside stale samples.
+    try:
+        written = write_workspace(
+            kg,
+            workspace,
+            feature_dim=feature_dim,
+            samples=(
+                SampleBudget(
+                    num_train=num_train,
+                    num_val=num_val,
+                    val_disease_fraction=val_disease_fraction,
+                    seed=sample_seed,
+                )
+                if generate_samples
+                else None
+            ),
+            train_label="--num-train",
+            val_label="--num-val",
+        )
+    except BudgetRefusal as exc:
+        # **Only this exception, and that is the point.** `BudgetRefusal` is
+        # raised before the writer touches the workspace, so "Nothing was
+        # written" is true by construction. Catching `ValueError` broadly would
+        # attach the same sentence to failures that happen after the graph is
+        # already on disk.
+        raise SystemExit(f"{exc} Nothing was written.") from exc
     kg_path = workspace / "kg.json"
     train_samples, val_samples = written.train_samples, written.val_samples
 

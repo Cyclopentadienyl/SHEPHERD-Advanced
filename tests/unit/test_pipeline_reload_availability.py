@@ -23,6 +23,7 @@ Module: tests/unit/test_pipeline_reload_availability.py
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -412,3 +413,185 @@ def test_publication_formats_nothing_after_it_has_assigned(monkeypatch, tmp_path
     assert api.app_state.pipeline is None, "published, then failed to announce it"
     assert api.app_state.kg is None
     assert api.app_state.model_version == "unknown"
+
+
+# --------------------------------------------------------------------------
+# The encoding boundary, on both paths
+# --------------------------------------------------------------------------
+class TestNothingLeavesThisEndpointUnencodable:
+    """`checkpoint_meta` is `Dict[str, Any]`, and its values come from a
+    checkpoint's `logs` -- whatever the trainer put there.
+
+    The realistic hazard is not `object()`. It is a metric recorded as
+    `loss.detach()` rather than `loss.item()`, which is a zero-dimensional
+    tensor: a training detail that becomes a serving failure at the HTTP
+    boundary, after the endpoint has returned.
+    """
+
+    def test_a_metric_recorded_as_a_tensor_is_normalised_at_the_source(self):
+        from fastapi.encoders import jsonable_encoder
+
+        from src.api.routes.pipeline import PipelineStatusResponse
+        from src.inference.pipeline import _as_int, _as_metric
+
+        torch = pytest.importorskip("torch")
+
+        assert _as_metric(torch.tensor(0.25)) == pytest.approx(0.25)
+        assert isinstance(_as_metric(torch.tensor(0.25)), float)
+        assert _as_int(torch.tensor(7)) == 7
+        # Not one number, so there is nothing to report about it.
+        assert _as_metric(torch.tensor([1.0, 2.0])) is None
+        # Not valid JSON, but a fact about the run worth keeping.
+        assert _as_metric(float("nan")) == "nan"
+
+        jsonable_encoder(
+            PipelineStatusResponse(
+                initialized=True,
+                checkpoint_meta={"val_loss": _as_metric(torch.tensor(0.25))},
+            )
+        )
+
+    def test_a_raw_tensor_that_reached_the_boundary_anyway_is_refused(
+        self, monkeypatch, tmp_path
+    ):
+        """Normalising at the source is the fix; the encoder before publication
+        is the guard that holds when a value gets past it by another route."""
+        import src.inference.pipeline as pipeline
+
+        torch = pytest.importorskip("torch")
+
+        api, before = _serving(monkeypatch)
+        root, _ = _candidate_workspace(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline,
+            "get_pipeline_config",
+            lambda self: dict(
+                CANDIDATE_CONFIG, checkpoint_meta={"val_loss": torch.tensor(0.25)}
+            ),
+        )
+
+        result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
+
+        assert result.success is False
+        assert "cannot be reported" in result.message
+        _assert_untouched(api, before)
+
+    @pytest.mark.parametrize(
+        "case",
+        ["missing_files", "bad_conv_type", "no_checkpoint", "bad_workspace"],
+    )
+    def test_every_refusal_crosses_the_encoder_before_it_is_returned(
+        self, monkeypatch, tmp_path, case
+    ):
+        """A refusal that cannot be serialised becomes a 500 -- reporting a crash
+        for a request that correctly declined to act."""
+        from fastapi.encoders import jsonable_encoder
+
+        _serving(monkeypatch)
+        kwargs = {}
+        if case == "missing_files":
+            empty = tmp_path / "empty"
+            empty.mkdir()
+            kwargs["data_dir"] = str(empty)
+        else:
+            root, _ = _candidate_workspace(monkeypatch, tmp_path)
+            kwargs["data_dir"] = str(root)
+            if case == "bad_conv_type":
+                kwargs["conv_type"] = "nonsense"
+            elif case == "bad_workspace":
+                (root / "node_features.pt").write_bytes(b"another workspace")
+                kwargs["checkpoint_path"] = str(root / "ckpt.pt")
+
+        result = _reload(**kwargs)
+
+        assert result.success is False
+        jsonable_encoder(result)
+
+    def test_a_live_pipeline_that_cannot_be_described_still_gets_a_refusal(
+        self, monkeypatch, tmp_path
+    ):
+        """The fallback. `_live_status` reads the *running* pipeline's config,
+        which is arbitrary too, so the refusal path can fail on state this
+        request never touched. It still has to answer."""
+        from fastapi.encoders import jsonable_encoder
+
+        import src.api.main as api
+
+        class _Undescribable:
+            def get_pipeline_config(self):
+                return {"checkpoint_meta": {"x": object()}}
+
+        monkeypatch.setattr(api.app_state, "pipeline", _Undescribable(), raising=False)
+        monkeypatch.setattr(api.app_state, "_current_data_dir", "/served", raising=False)
+        empty = tmp_path / "empty"
+        empty.mkdir()
+
+        result = _reload(data_dir=str(empty))
+
+        assert result.success is False
+        assert "Missing required files" in result.message
+        assert "could not be rendered" in result.message
+        assert result.status.initialized is True, "a pipeline is serving; say so"
+        jsonable_encoder(result)
+
+
+def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path):
+    """The point of normalising at the source is that such a checkpoint *works*.
+
+    The encoder before publication would refuse it, which keeps the service
+    safe and makes every reload of a perfectly good checkpoint fail. A metric
+    written as `loss.detach()` is a training-side slip, not a reason to decline
+    to serve a trained model.
+    """
+    torch = pytest.importorskip("torch")
+
+    from src.inference.pipeline import DiagnosisPipeline
+    from src.kg.graph import KnowledgeGraph
+    from tests.fixtures.synthetic_workspace import build_workspace
+
+    data_dir, checkpoint_path = build_workspace(tmp_path)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint["epoch"] = torch.tensor(3)
+    checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "mrr": torch.tensor(0.5)}
+    torch.save(checkpoint, checkpoint_path)
+
+    graph_data = {
+        "x_dict": torch.load(data_dir / "node_features.pt", weights_only=False),
+        "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=False),
+        "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
+    }
+    pipeline = DiagnosisPipeline(
+        kg=KnowledgeGraph(),
+        graph_data=graph_data,
+        checkpoint_path=str(checkpoint_path),
+        device="cpu",
+    )
+
+    meta = pipeline.get_pipeline_config()["checkpoint_meta"]
+    assert meta["epoch"] == 3 and isinstance(meta["epoch"], int)
+    assert meta["val_loss"] == pytest.approx(0.25)
+    assert isinstance(meta["val_loss"], float)
+    assert isinstance(meta["params"], int)
+    from fastapi.encoders import jsonable_encoder
+
+    from src.api.routes.pipeline import _status_of
+
+    jsonable_encoder(_status_of(pipeline.get_pipeline_config(), None, None))
+
+
+def test_a_workspace_without_a_manifest_is_named_in_the_file_report(
+    monkeypatch, tmp_path
+):
+    """It was always going to be refused -- reload builds a file-backed pipeline
+    -- but the refusal arrived from inside the build, with a longer story. The
+    file report is where an operator looks for what is missing."""
+    api, before = _serving(monkeypatch)
+    root, _ = _candidate_workspace(monkeypatch, tmp_path)
+    (root / "split_manifest.json").unlink()
+
+    result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
+
+    assert result.success is False
+    assert "split_manifest.json" in result.message
+    assert result.files_found["split_manifest.json"] is False
+    _assert_untouched(api, before)

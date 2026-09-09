@@ -40,9 +40,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # object that has one.
 #
 # Measured, not assumed. Injecting each form into `scripts/setup_demo.py`:
-#   a direct persisting call        -> caught
-#   a direct in-memory call         -> allowed, correctly
-#   the same call behind an alias   -> NOT caught
+#   a direct persisting call            -> caught
+#   a direct in-memory call             -> allowed, correctly
+#   the same call behind an alias       -> NOT caught
+#   output_dir passed positionally      -> NOT caught
 # So this is a guardrail over the operator-facing persisted producer, not a
 # sandbox. What it catches is the thing that actually happened three times: a
 # script growing its own copy of the writing sequence by copying the production
@@ -74,9 +75,16 @@ def _persisting_call_sites(path: Path):
     return lines
 
 
-def test_only_the_writer_persists_a_workspace():
-    """Shipped code, not tests: a test may compose the primitives to build a
-    fixture, but nothing an operator can run may write a manifest of its own."""
+def test_no_script_copies_the_persisting_call():
+    """A copy-paste regression guard, and only that.
+
+    It does not prove the writer is the only thing that can persist a workspace
+    — an alias or a positional `output_dir` walks past it, both measured above.
+    What carries that claim in practice is the routing sentinels and the
+    end-to-end verifier tests below. This catches the specific thing that
+    happened three times: a script acquiring its own copy of the production
+    call.
+    """
     offenders = {}
     for directory in ("src", "scripts"):
         for path in sorted((PROJECT_ROOT / directory).rglob("*.py")):
@@ -87,9 +95,10 @@ def test_only_the_writer_persists_a_workspace():
                 offenders[str(path.relative_to(PROJECT_ROOT))] = sites
 
     assert offenders == {}, (
-        f"a manifest is written outside src/kg/workspace.py: {offenders}. "
-        "Route it through write_workspace instead of composing the ordering "
-        "again -- that ordering is what binds the six artifacts into one event."
+        f"a copy of the persisting call appears outside src/kg/workspace.py: "
+        f"{offenders}. Route it through write_workspace instead of composing "
+        "the ordering again -- that ordering is what binds the six artifacts "
+        "into one production event."
     )
 
 
@@ -408,3 +417,96 @@ class TestAGraphOnlyBuildSaysWhatItIs:
 
         assert "train_model.py" in out
         assert "CANNOT be trained on" not in out
+
+
+class TestTheRefusalOrderHasNoHookInIt:
+    """There is no callback left to run before the writer's own check.
+
+    The reviewed shape ran an optional caller hook between the allocation and
+    the writer's coverage check. Making the writer's check authoritative meant
+    moving it in front of that hook -- at which point the hook could no longer
+    produce the message an operator needed, because the writer would already
+    have refused. A parameter with no remaining job is worse than no parameter,
+    so the vocabulary moved into the writer and the hook went away.
+
+    What replaces "the hook cannot mask the check" is stronger: nothing runs
+    between the allocation and the check at all.
+    """
+
+    def test_the_writer_takes_no_callback(self):
+        import inspect
+
+        from src.kg.workspace import write_workspace
+
+        parameters = inspect.signature(write_workspace).parameters
+        assert "preflight" not in parameters
+        assert {"train_label", "val_label"} <= set(parameters)
+
+    def test_the_refusal_speaks_the_caller_s_vocabulary(self, tmp_path):
+        """What the hook existed for, without the hook: an operator sees the
+        flag they typed, and the check that produced it is the writer's."""
+        from scripts.setup_demo import build_demo_kg
+        from src.kg.workspace import BudgetRefusal, SampleBudget, write_workspace
+
+        with pytest.raises(BudgetRefusal, match=r"--num-val=0 cannot cover"):
+            write_workspace(
+                build_demo_kg(), tmp_path / "ws", feature_dim=8,
+                samples=SampleBudget(num_train=50, num_val=0,
+                                     val_disease_fraction=0.2),
+                train_label="--num-train", val_label="--num-val",
+            )
+        assert not (tmp_path / "ws").exists()
+
+    def test_the_production_build_reports_it_with_its_own_flags(
+        self, monkeypatch, tmp_path
+    ):
+        """End to end through the real entry point, which is where the previous
+        shape's message actually mattered."""
+        from tests.unit.test_data_pipeline import (
+            TestBuildPathOrdering,
+            _wide_kg_object,
+        )
+
+        build = TestBuildPathOrdering._stub_build_stages(monkeypatch, _wide_kg_object())
+        TestBuildPathOrdering._satisfy_input_validation(tmp_path)
+
+        with pytest.raises(SystemExit) as excinfo:
+            build.build_knowledge_graph(
+                external_dir=tmp_path, workspace=tmp_path / "ws",
+                generate_samples=True, num_train=1, num_val=1,
+            )
+        message = str(excinfo.value)
+        assert "--num-train=1 cannot cover" in message
+        assert "Nothing was written" in message
+        assert not (tmp_path / "ws").exists()
+
+
+def test_a_failure_after_the_graph_is_written_is_not_called_unwritten(
+    monkeypatch, tmp_path
+):
+    """"Nothing was written" has to be true when the build says it.
+
+    `BudgetRefusal` is raised only before the writer touches the workspace, so
+    catching it and adding that sentence is sound. Catching `ValueError` broadly
+    would attach the same sentence to a generator failure, which happens with
+    `kg.json` and three tensors already on disk.
+    """
+    import src.kg.sample_generator as generator
+    from tests.unit.test_data_pipeline import TestBuildPathOrdering, _wide_kg_object
+
+    build = TestBuildPathOrdering._stub_build_stages(monkeypatch, _wide_kg_object())
+    TestBuildPathOrdering._satisfy_input_validation(tmp_path)
+    workspace = tmp_path / "ws"
+
+    def _fail_after_the_graph(*args, **kwargs):
+        raise ValueError("the generator refused, and the graph is already there")
+
+    monkeypatch.setattr(generator, "generate_training_samples", _fail_after_the_graph)
+
+    with pytest.raises(ValueError, match="already there"):
+        build.build_knowledge_graph(
+            external_dir=tmp_path, workspace=workspace,
+            generate_samples=True, num_train=60, num_val=20,
+        )
+
+    assert (workspace / "kg.json").exists(), "the premise of this test is gone"

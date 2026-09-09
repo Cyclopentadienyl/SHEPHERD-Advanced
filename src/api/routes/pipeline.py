@@ -100,11 +100,16 @@ class UIConfigResponse(BaseModel):
 # =============================================================================
 # File completeness check
 # =============================================================================
+# **The manifest belongs here.** Reload builds a file-backed pipeline, which
+# refuses a workspace whose artifacts nothing records — so a directory without
+# one was always going to be rejected, just later and with a longer story. Listed
+# as required, the operator's file report names the missing piece directly.
 REQUIRED_DATA_FILES = [
     "kg.json",
     "node_features.pt",
     "edge_indices.pt",
     "num_nodes.json",
+    "split_manifest.json",
 ]
 OPTIONAL_DATA_FILES = [
     "shortest_paths.pt",
@@ -216,6 +221,41 @@ def _live_status() -> PipelineStatusResponse:
     )
 
 
+def _refused(message: str, files: Dict[str, Any], **extra: Any) -> PipelineReloadResponse:
+    """A refused reload, built so it can actually reach the client.
+
+    **The live pipeline's configuration is arbitrary too.** `_live_status` reads
+    it from whatever is currently loaded, and a value no encoder can serialise
+    there would turn a refusal into a 500 after this endpoint had returned —
+    reporting a crash for a request that correctly declined to do anything. So
+    the refusal crosses the encoder here, and falls back to a status built from
+    nothing but primitives if it cannot.
+
+    The fallback still answers the question that matters: `initialized` says
+    whether a pipeline is serving, which is a boolean read off application
+    state and cannot fail to encode.
+    """
+    from src.api.main import app_state
+
+    try:
+        response = PipelineReloadResponse(
+            success=False, message=message, status=_live_status(),
+            files_found=files, **extra,
+        )
+        jsonable_encoder(response)
+        return response
+    except Exception as exc:  # noqa: BLE001 — a refusal must still be deliverable
+        logger.error("The live pipeline's status could not be reported: %s", exc)
+        return PipelineReloadResponse(
+            success=False,
+            message=f"{message} (the running pipeline's status could not be "
+            f"rendered: {exc})",
+            status=PipelineStatusResponse(initialized=app_state.pipeline is not None),
+            files_found=files,
+            **extra,
+        )
+
+
 @router.get("/pipeline/status", response_model=PipelineStatusResponse)
 async def get_pipeline_status() -> PipelineStatusResponse:
     """Get current pipeline status."""
@@ -239,11 +279,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
 
     missing_required = [f for f in REQUIRED_DATA_FILES if not files.get(f, False)]
     if missing_required:
-        return PipelineReloadResponse(
-            success=False,
-            message=f"Missing required files in {data_dir}: {missing_required}",
-            status=_live_status(),
-            files_found=files,
+        return _refused(
+            f"Missing required files in {data_dir}: {missing_required}", files
         )
 
     # Resolve which checkpoint to serve, from the architecture-scoped layout
@@ -287,12 +324,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             try:
                 architecture = normalize_conv_type(requested_conv)
             except ValueError as exc:
-                return PipelineReloadResponse(
-                    success=False,
-                    message=str(exc),
-                    status=_live_status(),
-                    files_found=files,
-                    selection_reason="invalid conv_type",
+                return _refused(
+                    str(exc), files, selection_reason="invalid conv_type"
                 )
             selected = select_checkpoint_in_dir(base / architecture, score_fn=_checkpoint_score)
             selection_reason = f"architecture '{architecture}'"
@@ -325,13 +358,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             )
         else:
             hint = "Train a model or pass an explicit checkpoint_path."
-        return PipelineReloadResponse(
-            success=False,
-            message=f"No checkpoint found ({selection_reason}). {hint}",
-            status=_live_status(),
-            files_found=files,
-            architecture=architecture,
-            selection_reason=selection_reason,
+        return _refused(
+            f"No checkpoint found ({selection_reason}). {hint}", files,
+            architecture=architecture, selection_reason=selection_reason,
         )
 
     # Derive kg_path from data_dir
@@ -362,20 +391,14 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         )
     except Exception as e:
         logger.error(f"Pipeline reload failed: {e}")
-        return PipelineReloadResponse(
-            success=False,
-            message=f"Pipeline initialization failed: {e}.{_still_serving()}",
-            status=_live_status(),
-            files_found=files,
+        return _refused(
+            f"Pipeline initialization failed: {e}.{_still_serving()}", files
         )
 
     if candidate is None:
-        return PipelineReloadResponse(
-            success=False,
-            message=f"No pipeline could be built from {data_dir}. "
-            f"Check server logs.{_still_serving()}",
-            status=_live_status(),
-            files_found=files,
+        return _refused(
+            f"No pipeline could be built from {data_dir}. "
+            f"Check server logs.{_still_serving()}", files
         )
 
     # **The whole response is built, validated and encoded before anything is
@@ -413,12 +436,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         # Reported as a refused reload rather than a 500, because that is what it
         # is: a candidate this service cannot describe is one it should not serve.
         logger.error(f"Pipeline reload rejected while rendering its response: {e}")
-        return PipelineReloadResponse(
-            success=False,
-            message=f"Pipeline built but its configuration cannot be reported: {e}."
-            f"{_still_serving()}",
-            status=_live_status(),
-            files_found=files,
+        return _refused(
+            f"Pipeline built but its configuration cannot be reported: {e}."
+            f"{_still_serving()}", files
         )
 
     publish_pipeline(candidate)

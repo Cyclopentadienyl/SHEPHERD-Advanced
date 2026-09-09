@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -180,6 +181,34 @@ class ValidationResult:
 # ==============================================================================
 # Diagnosis Pipeline
 # ==============================================================================
+def _as_int(value: Any) -> Optional[int]:
+    """One integer, or ``None`` if the value is not one.
+
+    Accepts what a trainer plausibly writes -- a Python int, a numpy integer, a
+    zero-dimensional tensor -- and refuses anything that is not a single number,
+    rather than passing it on to be discovered by a JSON encoder.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_metric(value: Any) -> Optional[Union[float, str]]:
+    """One metric value, as a float where that is what it is.
+
+    A non-finite metric is kept as its name rather than dropped: a `nan`
+    validation loss is a fact about the run worth showing, and `NaN` is not
+    valid JSON. Values that are not numbers at all are dropped, because there is
+    nothing to say about them that the key's absence does not already say.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else str(number)
+
+
 class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
@@ -646,10 +675,19 @@ class DiagnosisPipeline:
             logger.error(f"Failed to build model from {ckpt_path}: {exc}")
             return None
 
-        # Store checkpoint training metadata for UI display
+        # Store checkpoint training metadata for UI display.
+        #
+        # **Normalised to JSON primitives here, at the only place that knows what
+        # these values are.** A checkpoint's `logs` are whatever the trainer put
+        # there, and a metric recorded as `loss.detach()` rather than
+        # `loss.item()` is a zero-dimensional tensor. It reaches the API through
+        # `checkpoint_meta`, which is `Dict[str, Any]` and so accepts it, and
+        # fails where the response is encoded -- a serving concern created by a
+        # training detail, discovered at the HTTP boundary. Converting at the
+        # source is what keeps the boundary a formality.
         self._checkpoint_meta = {
-            "epoch": checkpoint.get("epoch"),
-            "params": sum(p.numel() for p in model.parameters()),
+            "epoch": _as_int(checkpoint.get("epoch")),
+            "params": int(sum(p.numel() for p in model.parameters())),
             "device": str(device) if device else "cpu",
         }
         # Extract best metrics from logs if available
@@ -657,7 +695,9 @@ class DiagnosisPipeline:
         if isinstance(logs, dict):
             for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
                 if key in logs:
-                    self._checkpoint_meta[key] = logs[key]
+                    metric = _as_metric(logs[key])
+                    if metric is not None:
+                        self._checkpoint_meta[key] = metric
 
         # Move to device
         if device is None:

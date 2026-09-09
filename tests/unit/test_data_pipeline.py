@@ -1172,35 +1172,46 @@ class TestBudgetPreflight:
             (workspace / name).write_bytes(data)
         return payload
 
-    def test_a_budget_too_small_for_its_partition_is_refused_before_writing(self):
-        """`_generate_partition` refuses too, but only after the graph is saved."""
-        import scripts.build_knowledge_graph as build
-
-        allocation = allocate_diseases(
+    @staticmethod
+    def _allocation():
+        return allocate_diseases(
             build_eligible_disease_profiles(_wide_kg_object(), 2), 0.2, seed=42
         )
-        with pytest.raises(SystemExit, match="cannot cover"):
-            build.require_sufficient_budgets(1, 999, allocation)
-        with pytest.raises(SystemExit, match="--num-val"):
-            build.require_sufficient_budgets(999, 0, allocation)
+
+    def test_a_budget_too_small_for_its_partition_is_refused(self):
+        """`_generate_partition` refuses too, but only after the graph is saved.
+
+        The comparison lives in the writer, which is what runs it before the
+        first byte; the script supplies the flag names its operator typed.
+        """
+        from src.kg.workspace import BudgetRefusal, require_budget_coverage
+
+        allocation = self._allocation()
+        with pytest.raises(BudgetRefusal, match="cannot cover"):
+            require_budget_coverage(1, 999, allocation)
+        with pytest.raises(BudgetRefusal, match="--num-val"):
+            require_budget_coverage(
+                999, 0, allocation,
+                train_label="--num-train", val_label="--num-val",
+            )
 
     def test_sufficient_budgets_pass(self):
-        import scripts.build_knowledge_graph as build
+        from src.kg.workspace import require_budget_coverage
 
-        allocation = allocate_diseases(
-            build_eligible_disease_profiles(_wide_kg_object(), 2), 0.2, seed=42
+        allocation = self._allocation()
+        require_budget_coverage(
+            len(allocation.train), len(allocation.val), allocation
         )
-        build.require_sufficient_budgets(len(allocation.train), len(allocation.val), allocation)
 
-    def test_the_refusal_states_that_nothing_was_written(self):
-        import scripts.build_knowledge_graph as build
+    def test_the_refusal_is_the_kind_a_caller_may_call_unwritten(self):
+        """`BudgetRefusal` is what lets the build say "Nothing was written" and
+        be right: every other failure in the writer can happen after the graph
+        is on disk."""
+        from src.kg.workspace import BudgetRefusal, require_budget_coverage
 
-        allocation = allocate_diseases(
-            build_eligible_disease_profiles(_wide_kg_object(), 2), 0.2, seed=42
-        )
-        with pytest.raises(SystemExit) as excinfo:
-            build.require_sufficient_budgets(1, 1, allocation)
-        assert "Nothing was written" in str(excinfo.value)
+        with pytest.raises(BudgetRefusal):
+            require_budget_coverage(1, 1, self._allocation())
+        assert issubclass(BudgetRefusal, ValueError)
 
 
 @pytest.mark.parametrize(
