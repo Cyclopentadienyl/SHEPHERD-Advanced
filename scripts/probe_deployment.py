@@ -243,6 +243,72 @@ def phase_environment(report: Report, device: str) -> Dict[str, Any]:
         return f"serving device is {resolved}", collected
 
     report.run("A2", "environment", "the serving device resolves", _device)
+
+    def _arch_support() -> Tuple[str, Dict[str, Any]]:
+        """What this torch build can emit, against what this device is.
+
+        Facts, not a verdict. A device outside the build's range can still work
+        by JIT-compiling the build's PTX, and a device inside it can still be
+        broken. A4 is the verdict; this is what makes A4's result explicable.
+        """
+        import torch
+
+        if facts.get("resolved_device") != "cuda":
+            raise SkipProbe("no device to compare against")
+        arch_list = list(torch.cuda.get_arch_list())
+        capability = facts.get("capability", "")
+        native = f"sm_{capability.replace('.', '')}" in arch_list
+        ptx = [name for name in arch_list if name.startswith("compute_")]
+        collected = {
+            "arch_list": arch_list,
+            "device_capability": capability,
+            "natively_compiled_for_this_device": native,
+            "ptx_available": ptx,
+        }
+        facts.update({"cuda_arch_support": collected})
+        note = "built for this device" if native else (
+            "not built for this device; execution depends on PTX JIT"
+        )
+        return note, collected
+
+    report.run(
+        "A3", "environment",
+        "the build's architectures are recorded against this device", _arch_support,
+    )
+
+    def _kernel_runs() -> Tuple[str, Dict[str, Any]]:
+        """**Availability is not usability.** `torch.cuda.is_available()` is
+        true for a device this build has no kernel image for; the failure
+        arrives at the first launch. This launches one and checks the answer.
+        """
+        import torch
+
+        if facts.get("resolved_device") != "cuda":
+            raise SkipProbe("no device to execute on")
+        generator = torch.Generator(device="cpu").manual_seed(SEED)
+        left = torch.randn(256, 256, generator=generator)
+        right = torch.randn(256, 256, generator=generator)
+        expected = left @ right
+        observed = (left.cuda() @ right.cuda()).cpu()
+        assert torch.allclose(expected, observed, atol=1e-3), (
+            "a matrix product on the device disagreed with the same product on "
+            "the host: this build's kernels are not running correctly here"
+        )
+        index = torch.tensor([0, 1, 1, 2], device="cuda")
+        source = torch.tensor([1.0, 2.0, 3.0, 4.0], device="cuda")
+        gathered = torch.zeros(3, device="cuda").scatter_add_(0, index, source)
+        assert torch.allclose(
+            gathered.cpu(), torch.tensor([1.0, 5.0, 4.0]), atol=1e-5
+        ), "scatter_add on the device gave the wrong answer"
+        return "kernels execute on the device and agree with the host", {
+            "matmul_max_abs_error": round(float((expected - observed).abs().max()), 6),
+        }
+
+    report.run(
+        "A4", "environment",
+        "kernels actually execute on this device and give the right answer",
+        _kernel_runs,
+    )
     return facts
 
 
@@ -592,6 +658,8 @@ def phase_serving(
     report: Report, work: Path, sound: Path, checkpoint: Path, device: str
 ) -> None:
     print("\nE. Serving, attacked")
+    print("   (E5 and E6 provoke refusals; the ERROR lines they log are the "
+          "evidence that they worked)")
     import torch
 
     state: Dict[str, Any] = {}
@@ -633,6 +701,7 @@ def phase_serving(
         jsonable_encoder(_status_of(state["bundle"].config, None, None))
         return "metadata is JSON-primitive and the status encodes", {
             "metadata_types": {k: type(v).__name__ for k, v in sorted(meta.items())},
+            "recorded_device": meta.get("device"),
         }
 
     report.run(
@@ -798,6 +867,30 @@ def phase_serving(
         }
 
     report.run("E7", "serving", "a diagnosis runs on this machine", _diagnose)
+
+    def _model_is_where_it_was_asked_to_be() -> Tuple[str, Dict[str, Any]]:
+        """A silent fall back to the host would leave `gnn_ready` true and every
+        other probe passing, while the machine bought for this served on CPU."""
+        model = state["bundle"].pipeline.model
+        assert model is not None, "no model was loaded"
+        devices = {str(parameter.device).split(":")[0] for parameter in model.parameters()}
+        assert devices == {device}, (
+            f"the model's parameters are on {sorted(devices)}, not on the "
+            f"requested {device}"
+        )
+        embeddings = state["bundle"].pipeline._node_embeddings or {}
+        return f"every parameter is on {device}", {
+            "parameter_devices": sorted(devices),
+            "embedding_devices": sorted(
+                {str(tensor.device).split(":")[0] for tensor in embeddings.values()}
+            ),
+        }
+
+    report.run(
+        "E8", "serving",
+        "the served model's parameters are on the requested device",
+        _model_is_where_it_was_asked_to_be,
+    )
 
 
 # =============================================================================
