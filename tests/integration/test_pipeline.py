@@ -257,6 +257,31 @@ class TestGNNPipelineE2E:
 # =============================================================================
 # Test: Checkpoint Save → Load → Inference (full bridge)
 # =============================================================================
+def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
+    """Write these exact tensors into a workspace whose manifest binds them.
+
+    These tests deliberately overwrite the export with the fixture's own tensors,
+    because those are the bytes the model was trained on and the precomputed
+    embeddings have to match. That leaves a directory holding graph artifacts
+    that nothing records — which the pipeline now refuses, correctly: a
+    same-shaped tensor file from another workspace is indistinguishable from
+    this one by structure alone.
+
+    So the manifest is built *after* the overwrite, over the bytes that are
+    actually there. Returns `kg.json`'s path, which the pipeline needs in order
+    to check that the graph object and the workspace are one composition.
+    """
+    from tests.fixtures.generated_workspace import write_generated_workspace
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    kg.export_graph_data(output_dir=data_dir, feature_dim=feature_dim)
+    torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
+    torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+    kg.save_json(str(data_dir / "kg.json"))
+    write_generated_workspace(data_dir, train_ids=[0, 1], val_ids=[2])
+    return data_dir / "kg.json"
+
+
 class TestCheckpointBridge:
     """Verify the train → save checkpoint → load → inference chain."""
 
@@ -302,20 +327,17 @@ class TestCheckpointBridge:
         }, ckpt_path)
 
         # --- Save graph data files ---
-        # Save the SAME features+edges the model was trained on so the
-        # precomputed embeddings match training. We use export_graph_data() to
-        # create the directory + num_nodes.json, then overwrite the tensor
-        # files with the fixture's exact data (which is what the model saw).
+        # The SAME features+edges the model was trained on, so the precomputed
+        # embeddings match training; see `bind_workspace`.
         data_dir = tmp_path / "graph_data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
         # --- Load fresh pipeline from disk (production path) ---
         pipeline = DiagnosisPipeline(
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             device="cpu",
         )
 
@@ -385,14 +407,13 @@ class TestCheckpointBridge:
         }, ckpt_path)
 
         data_dir = tmp_path / "encode_graph_data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
         pipeline = DiagnosisPipeline(
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             device="cpu",
         )
         cached = pipeline._node_embeddings
@@ -473,9 +494,7 @@ class TestShortestPathIntegration:
 
         # Set up data_dir with both graph data and SP table
         data_dir = tmp_path / "data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
         self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
 
         # Save checkpoint and load via disk path so _load_shortest_paths runs
@@ -490,6 +509,7 @@ class TestShortestPathIntegration:
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             device="cpu",
         )
         assert pipeline._gnn_ready
@@ -508,9 +528,7 @@ class TestShortestPathIntegration:
         model, graph_data = gnn_model_and_data
 
         data_dir = tmp_path / "data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
         # Note: NO shortest_paths.pt
 
         ckpt_path = tmp_path / "ckpt.pt"
@@ -524,6 +542,7 @@ class TestShortestPathIntegration:
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             device="cpu",
         )
         assert pipeline._gnn_ready
@@ -541,9 +560,7 @@ class TestShortestPathIntegration:
         model, graph_data = gnn_model_and_data
 
         data_dir = tmp_path / "data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
         self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
 
         ckpt_path = tmp_path / "ckpt.pt"
@@ -559,6 +576,7 @@ class TestShortestPathIntegration:
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             config=config,
             device="cpu",
         )
@@ -586,9 +604,7 @@ class TestShortestPathIntegration:
         model, graph_data = gnn_model_and_data
 
         data_dir = tmp_path / "data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
         self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
 
         ckpt_path = tmp_path / "ckpt.pt"
@@ -602,6 +618,7 @@ class TestShortestPathIntegration:
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             config=PipelineConfig(eta=1.0),
             device="cpu",
         )
@@ -622,9 +639,7 @@ class TestShortestPathIntegration:
         model, graph_data = gnn_model_and_data
 
         data_dir = tmp_path / "data"
-        medium_kg.export_graph_data(output_dir=data_dir, feature_dim=32)
-        torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-        torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
         self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
 
         ckpt_path = tmp_path / "ckpt.pt"
@@ -638,6 +653,7 @@ class TestShortestPathIntegration:
             kg=medium_kg,
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
+            kg_path=str(kg_path),
             config=PipelineConfig(eta=0.0),
             device="cpu",
         )

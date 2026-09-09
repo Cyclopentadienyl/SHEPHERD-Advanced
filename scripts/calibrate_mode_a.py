@@ -210,6 +210,14 @@ def run_harness(seed: int, workdir: Path, args: argparse.Namespace, device: str)
             "--checkpoint", str(args.checkpoint),
             "--data-dir", str(args.data_dir),
             "--split", args.split,
+            # **Forwarded, not defaulted.** This launcher already refuses a
+            # cohort kind the workspace contradicts, using the same validator
+            # the child does — but it was refusing on its own behalf and then
+            # spawning a child that fell back to `generated`. Any supplied
+            # cohort therefore failed inside the subprocess, after the frozen
+            # evaluator had already run, and the comparison this script exists
+            # to make never happened.
+            "--cohort-kind", args.cohort_kind,
             "--output", str(measurement_path),
             "--predictions-output", str(predictions_path),
             "--batch-size", str(args.batch_size),
