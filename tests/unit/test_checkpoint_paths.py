@@ -194,3 +194,57 @@ def test_auto_none_without_architecture_checkpoints(tmp_path):
     path, arch, reason = select_auto_checkpoint(base)
     assert path is None and arch is None
     assert "no architecture" in reason
+
+
+def _layout(tmp_path, mtimes):
+    base = tmp_path / "checkpoints"
+    for arch, when in mtimes.items():
+        directory = base / arch
+        directory.mkdir(parents=True)
+        checkpoint = directory / "last.pt"
+        checkpoint.write_bytes(b"weights")
+        os.utime(checkpoint, (when, when))
+    return base
+
+
+def test_equal_mtimes_choose_by_name_not_by_the_filesystem(tmp_path, monkeypatch):
+    """`iterdir()` order is unspecified — ext4 returns directory-hash order,
+    which depends on the names and a per-filesystem seed. Two architectures
+    whose newest checkpoint shares an mtime would otherwise pick which model
+    gets served by a property of the disk.
+
+    **The order is injected, not hoped for.** The first version of this test
+    built three directories and trusted the filesystem to hand them back
+    adversarially; it passed against the unfixed selector on this machine, which
+    is a test passing for the wrong reason. Feeding the discovery step a
+    deliberately wrong order is what isolates the ranking key.
+    """
+    from src.utils import checkpoint_paths
+
+    base = _layout(tmp_path, {"gat": 1_700_000_000, "hgt": 1_700_000_000,
+                              "sage": 1_700_000_000})
+    monkeypatch.setattr(
+        checkpoint_paths, "_architecture_dirs",
+        lambda b: [base / "sage", base / "hgt", base / "gat"],
+    )
+
+    selected, architecture, reason = checkpoint_paths.select_auto_checkpoint(base)
+
+    assert architecture == "gat", "the tie was not broken by name"
+    assert selected == base / "gat" / "last.pt"
+    assert "gat" in reason
+
+
+def test_a_newer_architecture_still_wins_over_the_name(tmp_path, monkeypatch):
+    """Otherwise the tie-break would have become the rule."""
+    from src.utils import checkpoint_paths
+
+    base = _layout(tmp_path, {"gat": 1_700_000_000, "sage": 1_700_000_900})
+    monkeypatch.setattr(
+        checkpoint_paths, "_architecture_dirs",
+        lambda b: [base / "gat", base / "sage"],
+    )
+
+    _, architecture, _ = checkpoint_paths.select_auto_checkpoint(base)
+
+    assert architecture == "sage"
