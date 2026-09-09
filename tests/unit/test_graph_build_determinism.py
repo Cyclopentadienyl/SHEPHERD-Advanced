@@ -193,6 +193,36 @@ class TestTheFeatureDrawIsSeeded:
         with pytest.raises(ValueError, match=message):
             validate_feature_seed(seed)
 
+    @pytest.mark.parametrize(
+        "seed,message",
+        [
+            (True, "must be an integer"),
+            (1.5, "must be an integer"),
+            ("42", "must be an integer"),
+            (2 ** 64, "range torch's generator accepts"),
+        ],
+        ids=["bool", "float", "str", "above"],
+    )
+    def test_the_export_itself_refuses_it_and_not_torch(self, seed, message):
+        """Through the public method, because the rule above proves nothing
+        about who applies it.
+
+        Removing `validate_feature_seed` from `export_graph_data` left the whole
+        suite green: `write_workspace` checks first, and every other test called
+        the validator directly. But the export is a public method with callers
+        that are not the workspace writer, and dropping its check does not make
+        a bad seed work -- it changes who refuses. Measured with the check
+        removed, `manual_seed` raises `RuntimeError: manual_seed expected a
+        long, but got float`, so a caller handling this module's documented
+        `ValueError` stops handling it. Matching the message rather than the type
+        is what separates the two: `2 ** 64` is the one value torch also refuses
+        as a `ValueError`.
+        """
+        pytest.importorskip("torch")
+
+        with pytest.raises(ValueError, match=message):
+            self._kg().export_graph_data(feature_dim=8, feature_seed=seed)
+
     @pytest.mark.parametrize("seed", [0, -1, 2 ** 64 - 1, -(2 ** 63)])
     def test_the_edges_of_that_range_are_accepted(self, seed):
         torch = pytest.importorskip("torch")

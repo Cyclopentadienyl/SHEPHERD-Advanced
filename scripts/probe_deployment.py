@@ -1027,15 +1027,22 @@ def phase_real_build(
             list(GRAPH_ARTIFACTS.values())
             + ["train_samples.json", "val_samples.json", MANIFEST_FILENAME]
         )
+        # **Absence is checked before content, in both directions.** Hashing a
+        # path that is not there raises out of the comprehension, and what the
+        # operator would then read is a traceback about a missing file rather
+        # than this probe's finding, which is that a build did not write one.
+        # The comparison is only meaningful once both sides are known present.
+        missing = sorted(
+            f"{label}/{name}"
+            for label, root in (("first", first), ("second", second))
+            for name in names if not (root / name).exists()
+        )
+        assert not missing, f"a build did not write {missing}"
         digests = {name: file_sha256(first / name) for name in names}
         differing = sorted(
             name for name in names
             if file_sha256(second / name) != digests[name]
         )
-        missing = sorted(
-            name for name in names if not (second / name).exists()
-        )
-        assert not missing, f"the second build did not write {missing}"
         assert not differing, (
             f"two builds from the same annotation files differ in {differing}: "
             "a digest would then identify a run rather than a workspace"

@@ -424,7 +424,7 @@ class TestSampleGenerator:
         allocation = self.allocate(demo_kg)
         generate_training_samples(
             demo_kg, allocation, num_train=5, num_val=3, min_phenotypes=1,
-            output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
+            output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
         )
         assert (tmp_dir / "train_samples.json").exists()
         assert (tmp_dir / "val_samples.json").exists()
@@ -694,7 +694,7 @@ class TestSplitRegimeBoundary:
         with pytest.raises(FileExistsError, match="two split regimes"):
             generate_training_samples(
                 demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
+                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
             )
 
     def test_the_refusal_writes_nothing(self, demo_kg, tmp_dir):
@@ -702,7 +702,7 @@ class TestSplitRegimeBoundary:
         with pytest.raises(FileExistsError):
             generate_training_samples(
                 demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
+                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
             )
         assert not (tmp_dir / "train_samples.json").exists()
         assert not (tmp_dir / "split_manifest.json").exists()
@@ -712,14 +712,14 @@ class TestSplitRegimeBoundary:
         (tmp_dir / "checkpoints").mkdir()
         generate_training_samples(
             demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-            min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
+            min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
         )
         assert (tmp_dir / "split_manifest.json").exists()
 
     def test_a_fresh_workspace_is_unaffected(self, demo_kg, tmp_dir):
         generate_training_samples(
             demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
-            min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
+            min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
         )
         assert (tmp_dir / "train_samples.json").exists()
 
@@ -955,6 +955,21 @@ class TestAllocationBoundary:
             )
 
 
+def _stub_graph_export():
+    """The recipe that goes beside those digests.
+
+    The digests say which bytes `node_features.pt` is; schema 3 also promises it
+    can be remade, and the reader collects that promise. A test writing a
+    workspace has to produce both or it produces one no consumer opens -- which
+    would be this file testing the binding through a workspace that fails for an
+    unrelated reason. Shared with the fixture so there is one answer to "what
+    does a written workspace carry".
+    """
+    from tests.fixtures.generated_workspace import default_graph_export
+
+    return default_graph_export()
+
+
 def _stub_graph_digests(root):
     """Stand-in graph artifacts plus their digests, as the export writer supplies.
 
@@ -997,7 +1012,7 @@ class TestManifestBinding:
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir, graph_digests=digests,
+            output_dir=tmp_dir, graph_digests=digests, graph_export=_stub_graph_export(),
         )
         for role, filename in (
             ("train_samples", "train_samples.json"),
@@ -1023,7 +1038,7 @@ class TestManifestBinding:
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir, graph_digests=digests,
+            output_dir=tmp_dir, graph_digests=digests, graph_export=_stub_graph_export(),
         )
         assert manifest["artifacts"]["kg"] == digests["kg"]
 
@@ -1042,7 +1057,7 @@ class TestManifestBinding:
         with pytest.raises(ValueError, match="would leave"):
             generate_training_samples(
                 wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-                output_dir=tmp_dir, graph_digests=digests,
+                output_dir=tmp_dir, graph_digests=digests, graph_export=_stub_graph_export(),
             )
 
     def test_tampering_with_a_sample_file_breaks_its_recorded_digest(
@@ -1054,7 +1069,7 @@ class TestManifestBinding:
         allocation = allocate_diseases(build_eligible_disease_profiles(wide_kg, 2), 0.2, seed=42)
         _, _, manifest = generate_training_samples(
             wide_kg, allocation, num_train=30, num_val=10, min_phenotypes=2,
-            output_dir=tmp_dir, graph_digests=digests,
+            output_dir=tmp_dir, graph_digests=digests, graph_export=_stub_graph_export(),
         )
         (tmp_dir / "train_samples.json").write_bytes(b'[{"tampered": true}]')
         assert file_sha256(tmp_dir / "train_samples.json") != manifest["artifacts"]["train_samples"]

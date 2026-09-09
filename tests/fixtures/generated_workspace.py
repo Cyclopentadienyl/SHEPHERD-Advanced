@@ -18,6 +18,38 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 DEFAULT_CONFIG = {"min_phenotypes": 2, "max_phenotypes": 15, "phenotype_drop_rate": 0.3}
 
 
+def default_graph_export() -> Dict[str, Any]:
+    """The recipe a persisted schema-3 manifest carries, taken from the writer.
+
+    **Read from the graph module rather than spelled out here.** A schema-3
+    manifest promises `node_features.pt` can be rebuilt, and the reader collects
+    that promise, so a fixture that omitted the recipe would build a workspace
+    no consumer accepts -- which is exactly what this fixture exists not to do.
+    Sourcing the values from the module that performs the draw means a field
+    added there arrives here without this file being edited, and a field whose
+    domain moves cannot leave the fixture producing something the reader
+    refuses.
+
+    Like the digests above it, this describes a production event the fixture did
+    not literally perform: the graph bytes are stand-ins. The recipe is recorded
+    rather than verified against the tensors -- only the writer of an export
+    knows what it passed -- so a fixture stating the default is exactly as
+    truthful here as its digests are.
+    """
+    from src.kg.graph import (
+        DEFAULT_FEATURE_SEED,
+        FEATURE_INITIALISATION,
+        FEATURE_INITIALISATION_VERSION,
+    )
+
+    return {
+        "feature_dim": 8,
+        "feature_seed": DEFAULT_FEATURE_SEED,
+        "initialisation": FEATURE_INITIALISATION,
+        "initialisation_version": FEATURE_INITIALISATION_VERSION,
+    }
+
+
 def profiles_for(disease_ids: Iterable[int]) -> Dict[int, Dict[str, List[int]]]:
     """A profile per disease, with phenotypes derived from the id."""
     return {
@@ -45,6 +77,7 @@ def write_generated_workspace(
     val_samples: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
     graph_bytes: Optional[Dict[str, bytes]] = None,
+    graph_export: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Path, Dict[str, Any]]:
     """Write `train_samples.json`, `val_samples.json` and a real manifest.
 
@@ -97,6 +130,7 @@ def write_generated_workspace(
             **{role: file_sha256(root / filename)
                for role, filename in GRAPH_ARTIFACTS.items()},
         },
+        graph_export=dict(graph_export or default_graph_export()),
     )
     (root / "split_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return root, manifest

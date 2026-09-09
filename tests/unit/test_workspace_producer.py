@@ -702,17 +702,25 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
         # **Through `graph_export`, because that is the field this needs.** The
         # first version of this test hand-built an allocation with an `object()`
         # seed; `validate_allocation` now refuses that, which closed the route
-        # and is the better outcome. `graph_export` is documented as recorded
-        # rather than verified — only the writer knows what it passed to the
-        # export — so it is the field that can still carry something no encoder
-        # takes, and therefore the one this property exists for.
+        # and is the better outcome. The second passed a lone unserialisable
+        # `initialisation`; the writer's presence check now refuses *that*,
+        # for the unrelated reason that three other keys were absent — which
+        # would have let this test pass while proving nothing about encoding.
+        # So the recipe here is complete: it satisfies every check the writer
+        # makes, and the writer checks presence rather than type because only
+        # the caller of the export knows what it passed. That is precisely the
+        # gap where a value no encoder takes can still reach `json.dump`, and
+        # the reason this property is structural rather than a field audit.
         with pytest.raises(TypeError):
             generate_training_samples(
                 kg=self._demo_kg(), allocation=allocation,
                 num_train=20, num_val=5, output_dir=workspace,
                 graph_digests={r: "0" * 64 for r in
                                ("kg", "node_features", "edge_indices", "num_nodes")},
-                graph_export={"initialisation": object()},
+                graph_export={
+                    "feature_dim": 4, "feature_seed": 7,
+                    "initialisation": object(), "initialisation_version": 1,
+                },
             )
 
         assert not (workspace / "split_manifest.json").exists(), (
@@ -944,27 +952,15 @@ class TestProvenanceMustAgreeWithWhatWasRun:
             require_manifest_schema({"schema_version": 2}, path)
 
 
-def test_the_split_manifest_shape_is_pinned_to_its_schema_version(tmp_path):
-    """`schema_version` is a number a human has to remember to bump.
+#: Distinguishes "leave the writer's own recipe alone" from "replace it
+#: with nothing", which `None` would collide with.
+_UNTOUCHED = object()
 
-    `require_manifest_schema` refuses a manifest whose version this code does
-    not read, and names what each older one lacked — a contract that only works
-    while the version tracks the shape. Nothing enforced that: `graph_export`
-    was added by hand and the bump from 2 to 3 was too, and a field added
-    without one would sail through the version check and be read as absent by
-    every consumer.
 
-    `MeasurementManifest` already has this guard, over its dataclass fields.
-    This is the same guard for the manifest that is built as a dict.
-
-    Adding, removing or renaming a key here means bumping
-    SPLIT_MANIFEST_SCHEMA_VERSION and updating the refusal message that tells an
-    operator what the old shape could not do.
-    """
+def _demo_manifest(tmp_path):
     import json
 
     from scripts.setup_demo import build_demo_kg
-    from src.kg.artifacts import SPLIT_MANIFEST_SCHEMA_VERSION
     from src.kg.workspace import SampleBudget, write_workspace
 
     workspace = tmp_path / "ws"
@@ -972,29 +968,264 @@ def test_the_split_manifest_shape_is_pinned_to_its_schema_version(tmp_path):
         build_demo_kg(), workspace, feature_dim=16,
         samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
     )
-    manifest = json.loads((workspace / "split_manifest.json").read_text())
+    return json.loads((workspace / "split_manifest.json").read_text())
+
+
+def test_the_manifest_carries_everything_its_schema_requires(tmp_path):
+    """Required keys, not an exact key set.
+
+    The first version of this test asserted exact equality on every section and
+    said adding any key meant bumping the schema. That was too rigid twice over:
+    it turns additive description an old reader can ignore into a breaking
+    change and a forced rebuild, and it never proved anyone bumps the version
+    anyway — a developer can edit the expected set instead.
+
+    A version is for a change that makes an old manifest unable to satisfy a new
+    guarantee. `graph_export` was one: schema 2 could not promise a rebuildable
+    export. Optional metadata is not, and the planned source-input provenance
+    should be able to land without invalidating a workspace.
+    """
+    from src.kg.artifacts import GRAPH_EXPORT_REQUIRED, SPLIT_MANIFEST_SCHEMA_VERSION
+
+    manifest = _demo_manifest(tmp_path)
 
     assert manifest["schema_version"] == SPLIT_MANIFEST_SCHEMA_VERSION
-    assert set(manifest) == {
+    assert {
         "schema_version", "generation", "graph_export", "allocation",
         "realised", "artifacts", "disjoint",
-    }
-    assert set(manifest["generation"]) == {
+    } <= set(manifest)
+    assert {
         "algorithm", "algorithm_version", "num_train", "num_val",
         "min_phenotypes", "max_phenotypes", "phenotype_drop_rate",
-    }
-    assert set(manifest["graph_export"]) == {
-        "feature_dim", "feature_seed", "initialisation", "initialisation_version",
-    }
-    assert set(manifest["allocation"]) == {
+    } <= set(manifest["generation"])
+    assert set(GRAPH_EXPORT_REQUIRED) <= set(manifest["graph_export"])
+    assert {
         "algorithm", "algorithm_version", "allocated", "eligible_diseases",
         "seed", "stream_derivation", "universe_digest", "val_fraction_requested",
-    }
-    assert set(manifest["realised"]) == {
+    } <= set(manifest["allocation"])
+    assert {
         "derived_from", "train_digest", "train_diseases", "val_digest",
         "val_diseases",
-    }
-    assert set(manifest["artifacts"]) == {
+    } <= set(manifest["realised"])
+    assert {
         "kg", "node_features", "edge_indices", "num_nodes",
         "train_samples", "val_samples",
-    }
+    } <= set(manifest["artifacts"])
+
+
+def test_a_descriptive_field_beside_the_required_ones_is_accepted(tmp_path):
+    """The half that makes the subset rule mean something.
+
+    Source-input provenance and any future cross-species metadata are additive.
+    A reader that refused them would force a schema bump — and a rebuild of every
+    workspace — for a field it could have ignored.
+    """
+    from pathlib import Path as _Path
+
+    from src.kg.artifacts import require_manifest_schema
+
+    manifest = _demo_manifest(tmp_path)
+    manifest["graph_export"]["notes"] = "drawn on the deployment machine"
+    manifest["an_added_section"] = {"anything": [1, 2, 3]}
+
+    require_manifest_schema(manifest, _Path("split_manifest.json"))
+
+
+class TestTheRecipeIsRequiredWhereItIsRead:
+    """A promise nothing reads is a comment.
+
+    `generate_training_samples` will persist a workspace with `graph_export={}`
+    if a caller passes no recipe, and every consumer accepted it: the version
+    check reads a number, the artifact check reads digests. Schema 3 exists to
+    promise that `node_features.pt` can be rebuilt rather than merely
+    recognised, so the reader is where that promise has to be collected.
+    """
+
+    @staticmethod
+    def _manifest(**recipe):
+        return {"schema_version": 3, "graph_export": dict(recipe)}
+
+    @staticmethod
+    def _sound():
+        return {
+            "feature_dim": 32, "feature_seed": 7,
+            "initialisation": "standard-normal", "initialisation_version": 1,
+        }
+
+    @staticmethod
+    def _persisted(tmp_path, recipe):
+        """A real workspace on disk whose recipe has been edited to `recipe`.
+
+        **Built rather than hand-written, and read back through the verifiers.**
+        The class below this one checks the field rules by calling
+        `require_graph_export_recipe` directly, which proves the rules and
+        nothing about who applies them: with the call removed from
+        `require_manifest_schema` every one of those tests still passed, and the
+        original defect — `verify_graph_artifacts` accepting a schema-3
+        workspace that recorded no recipe — was back with the suite green. So
+        these two go through the functions a consumer actually calls.
+        """
+        import json
+
+        from scripts.setup_demo import build_demo_kg
+        from src.kg.workspace import SampleBudget, write_workspace
+
+        workspace = tmp_path / "ws"
+        write_workspace(
+            build_demo_kg(), workspace, feature_dim=16,
+            samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
+        )
+        manifest_path = workspace / "split_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        if recipe is _UNTOUCHED:
+            return workspace
+        manifest["graph_export"] = recipe
+        manifest_path.write_text(json.dumps(manifest))
+        return workspace
+
+    @pytest.mark.parametrize("reader", ["artifacts", "cohorts"])
+    @pytest.mark.parametrize("recipe,message", [
+        ({}, "records no graph_export recipe"),
+        ({"feature_dim": 16}, "missing"),
+        ({"feature_dim": 0, "feature_seed": 7, "initialisation": "standard-normal",
+          "initialisation_version": 1}, "malformed"),
+    ])
+    def test_a_boundary_reader_refuses_a_workspace_without_a_usable_recipe(
+        self, tmp_path, reader, recipe, message
+    ):
+        """The two places a persisted manifest is read for real.
+
+        Both reach the schema check, and the schema check is where schema 3's
+        promise has to be collected — a workspace whose `node_features.pt` can
+        be recognised and not rebuilt is not one, whatever its version field
+        says.
+        """
+        from src.evaluation.cohort import verify_generated_cohorts
+        from src.kg.artifacts import verify_graph_artifacts
+
+        workspace = self._persisted(tmp_path, recipe)
+        verify = verify_graph_artifacts if reader == "artifacts" else verify_generated_cohorts
+        with pytest.raises(ValueError, match=message):
+            verify(workspace)
+
+    @pytest.mark.parametrize("reader", ["artifacts", "cohorts"])
+    def test_a_boundary_reader_accepts_the_workspace_the_writer_produced(
+        self, tmp_path, reader
+    ):
+        """Without this the refusals above could be about the editing, not the
+        recipe — and the writer's own output failing its readers would be the
+        larger defect of the two."""
+        from src.evaluation.cohort import verify_generated_cohorts
+        from src.kg.artifacts import verify_graph_artifacts
+
+        workspace = self._persisted(tmp_path, _UNTOUCHED)
+        verify = verify_graph_artifacts if reader == "artifacts" else verify_generated_cohorts
+        verify(workspace)
+
+    def test_the_sound_recipe_is_accepted(self):
+        """Otherwise every refusal below could be firing for another reason."""
+        from pathlib import Path as _Path
+
+        from src.kg.artifacts import require_graph_export_recipe
+
+        require_graph_export_recipe(self._manifest(**self._sound()), _Path("m.json"))
+
+    @pytest.mark.parametrize("absent", [
+        "feature_dim", "feature_seed", "initialisation", "initialisation_version",
+    ])
+    def test_each_required_field_is_refused_when_missing(self, absent):
+        from pathlib import Path as _Path
+
+        from src.kg.artifacts import require_graph_export_recipe
+
+        recipe = self._sound()
+        del recipe[absent]
+        with pytest.raises(ValueError, match=absent):
+            require_graph_export_recipe(self._manifest(**recipe), _Path("m.json"))
+
+    @pytest.mark.parametrize("field,value,message", [
+        ("feature_dim", 0, "must be >= 1"),
+        ("feature_dim", True, "must be an integer"),
+        ("feature_dim", "32", "must be an integer"),
+        ("feature_seed", 2 ** 64, "range torch's generator accepts"),
+        ("feature_seed", 1.5, "must be an integer"),
+        ("initialisation", "", "names no initialisation"),
+        ("initialisation", "   ", "names no initialisation"),
+        ("initialisation", 7, "names no initialisation"),
+        ("initialisation_version", 0, "positive integer"),
+        ("initialisation_version", True, "positive integer"),
+    ])
+    def test_a_malformed_field_is_refused(self, field, value, message):
+        """The field rules are the writer's own, so the reader cannot come to
+        require something the writer would not produce."""
+        from pathlib import Path as _Path
+
+        from src.kg.artifacts import require_graph_export_recipe
+
+        recipe = self._sound()
+        recipe[field] = value
+        with pytest.raises(ValueError, match=message):
+            require_graph_export_recipe(self._manifest(**recipe), _Path("m.json"))
+
+    @pytest.mark.parametrize("recipe", [None, {}, [], "standard-normal"])
+    def test_an_absent_or_unusable_recipe_is_refused(self, recipe):
+        from pathlib import Path as _Path
+
+        from src.kg.artifacts import require_graph_export_recipe
+
+        with pytest.raises(ValueError, match="records no graph_export recipe"):
+            require_graph_export_recipe(
+                {"schema_version": 3, "graph_export": recipe}, _Path("m.json")
+            )
+
+    def test_a_persisted_workspace_cannot_omit_it(self, tmp_path):
+        """The reader is the guarantee; the writer refusing first is the better
+        error, at the point where the caller can still supply one."""
+        from src.kg.artifacts import GRAPH_ARTIFACTS
+        from src.kg.disease_allocation import allocate_diseases
+        from src.kg.sample_generator import (
+            build_eligible_disease_profiles,
+            generate_training_samples,
+        )
+        from src.utils.fingerprint import file_sha256
+        from scripts.setup_demo import build_demo_kg
+
+        kg = build_demo_kg()
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        for role, filename in GRAPH_ARTIFACTS.items():
+            (workspace / filename).write_bytes(role.encode())
+
+        with pytest.raises(ValueError, match="graph_export recipe"):
+            generate_training_samples(
+                kg=kg,
+                allocation=allocate_diseases(
+                    build_eligible_disease_profiles(kg, 2), 0.2, seed=42
+                ),
+                num_train=20, num_val=5, output_dir=workspace,
+                graph_digests={
+                    role: file_sha256(workspace / filename)
+                    for role, filename in GRAPH_ARTIFACTS.items()
+                },
+            )
+
+    def test_an_in_memory_manifest_still_needs_none(self, tmp_path):
+        """The distinction is intentional: a manifest that describes a cut makes
+        no claim about a directory, and there is no export for it to describe."""
+        from src.kg.disease_allocation import allocate_diseases
+        from src.kg.sample_generator import (
+            build_eligible_disease_profiles,
+            generate_training_samples,
+        )
+        from scripts.setup_demo import build_demo_kg
+
+        kg = build_demo_kg()
+        _, _, manifest = generate_training_samples(
+            kg=kg,
+            allocation=allocate_diseases(
+                build_eligible_disease_profiles(kg, 2), 0.2, seed=42
+            ),
+            num_train=20, num_val=5,
+        )
+
+        assert manifest["graph_export"] == {}

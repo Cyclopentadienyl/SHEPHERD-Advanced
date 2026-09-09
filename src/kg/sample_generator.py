@@ -24,7 +24,11 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from src.kg.artifacts import GRAPH_ARTIFACTS, SPLIT_MANIFEST_SCHEMA_VERSION
+from src.kg.artifacts import (
+    GRAPH_ARTIFACTS,
+    GRAPH_EXPORT_REQUIRED,
+    SPLIT_MANIFEST_SCHEMA_VERSION,
+)
 from src.kg.disease_allocation import (
     DiseaseAllocation,
     derive_stream,
@@ -210,6 +214,22 @@ def generate_training_samples(
                 "so they are supplied rather than recomputed here — and a manifest "
                 "without them cannot show that the tensors a model consumes are "
                 "this graph's."
+            )
+        # **And the recipe those tensors came out of.** The digests say which
+        # bytes; only the recipe says how to make them again, which is what
+        # schema 3 promises. Required on the same terms and for the same reason:
+        # a persisted workspace makes the claim, an in-memory manifest does not.
+        missing_recipe = [
+            name for name in GRAPH_EXPORT_REQUIRED
+            if name not in (graph_export or {})
+        ]
+        if missing_recipe:
+            raise ValueError(
+                f"this workspace would record no {', '.join(missing_recipe)} in "
+                "its graph_export recipe. Schema "
+                f"{SPLIT_MANIFEST_SCHEMA_VERSION} promises node_features.pt can "
+                "be rebuilt, not merely recognised, and only the writer of the "
+                "export knows what it passed."
             )
 
     manifest = build_split_manifest(

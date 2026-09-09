@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 #: Manifest role → filename, for the artifacts a graph consumer reads.
 #:
@@ -122,6 +122,72 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
     return observed
 
 
+#: The graph-export recipe a persisted schema-3 manifest must carry. The point
+#: of schema 3 is that `node_features.pt` can be rebuilt, not merely recognised,
+#: so a manifest that omits these is not a schema-3 workspace whatever its
+#: version field says. Unknown keys beside them are welcome: additive
+#: description that an old reader can ignore is not a schema change.
+GRAPH_EXPORT_REQUIRED: Tuple[str, ...] = (
+    "feature_dim",
+    "feature_seed",
+    "initialisation",
+    "initialisation_version",
+)
+
+
+def require_graph_export_recipe(
+    manifest: Dict[str, Any], manifest_path: Path
+) -> Dict[str, Any]:
+    """The recipe a persisted manifest promises, checked where it is read.
+
+    **The writer being correct is not the guarantee.** `generate_training_samples`
+    will persist a workspace with `graph_export={}` if a caller passes no recipe,
+    and every consumer used to accept it: the version check reads a number and
+    the artifact check reads digests, so a schema-3 manifest could promise a
+    reproducible export and carry none. A promise nothing reads is a comment.
+
+    The field rules are the writer's own — `validate_feature_dim` and
+    `validate_feature_seed` from the module that performs the draw — so the
+    reader cannot come to require something the writer would not produce.
+    """
+    from src.kg.graph import validate_feature_dim, validate_feature_seed
+
+    recipe = manifest.get("graph_export")
+    if not isinstance(recipe, dict) or not recipe:
+        raise ValueError(
+            f"{manifest_path} is schema {SPLIT_MANIFEST_SCHEMA_VERSION} and "
+            "records no graph_export recipe, so its node_features.pt can be "
+            "recognised and not rebuilt. Rebuild the workspace with "
+            "scripts/build_knowledge_graph.py --generate-samples."
+        )
+    missing = [name for name in GRAPH_EXPORT_REQUIRED if name not in recipe]
+    if missing:
+        raise ValueError(
+            f"{manifest_path} graph_export is missing {missing}; a recipe "
+            "without them cannot reproduce the export it describes."
+        )
+
+    try:
+        validate_feature_dim(recipe["feature_dim"])
+        validate_feature_seed(recipe["feature_seed"])
+    except ValueError as exc:
+        raise ValueError(f"{manifest_path} graph_export is malformed: {exc}") from exc
+
+    name = recipe["initialisation"]
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(
+            f"{manifest_path} graph_export names no initialisation, so the "
+            f"recipe's numbers describe an unknown draw (got {name!r})"
+        )
+    version = recipe["initialisation_version"]
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError(
+            f"{manifest_path} graph_export initialisation_version must be a "
+            f"positive integer, got {version!r}"
+        )
+    return recipe
+
+
 def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> None:
     version = manifest.get("schema_version")
     if version != SPLIT_MANIFEST_SCHEMA_VERSION:
@@ -143,6 +209,7 @@ def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> No
             + "Rebuild it with scripts/build_knowledge_graph.py "
             "--generate-samples; there is no migration and no unbound-digest path."
         )
+    require_graph_export_recipe(manifest, manifest_path)
 
 
 def verify_graph_source(kg_path: Path, data_dir: Path) -> Dict[str, str]:
@@ -190,6 +257,8 @@ __all__ = [
     "GRAPH_ARTIFACTS",
     "MANIFEST_FILENAME",
     "SPLIT_MANIFEST_SCHEMA_VERSION",
+    "GRAPH_EXPORT_REQUIRED",
+    "require_graph_export_recipe",
     "require_manifest_schema",
     "verify_graph_artifacts",
     "verify_graph_source",
