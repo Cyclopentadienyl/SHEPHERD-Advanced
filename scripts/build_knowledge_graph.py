@@ -59,8 +59,13 @@ def require_usable_budgets(num_train: Optional[int], num_val: Optional[int]) -> 
     Runs before an ontology is opened, because it needs nothing but the two
     arguments. **A default that cannot succeed is worse than no default** — full
     coverage requires one sample per allocated disease, and the audited universe
-    allocates roughly 8,990 training and 1,586 validation diseases at f = 0.15,
-    so the former 5,000 / 1,000 could never work on a real workspace.
+    allocates 8,990 training and 1,587 validation diseases at f = 0.15, so the
+    former 5,000 / 1,000 could never work on a real workspace.
+
+    Those two numbers were "roughly 8,990 and 1,586" until a build on the
+    deployment machine measured them: 10,577 eligible, cut 8,990 / 1,587.
+    ``withheld_count(10577, 0.15)`` is 1,587 — ``floor(1586.55 + 0.5)`` — so the
+    1,586 was arithmetic nobody had run.
 
     The domain rules live in ``validate_sample_budgets``, shared with the
     generator, so the entry point and the library cannot disagree about what a

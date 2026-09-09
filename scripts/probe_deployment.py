@@ -761,8 +761,19 @@ def phase_serving(
 
         api.publish_pipeline(state["bundle"])
         facts: Dict[str, Any] = {}
+        parameters = sum(
+            p.numel() for p in state["bundle"].pipeline.model.parameters()
+        )
         if device == "cuda":
+            # **Measured against a steady state, not against whatever the
+            # earlier phases left behind.** The first version reset the peak
+            # while this probe still held the previous bundle and while A4's
+            # matrices were live, so "before" was noise and nothing could be
+            # freed. Dropping the reference and emptying the cache is what makes
+            # the difference attributable to the reload.
+            state.pop("bundle_reference_for_measurement", None)
             torch.cuda.synchronize()
+            torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
             before_bytes = torch.cuda.memory_allocated()
         result = asyncio.run(
@@ -772,11 +783,19 @@ def phase_serving(
         jsonable_encoder(result)
         if device == "cuda":
             torch.cuda.synchronize()
-            facts["allocated_before_mb"] = round(before_bytes / 1e6, 1)
+            facts["allocated_before_mb"] = round(before_bytes / 1e6, 2)
             facts["peak_during_reload_mb"] = round(
-                torch.cuda.max_memory_allocated() / 1e6, 1
+                torch.cuda.max_memory_allocated() / 1e6, 2
             )
-            facts["allocated_after_mb"] = round(torch.cuda.memory_allocated() / 1e6, 1)
+            facts["allocated_after_mb"] = round(torch.cuda.memory_allocated() / 1e6, 2)
+            # **The scale this was measured at, so nobody over-reads it.** The
+            # demo model is a few hundred kilobytes; a second copy of it is
+            # inside the noise of an allocator that caches. This says the reload
+            # works on the device and its response encodes. It does NOT settle
+            # what double residency costs — that needs a checkpoint of
+            # deployment size, and the report should not be read as if it did.
+            facts["model_parameters"] = parameters
+            facts["double_residency_conclusive"] = parameters > 10_000_000
         facts["scoring_mode"] = result.status.scoring_mode
         return "the reload succeeded and its response encodes", facts
 
