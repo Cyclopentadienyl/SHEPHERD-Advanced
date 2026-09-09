@@ -143,6 +143,30 @@ class TestARejectedCandidateCostsNothing:
         assert "is not the node_features artifact" in result.message
         _assert_untouched(api, before)
 
+    def test_a_configuration_the_schema_rejects_changes_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        """`build_pipeline` obtains the configuration; it does not validate its
+        shape. A pipeline that *returns* something unusable rather than raising
+        constructs successfully, so the refusal happens later -- while the
+        response is rendered -- and would land after publication if rendering
+        came second."""
+        import src.inference.pipeline as pipeline
+
+        api, before = _serving(monkeypatch)
+        root, _ = _candidate_workspace(monkeypatch, tmp_path)
+        bad = dict(CANDIDATE_CONFIG, kg_nodes="not an integer at all")
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline, "get_pipeline_config", lambda self: bad
+        )
+
+        result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
+
+        assert result.success is False
+        assert "configuration is unusable" in result.message
+        assert result.status.initialized is True, "reported a down service"
+        _assert_untouched(api, before)
+
     def test_a_late_configuration_failure_is_refused_and_changes_nothing(
         self, monkeypatch, tmp_path
     ):

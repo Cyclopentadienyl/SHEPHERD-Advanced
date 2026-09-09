@@ -229,14 +229,16 @@ echo Next steps:
 echo   1. Verify the installation:
 echo      .venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available())"
 echo.
-echo   2. Quick demo (synthetic data, ~1 min):
+echo   2. Quick demo (small built-in graph, ~1 min):
 echo      .venv\Scripts\python.exe scripts\setup_demo.py --train-model
 echo.
 echo   3. Real data pipeline (manual HPO download required first;
-echo      see data\external\README.md for the required annotation files):
-echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py
-echo      .venv\Scripts\python.exe scripts\compute_shortest_paths.py
-echo      .venv\Scripts\python.exe scripts\train_model.py
+echo      see data\external\README.md for the required annotation files).
+echo      --generate-samples is not optional: without it the workspace has
+echo      no split manifest, and training and serving both refuse it.
+echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py --workspace data\workspaces\main --external-dir data\external --generate-samples --num-train 200000 --num-val 40000
+echo      .venv\Scripts\python.exe scripts\compute_shortest_paths.py --kg-path data\workspaces\main\kg.json --output-dir data\workspaces\main
+echo      .venv\Scripts\python.exe scripts\train_model.py --data-dir data\workspaces\main --epochs 50
 echo.
 echo   4. Launch the system:
 echo      launch_shepherd.cmd

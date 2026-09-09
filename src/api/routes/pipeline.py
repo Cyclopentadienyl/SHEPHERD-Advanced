@@ -377,28 +377,48 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             files_found=files,
         )
 
+    # **The whole response is built and validated before anything is published.**
+    # `build_pipeline` obtains the configuration dictionary but makes no claim
+    # about its *shape*: a pipeline that returns, say, a string where the schema
+    # wants an int constructs fine and is refused here, by Pydantic, while the
+    # response is rendered. Rendering after publication would mean the request
+    # reporting failure over state it had already replaced -- the same defect as
+    # the teardown, one step later and harder to see. Publication is the last
+    # thing this endpoint does that changes anything, and everything fallible
+    # happens above it.
+    try:
+        config = candidate.config
+        fp_warns = config.get("fingerprint_warnings", [])
+
+        msg = "Pipeline reloaded successfully."
+        if selection_reason:
+            msg += f" ({selection_reason})"
+        if fp_warns:
+            msg += f" WARNING: {len(fp_warns)} fingerprint mismatch(es) detected."
+
+        response = PipelineReloadResponse(
+            success=True,
+            message=msg,
+            status=_status_of(config, data_dir, checkpoint_path),
+            files_found=files,
+            checkpoint_path=checkpoint_path,
+            architecture=architecture,
+            selection_reason=selection_reason,
+        )
+    except Exception as e:
+        # Reported as a refused reload rather than a 500, because that is what it
+        # is: a candidate this service cannot describe is one it should not serve.
+        logger.error(f"Pipeline reload rejected while rendering its status: {e}")
+        return PipelineReloadResponse(
+            success=False,
+            message=f"Pipeline built but its configuration is unusable: {e}."
+            f"{_still_serving()}",
+            status=_live_status(),
+            files_found=files,
+        )
+
     publish_pipeline(candidate)
-
-    config = candidate.config
-    fp_warns = config.get("fingerprint_warnings", [])
-
-    msg = "Pipeline reloaded successfully."
-    if selection_reason:
-        msg += f" ({selection_reason})"
-    if fp_warns:
-        msg += f" WARNING: {len(fp_warns)} fingerprint mismatch(es) detected."
-
-    status_resp = _status_of(config, data_dir, checkpoint_path)
-
-    return PipelineReloadResponse(
-        success=True,
-        message=msg,
-        status=status_resp,
-        files_found=files,
-        checkpoint_path=checkpoint_path,
-        architecture=architecture,
-        selection_reason=selection_reason,
-    )
+    return response
 
 
 @router.get("/pipeline/config", response_model=UIConfigResponse)

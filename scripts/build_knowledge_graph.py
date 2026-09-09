@@ -44,7 +44,7 @@ from src.core.types import DataSource, NodeType
 from src.kg.builder import KnowledgeGraphBuilder, KGBuilderConfig
 from src.data_sources.hpo_annotations import HPOAnnotationParser
 from src.ontology.loader import OntologyLoader
-from src.utils.fingerprint import file_sha256
+from src.kg.workspace import SampleBudget, write_workspace
 
 logging.basicConfig(
     level=logging.INFO,
@@ -214,70 +214,36 @@ def build_knowledge_graph(
     kg = builder.build()
     stats = kg.get_statistics()
 
-    # **Everything that can refuse, refuses before the first workspace byte.**
-    # The allocation and phase two of the budget preflight need only the
-    # in-memory graph, so they run here rather than after `kg.save_json`. The
-    # earlier ordering wrote the graph, then discovered the budgets were too
-    # small — leaving a rebuilt graph beside stale samples, which is the same
-    # class of half-written workspace the checkpoint preflight exists to prevent.
-    allocation = None
-    if generate_samples:
-        from src.kg import allocate_diseases, build_eligible_disease_profiles
-
-        # The split is decided here, before generation, and at the disease
-        # level. The generator consumes the allocation; it does not own split
-        # policy (EVALUATION_COHORTS §6.2). A sample-level slice, which is what
-        # this used to be, leaves every multi-sample disease on both sides.
-        eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
-        allocation = allocate_diseases(eligible, val_disease_fraction, seed=sample_seed)
-        require_sufficient_budgets(num_train, num_val, allocation)
-
-    # Save KG
+    # **One writer produces a workspace, and this is a call to it.** Allocate,
+    # refuse, write, digest, generate — that ordering is what binds the six
+    # artifacts into one production event, and it lives in `src.kg.workspace`
+    # so this script is not the only place that knows it. `preflight` is where
+    # a refusal decidable from the allocation alone lands: before the first
+    # workspace byte, in this tool's own vocabulary. The superseded ordering
+    # wrote the graph and only then discovered the budgets were too small,
+    # leaving a rebuilt graph beside stale samples.
+    written = write_workspace(
+        kg,
+        workspace,
+        feature_dim=feature_dim,
+        samples=(
+            SampleBudget(
+                num_train=num_train,
+                num_val=num_val,
+                val_disease_fraction=val_disease_fraction,
+                seed=sample_seed,
+            )
+            if generate_samples
+            else None
+        ),
+        preflight=(
+            (lambda alloc: require_sufficient_budgets(num_train, num_val, alloc))
+            if generate_samples
+            else None
+        ),
+    )
     kg_path = workspace / "kg.json"
-    kg.save_json(str(kg_path))
-    logger.info(f"KG saved to {kg_path}")
-
-    # Export PyG graph data
-    logger.info(f"Exporting graph data (feature_dim={feature_dim})...")
-    kg.export_graph_data(output_dir=workspace, feature_dim=feature_dim)
-
-    # **The digests of the artifacts this function just wrote, from this graph.**
-    # Only the writer can vouch for that binding; generation hashing them on its
-    # own would happily digest files some other graph produced and record them
-    # beside this allocation's universe digest as one provenance chain.
-    #
-    # The three tensors matter as much as kg.json and used to be omitted. A model
-    # never opens kg.json — it consumes `node_features.pt` and `edge_indices.pt` —
-    # so binding only the JSON left the artifacts the training actually reads
-    # bound to nothing. `graph_fingerprint` does not close it either: it is
-    # structural, so a same-shaped tensor file from another workspace shares it.
-    from src.kg.artifacts import GRAPH_ARTIFACTS
-
-    graph_digests = {
-        role: file_sha256(workspace / filename)
-        for role, filename in GRAPH_ARTIFACTS.items()
-    }
-
-    # --- Generate training samples ---
-    if generate_samples:
-        logger.info("Generating training samples...")
-        from src.kg.sample_generator import generate_training_samples
-
-        train_samples, val_samples, manifest = generate_training_samples(
-            kg=kg,
-            allocation=allocation,
-            num_train=num_train,
-            num_val=num_val,
-            output_dir=workspace,
-            graph_digests=graph_digests,
-        )
-        logger.info(
-            "Generated %d train samples over %d diseases, %d val over %d — "
-            "disjoint: %s",
-            len(train_samples), manifest["realised"]["train_diseases"],
-            len(val_samples), manifest["realised"]["val_diseases"],
-            manifest["disjoint"],
-        )
+    train_samples, val_samples = written.train_samples, written.val_samples
 
     elapsed = time.time() - t0
 

@@ -133,36 +133,38 @@ def build_test_kg() -> KnowledgeGraph:
 def build_workspace(kg: KnowledgeGraph, data_dir: Path, hidden_dim: int = 64) -> Path:
     """Write a workspace the production pipeline will accept, and return kg.json.
 
-    The same order `scripts/build_knowledge_graph.py` uses, for the same reason:
-    the writer serialises the graph, exports the tensors, digests what it just
-    wrote, and only then generates cohorts whose manifest binds those digests.
-    Nothing here hashes a file it did not write.
+    **Through the production writer, not a re-implementation of it.** This used
+    to compose the same primitives in the same order by hand, which is a copy of
+    the ordering that would keep passing after the real one moved -- and the
+    ordering is the part that binds six artifacts into one production event.
+    Budgets are set to one sample per allocated disease, the smallest that
+    achieves full coverage.
     """
     from src.kg.artifacts import GRAPH_ARTIFACTS
     from src.kg.disease_allocation import allocate_diseases
-    from src.kg.sample_generator import (
-        build_eligible_disease_profiles,
-        generate_training_samples,
-    )
-    from src.utils.fingerprint import file_sha256
+    from src.kg.sample_generator import build_eligible_disease_profiles
+    from src.kg.workspace import SampleBudget, write_workspace
 
-    data_dir.mkdir(parents=True, exist_ok=True)
-    kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
-    kg.save_json(str(kg_path))
-    kg.export_graph_data(output_dir=data_dir, feature_dim=hidden_dim)
-
-    graph_digests = {
-        role: file_sha256(data_dir / filename)
-        for role, filename in GRAPH_ARTIFACTS.items()
-    }
-    eligible = build_eligible_disease_profiles(kg, min_phenotypes=2)
-    allocation = allocate_diseases(eligible, val_fraction=0.34, seed=20260818)
-    generate_training_samples(
-        kg=kg, allocation=allocation,
-        num_train=len(allocation.train), num_val=len(allocation.val),
-        output_dir=data_dir, graph_digests=graph_digests,
+    # The budgets must reach every allocated disease, and the partition sizes are
+    # only known once the cut is made -- so the cut is measured here and made
+    # again inside the writer from the same graph, fraction and seed.
+    allocation = allocate_diseases(
+        build_eligible_disease_profiles(kg, min_phenotypes=2),
+        val_fraction=0.34,
+        seed=20260818,
     )
-    return kg_path
+    write_workspace(
+        kg,
+        data_dir,
+        feature_dim=hidden_dim,
+        samples=SampleBudget(
+            num_train=len(allocation.train),
+            num_val=len(allocation.val),
+            val_disease_fraction=0.34,
+            seed=20260818,
+        ),
+    )
+    return data_dir / GRAPH_ARTIFACTS["kg"]
 
 
 def load_graph_data_for_training(data_dir: Path) -> dict:

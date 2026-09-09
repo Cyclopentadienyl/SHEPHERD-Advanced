@@ -2,14 +2,22 @@
 """
 Setup Demo Data for SHEPHERD-Advanced
 ======================================
-Generates a small demonstration knowledge graph and optionally trains
-a minimal GNN model so the API can start end-to-end.
+Writes a small demonstration workspace through the production workspace writer,
+and optionally trains a small model on it through the production trainer.
+
+**Everything here is the real path at a small size.** This script owns the demo
+knowledge graph and nothing else: the allocation, the cohorts, the manifest and
+the checkpoint all come from the same code a real build and a real training run
+use. It previously carried its own copies — a sample generator that split
+patients rather than diseases, and a hand-rolled training loop — and produced a
+directory that looked complete, trained, and was then refused by the clinical
+verifier because no manifest bound it.
 
 Usage:
-    # KG only (path-reasoning fallback mode):
+    # Workspace only (path-reasoning fallback mode):
     python scripts/setup_demo.py
 
-    # KG + minimal GNN model (full GNN-primary mode):
+    # Workspace + a small trained model (full GNN-primary mode):
     python scripts/setup_demo.py --train-model
 
     # Custom output directory:
@@ -17,21 +25,20 @@ Usage:
 
 Output files:
     <output_dir>/kg.json              - Knowledge graph
-    <output_dir>/node_features.pt     - Node feature tensors (if --train-model)
-    <output_dir>/edge_indices.pt      - Edge index tensors   (if --train-model)
-    <output_dir>/num_nodes.json       - Node counts           (if --train-model)
-    <output_dir>/checkpoints/model_checkpoint.pt  - Trained GNN checkpoint (if --train-model)
+    <output_dir>/node_features.pt     - Node feature tensors
+    <output_dir>/edge_indices.pt      - Edge index tensors
+    <output_dir>/num_nodes.json       - Node counts per type
+    <output_dir>/train_samples.json   - Training cohort
+    <output_dir>/val_samples.json     - Validation cohort (disease-disjoint)
+    <output_dir>/split_manifest.json  - Binds all six to one production event
+    <output_dir>/checkpoints/gat/     - Checkpoints (if --train-model)
 
-After running, start the API with:
-    SHEPHERD_KG_PATH=data/demo/kg.json \\
-    SHEPHERD_CHECKPOINT_PATH=data/workspaces/demo/checkpoints/model_checkpoint.pt \\
-    SHEPHERD_DATA_DIR=data/demo \\
-    python -m uvicorn src.api.main:app --reload
+The command to start the API is printed on completion, with the checkpoint the
+run actually selected.
 """
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
@@ -49,12 +56,42 @@ from src.core.types import (
     NodeType,
 )
 from src.kg.graph import KnowledgeGraph
+from src.kg.workspace import SampleBudget, write_workspace
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# The demo graph is 10 phenotypes / 8 genes / 5 diseases, so the budgets only
+# have to reach every allocated disease; they are generous rather than tuned.
+DEMO_FEATURE_DIM = 64
+DEMO_NUM_TRAIN = 200
+DEMO_NUM_VAL = 50
+DEMO_VAL_DISEASE_FRACTION = 0.2
+DEMO_SEED = 42
+
+
+def _refuse_undersized_budgets(allocation) -> None:
+    """Refuse before the first workspace byte, in this script's vocabulary.
+
+    The demo's budgets are constants, so this cannot fire unless the demo graph
+    is edited to hold more diseases than samples. It is wired anyway because the
+    alternative — relying on the generator's own refusal — happens after the
+    graph has been written, and a half-written demo workspace teaches the same
+    wrong lesson as a half-written real one.
+    """
+    for budget, partition, name in (
+        (DEMO_NUM_TRAIN, allocation.train, "DEMO_NUM_TRAIN"),
+        (DEMO_NUM_VAL, allocation.val, "DEMO_NUM_VAL"),
+    ):
+        if budget < len(partition):
+            raise SystemExit(
+                f"{name}={budget} cannot cover {len(partition)} allocated "
+                "diseases; every allocated disease must receive at least one "
+                "sample. Nothing was written."
+            )
 
 
 # =============================================================================
@@ -223,270 +260,53 @@ def build_demo_kg() -> KnowledgeGraph:
 
 
 # =============================================================================
-# Graph data generation (for GNN)
+# Model training
 # =============================================================================
-def generate_graph_data(kg: KnowledgeGraph, output_dir: Path) -> None:
+def train_demo_model(workspace: Path, num_epochs: int) -> Path:
+    """Train a small model on the demo workspace **through the real trainer**.
+
+    This script used to carry its own: it read the exported tensors, built a
+    GAT by hand, ran a loop and saved a checkpoint of its own shape. That
+    checkpoint never passed the training preflight, so nothing ever checked that
+    the workspace it came from was internally consistent — and the workspace it
+    came from was not, because the samples beside it were split by patient.
+
+    Calling `train` costs a few more seconds and buys the thing the demo is for:
+    if this returns a checkpoint, the production path works end to end on this
+    machine. The configuration is small because the demo graph is small; it is
+    not a different pipeline.
+
+    Returns:
+        The checkpoint the API should serve.
     """
-    Generate PyG-compatible graph data files from the KG.
+    from scripts.train_model import TrainConfig, train
+    from src.utils.checkpoint_paths import resolve_checkpoint_dir, select_checkpoint_in_dir
 
-    Delegates to KnowledgeGraph.export_graph_data() which is the single
-    source of truth for graph-data generation. It automatically adds
-    reverse `rev_*` edges so every node type participates as a destination
-    in message passing — without this, node types that only appear as
-    source (e.g. `gene` in the demo KG) would never have their embeddings
-    updated during training.
-
-    Creates node_features.pt, edge_indices.pt, num_nodes.json in output_dir.
-    """
-    kg.export_graph_data(output_dir=output_dir, feature_dim=64)
-    logger.info(f"Graph data saved to {output_dir}")
-
-
-# =============================================================================
-# Minimal model training
-# =============================================================================
-def train_minimal_model(
-    kg: KnowledgeGraph,
-    output_dir: Path,
-    hidden_dim: int = 64,
-    num_epochs: int = 20,
-) -> None:
-    """
-    Train a minimal GNN model on the demo KG for demonstration purposes.
-
-    This produces a valid checkpoint that the pipeline can load.
-    """
-    import torch
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-
-    node_features = torch.load(output_dir / "node_features.pt", weights_only=True)
-    edge_indices = torch.load(output_dir / "edge_indices.pt", weights_only=True)
-
-    # CRITICAL: metadata MUST be derived from the graph_data's edge keys
-    # (which include rev_* reverse edges added by export_graph_data), not
-    # from kg.metadata() (which only has forward edges). Using kg.metadata()
-    # here would build a model with only forward-edge conv layers, and PyG's
-    # HeteroConv would silently ignore the reverse edges during forward
-    # pass — leaving any "source-only" node type (e.g. `gene` in this demo)
-    # with its initial random embeddings forever.
-    #
-    # This matches the pattern in:
-    #   - scripts/train_model.py:create_model_from_config
-    #   - src/inference/pipeline.py:_load_model_from_checkpoint
-    node_types = list(node_features.keys())
-    edge_types = list(edge_indices.keys())
-    metadata = (node_types, edge_types)
-
-    in_channels_dict = {nt: feat.size(-1) for nt, feat in node_features.items()}
-
-    config = ShepherdGNNConfig(
-        hidden_dim=hidden_dim,
+    config = TrainConfig(
+        data_dir=str(workspace),
+        output_dir=str(workspace / "outputs"),
+        log_dir=str(workspace / "logs"),
+        conv_type="gat",
+        hidden_dim=DEMO_FEATURE_DIM,
         num_layers=2,
         num_heads=4,
-        conv_type="gat",
-        dropout=0.1,
-        use_positional_encoding=False,
-        use_ortholog_gate=False,
+        num_epochs=num_epochs,
+        batch_size=8,
+        warmup_steps=0,
     )
+    if not train(config):
+        raise SystemExit(
+            "Demo training produced no metrics; see the log above. The workspace "
+            "itself was written and is valid — re-run training with "
+            f"scripts/train_model.py --data-dir {workspace}"
+        )
 
-    model = ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels_dict,
-        config=config,
-    )
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-    logger.info(f"Training minimal GNN model for {num_epochs} epochs...")
-    model.train()
-    for epoch in range(num_epochs):
-        optimizer.zero_grad()
-        out = model(node_features, edge_indices)
-
-        # Simple self-supervised loss: pull similar node embeddings together
-        loss = torch.tensor(0.0)
-        for nt, emb in out.items():
-            if emb.size(0) > 1:
-                # Encourage embeddings to be diverse (not all the same)
-                norms = torch.nn.functional.normalize(emb, dim=-1)
-                sim = torch.mm(norms, norms.t())
-                # Target: identity-like (each node distinct)
-                target = torch.eye(sim.size(0))
-                loss = loss + torch.nn.functional.mse_loss(sim, target)
-
-        loss.backward()
-        optimizer.step()
-
-        if (epoch + 1) % 5 == 0:
-            logger.info(f"  Epoch {epoch + 1}/{num_epochs}, loss={loss.item():.4f}")
-
-    model.eval()
-
-    # Compute data fingerprint for KG version tracking
-    from src.utils.fingerprint import compute_fingerprint
-    graph_data = {
-        "x_dict": node_features,
-        "edge_index_dict": edge_indices,
-        "num_nodes_dict": {nt: feat.size(0) for nt, feat in node_features.items()},
-    }
-    data_fp = compute_fingerprint(
-        graph_data,
-        kg_total_nodes=kg.total_nodes,
-        kg_total_edges=kg.total_edges,
-    )
-
-    # Save checkpoint (Trainer format) with fingerprint
-    checkpoint = {
-        "model_state_dict": model.state_dict(),
-        "config": {
-            "hidden_dim": config.hidden_dim,
-            "num_layers": config.num_layers,
-            "num_heads": config.num_heads,
-            "conv_type": config.conv_type,
-            "use_positional_encoding": config.use_positional_encoding,
-            "use_ortholog_gate": config.use_ortholog_gate,
-        },
-        "data_fingerprint": data_fp,
-    }
-    ckpt_dir = output_dir / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_path = ckpt_dir / "model_checkpoint.pt"
-    torch.save(checkpoint, ckpt_path)
-    logger.info(f"Model checkpoint saved to {ckpt_path}")
-
-
-# =============================================================================
-# Training sample generation
-# =============================================================================
-def generate_training_samples(
-    kg: KnowledgeGraph,
-    output_dir: Path,
-    num_train: int = 200,
-    num_val: int = 50,
-) -> None:
-    """
-    Generate train_samples.json and val_samples.json for the demo workspace.
-
-    These files are required by scripts/train_model.py (via Training Console).
-    Each sample is a simulated patient with a subset of phenotypes and a
-    target disease, derived from the actual KG structure so the training
-    signal is meaningful (not random).
-
-    Format per sample:
-        {"patient_id": str, "phenotype_ids": [int], "disease_id": int}
-
-    Where phenotype_ids and disease_id are integer indices matching the
-    node ordering in node_features.pt (from kg.get_node_id_mapping()).
-    """
-    import random
-    random.seed(42)
-
-    node_mapping = kg.get_node_id_mapping()
-    pheno_map = node_mapping.get("phenotype", {})
-    disease_map = node_mapping.get("disease", {})
-
-    if not pheno_map or not disease_map:
-        logger.warning("Cannot generate training samples: no phenotype or disease nodes")
-        return
-
-    # Build disease → associated phenotype indices from KG edges
-    disease_phenotypes: dict = {}
-    for edge in kg._edges:
-        src_node = kg._nodes.get(str(edge.source_id))
-        tgt_node = kg._nodes.get(str(edge.target_id))
-        if src_node is None or tgt_node is None:
-            continue
-
-        # gene_has_phenotype + gene_associated_with_disease → indirect mapping
-        # phenotype_of_disease → direct mapping
-        if (src_node.node_type == NodeType.PHENOTYPE
-                and tgt_node.node_type == NodeType.DISEASE):
-            d_idx = disease_map.get(str(edge.target_id))
-            p_idx = pheno_map.get(str(edge.source_id))
-            if d_idx is not None and p_idx is not None:
-                disease_phenotypes.setdefault(d_idx, set()).add(p_idx)
-
-    # Also build indirect: phenotype → gene → disease
-    gene_phenotypes: dict = {}
-    gene_diseases: dict = {}
-    gene_map = node_mapping.get("gene", {})
-
-    for edge in kg._edges:
-        src_node = kg._nodes.get(str(edge.source_id))
-        tgt_node = kg._nodes.get(str(edge.target_id))
-        if src_node is None or tgt_node is None:
-            continue
-        src_str = str(edge.source_id)
-        tgt_str = str(edge.target_id)
-
-        if (src_node.node_type.value == "gene"
-                and tgt_node.node_type.value == "phenotype"):
-            g_idx = gene_map.get(src_str)
-            p_idx = pheno_map.get(tgt_str)
-            if g_idx is not None and p_idx is not None:
-                gene_phenotypes.setdefault(g_idx, set()).add(p_idx)
-
-        if (src_node.node_type.value == "gene"
-                and tgt_node.node_type.value == "disease"):
-            g_idx = gene_map.get(src_str)
-            d_idx = disease_map.get(tgt_str)
-            if g_idx is not None and d_idx is not None:
-                gene_diseases.setdefault(g_idx, set()).add(d_idx)
-
-    # Merge indirect phenotypes into disease_phenotypes
-    for g_idx, d_indices in gene_diseases.items():
-        g_phenos = gene_phenotypes.get(g_idx, set())
-        for d_idx in d_indices:
-            disease_phenotypes.setdefault(d_idx, set()).update(g_phenos)
-
-    if not disease_phenotypes:
-        logger.warning("No disease-phenotype associations found in KG")
-        return
-
-    all_pheno_indices = list(range(len(pheno_map)))
-    disease_indices = list(disease_phenotypes.keys())
-
-    def make_samples(n: int) -> list:
-        samples = []
-        for i in range(n):
-            # Pick a random disease
-            d_idx = random.choice(disease_indices)
-            associated = list(disease_phenotypes.get(d_idx, set()))
-
-            if not associated:
-                continue
-
-            # Patient gets 2-5 associated phenotypes + 0-2 noise phenotypes
-            n_assoc = min(len(associated), random.randint(2, 5))
-            patient_phenos = random.sample(associated, n_assoc)
-
-            noise_pool = [p for p in all_pheno_indices if p not in associated]
-            n_noise = min(len(noise_pool), random.randint(0, 2))
-            if n_noise > 0:
-                patient_phenos += random.sample(noise_pool, n_noise)
-
-            random.shuffle(patient_phenos)
-
-            samples.append({
-                "patient_id": f"patient_{i:05d}",
-                "phenotype_ids": patient_phenos,
-                "disease_id": d_idx,
-            })
-        return samples
-
-    train_samples = make_samples(num_train)
-    val_samples = make_samples(num_val)
-
-    with open(output_dir / "train_samples.json", "w") as f:
-        json.dump(train_samples, f)
-    with open(output_dir / "val_samples.json", "w") as f:
-        json.dump(val_samples, f)
-
-    logger.info(
-        f"Training samples generated: {len(train_samples)} train, "
-        f"{len(val_samples)} val ({len(disease_indices)} diseases, "
-        f"{len(all_pheno_indices)} phenotypes)"
-    )
+    ckpt_dir = resolve_checkpoint_dir(str(workspace), config.conv_type, None)
+    selected = select_checkpoint_in_dir(ckpt_dir)
+    if selected is None:
+        raise SystemExit(f"Training wrote no checkpoint under {ckpt_dir}.")
+    logger.info("Demo checkpoint: %s", selected)
+    return selected
 
 
 # =============================================================================
@@ -505,54 +325,75 @@ def main():
     parser.add_argument(
         "--train-model",
         action="store_true",
-        help="Also train a minimal GNN model",
+        help="Also train a small model, so the API can start in GNN mode",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=20,
+        help="Training epochs when --train-model is given (default: 20)",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Build and save KG
     logger.info("Building demo knowledge graph...")
     kg = build_demo_kg()
+
+    # **The same writer the production build uses.** Not a demo-shaped
+    # imitation of one: the allocation is cut at the disease level, the cohorts
+    # are generated from it, and `split_manifest.json` binds all six artifacts
+    # to this one event. A workspace this script writes is a workspace every
+    # consumer accepts — which is the only useful thing a demo of this system
+    # can demonstrate.
+    written = write_workspace(
+        kg,
+        output_dir,
+        feature_dim=DEMO_FEATURE_DIM,
+        samples=SampleBudget(
+            num_train=DEMO_NUM_TRAIN,
+            num_val=DEMO_NUM_VAL,
+            val_disease_fraction=DEMO_VAL_DISEASE_FRACTION,
+            seed=DEMO_SEED,
+        ),
+        preflight=_refuse_undersized_budgets,
+    )
     kg_path = output_dir / "kg.json"
-    kg.save_json(str(kg_path))
 
+    checkpoint_path = None
     if args.train_model:
-        # Step 2: Generate graph data
-        logger.info("Generating graph data for GNN...")
-        generate_graph_data(kg, output_dir)
+        checkpoint_path = train_demo_model(output_dir, args.epochs)
 
-        # Step 3: Generate training samples
-        logger.info("Generating training samples...")
-        generate_training_samples(kg, output_dir)
-
-        # Step 4: Train minimal model
-        train_minimal_model(kg, output_dir)
-
-    # Print startup instructions
     print("\n" + "=" * 60)
     print("Demo setup complete!")
     print("=" * 60)
+    print(f"  Workspace: {output_dir}")
+    print(f"  Train: {len(written.train_samples)} samples over "
+          f"{written.manifest['realised']['train_diseases']} diseases")
+    print(f"  Val:   {len(written.val_samples)} samples over "
+          f"{written.manifest['realised']['val_diseases']} diseases "
+          f"(disjoint: {written.manifest['disjoint']})")
 
-    if args.train_model:
+    if checkpoint_path is not None:
         print(f"""
 Start the API with GNN scoring (full mode):
 
   SHEPHERD_KG_PATH={kg_path} \\
-  SHEPHERD_CHECKPOINT_PATH={output_dir / 'checkpoints' / 'model_checkpoint.pt'} \\
+  SHEPHERD_CHECKPOINT_PATH={checkpoint_path} \\
   SHEPHERD_DATA_DIR={output_dir} \\
-  python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 """)
     else:
         print(f"""
 Start the API with path-reasoning only (fallback mode):
 
   SHEPHERD_KG_PATH={kg_path} \\
-  python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 
-To enable GNN scoring, re-run with --train-model:
+To enable GNN scoring, train on this workspace:
   python scripts/setup_demo.py --train-model
+  # or, equivalently, the production entry point:
+  python scripts/train_model.py --data-dir {output_dir} --epochs 20
 """)
 
 
