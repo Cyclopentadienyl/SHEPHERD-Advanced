@@ -44,7 +44,11 @@ from src.core.types import DataSource, NodeType
 from src.kg.builder import KnowledgeGraphBuilder, KGBuilderConfig
 from src.data_sources.hpo_annotations import HPOAnnotationParser
 from src.ontology.loader import OntologyLoader
-from src.kg.workspace import SampleBudget, write_workspace
+from src.kg.workspace import (
+    SampleBudget,
+    require_budget_coverage,
+    write_workspace,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,19 +91,20 @@ def require_sufficient_budgets(
 
     Split from phase one because this is the half that *cannot* run early: the
     partition sizes exist only once the graph has been built and cut. It still
-    runs before the first workspace write. ``_generate_partition`` refuses an
-    under-sized budget too, but by then the graph artifacts have been saved.
+    runs before the first workspace write.
+
+    **The comparison belongs to the writer; this adds the flag names and the
+    exit convention of a command-line tool.** The writer enforces it too, and
+    would refuse this run on its own — but in library terms, naming an argument
+    an operator never typed.
     """
-    for budget, partition, flag in (
-        (num_train, allocation.train, "--num-train"),
-        (num_val, allocation.val, "--num-val"),
-    ):
-        if budget < len(partition):
-            raise SystemExit(
-                f"{flag}={budget} cannot cover {len(partition)} allocated "
-                "diseases; every allocated disease must receive at least one "
-                "sample. Nothing was written."
-            )
+    try:
+        require_budget_coverage(
+            num_train, num_val, allocation,
+            train_label="--num-train", val_label="--num-val",
+        )
+    except ValueError as exc:
+        raise SystemExit(f"{exc} Nothing was written.") from exc
 
 
 def build_knowledge_graph(
@@ -262,16 +267,33 @@ def build_knowledge_graph(
         print(f"    {et}: {count:,}")
     print(f"  Workspace: {workspace}")
 
+    # **Name what was produced, and print only the steps that work on it.**
+    # Without cohorts this is a graph export, not a trainable workspace: nothing
+    # records which export the tensors are, so `train_model.py` and GNN serving
+    # both refuse it. Printing the training command anyway is how an operator
+    # learns that at the end of a 30-minute build instead of at the start.
     if generate_samples:
         print(f"\n  Training samples: {len(train_samples)}")
         print(f"  Validation samples: {len(val_samples)}")
+    else:
+        print("\n  Cohorts: none (graph export only, --generate-samples not given)")
+        print("  This workspace CANNOT be trained on or served with GNN scoring:")
+        print("  no split manifest binds these tensors to this export.")
 
-    print(f"\nNext steps:")
-    print(f"  # Precompute shortest paths (may take 30-60 min for large KGs)")
-    print(f"  python scripts/compute_shortest_paths.py \\")
+    print("\nNext steps:")
+    print("  # Precompute shortest paths (may take 30-60 min for large KGs)")
+    print("  python scripts/compute_shortest_paths.py \\")
     print(f"      --kg-path {kg_path} --output-dir {workspace}")
-    print(f"\n  # Train model")
-    print(f"  python scripts/train_model.py --data-dir {workspace} --epochs 50")
+    if generate_samples:
+        print("\n  # Train model")
+        print(f"  python scripts/train_model.py --data-dir {workspace} --epochs 50")
+    else:
+        print("\n  # Complete the workspace before training. Cohorts cannot be")
+        print("  # added to an export afterwards -- only the writer that exported")
+        print("  # the tensors can vouch for their digests -- so this rebuilds:")
+        print(f"  python scripts/build_knowledge_graph.py --workspace {workspace} \\")
+        print(f"      --external-dir {external_dir} --generate-samples \\")
+        print("      --num-train <n> --num-val <n>")
     print("=" * 60)
 
 

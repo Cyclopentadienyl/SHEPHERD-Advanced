@@ -73,27 +73,6 @@ DEMO_VAL_DISEASE_FRACTION = 0.2
 DEMO_SEED = 42
 
 
-def _refuse_undersized_budgets(allocation) -> None:
-    """Refuse before the first workspace byte, in this script's vocabulary.
-
-    The demo's budgets are constants, so this cannot fire unless the demo graph
-    is edited to hold more diseases than samples. It is wired anyway because the
-    alternative — relying on the generator's own refusal — happens after the
-    graph has been written, and a half-written demo workspace teaches the same
-    wrong lesson as a half-written real one.
-    """
-    for budget, partition, name in (
-        (DEMO_NUM_TRAIN, allocation.train, "DEMO_NUM_TRAIN"),
-        (DEMO_NUM_VAL, allocation.val, "DEMO_NUM_VAL"),
-    ):
-        if budget < len(partition):
-            raise SystemExit(
-                f"{name}={budget} cannot cover {len(partition)} allocated "
-                "diseases; every allocated disease must receive at least one "
-                "sample. Nothing was written."
-            )
-
-
 # =============================================================================
 # Demo KG construction
 # =============================================================================
@@ -356,7 +335,6 @@ def main():
             val_disease_fraction=DEMO_VAL_DISEASE_FRACTION,
             seed=DEMO_SEED,
         ),
-        preflight=_refuse_undersized_budgets,
     )
     kg_path = output_dir / "kg.json"
 

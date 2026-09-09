@@ -163,7 +163,36 @@ class TestARejectedCandidateCostsNothing:
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
         assert result.success is False
-        assert "configuration is unusable" in result.message
+        assert "cannot be reported" in result.message
+        assert result.status.initialized is True, "reported a down service"
+        _assert_untouched(api, before)
+
+    def test_a_configuration_no_encoder_can_serialise_changes_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        """Pydantic construction is not the last thing that can fail.
+
+        `checkpoint_meta` is `Dict[str, Any]`, so an unserialisable value passes
+        the model and is refused by the encoder FastAPI runs *after* the endpoint
+        returns -- past the swap, where the request reports failure over state it
+        has already replaced. Driving the coroutine directly, as these tests do,
+        never reaches that boundary, so the endpoint has to reach it itself.
+        """
+        import src.inference.pipeline as pipeline
+
+        api, before = _serving(monkeypatch)
+        root, _ = _candidate_workspace(monkeypatch, tmp_path)
+        unserialisable = dict(CANDIDATE_CONFIG, checkpoint_meta={"trained_on": object()})
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline,
+            "get_pipeline_config",
+            lambda self: unserialisable,
+        )
+
+        result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
+
+        assert result.success is False
+        assert "cannot be reported" in result.message
         assert result.status.initialized is True, "reported a down service"
         _assert_untouched(api, before)
 
@@ -341,3 +370,45 @@ def test_a_service_with_no_pipeline_is_not_told_one_is_still_serving(
     assert result.success is False
     assert "still being served" not in result.message
     assert result.status.initialized is False
+
+
+def test_publication_formats_nothing_after_it_has_assigned(monkeypatch, tmp_path):
+    """`publish_pipeline` logs an announcement interpolating configuration
+    values, and `__str__` is the caller's code.
+
+    **Tested through startup, not through reload.** Reload renders its response
+    first, and the response schema types the three values the announcement
+    interpolates — so by the time reload publishes, they are provably a `str`
+    and two `bool`s and the formatting cannot fail. `initialize_pipeline`
+    validates nothing, which is where the ordering inside `publish_pipeline` is
+    the only thing standing between a hostile value and a pipeline that is live
+    while its publisher raises.
+    """
+    import src.api.main as api
+    import src.inference.pipeline as pipeline
+
+    class _Hostile:
+        def __str__(self):
+            raise RuntimeError("formatting me is a mistake")
+
+        __repr__ = __str__
+
+    root, _ = _candidate_workspace(monkeypatch, tmp_path)
+    monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
+    monkeypatch.setattr(api.app_state, "kg", None, raising=False)
+    monkeypatch.setattr(api.app_state, "model_version", "unknown", raising=False)
+    monkeypatch.setattr(
+        pipeline.DiagnosisPipeline,
+        "get_pipeline_config",
+        lambda self: dict(CANDIDATE_CONFIG, scoring_mode=_Hostile()),
+    )
+    monkeypatch.setenv("SHEPHERD_KG_PATH", str(root / "kg.json"))
+    monkeypatch.setenv("SHEPHERD_DATA_DIR", str(root))
+    monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(root / "ckpt.pt"))
+
+    with pytest.raises(RuntimeError, match="formatting me is a mistake"):
+        api.initialize_pipeline()
+
+    assert api.app_state.pipeline is None, "published, then failed to announce it"
+    assert api.app_state.kg is None
+    assert api.app_state.model_version == "unknown"

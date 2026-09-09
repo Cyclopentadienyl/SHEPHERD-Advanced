@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from src.config.model_types import SUPPORTED_CONV_TYPES
@@ -377,15 +378,14 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             files_found=files,
         )
 
-    # **The whole response is built and validated before anything is published.**
-    # `build_pipeline` obtains the configuration dictionary but makes no claim
-    # about its *shape*: a pipeline that returns, say, a string where the schema
-    # wants an int constructs fine and is refused here, by Pydantic, while the
-    # response is rendered. Rendering after publication would mean the request
-    # reporting failure over state it had already replaced -- the same defect as
-    # the teardown, one step later and harder to see. Publication is the last
-    # thing this endpoint does that changes anything, and everything fallible
-    # happens above it.
+    # **The whole response is built, validated and encoded before anything is
+    # published.** `build_pipeline` obtains the configuration dictionary but
+    # makes no claim about its *shape*, and Pydantic construction does not close
+    # that either: `checkpoint_meta` is `Dict[str, Any]`, so a value that no
+    # encoder can serialise is accepted by the model and rejected only at the
+    # HTTP boundary -- after this function has returned, and after publication.
+    # Encoding here is what moves that failure back in front of the swap.
+    # Publication is the last thing this endpoint does that changes anything.
     try:
         config = candidate.config
         fp_warns = config.get("fingerprint_warnings", [])
@@ -405,13 +405,17 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             architecture=architecture,
             selection_reason=selection_reason,
         )
+        # The encoder FastAPI itself runs on the way out, run here for its
+        # refusal rather than its output: the response object is what gets
+        # returned, and the second encode costs one small object.
+        jsonable_encoder(response)
     except Exception as e:
         # Reported as a refused reload rather than a 500, because that is what it
         # is: a candidate this service cannot describe is one it should not serve.
-        logger.error(f"Pipeline reload rejected while rendering its status: {e}")
+        logger.error(f"Pipeline reload rejected while rendering its response: {e}")
         return PipelineReloadResponse(
             success=False,
-            message=f"Pipeline built but its configuration is unusable: {e}."
+            message=f"Pipeline built but its configuration cannot be reported: {e}."
             f"{_still_serving()}",
             status=_live_status(),
             files_found=files,

@@ -56,6 +56,33 @@ class SampleBudget(NamedTuple):
     min_phenotypes: int = 2
 
 
+def require_budget_coverage(
+    num_train: int,
+    num_val: int,
+    allocation: Any,
+    *,
+    train_label: str = "num_train",
+    val_label: str = "num_val",
+) -> None:
+    """Every allocated disease must receive at least one sample.
+
+    **One implementation, two vocabularies.** A command-line tool wants to name
+    its flags and a library caller wants to name its arguments, but the
+    comparison is the same one and a second copy of it would be a second thing
+    to keep true. The labels are the only part the caller supplies.
+    """
+    for budget, partition, label in (
+        (num_train, allocation.train, train_label),
+        (num_val, allocation.val, val_label),
+    ):
+        if budget < len(partition):
+            raise ValueError(
+                f"{label}={budget} cannot cover {len(partition)} allocated "
+                "diseases; every allocated disease must receive at least one "
+                "sample."
+            )
+
+
 class WorkspaceWrite(NamedTuple):
     """What one production event produced."""
 
@@ -82,14 +109,20 @@ def write_workspace(
         workspace: the directory to write. Created if absent.
         feature_dim: node feature width for the export.
         samples: when given, cut an allocation and generate cohorts with a
-            `split_manifest.json`. When omitted, only the graph is written — a
-            directory no consumer accepts on its own, which is why every
-            production caller supplies budgets.
+            `split_manifest.json`. When omitted, only the graph is written.
+            That is a real mode, not a broken one — `compute_shortest_paths.py`
+            reads `kg.json`, `build_index.py` reads the tensors, and the API
+            serves path-reasoning from `kg.json` alone — but it is **not a
+            trainable or GNN-servable workspace**, because nothing records which
+            export those tensors are. Completing it means running this function
+            again with budgets, not adding a manifest to what is already there:
+            only the writer that exported the tensors can vouch for their
+            digests.
         preflight: called with the allocation once it is cut and **before any
-            byte is written**, so a caller can refuse in its own vocabulary (a
-            command-line tool naming its flags, say) while the ordering that
-            makes the refusal free stays here. The generator refuses an
-            undersized budget too, but only after the graph has been saved.
+            byte is written**, for caller-specific wording or additional policy.
+            It is never the only check: this function validates the budgets'
+            domain before allocating and their coverage before writing, so a
+            caller that passes none gets the same refusals in library terms.
 
     Returns:
         The digests, the allocation, both cohorts and the manifest.
@@ -99,7 +132,6 @@ def write_workspace(
     from src.utils.fingerprint import file_sha256
 
     workspace = Path(workspace)
-    workspace.mkdir(parents=True, exist_ok=True)
 
     # **A workspace under trained checkpoints is not rewritable.** Rebuilding
     # the graph beneath them leaves those checkpoints paired with a graph they
@@ -112,6 +144,14 @@ def write_workspace(
     allocation = None
     if samples is not None:
         from src.kg import allocate_diseases, build_eligible_disease_profiles
+        from src.kg.sample_generator import validate_sample_budgets
+
+        # **The budgets' own domain, before an allocation is even cut.** The
+        # same validator the generator uses, so the writer and the library
+        # cannot disagree about what a budget is. A `True` or a large float used
+        # to pass every comparison below it and be caught only by the generator,
+        # with the graph already on disk.
+        validate_sample_budgets(samples.num_train, samples.num_val)
 
         eligible = build_eligible_disease_profiles(
             kg, min_phenotypes=samples.min_phenotypes
@@ -119,9 +159,15 @@ def write_workspace(
         allocation = allocate_diseases(
             eligible, samples.val_disease_fraction, seed=samples.seed
         )
+        # Coverage needs the partition sizes, so it cannot run earlier than this
+        # -- but it still runs before the first byte. A caller's `preflight` may
+        # refuse first with a better message; this is what holds when none does.
         if preflight is not None:
             preflight(allocation)
+        require_budget_coverage(samples.num_train, samples.num_val, allocation)
 
+    # Every refusal is behind us; this is the first thing that exists afterwards.
+    workspace.mkdir(parents=True, exist_ok=True)
     kg_path = workspace / GRAPH_ARTIFACTS["kg"]
     kg.save_json(str(kg_path))
     logger.info("KG saved to %s", kg_path)
@@ -158,4 +204,9 @@ def write_workspace(
     )
 
 
-__all__ = ["SampleBudget", "WorkspaceWrite", "write_workspace"]
+__all__ = [
+    "SampleBudget",
+    "WorkspaceWrite",
+    "require_budget_coverage",
+    "write_workspace",
+]

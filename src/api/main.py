@@ -483,16 +483,24 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
     describing a pipeline that is not the one loaded. Everything that can fail
     happened in `build_pipeline`; these assignments cannot.
     """
-    app_state.kg = bundle.kg
-    app_state.pipeline = bundle.pipeline
-    app_state.model_version = bundle.config.get("version", "unknown")
-    app_state._current_data_dir = bundle.data_dir
-    app_state._current_checkpoint_path = bundle.checkpoint_path
-    logger.info(
+    # **Formatted before the first assignment.** These are values out of an
+    # arbitrary configuration dictionary, and formatting one calls its `__str__`;
+    # a type whose `__str__` raises would leave the pipeline published and this
+    # function raising, which is the failure the caller's ordering exists to
+    # prevent. Built here, the same failure happens before anything changed.
+    announcement = (
         f"Pipeline published: scoring_mode={bundle.config.get('scoring_mode')}, "
         f"gnn_ready={bundle.config.get('gnn_ready')}, "
         f"sp_ready={bundle.config.get('sp_ready')}"
     )
+    model_version = bundle.config.get("version", "unknown")
+
+    app_state.kg = bundle.kg
+    app_state.pipeline = bundle.pipeline
+    app_state.model_version = model_version
+    app_state._current_data_dir = bundle.data_dir
+    app_state._current_checkpoint_path = bundle.checkpoint_path
+    logger.info(announcement)
 
 
 def initialize_pipeline(
