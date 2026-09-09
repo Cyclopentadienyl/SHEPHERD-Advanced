@@ -942,3 +942,59 @@ class TestProvenanceMustAgreeWithWhatWasRun:
         path = tmp_path / "split_manifest.json"
         with pytest.raises(ValueError, match="recorded no export recipe"):
             require_manifest_schema({"schema_version": 2}, path)
+
+
+def test_the_split_manifest_shape_is_pinned_to_its_schema_version(tmp_path):
+    """`schema_version` is a number a human has to remember to bump.
+
+    `require_manifest_schema` refuses a manifest whose version this code does
+    not read, and names what each older one lacked — a contract that only works
+    while the version tracks the shape. Nothing enforced that: `graph_export`
+    was added by hand and the bump from 2 to 3 was too, and a field added
+    without one would sail through the version check and be read as absent by
+    every consumer.
+
+    `MeasurementManifest` already has this guard, over its dataclass fields.
+    This is the same guard for the manifest that is built as a dict.
+
+    Adding, removing or renaming a key here means bumping
+    SPLIT_MANIFEST_SCHEMA_VERSION and updating the refusal message that tells an
+    operator what the old shape could not do.
+    """
+    import json
+
+    from scripts.setup_demo import build_demo_kg
+    from src.kg.artifacts import SPLIT_MANIFEST_SCHEMA_VERSION
+    from src.kg.workspace import SampleBudget, write_workspace
+
+    workspace = tmp_path / "ws"
+    write_workspace(
+        build_demo_kg(), workspace, feature_dim=16,
+        samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
+    )
+    manifest = json.loads((workspace / "split_manifest.json").read_text())
+
+    assert manifest["schema_version"] == SPLIT_MANIFEST_SCHEMA_VERSION
+    assert set(manifest) == {
+        "schema_version", "generation", "graph_export", "allocation",
+        "realised", "artifacts", "disjoint",
+    }
+    assert set(manifest["generation"]) == {
+        "algorithm", "algorithm_version", "num_train", "num_val",
+        "min_phenotypes", "max_phenotypes", "phenotype_drop_rate",
+    }
+    assert set(manifest["graph_export"]) == {
+        "feature_dim", "feature_seed", "initialisation", "initialisation_version",
+    }
+    assert set(manifest["allocation"]) == {
+        "algorithm", "algorithm_version", "allocated", "eligible_diseases",
+        "seed", "stream_derivation", "universe_digest", "val_fraction_requested",
+    }
+    assert set(manifest["realised"]) == {
+        "derived_from", "train_digest", "train_diseases", "val_digest",
+        "val_diseases",
+    }
+    assert set(manifest["artifacts"]) == {
+        "kg", "node_features", "edge_indices", "num_nodes",
+        "train_samples", "val_samples",
+    }
