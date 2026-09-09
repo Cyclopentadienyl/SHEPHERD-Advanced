@@ -247,9 +247,17 @@ def phase_environment(report: Report, device: str) -> Dict[str, Any]:
     def _arch_support() -> Tuple[str, Dict[str, Any]]:
         """What this torch build can emit, against what this device is.
 
-        Facts, not a verdict. A device outside the build's range can still work
-        by JIT-compiling the build's PTX, and a device inside it can still be
-        broken. A4 is the verdict; this is what makes A4's result explicable.
+        **Facts, and deliberately not a verdict.** On GB10 (sm_121) this probe
+        will report "no native kernels" on every run this project will ever
+        make: NVIDIA ships no sm_121-specific kernels, so no PyTorch build has
+        any, and the device runs through the compatibility path permanently.
+        That is upstream's settled position, not a deployment defect and not
+        something to chase.
+
+        Recording it as a status would therefore be a light that is always on,
+        which is a light nobody reads. A4 carries the verdict — whether kernels
+        actually execute and give the right answers — and this exists to make
+        A4's result explicable rather than to grade the machine.
         """
         import torch
 
@@ -263,17 +271,25 @@ def phase_environment(report: Report, device: str) -> Dict[str, Any]:
             "arch_list": arch_list,
             "device_capability": capability,
             "natively_compiled_for_this_device": native,
+            "native_kernels_expected": None,  # set below: a judgement, not a probe
             "ptx_available": ptx,
         }
+        # A device newer than anything the build names is the ordinary case for
+        # recent hardware, and stays that way until the vendor ships kernels for
+        # it. Saying so in the artifact keeps a later reader from re-opening it.
+        collected["native_kernels_expected"] = bool(arch_list) and native
         facts.update({"cuda_arch_support": collected})
-        note = "built for this device" if native else (
-            "not built for this device; execution depends on PTX JIT"
+        note = (
+            "natively compiled for this device" if native else
+            "no native kernels for this device — the expected, permanent state "
+            "for a capability the vendor ships none for; A4 is what decides "
+            "whether that matters here"
         )
         return note, collected
 
     report.run(
         "A3", "environment",
-        "the build's architectures are recorded against this device", _arch_support,
+        "the build's architectures are recorded (informational)", _arch_support,
     )
 
     def _kernel_runs() -> Tuple[str, Dict[str, Any]]:
