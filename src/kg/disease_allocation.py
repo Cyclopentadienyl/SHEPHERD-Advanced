@@ -41,6 +41,22 @@ second vintage rather than as a second machine — the operator states the two a
 an identical hardware and software build, and these audits read files and count
 integers, so no number here depends on which machine produced it.
 
+**That digest cannot be rebuilt, and the reading survives it.** ``6889ed11…``
+was produced before ``Ontology.get_all_terms`` and ``to_edges`` were sorted, when
+`pronto`'s threaded parse left node insertion order — and therefore every integer
+disease index — varying between builds of identical annotation files. The
+deployment probe's F2 caught it: two builds, same content, different order, and
+an allocation that withheld a *different set of diseases* under the same seed.
+Sorting fixed the order, which changed every index, which changed the digest.
+
+The figures above are unaffected, and not by assumption. Eligibility counts
+phenotypes and genes, which no relabelling moves: three builds on the deployment
+machine, before and after the fix, each reported 10,577 eligible of 29,866 and a
+8,990 / 1,587 cut at f = 0.15 — the artifact's own universe. What is lost is the
+ability to point at ``6889ed11…`` and rebuild it. Since the fix, a rebuild
+reproduces ``kg.json`` exactly, so a digest recorded from here on names a graph
+rather than a run.
+
 Module: src/kg/disease_allocation.py
 """
 from __future__ import annotations

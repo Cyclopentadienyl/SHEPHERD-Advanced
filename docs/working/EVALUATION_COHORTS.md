@@ -10,7 +10,7 @@ with one item under re-review.
 <summary><b>Revision history</b></summary>
 
 - **28** — §6.8's audit has a committed artifact, and §6.2's uniform draw stops being provisional.
-  `EVIDENCE_split_feasibility_homelab.json` (schema 2, `identical-sibling`, KG `6889ed11…`) puts the
+  `EVIDENCE_split_feasibility_homelab.json` (schema 2, `identical-sibling`, KG `6889ed11…` — a digest from before the build was made deterministic, and no longer reproducible; see `src/kg/disease_allocation.py`) puts the
   worst validation-representation risk at a 69-disease `gene_count 11+` band: 2.9% at f = 0.05 and
   0.0013% at f = 0.15, with the worst training-side risk anywhere at 2e-92. Stratified allocation
   stays unbuilt on that evidence rather than on expectation. The figures belong to one MONDO
