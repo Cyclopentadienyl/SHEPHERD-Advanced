@@ -974,6 +974,59 @@ def phase_real_build(
         "F1", "real_build", "a real workspace builds and verifies here", _build
     )
 
+    def _rebuild_is_the_same_graph() -> Tuple[str, Dict[str, Any]]:
+        """Two builds from the same annotation files, compared.
+
+        **The manifest scheme rests on this and nothing tested it.** A digest
+        binds artifacts to a production event; if the same inputs produced a
+        different graph each time, a digest would identify a run rather than a
+        graph, and comparing two workspaces would be meaningless.
+
+        The three tensors are a different matter and are expected to differ:
+        `export_graph_data` initialises node features with `torch.randn` and no
+        seed, so they are new random values on every build. That is why a
+        workspace is copied rather than rebuilt — the identical `kg.json` digest
+        is what proves two copies were cut from the same graph. Recorded rather
+        than asserted, because "these differ" is a claim about randomness.
+        """
+        from scripts.build_knowledge_graph import build_knowledge_graph
+        from src.kg.artifacts import GRAPH_ARTIFACTS
+        from src.utils.fingerprint import file_sha256
+
+        first = work / "real_workspace"
+        if not (first / "kg.json").exists():
+            raise SkipProbe("the first build did not complete")
+        second = work / "real_workspace_again"
+        build_knowledge_graph(
+            external_dir=external, workspace=second,
+            generate_samples=True, num_train=num_train, num_val=num_val,
+            val_disease_fraction=0.15, sample_seed=SEED,
+        )
+        digests = {
+            role: (
+                file_sha256(first / filename) == file_sha256(second / filename)
+            )
+            for role, filename in GRAPH_ARTIFACTS.items()
+        }
+        assert digests["kg"], (
+            "two builds from the same annotation files produced different "
+            "graphs: a digest would then identify a run rather than a graph"
+        )
+        return "the same inputs produced the same graph", {
+            "artifacts_reproduced": {
+                role: matched for role, matched in sorted(digests.items())
+            },
+            "tensors_are_seeded": all(
+                digests[role] for role in
+                ("node_features", "edge_indices", "num_nodes")
+            ),
+        }
+
+    report.run(
+        "F2", "real_build",
+        "the same annotation files produce the same graph", _rebuild_is_the_same_graph,
+    )
+
 
 # =============================================================================
 # Entry point
