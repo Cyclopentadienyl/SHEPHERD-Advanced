@@ -49,6 +49,13 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # Knowledge Graph
 # ==============================================================================
+#: How node features are initialised, recorded in the manifest so a later
+#: operator reads a recipe rather than only a digest. Changing the draw means
+#: changing this name — a switch to pretrained, ortholog-derived or otherwise
+#: different features must not silently inherit the semantics of a normal draw.
+FEATURE_INITIALISATION = "standard-normal"
+FEATURE_INITIALISATION_VERSION = 1
+
 #: The node features an export writes are drawn from this seed unless a caller
 #: names another. Fixed so that rebuilding a workspace from the same annotation
 #: files reproduces it rather than merely resembling it; a parameter rather than

@@ -781,13 +781,12 @@ def phase_serving(
             p.numel() for p in state["bundle"].pipeline.model.parameters()
         )
         if device == "cuda":
-            # **Measured against a steady state, not against whatever the
-            # earlier phases left behind.** The first version reset the peak
-            # while this probe still held the previous bundle and while A4's
-            # matrices were live, so "before" was noise and nothing could be
-            # freed. Dropping the reference and emptying the cache is what makes
-            # the difference attributable to the reload.
-            state.pop("bundle_reference_for_measurement", None)
+            # **Emptied, not freed.** `empty_cache` returns the allocator's
+            # unused blocks so the baseline is not whatever A4's matrices and
+            # the training run left cached. It does not release the previous
+            # pipeline: this probe still holds it in `state["bundle"]`, which is
+            # deliberate — E5 needs it — and is one of the reasons the numbers
+            # below are marked inconclusive rather than interpreted.
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
@@ -1017,7 +1016,17 @@ def phase_real_build(
             generate_samples=True, num_train=num_train, num_val=num_val,
             val_disease_fraction=0.15, sample_seed=SEED,
         )
-        names = sorted(path.name for path in first.iterdir() if path.is_file())
+        # The seven files a generated workspace is: the four graph artifacts,
+        # both cohorts and the manifest. Named rather than globbed, so "the same
+        # workspace" means the same thing here as it does to the verifiers, and
+        # an unrelated file dropped into the directory neither joins the claim
+        # nor breaks it.
+        from src.kg.artifacts import GRAPH_ARTIFACTS, MANIFEST_FILENAME
+
+        names = sorted(
+            list(GRAPH_ARTIFACTS.values())
+            + ["train_samples.json", "val_samples.json", MANIFEST_FILENAME]
+        )
         digests = {name: file_sha256(first / name) for name in names}
         differing = sorted(
             name for name in names
@@ -1032,7 +1041,7 @@ def phase_real_build(
             "a digest would then identify a run rather than a workspace"
         )
         return "the same inputs produced the same workspace", {
-            "files_compared": len(names),
+            "canonical_artifacts_compared": len(names),
             # Recorded so a report from another machine can be diffed against
             # this one without rebuilding anything.
             "digests": digests,

@@ -253,6 +253,11 @@ def write_workspace(
 
     from src.kg.sample_generator import generate_training_samples
 
+    from src.kg.graph import (
+        FEATURE_INITIALISATION,
+        FEATURE_INITIALISATION_VERSION,
+    )
+
     train_samples, val_samples, manifest = generate_training_samples(
         kg=kg,
         allocation=allocation,
@@ -261,6 +266,15 @@ def write_workspace(
         min_phenotypes=samples.min_phenotypes,
         output_dir=workspace,
         graph_digests=graph_digests,
+        # **What the digests cannot say.** They prove these are the bytes this
+        # writer exported; they do not say how to make them again. The recipe
+        # is what turns "rebuild this workspace" into an instruction.
+        graph_export={
+            "feature_dim": feature_dim,
+            "feature_seed": feature_seed,
+            "initialisation": FEATURE_INITIALISATION,
+            "initialisation_version": FEATURE_INITIALISATION_VERSION,
+        },
     )
     logger.info(
         "Generated %d train samples over %d diseases, %d val over %d — disjoint: %s",

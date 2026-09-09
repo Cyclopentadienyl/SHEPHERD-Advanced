@@ -52,7 +52,7 @@ MANIFEST_FILENAME = "split_manifest.json"
 #: **Lives here rather than in `sample_generator`** so that this module — which
 #: every graph consumer imports, down to the clinical inference pipeline — does
 #: not have to reach up into the generator to know what schema it is reading.
-SPLIT_MANIFEST_SCHEMA_VERSION = 2
+SPLIT_MANIFEST_SCHEMA_VERSION = 3
 
 
 def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
@@ -133,6 +133,10 @@ def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> No
                 "workspace built under it cannot show that its tensors are this "
                 "graph's export. "
                 if version == 1
+                else "Schema 2 bound the graph artifacts but recorded no export "
+                "recipe, so its `node_features.pt` can be identified and not "
+                "rebuilt. "
+                if version == 2
                 else "That version is not one this revision knows how to read, so "
                 "which of its fields still mean what they say is a guess. "
             )

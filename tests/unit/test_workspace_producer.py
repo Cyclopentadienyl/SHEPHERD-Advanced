@@ -688,7 +688,7 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
         property of the current field list — re-proved by hand each time someone
         adds one. Serialising the text first makes it structural.
         """
-        from src.kg.disease_allocation import DiseaseAllocation, allocate_diseases
+        from src.kg.disease_allocation import allocate_diseases
         from src.kg.sample_generator import (
             build_eligible_disease_profiles,
             generate_training_samples,
@@ -697,21 +697,22 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
         workspace = tmp_path / "ws"
         workspace.mkdir()
         eligible = build_eligible_disease_profiles(self._demo_kg(), 2)
-        sound = allocate_diseases(eligible, 0.2, seed=42)
-        # A seed no encoder can take, past the validator by construction: the
-        # point is the writing, not the checking.
-        smuggled = DiseaseAllocation(
-            train=sound.train, val=sound.val,
-            val_fraction_requested=sound.val_fraction_requested,
-            seed=object(), universe_digest=sound.universe_digest,
-        )
+        allocation = allocate_diseases(eligible, 0.2, seed=42)
 
+        # **Through `graph_export`, because that is the field this needs.** The
+        # first version of this test hand-built an allocation with an `object()`
+        # seed; `validate_allocation` now refuses that, which closed the route
+        # and is the better outcome. `graph_export` is documented as recorded
+        # rather than verified — only the writer knows what it passed to the
+        # export — so it is the field that can still carry something no encoder
+        # takes, and therefore the one this property exists for.
         with pytest.raises(TypeError):
             generate_training_samples(
-                kg=self._demo_kg(), allocation=smuggled,
+                kg=self._demo_kg(), allocation=allocation,
                 num_train=20, num_val=5, output_dir=workspace,
                 graph_digests={r: "0" * 64 for r in
                                ("kg", "node_features", "edge_indices", "num_nodes")},
+                graph_export={"initialisation": object()},
             )
 
         assert not (workspace / "split_manifest.json").exists(), (
@@ -809,3 +810,135 @@ class TestThePreWriteBoundaryRefusesEarlyAndInOneVocabulary:
         assert "val_fraction must be finite" in str(excinfo.value)
         assert "Nothing was written" in str(excinfo.value)
         assert not (tmp_path / "ws").exists()
+
+
+class TestProvenanceMustAgreeWithWhatWasRun:
+    """A manifest that reads as sound and cannot be reproduced is worse than one
+    that refuses to be written.
+
+    Two ways that happened. The seed is consumed by two faculties —
+    `derive_stream` interpolates it, the manifest serialises it — and an `int`
+    subclass could make them disagree. And `node_features.pt` was bound by a
+    digest that proves identity while explaining nothing: a workspace built with
+    `feature_seed=7` verified perfectly, and no later operator could recover the
+    7.
+    """
+
+    @staticmethod
+    def _demo_kg():
+        from scripts.setup_demo import build_demo_kg
+
+        return build_demo_kg()
+
+    def test_a_seed_whose_text_disagrees_with_its_value_is_refused(self):
+        """The exact case: `derive_stream` would read 'different-stream' and the
+        manifest would record 42, so rebuilding with 42 reproduces neither."""
+        import json
+
+        from src.kg.disease_allocation import derive_stream, validate_allocation_seed
+
+        class StrangeSeed(int):
+            def __str__(self):
+                return "different-stream"
+
+        strange = StrangeSeed(42)
+        # The disagreement, demonstrated before it is refused — otherwise this
+        # test asserts a rule without showing what the rule is for.
+        assert f"{strange}|allocation" != f"{42}|allocation"
+        assert json.dumps({"seed": strange}) == '{"seed": 42}'
+        assert (
+            derive_stream(strange, "allocation").random()
+            != derive_stream(42, "allocation").random()
+        )
+
+        with pytest.raises(ValueError, match="seed must be an integer"):
+            validate_allocation_seed(strange)
+
+    def test_a_hand_built_allocation_is_refused_at_the_same_gate(self):
+        """`allocate_diseases` is not the only way to make one, and the
+        generator derives its streams from whatever it is handed."""
+        from src.kg.disease_allocation import (
+            DiseaseAllocation,
+            allocate_diseases,
+            validate_allocation,
+        )
+        from src.kg.sample_generator import build_eligible_disease_profiles
+
+        class StrangeSeed(int):
+            def __str__(self):
+                return "different-stream"
+
+        sound = allocate_diseases(
+            build_eligible_disease_profiles(self._demo_kg(), 2), 0.2, seed=42
+        )
+        with pytest.raises(ValueError, match="seed must be an integer"):
+            validate_allocation(DiseaseAllocation(
+                train=sound.train, val=sound.val,
+                val_fraction_requested=sound.val_fraction_requested,
+                seed=StrangeSeed(42), universe_digest=sound.universe_digest,
+            ))
+
+    @pytest.mark.parametrize("seed", [0, -1, 2 ** 128])
+    def test_ordinary_integers_of_any_size_still_pass(self, seed):
+        """The exact-type rule must not have become a range."""
+        from src.kg.disease_allocation import validate_allocation_seed
+
+        validate_allocation_seed(seed)
+
+    def test_the_manifest_records_the_recipe_not_only_the_digest(self, tmp_path):
+        import json
+
+        from src.kg.graph import (
+            FEATURE_INITIALISATION,
+            FEATURE_INITIALISATION_VERSION,
+        )
+        from src.kg.workspace import SampleBudget, write_workspace
+
+        workspace = tmp_path / "ws"
+        write_workspace(
+            self._demo_kg(), workspace, feature_dim=16, feature_seed=7,
+            samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
+        )
+        recipe = json.loads((workspace / "split_manifest.json").read_text())["graph_export"]
+
+        assert recipe["feature_dim"] == 16
+        assert recipe["feature_seed"] == 7
+        assert recipe["initialisation"] == FEATURE_INITIALISATION
+        assert recipe["initialisation_version"] == FEATURE_INITIALISATION_VERSION
+
+    def test_the_recipe_is_enough_to_rebuild_the_tensors(self, tmp_path):
+        """The point of recording it. A recipe nobody can act on is a comment."""
+        import json
+
+        from src.kg.workspace import SampleBudget, write_workspace
+        from src.utils.fingerprint import file_sha256
+
+        first = tmp_path / "first"
+        write_workspace(
+            self._demo_kg(), first, feature_dim=16, feature_seed=7,
+            samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
+        )
+        recipe = json.loads((first / "split_manifest.json").read_text())["graph_export"]
+
+        # A later operator, holding only the manifest.
+        rebuilt = tmp_path / "rebuilt"
+        write_workspace(
+            self._demo_kg(), rebuilt,
+            feature_dim=recipe["feature_dim"], feature_seed=recipe["feature_seed"],
+            samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
+        )
+
+        assert file_sha256(rebuilt / "node_features.pt") == file_sha256(
+            first / "node_features.pt"
+        )
+
+    def test_a_schema_two_manifest_is_refused_by_name(self, tmp_path):
+        """It bound the artifacts and recorded no recipe, so its tensors can be
+        identified and not rebuilt. The refusal says which of those it is."""
+        import json
+
+        from src.kg.artifacts import require_manifest_schema
+
+        path = tmp_path / "split_manifest.json"
+        with pytest.raises(ValueError, match="recorded no export recipe"):
+            require_manifest_schema({"schema_version": 2}, path)

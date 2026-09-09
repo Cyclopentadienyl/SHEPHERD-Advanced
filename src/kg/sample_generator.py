@@ -81,6 +81,7 @@ def generate_training_samples(
     phenotype_drop_rate: float = 0.3,
     output_dir: Optional[Path] = None,
     graph_digests: Optional[Dict[str, str]] = None,
+    graph_export: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """Generate simulated patients from a **disease allocation**.
 
@@ -103,6 +104,10 @@ def generate_training_samples(
         min_phenotypes / max_phenotypes / phenotype_drop_rate: generation config.
         output_dir: when given, writes ``train_samples.json``,
             ``val_samples.json`` and ``split_manifest.json``.
+        graph_export: the recipe those artifacts came out of — feature width,
+            seed and initialisation name. Recorded, not verified: only the
+            writer knows what it passed to the export, and a digest already says
+            whether the bytes are the ones it wrote.
         graph_digests: the digests of the graph artifacts, **computed by whoever
             wrote them**, keyed by manifest role. Required when writing a
             manifest. This function does not hash them itself and must not: it
@@ -215,6 +220,7 @@ def generate_training_samples(
         num_train=num_train,
         num_val=num_val,
         artifacts=artifacts,
+        graph_export=graph_export,
     )
 
     if output_dir is not None:
@@ -371,6 +377,7 @@ def build_split_manifest(
     num_train: int,
     num_val: int,
     artifacts: Dict[str, Optional[str]],
+    graph_export: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """What the sample digests cannot say: how this workspace was cut.
 
@@ -381,6 +388,15 @@ def build_split_manifest(
     the allocation.** A realised field populated from allocation metadata would
     restate the allocation rather than evidence it, and the coverage assertion
     below would be checking a value against itself.
+
+    ``graph_export`` is the recipe the tensors came out of — the feature width,
+    the seed, and the name of the initialisation. **A digest proves identity and
+    explains nothing.** ``node_features.pt`` is bound by its digest, so a
+    workspace built with ``feature_seed=7`` verifies perfectly and a later
+    operator has no way to recover the 7. The recipe is what makes "rebuild
+    this" an instruction rather than a guess, and naming the initialisation is
+    what stops a future switch to different features inheriting the semantics of
+    a normal draw.
 
     ``artifacts`` is recorded as given. Whether it binds the whole graph export is
     checked where a **workspace** is produced — ``generate_training_samples`` with
@@ -411,6 +427,7 @@ def build_split_manifest(
             "num_val": num_val,
             **config,
         },
+        "graph_export": dict(graph_export or {}),
         "allocation": allocation.provenance(),
         "realised": {
             "train_diseases": len(realised_train),

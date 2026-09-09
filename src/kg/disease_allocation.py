@@ -53,9 +53,13 @@ The figures above are unaffected, and not by assumption. Eligibility counts
 phenotypes and genes, which no relabelling moves: three builds on the deployment
 machine, before and after the fix, each reported 10,577 eligible of 29,866 and a
 8,990 / 1,587 cut at f = 0.15 — the artifact's own universe. What is lost is the
-ability to point at ``6889ed11…`` and rebuild it. Since the fix, a rebuild
-reproduces ``kg.json`` exactly, so a digest recorded from here on names a graph
-rather than a run.
+ability to point at ``6889ed11…`` and rebuild it. Since the fix, a rebuild from
+the same annotation files, on the same code and library versions, reproduces
+``kg.json`` exactly — so a digest recorded from here on names a graph rather
+than a run **for that input and that environment**. It is not a claim about
+every future ingestion source: a path that reaches the builder without passing
+through the sorted ontology ingress would have to earn the same property
+separately.
 
 Module: src/kg/disease_allocation.py
 """
@@ -93,11 +97,24 @@ def validate_allocation_seed(value: Any) -> None:
     deterministic.
 
     Any Python integer is accepted, of any magnitude: the stream comes from the
-    decimal form and nothing downstream packs it into a machine word. ``True``
-    is refused for the usual reason — it is an ``int``, and "seed 1" is not what
-    a caller writing ``seed=True`` meant.
+    decimal form and nothing downstream packs it into a machine word.
+
+    **``int`` exactly, not any ``int``.** The seed is consumed twice and by two
+    different faculties: ``derive_stream`` interpolates it, and the manifest
+    serialises it. An ``int`` subclass can make those disagree ::
+
+        class StrangeSeed(int):
+            def __str__(self): return "different-stream"
+
+        derive_stream(StrangeSeed(42), "allocation")  # 'different-stream|...'
+        json.dumps({"seed": StrangeSeed(42)})         # '{"seed": 42}'
+
+    A manifest saying seed 42 beside an allocation no seed 42 can reproduce is
+    worse than a refusal: it is provenance that reads as sound. ``bool`` is the
+    familiar member of that family and stays refused, because "seed 1" is not
+    what a caller writing ``seed=True`` meant.
     """
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"seed must be an integer, got {value!r}")
 
 
@@ -230,6 +247,12 @@ def validate_allocation(allocation: DiseaseAllocation) -> DiseaseAllocation:
     partitions is exactly the defect this whole change removes, arriving through
     the front door instead.
     """
+    # **The seed too, for the same reason the partitions are checked here.** A
+    # hand-built allocation reaches the generator's stream derivation and the
+    # manifest exactly as a cut one does, so the gate both consumers pass
+    # through is where they are required to agree.
+    validate_allocation_seed(allocation.seed)
+
     for partition, name in ((allocation.train, "train"), (allocation.val, "val")):
         for disease_id, profile in partition:
             if isinstance(disease_id, bool) or not isinstance(disease_id, int):
