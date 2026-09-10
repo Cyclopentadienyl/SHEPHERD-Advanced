@@ -450,6 +450,137 @@ def phase_writer(report: Report, work: Path) -> Optional[Path]:
         "B13", "writer", "a refusal creates no directory at all", _fresh_directory
     )
 
+    # -------------------------------------------------------------------------
+    # The direct persisting path.
+    #
+    # **Why these are not covered by B2-B12.** Those attack `write_workspace`,
+    # which validates everything up front and always supplies a complete recipe
+    # and complete digests — so its callers never reach the checks that used to
+    # run *after* the cohort files were written. `generate_training_samples` is
+    # public and persists on its own; that is where a caller can arrive with a
+    # missing digest or a malformed recipe, and where the refusal used to land
+    # on a workspace it had already overwritten.
+    # -------------------------------------------------------------------------
+    def _persisting_call(target: Path, digests=None, recipe=None):
+        from src.kg.disease_allocation import allocate_diseases
+        from src.kg.graph import (
+            DEFAULT_FEATURE_SEED,
+            FEATURE_INITIALISATION,
+            FEATURE_INITIALISATION_VERSION,
+        )
+        from src.kg.sample_generator import (
+            build_eligible_disease_profiles,
+            generate_training_samples,
+        )
+
+        kg = _demo_kg()
+        sound_digests = {role: "0" * 64 for role in
+                         ("kg", "node_features", "edge_indices", "num_nodes")}
+        sound_recipe = {
+            "feature_dim": FEATURE_DIM,
+            "feature_seed": DEFAULT_FEATURE_SEED,
+            "initialisation": FEATURE_INITIALISATION,
+            "initialisation_version": FEATURE_INITIALISATION_VERSION,
+        }
+        return generate_training_samples(
+            kg=kg,
+            allocation=allocate_diseases(
+                build_eligible_disease_profiles(kg, 2), VAL_FRACTION, seed=SEED
+            ),
+            num_train=NUM_TRAIN, num_val=NUM_VAL, output_dir=target,
+            graph_digests=sound_digests if digests is None else digests,
+            graph_export=sound_recipe if recipe is None else recipe,
+        )
+
+    def _populated(target: Path) -> Path:
+        """A workspace with cohorts and a manifest already in it."""
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir(parents=True)
+        for name in ("train_samples.json", "val_samples.json", "split_manifest.json"):
+            (target / name).write_text('{"from": "an earlier production event"}')
+        return target
+
+    #: Each entry is a persisting call a caller can get wrong, and the fragment
+    #: its refusal must carry. The digest cases are shape only — a well-formed
+    #: digest can still be another graph's, and what settles that is the
+    #: consumer re-hashing the file, not anything checked here.
+    DIRECT_REFUSALS = [
+        ("B15", "a persisted call with an empty recipe is refused",
+         dict(recipe={}), "graph_export"),
+        ("B16", "a persisted call with an incomplete recipe is refused",
+         dict(recipe={"feature_dim": FEATURE_DIM}), "graph_export"),
+        ("B17", "a persisted call with a malformed recipe field is refused",
+         dict(recipe={"feature_dim": 0, "feature_seed": 7,
+                      "initialisation": "standard-normal",
+                      "initialisation_version": 1}), "graph_export"),
+        ("B18", "a persisted call missing a graph digest is refused",
+         dict(digests={r: "0" * 64 for r in
+                       ("kg", "node_features", "edge_indices")}), "unbound"),
+        # The regression this campaign exists to guard: a 64-digit integer
+        # stringifies to 64 valid hex characters, and the manifest would have
+        # recorded a JSON number no consumer could ever match.
+        ("B19", "a digest that is a 64-digit integer is refused",
+         dict(digests={**{r: "0" * 64 for r in
+                          ("kg", "node_features", "edge_indices")},
+                       "num_nodes": int("1" * 64)}), "not SHA-256"),
+    ]
+
+    for probe_id, claim, kwargs, fragment in DIRECT_REFUSALS:
+        def _direct(kwargs=kwargs, fragment=fragment):
+            target = _populated(work / "direct_refusal")
+            before = snapshot(target)
+            refuses(lambda: _persisting_call(target, **kwargs), ValueError, fragment)
+            assert_untouched(before, target, "a refused persisting call")
+            shutil.rmtree(target)
+            return "refused, and the workspace was untouched", {}
+
+        report.run(probe_id, "writer", claim, _direct)
+
+    def _direct_creates_nothing() -> Tuple[str, Dict[str, Any]]:
+        """A refusal must not leave the directory it was about to fill."""
+        target = work / "direct_never_created"
+        refuses(lambda: _persisting_call(target, recipe={}), ValueError, "graph_export")
+        assert not target.exists(), "a refused persisting call created the directory"
+        return "no directory was created", {}
+
+    report.run(
+        "B20", "writer",
+        "a refused persisted call creates no directory at all",
+        _direct_creates_nothing,
+    )
+
+    def _direct_control() -> Tuple[str, Dict[str, Any]]:
+        """CONTROL: without it every refusal above holds for a writer that
+        refuses everything, and the digest recorded is checked against the file
+        actually written -- which is what the serialise-once change had to keep
+        true."""
+        from src.utils.fingerprint import file_sha256
+
+        target = work / "direct_sound"
+        if target.exists():
+            shutil.rmtree(target)
+        _, _, manifest = _persisting_call(target)
+        recorded = manifest["artifacts"]
+        observed = {
+            role: file_sha256(target / f"{role}.json")
+            for role in ("train_samples", "val_samples")
+        }
+        mismatched = sorted(r for r in observed if observed[r] != recorded[r])
+        assert not mismatched, (
+            f"the manifest records a digest that is not the file's for {mismatched}"
+        )
+        shutil.rmtree(target)
+        return "it wrote, and its digests are of the bytes on disk", {
+            "cohort_digests_verified": len(observed),
+        }
+
+    report.run(
+        "B21", "writer",
+        "CONTROL: a sound persisted call writes, and its digests match the files",
+        _direct_control,
+    )
+
     def _checkpoint_guard() -> Tuple[str, Dict[str, Any]]:
         guard = work / "guarded_workspace"
         write_workspace(_demo_kg(), guard, feature_dim=FEATURE_DIM, samples=_budget())

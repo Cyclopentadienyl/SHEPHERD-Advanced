@@ -85,10 +85,21 @@ def test_no_script_copies_the_persisting_call():
     happened three times: a script acquiring its own copy of the production
     call.
     """
+    # **One exemption, and it is the opposite of a producer.** The deployment
+    # probe composes the persisting call on purpose, because attacking it is
+    # the point: `write_workspace` always supplies a complete recipe and
+    # complete digests, so nothing routed through it ever reaches the refusals
+    # that used to fire after the cohort files were written. A probe that went
+    # through the writer would test the writer twice and that boundary never.
+    # It is exempt from this guard and not from the routing tests below — it
+    # writes nothing an operator keeps, and removes the one workspace its
+    # control writes.
+    exempt = {PROJECT_ROOT / "scripts" / "probe_deployment.py"}
+
     offenders = {}
     for directory in ("src", "scripts"):
         for path in sorted((PROJECT_ROOT / directory).rglob("*.py")):
-            if path == SOLE_CALLER:
+            if path == SOLE_CALLER or path in exempt:
                 continue
             sites = _persisting_call_sites(path)
             if sites:
@@ -99,6 +110,24 @@ def test_no_script_copies_the_persisting_call():
         f"{offenders}. Route it through write_workspace instead of composing "
         "the ordering again -- that ordering is what binds the six artifacts "
         "into one production event."
+    )
+
+
+def test_the_probe_is_the_only_thing_exempt_from_that_guard():
+    """An exemption nobody re-reads becomes a hole.
+
+    The list is one file today. This fails if a second entry appears, so
+    widening it is a deliberate act with a reviewer attached rather than a line
+    added while making a test pass.
+    """
+    import inspect
+
+    source = inspect.getsource(test_no_script_copies_the_persisting_call)
+    exempted = [line for line in source.splitlines() if 'PROJECT_ROOT / "scripts"' in line]
+
+    assert exempted == ['    exempt = {PROJECT_ROOT / "scripts" / "probe_deployment.py"}'], (
+        "the exemption list changed; every entry is a script allowed to compose "
+        "the persisting call, which is how the second producer appeared before"
     )
 
 
@@ -1341,6 +1370,17 @@ class TestARefusalToPersistTouchesNothing:
         "a digest that is a number": dict(digests={
             **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
             "num_nodes": 12345}),
+        # **The case the first version of this matrix missed.** `12345` above is
+        # refused for its length, so it passed while proving nothing about type.
+        # A 64-digit integer stringifies to 64 characters that are all valid
+        # hex, and the manifest would then record a JSON number no consumer
+        # comparing against a hexdigest could match.
+        "a 64-digit integer": dict(digests={
+            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
+            "num_nodes": int("1" * 64)}),
+        "a digest that is a list of hex": dict(digests={
+            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
+            "num_nodes": ["a" * 64]}),
     }
 
     @pytest.mark.parametrize("case", sorted(REFUSALS))
@@ -1416,6 +1456,29 @@ class TestARefusalToPersistTouchesNothing:
             r: real for r in ("kg", "node_features", "edge_indices", "num_nodes")})
 
         assert (workspace / "split_manifest.json").is_file()
+
+    def test_a_str_subclass_carrying_a_real_digest_is_accepted(self, tmp_path):
+        """Why this check is `isinstance` and not `type(...) is str`.
+
+        The seed needed the stricter test because `derive_stream` formats it
+        with `str()` while the manifest encodes it as a number, so an `int`
+        subclass could make the two disagree. Nothing here can diverge that way:
+        the regex and `json.dumps` both read a `str` subclass's actual value. A
+        stricter test would refuse a caller for no reason anyone could state.
+        """
+        class Tagged(str):
+            """A digest a caller has attached provenance to."""
+
+        workspace = tmp_path / "ws"
+        self._call(workspace, digests={
+            r: Tagged("a" * 64) for r in
+            ("kg", "node_features", "edge_indices", "num_nodes")})
+
+        import json
+        recorded = json.loads((workspace / "split_manifest.json").read_text())
+        assert recorded["artifacts"]["kg"] == "a" * 64, (
+            "the subclass was recorded as something other than its own value"
+        )
 
     def test_the_refusal_precedes_generation_not_merely_the_write(self, tmp_path):
         """Where the check runs, not just that it runs.

@@ -132,9 +132,18 @@ def _require_persistable(
     # and stays. This refuses only the strings `file_sha256` could never return,
     # so it rejects nothing a real producer supplies and costs an hour-long
     # build nothing to learn late.
+    # **The value itself, never `str()` of it.** Coercing first accepted a
+    # 64-digit integer — `int("1" * 64)` stringifies to 64 characters that are
+    # all valid hex — and the manifest then recorded a JSON *number* that no
+    # consumer comparing against a hexdigest could ever match. `isinstance`
+    # rather than `type(...) is` on purpose: unlike the allocation seed, where
+    # `str()` formatting and JSON encoding could disagree about an `int`
+    # subclass, the regex and `json.dumps` both read a `str` subclass's actual
+    # value, so they cannot diverge and a stricter test would refuse a caller
+    # for nothing.
     malformed = sorted(
         role for role in GRAPH_ARTIFACTS
-        if not _IS_SHA256.fullmatch(str(supplied[role]))
+        if not (isinstance(supplied[role], str) and _IS_SHA256.fullmatch(supplied[role]))
     )
     if malformed:
         raise ValueError(
