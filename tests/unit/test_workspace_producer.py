@@ -1325,6 +1325,22 @@ class TestARefusalToPersistTouchesNothing:
         "no digests at all": dict(digests=None),
         "digests missing a role": dict(digests={
             r: "0" * 64 for r in ("kg", "node_features", "edge_indices")}),
+        # Shape only. A digest of the right shape can still be another graph's;
+        # these are the strings `file_sha256` could never return, so refusing
+        # them turns an hour-long build's late mismatch into an immediate one
+        # without claiming anything about the ones it lets through.
+        "a digest that is too short": dict(digests={
+            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
+            "num_nodes": "0" * 63}),
+        "a digest in upper case": dict(digests={
+            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
+            "num_nodes": "A" * 64}),
+        "a digest that is not hex": dict(digests={
+            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
+            "num_nodes": "z" * 64}),
+        "a digest that is a number": dict(digests={
+            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
+            "num_nodes": 12345}),
     }
 
     @pytest.mark.parametrize("case", sorted(REFUSALS))
@@ -1380,6 +1396,26 @@ class TestARefusalToPersistTouchesNothing:
         assert (workspace / "split_manifest.json").is_file()
         assert (workspace / "train_samples.json").is_file()
         assert (workspace / "val_samples.json").is_file()
+
+    def test_a_real_digest_is_not_refused_by_the_shape_check(self, tmp_path):
+        """The half that keeps the shape rule from being a liability.
+
+        `file_sha256` is the only producer of these values, so whatever it
+        returns has to pass — otherwise the check would refuse the one caller it
+        exists to serve. Taken from the function rather than written out, so a
+        change to its output format fails here rather than in a build.
+        """
+        from src.utils.fingerprint import file_sha256
+
+        sample = tmp_path / "artifact.bin"
+        sample.write_bytes(b"whatever bytes")
+        real = file_sha256(sample)
+
+        workspace = tmp_path / "ws"
+        self._call(workspace, digests={
+            r: real for r in ("kg", "node_features", "edge_indices", "num_nodes")})
+
+        assert (workspace / "split_manifest.json").is_file()
 
     def test_the_refusal_precedes_generation_not_merely_the_write(self, tmp_path):
         """Where the check runs, not just that it runs.

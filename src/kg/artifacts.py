@@ -194,11 +194,15 @@ def require_graph_export_recipe(
 ) -> Dict[str, Any]:
     """The recipe a persisted manifest promises, checked where it is read.
 
-    **The writer being correct is not the guarantee.** `generate_training_samples`
-    will persist a workspace with `graph_export={}` if a caller passes no recipe,
-    and every consumer used to accept it: the version check reads a number and
-    the artifact check reads digests, so a schema-3 manifest could promise a
-    reproducible export and carry none. A promise nothing reads is a comment.
+    **The writer being correct is not the guarantee, which is why this stays.**
+    `generate_training_samples` once persisted a workspace with `graph_export={}`
+    whenever a caller passed no recipe, and every consumer accepted it: the
+    version check reads a number and the artifact check reads digests, so a
+    schema-3 manifest could promise a reproducible export and carry none. That
+    writer now refuses before it creates anything — but a manifest can reach a
+    reader from a workspace built by an older revision, a partial copy, or a hand
+    edit, and none of those went through it. A promise only its producer checks
+    is a promise about that producer.
 
     The rules are `validate_graph_export_recipe`'s, so the reader cannot come to
     require something the writer would not produce; what this adds is the path,

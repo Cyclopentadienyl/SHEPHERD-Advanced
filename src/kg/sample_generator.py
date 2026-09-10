@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -42,6 +43,9 @@ from src.kg.graph import KnowledgeGraph
 from src.utils.fingerprint import file_sha256
 
 logger = logging.getLogger(__name__)
+
+#: What `file_sha256` returns, and the only shape a digest can have.
+_IS_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 #: Bumped when generation changes in a way that makes two cohorts from the same
 #: allocation, budgets and seed differ. Recorded in the split manifest: the
@@ -111,7 +115,8 @@ def _require_persistable(
     """
     refuse_if_checkpoints_exist(output_dir)
 
-    unbound = sorted(role for role in GRAPH_ARTIFACTS if not (graph_digests or {}).get(role))
+    supplied = graph_digests or {}
+    unbound = sorted(role for role in GRAPH_ARTIFACTS if not supplied.get(role))
     if unbound:
         raise ValueError(
             f"this workspace would leave {', '.join(unbound)} unbound. "
@@ -119,6 +124,24 @@ def _require_persistable(
             "so they are supplied rather than recomputed here — and a manifest "
             "without them cannot show that the tensors a model consumes are "
             "this graph's."
+        )
+
+    # **Not an integrity check, and not offered as one.** A well-formed digest
+    # can still belong to another graph; what proves otherwise is the consumer
+    # re-hashing the file against this value, which is where that trust lives
+    # and stays. This refuses only the strings `file_sha256` could never return,
+    # so it rejects nothing a real producer supplies and costs an hour-long
+    # build nothing to learn late.
+    malformed = sorted(
+        role for role in GRAPH_ARTIFACTS
+        if not _IS_SHA256.fullmatch(str(supplied[role]))
+    )
+    if malformed:
+        raise ValueError(
+            f"the digests supplied for {', '.join(malformed)} are not SHA-256 "
+            "digests, so no file could ever match them. This says nothing about "
+            "whether a well-formed digest is this graph's — only a consumer "
+            "re-hashing the file can say that."
         )
 
     try:
@@ -165,9 +188,13 @@ def generate_training_samples(
         output_dir: when given, writes ``train_samples.json``,
             ``val_samples.json`` and ``split_manifest.json``.
         graph_export: the recipe those artifacts came out of — feature width,
-            seed and initialisation name. Recorded, not verified: only the
-            writer knows what it passed to the export, and a digest already says
-            whether the bytes are the ones it wrote.
+            seed and initialisation name. On a persisted call its **shape** is
+            validated by the same rule the reader applies, so this writer cannot
+            produce a manifest its own readers refuse. What stays unverified is
+            the **causal** claim: that these numbers are the ones that produced
+            those bytes. Only the caller of the export knows that, and no check
+            here can recover it — a digest says which bytes exist, not which
+            arguments made them.
         graph_digests: the digests of the graph artifacts, **computed by whoever
             wrote them**, keyed by manifest role. Required when writing a
             manifest. This function does not hash them itself and must not: it
@@ -253,12 +280,17 @@ def generate_training_samples(
     # process locale, so the same records could serialise to different bytes on
     # two machines — and two sites comparing digests is exactly what these
     # digests are for.
-    cohorts = {
-        "train_samples.json": json.dumps(train_samples),
-        "val_samples.json": json.dumps(val_samples),
-    }
     artifacts: Dict[str, Optional[str]] = {"train_samples": None, "val_samples": None}
+    cohorts: Dict[str, str] = {}
     if output_dir is not None:
+        # Measured at the real build's budget (200k train, 40k val): ~44 MB of
+        # strings, against a machine with 130 GB. Cheap where it buys the
+        # ordering above, and pure waste on the in-memory path, which writes
+        # nothing and digests nothing — so it is built here rather than above.
+        cohorts = {
+            "train_samples.json": json.dumps(train_samples),
+            "val_samples.json": json.dumps(val_samples),
+        }
         artifacts["train_samples"] = _sha256_text(cohorts["train_samples.json"])
         artifacts["val_samples"] = _sha256_text(cohorts["val_samples.json"])
 
