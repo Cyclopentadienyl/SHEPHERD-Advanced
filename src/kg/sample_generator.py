@@ -16,6 +16,7 @@ Output format matches what scripts/train_model.py expects:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -26,8 +27,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
-    GRAPH_EXPORT_REQUIRED,
     SPLIT_MANIFEST_SCHEMA_VERSION,
+    validate_graph_export_recipe,
 )
 from src.kg.disease_allocation import (
     DiseaseAllocation,
@@ -73,6 +74,61 @@ def retained_phenotype_count(
     """
     keep = max(min_phenotypes, int(n_phenotypes * (1.0 - phenotype_drop_rate)))
     return min(keep, max_phenotypes, n_phenotypes)
+
+
+def _sha256_text(text: str) -> str:
+    """Digest of the UTF-8 bytes a caller is about to write.
+
+    Equal to `file_sha256` of the resulting file by construction, because the
+    same string is what gets written. Kept private: this is a serialisation
+    detail of one writer, not a second digesting policy for the project.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _require_persistable(
+    output_dir: Path,
+    graph_digests: Optional[Dict[str, str]],
+    graph_export: Optional[Dict[str, Any]],
+) -> None:
+    """Everything a persisting call must satisfy, before anything is generated.
+
+    **The whole point is where it runs, not what it checks.** These same three
+    refusals used to fire after `train_samples.json` and `val_samples.json` had
+    been written, so a caller that forgot a digest or a recipe destroyed an
+    existing workspace's cohorts and then refused — leaving new cohort files
+    beside the old manifest, a mixed generation that no reader can make sense of.
+    Nothing is rolled back here because nothing has happened yet.
+
+    **The recipe's domains, not merely its keys.** Checking presence alone let
+    this writer persist a schema-3 manifest that every reader refuses; a producer
+    whose output is guaranteed to be rejected is broken whichever side is right.
+    The rules are `validate_graph_export_recipe`'s, so writer and reader cannot
+    drift apart.
+
+    Raises:
+        ValueError: naming what was missing or malformed.
+    """
+    refuse_if_checkpoints_exist(output_dir)
+
+    unbound = sorted(role for role in GRAPH_ARTIFACTS if not (graph_digests or {}).get(role))
+    if unbound:
+        raise ValueError(
+            f"this workspace would leave {', '.join(unbound)} unbound. "
+            "Only the writer of the graph export can vouch for those digests, "
+            "so they are supplied rather than recomputed here — and a manifest "
+            "without them cannot show that the tensors a model consumes are "
+            "this graph's."
+        )
+
+    try:
+        validate_graph_export_recipe(graph_export)
+    except ValueError as exc:
+        raise ValueError(
+            f"this workspace {exc}. Schema {SPLIT_MANIFEST_SCHEMA_VERSION} "
+            "promises node_features.pt can be rebuilt, not merely recognised, "
+            "and only the writer of the export knows what it passed."
+        ) from exc
 
 
 def generate_training_samples(
@@ -153,6 +209,15 @@ def generate_training_samples(
             f"num_val is {num_val} but the allocation has no validation partition"
         )
 
+    # **Before generation, not before the write.** A persisting call's arguments
+    # are knowable from the arguments alone, so there is no reason to spend the
+    # generation on a call that cannot legitimately persist — and every reason
+    # not to reach `mkdir` with a refusal still pending. An in-memory manifest
+    # makes no claim about a directory, so it needs none of this.
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        _require_persistable(output_dir, graph_digests, graph_export)
+
     config = dict(
         min_phenotypes=min_phenotypes,
         max_phenotypes=max_phenotypes,
@@ -170,23 +235,32 @@ def generate_training_samples(
         "Generated %d train and %d val samples", len(train_samples), len(val_samples)
     )
 
-    # **Write the sample files first, then digest the bytes that actually
-    # landed.** Hashing a separately reconstructed representation would record a
-    # digest of something no reader can obtain — the manifest has to describe the
-    # files on disk, not an equivalent-looking serialisation of the same objects.
+    # **Everything that can refuse has already refused.** `_require_persistable`
+    # ran before generation, and the coverage assertions inside
+    # `build_split_manifest` run below — both before the first byte is written.
+    # What is left after that point is `mkdir` and three writes.
+    #
+    # **Serialised once, so the digest is of the bytes that land.** The manifest
+    # has to describe the files on disk rather than an equivalent-looking
+    # re-serialisation of the same objects, which is why this used to write the
+    # cohorts and hash them back. Hashing the very string that is written is the
+    # same guarantee without the ordering: `json.dump(obj, handle)` and
+    # `handle.write(json.dumps(obj))` produce identical bytes, and
+    # `test_the_manifest_digests_the_files_that_were_written` re-checks that
+    # against `file_sha256` of the written file rather than trusting it here.
+    #
+    # **UTF-8 is named rather than inherited.** `open(path, "w")` takes the
+    # process locale, so the same records could serialise to different bytes on
+    # two machines — and two sites comparing digests is exactly what these
+    # digests are for.
+    cohorts = {
+        "train_samples.json": json.dumps(train_samples),
+        "val_samples.json": json.dumps(val_samples),
+    }
     artifacts: Dict[str, Optional[str]] = {"train_samples": None, "val_samples": None}
     if output_dir is not None:
-        output_dir = Path(output_dir)
-        refuse_if_checkpoints_exist(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        for name, payload in (
-            ("train_samples.json", train_samples),
-            ("val_samples.json", val_samples),
-        ):
-            with open(output_dir / name, "w") as handle:
-                json.dump(payload, handle)
-        artifacts["train_samples"] = file_sha256(output_dir / "train_samples.json")
-        artifacts["val_samples"] = file_sha256(output_dir / "val_samples.json")
+        artifacts["train_samples"] = _sha256_text(cohorts["train_samples.json"])
+        artifacts["val_samples"] = _sha256_text(cohorts["val_samples.json"])
 
     # **The graph digests are supplied by whoever wrote those files, never taken
     # here.** Hashing `output_dir/*.pt` would digest whatever happens to sit
@@ -194,43 +268,9 @@ def generate_training_samples(
     # from: a caller can pass graph A with its allocation while the directory
     # holds graph B's tensors, and the manifest would record A's universe digest
     # beside B's file digests as one provenance chain. Only the writer of an
-    # export can vouch that these are the artifacts it just produced.
-    #
-    # All four are required together. They are one call to `export_graph_data`
-    # from one in-memory graph, so a manifest binding some of them describes half
-    # a production event — and the half it omits is the half a model consumes.
-    # **A written workspace must bind its whole graph export.** All four roles are
-    # one call to `export_graph_data` from one in-memory graph, so a manifest
-    # binding some of them describes half a production event — and the half it
-    # omits is the half a model consumes. Only checked when a workspace is being
-    # written: an in-memory manifest describes a cut, not a directory.
+    # export can vouch that these are the artifacts it just produced. Their
+    # completeness is checked in `_require_persistable`, before any of this.
     artifacts.update(graph_digests or {})
-    if output_dir is not None:
-        unbound = [role for role in GRAPH_ARTIFACTS if artifacts.get(role) is None]
-        if unbound:
-            raise ValueError(
-                f"this workspace would leave {', '.join(sorted(unbound))} unbound. "
-                "Only the writer of the graph export can vouch for those digests, "
-                "so they are supplied rather than recomputed here — and a manifest "
-                "without them cannot show that the tensors a model consumes are "
-                "this graph's."
-            )
-        # **And the recipe those tensors came out of.** The digests say which
-        # bytes; only the recipe says how to make them again, which is what
-        # schema 3 promises. Required on the same terms and for the same reason:
-        # a persisted workspace makes the claim, an in-memory manifest does not.
-        missing_recipe = [
-            name for name in GRAPH_EXPORT_REQUIRED
-            if name not in (graph_export or {})
-        ]
-        if missing_recipe:
-            raise ValueError(
-                f"this workspace would record no {', '.join(missing_recipe)} in "
-                "its graph_export recipe. Schema "
-                f"{SPLIT_MANIFEST_SCHEMA_VERSION} promises node_features.pt can "
-                "be rebuilt, not merely recognised, and only the writer of the "
-                "export knows what it passed."
-            )
 
     manifest = build_split_manifest(
         allocation=allocation,
@@ -244,23 +284,28 @@ def generate_training_samples(
     )
 
     if output_dir is not None:
-        # **Serialised whole, then renamed into place.** `json.dump` writes as
-        # it walks, so a value it cannot encode leaves a manifest truncated at
-        # exactly that key -- a file that parses as nothing and reads as a
-        # workspace that has one. Every field reaching here is constrained
-        # today, but that is a property of the current field list, re-proved by
-        # hand every time someone adds one. Building the text first makes the
-        # failure mode structural instead: either the manifest is whole, or it
-        # was never written.
-        payload = json.dumps(manifest, indent=2, sort_keys=True)
+        # Serialised before `mkdir` for the same reason as the cohorts: a value
+        # no encoder takes must not be discovered with a directory already made.
+        manifest_text = json.dumps(manifest, indent=2, sort_keys=True)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in cohorts.items():
+            with open(output_dir / name, "w", encoding="utf-8") as handle:
+                handle.write(text)
+
+        # **Renamed into place.** Not a workspace transaction and not offered as
+        # one: the cohorts beside it are ordinary writes, and a process killed
+        # between them leaves a partial directory. What this buys is narrower and
+        # real — the manifest is never a half-written file that parses as nothing
+        # and reads as a workspace that has one.
         target = output_dir / "split_manifest.json"
         handle = tempfile.NamedTemporaryFile(
             "w", dir=str(output_dir), prefix=target.name, suffix=".tmp",
-            delete=False,
+            delete=False, encoding="utf-8",
         )
         try:
             with handle:
-                handle.write(payload)
+                handle.write(manifest_text)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(handle.name, target)

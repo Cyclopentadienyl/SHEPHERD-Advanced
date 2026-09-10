@@ -135,6 +135,60 @@ GRAPH_EXPORT_REQUIRED: Tuple[str, ...] = (
 )
 
 
+def validate_graph_export_recipe(recipe: Any) -> Dict[str, Any]:
+    """The recipe's own rules, with no manifest and no file around it.
+
+    **One rule, two boundaries.** The reader below re-frames these refusals with
+    the path it was reading; the writer in `sample_generator` raises them as they
+    are, before it has a path to name. Keeping the rules in one pure function is
+    what stops the two from drifting into a state where the writer produces a
+    recipe the reader rejects — an artifact guaranteed to be refused is a defect
+    whichever side is "right".
+
+    **Shape, never membership.** `initialisation` must name something; it is not
+    checked against a list of names this revision knows how to execute. A future
+    producer's well-formed, digest-bound artifact must stay readable here — the
+    tool asked to *run* a recipe is where capability belongs, and a reader that
+    refused unknown names would make every new initialisation a breaking change.
+
+    Raises:
+        ValueError: naming the field and what was wrong with it.
+    """
+    from src.kg.graph import validate_feature_dim, validate_feature_seed
+
+    if not isinstance(recipe, dict) or not recipe:
+        raise ValueError(
+            "records no graph_export recipe, so its node_features.pt can be "
+            "recognised and not rebuilt"
+        )
+    missing = [name for name in GRAPH_EXPORT_REQUIRED if name not in recipe]
+    if missing:
+        raise ValueError(
+            f"graph_export is missing {missing}; a recipe without them cannot "
+            "reproduce the export it describes"
+        )
+
+    try:
+        validate_feature_dim(recipe["feature_dim"])
+        validate_feature_seed(recipe["feature_seed"])
+    except ValueError as exc:
+        raise ValueError(f"graph_export is malformed: {exc}") from exc
+
+    name = recipe["initialisation"]
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(
+            "graph_export names no initialisation, so the recipe's numbers "
+            f"describe an unknown draw (got {name!r})"
+        )
+    version = recipe["initialisation_version"]
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError(
+            "graph_export initialisation_version must be a positive integer, "
+            f"got {version!r}"
+        )
+    return dict(recipe)
+
+
 def require_graph_export_recipe(
     manifest: Dict[str, Any], manifest_path: Path
 ) -> Dict[str, Any]:
@@ -146,46 +200,19 @@ def require_graph_export_recipe(
     the artifact check reads digests, so a schema-3 manifest could promise a
     reproducible export and carry none. A promise nothing reads is a comment.
 
-    The field rules are the writer's own — `validate_feature_dim` and
-    `validate_feature_seed` from the module that performs the draw — so the
-    reader cannot come to require something the writer would not produce.
+    The rules are `validate_graph_export_recipe`'s, so the reader cannot come to
+    require something the writer would not produce; what this adds is the path,
+    which is the only part of the message a reader can supply and the writer
+    cannot.
     """
-    from src.kg.graph import validate_feature_dim, validate_feature_seed
-
-    recipe = manifest.get("graph_export")
-    if not isinstance(recipe, dict) or not recipe:
+    try:
+        return validate_graph_export_recipe(manifest.get("graph_export"))
+    except ValueError as exc:
         raise ValueError(
             f"{manifest_path} is schema {SPLIT_MANIFEST_SCHEMA_VERSION} and "
-            "records no graph_export recipe, so its node_features.pt can be "
-            "recognised and not rebuilt. Rebuild the workspace with "
+            f"{exc}. Rebuild the workspace with "
             "scripts/build_knowledge_graph.py --generate-samples."
-        )
-    missing = [name for name in GRAPH_EXPORT_REQUIRED if name not in recipe]
-    if missing:
-        raise ValueError(
-            f"{manifest_path} graph_export is missing {missing}; a recipe "
-            "without them cannot reproduce the export it describes."
-        )
-
-    try:
-        validate_feature_dim(recipe["feature_dim"])
-        validate_feature_seed(recipe["feature_seed"])
-    except ValueError as exc:
-        raise ValueError(f"{manifest_path} graph_export is malformed: {exc}") from exc
-
-    name = recipe["initialisation"]
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError(
-            f"{manifest_path} graph_export names no initialisation, so the "
-            f"recipe's numbers describe an unknown draw (got {name!r})"
-        )
-    version = recipe["initialisation_version"]
-    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
-        raise ValueError(
-            f"{manifest_path} graph_export initialisation_version must be a "
-            f"positive integer, got {version!r}"
-        )
-    return recipe
+        ) from exc
 
 
 def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> None:
@@ -258,6 +285,7 @@ __all__ = [
     "MANIFEST_FILENAME",
     "SPLIT_MANIFEST_SCHEMA_VERSION",
     "GRAPH_EXPORT_REQUIRED",
+    "validate_graph_export_recipe",
     "require_graph_export_recipe",
     "require_manifest_schema",
     "verify_graph_artifacts",

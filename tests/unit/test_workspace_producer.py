@@ -681,51 +681,83 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
         with pytest.raises(ValueError, match="seed must be an integer"):
             allocate_diseases(eligible, 0.2, seed=b"42")
 
-    def test_a_manifest_is_written_whole_or_not_at_all(self, tmp_path):
-        """What made a bad value corrupt a file rather than merely fail.
+    def test_a_manifest_that_cannot_be_serialised_touches_nothing(self, tmp_path, monkeypatch):
+        """The property outlived three ways of provoking it, and got stronger.
 
-        Every field reaching the manifest is constrained today, but that is a
-        property of the current field list — re-proved by hand each time someone
-        adds one. Serialising the text first makes it structural.
+        Each earlier version smuggled an unserialisable value in through a
+        caller field — an `object()` allocation seed, then a lone
+        `initialisation`, then a complete recipe with an `object()` name. Each
+        time the writer learned to refuse that field first, which is the better
+        outcome and left the property untested. There is now no caller field
+        left: every value reaching the manifest is validated before generation.
+
+        So the failure is injected where it can still originate — the manifest
+        builder — and the claim is no longer "no temp file". `json.dumps` of the
+        manifest now runs *before* `mkdir`, so on a new workspace a manifest that
+        cannot be encoded must leave no directory at all.
         """
+        import src.kg.sample_generator as generator
         from src.kg.disease_allocation import allocate_diseases
-        from src.kg.sample_generator import (
-            build_eligible_disease_profiles,
-            generate_training_samples,
-        )
 
         workspace = tmp_path / "ws"
-        workspace.mkdir()
-        eligible = build_eligible_disease_profiles(self._demo_kg(), 2)
+        eligible = generator.build_eligible_disease_profiles(self._demo_kg(), 2)
         allocation = allocate_diseases(eligible, 0.2, seed=42)
 
-        # **Through `graph_export`, because that is the field this needs.** The
-        # first version of this test hand-built an allocation with an `object()`
-        # seed; `validate_allocation` now refuses that, which closed the route
-        # and is the better outcome. The second passed a lone unserialisable
-        # `initialisation`; the writer's presence check now refuses *that*,
-        # for the unrelated reason that three other keys were absent — which
-        # would have let this test pass while proving nothing about encoding.
-        # So the recipe here is complete: it satisfies every check the writer
-        # makes, and the writer checks presence rather than type because only
-        # the caller of the export knows what it passed. That is precisely the
-        # gap where a value no encoder takes can still reach `json.dump`, and
-        # the reason this property is structural rather than a field audit.
+        real = generator.build_split_manifest
+        monkeypatch.setattr(
+            generator, "build_split_manifest",
+            lambda **kw: {**real(**kw), "injected": object()},
+        )
+
         with pytest.raises(TypeError):
-            generate_training_samples(
+            generator.generate_training_samples(
                 kg=self._demo_kg(), allocation=allocation,
                 num_train=20, num_val=5, output_dir=workspace,
                 graph_digests={r: "0" * 64 for r in
                                ("kg", "node_features", "edge_indices", "num_nodes")},
-                graph_export={
-                    "feature_dim": 4, "feature_seed": 7,
-                    "initialisation": object(), "initialisation_version": 1,
-                },
+                graph_export=dict(_SOUND_RECIPE),
             )
 
-        assert not (workspace / "split_manifest.json").exists(), (
-            "a manifest that could not be serialised was left on disk"
+        assert not workspace.exists(), (
+            "a manifest that could not be serialised still created the workspace"
         )
+
+    def test_the_same_failure_leaves_an_existing_workspace_alone(self, tmp_path, monkeypatch):
+        """The half `mkdir` cannot speak for.
+
+        A new workspace proves ordering; an existing one proves the thing an
+        operator loses. `exist_ok=True` means the directory survives either way,
+        so what has to be shown is that its bytes do.
+        """
+        import src.kg.sample_generator as generator
+        from src.kg.disease_allocation import allocate_diseases
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        before = {}
+        for name in ("train_samples.json", "val_samples.json", "split_manifest.json"):
+            (workspace / name).write_text(f"previous {name}")
+            before[name] = (workspace / name).read_bytes()
+
+        eligible = generator.build_eligible_disease_profiles(self._demo_kg(), 2)
+        allocation = allocate_diseases(eligible, 0.2, seed=42)
+        real = generator.build_split_manifest
+        monkeypatch.setattr(
+            generator, "build_split_manifest",
+            lambda **kw: {**real(**kw), "injected": object()},
+        )
+
+        with pytest.raises(TypeError):
+            generator.generate_training_samples(
+                kg=self._demo_kg(), allocation=allocation,
+                num_train=20, num_val=5, output_dir=workspace,
+                graph_digests={r: "0" * 64 for r in
+                               ("kg", "node_features", "edge_indices", "num_nodes")},
+                graph_export=dict(_SOUND_RECIPE),
+            )
+
+        for name, payload in before.items():
+            assert (workspace / name).read_bytes() == payload, f"{name} was modified"
         assert not list(workspace.glob("*.tmp")), "the temporary file was left behind"
 
 
@@ -955,6 +987,12 @@ class TestProvenanceMustAgreeWithWhatWasRun:
 #: Distinguishes "leave the writer's own recipe alone" from "replace it
 #: with nothing", which `None` would collide with.
 _UNTOUCHED = object()
+
+#: A recipe that satisfies every rule, for tests whose subject is something else.
+_SOUND_RECIPE = {
+    "feature_dim": 4, "feature_seed": 7,
+    "initialisation": "standard-normal", "initialisation_version": 1,
+}
 
 
 def _demo_manifest(tmp_path):
@@ -1229,3 +1267,138 @@ class TestTheRecipeIsRequiredWhereItIsRead:
         )
 
         assert manifest["graph_export"] == {}
+
+
+class TestARefusalToPersistTouchesNothing:
+    """The blocker this class exists for, stated as the property it protects.
+
+    Digest completeness, recipe presence and recipe shape were all checked
+    *after* `train_samples.json` and `val_samples.json` had been written. A
+    caller that forgot one therefore destroyed an existing workspace's cohorts
+    and then refused, leaving new cohort files beside the old manifest — a mixed
+    generation whose manifest describes neither. Nothing is rolled back now
+    because the refusal happens before anything is generated or created.
+
+    Atomic manifest replacement never protected against this and is not offered
+    as if it did: it protects one file's contents, not the two ordinary writes
+    beside it.
+    """
+
+    @staticmethod
+    def _kg():
+        from scripts.setup_demo import build_demo_kg
+
+        return build_demo_kg()
+
+    def _call(self, workspace, *, digests=..., recipe=...):
+        from src.kg.disease_allocation import allocate_diseases
+        from src.kg.sample_generator import (
+            build_eligible_disease_profiles,
+            generate_training_samples,
+        )
+
+        kg = self._kg()
+        if digests is ...:
+            digests = {r: "0" * 64 for r in
+                       ("kg", "node_features", "edge_indices", "num_nodes")}
+        if recipe is ...:
+            recipe = dict(_SOUND_RECIPE)
+        return generate_training_samples(
+            kg=kg,
+            allocation=allocate_diseases(
+                build_eligible_disease_profiles(kg, 2), 0.2, seed=42
+            ),
+            num_train=20, num_val=5, output_dir=workspace,
+            graph_digests=digests, graph_export=recipe,
+        )
+
+    #: Each entry is a persisting call that must be refused, and the reason.
+    REFUSALS = {
+        "no recipe at all": dict(recipe=None),
+        "empty recipe": dict(recipe={}),
+        "recipe missing a field": dict(recipe={
+            k: v for k, v in _SOUND_RECIPE.items() if k != "feature_seed"}),
+        "recipe with a zero width": dict(recipe={**_SOUND_RECIPE, "feature_dim": 0}),
+        "recipe with an unusable seed": dict(recipe={**_SOUND_RECIPE, "feature_seed": 2 ** 64}),
+        "recipe naming no initialisation": dict(recipe={**_SOUND_RECIPE, "initialisation": "  "}),
+        "recipe with a zero version": dict(recipe={**_SOUND_RECIPE, "initialisation_version": 0}),
+        "no digests at all": dict(digests=None),
+        "digests missing a role": dict(digests={
+            r: "0" * 64 for r in ("kg", "node_features", "edge_indices")}),
+    }
+
+    @pytest.mark.parametrize("case", sorted(REFUSALS))
+    def test_a_new_workspace_is_never_created(self, tmp_path, case):
+        """Not merely empty — absent. `mkdir` is downstream of every refusal."""
+        workspace = tmp_path / "ws"
+
+        with pytest.raises(ValueError):
+            self._call(workspace, **self.REFUSALS[case])
+
+        assert not workspace.exists(), (
+            f"{case} was refused, but the workspace directory was created"
+        )
+
+    @pytest.mark.parametrize("case", sorted(REFUSALS))
+    def test_an_existing_workspace_is_left_byte_for_byte(self, tmp_path, case):
+        """Bytes and mtimes, because a rewritten-identical file is still a write
+        an operator has to reason about — and because a cohort overwritten with
+        *new* content beside an old manifest is the exact loss this prevents."""
+        import os
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        names = ("train_samples.json", "val_samples.json", "split_manifest.json")
+        for name in names:
+            (workspace / name).write_text(f"previous {name}")
+        # Backdated so a same-second rewrite cannot pass as untouched.
+        for name in names:
+            os.utime(workspace / name, (1_600_000_000, 1_600_000_000))
+        before = {
+            name: ((workspace / name).read_bytes(), (workspace / name).stat().st_mtime_ns)
+            for name in names
+        }
+
+        with pytest.raises(ValueError):
+            self._call(workspace, **self.REFUSALS[case])
+
+        for name, (payload, mtime) in before.items():
+            assert (workspace / name).read_bytes() == payload, f"{case}: {name} was rewritten"
+            assert (workspace / name).stat().st_mtime_ns == mtime, f"{case}: {name} was touched"
+        assert not list(workspace.glob("*.tmp")), f"{case}: a temp file was left behind"
+        assert sorted(p.name for p in workspace.iterdir()) == sorted(names), (
+            f"{case}: the refusal added a file"
+        )
+
+    def test_the_sound_call_still_writes(self, tmp_path):
+        """Otherwise every assertion above would hold for a writer that refuses
+        everything."""
+        workspace = tmp_path / "ws"
+
+        self._call(workspace)
+
+        assert (workspace / "split_manifest.json").is_file()
+        assert (workspace / "train_samples.json").is_file()
+        assert (workspace / "val_samples.json").is_file()
+
+    def test_the_refusal_precedes_generation_not_merely_the_write(self, tmp_path):
+        """Where the check runs, not just that it runs.
+
+        A gate placed after generation would satisfy every assertion above — no
+        file is written either way — while still spending the full walk over the
+        disease universe on a call that cannot persist. This is the difference
+        those tests cannot see.
+        """
+        import src.kg.sample_generator as generator
+
+        calls = []
+        original = generator._generate_partition
+        generator._generate_partition = lambda *a, **k: (
+            calls.append(1), original(*a, **k))[1]
+        try:
+            with pytest.raises(ValueError):
+                self._call(tmp_path / "ws", recipe=None)
+        finally:
+            generator._generate_partition = original
+
+        assert not calls, "the cohorts were generated before the refusal"
