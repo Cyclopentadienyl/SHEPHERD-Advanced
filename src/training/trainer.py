@@ -866,15 +866,37 @@ class Trainer:
                 - hits@1, hits@5, hits@10: Hits at K
                 - loss: 平均損失
         """
-        dataloader = test_dataloader or self.val_dataloader
+        # **`is None`, not falsy.** An explicitly supplied `[]` used to be
+        # silently replaced by the validation set, so a caller asking to
+        # evaluate a specific empty cohort received a full validation pass and
+        # numbers about a different set of patients entirely.
+        dataloader = self.val_dataloader if test_dataloader is None else test_dataloader
 
         if dataloader is None:
+            # Nothing asked for and nothing configured: the method declines to
+            # act, which is different from being handed a cohort with no rows.
             logger.warning("No dataloader provided for evaluation")
             return {}
 
         self.model.eval()
 
         result = self._run_evaluation_pass(dataloader)
+
+        # **A cohort with no rows is refused rather than scored.** `mean_loss`
+        # divides by `max(num_batches, 1)`, so an empty traversal returns
+        # `{"loss": 0.0}` — a number about a model, produced without reading a
+        # single patient. `RankingMetrics`, `measurement.py` and
+        # `differential.py` all refuse to invent a value for an empty cohort;
+        # this is the same refusal at the entry point that could still fabricate
+        # one. Checked after the traversal rather than before, so a generator
+        # that yields nothing is caught as surely as an empty list.
+        if result.num_batches == 0:
+            raise ValueError(
+                "the cohort handed to evaluate() has no batches, so there is "
+                "nothing to measure. An empty traversal would report a loss of "
+                "0.0 and no ranking metrics, which reads as a result and is not "
+                "one. Pass None to evaluate the validation set."
+            )
 
         # Compute metrics
         metrics = {"loss": result.mean_loss}

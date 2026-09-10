@@ -293,22 +293,61 @@ def test_evaluate_with_no_dataloader_at_all_returns_empty():
     assert trainer.model.forward_calls == 0
 
 
-def test_an_explicitly_empty_evaluate_argument_falls_back_to_the_val_dataloader():
-    """**Frozen as observed, not endorsed.** `evaluate` selects its dataloader
-    with `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an
-    explicitly supplied `[]` is falsy and silently becomes the validation set —
-    a caller asking to evaluate nothing gets a full validation pass instead.
+def test_an_explicitly_empty_cohort_is_refused_rather_than_replaced():
+    """**Unfrozen deliberately — backlog item 12.**
 
-    1c must not quietly change this to an `is None` contract. That would be a
-    defensible fix, but it is a **behaviour change** and has to be made by
-    editing this test rather than by an extraction nobody re-read.
+    This was frozen as *observed, not endorsed*: `evaluate` chose its dataloader
+    with `test_dataloader or self.val_dataloader`, so an explicitly supplied
+    `[]` was falsy and silently became the validation set. A caller asking to
+    evaluate one cohort received numbers about a different set of patients, and
+    nothing in the return value said so.
+
+    The note on the frozen version said the `is None` contract was a defensible
+    fix that had to be made by editing this test rather than by an extraction
+    nobody re-read. This is that edit.
+
+    Refused rather than scored, because the other outcome was equally silent:
+    `mean_loss` divides by `max(num_batches, 1)`, so an empty traversal returns
+    `{"loss": 0.0}` — a statement about a model made without reading a patient.
+    `RankingMetrics`, `measurement.py` and `differential.py` all refuse to
+    invent a value for an empty cohort; this is the same refusal at the last
+    entry point that could still produce one.
     """
     trainer = make_trainer([make_batch([0, 1]), make_batch([2, 3])])
 
-    metrics = trainer.evaluate([])
+    with pytest.raises(ValueError, match="nothing to measure"):
+        trainer.evaluate([])
 
-    assert trainer.model.forward_calls == 2, "the two val batches ran"
-    assert "loss" in metrics, "and produced a full result"
+    assert trainer.model.forward_calls == 0, (
+        "the validation set was traversed for a caller who did not ask for it"
+    )
+
+
+def test_a_generator_that_yields_nothing_is_refused_too():
+    """The half an emptiness test before the traversal would have missed.
+
+    `[]` can be measured without running anything; a generator cannot be asked
+    whether it is empty without consuming it. Checking `num_batches` after the
+    pass covers both with one rule, and this is the case that proves the rule
+    is not a `len()` in disguise.
+    """
+    trainer = make_trainer([make_batch([0, 1])])
+
+    with pytest.raises(ValueError, match="nothing to measure"):
+        trainer.evaluate(iter([]))
+
+    assert trainer.model.forward_calls == 0
+
+
+def test_a_supplied_cohort_is_still_the_one_evaluated():
+    """The control. Without it the two refusals above hold for an `evaluate`
+    that refuses every supplied cohort, and the defect would read as fixed."""
+    trainer = make_trainer([make_batch([0, 1]), make_batch([2, 3])])
+
+    metrics = trainer.evaluate([make_batch([4, 5])])
+
+    assert trainer.model.forward_calls == 1, "the supplied batch ran, and only it"
+    assert "loss" in metrics
 
 
 # ---------------------------------------------------------------------------
