@@ -708,9 +708,9 @@ class DiagnosisPipeline:
                 "unreachable sentinel every shortest-path score is measured "
                 "against and cannot be recovered from the tensors, which bound "
                 "it from below only. Shortest-path scoring is off; set "
-                "sp_hop_bound to the value the table was built with, or rebuild "
-                "it with scripts/compute_shortest_paths.py to restore the "
-                "sidecar.",
+                "SHEPHERD_SP_HOP_BOUND to the value the table was built with, "
+                "or rebuild it with scripts/compute_shortest_paths.py to "
+                "restore the sidecar.",
                 sp_path, meta_path.name,
             )
             return

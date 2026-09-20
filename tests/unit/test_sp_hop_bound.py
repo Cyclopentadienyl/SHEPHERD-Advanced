@@ -325,8 +325,13 @@ class TestTheProvenanceReachesACaller:
         assert status.sp_hop_bound_source == source
 
     def test_the_loader_and_the_response_agree_end_to_end(self, tmp_path):
-        """Through `get_pipeline_config`, so a rename on either side fails here
-        rather than silently dropping the field."""
+        """Through the real `get_pipeline_config`, which the first version only
+        claimed.
+
+        That version hand-built the dict it passed to `_status_of`, so deleting
+        the provenance key from production `get_pipeline_config` left all 32
+        tests green — the docstring asserted coverage the test did not have.
+        """
         from src.api.routes.pipeline import _status_of
 
         pipeline, data_dir = _loader(
@@ -334,14 +339,18 @@ class TestTheProvenanceReachesACaller:
         )
         pipeline._load_shortest_paths(data_dir)
 
-        # The rest of `get_pipeline_config` needs a whole initialised pipeline;
-        # what is under test is that this key is produced and carried.
-        config = {
-            "scoring_mode": "gnn_plus_shortest_path",
-            "sp_max_hops": pipeline._sp_max_hops,
-            "sp_hop_bound_source": pipeline._sp_hop_bound_source,
-        }
-        status = _status_of(config, data_dir=None, checkpoint_path=None)
+        # The rest of `get_pipeline_config` reads attributes a full
+        # initialisation sets; supplying them is what lets the real method run
+        # here instead of a dict standing in for it.
+        pipeline._gnn_ready = True
+        pipeline.kg = None
+        pipeline.model = None
 
+        config = pipeline.get_pipeline_config()
+
+        assert config["sp_hop_bound_source"] == "sidecar", (
+            "the production method does not emit the key the response carries"
+        )
+        status = _status_of(config, data_dir=None, checkpoint_path=None)
         assert status.sp_max_hops == 3
         assert status.sp_hop_bound_source == "sidecar"

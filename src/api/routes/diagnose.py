@@ -28,7 +28,6 @@ Version: 1.0.0
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -260,9 +259,14 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             # system that cannot answer it, and a warning string beside a
             # well-formed ranked list is not a refusal.
             #
-            # `SHEPHERD_KG_PATH` is what separates the two, because it is what
-            # `initialize_pipeline` requires and what the startup path keys on.
-            if os.environ.get("SHEPHERD_KG_PATH"):
+            # **What separates the two is whether a workspace was ever named**,
+            # by any route. The first version of this keyed on
+            # `SHEPHERD_KG_PATH`, which covered startup and missed the reload
+            # API — a caller could point `/pipeline/reload` at a real workspace,
+            # have the candidate refused, and still be handed invented
+            # candidates here. `build_pipeline` records the request where both
+            # routes resolve their paths.
+            if app_state.real_pipeline_requested:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=(

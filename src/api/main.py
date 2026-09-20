@@ -86,6 +86,13 @@ class AppState:
         # including after an environment-configured startup, which used to
         # publish a pipeline and leave these reading as unknown.
         self._current_data_dir = None
+        #: Whether any real workspace has ever been named for this service —
+        #: through `SHEPHERD_KG_PATH` at startup, or through a reload that
+        #: pointed at one. It records a **request**, not an outcome, so it stays
+        #: True after a build that failed. `/diagnose` needs exactly that: the
+        #: difference between "nobody configured a pipeline" and "a pipeline was
+        #: configured and cannot answer" is not visible from `pipeline is None`.
+        self.real_pipeline_requested = False
         self._current_checkpoint_path = None
 
 
@@ -381,6 +388,35 @@ class PipelineBundle(NamedTuple):
     checkpoint_path: Optional[str]
 
 
+#: The environment variable that supplies a hop bound for a shortest-path table
+#: whose sidecar is absent. Named beside the other `SHEPHERD_*` settings because
+#: it is read the same way and at the same moment as they are.
+SP_HOP_BOUND_ENV = "SHEPHERD_SP_HOP_BOUND"
+
+
+def _configured_hop_bound() -> Optional[int]:
+    """The deployment's hop bound, or None when it stated none.
+
+    **Refused here rather than coerced.** An unparsable value is a deployment
+    that meant to set the bound and did not, and silently treating it as unset
+    would put the service back into the state the loader refuses — serving
+    without shortest paths while the operator believes they configured them.
+    The domain itself belongs to `validate_hop_bound`, which the loader applies;
+    this only establishes that an integer was written.
+    """
+    raw = os.environ.get(SP_HOP_BOUND_ENV)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        raise ValueError(
+            f"{SP_HOP_BOUND_ENV}={raw!r} is not an integer. It is the hop bound "
+            "for a shortest-path table whose sidecar is missing, and a bound "
+            "that cannot be read is not a bound."
+        ) from None
+
+
 def build_pipeline(
     kg_path: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
@@ -427,9 +463,19 @@ def build_pipeline(
         )
         return None
 
+    # **Recorded here because this is where both entry points meet.** Startup
+    # resolves `SHEPHERD_KG_PATH` and a reload passes a workspace it derived from
+    # the request; keying the distinction on the environment variable alone
+    # covered only the first, so a caller who named a real workspace through the
+    # reload API and had it refused still received mock candidates. This is the
+    # request, not its result — it stays True when the build below fails, which
+    # is the whole point — and it touches nothing the published bundle owns, so
+    # the build-then-publish separation is unchanged.
+    app_state.real_pipeline_requested = True
+
     try:
         from src.kg.graph import KnowledgeGraph
-        from src.inference.pipeline import create_diagnosis_pipeline
+        from src.inference.pipeline import PipelineConfig, create_diagnosis_pipeline
 
         # Step 1: Load knowledge graph
         kg_file = Path(kg_path)
@@ -450,8 +496,14 @@ def build_pipeline(
         # read through the other graph's node identifiers. The pipeline refuses
         # that composition, and because this function publishes nothing, a
         # refused one cannot leave a graph visible as though it had been accepted.
+        # **The hop bound a workspace without its sidecar needs.** The loader
+        # refuses to guess it, and tells the operator to supply it — so there has
+        # to be a way to, from the surface a deployment is actually started with.
+        # This function is that surface for both entry points, and the factory
+        # has always accepted a config; nothing was passing one.
         pipeline = create_diagnosis_pipeline(
             kg=kg,
+            config=PipelineConfig(sp_hop_bound=_configured_hop_bound()),
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             kg_path=str(kg_file),

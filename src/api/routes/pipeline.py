@@ -275,6 +275,17 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     verified; a rejected candidate leaves the running pipeline serving.
     """
     data_dir = request.data_dir
+
+    # **Naming a workspace is the request, whatever becomes of it.** The refusals
+    # below — missing files, no checkpoint, a build that fails — all return
+    # before `build_pipeline` records anything, and a caller who reached any of
+    # them has still asked this service for a real pipeline. Without this,
+    # `/diagnose` would afterwards read them as a demo user and answer with
+    # invented candidates. Recorded here rather than after a successful build for
+    # exactly that reason.
+    from src.api.main import app_state as _app_state
+
+    _app_state.real_pipeline_requested = True
     checkpoint_path = request.checkpoint_path
     device = request.device
 
