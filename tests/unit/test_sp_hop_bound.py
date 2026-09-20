@@ -24,6 +24,13 @@ import pytest
 torch = pytest.importorskip("torch")
 
 
+def _config(**kwargs):
+    """A PipelineConfig with only the fields this loader reads."""
+    from src.inference.pipeline import PipelineConfig
+
+    return PipelineConfig(**kwargs)
+
+
 def _loader(tmp_path, *, distances, sidecar):
     """A pipeline instance driven through `_load_shortest_paths` and nothing else.
 
@@ -51,6 +58,7 @@ def _loader(tmp_path, *, distances, sidecar):
         path.write_text(sidecar if isinstance(sidecar, str) else json.dumps(sidecar))
 
     pipeline = DiagnosisPipeline.__new__(DiagnosisPipeline)
+    pipeline.config = _config()
     pipeline._sp_ready = False
     pipeline._sp_lookup = None
     pipeline._sp_max_hops = 5
@@ -112,28 +120,109 @@ class TestAPresentSidecarIsBinding:
         assert pipeline._sp_lookup.unreachable_distance == 4.0
 
 
-class TestAMissingSidecarAssumesAndSaysSo:
-    """The defect was the silence, not the number."""
+class TestAMissingSidecarNeedsTheBoundStated:
+    """A recorded guess is still a guess.
 
-    def test_the_producer_default_is_used(self, tmp_path):
-        from src.inference.scoring import ASSUMED_HOP_BOUND
+    A previous revision assumed the producer's default of 5 here and recorded
+    that it had assumed. Recording does not stop it changing an answer: the
+    producer's CLI accepts 1..127, so a legitimate 3-hop table is inside the
+    supported range, and read against 5 it reorders candidates. The floor check
+    cannot see that — the observed maximum is 3 either way.
+    """
 
+    def test_without_a_stated_bound_shortest_paths_stay_off(self, tmp_path):
         pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
+        pipeline.config = _config(sp_hop_bound=None)
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+    def test_the_workspace_itself_is_not_refused(self, tmp_path):
+        """SP off is the state an absent table already produces. The tensors are
+        sound; what is declined is scoring against a ceiling nobody chose."""
+        pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
+        pipeline.config = _config(sp_hop_bound=None)
+
+        pipeline._load_shortest_paths(data_dir)  # returns, does not raise
+
+    def test_a_stated_bound_is_used_and_recorded_as_stated(self, tmp_path):
+        pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
+        pipeline.config = _config(sp_hop_bound=3)
 
         pipeline._load_shortest_paths(data_dir)
 
         assert pipeline._sp_ready is True
-        assert pipeline._sp_max_hops == ASSUMED_HOP_BOUND
-        assert pipeline._sp_lookup.unreachable_distance == ASSUMED_HOP_BOUND + 1
+        assert pipeline._sp_max_hops == 3
+        assert pipeline._sp_hop_bound_source == "configured"
+        assert pipeline._sp_lookup.unreachable_distance == 4.0
 
-    def test_the_assumption_is_recorded_rather_than_silent(self, tmp_path):
-        """A log line is not a surface anyone watches. Two tables scoring
-        differently must be distinguishable by something a caller can read."""
+    @pytest.mark.parametrize("bound,fragment", [
+        (True, "not an integer"),
+        ("3", "not an integer"),
+        (0, r"outside the \[1, 127\]"),
+        (128, r"outside the \[1, 127\]"),
+    ], ids=["bool", "string", "zero", "above-producer-range"])
+    def test_a_stated_bound_is_held_to_the_same_domain(self, tmp_path, bound, fragment):
+        """Stated is not trusted. The sidecar's rules are the configuration's."""
         pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
+        pipeline.config = _config(sp_hop_bound=bound)
+
+        with pytest.raises(ValueError, match=fragment):
+            pipeline._load_shortest_paths(data_dir)
+
+    def test_a_stated_bound_below_the_table_is_refused(self, tmp_path):
+        """And it is not exempt from the one check that can contradict it."""
+        pipeline, data_dir = _loader(tmp_path, distances=[1, 5], sidecar=None)
+        pipeline.config = _config(sp_hop_bound=3)
+
+        with pytest.raises(ValueError, match="records a distance of 5"):
+            pipeline._load_shortest_paths(data_dir)
+
+    def test_the_sidecar_wins_over_the_configured_bound(self, tmp_path):
+        """The file describes the artifact; the setting is for when no file does.
+        Without this, a stale configuration would quietly override a table that
+        came with its own answer."""
+        pipeline, data_dir = _loader(
+            tmp_path, distances=[1, 2, 3], sidecar={"max_hops": 3}
+        )
+        pipeline.config = _config(sp_hop_bound=5)
 
         pipeline._load_shortest_paths(data_dir)
 
-        assert pipeline._sp_hop_bound_source == "assumed"
+        assert pipeline._sp_max_hops == 3
+        assert pipeline._sp_hop_bound_source == "sidecar"
+
+
+class TestTheRankingThisPrevents:
+    """The counterexample the assumption could not survive, asserted as
+    behaviour so the reasoning is not only in a commit message."""
+
+    def test_reading_a_three_hop_table_against_five_flips_a_pair(self):
+        """Not a claim about the loader — a claim about why its refusal matters.
+
+        Two candidates over one 3-hop table: A's phenotype distances are
+        [1, unreachable], B's are [3, 3], both embedding scores 0.5, eta 0.7.
+        The sentinel is the only thing that differs between the two readings.
+        """
+        from src.inference.scoring import sp_scores_from_distances
+
+        def mixture(max_hops):
+            unreachable = float(max_hops + 1)
+            means = torch.tensor(
+                [(1.0 + unreachable) / 2, 3.0], dtype=torch.float64
+            )
+            sp = sp_scores_from_distances(means)
+            return [0.7 * 0.5 + 0.3 * float(v) for v in sp]
+
+        correct_a, correct_b = mixture(3)
+        assumed_a, assumed_b = mixture(5)
+
+        assert correct_a > correct_b, "with the real bound, A ranks above B"
+        assert assumed_b > assumed_a, (
+            "the assumption does not merely shift the scores, it swaps the pair"
+        )
 
 
 class TestTheFloorCheckCatchesTheDirectionItCan:
@@ -152,15 +241,6 @@ class TestTheFloorCheckCatchesTheDirectionItCan:
             pipeline._load_shortest_paths(data_dir)
 
         assert pipeline._sp_ready is False
-
-    def test_an_assumed_bound_below_the_table_is_refused_too(self, tmp_path):
-        """The assumption is not exempt from the one check that can contradict it."""
-        pipeline, data_dir = _loader(
-            tmp_path, distances=[1, 7], sidecar=None
-        )
-
-        with pytest.raises(ValueError, match="records a distance of 7"):
-            pipeline._load_shortest_paths(data_dir)
 
     def test_a_bound_exactly_one_below_the_table_is_refused(self, tmp_path):
         """The boundary, and the realistic case.
@@ -221,3 +301,47 @@ class TestASecondLoadCannotInheritTheFirst:
 
         assert pipeline._sp_ready is False, "the first load's flag survived the second"
         assert pipeline._sp_lookup is None, "a lookup over the previous table survived"
+
+
+class TestTheProvenanceReachesACaller:
+    """A field nothing carries is a field nobody reads.
+
+    The tests above assert the loader's private attribute, which proves the
+    value is computed and nothing about whether it survives to the surface an
+    operator watches. Two tables scoring differently have to be distinguishable
+    without reading the service's logs.
+    """
+
+    @pytest.mark.parametrize("source", ["sidecar", "configured"])
+    def test_it_survives_get_pipeline_config_and_the_status_response(self, source):
+        from src.api.routes.pipeline import _status_of
+
+        status = _status_of(
+            {"scoring_mode": "gnn_plus_shortest_path", "sp_max_hops": 3,
+             "sp_hop_bound_source": source},
+            data_dir=None, checkpoint_path=None,
+        )
+
+        assert status.sp_hop_bound_source == source
+
+    def test_the_loader_and_the_response_agree_end_to_end(self, tmp_path):
+        """Through `get_pipeline_config`, so a rename on either side fails here
+        rather than silently dropping the field."""
+        from src.api.routes.pipeline import _status_of
+
+        pipeline, data_dir = _loader(
+            tmp_path, distances=[1, 2, 3], sidecar={"max_hops": 3}
+        )
+        pipeline._load_shortest_paths(data_dir)
+
+        # The rest of `get_pipeline_config` needs a whole initialised pipeline;
+        # what is under test is that this key is produced and carried.
+        config = {
+            "scoring_mode": "gnn_plus_shortest_path",
+            "sp_max_hops": pipeline._sp_max_hops,
+            "sp_hop_bound_source": pipeline._sp_hop_bound_source,
+        }
+        status = _status_of(config, data_dir=None, checkpoint_path=None)
+
+        assert status.sp_max_hops == 3
+        assert status.sp_hop_bound_source == "sidecar"

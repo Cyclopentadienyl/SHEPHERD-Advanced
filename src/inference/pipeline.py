@@ -137,6 +137,18 @@ class PipelineConfig:
     # If False, pipeline raises at init when both signals are not available.
     sp_optional: bool = True
 
+    # The hop bound for a shortest-path table whose sidecar is absent.
+    #
+    # **Supplied, never assumed.** `max_hops` sets the unreachable sentinel, and
+    # a wrong one reorders candidates rather than merely mis-scoring them: a
+    # legitimate 3-hop table read against 5 flips a pair whose distances are
+    # [1, unreachable] and [3, 3]. The producer's CLI accepts 1..127, so a
+    # non-5-hop artifact is inside the supported range and losing its sidecar in
+    # a copy is an ordinary accident. Nothing the loader can measure tells the
+    # two apart — the recorded distances bound the ceiling from below and never
+    # from above — so the operator states it or shortest-path scoring stays off.
+    sp_hop_bound: Optional[int] = None
+
     ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
 
     # Output control
@@ -484,10 +496,15 @@ class DiagnosisPipeline:
         )
 
         if not self._sp_ready and not self.config.sp_optional:
+            # **Names the state, not a guess at its cause.** This used to say
+            # "no shortest_paths.pt found", which is false whenever the table is
+            # present and something else about it is unusable — an unknown hop
+            # bound, for one. The loader logs the specific reason at the point it
+            # establishes it; this says what the configuration then does about it.
             logger.error(
-                "Shortest path lookup required (sp_optional=False) but "
-                "no shortest_paths.pt found in data_dir. Run "
-                "scripts/compute_shortest_paths.py to generate it."
+                "Shortest path lookup required (sp_optional=False) but it is "
+                "not available; see the shortest-path load messages above for "
+                "which condition stopped it. GNN scoring is disabled."
             )
             self._gnn_ready = False
 
@@ -636,11 +653,7 @@ class DiagnosisPipeline:
         # meant a missing file, malformed JSON, an absent key, a string, a
         # boolean or a value the producer would never write all arrived at the
         # same silent 5.
-        from src.inference.scoring import (
-            ASSUMED_HOP_BOUND,
-            SPLookup,
-            validate_hop_bound,
-        )
+        from src.inference.scoring import SPLookup, validate_hop_bound
 
         meta_path = sp_path.with_suffix(".meta.json")
         if meta_path.exists():
@@ -662,20 +675,45 @@ class DiagnosisPipeline:
                 )
             max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
             hop_bound_source = "sidecar"
+        elif self.config.sp_hop_bound is not None:
+            # **Stated by the deployment, and validated like any other.** This is
+            # the cheap recovery a missing sidecar needs: the producer has no
+            # metadata-only mode and re-running the BFS is the heaviest
+            # prerequisite there is, so an operator who knows what the table was
+            # built to says so here rather than rebuilding it. Recorded as
+            # `configured`, because a stated bound and a read one are different
+            # evidence.
+            max_hops = validate_hop_bound(
+                self.config.sp_hop_bound, "config.sp_hop_bound"
+            )
+            hop_bound_source = "configured"
         else:
-            # **Assumed, and recorded as assumed.** The defect here was the
-            # silence, not the number: every operator-facing build path in this
-            # repository uses the producer's default of 5, and the workspace
-            # inventories in `docs/` do not list the sidecar, so an operator who
-            # copied a workspace by this repo's own documentation has a real
-            # 5-hop table with no sidecar beside it. Refusing would replace a
-            # correct score with a different one and throw away the only cheap
-            # recovery — the producer has no metadata-only mode, and re-running
-            # the BFS is the heaviest prerequisite there is. What was missing is
-            # that nothing said the number was an assumption; `get_pipeline_config`
-            # now does.
-            max_hops = ASSUMED_HOP_BOUND
-            hop_bound_source = "assumed"
+            # **No sidecar and nothing stated: shortest-path scoring stays off.**
+            #
+            # A previous revision assumed the producer's default of 5 here and
+            # merely recorded that it had assumed. Recording a guess does not
+            # stop it: a legitimate 3-hop table read against 5 reorders
+            # candidates, and the floor check below cannot see it because the
+            # observed maximum is 3 either way. The producer accepts 1..127, so
+            # that table is inside the supported range rather than a
+            # hypothetical.
+            #
+            # This is not a refusal of the workspace. The tensors are sound and
+            # the pipeline serves without shortest paths — the state an absent
+            # table already produces — and one configuration value turns it back
+            # on. What is refused is scoring against a ceiling nobody chose.
+            logger.error(
+                "%s has no %s and config.sp_hop_bound is unset, so the hop "
+                "bound this table was built to is unknown. It sets the "
+                "unreachable sentinel every shortest-path score is measured "
+                "against and cannot be recovered from the tensors, which bound "
+                "it from below only. Shortest-path scoring is off; set "
+                "sp_hop_bound to the value the table was built with, or rebuild "
+                "it with scripts/compute_shortest_paths.py to restore the "
+                "sidecar.",
+                sp_path, meta_path.name,
+            )
+            return
 
         # **A floor, and honest about being only that.** The distances recorded
         # are bounded by the ceiling the table was built to, so `max(distance)`
