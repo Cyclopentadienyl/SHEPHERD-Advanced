@@ -60,9 +60,18 @@ loads whatever `mondo.obo` happens to be.
 does not offer the argument.** This is the one item that should not wait on any
 design decision.
 
-`force_download` is a second inert control: it exists on the loader and **no
-caller anywhere passes it**, and no CLI exposes it. Refreshing an ontology today
-means deleting the cached file by hand.
+**`force_download` is a different case, and the first draft of this plan got it
+wrong.** It was listed here as a second inert control. It is not: the parameter
+is checked at all three branches of `_load_known_ontology` — the memory cache
+(`:124`), the disk cache (`:130-135`) and the download decision (`:138`) — so
+passing `True` bypasses both caches and re-fetches. What is true is that **no
+caller anywhere passes it and no CLI exposes it**; that is a usability gap, not
+a broken control, and the two claims are not the same. Removing it would delete
+working behaviour.
+
+The accurate statement about refreshing: there is no *command* for it, so an
+operator's only route today is deleting the cached file by hand — while the
+mechanism to do it properly already exists one layer down.
 
 ### 2.3 The version is knowable and is not recorded
 
@@ -170,14 +179,95 @@ digest of what arrived.
 
 ### 3.4 The inversion worth making
 
-Today, auto-download is the primary path and **there is no way to point at a
-file at all**. That is backwards for the target environment: a hospital network
+Today auto-download is the primary path, and **the build CLI has no
+per-ontology path argument** — a second correction to the first draft, which
+said there was no way to point at a file at all. `OntologyLoader.load(path)`
+exists (`loader.py:68`) and takes a file directly; what is missing is a route to
+it from `scripts/build_knowledge_graph.py`, which only exposes
+`--ontology-cache-dir`. The gap is in the entry point, not the library.
+
+That ordering is still backwards for the target environment: a hospital network
 may not reach the internet, and the offline path is the one that always works.
 
 **"Point at a file you already have" should be the first-class path, and
 download a convenience that may be absent.** This also meets the maintainer's
 export/import idea from the other side — import a packaged workspace and its
 ontologies arrive with it.
+
+### 3.5 Where the record is written — the question Phase 1 must settle first
+
+The first draft said "record it in the manifest" and called Phase 1 free of
+design decisions. Two facts make that wrong.
+
+**Graph-only builds write no manifest.** `write_workspace(samples=None)` is a
+supported mode: it writes `kg.json` and the tensors and returns
+(`workspace.py:251`) before any split manifest exists. Provenance placed only in
+the split manifest would leave that path unrecorded — and it is the path whose
+output most needs identifying, because a graph is what the ontologies produced.
+
+**`kg.json` has nowhere to put it.** Its serialisation is `format_version`,
+`nodes`, `edges` (`graph.py:799`). Adding a section would change every existing
+`kg.json`'s bytes and therefore every recorded digest, invalidating manifests
+that are otherwise sound.
+
+**Proposal: a `kg.provenance.json` written beside `kg.json` on every build, and
+bound by digest into the split manifest's `artifacts` map** exactly like the
+four graph artifacts already are.
+
+The obvious objection is that this project has just spent a long time on what
+goes wrong when a sidecar can be separated from the file it describes — the
+shortest-path `meta.json` is the whole reason for the hop-bound work. Binding it
+by digest is the answer to precisely that: an unbound sidecar is separable and
+undetectable, a digest-bound one is separable and *detected*, by machinery that
+already exists and is already tested. For a graph-only build there is no
+manifest to bind it into, and the honest statement is that such a workspace is
+self-describing but not self-verifying — which is already true of everything
+else in it.
+
+An alternative — carrying the record inline in the split manifest as well — is
+not proposed, because two copies that can disagree is a worse failure than one
+copy that can go missing.
+
+**Absent records read as unknown.** A workspace built before this exists has no
+provenance, and nothing may fill that in from whatever is in the cache now: the
+current file is not evidence about a past build.
+
+### 3.6 All four inputs, or a narrower claim
+
+Phase 1 as first drafted recorded the two ontologies and claimed it would
+explain the two-site divergence. It would not. `--external-dir` names a
+directory, and `phenotype.hpoa` and `genes_to_phenotype.txt` can both be
+replaced in place under the same names. Same ontologies, same directory path,
+even the same skipped count, and the graph can still differ because the
+annotations did.
+
+**So Phase 1 records all four source files** — two ontologies and two annotation
+files — each with its role, its content digest, and its declared version where
+one exists. The directory is a locator, not an identity.
+
+This does not bring annotation selection or download management into scope. It
+brings the annotation files into the *record*, which is where the reproducibility
+claim actually lives.
+
+### 3.7 Naming the numbers precisely
+
+`skipped_unmapped` is a local counter in one parser
+(`hpo_annotations.py:157-207`). It counts **annotation rows** that
+`phenotype.hpoa` parsing could not resolve to a MONDO identifier, which includes
+identifier types that are deliberately unsupported — DECIPHER among them — and
+not only vintage mismatches. The builder drops further edges elsewhere when a
+phenotype or disease node is absent (`builder.py:393`), and those are not in
+this count.
+
+**Record it as what it is**: rows skipped at one parsing stage, with the stage
+named. It must not be presented as "diseases lost to a version mismatch" —
+the first draft of this plan came close to doing exactly that.
+
+Similarly, `Ontology.version` falls back to `format_version` and then to
+`"Unknown"` (`hierarchy.py:124-128`), so it can return a *format* version where
+a release is expected. **Provenance stores the raw `data-version`, null when the
+file declares none.** The content digest is the identity; the declared version
+is a label.
 
 ---
 
@@ -188,9 +278,9 @@ each one forces.
 
 | Phase | What | Needs a design decision? |
 |---|---|---|
-| **0** | Resolve the inert `version` and `force_download` arguments — make them work or remove them | **No.** Correcting a misleading API |
-| **1** | Record provenance: per-ontology `data-version`, digest and source in the manifest, plus `skipped_unmapped` | **No.** The values are already computed |
-| **2** | Explicit selection: a path per ontology, resolver over configured roots | Small: where roots are configured |
+| **0** | Resolve the **`version`** promise — make it select a file or refuse a version it cannot honour. **`force_download` is left alone**; it works | **No.** Correcting a misleading API |
+| **1** | `kg.provenance.json` on every build (§3.5), covering **all four source files** (§3.6), with the parsing counters named precisely (§3.7) | **Yes, one**: where the record is written. §3.5 proposes an answer |
+| **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2) | Small: where roots are configured |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
 
 **Why 3 comes last.** Once 1 and 2 are done, packaging is moving things that are
@@ -200,15 +290,37 @@ inside it.
 **Why 0 does not wait.** It is the only item that is actively misleading rather
 than merely missing, and it depends on nothing.
 
-**Phase 1 is where the value is.** It makes the two-site divergence explainable
-instead of merely detectable, and it surfaces the annotation drop that no
-artifact currently records. It needs no front end and benefits CLI users
-immediately.
+**Phase 1 is where the value is** — and only with §3.6's full four-file scope.
+With the two ontologies alone it would leave a divergence caused by an updated
+annotation file just as unexplainable as before, while sounding as though the
+question were settled. It needs no front end and benefits CLI users immediately.
+
+### 4.2 The imports policy Phase 2 owes
+
+Pointing at a local file does not by itself make a build offline or
+self-contained. The loader calls `pronto.Ontology(str(path))` with nothing else
+(`loader.py:84`), and pronto 2.7.3's `import_depth` defaults to `-1` — resolve
+every import, without bound. A root file carrying `import:` lines can therefore
+pull further ontologies over the network at parse time, and the root file's
+digest does not cover what they contributed.
+
+**Verified: the default is unbounded and the loader passes no override.
+Unverified: whether the MONDO and HPO artifacts these deployments use actually
+declare imports** — no such file exists in the environment this plan was written
+in, so the exposure is conditional and stated as conditional.
+
+Phase 2 must therefore state a policy rather than inherit one. The narrow option
+is to require self-contained files and refuse an input whose imports cannot be
+satisfied locally; the wider one is to support imports and record each resolved
+dependency alongside the root. **Silently suppressing imports is not an option**
+— it would change the graph while appearing to make the build offline.
 
 ### 4.1 Explicitly not proposed
 
 - No ontology registry, no version-negotiation layer, no install-state database.
   A path is enough.
+- **No removal of `force_download`**, which works. Whether to expose a refresh
+  command is a separate, later question.
 - **No refusal on version mismatch, at least not in phase 1.** Make it visible
   and comparable first; whether a mismatch should block is a decision to take
   with evidence in hand, not before.
@@ -226,8 +338,9 @@ Nothing here blocks or is blocked by backlog item 5a. 5a's step 0 is complete
 and approved; step 2 (moving approach A into `src/inference/sp_index.py`) is
 next and touches none of this.
 
-**Recommendation on order.** Phase 0 is small, independent and correcting
-something misleading, so it can land between 5a's steps without entangling them.
+**Recommendation on order**, unchanged by this revision and endorsed by review.
+Phase 0 is small, independent and corrects something misleading, so it can land
+between 5a's steps without entangling them.
 Phases 1-3 should wait until 5a reaches its stopping point — implemented, with
 the integrated gate readings pending a designated measurement subject — so that
 two multi-commit efforts are not open in the same files at once. 5a touches
