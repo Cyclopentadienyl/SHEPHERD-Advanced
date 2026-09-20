@@ -216,13 +216,36 @@ four graph artifacts already are.
 
 The obvious objection is that this project has just spent a long time on what
 goes wrong when a sidecar can be separated from the file it describes — the
-shortest-path `meta.json` is the whole reason for the hop-bound work. Binding it
-by digest is the answer to precisely that: an unbound sidecar is separable and
-undetectable, a digest-bound one is separable and *detected*, by machinery that
-already exists and is already tested. For a graph-only build there is no
-manifest to bind it into, and the honest statement is that such a workspace is
-self-describing but not self-verifying — which is already true of everything
-else in it.
+shortest-path `meta.json` is the whole reason for the hop-bound work.
+
+**The first version of this section answered that objection only upward**, by
+binding the provenance file's digest into the split manifest, and then excused
+the graph-only case as "self-describing but not self-verifying". That excuse
+does not survive the scenario it invites: two graph-only workspaces, A and B,
+and B's `kg.provenance.json` ends up beside A's `kg.json` during a copy. Both
+files are well-formed, both are present, nothing has a manifest, and any surface
+reading provenance would attribute B's four inputs to A's graph. **A record that
+cannot say which artifact it describes is not provenance.** This is the same
+defect this plan exists to fix, reproduced in the fix.
+
+**So the binding runs in both directions:**
+
+1. **Downward — provenance names its graph.** The record carries the SHA-256 of
+   the `kg.json` written in the same build, supplied by the writer that wrote
+   both.
+2. **At read time — the claim is checked.** A reader compares the recorded
+   digest against the `kg.json` actually present. A mismatch means the record
+   describes another graph and **must be reported as a mismatch**, never
+   accepted as that graph's provenance and never quietly degraded to "unknown".
+   Reporting it is not the same as refusing to serve; what a consumer does about
+   it is that consumer's decision, and inference does not depend on provenance.
+3. **Upward — the manifest names the provenance**, when there is a manifest, by
+   recording the provenance file's digest as it already records the graph
+   artifacts'.
+
+The order is: write the graph → write provenance carrying the graph's digest →
+write the manifest carrying provenance's digest. Each step digests only what is
+already final, so there is no circular hash and `kg.json`'s format is untouched.
 
 An alternative — carrying the record inline in the split manifest as well — is
 not proposed, because two copies that can disagree is a worse failure than one
@@ -231,6 +254,30 @@ copy that can go missing.
 **Absent records read as unknown.** A workspace built before this exists has no
 provenance, and nothing may fill that in from whatever is in the cache now: the
 current file is not evidence about a past build.
+
+### 3.5.1 What the reader side actually has to gain
+
+A digest written into a JSON file verifies nothing on its own, and this project
+has a specific reason to say so out loud: `verify_graph_artifacts` iterates
+`GRAPH_ARTIFACTS`, a fixed map of four roles (`artifacts.py:32-37`,
+`:105`). An extra key in the manifest's `artifacts` section is **not** verified
+by anything today. Phase 1 therefore includes the reader work, or it ships a
+field that reads like a guarantee and is not — the exact shape of defect the
+schema-3 recipe round was about.
+
+Three states have to stay distinguishable, and the middle one is the one an
+implementation will be tempted to collapse:
+
+| State | Meaning | Treatment |
+|---|---|---|
+| No provenance declared | Built before this existed | **unknown**, and nothing is back-filled |
+| Declared, and it matches | A record of this graph's inputs | Report it |
+| **Declared, but missing or mismatched** | A claim that does not hold | **Reported as such** — never folded into "unknown" |
+
+**And provenance must not become a required file for existing workspaces.** A
+schema-3 workspace built before Phase 1 declares no provenance and stays valid;
+requiring the file unconditionally would make every current deployment rebuild
+for a field that describes builds it never made.
 
 ### 3.6 All four inputs, or a narrower claim
 
@@ -279,7 +326,7 @@ each one forces.
 | Phase | What | Needs a design decision? |
 |---|---|---|
 | **0** | Resolve the **`version`** promise — make it select a file or refuse a version it cannot honour. **`force_download` is left alone**; it works | **No.** Correcting a misleading API |
-| **1** | `kg.provenance.json` on every build (§3.5), covering **all four source files** (§3.6), with the parsing counters named precisely (§3.7) | **Yes, one**: where the record is written. §3.5 proposes an answer |
+| **1** | `kg.provenance.json` on every build (§3.5), bound **to its graph and from the manifest**, covering **all four source files** (§3.6), with the parsing counters named precisely (§3.7) and the reader work that makes the binding real (§3.5.1) | **Yes, one**: where the record is written. §3.5 proposes an answer |
 | **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2) | Small: where roots are configured |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
 
@@ -329,6 +376,25 @@ dependency alongside the root. **Silently suppressing imports is not an option**
   resolver and passes paths.
 - No change to `scripts/compute_shortest_paths.py` or the shortest-path sidecar;
   that is a separate recorded defect.
+
+---
+
+### 4.3 What Phase 1 has to demonstrate
+
+Named here so the acceptance is agreed before the work rather than argued after
+it. Ordinary unit tests; no probe, no new framework.
+
+1. **Two graph-only workspaces with their provenance files swapped are
+   reported as mismatched.** This is the scenario that closed the gap in §3.5
+   and is the reason the downward binding exists.
+2. **A matched pair reads back as that graph's inputs**, so the refusal above is
+   not holding for a reader that rejects everything.
+3. **A workspace built before Phase 1 reads as unknown**, and nothing fills it
+   in from whatever the cache currently holds.
+4. **A declared-but-absent provenance file is reported, not folded into
+   "unknown"** — the state an implementation is most likely to collapse.
+5. **All four source files appear in the record** with role and content digest,
+   and a build that changes only an annotation file produces a different record.
 
 ---
 
