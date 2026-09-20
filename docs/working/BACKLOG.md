@@ -674,6 +674,31 @@ depends on is resolved.
 and `scorer-retraining/` (scoping only, four gates uncleared). Neither blocks nor
 is blocked by anything above.
 
+**Ontology provenance is unrecorded and its version is not pinnable — raised by
+the maintainer, and the sharper half of the packaging problem below.** Verified
+against the code rather than recalled:
+
+| | Established |
+|---|---|
+| Cache location | `Path.home()/'.shepherd'/'ontologies'` — **outside the project**, in the operator's home |
+| On a missing file | `urlretrieve('http://purl.obolibrary.org/obo/mondo.obo')` — **whatever is latest**, with no pinning |
+| The `version` argument | Used only as an in-memory cache key; the filename is `mondo.obo` regardless. **It reads as version selection and is not** |
+| Is the version knowable? | **Yes** — the OBO header carries `data-version`, and `hierarchy.py` already parses it |
+| Is it recorded? | **No.** The manifest carries a recipe for `node_features.pt` and digests for the tensors, and nothing says which ontology produced `kg.json` |
+
+This is not hypothetical: the two machines used this session differ in MONDO
+vintage (29,866 vs 32,109 disease nodes, different `kg_digest`) purely because
+they were deployed on different dates. The differing digest *detects* it, which
+is the manifest working — but it cannot say what differed, and a site cannot
+deliberately reproduce another site's graph.
+
+**The inert `version` argument is the part that should not wait**, whatever is
+decided about pinning: an API that looks like it pins and does not is worse than
+one that does not offer it. Recording `data-version` beside the build is the
+cheap half and needs no new subsystem. Pinning — where the files live, whether a
+mismatch refuses or warns — is a design question with real alternatives and
+deserves its own plan. Both are out of scope for 5a.
+
 **A workspace export/import pair — the maintainer's idea, recorded so it is not
 lost.** Not a review finding and not scheduled. The hop-bound work exposed the
 underlying problem: a workspace is seven files plus a shortest-path pair, the

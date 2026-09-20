@@ -102,6 +102,7 @@ and other documents.
 | [`../medical-kg-blueprint.md`](../medical-kg-blueprint.md) | Project-level engineering blueprint; referenced from the repository root |
 | [`../medical-kg-todo.md`](../medical-kg-todo.md) | Project-level task list |
 | [`../deployment-guide.md`](../deployment-guide.md) | Deployment guide; referenced by `deploy.sh` |
+| [`../deployment-guide.en.md`](../deployment-guide.en.md) | English edition of the deployment guide; the Chinese original is authoritative for `deploy.cmd`'s pointer |
 | [`../data/external/README.md`](../data/external/README.md) | How to obtain and place external data sources — belongs with the data |
 | [`../configs/deployment/README.md`](../configs/deployment/README.md) | Deployment config conventions |
 | [`../models/pretrained/README.md`](../models/pretrained/README.md) | What belongs in the pretrained-model directory |
