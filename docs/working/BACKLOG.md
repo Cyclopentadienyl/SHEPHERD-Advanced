@@ -674,6 +674,16 @@ depends on is resolved.
 and `scorer-retraining/` (scoping only, four gates uncleared). Neither blocks nor
 is blocked by anything above.
 
+**A workspace export/import pair — the maintainer's idea, recorded so it is not
+lost.** Not a review finding and not scheduled. The hop-bound work exposed the
+underlying problem: a workspace is seven files plus a shortest-path pair, the
+`.pt` and its `.meta.json` belong to one build, and nothing stops a hand copy
+from separating them. A packaging step that moves a workspace whole would remove
+that class of accident at the source. **Whatever it would do, it replaces no
+verification** — the manifest digests, the schema-3 recipe and the hop-bound
+checks stay exactly where they are; an importer that trusted its own bundle
+would reintroduce what they exist to catch.
+
 ---
 
 ## 5. Two orderings that are easy to get wrong
