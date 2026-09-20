@@ -34,6 +34,7 @@ Module: src/kg/workspace.py
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
@@ -164,7 +165,11 @@ def write_workspace(
     """
     from src.kg.artifacts import GRAPH_ARTIFACTS
     from src.kg.sample_generator import refuse_if_checkpoints_exist
-    from src.kg.provenance import build_provenance, write_provenance
+    from src.kg.provenance import (
+        ProvenanceError,
+        build_provenance,
+        write_provenance,
+    )
     from src.utils.fingerprint import file_sha256
 
     workspace = Path(workspace)
@@ -238,6 +243,36 @@ def write_workspace(
             samples.num_train, samples.num_val, allocation,
             train_label=train_label, val_label=val_label,
         )
+
+    # **The new inputs join the old refusals rather than trailing them.**
+    # `sources` and `source_counters` come from a caller and are knowable before
+    # anything is written — so a malformed entry or a counter no encoder takes
+    # must refuse here, not after `kg.json` and three tensors have been
+    # overwritten. Measured on the shape that got this wrong: an unserialisable
+    # counter raised `TypeError` with four graph artifacts already written, and
+    # over an existing workspace it left new tensors beside the previous
+    # manifest.
+    #
+    # The record is assembled against a placeholder digest purely to prove it
+    # encodes; the real one is not known until `kg.json` exists, and the record
+    # written below is built again with it. Encoding twice costs nothing and is
+    # what makes the refusal structural rather than a list of fields someone
+    # re-checks by hand.
+    if sources is not None or source_counters is not None:
+        try:
+            json.dumps(build_provenance(
+                kg_digest="0" * 64,
+                sources=sources,
+                counters=source_counters,
+                origin="files" if sources is not None else "synthetic",
+            ))
+        except ProvenanceError as exc:
+            raise WorkspaceRefusal(f"the provenance this build would record is unusable: {exc}") from exc
+        except (TypeError, ValueError) as exc:
+            raise WorkspaceRefusal(
+                "the provenance this build would record cannot be serialised "
+                f"({type(exc).__name__}: {exc}). Nothing has been written."
+            ) from exc
 
     # Every refusal is behind us; this is the first thing that exists afterwards.
     workspace.mkdir(parents=True, exist_ok=True)

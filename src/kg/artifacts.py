@@ -120,42 +120,21 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
             )
         observed[role] = digest
 
-    # **Verified only when the manifest says there is one.** A workspace built
-    # before provenance existed declares none, and requiring the file would make
-    # every current deployment rebuild for a record describing builds it never
-    # made. Declared-and-broken is a different state from never-declared, and
-    # the two are not merged: the first raises here, the second returns quietly.
+    # **Provenance is deliberately not checked here, and that is a correction.**
+    # An earlier revision raised from this function when a declared record was
+    # missing or did not match. This function is not only an audit: it is called
+    # from `verify_graph_source`, which `DiagnosisPipeline._init_gnn_inference`
+    # calls before it loads a tensor — so a lost record stopped a model from
+    # initialising, and through the API a cold start then answered `/diagnose`
+    # with 503. The tensors were sound; only the note about where they came from
+    # was not.
     #
-    # Two bindings, because either alone leaves a hole. The manifest names the
-    # provenance file's digest, which catches a record replaced after the build;
-    # the record names `kg.json`'s digest, which catches one that was never this
-    # graph's — the case a copy produces, where every file is well-formed and
-    # only the pairing is wrong.
-    recorded_provenance = artifacts.get("provenance")
-    if recorded_provenance is not None:
-        from src.kg.provenance import PROVENANCE_FILENAME, verify_provenance
-
-        provenance_path = data_dir / PROVENANCE_FILENAME
-        if not provenance_path.is_file():
-            raise ValueError(
-                f"{manifest_path} records a {PROVENANCE_FILENAME} that is not "
-                "beside it. The record of what this graph was built from was "
-                "declared and is gone, which is not the same as never having "
-                "had one."
-            )
-        observed_provenance = file_sha256(provenance_path)
-        if observed_provenance != recorded_provenance:
-            raise ValueError(
-                f"{provenance_path} is not the record {manifest_path} describes "
-                f"({str(recorded_provenance)[:12]}... vs "
-                f"{str(observed_provenance)[:12]}...). It was replaced after the "
-                "build, so what it says this graph came from is not what was "
-                "recorded at the time."
-            )
-        # And the record's own claim about which graph it describes.
-        verify_provenance(data_dir, observed["kg"])
-        observed["provenance"] = observed_provenance
-
+    # Gating service on that is a policy nobody approved, and the plan says the
+    # opposite: what a graph was built from is reported, not enforced. So it
+    # moved to `workspace_provenance_status`, which returns a state instead of
+    # raising, and callers decide. The four bindings above are unchanged and
+    # still raise — those say the tensors are not this graph's, which is a
+    # different claim entirely.
     return observed
 
 
@@ -224,6 +203,48 @@ def validate_graph_export_recipe(recipe: Any) -> Dict[str, Any]:
             f"got {version!r}"
         )
     return dict(recipe)
+
+
+def workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
+    """What a workspace records about the inputs its graph was built from.
+
+    **Reports; does not refuse.** Every state this can return is a fact about a
+    note beside the graph, not about whether the graph is usable — so nothing
+    here raises, and no caller is forced to stop. A caller that decides a
+    missing record should block something is making a policy choice, and it
+    makes it explicitly by reading this.
+
+    Reads the manifest, when there is one, to learn whether a record was ever
+    declared. That is what separates "this build predates provenance" from "it
+    had one and it is gone": the file's absence alone cannot tell them apart,
+    and giving both the same name would make a broken workspace read as an old
+    one. A graph-only workspace has no manifest, and its record is still checked
+    against the graph.
+    """
+    from src.kg.provenance import provenance_status
+    from src.utils.fingerprint import file_sha256
+
+    kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
+    if not kg_path.is_file():
+        from src.kg.provenance import ProvenanceStatus
+
+        return ProvenanceStatus(
+            "absent", None, f"{data_dir} has no {GRAPH_ARTIFACTS['kg']} to describe"
+        )
+
+    declared = None
+    manifest_path = data_dir / MANIFEST_FILENAME
+    if manifest_path.is_file():
+        try:
+            declared = json.loads(manifest_path.read_text()).get("artifacts", {}).get(
+                "provenance"
+            )
+        except Exception:
+            # An unreadable manifest is `verify_graph_artifacts`'s to refuse.
+            # Here it only means nothing was declared that can be read.
+            declared = None
+
+    return provenance_status(data_dir, file_sha256(kg_path), declared)
 
 
 def require_graph_export_recipe(
@@ -329,6 +350,7 @@ __all__ = [
     "validate_graph_export_recipe",
     "require_graph_export_recipe",
     "require_manifest_schema",
+    "workspace_provenance_status",
     "verify_graph_artifacts",
     "verify_graph_source",
 ]

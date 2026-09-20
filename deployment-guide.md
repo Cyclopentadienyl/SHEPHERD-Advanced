@@ -1093,10 +1093,18 @@ OBO 的 format version 冒充 release。
 | **有，但缺檔／損壞／不相符** | 一個不成立的宣稱 | **回報為此狀態**，不等同 unknown |
 
 第三種最重要：兩個 graph-only workspace 在搬移時互換了 provenance 檔案，**每個檔案都
-合法**，只有配對錯了。reader 比對紀錄裡的 `kg_digest` 與現場的 `kg.json` 就能分辨。
+合法**，只有配對錯了。`workspace_provenance_status()` 比對紀錄裡的 `kg_digest` 與現場的
+`kg.json` 就能分辨。
 
-**來源驗證與「是否提供服務」是分開的。** 推論不消費這份紀錄；驗證失敗要怎麼處理是
-呼叫端的決定。
+**來源驗證不會擋下服務。** 來源狀態是「這個圖從哪裡來」的敘述，不是「這個圖能不能
+用」的判定——後者由 `kg.json` 與三個張量的 digest 綁定負責，那些仍然會拒絕。
+`workspace_provenance_status()` **不拋例外**，只回傳狀態；要不要因為來源有問題而停止
+什麼，是呼叫端的政策決定，目前沒有任何程式這樣做。
+
+> **修正紀錄**：本節的早期版本讓 `verify_graph_artifacts()` 在來源紀錄損壞時直接拋
+> 例外。那個函數被 `verify_graph_source()` 呼叫，而後者在 `DiagnosisPipeline`
+> 載入張量前執行——結果是「一張便條不見了」會讓模型無法初始化，冷啟動時 `/diagnose`
+> 回 503，而張量本身完好無損。已改為回報而非拒絕。
 
 ### 舊 workspace
 

@@ -595,12 +595,21 @@ all outside it. It is a **list of source files, not a rebuild recipe**.
 
 The third is the one that matters: two graph-only workspaces whose provenance
 files were swapped during a copy have **every file well-formed** and only the
-pairing wrong. Comparing the record's `kg_digest` against the `kg.json` present
-is what tells them apart.
+pairing wrong. `workspace_provenance_status()` compares the record's `kg_digest`
+against the `kg.json` present, which is what tells them apart.
 
-**Verifying provenance is separate from deciding whether to serve.** Inference
-does not consume this record; what to do about a broken claim is the caller's
-decision.
+**Verifying provenance does not gate service.** A source state describes where a
+graph came from; whether the graph is usable is a different question, answered by
+the digest bindings on `kg.json` and the three tensors — and those still refuse.
+`workspace_provenance_status()` **does not raise**; it returns a state, and
+deciding to stop anything because of one is a policy choice no code here makes.
+
+> **Correction.** An earlier version of this section had
+> `verify_graph_artifacts()` raise on a broken record. That function is called by
+> `verify_graph_source()`, which `DiagnosisPipeline` runs before loading a
+> tensor — so a lost note about where a graph came from stopped a model from
+> initialising, and a cold start answered `/diagnose` with 503 while the tensors
+> were sound. It reports now rather than refusing.
 
 ### Older workspaces
 

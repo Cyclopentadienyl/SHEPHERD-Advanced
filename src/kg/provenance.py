@@ -27,7 +27,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 #: The file, beside `kg.json`, that records what the graph was built from.
 PROVENANCE_FILENAME = "kg.provenance.json"
@@ -52,8 +52,37 @@ INCOMPLETE_BY_DESIGN = (
 )
 
 
+#: The fields a usable record carries. "Parses as JSON" is not "is a provenance
+#: record": one with only a schema version and a digest states no origin and
+#: lists no sources, and a reader that accepted it would report a build's inputs
+#: as an empty set rather than as unrecorded.
+REQUIRED_RECORD_FIELDS = ("schema_version", "kg_digest", "origin", "sources")
+
+
 class ProvenanceError(ValueError):
     """A provenance record that cannot be trusted to describe its graph."""
+
+
+class ProvenanceStatus(NamedTuple):
+    """What is known about a workspace's record, without deciding anything.
+
+    **Separate from the graph and tensor bindings on purpose.** Those gate
+    whether a workspace can be consumed at all and raise; this one answers a
+    different question — what this graph was built from — and a caller that
+    cannot serve without an answer is making a policy choice no approved plan
+    has taken. Returning a state rather than raising is what keeps that choice
+    with the caller.
+    """
+
+    #: absent | recorded | undeclared_present | missing | unreadable | mismatched
+    state: str
+    record: Optional[Dict[str, Any]]
+    detail: str
+
+    @property
+    def is_known(self) -> bool:
+        """True only when a record was found and holds for this graph."""
+        return self.state == "recorded"
 
 
 def source_entry(
@@ -121,6 +150,25 @@ def build_provenance(
             "the record cannot say which graph it describes"
         )
     entries = list(sources or [])
+    # **Entries are re-checked here, not trusted because `source_entry` exists.**
+    # That helper validates what it builds; nothing stops a caller assembling a
+    # dict by hand, and a record listing an entry with no digest identifies
+    # nothing while looking like it does.
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ProvenanceError(f"a source entry is not an object ({entry!r})")
+        absent = [key for key in ("role", "digest") if key not in entry]
+        if absent:
+            raise ProvenanceError(
+                f"a source entry is missing {absent}; without them it names "
+                f"nothing and identifies nothing ({entry!r})"
+            )
+        source_entry(
+            role=entry["role"],
+            path=entry.get("filename"),
+            digest=entry["digest"],
+            declared_version=entry.get("declared_version"),
+        )
     if origin == "synthetic" and entries:
         raise ProvenanceError(
             "a synthetic build recorded source files. Nothing read them, so "
@@ -198,7 +246,88 @@ def read_provenance(workspace: Path) -> Optional[Dict[str, Any]]:
             f"{PROVENANCE_SCHEMA_VERSION}. Which of its fields still mean what "
             "they say is a guess."
         )
+    absent = [field for field in REQUIRED_RECORD_FIELDS if field not in record]
+    if absent:
+        raise ProvenanceError(
+            f"{path} is missing {absent}. A file that parses is not a record: "
+            "without them it states no origin and lists no sources, which reads "
+            "as a build with no inputs rather than as inputs unrecorded."
+        )
     return record
+
+
+def provenance_status(
+    workspace: Path,
+    kg_digest: str,
+    declared_digest: Optional[str] = None,
+) -> ProvenanceStatus:
+    """What is known about this workspace's record. **Never raises.**
+
+    **The declaration is an input, because absence alone cannot be read.** A
+    missing file means "this build predates provenance" only when nothing said
+    there should be one. When a manifest declares the record's digest and the
+    file is gone, that is a broken workspace, and a reader that reported both as
+    `unknown` would give two names to opposite situations. `declared_digest` is
+    how the caller supplies what it knows; `None` means nothing declared one.
+
+    Args:
+        workspace: the directory to inspect.
+        kg_digest: the digest of the `kg.json` actually present.
+        declared_digest: the digest a manifest recorded, when one did.
+
+    Returns:
+        A `ProvenanceStatus`. Deciding what to do about a state that is not
+        `recorded` belongs to the caller: this establishes what is true, not
+        whether to serve.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    path = Path(workspace) / PROVENANCE_FILENAME
+    if not path.is_file():
+        if declared_digest is None:
+            return ProvenanceStatus(
+                "absent", None,
+                "no record, and nothing declared one: this workspace predates "
+                "provenance and its inputs are unrecorded",
+            )
+        return ProvenanceStatus(
+            "missing", None,
+            f"{PROVENANCE_FILENAME} was declared and is not here; what this "
+            "graph was built from was recorded once and has been lost",
+        )
+
+    if declared_digest is not None:
+        observed = file_sha256(path)
+        if observed != declared_digest:
+            return ProvenanceStatus(
+                "mismatched", None,
+                f"{PROVENANCE_FILENAME} is not the record that was declared "
+                f"({str(declared_digest)[:12]}... vs {observed[:12]}...); it was "
+                "replaced after the build",
+            )
+
+    try:
+        record = read_provenance(workspace)
+    except ProvenanceError as exc:
+        return ProvenanceStatus("unreadable", None, str(exc))
+    if record is None:  # pragma: no cover - the file existed a moment ago
+        return ProvenanceStatus("absent", None, "the record disappeared while being read")
+
+    if record.get("kg_digest") != kg_digest:
+        return ProvenanceStatus(
+            "mismatched", None,
+            f"{PROVENANCE_FILENAME} describes a graph whose digest is "
+            f"{str(record.get('kg_digest'))[:12]}..., and the kg.json beside it "
+            f"digests to {kg_digest[:12]}...; this record belongs to another build",
+        )
+
+    if declared_digest is None:
+        return ProvenanceStatus(
+            "undeclared_present", record,
+            "a record is here and matches this graph, but nothing binds it — "
+            "no manifest declared it, so it could have been placed here",
+        )
+    return ProvenanceStatus("recorded", record, "the record belongs to this graph")
 
 
 def verify_provenance(workspace: Path, kg_digest: str) -> Optional[Dict[str, Any]]:
@@ -238,8 +367,11 @@ __all__ = [
     "PROVENANCE_FILENAME",
     "PROVENANCE_SCHEMA_VERSION",
     "ProvenanceError",
+    "ProvenanceStatus",
+    "REQUIRED_RECORD_FIELDS",
     "SOURCE_ROLES",
     "build_provenance",
+    "provenance_status",
     "read_provenance",
     "source_entry",
     "verify_provenance",
