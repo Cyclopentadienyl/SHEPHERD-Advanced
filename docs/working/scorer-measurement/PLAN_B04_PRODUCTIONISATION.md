@@ -144,11 +144,14 @@ the type component broke the tie first, so the table was still ordered. The case
 above changes `target` **within** one `(phenotype, target_type)` run, which is
 the only place ordering can actually break.)*
 
-**`build_global_key_index` is not deleted.** It stays in the prototypes module
-as the sorting wrapper, because `benchmark_sp_lookup.py` feeds it a table
-straight off disk in whatever order the artifact has. Production takes the
-presorted seam; the benchmark takes the wrapper. That is one implementation of
-the query and two entry points to building it, not two indexes.
+**`build_global_key_index` is not deleted, and does not keep its own build.**
+It stays in the prototypes module as the sorting wrapper, because
+`benchmark_sp_lookup.py` feeds it a table straight off disk in whatever order the
+artifact has. It **sorts, then delegates to the presorted builder** rather than
+constructing an index itself — otherwise the two entry points would each carry a
+copy of the domain derivation, the key construction and the uniqueness check, and
+the wrapper's copy would be the one nothing in production exercises. One build,
+two ways in.
 
 **Tests must prove storage sharing, not only equal numbers.**
 `index.distance.data_ptr() == lookup.distance.data_ptr()` on the production
@@ -184,7 +187,31 @@ the domain.
 - index columns are integral and not `bool`;
 - `phenotype_idx` and `target_idx` are non-negative and within int32;
 - `target_type` is exactly within `{0, 1}`;
-- `distance` is within its producer's domain.
+- `distance` is integral and not `bool`, and on a non-empty table lies within
+  `1 .. max_hops` — the producer's domain, stated as a rule a test can execute
+  rather than as "its producer's domain", which the draft left to the reader.
+  `max_hops` here is the validated sidecar value, which is why §8.1's fix is a
+  precondition and not a nicety: without it the domain is checked against a
+  guess.
+
+**The empty table is a hole today, and the validator is where it closes.**
+Measured on the current loader's offset construction:
+
+    changes: []   starts: [0]
+    ph[starts] -> IndexError: index is out of bounds for dimension with size 0
+
+A `shortest_paths.pt` that is well-formed but carries no rows therefore aborts
+`initialize()` with an `IndexError` from a tensor index — not a named refusal,
+and from a call site with no handler. The prototypes' empty-table test does not
+reach this, because it constructs a lookup directly rather than going through the
+loader.
+
+**Proposed: an empty table is the absent case.** It binds nothing, so there is
+nothing for SP to be ready for; the loader takes its existing early-return path,
+`_sp_ready` stays False, and the operator sees a named reason. Refusing it as
+invalid is the other defensible reading, and I take the weaker one because an
+empty table makes no false claim — it is indistinguishable in effect from having
+no file, which is a state policy blesses.
 
 **Not a schema framework**, and no new module: one private function beside the
 loader, refusing with the column named. It is the same shape as
@@ -195,34 +222,48 @@ value enters, not a validation layer.
 
 My draft recommended fail-open: log at ERROR, leave `_sp_ready = False`, serve
 without SP. Review objected that this does not distinguish *absent by
-configuration* from *present but rejected*, and asked whether an institutional
-degraded-service decision exists. **It does not, and the policy says the
-opposite.** `DISEASE_SCORER_POLICY.md` §2:
+configuration* from *present but rejected*. That distinction is right, and the
+resolution is to refuse — but my argument for it over-reached and is narrowed
+here.
 
-- *"When a checkpoint is loaded but `shortest_paths.pt` is **absent**, scoring
-  degrades to pure GNN"* — recorded as current behaviour, so **absent** is an
-  accepted state;
-- the adjacent fallback row's target state is *"fail-closed by default; fallback
-  only by explicit request or **approved deployment policy**"*, marked **not
-  implemented** (work item B-2).
+**The direct authority is `PLAN_B04.md` §5.3.2**, which requires the index build
+to assert uniqueness and fail rather than preserve first-match semantics for a
+case the data model says cannot occur. That covers duplicate rows on its own
+terms and needs no help.
 
-So the one degraded path that is blessed is the *absent* one, and any other
-fallback is conditioned on an approved deployment policy that does not exist.
-Nothing authorises serving on a **rejected** artifact.
+**What §2 of the policy does and does not say.** It records that an **absent**
+`shortest_paths.pt` degrades to pure GNN — so *absent* is an accepted state, and
+that much is load-bearing here. My draft also leaned on the adjacent row's
+*"fail-closed by default; fallback only by explicit request or approved
+deployment policy"*. **That row's subject is GNN unavailability, not SP**, and
+citing it as settled policy for SP rejection was a misattribution. Withdrawn.
 
-**Resolution: refuse the candidate pipeline.** A `shortest_paths.pt` that is
-present and fails validation — duplicate rows, non-monotonic keys, an id outside
-its domain — aborts the build. The operator is told which artifact and which
-column, and fixes or removes it; removing it reaches the *absent* path, which is
-the state policy actually blesses. Fail-open returns here only if the institution
-approves degraded operation on an invalid artifact, and then it needs a status
-surface that says *rejected*, not merely `sp_ready: false`.
+**So this is a proposal, not an existing mandate**, for the invalid-artifact
+cases §5.3.2 does not name — non-monotonic keys, an id outside its domain, a
+malformed column: treat them as §5.3.2 treats duplicates. The argument stands on
+its own: *absent* is a state an operator chose, *rejected* is one nobody chose,
+and serving as though they were the same reports a degraded mode that was never
+configured. If the reviewer wants that narrowed to duplicates alone until the
+institution rules, say so — the validator's shape does not change, only which
+failures abort.
 
-**Refusing costs no availability, because of the reload architecture.**
-`build_pipeline` constructs a candidate without touching application state and
-`publish_pipeline` swaps only after it succeeds, so a rejected SP artifact fails
-the candidate and **the running pipeline keeps serving** — which probe E5 already
-exercises for a different refusal.
+**What refusing costs, stated for both situations rather than one.**
+
+- **On reload, nothing.** `build_pipeline` constructs a candidate without
+  touching application state and `publish_pipeline` swaps only after it
+  succeeds, so a rejected SP artifact fails the candidate and the running
+  pipeline keeps serving. Probe E5 already exercises this for a different
+  refusal.
+- **On cold start, the service does not come up.** There is no previous pipeline
+  to keep serving, so refusal is a full outage until the artifact is fixed or
+  removed. My draft said refusing "costs no availability" without this
+  qualification, which was true of the case I had in mind and false of the other
+  one.
+
+That second bullet is not an argument for fail-open — an invalid artifact at cold
+start is a deployment that was never valid, and the operator's remedy is to
+remove the file, which reaches the *absent* path policy blesses. It is stated
+because a reviewer weighing this deserves both halves.
 
 **`_sp_ready` is published too early today, and this plan must fix it.**
 `pipeline.py:619` sets it before the `max_hops` sidecar is read (620-628) and
@@ -311,38 +352,104 @@ holding after the move.
 
 ---
 
+## 6.1 What the implementation review will be shown
+
+Agreed with the reviewer, and recorded so the implementation is built to produce
+it. **Ordinary unit and integration tests — no new deployment probe, no
+validation framework.** The last round's process finding stands: probes are for
+claims CI cannot establish, and every item here is deterministic and CPU-only.
+
+1. **Entry through the real loader, not the validator.** Illegal raw ids, dtypes,
+   `target_type` values and distances are refused *via a load call* — and
+   deleting the validator's call site makes those tests fail. The rule and its
+   application are separate claims and both get mutated.
+2. **Every non-happy load path matches D1.** Unreadable artifact, missing
+   columns, duplicates. The current `torch.load` handler warns and returns —
+   fail-open — and that path does not survive this change.
+3. **Storage sharing is asserted, not inferred.** On a non-empty production
+   lookup, `index.distance.data_ptr() == lookup.distance.data_ptr()`; the
+   ordering check, the uniqueness check and the dispatch each have a mutation
+   that fails exactly the test claiming them.
+4. **The equivalence comparison uses an index-free lookup for its expected
+   values.** Otherwise the new dispatch sends both sides to the same indexed
+   implementation and the test compares it with itself — which would pass for the
+   wrong reason, and is the failure mode this project keeps finding.
+5. **Refusal is tested in both situations D1 distinguishes.** A rejected
+   candidate does not publish and the old pipeline keeps serving; a cold start
+   with no previous pipeline refuses and is verified separately.
+
+---
+
 ## 7. The §13 gate — what this machine can answer, and what it cannot
 
 | # | Reading | Status |
 |---|---|---|
-| 1 | complete pipeline cold start with A wired in | **pending item 6** — see below |
-| 2 | steady and peak RSS/UMA once serving | **available here** |
-| 3 | one real reload, *if live reload is supported* — establish that first | **supported**: probe E4 exercises it and returns a built candidate |
-| 4 | peak while old and new pipeline state coexist | **pending item 6** — probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
+| 1 | complete pipeline cold start with A wired in | **pending a designated measurement subject** — see below |
+| 2 | steady and peak RSS/UMA once serving | **pending a designated measurement subject.** This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — so an SP-only figure cannot complete it, however useful it is |
+| 3 | one real reload, *if live reload is supported* — establish that first | **half answered.** Live reload *is* supported: probe E4 builds a candidate beside the live pipeline and E5 shows a refused one leaves it serving. A reload **with the index wired in** has not been measured, and that is the half §13 asks for |
+| 4 | peak while old and new pipeline state coexist | **pending a designated measurement subject** — probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
 | 5 | the same on the **smallest supported deployment target** | **blocked** — that machine is not available. The reading is deferred, not waived, and the gate is not claimed complete without it |
 
-**Corrected in review: readings 1 and 4 are checkpoint-dependent, not
-graph-dependent.** My draft claimed both were available here because this machine
-can build a deployment-sized workspace in 39.9 s (probe F1). That confuses the
-two halves. Reading 1 measures a *complete pipeline* cold start and reading 4 the
-peak while two pipeline states coexist — and in both, what is resident is the
-model as much as the graph. A deployment-sized graph beside a 43,553-parameter
-demo model measures neither.
+### 7.1 The measurement subject — designated, not authoritative
 
-Both therefore need a **named deployment-size checkpoint recorded by digest as
-the measurement subject**, which is BACKLOG item 6 — an institutional decision
-about which checkpoint is authoritative. Until it is designated, readings 1 and 4
-are **pending**, not available.
+**Two revisions in a row got this wrong in opposite directions.** The first
+draft claimed readings 1 and 4 were available here because this machine builds a
+deployment-sized workspace in 39.9 s (probe F1) — which measures the graph half
+and leaves a 43,553-parameter demo model resident, so it measures neither. The
+correction then marked them *pending BACKLOG item 6*, the clinical decision about
+which checkpoint is authoritative.
 
-Reading 4 remains the open item this project has carried since the reload work.
-It is not a separate task that happens to be nearby; it is one of the five
-readings, and it is blocked on the same decision.
+That second move invented a dependency the programme explicitly disclaims.
+BACKLOG §3.5:
 
-**What this plan can therefore complete unaided**: the implementation, its tests,
-and gate reading 2 in the SP-only sense the B-0.4 benchmark already measures. It
-ends at *implemented; readings 2 recorded; 1 and 4 pending item 6; 5 deferred for
-want of the smallest supported target*. It is not a clearance to ship, and the
-gate is not claimed complete.
+> **"Designated loadable" is not "authoritative".** 5a does not wait on item 6's
+> clinical decision; it needs *a* checkpoint that loads against the artifact set,
+> which is a far weaker requirement. If the finally deployed model has a
+> materially different architecture or memory footprint, compatibility is
+> confirmed **for that model** — that is a re-run of the gate, not a blocker on
+> it now.
+>
+> No checkpoint registry. **One designated file, named in the 5a plan.**
+
+So naming the subject is this plan's job, and blocking on item 6 both invents a
+dependency and skips the task.
+
+**What designation requires**, and all of it is engineering:
+
+1. the file's **SHA-256**, recorded as the measurement subject;
+2. that it **loads against this artifact set** — the graph export and SP table
+   the readings are taken over;
+3. a statement of **which deployment shape it stands for**, so a materially
+   different final model is recognised as needing a re-run rather than silently
+   covered.
+
+**Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` and
+`EVIDENCE_M1_M3_gat.json` record ten checkpoints each by digest, from a machine
+in an `identical-sibling` deployment relationship, with load results and an
+`in_channels` of 128 established across the family. Those digests are a
+designation list, not a decision: one is chosen, its availability on the
+measuring machine confirmed, and it is named here before step 7 runs.
+
+I have **not** named one in this revision, because the evidence records digests
+and loadability but no parameter count or resident size, and I will not assert a
+deployment shape I have not measured. The blocking condition is therefore
+*"awaiting a designated measurement subject"* — satisfiable by this project, not
+by the institution.
+
+### 7.2 What this plan completes unaided
+
+The implementation and its tests. **No integrated reading.**
+
+Readings 1, 2 and 4 are all integrated — they measure what is resident while the
+service runs — so all three wait on the subject above. An SP-only memory figure
+is worth recording and this plan will record it, but as a **supplementary
+measurement**, named as such, never as reading 2. Treating it as the reading
+would leave unverified serving memory shelved as done.
+
+The plan ends at: *implemented; a supplementary SP-only memory figure recorded;
+readings 1, 2, 3b and 4 pending a designated measurement subject; reading 5
+deferred for want of the smallest supported target*. Not a clearance to ship, and
+the gate is not claimed complete.
 
 ---
 
@@ -374,7 +481,10 @@ excluded so this change stays reviewable.**
    written into a workspace they were not computed from, with nothing binding
    them.
 
-Proposal: raise these as one small backlog item after 5a lands.
+Proposal: defects 2 and 3 become one small backlog item after 5a lands. **Defect
+1 is not among them** — it is listed in §10 as step 0, a precondition of
+activating the indexed path, and the draft's closing line contradicted that by
+sweeping all three into the same post-5a bucket.
 
 ---
 
@@ -399,9 +509,13 @@ shape. No pre-built response to a gate failure that has not happened.
 4. Dispatch in `sp_mean_distances`; equivalence tests indexed-vs-scan.
 5. Mutation-check the load-time uniqueness assertion and the dispatch.
 6. `make check`.
-7. Record gate reading 2. Readings 1 and 4 wait on item 6's checkpoint.
-8. Report, naming readings 1, 4 (item 6) and 5 (smallest target) as outstanding.
+7. Record the SP-only memory figure as a **supplementary measurement**, labelled
+   as such. It completes no §13 reading.
+8. Report: implemented; supplementary figure recorded; readings 1, 2, 3b and 4
+   awaiting a designated measurement subject (§7.1); reading 5 deferred for want
+   of the smallest supported target.
 
-Steps 2-6 need no checkpoint, no calibration and no institutional input. Step 7
-needs a designated deployment-size checkpoint (item 6) as well as a real build,
-so it is where this plan stops and waits.
+Steps 0-7 need no calibration and **no institutional decision** — §7.1's
+designation is engineering, and item 6's clinical choice is not a prerequisite
+for any of it. What steps 1-7 cannot do is complete an integrated reading, which
+is why the plan stops at step 8 rather than at a gate verdict.
