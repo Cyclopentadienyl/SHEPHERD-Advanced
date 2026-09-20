@@ -188,6 +188,25 @@ def build_provenance(
     }
 
 
+def encode_provenance(record: Dict[str, Any]) -> str:
+    """The record as the bytes that go to disk. **The one encoder.**
+
+    A pre-write gate that asks "does this encode?" with different arguments
+    from the writer is not a gate, it is a second encoder that happens to agree
+    on most inputs. Measured on the pair this replaces: a counter keyed
+    `{1: 2, "OMIM": 3}` passed the gate's `json.dumps(record)` and then failed
+    the writer's `sort_keys=True` with `TypeError: '<' not supported between
+    instances of 'str' and 'int'` — after `kg.json` and three tensors had been
+    written. Both sides call this, so both ask the same question.
+
+    Raises:
+        TypeError, ValueError: whatever the encoder raises, unchanged. The
+            caller that has not written anything yet turns it into a refusal;
+            the caller mid-write lets it abort. Neither is decided here.
+    """
+    return json.dumps(record, indent=2, sort_keys=True)
+
+
 def write_provenance(workspace: Path, record: Dict[str, Any]) -> str:
     """Serialise the record whole, then rename it into place.
 
@@ -198,7 +217,7 @@ def write_provenance(workspace: Path, record: Dict[str, Any]) -> str:
     """
     from src.utils.fingerprint import file_sha256
 
-    payload = json.dumps(record, indent=2, sort_keys=True)
+    payload = encode_provenance(record)
     target = Path(workspace) / PROVENANCE_FILENAME
     handle = tempfile.NamedTemporaryFile(
         "w", dir=str(workspace), prefix=target.name, suffix=".tmp",
@@ -217,22 +236,41 @@ def write_provenance(workspace: Path, record: Dict[str, Any]) -> str:
 
 
 def read_provenance(workspace: Path) -> Optional[Dict[str, Any]]:
-    """The record, or None when the workspace declares none.
+    """The file, read and checked for shape. **Low-level; reports no state.**
 
-    None means *this build predates provenance*, and a caller must not fill it
-    in from anything present now: the ontology sitting in a cache today is not
-    evidence about a build made months ago.
+    None here means only *no file is present in this directory*. It is not the
+    answer to "was a record ever declared" — a manifest can declare one that has
+    since been deleted, and this function does not read manifests, so it cannot
+    tell that workspace from one built before provenance existed. Callers that
+    need that distinction use `provenance_status`, which takes the declaration
+    as an input; a caller that reads this `None` as "never declared" will give
+    two opposite situations the same name.
 
     Raises:
-        ProvenanceError: the file is there and unusable, which is a different
-            state from its absence and is reported as one.
+        ProvenanceError: the file is there and unusable — unopenable, undecodable,
+            unparseable, or parsed and not a record. Each is a different state
+            from its absence and none of them is folded into one.
     """
     path = Path(workspace) / PROVENANCE_FILENAME
     if not path.is_file():
         return None
+    # **Opening and parsing are separated because they fail for unlike reasons.**
+    # A file that cannot be opened at all -- permissions, a directory in its
+    # place, a device error -- is not malformed JSON, and a message saying it is
+    # sends a reader to edit a file they cannot even read. Both are raised as
+    # `ProvenanceError` so a status caller catches one type; the message says
+    # which happened.
     try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ProvenanceError(
+            f"{path} is present and could not be read as UTF-8 text "
+            f"({type(exc).__name__}: {exc}); a record that cannot be opened is "
+            "not an absent one"
+        ) from exc
+    try:
+        record = json.loads(text)
+    except ValueError as exc:
         raise ProvenanceError(
             f"{path} is present but not readable JSON ({type(exc).__name__}); "
             "a record that cannot be parsed is not an absent one"
@@ -262,6 +300,14 @@ def provenance_status(
     declared_digest: Optional[str] = None,
 ) -> ProvenanceStatus:
     """What is known about this workspace's record. **Never raises.**
+
+    **Including when the disk refuses.** Every read this performs is an
+    operation that can fail for reasons unrelated to what is recorded: a file
+    mode that excludes this process, a truncated volume, a directory where a
+    file belongs. Those come back as `unreadable` carrying the cause, because a
+    caller told this never raises will not have wrapped the call, and a
+    `PermissionError` escaping a reporting function stops a pipeline over a note
+    that was never allowed to stop one.
 
     **The declaration is an input, because absence alone cannot be read.** A
     missing file means "this build predates provenance" only when nothing said
@@ -297,7 +343,15 @@ def provenance_status(
         )
 
     if declared_digest is not None:
-        observed = file_sha256(path)
+        try:
+            observed = file_sha256(path)
+        except OSError as exc:
+            return ProvenanceStatus(
+                "unreadable", None,
+                f"{PROVENANCE_FILENAME} is here and could not be read "
+                f"({type(exc).__name__}: {exc}), so whether it is the record "
+                "that was declared cannot be established",
+            )
         if observed != declared_digest:
             return ProvenanceStatus(
                 "mismatched", None,
@@ -338,8 +392,10 @@ def verify_provenance(workspace: Path, kg_digest: str) -> Optional[Dict[str, Any
     workspace's inputs as another's, which is the failure a copy produces and
     every file involved looks correct.
 
-    Returns the record when it belongs to this graph, or None when none is
-    declared. Raises when one is declared and does not hold — **a mismatch is
+    Returns the record when it belongs to this graph, or None when **no file is
+    present in this directory** — which is not the same as "no record was ever
+    declared", a question only a manifest can answer and this function does not
+    read one. Raises when a file is present and does not hold — **a mismatch is
     reported as a mismatch and never folded into "unknown"**, because the two
     states mean opposite things about what is known.
 
@@ -371,6 +427,7 @@ __all__ = [
     "REQUIRED_RECORD_FIELDS",
     "SOURCE_ROLES",
     "build_provenance",
+    "encode_provenance",
     "provenance_status",
     "read_provenance",
     "source_entry",

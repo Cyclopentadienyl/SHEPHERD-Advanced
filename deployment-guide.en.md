@@ -603,6 +603,15 @@ graph came from; whether the graph is usable is a different question, answered b
 the digest bindings on `kg.json` and the three tensors — and those still refuse.
 `workspace_provenance_status()` **does not raise**; it returns a state, and
 deciding to stop anything because of one is a policy choice no code here makes.
+That promise covers the disk as well as the content: a `kg.json`, a record or a
+`manifest.json` that this process cannot open or decode comes back as
+`unreadable` with the cause in the detail, rather than as an exception out of a
+function every caller was written not to wrap. Note the manifest case in
+particular — an unreadable manifest means *whether a record was ever declared
+cannot be established*, which is not the same as *nothing declared one*, and
+only the second of those licenses the "this workspace predates provenance"
+reading. Refusing a workspace over a broken manifest remains
+`verify_graph_artifacts()`'s job.
 
 > **Correction.** An earlier version of this section had
 > `verify_graph_artifacts()` raise on a broken record. That function is called by

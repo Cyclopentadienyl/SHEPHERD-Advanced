@@ -168,6 +168,7 @@ def write_workspace(
     from src.kg.provenance import (
         ProvenanceError,
         build_provenance,
+        encode_provenance,
         write_provenance,
     )
     from src.utils.fingerprint import file_sha256
@@ -258,9 +259,17 @@ def write_workspace(
     # written below is built again with it. Encoding twice costs nothing and is
     # what makes the refusal structural rather than a list of fields someone
     # re-checks by hand.
+    #
+    # **`encode_provenance`, not `json.dumps` -- the gate must run the writer's
+    # encoder, not an encoder.** These were two calls with different arguments,
+    # and they disagreed: a counter keyed `{1: 2, "OMIM": 3}` encodes under the
+    # default and fails `sort_keys=True`, so the gate passed and the writer then
+    # raised `TypeError` with `kg.json` and three tensors already on disk --
+    # precisely the failure the gate exists to prevent, reintroduced by the gate
+    # itself. One function now answers for both.
     if sources is not None or source_counters is not None:
         try:
-            json.dumps(build_provenance(
+            encode_provenance(build_provenance(
                 kg_digest="0" * 64,
                 sources=sources,
                 counters=source_counters,

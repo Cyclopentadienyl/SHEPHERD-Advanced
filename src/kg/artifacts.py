@@ -220,14 +220,17 @@ def workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
     and giving both the same name would make a broken workspace read as an old
     one. A graph-only workspace has no manifest, and its record is still checked
     against the graph.
+
+    **Not raising is a promise about the disk too.** Both files this opens can
+    fail to open for reasons that say nothing about provenance, and a caller
+    told this reports rather than refuses will not have wrapped it. Those return
+    `unreadable` with the cause in the detail.
     """
-    from src.kg.provenance import provenance_status
+    from src.kg.provenance import ProvenanceStatus, provenance_status
     from src.utils.fingerprint import file_sha256
 
     kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
     if not kg_path.is_file():
-        from src.kg.provenance import ProvenanceStatus
-
         return ProvenanceStatus(
             "absent", None, f"{data_dir} has no {GRAPH_ARTIFACTS['kg']} to describe"
         )
@@ -235,16 +238,36 @@ def workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
     declared = None
     manifest_path = data_dir / MANIFEST_FILENAME
     if manifest_path.is_file():
+        # **A manifest that cannot be read is not a manifest that declared
+        # nothing.** `declared = None` is the value that means "nothing was ever
+        # declared", and feeding it here made an unreadable manifest with a
+        # missing record report `absent` -- whose detail says the workspace
+        # predates provenance, about a workspace that may have declared one and
+        # lost it. What is true is narrower: the declaration could not be read.
         try:
             declared = json.loads(manifest_path.read_text()).get("artifacts", {}).get(
                 "provenance"
             )
-        except Exception:
-            # An unreadable manifest is `verify_graph_artifacts`'s to refuse.
-            # Here it only means nothing was declared that can be read.
-            declared = None
+        except (OSError, ValueError, AttributeError) as exc:
+            return ProvenanceStatus(
+                "unreadable", None,
+                f"{MANIFEST_FILENAME} is here and could not be read "
+                f"({type(exc).__name__}: {exc}), so whether a record was ever "
+                "declared cannot be established. Refusing the workspace over "
+                "that manifest is `verify_graph_artifacts`'s to do, not this.",
+            )
 
-    return provenance_status(data_dir, file_sha256(kg_path), declared)
+    try:
+        kg_digest = file_sha256(kg_path)
+    except OSError as exc:
+        return ProvenanceStatus(
+            "unreadable", None,
+            f"{GRAPH_ARTIFACTS['kg']} is here and could not be read "
+            f"({type(exc).__name__}: {exc}), so no record can be checked "
+            "against the graph it claims to describe",
+        )
+
+    return provenance_status(data_dir, kg_digest, declared)
 
 
 def require_graph_export_recipe(

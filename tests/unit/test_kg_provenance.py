@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -474,42 +475,76 @@ class TestAWorkspaceFromBeforeThisStillWorks:
             read_provenance(workspace)
 
 
+#: Provenance arguments no build can write, each with the fragment of the
+#: refusal that says which check caught it. Parametrised rather than written out
+#: once, because the defect this class exists for was a *second* encoder that
+#: agreed with the writer on some of these and not others: a single unencodable
+#: value would have been caught either way, and the pair only diverges on inputs
+#: `sort_keys` rejects and the default accepts.
+UNWRITABLE_PROVENANCE = {
+    "counter-value-no-encoder-takes": (
+        {"sources": [], "counters": {"rows_parsed": object()}},
+        "cannot be serialised",
+    ),
+    # `json.dumps(record)` encodes this; `json.dumps(record, sort_keys=True)`
+    # raises `TypeError: '<' not supported between instances of 'str' and 'int'`.
+    # This is the input that passed the gate and then failed the writer.
+    "counter-keys-of-mixed-type": (
+        {"sources": [], "counters": {"by_identifier": {1: 2, "OMIM": 3}}},
+        "cannot be serialised",
+    ),
+    "source-entry-that-identifies-nothing": (
+        {"sources": [{"role": "mondo"}], "counters": None},
+        "unusable",
+    ),
+}
+
+
 class TestTheNewWriterInputsRefuseBeforeTheFirstByte:
-    """**Finding 3.** `sources` and `source_counters` arrived after the graph.
+    """**Finding 3, and the encoder split that reopened it.**
 
     The writer's standing contract is that everything knowable from the
-    arguments refuses before anything is created. These two parameters were
-    added outside it: the record was assembled and serialised *after* `kg.json`
-    and three tensors had been written, so a counter no encoder takes left a
-    half-built workspace — and over an existing one, new tensors beside the
-    previous manifest.
+    arguments refuses before anything is created. `sources` and
+    `source_counters` were added outside it: the record was assembled and
+    serialised *after* `kg.json` and three tensors had been written, so a
+    counter no encoder takes left a half-built workspace.
+
+    The gate that closed that then called `json.dumps(record)` while the writer
+    called `json.dumps(record, indent=2, sort_keys=True)` — two encoders, not
+    one question — and a counter with mixed-type keys passed the gate and raised
+    in the writer, with the graph already overwritten. So the matrix below runs
+    every refusal against a directory that does not exist yet *and* against a
+    workspace that already holds a graph, in both states a build can find one.
     """
 
-    @staticmethod
-    def _bad_counters():
-        return {"rows_skipped_unresolved_disease_id": object()}
-
-    def test_a_new_workspace_is_never_created(self, tmp_path):
+    @pytest.mark.parametrize("kind", sorted(UNWRITABLE_PROVENANCE))
+    def test_a_new_workspace_is_never_created(self, tmp_path, kind):
         from src.kg.workspace import WorkspaceRefusal
 
+        arguments, fragment = UNWRITABLE_PROVENANCE[kind]
         workspace = tmp_path / "ws"
 
-        with pytest.raises(WorkspaceRefusal, match="cannot be serialised"):
-            _write(workspace, sources=[], counters=self._bad_counters())
+        with pytest.raises(WorkspaceRefusal, match=fragment):
+            _write(workspace, **arguments)
 
         assert not workspace.exists(), (
             "the refusal left the directory it was about to fill"
         )
 
-    def test_an_existing_workspace_is_left_byte_for_byte(self, tmp_path):
+    @pytest.mark.parametrize("state", ["graph-only", "with-samples"])
+    @pytest.mark.parametrize("kind", sorted(UNWRITABLE_PROVENANCE))
+    def test_an_existing_workspace_is_left_byte_for_byte(self, tmp_path, kind, state):
         """The loss this prevents: a rebuild that overwrites the graph and then
-        discovers its own record will not encode."""
-        import os
+        discovers its own record will not encode. Both states are covered
+        because they end differently — a graph-only build returns before the
+        manifest, so the half-written shape it leaves is not the other's."""
+        from scripts.setup_demo import build_demo_kg
+        from src.kg.workspace import WorkspaceRefusal, write_workspace
 
-        from src.kg.workspace import WorkspaceRefusal
-
+        arguments, fragment = UNWRITABLE_PROVENANCE[kind]
+        budget = _budget() if state == "with-samples" else None
         workspace = tmp_path / "ws"
-        _write(workspace, samples=_budget())
+        _write(workspace, samples=budget)
         names = sorted(p.name for p in workspace.iterdir())
         for name in names:
             os.utime(workspace / name, (1_600_000_000, 1_600_000_000))
@@ -519,40 +554,208 @@ class TestTheNewWriterInputsRefuseBeforeTheFirstByte:
         }
 
         # A different feature width, so a write that happened would be visible.
-        with pytest.raises(WorkspaceRefusal, match="cannot be serialised"):
-            from src.kg.workspace import write_workspace
-            from scripts.setup_demo import build_demo_kg
-
+        with pytest.raises(WorkspaceRefusal, match=fragment):
             write_workspace(
-                build_demo_kg(), workspace, feature_dim=16,
-                sources=[], source_counters=self._bad_counters(),
+                build_demo_kg(), workspace, feature_dim=16, samples=budget,
+                sources=arguments["sources"], source_counters=arguments["counters"],
             )
 
+        assert sorted(p.name for p in workspace.iterdir()) == names, (
+            "the refusal added or removed a file"
+        )
         for name, (payload, mtime) in before.items():
             assert (workspace / name).read_bytes() == payload, f"{name} was rewritten"
             assert (workspace / name).stat().st_mtime_ns == mtime, f"{name} was touched"
 
-    def test_a_malformed_source_entry_is_refused_as_a_workspace_refusal(self, tmp_path):
-        """One vocabulary. The build script translates nothing, so a bad entry
-        has to arrive as the refusal every other bad input arrives as."""
-        from src.kg.workspace import WorkspaceRefusal
+    def test_the_gate_and_the_writer_call_one_encoder(self, tmp_path, monkeypatch):
+        """The call site, not the rule.
 
-        workspace = tmp_path / "ws"
+        `counter-keys-of-mixed-type` above proves the two agree on the input
+        that split them. This proves *why*: both reach `encode_provenance`, so
+        a later edit to the writer's serialisation cannot leave the gate asking
+        a question the writer no longer asks. A gate that reverted to
+        `json.dumps` would encode once here, not twice.
+        """
+        import src.kg.provenance as provenance
 
-        with pytest.raises(WorkspaceRefusal, match="unusable"):
-            _write(workspace, sources=[{"role": "mondo"}])
+        encoded = []
+        real = provenance.encode_provenance
 
-        assert not workspace.exists()
+        def spy(record):
+            encoded.append(record)
+            return real(record)
 
-    def test_the_sound_call_still_writes(self, tmp_path):
+        monkeypatch.setattr(provenance, "encode_provenance", spy)
+        _write(tmp_path / "ws", sources=[], counters={"rows_parsed": 3})
+
+        assert len(encoded) == 2, (
+            "expected the pre-write proof and the real write, both through the "
+            f"shared encoder; got {len(encoded)}"
+        )
+        assert encoded[0]["kg_digest"] == "0" * 64, "the gate encoded the real record"
+        assert encoded[1]["kg_digest"] != "0" * 64, "the writer wrote the placeholder"
+
+    @pytest.mark.parametrize("state", ["new", "graph-only", "with-samples"])
+    def test_the_sound_call_still_writes(self, tmp_path, state):
         """Without this, every refusal above holds for a writer that refuses
-        every provenance argument."""
+        every provenance argument — in every state one can be handed."""
         from src.kg.provenance import read_provenance
 
+        budget = _budget() if state == "with-samples" else None
         workspace = tmp_path / "ws"
-        _write(workspace, sources=[], counters={"rows_parsed": 3})
+        if state != "new":
+            _write(workspace, samples=budget)
+
+        _write(workspace, samples=budget, sources=[], counters={"rows_parsed": 3})
 
         assert read_provenance(workspace)["counters"] == {"rows_parsed": 3}
+
+
+class TestTheStatusEntryReportsWhenTheDiskRefuses:
+    """**`workspace_provenance_status` says it never raises; the disk was outside
+    that.**
+
+    Both files it opens — the manifest that says whether a record was declared,
+    and the `kg.json` a record is checked against — are opened after an
+    `is_file()` check that says nothing about whether *this process* may read
+    them. A mode that excludes the caller, a volume that errors, a manifest
+    written half-way: each produced an exception out of a function documented to
+    report, and every caller was written not to wrap it. A note beside the graph
+    would then stop a pipeline it was explicitly kept out of the way of.
+
+    The permission cases are the honest ones and they need a non-root user;
+    under root a mode of 000 is read straight through, so those skip and the
+    substitution tests carry the guard. The decode and manifest cases are real
+    on any user.
+    """
+
+    @staticmethod
+    def _refuse_reads_of(monkeypatch, filename):
+        """Make `file_sha256` fail for one file, the way a mode of 000 would."""
+        from pathlib import Path as _Path
+
+        import src.utils.fingerprint as fingerprint
+
+        real = fingerprint.file_sha256
+
+        def guard(path):
+            if _Path(path).name == filename:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path)
+
+        monkeypatch.setattr(fingerprint, "file_sha256", guard)
+
+    @pytest.mark.parametrize(
+        "target", ["kg.json", "kg.provenance.json"],
+        ids=["graph-unreadable", "declared-record-unreadable"],
+    )
+    def test_a_file_that_cannot_be_hashed_is_a_state(self, tmp_path, monkeypatch, target):
+        from src.kg.artifacts import workspace_provenance_status
+
+        workspace = tmp_path / "ws"
+        _write(workspace, samples=_budget())  # a manifest, so the record is declared
+        assert workspace_provenance_status(workspace).state == "recorded"  # control
+
+        self._refuse_reads_of(monkeypatch, target)
+        status = workspace_provenance_status(workspace)
+
+        assert status.state == "unreadable"
+        assert "PermissionError" in status.detail, (
+            "the cause was dropped; a reader cannot tell a permission problem "
+            f"from a corrupt file: {status.detail}"
+        )
+        assert not status.is_known
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="root reads through a mode of 000, so the guard cannot be provoked",
+    )
+    @pytest.mark.parametrize(
+        "target", ["kg.json", "kg.provenance.json"],
+        ids=["graph-unreadable", "declared-record-unreadable"],
+    )
+    def test_the_same_thing_with_a_real_file_mode(self, tmp_path, target):
+        from src.kg.artifacts import workspace_provenance_status
+
+        workspace = tmp_path / "ws"
+        _write(workspace, samples=_budget())
+        os.chmod(workspace / target, 0o000)
+        try:
+            status = workspace_provenance_status(workspace)
+        finally:
+            os.chmod(workspace / target, 0o644)
+
+        assert status.state == "unreadable"
+        assert not status.is_known
+
+    def test_a_record_that_is_not_utf8_is_unreadable_not_absent(self, tmp_path):
+        """Real on any user, and a different failure from malformed JSON: the
+        bytes never became text, so a message calling it unparseable JSON sends
+        a reader to edit something they could not decode."""
+        from src.kg.artifacts import workspace_provenance_status
+        from src.kg.provenance import PROVENANCE_FILENAME
+
+        workspace = tmp_path / "ws"
+        _write(workspace)  # graph-only: nothing declares the record
+        (workspace / PROVENANCE_FILENAME).write_bytes(b"\xff\xfe\x00not utf-8")
+
+        status = workspace_provenance_status(workspace)
+
+        assert status.state == "unreadable"
+        assert status.state != "absent"
+        assert "could not be read" in status.detail
+
+    @pytest.mark.parametrize(
+        "payload", ["{ not json", "[]"], ids=["unparseable", "not-an-object"],
+    )
+    @pytest.mark.parametrize(
+        "record", ["present", "deleted"], ids=["record-present", "record-gone"],
+    )
+    def test_a_manifest_that_cannot_be_read_declared_nothing_readable(
+        self, tmp_path, payload, record
+    ):
+        """**`declared = None` is a claim, not a fallback.**
+
+        It is the value that means *nothing ever declared a record*, and feeding
+        it from a failed manifest read made a workspace whose record is gone
+        report `absent` — whose detail says the workspace predates provenance,
+        about one that may have declared a record and lost it. What is true is
+        narrower and is what the status now says.
+        """
+        from src.kg.artifacts import MANIFEST_FILENAME, workspace_provenance_status
+        from src.kg.provenance import PROVENANCE_FILENAME
+
+        workspace = tmp_path / "ws"
+        _write(workspace, samples=_budget())
+        if record == "deleted":
+            (workspace / PROVENANCE_FILENAME).unlink()
+        (workspace / MANIFEST_FILENAME).write_text(payload)
+
+        status = workspace_provenance_status(workspace)
+
+        assert status.state == "unreadable"
+        assert "predates provenance" not in status.detail
+        assert MANIFEST_FILENAME in status.detail
+
+    def test_a_sound_workspace_still_hands_back_its_sources(self, tmp_path):
+        """The guards above hold for a status reader that reports `unreadable`
+        for everything. This is the control that says they do not."""
+        from src.kg.artifacts import workspace_provenance_status
+        from src.kg.provenance import source_entry
+
+        workspace = tmp_path / "ws"
+        _write(
+            workspace, samples=_budget(),
+            sources=[source_entry("mondo", "mondo.obo", "a" * 64, "2025-01-01")],
+            counters={"rows_parsed": 3},
+        )
+
+        status = workspace_provenance_status(workspace)
+
+        assert status.state == "recorded" and status.is_known
+        assert [e["role"] for e in status.record["sources"]] == ["mondo"]
+        assert status.record["sources"][0]["declared_version"] == "2025-01-01"
+        assert status.record["counters"] == {"rows_parsed": 3}
 
 
 class TestAFileThatParsesIsNotARecord:
