@@ -466,14 +466,22 @@ excluded so this change stays reviewable.**
 1. **`max_hops` falls back to 5 in silence — FIXED, ahead of the indexed path
    as §10 step 0 requires.** The investigation changed the fix materially from
    what this plan first proposed, and the changes are recorded in the commit
-   rather than here. In short: refusing a *missing* sidecar was wrong — it would
-   have replaced a correct score with a different one, since every
-   operator-facing build path uses the producer's default of 5 and the workspace
-   inventories in `docs/` do not list the sidecar. The defect was the silence,
-   not the number. What ships: a present sidecar is binding and validated
-   against the producer's own `[1, 127]`; a missing one still assumes 5 and
-   **records that it assumed**, surfaced through `get_pipeline_config`; and a
-   one-sided floor check refuses any bound the table itself contradicts.
+   rather than here. **Two rounds, each refuting the other's easy answer.**
+   Refusing a *missing* sidecar outright was wrong: it would have replaced a
+   correct score with a different one for the 5-hop tables every operator-facing
+   build path in this repository produces. But assuming 5 and merely recording
+   the assumption was also wrong: the producer's CLI accepts `1..127`, so a
+   legitimate 3-hop table is in support, and read against 5 it reorders
+   candidates while the floor check sees nothing — the observed maximum is 3
+   under either reading. What ships: a present sidecar is binding and validated
+   against the producer's own `[1, 127]`; a missing one takes the bound from
+   `config.sp_hop_bound`, held to the same domain and recorded as `configured`;
+   with neither, shortest-path scoring stays off rather than guessing, and the
+   workspace itself is not refused. A one-sided floor check refuses any bound
+   the table contradicts. Separately, a configured deployment whose pipeline
+   fails now refuses at `/diagnose` rather than reaching the mock generator —
+   the new refusals had made loadable artifacts reachable from a path that
+   answers with fabricated candidates over HTTP 200.
    Original description, kept because it is what the defect was: `_load_shortest_paths` reads
    `shortest_paths.meta.json` inside `try: ... except Exception: pass`, so a
    missing or malformed sidecar leaves `_sp_max_hops = 5`. `max_hops` sets the
