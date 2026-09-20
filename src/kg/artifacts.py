@@ -221,10 +221,40 @@ def workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
     one. A graph-only workspace has no manifest, and its record is still checked
     against the graph.
 
-    **Not raising is a promise about the disk too.** Both files this opens can
-    fail to open for reasons that say nothing about provenance, and a caller
-    told this reports rather than refuses will not have wrapped it. Those return
+    **Not raising is a promise about the disk too.** Every file this touches can
+    fail for reasons that say nothing about provenance, and a caller told this
+    reports rather than refuses will not have wrapped it. Those return
     `unreadable` with the cause in the detail.
+
+    **Including the `is_file` probes, which is what a first attempt missed.**
+    `Path.is_file` calls `stat` and `pathlib` re-raises EACCES -- only ENOENT,
+    ENOTDIR, EBADF and ELOOP come back as `False`. A workspace directory this
+    process may not traverse therefore fails at the question *is there a graph
+    here*, before any read. Reproduced as a real non-root process: with the
+    directory at mode 000 this raised `PermissionError` naming `kg.json`, out of
+    a function documented never to raise. The boundary below is around the whole
+    body for that reason -- a guard per read is a list someone has to keep
+    complete, and the probes were not on it.
+    """
+    from src.kg.provenance import ProvenanceStatus
+
+    try:
+        return _workspace_provenance_status(data_dir)
+    except OSError as exc:
+        return ProvenanceStatus(
+            "unreadable", None,
+            f"this workspace could not be inspected ({type(exc).__name__}: "
+            f"{exc}); what its graph was built from cannot be established, "
+            "which is not the same as its being unrecorded",
+        )
+
+
+def _workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
+    """`workspace_provenance_status`'s body. Free to raise `OSError`.
+
+    The guards inside are not redundant with the boundary around it: they name
+    which file failed and what that leaves unestablished, which a catch-all
+    cannot. The boundary is the contract; these are the message.
     """
     from src.kg.provenance import ProvenanceStatus, provenance_status
     from src.utils.fingerprint import file_sha256

@@ -1099,10 +1099,12 @@ OBO 的 format version 冒充 release。
 **來源驗證不會擋下服務。** 來源狀態是「這個圖從哪裡來」的敘述，不是「這個圖能不能
 用」的判定——後者由 `kg.json` 與三個張量的 digest 綁定負責，那些仍然會拒絕。
 `workspace_provenance_status()` **不拋例外**，只回傳狀態；要不要因為來源有問題而停止
-什麼，是呼叫端的政策決定，目前沒有任何程式這樣做。這個承諾同時涵蓋磁碟層面，不只是
-內容層面：`kg.json`、來源紀錄或 `manifest.json` 若本行程無法開啟或解碼，會以
-`unreadable` 狀態回傳並在 detail 裡帶上原因，而不是從一個所有呼叫端都沒有包
-try 的函數裡丟出例外。manifest 這一項尤其要分清楚——manifest 讀不到的意思是
+什麼，是呼叫端的政策決定，目前沒有任何程式這樣做。這個承諾同時涵蓋磁碟層面與「檔案存不存在」的探測，不只是
+內容層面：`kg.json`、來源紀錄或 `manifest.json` 若本行程無法開啟或解碼，**或是
+workspace 目錄本身無法進入**（此時連 `Path.is_file()` 都會拋例外——`pathlib` 對
+`EACCES` 是往外拋，不是回傳 `False`），都會以 `unreadable` 狀態回傳並在 detail 裡
+帶上原因，而不是從一個所有呼叫端都沒有包 try 的函數裡丟出例外。「無從得知紀錄在不
+在」會據實回報，不會被講成「紀錄不在」。manifest 這一項尤其要分清楚——manifest 讀不到的意思是
 **「無從得知是否曾宣告過來源紀錄」**，不是**「從未宣告過」**，而只有後者才能推得
 「這個 workspace 建於 provenance 之前」。要不要因為 manifest 壞掉而拒絕整個
 workspace，仍然是 `verify_graph_artifacts()` 的職責。

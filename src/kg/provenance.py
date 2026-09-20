@@ -252,7 +252,20 @@ def read_provenance(workspace: Path) -> Optional[Dict[str, Any]]:
             from its absence and none of them is folded into one.
     """
     path = Path(workspace) / PROVENANCE_FILENAME
-    if not path.is_file():
+    # **`is_file()` is a read, not a question about a string.** It calls `stat`,
+    # and `pathlib` only swallows ENOENT, ENOTDIR, EBADF and ELOOP -- EACCES is
+    # re-raised. A directory this process may not traverse therefore makes the
+    # *existence check* fail, and "I could not find out" must not return the
+    # value that means "it is not there".
+    try:
+        present = path.is_file()
+    except OSError as exc:
+        raise ProvenanceError(
+            f"{path} could not be looked up ({type(exc).__name__}: {exc}); "
+            "whether a record is there is unknown, which is not the same as "
+            "its being absent"
+        ) from exc
+    if not present:
         return None
     # **Opening and parsing are separated because they fail for unlike reasons.**
     # A file that cannot be opened at all -- permissions, a directory in its
@@ -326,6 +339,29 @@ def provenance_status(
         `recorded` belongs to the caller: this establishes what is true, not
         whether to serve.
     """
+    try:
+        return _provenance_status(workspace, kg_digest, declared_digest)
+    except OSError as exc:
+        # **The promise is kept here, by construction, not by a checklist.**
+        # Guarding each read in turn was tried and left the `is_file` probes
+        # outside, because they do not look like reads. Every filesystem call in
+        # the body -- the ones there now and the ones a later edit adds -- is
+        # inside this. The guards below it are not redundancy: they say *which*
+        # file and *what* could not be established, which this cannot.
+        return ProvenanceStatus(
+            "unreadable", None,
+            f"this workspace could not be inspected ({type(exc).__name__}: "
+            f"{exc}); whether a record is there cannot be established, which is "
+            "not the same as its not being there",
+        )
+
+
+def _provenance_status(
+    workspace: Path,
+    kg_digest: str,
+    declared_digest: Optional[str] = None,
+) -> ProvenanceStatus:
+    """`provenance_status`'s body. Free to raise `OSError`; its caller reports."""
     from src.utils.fingerprint import file_sha256
 
     path = Path(workspace) / PROVENANCE_FILENAME

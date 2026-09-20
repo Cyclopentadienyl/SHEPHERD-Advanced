@@ -21,6 +21,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -29,6 +31,61 @@ torch = pytest.importorskip("torch")
 
 def _sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _mode_000_denies_this_process(kind: str) -> bool:
+    """Whether `chmod(x, 0)` actually stops **this** process reading.
+
+    **Measured, not inferred.** The precondition these tests need is not "am I
+    root" and not "is this POSIX" — it is whether a mode of 000 denies this
+    process, and that is one `chmod` and one read away from being known. Asking
+    the proxy instead gets three environments wrong: `os.geteuid` does not exist
+    on Windows and raises at import, before pytest can skip anything; Windows
+    `chmod` sets a read-only bit and never denies a read, so a platform test
+    that merely excluded root would run a case that cannot hold there; and a
+    filesystem mounted without mode enforcement fails the same way for a
+    perfectly ordinary non-root user.
+
+    Returns False on anything unexpected, which skips rather than fails: a
+    probe that cannot establish the precondition has not established it.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            if kind == "file":
+                target = root / "probe.txt"
+                target.write_text("x")
+                readable = target
+            else:
+                target = root / "inner"
+                target.mkdir()
+                readable = target / "probe.txt"
+                readable.write_text("x")
+            os.chmod(target, 0o000)
+            try:
+                readable.read_text()
+                return False
+            except OSError:
+                return True
+            finally:
+                os.chmod(target, 0o700)
+    except Exception:
+        return False
+
+
+#: Evaluated once, at import, and only through `os.chmod` and `open` — both of
+#: which exist on every platform this runs on.
+FILE_MODES_ARE_ENFORCED = _mode_000_denies_this_process("file")
+DIRECTORY_MODES_ARE_ENFORCED = _mode_000_denies_this_process("directory")
+
+_NO_FILE_MODES = (
+    "chmod(000) does not deny this process a read here (root, or a filesystem "
+    "that ignores modes), so the guard cannot be provoked by file mode"
+)
+_NO_DIRECTORY_MODES = (
+    "chmod(000) on a directory does not stop this process entering it here, so "
+    "the guard cannot be provoked by directory mode"
+)
 
 
 def _write(workspace, *, kg=None, samples=None, sources=None, counters=None):
@@ -623,10 +680,19 @@ class TestTheStatusEntryReportsWhenTheDiskRefuses:
     report, and every caller was written not to wrap it. A note beside the graph
     would then stop a pipeline it was explicitly kept out of the way of.
 
-    The permission cases are the honest ones and they need a non-root user;
-    under root a mode of 000 is read straight through, so those skip and the
+    **And the existence probes, not only the reads.** `Path.is_file` calls
+    `stat`, and `pathlib` re-raises EACCES rather than returning False — only
+    ENOENT, ENOTDIR, EBADF and ELOOP become False. So a workspace directory this
+    process cannot traverse fails at *is there a graph here*, before anything is
+    opened. Reproduced as a real non-root process against the previous commit:
+    `PermissionError` naming `kg.json`, straight out of the entry point.
+
+    The permission cases are the honest ones and they need an environment where
+    a mode of 000 actually denies a read; `FILE_MODES_ARE_ENFORCED` and
+    `DIRECTORY_MODES_ARE_ENFORCED` measure that rather than guessing it from the
+    platform or the user id. Where it does not hold they skip and the
     substitution tests carry the guard. The decode and manifest cases are real
-    on any user.
+    everywhere.
     """
 
     @staticmethod
@@ -664,12 +730,17 @@ class TestTheStatusEntryReportsWhenTheDiskRefuses:
             "the cause was dropped; a reader cannot tell a permission problem "
             f"from a corrupt file: {status.detail}"
         )
+        # The boundary around the whole body would also report `unreadable`
+        # with the type in it, so this asserts the *specific* guard ran: only
+        # that one names the file and what its loss leaves unestablished.
+        assert "could not be read" in status.detail, status.detail
+        assert "could not be inspected" not in status.detail, (
+            "the named guard was lost and the catch-all boundary answered "
+            f"instead, which cannot say which file failed: {status.detail}"
+        )
         assert not status.is_known
 
-    @pytest.mark.skipif(
-        os.geteuid() == 0,
-        reason="root reads through a mode of 000, so the guard cannot be provoked",
-    )
+    @pytest.mark.skipif(not FILE_MODES_ARE_ENFORCED, reason=_NO_FILE_MODES)
     @pytest.mark.parametrize(
         "target", ["kg.json", "kg.provenance.json"],
         ids=["graph-unreadable", "declared-record-unreadable"],
@@ -684,6 +755,77 @@ class TestTheStatusEntryReportsWhenTheDiskRefuses:
             status = workspace_provenance_status(workspace)
         finally:
             os.chmod(workspace / target, 0o644)
+
+        assert status.state == "unreadable"
+        assert not status.is_known
+
+    @pytest.mark.parametrize(
+        "scope", ["kg.json", "whole-workspace"],
+        ids=["graph-probe-fails", "nothing-can-be-stat-ed"],
+    )
+    def test_an_existence_probe_that_fails_is_a_state(self, tmp_path, monkeypatch, scope):
+        """**`is_file()` is a read.** It calls `stat`, and EACCES comes back out
+        rather than as `False`, so the question *is there a graph here* fails
+        before anything is opened. Substituted so this runs everywhere; the
+        directory-mode test below is the same condition for real."""
+        from src.kg.artifacts import workspace_provenance_status
+
+        workspace = tmp_path / "ws"
+        _write(workspace, samples=_budget())
+        assert workspace_provenance_status(workspace).state == "recorded"  # control
+
+        real_stat = Path.stat
+
+        def guard(self, *args, **kwargs):
+            blocked = str(self) == str(workspace / "kg.json") if scope == "kg.json" \
+                else str(self).startswith(str(workspace))
+            if blocked:
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", guard)
+        status = workspace_provenance_status(workspace)
+
+        assert status.state == "unreadable", (
+            f"a failed stat was reported as {status.state!r}; not being able to "
+            "find out is not the same as the answer being no"
+        )
+        assert "PermissionError" in status.detail
+        assert not status.is_known
+
+    def test_the_low_level_entry_reports_a_failed_probe_too(self, tmp_path, monkeypatch):
+        """`provenance_status` carries the same promise and is reachable on its
+        own, so it needs the boundary rather than inheriting one."""
+        from src.kg.provenance import PROVENANCE_FILENAME, provenance_status
+
+        workspace = tmp_path / "ws"
+        _write(workspace)
+        real_stat = Path.stat
+
+        def guard(self, *args, **kwargs):
+            if self.name == PROVENANCE_FILENAME:
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", guard)
+        status = provenance_status(workspace, _sha256(workspace / "kg.json"))
+
+        assert status.state == "unreadable"
+        assert "PermissionError" in status.detail
+
+    @pytest.mark.skipif(not DIRECTORY_MODES_ARE_ENFORCED, reason=_NO_DIRECTORY_MODES)
+    def test_a_workspace_that_cannot_be_entered_with_a_real_directory_mode(self, tmp_path):
+        """The condition as the filesystem produces it: the files are intact and
+        the directory cannot be traversed, so every probe inside it fails."""
+        from src.kg.artifacts import workspace_provenance_status
+
+        workspace = tmp_path / "ws"
+        _write(workspace, samples=_budget())
+        os.chmod(workspace, 0o000)
+        try:
+            status = workspace_provenance_status(workspace)
+        finally:
+            os.chmod(workspace, 0o755)
 
         assert status.state == "unreadable"
         assert not status.is_known
@@ -736,6 +878,58 @@ class TestTheStatusEntryReportsWhenTheDiskRefuses:
         assert status.state == "unreadable"
         assert "predates provenance" not in status.detail
         assert MANIFEST_FILENAME in status.detail
+
+    @pytest.mark.parametrize(
+        "state", ["recorded", "missing", "absent", "mismatched"],
+    )
+    def test_a_readable_workspace_still_tells_the_four_states_apart(self, tmp_path, state):
+        """**The control the boundary needs most.**
+
+        An `except OSError` around a whole function is the cheapest way to
+        satisfy every test above and report `unreadable` for everything. This
+        says it does not: on a directory that reads normally, the four states a
+        caller acts on are still distinguished.
+        """
+        from src.kg.artifacts import workspace_provenance_status
+        from src.kg.provenance import PROVENANCE_FILENAME
+
+        workspace = tmp_path / "ws"
+        _write(workspace, samples=_budget())
+        if state == "missing":
+            (workspace / PROVENANCE_FILENAME).unlink()
+        elif state == "absent":
+            # No graph to describe: the earliest state, before any record.
+            workspace = tmp_path / "empty"
+            workspace.mkdir()
+        elif state == "mismatched":
+            record = json.loads((workspace / PROVENANCE_FILENAME).read_text())
+            record["counters"]["rows_parsed"] = 999
+            (workspace / PROVENANCE_FILENAME).write_text(json.dumps(record))
+
+        assert workspace_provenance_status(workspace).state == state
+
+    def test_the_low_level_reader_still_raises_its_own_error_type(self, tmp_path, monkeypatch):
+        """`read_provenance` is not a status function — it raises by contract,
+        and `ProvenanceError` is the type its callers catch. A `PermissionError`
+        from its existence probe would go past every one of them, including the
+        `except ProvenanceError` inside `provenance_status`."""
+        from src.kg.provenance import (
+            PROVENANCE_FILENAME, ProvenanceError, read_provenance,
+        )
+
+        workspace = tmp_path / "ws"
+        _write(workspace)
+        real_stat = Path.stat
+
+        def guard(self, *args, **kwargs):
+            if self.name == PROVENANCE_FILENAME:
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", guard)
+
+        with pytest.raises(ProvenanceError, match="could not be looked up"):
+            read_provenance(workspace)
 
     def test_a_sound_workspace_still_hands_back_its_sources(self, tmp_path):
         """The guards above hold for a status reader that reports `unreadable`
@@ -799,3 +993,43 @@ class TestAFileThatParsesIsNotARecord:
         # first; either way it is not `recorded`, which is the contract.
         assert status.state in ("unreadable", "mismatched")
         assert not status.is_known
+
+
+class TestThisModuleCollectsOnAPlatformWithoutPosixIds:
+    """**A skip condition runs at import, before pytest can skip anything.**
+
+    The first version of the permission guards called `os.geteuid()` in a
+    `skipif` decorator. That attribute exists only on Unix; on Windows the call
+    happens while the class is being defined, so the whole unit suite fails to
+    collect with `AttributeError` — a test that meant to skip taking the run
+    down with it. The predicates are measured now and touch only `os.chmod` and
+    `open`, which exist everywhere.
+
+    Checked by importing this module in a subprocess whose `os` has no
+    `geteuid`, which is what the platform difference amounts to. Asserting on
+    the source text instead would pass for any spelling that still called it.
+    """
+
+    def test_importing_it_without_os_geteuid_succeeds(self):
+        import subprocess
+        import sys
+
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import os, sys\n"
+             "sys.path.insert(0, sys.argv[1])\n"
+             "del os.geteuid\n"
+             "assert not hasattr(os, 'geteuid')\n"
+             "import importlib\n"
+             "importlib.import_module('tests.unit.test_kg_provenance')\n"
+             "print('collected')",
+             str(root)],
+            capture_output=True, text=True, cwd=str(root),
+        )
+
+        assert result.returncode == 0, (
+            "this module cannot be imported where os.geteuid is absent, which "
+            f"is every Windows checkout:\n{result.stderr[-2000:]}"
+        )
+        assert "collected" in result.stdout
