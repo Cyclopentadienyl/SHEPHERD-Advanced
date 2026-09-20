@@ -428,7 +428,10 @@ dependency and skips the task.
 in an `identical-sibling` deployment relationship, with load results and an
 `in_channels` of 128 established across the family. Those digests are a
 designation list, not a decision: one is chosen, its availability on the
-measuring machine confirmed, and it is named here before step 7 runs.
+measuring machine confirmed, and it is named here **before the integrated
+readings are taken**. Not before step 7 — that step is the SP-only supplementary
+figure, which needs no checkpoint, and tying it to one would reintroduce the
+dependency §7.1 exists to remove.
 
 I have **not** named one in this revision, because the evidence records digests
 and loadability but no parameter count or resident size, and I will not assert a
