@@ -65,6 +65,42 @@ class OntologyLoader:
 
         self._loaded_ontologies: Dict[str, 'Ontology'] = {}
 
+    #: The only value `version` can honour. Anything else names a release this
+    #: loader has no way to fetch or select, and saying so is the whole point of
+    #: `_require_supported_version`.
+    SUPPORTED_VERSION = "latest"
+
+    @classmethod
+    def _require_supported_version(cls, ontology_name: str, version: str) -> None:
+        """Refuse a version this loader cannot honour, instead of ignoring it.
+
+        **The argument used to read as version selection and do nothing of the
+        kind.** `_load_known_ontology` folds `version` into an in-memory cache
+        key and then opens `<cache_dir>/<name>.obo` regardless, so
+        `load_mondo(version="2026-01-01")` returned whatever that file happened
+        to be — a different release, silently, under the name of the one asked
+        for. Two different version strings in one process even produced two
+        cache entries over the same bytes.
+
+        Selecting a release is Phase 2's work (a path per ontology). Until it
+        exists, the honest behaviour is to refuse: a caller that asked for a
+        specific vintage and received another has no way to find out, and a
+        knowledge graph carries the consequence into every index it assigns.
+
+        Raises:
+            ValueError: naming what was asked for and what to do instead.
+        """
+        if version != cls.SUPPORTED_VERSION:
+            raise ValueError(
+                f"load of {ontology_name!r} asked for version {version!r}, and "
+                f"this loader can only honour {cls.SUPPORTED_VERSION!r}. It "
+                "reads one file per ontology from its cache directory and has "
+                "no way to fetch or select a release. Point `cache_dir` at a "
+                "directory holding the file you mean, or rebuild with the "
+                "ontology you want in place — do not rely on this argument to "
+                "choose one."
+            )
+
     def load(self, path: Path) -> 'Ontology':
         """
         載入本體檔案
@@ -94,7 +130,8 @@ class OntologyLoader:
         載入 HPO (Human Phenotype Ontology)
 
         Args:
-            version: 版本號或 "latest"
+            version: must be "latest"; a specific release is refused rather
+                than silently ignored -- see `_require_supported_version`
             force_download: 是否強制重新下載
         """
         return self._load_known_ontology('hpo', version, force_download)
@@ -118,6 +155,7 @@ class OntologyLoader:
         force_download: bool
     ) -> 'Ontology':
         """載入已知本體"""
+        self._require_supported_version(ontology_name, version)
         cache_key = f"{ontology_name}_{version}"
 
         # Check memory cache

@@ -325,7 +325,7 @@ each one forces.
 
 | Phase | What | Needs a design decision? |
 |---|---|---|
-| **0** | Resolve the **`version`** promise — make it select a file or refuse a version it cannot honour. **`force_download` is left alone**; it works | **No.** Correcting a misleading API |
+| **0** | **DONE.** The `version` promise is refused rather than ignored: only `"latest"` is honoured, at the shared path so all four loaders inherit it, before any cache read or fetch. **`force_download` left alone**; a test class exists so a future tidy-up of "unused flags" cannot take it | **No.** Correcting a misleading API |
 | **1** | `kg.provenance.json` on every build (§3.5), bound **to its graph and from the manifest**, covering **all four source files** (§3.6), with the parsing counters named precisely (§3.7) and the reader work that makes the binding real (§3.5.1) | **Yes, one**: where the record is written. §3.5 proposes an answer |
 | **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2) | Small: where roots are configured |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
