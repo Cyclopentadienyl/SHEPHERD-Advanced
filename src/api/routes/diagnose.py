@@ -248,7 +248,35 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                 logger.warning(f"Lazy pipeline init failed: {e}")
 
         if app_state.pipeline is None:
-            # Fallback to mock response when pipeline is unavailable
+            # **A configured pipeline that failed is not a demo.**
+            #
+            # `_generate_mock_candidates` returns real MONDO identifiers, real
+            # disease names, real gene symbols and confidence scores from 0.95
+            # down, over HTTP 200. That is the intended answer when no pipeline
+            # was ever configured — someone trying the service out. It is the
+            # wrong answer when a deployment *was* configured and its pipeline
+            # could not be built: the caller asked a clinical question of a
+            # system that cannot answer it, and a warning string beside a
+            # well-formed ranked list is not a refusal.
+            #
+            # **What separates the two is whether a workspace was ever named**,
+            # by any route. The first version of this keyed on
+            # `SHEPHERD_KG_PATH`, which covered startup and missed the reload
+            # API — a caller could point `/pipeline/reload` at a real workspace,
+            # have the candidate refused, and still be handed invented
+            # candidates here. `build_pipeline` records the request where both
+            # routes resolve their paths.
+            if app_state.real_pipeline_requested:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "A pipeline is configured for this deployment but could "
+                        "not be initialized, so no diagnosis can be produced. "
+                        "See the service logs for the condition that stopped it."
+                    ),
+                )
+
+            # Fallback to mock response when no pipeline is configured at all
             logger.warning("Pipeline not initialized - returning mock response")
             warnings.append("Pipeline not fully initialized - using mock data")
 
@@ -298,6 +326,12 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             if result.warnings:
                 warnings.extend(result.warnings)
 
+    except HTTPException:
+        # **Deliberate statuses pass through.** `HTTPException` is an
+        # `Exception`, so the handler below would relabel a considered 503 as an
+        # unexpected 500 — which reads to a caller as a bug in the service rather
+        # than as the service declining to answer.
+        raise
     except Exception as e:
         logger.exception(f"Diagnosis failed: {e}")
         raise HTTPException(

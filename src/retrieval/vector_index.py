@@ -39,30 +39,95 @@ from src.retrieval.backends.base import VectorIndexBase
 
 logger = logging.getLogger(__name__)
 
-# Backend registry
+# Backend registry. Rebuilt by `_register_backends`, never replaced — callers that
+# hold a reference to this object keep seeing the current answer.
 _BACKEND_REGISTRY: Dict[str, Type[VectorIndexBase]] = {}
+
+#: What each backend needs before it can be constructed **at all**, plus where its
+#: class lives. The package names are the ones the backend imports on the way to a
+#: working index, not the ones it imports somewhere:
+#: `CuVSIndex._validate_cuvs` imports `cuvs.neighbors` **and** `cupy`, so a host
+#: with cuvs and without cupy cannot construct one — a state this repository has
+#: already observed on a real deployment machine and records in
+#: `scripts/validate_installation.py`.
+#:
+#: Top-level package names on purpose. `find_spec("cuvs.neighbors")` imports the
+#: parent `cuvs` as a side effect and raises `ModuleNotFoundError` when it is
+#: absent; `find_spec("cuvs")` does neither, which is what keeps this cheap enough
+#: to run at import time.
+_BACKEND_SPECS: Dict[str, "tuple"] = {
+    "voyager": (("voyager",), "src.retrieval.backends.voyager_backend", "VoyagerIndex"),
+    "cuvs": (("cuvs", "cupy"), "src.retrieval.backends.cuvs_backend", "CuVSIndex"),
+}
+
+#: Backends that cannot run on this platform whatever is installed. Separate from
+#: `_BACKEND_SPECS` because it is a support statement, not a dependency.
+_WINDOWS_UNSUPPORTED = frozenset({"cuvs"})
+
+
+def _discoverable(package: str) -> bool:
+    """Whether `package` can be found on this interpreter's path.
+
+    **Discovery, and nothing beyond it.** A true answer means the immediate
+    required package is findable. It does not mean the package imports, that its
+    CUDA build matches the driver, that an index can be constructed, or that a
+    search returns anything. `scripts/validate_installation.py` is where the
+    deeper states are distinguished, and this deliberately does not duplicate it.
+
+    **Fails closed.** `find_spec` raises rather than returning for several ordinary
+    conditions — `ModuleNotFoundError` when a parent package is absent,
+    `ValueError` when a module is already imported but carries no `__spec__`. An
+    optional-dependency probe must never be the reason `import src.retrieval`
+    fails, so anything it raises is read as "not discoverable".
+    """
+    try:
+        return importlib.util.find_spec(package) is not None
+    except (ImportError, ValueError):
+        # ModuleNotFoundError is an ImportError; both are discovery outcomes here.
+        return False
 
 
 def _register_backends() -> None:
-    """註冊可用的後端"""
-    global _BACKEND_REGISTRY
+    """Register the backends whose immediate required packages are discoverable.
 
-    # Always register Voyager (cross-platform)
-    try:
-        from src.retrieval.backends.voyager_backend import VoyagerIndex
-        _BACKEND_REGISTRY["voyager"] = VoyagerIndex
-        logger.debug("Registered backend: voyager")
-    except ImportError as e:
-        logger.warning(f"Failed to register voyager backend: {e}")
+    **Registration is what selection, fallback and reporting all read.**
+    `resolve_backend`, `create_index` and `list_available_backends` consume this
+    registry, so a backend registered without its dependencies is not one wrong
+    answer but three: `auto` selects it, the fallback chain beneath never runs
+    because nothing raised, and `build_index.py` prints it to the operator as
+    available. That was the state before this function checked anything — both
+    backends import their dependency lazily, inside a method, so the module import
+    this used to guard on never failed and every backend was always registered.
 
-    # Register cuVS (Linux only)
-    if sys.platform != "win32":
+    **Rebuilt, not accumulated.** Discovery is redone from scratch and the registry
+    is cleared before the new answers land, so a backend registered by an earlier
+    call cannot survive as falsely available once its dependency is gone. Cleared
+    in place rather than rebound, so a caller holding this dict is not left
+    reading a detached copy.
+    """
+    discovered: Dict[str, Type[VectorIndexBase]] = {}
+
+    for name, (requirements, module_path, class_name) in _BACKEND_SPECS.items():
+        if sys.platform == "win32" and name in _WINDOWS_UNSUPPORTED:
+            logger.debug("Backend %s: not registered, unsupported on Windows", name)
+            continue
+
+        missing = [pkg for pkg in requirements if not _discoverable(pkg)]
+        if missing:
+            logger.debug("Backend %s: not registered, %s not discoverable", name, missing)
+            continue
+
         try:
-            from src.retrieval.backends.cuvs_backend import CuVSIndex
-            _BACKEND_REGISTRY["cuvs"] = CuVSIndex
-            logger.debug("Registered backend: cuvs")
-        except ImportError as e:
-            logger.debug(f"cuVS not available: {e}")
+            module = importlib.import_module(module_path)
+            discovered[name] = getattr(module, class_name)
+            logger.debug("Registered backend: %s", name)
+        except (ImportError, AttributeError) as exc:
+            # The backend module itself is broken or has been renamed. Distinct
+            # from a missing dependency, and worth more than debug.
+            logger.warning("Backend %s: %s could not be loaded (%s)", name, module_path, exc)
+
+    _BACKEND_REGISTRY.clear()
+    _BACKEND_REGISTRY.update(discovered)
 
 
 # Initialize registry on module load
@@ -155,11 +220,18 @@ def resolve_backend(
                 f"Valid options: {sorted(valid_backends)}"
             )
 
-    # Check if requested backend is available
+    # Availability is decided by `_register_backends`, not here: a name is in the
+    # registry only if its immediate required packages were discoverable and the
+    # platform supports it. This block used to be commented "Verify it can actually
+    # be instantiated" / "Quick validation check", and it never verified anything —
+    # the only condition it tested was Windows, so an absent package sailed through
+    # and the fallback chain below could not run.
+    #
+    # The Windows branch below is now unreachable for the same reason: cuVS is not
+    # registered on Windows at all. Left as it stands rather than simplified,
+    # because `resolve_backend` is not what this change is about.
     if requested in _BACKEND_REGISTRY:
-        # Verify it can actually be instantiated
         try:
-            # Quick validation check
             backend_cls = _BACKEND_REGISTRY[requested]
             if requested == "cuvs" and sys.platform == "win32":
                 raise RuntimeError("cuVS not supported on Windows")

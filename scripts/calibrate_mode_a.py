@@ -99,6 +99,9 @@ if str(PROJECT_ROOT) not in sys.path:
 # One hashing implementation, shared. A second one here could differ from the
 # harness's in exactly the way the digests exist to detect.
 from scripts.measure_scorer import artifact_digests  # noqa: E402
+from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP  # noqa: E402
+from src.evaluation.cohort import COHORT_KINDS, DEFAULT_COHORT_KIND  # noqa: E402
+from src.evaluation.measurement import validate_measurement_seed  # noqa: E402
 
 logger = logging.getLogger("calibrate_mode_a")
 
@@ -207,6 +210,14 @@ def run_harness(seed: int, workdir: Path, args: argparse.Namespace, device: str)
             "--checkpoint", str(args.checkpoint),
             "--data-dir", str(args.data_dir),
             "--split", args.split,
+            # **Forwarded, not defaulted.** This launcher already refuses a
+            # cohort kind the workspace contradicts, using the same validator
+            # the child does — but it was refusing on its own behalf and then
+            # spawning a child that fell back to `generated`. Any supplied
+            # cohort therefore failed inside the subprocess, after the frozen
+            # evaluator had already run, and the comparison this script exists
+            # to make never happened.
+            "--cohort-kind", args.cohort_kind,
             "--output", str(measurement_path),
             "--predictions-output", str(predictions_path),
             "--batch-size", str(args.batch_size),
@@ -341,9 +352,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--split", required=True,
-                        choices=["train", "val", "test"],
-                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. `val` is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated and are not held-out generalisation.')
+    parser.add_argument("--split", required=True, help=SPLIT_ARGUMENT_HELP)
+    parser.add_argument("--cohort-kind", default=DEFAULT_COHORT_KIND,
+                        choices=COHORT_KINDS, help=COHORT_KIND_HELP)
     parser.add_argument("--workdir", type=Path, required=True,
                         help="Where both runs write. Created if absent")
     parser.add_argument("--seed", type=int, required=True,
@@ -365,6 +376,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
 
+    # **Before the workdir, the device, the artifact reads and two subprocesses.**
+    # `argparse` accepts any integer, and a negative or oversized one is rejected
+    # only by NumPy inside the seeded bootstrap — after this run has created a
+    # directory, resolved a device, hashed the inputs and launched the frozen
+    # evaluator. The same validator `measure_scorer` uses, called at the same
+    # point in the run: as early as the value is knowable.
+    validate_measurement_seed(args.seed, "--seed")
+
     args.checkpoint = args.checkpoint.resolve()
     args.data_dir = args.data_dir.resolve()
     args.workdir.mkdir(parents=True, exist_ok=True)
@@ -374,14 +393,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     logger.info("seed=%d device=%s batch_size=%d workers=%d",
                 args.seed, device, args.batch_size, ORACLE_NUM_WORKERS)
 
-    digests_before = artifact_digests(args.checkpoint, args.data_dir, args.split)
+    digests_before = artifact_digests(args.checkpoint, args.data_dir, args.split, args.cohort_kind)
 
     logger.info("Running the frozen evaluator...")
     oracle_report, oracle_predictions = run_oracle(args.seed, workdir, args, device)
     logger.info("Running the Mode A harness...")
     measurement, harness_predictions = run_harness(args.seed, workdir, args, device)
 
-    digests_after = artifact_digests(args.checkpoint, args.data_dir, args.split)
+    digests_after = artifact_digests(args.checkpoint, args.data_dir, args.split, args.cohort_kind)
 
     failures = compare(
         oracle_report, oracle_predictions, measurement, harness_predictions, args,

@@ -8,8 +8,12 @@ existing workspace (Laplacian PE, RWSE, degree features).
 Current state of the world:
   - src/kg/preprocessing.py contains the actual preprocessing logic
     (compute_laplacian_pe, compute_rwse, compute_degree_features,
-    preprocess_for_gnn). It is invoked automatically inside the GNN
-    training path and exported via src/kg/__init__.py.
+    preprocess_for_gnn). It is exported via src/kg/__init__.py and, despite
+    what this file said until the claim was checked, **nothing on the
+    training path calls it**: the only caller anywhere is
+    scripts/run_local_tests.py. Its `torch.randn` feature initialisation is
+    unseeded, which would matter if it were on a production path and does
+    not while it is not.
   - scripts/build_knowledge_graph.py already produces node_features.pt /
     edge_indices.pt as part of KG construction, which covers the
     common case.

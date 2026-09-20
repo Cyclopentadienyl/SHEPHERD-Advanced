@@ -50,7 +50,7 @@ def calibration(tmp_path_factory):
     exit_code = main([
         "--checkpoint", str(checkpoint),
         "--data-dir", str(data_dir),
-        "--split", "test",
+        "--split", "test", "--cohort-kind", "supplied",
         "--workdir", str(workdir),
         "--seed", str(SEED),
         "--batch-size", str(BATCH_SIZE),
@@ -292,7 +292,7 @@ def test_the_cli_runs_all_three_modes_without_disturbing_the_calibration_artifac
 
     exit_code = main([
         "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "test", "--output", str(output),
+        "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
         "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
         "--device", "cpu", "--modes", "A,B,C",
     ])
@@ -329,7 +329,7 @@ def test_mode_b_without_mode_a_is_refused(tmp_path):
     with pytest.raises(SystemExit, match="only meaningful beside A"):
         main([
             "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--split", "test", "--output", str(tmp_path / "m.json"),
+            "--split", "test", "--cohort-kind", "supplied", "--output", str(tmp_path / "m.json"),
             "--device", "cpu", "--modes", "B",
         ])
 
@@ -356,7 +356,7 @@ def test_mode_c_alone_touches_no_retiring_legacy_path(tmp_path, monkeypatch):
     output = tmp_path / "c_only" / "measurement.json"
     assert cli.main([
         "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "test", "--output", str(output),
+        "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
         "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
         "--device", "cpu", "--modes", "C",
     ]) == 0
@@ -395,7 +395,7 @@ def test_a_and_c_must_agree_on_the_cohort_before_anything_is_written(tmp_path, m
     with pytest.raises(SystemExit, match="same cohort in the same order"):
         cli.main([
             "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--split", "test", "--output", str(tmp_path / "out" / "m.json"),
+            "--split", "test", "--cohort-kind", "supplied", "--output", str(tmp_path / "out" / "m.json"),
             "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
             "--device", "cpu", "--modes", "A,B,C",
         ])
@@ -420,7 +420,7 @@ def test_unsupported_mode_combinations_are_refused_not_repaired(tmp_path, spec, 
     with pytest.raises(SystemExit, match=expected):
         main([
             "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--split", "test", "--output", str(tmp_path / "m.json"),
+            "--split", "test", "--cohort-kind", "supplied", "--output", str(tmp_path / "m.json"),
             "--device", "cpu", "--modes", spec,
         ])
 

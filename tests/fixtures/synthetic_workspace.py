@@ -129,6 +129,21 @@ def build_workspace(
         json.dumps(_samples(n_phenotypes, n_diseases, n_samples))
     )
 
+    # **A supplied cohort still lives in a workspace whose graph is bound.** This
+    # fixture's `test` split is a supplied cohort -- it was never cut from a
+    # disease allocation -- but it is scored against the tensors above exactly as a
+    # generated one is, so the workspace has to carry the manifest that binds them.
+    # Writing a bare `kg.json` and two small generated cohorts beside them is what
+    # a real deployment holds; the measurement paths under test read neither.
+    from tests.fixtures.generated_workspace import write_generated_workspace
+
+    (data_dir / "kg.json").write_text(json.dumps({"synthetic": True}))
+    write_generated_workspace(
+        data_dir,
+        train_ids=list(range(min(2, n_diseases))),
+        val_ids=[n_diseases + 1],
+    )
+
     metadata = (list(num_nodes_dict), list(edge_index_dict))
     in_channels_dict = {k: FEATURE_DIM for k in num_nodes_dict}
     config = ShepherdGNNConfig(hidden_dim=HIDDEN_DIM, num_layers=2, num_heads=2)

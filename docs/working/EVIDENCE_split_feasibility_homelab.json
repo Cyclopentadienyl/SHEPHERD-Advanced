@@ -1,0 +1,2026 @@
+{
+  "assumptions": {
+    "current_train_budget": 100000,
+    "current_val_budget": 15000,
+    "max_phenotypes": 15,
+    "min_phenotypes": 2,
+    "note": "Supplied to this audit, not recovered from the workspace. This audit prices allocations that have not been made and reads a bare kg.json, so there is no generated workspace to recover a configuration from.",
+    "phenotype_drop_rate": 0.3
+  },
+  "audit": "split_feasibility",
+  "axis_definitions": {
+    "empty_bands": "A band with 0 diseases reports both probabilities as null. They are not zero and not unknown: a stratum with no members has no representation to lose, so the question the columns ask does not apply. Empty bands are still listed so the band structure is identical across workspaces, which makes two reports structurally alignable \u2014 not, on its own, scientifically comparable, since they may rest on different KG vintages or different assumptions.",
+    "gene_count": "Genes associated with the disease.",
+    "generator_capacity": "C(P, k) distinct phenotype subsets the generator can draw, with k from the production rule in src.kg.retained_phenotype_count.",
+    "p_no_training_representation": "Probability that a uniform draw withholds all of this band, leaving a model trained under that hypothetical allocation with no patient supervision anywhere in it. A different event from the one above. This audit selects no allocation and describes no existing weights.",
+    "p_no_validation_representation": "Probability that a uniform draw of W diseases withholds none of this band, leaving the validation metric silent about it.",
+    "phenotype_count": "Phenotypes in the disease's generator profile. Includes phenotypes reached through an associated gene, not only those directly linked to the disease.",
+    "profile_support_size": "phenotype_count + gene_count. **Not the disease node's direct KG degree**, because phenotype_count is propagated through genes. Direct degree is a different quantity and is not measured here; a disease with no incident edges at all has an empty profile and is already counted under exclusions."
+  },
+  "coverage_budgets": [
+    {
+      "fraction_requested": 0.05,
+      "samples_per_disease": 1,
+      "train_budget_sufficient": true,
+      "train_required": 10048,
+      "val_budget_sufficient": true,
+      "val_required": 529
+    },
+    {
+      "fraction_requested": 0.1,
+      "samples_per_disease": 1,
+      "train_budget_sufficient": true,
+      "train_required": 9519,
+      "val_budget_sufficient": true,
+      "val_required": 1058
+    },
+    {
+      "fraction_requested": 0.15,
+      "samples_per_disease": 1,
+      "train_budget_sufficient": true,
+      "train_required": 8990,
+      "val_budget_sufficient": true,
+      "val_required": 1587
+    },
+    {
+      "fraction_requested": 0.2,
+      "samples_per_disease": 1,
+      "train_budget_sufficient": true,
+      "train_required": 8462,
+      "val_budget_sufficient": true,
+      "val_required": 2115
+    },
+    {
+      "fraction_requested": 0.25,
+      "samples_per_disease": 1,
+      "train_budget_sufficient": true,
+      "train_required": 7933,
+      "val_budget_sufficient": true,
+      "val_required": 2644
+    },
+    {
+      "fraction_requested": 0.3,
+      "samples_per_disease": 1,
+      "train_budget_sufficient": true,
+      "train_required": 7404,
+      "val_budget_sufficient": true,
+      "val_required": 3173
+    },
+    {
+      "fraction_requested": 0.05,
+      "samples_per_disease": 5,
+      "train_budget_sufficient": true,
+      "train_required": 50240,
+      "val_budget_sufficient": true,
+      "val_required": 2645
+    },
+    {
+      "fraction_requested": 0.1,
+      "samples_per_disease": 5,
+      "train_budget_sufficient": true,
+      "train_required": 47595,
+      "val_budget_sufficient": true,
+      "val_required": 5290
+    },
+    {
+      "fraction_requested": 0.15,
+      "samples_per_disease": 5,
+      "train_budget_sufficient": true,
+      "train_required": 44950,
+      "val_budget_sufficient": true,
+      "val_required": 7935
+    },
+    {
+      "fraction_requested": 0.2,
+      "samples_per_disease": 5,
+      "train_budget_sufficient": true,
+      "train_required": 42310,
+      "val_budget_sufficient": true,
+      "val_required": 10575
+    },
+    {
+      "fraction_requested": 0.25,
+      "samples_per_disease": 5,
+      "train_budget_sufficient": true,
+      "train_required": 39665,
+      "val_budget_sufficient": true,
+      "val_required": 13220
+    },
+    {
+      "fraction_requested": 0.3,
+      "samples_per_disease": 5,
+      "train_budget_sufficient": true,
+      "train_required": 37020,
+      "val_budget_sufficient": false,
+      "val_required": 15865
+    },
+    {
+      "fraction_requested": 0.05,
+      "samples_per_disease": 10,
+      "train_budget_sufficient": false,
+      "train_required": 100480,
+      "val_budget_sufficient": true,
+      "val_required": 5290
+    },
+    {
+      "fraction_requested": 0.1,
+      "samples_per_disease": 10,
+      "train_budget_sufficient": true,
+      "train_required": 95190,
+      "val_budget_sufficient": true,
+      "val_required": 10580
+    },
+    {
+      "fraction_requested": 0.15,
+      "samples_per_disease": 10,
+      "train_budget_sufficient": true,
+      "train_required": 89900,
+      "val_budget_sufficient": false,
+      "val_required": 15870
+    },
+    {
+      "fraction_requested": 0.2,
+      "samples_per_disease": 10,
+      "train_budget_sufficient": true,
+      "train_required": 84620,
+      "val_budget_sufficient": false,
+      "val_required": 21150
+    },
+    {
+      "fraction_requested": 0.25,
+      "samples_per_disease": 10,
+      "train_budget_sufficient": true,
+      "train_required": 79330,
+      "val_budget_sufficient": false,
+      "val_required": 26440
+    },
+    {
+      "fraction_requested": 0.3,
+      "samples_per_disease": 10,
+      "train_budget_sufficient": true,
+      "train_required": 74040,
+      "val_budget_sufficient": false,
+      "val_required": 31730
+    },
+    {
+      "fraction_requested": 0.05,
+      "samples_per_disease": 20,
+      "train_budget_sufficient": false,
+      "train_required": 200960,
+      "val_budget_sufficient": true,
+      "val_required": 10580
+    },
+    {
+      "fraction_requested": 0.1,
+      "samples_per_disease": 20,
+      "train_budget_sufficient": false,
+      "train_required": 190380,
+      "val_budget_sufficient": false,
+      "val_required": 21160
+    },
+    {
+      "fraction_requested": 0.15,
+      "samples_per_disease": 20,
+      "train_budget_sufficient": false,
+      "train_required": 179800,
+      "val_budget_sufficient": false,
+      "val_required": 31740
+    },
+    {
+      "fraction_requested": 0.2,
+      "samples_per_disease": 20,
+      "train_budget_sufficient": false,
+      "train_required": 169240,
+      "val_budget_sufficient": false,
+      "val_required": 42300
+    },
+    {
+      "fraction_requested": 0.25,
+      "samples_per_disease": 20,
+      "train_budget_sufficient": false,
+      "train_required": 158660,
+      "val_budget_sufficient": false,
+      "val_required": 52880
+    },
+    {
+      "fraction_requested": 0.3,
+      "samples_per_disease": 20,
+      "train_budget_sufficient": false,
+      "train_required": 148080,
+      "val_budget_sufficient": false,
+      "val_required": 63460
+    }
+  ],
+  "decides": "nothing \u2014 no fraction is selected and no allocation is written",
+  "deployment_relationship": "identical-sibling",
+  "distributions": {
+    "gene_count": [
+      {
+        "band": "0",
+        "diseases": 2994
+      },
+      {
+        "band": "1",
+        "diseases": 6692
+      },
+      {
+        "band": "2-3",
+        "diseases": 561
+      },
+      {
+        "band": "4-10",
+        "diseases": 261
+      },
+      {
+        "band": "11+",
+        "diseases": 69
+      },
+      {
+        "band": "missing",
+        "diseases": 0
+      }
+    ],
+    "generator_capacity": [
+      {
+        "band": "1",
+        "diseases": 320
+      },
+      {
+        "band": "2-5",
+        "diseases": 291
+      },
+      {
+        "band": "6-20",
+        "diseases": 691
+      },
+      {
+        "band": "21-100",
+        "diseases": 540
+      },
+      {
+        "band": "101-1000",
+        "diseases": 563
+      },
+      {
+        "band": "1001+",
+        "diseases": 8172
+      },
+      {
+        "band": "missing",
+        "diseases": 0
+      }
+    ],
+    "phenotype_count": [
+      {
+        "band": "0-1",
+        "diseases": 0
+      },
+      {
+        "band": "2-3",
+        "diseases": 611
+      },
+      {
+        "band": "4-5",
+        "diseases": 484
+      },
+      {
+        "band": "6-10",
+        "diseases": 884
+      },
+      {
+        "band": "11-20",
+        "diseases": 1369
+      },
+      {
+        "band": "21-50",
+        "diseases": 2820
+      },
+      {
+        "band": "51+",
+        "diseases": 4409
+      },
+      {
+        "band": "missing",
+        "diseases": 0
+      }
+    ],
+    "profile_support_size": [
+      {
+        "band": "0",
+        "diseases": 0
+      },
+      {
+        "band": "1",
+        "diseases": 0
+      },
+      {
+        "band": "2-4",
+        "diseases": 774
+      },
+      {
+        "band": "5-10",
+        "diseases": 1148
+      },
+      {
+        "band": "11-25",
+        "diseases": 1971
+      },
+      {
+        "band": "26-50",
+        "diseases": 2214
+      },
+      {
+        "band": "51+",
+        "diseases": 4470
+      },
+      {
+        "band": "missing",
+        "diseases": 0
+      }
+    ]
+  },
+  "excluded_by_design": [
+    "disease ids",
+    "patient ids",
+    "sample ids",
+    "per-disease rows (only band populations are recorded)",
+    "absolute paths, host names, operator names"
+  ],
+  "inputs": {
+    "kg": "6889ed11dfd44811d659228b672b01023a46c2a527cbdde31dd830f0ceb44641"
+  },
+  "schema_version": 2,
+  "sensitivity": [
+    {
+      "fraction_requested": 0.05,
+      "realised_fraction": 0.05001418171504207,
+      "retained_diseases": 10048,
+      "strata": {
+        "gene_count": [
+          {
+            "band": "0",
+            "diseases": 2994,
+            "expected_withheld": 149.74246005483596,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.5469072499773232e-79,
+            "quota": 150,
+            "sd_withheld": 10.099290155559858
+          },
+          {
+            "band": "1",
+            "diseases": 6692,
+            "expected_withheld": 334.6949040370616,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.2917788696545343e-241,
+            "quota": 335,
+            "sd_withheld": 10.807317277023191
+          },
+          {
+            "band": "2-3",
+            "diseases": 561,
+            "expected_withheld": 28.0579559421386,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.4025120756003563e-13,
+            "quota": 28,
+            "sd_withheld": 5.024270490271197
+          },
+          {
+            "band": "4-10",
+            "diseases": 261,
+            "expected_withheld": 13.053701427625981,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.2869510694573855e-06,
+            "quota": 13,
+            "sd_withheld": 3.477926055512293
+          },
+          {
+            "band": "11+",
+            "diseases": 69,
+            "expected_withheld": 3.450978538337903,
+            "p_no_training_representation": 2.08444556970252e-92,
+            "p_no_validation_representation": 0.028667344091291302,
+            "quota": 3,
+            "sd_withheld": 1.8047996630241905
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "generator_capacity": [
+          {
+            "band": "1",
+            "diseases": 320,
+            "expected_withheld": 16.004538148813463,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.71229316028067e-08,
+            "quota": 16,
+            "sd_withheld": 3.839985555330755
+          },
+          {
+            "band": "2-5",
+            "diseases": 291,
+            "expected_withheld": 14.554126879077243,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.6467802833559716e-07,
+            "quota": 14,
+            "sd_withheld": 3.6670275963812813
+          },
+          {
+            "band": "6-20",
+            "diseases": 691,
+            "expected_withheld": 34.559799565094075,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.1559741190018154e-16,
+            "quota": 35,
+            "sd_withheld": 5.539795721625969
+          },
+          {
+            "band": "21-100",
+            "diseases": 540,
+            "expected_withheld": 27.00765812612272,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 4.3774646054144796e-13,
+            "quota": 27,
+            "sd_withheld": 4.934501277865368
+          },
+          {
+            "band": "101-1000",
+            "diseases": 563,
+            "expected_withheld": 28.157984305568686,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.2582686048078284e-13,
+            "quota": 28,
+            "sd_withheld": 5.032715898339144
+          },
+          {
+            "band": "1001+",
+            "diseases": 8172,
+            "expected_withheld": 408.7158929753238,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1e-323,
+            "quota": 409,
+            "sd_withheld": 9.3965005415534
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "phenotype_count": [
+          {
+            "band": "0-1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-3",
+            "diseases": 611,
+            "expected_withheld": 30.558665027890708,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 9.239830317868557e-15,
+            "quota": 31,
+            "sd_withheld": 5.230286396569239
+          },
+          {
+            "band": "4-5",
+            "diseases": 484,
+            "expected_withheld": 24.20686395008036,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 8.999559698802397e-12,
+            "quota": 24,
+            "sd_withheld": 4.6846509907919724
+          },
+          {
+            "band": "6-10",
+            "diseases": 884,
+            "expected_withheld": 44.21253663609719,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.550942954356679e-21,
+            "quota": 44,
+            "sd_withheld": 6.204398192695894
+          },
+          {
+            "band": "11-20",
+            "diseases": 1369,
+            "expected_withheld": 68.4694147678926,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.867835512715029e-33,
+            "quota": 68,
+            "sd_withheld": 7.525386381943546
+          },
+          {
+            "band": "21-50",
+            "diseases": 2820,
+            "expected_withheld": 141.03999243641866,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.887495331639097e-74,
+            "quota": 141,
+            "sd_withheld": 9.913245776750749
+          },
+          {
+            "band": "51+",
+            "diseases": 4409,
+            "expected_withheld": 220.5125271816205,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 6.368526792690163e-129,
+            "quota": 221,
+            "sd_withheld": 11.053165065420176
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "profile_support_size": [
+          {
+            "band": "0",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-4",
+            "diseases": 774,
+            "expected_withheld": 38.710976647442564,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.1805317557831635e-18,
+            "quota": 39,
+            "sd_withheld": 5.8384075206524235
+          },
+          {
+            "band": "5-10",
+            "diseases": 1148,
+            "expected_withheld": 57.4162806088683,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 7.597907600455339e-28,
+            "quota": 57,
+            "sd_withheld": 6.973457937825171
+          },
+          {
+            "band": "11-25",
+            "diseases": 1971,
+            "expected_withheld": 98.57795216034792,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.8110864727707003e-49,
+            "quota": 99,
+            "sd_withheld": 8.729480653199792
+          },
+          {
+            "band": "26-50",
+            "diseases": 2214,
+            "expected_withheld": 110.73139831710314,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.9098797397844023e-56,
+            "quota": 111,
+            "sd_withheld": 9.120408285530104
+          },
+          {
+            "band": "51+",
+            "diseases": 4470,
+            "expected_withheld": 223.56339226623805,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.608491120116109e-131,
+            "quota": 223,
+            "sd_withheld": 11.074194460305195
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ]
+      },
+      "withheld_diseases": 529
+    },
+    {
+      "fraction_requested": 0.1,
+      "realised_fraction": 0.10002836343008414,
+      "retained_diseases": 9519,
+      "strata": {
+        "gene_count": [
+          {
+            "band": "0",
+            "diseases": 2994,
+            "expected_withheld": 299.4849201096719,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.7188434442313846e-163,
+            "quota": 300,
+            "sd_withheld": 13.901501081784096
+          },
+          {
+            "band": "1",
+            "diseases": 6692,
+            "expected_withheld": 669.3898080741232,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 669,
+            "sd_withheld": 14.876088368944712
+          },
+          {
+            "band": "2-3",
+            "diseases": 561,
+            "expected_withheld": 56.1159118842772,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.7809125212604695e-27,
+            "quota": 56,
+            "sd_withheld": 6.915822852879414
+          },
+          {
+            "band": "4-10",
+            "diseases": 261,
+            "expected_withheld": 26.107402855251962,
+            "p_no_training_representation": 1.5861298368180597e-275,
+            "p_no_validation_representation": 7.872984829115053e-13,
+            "quota": 26,
+            "sd_withheld": 4.787306046103892
+          },
+          {
+            "band": "11+",
+            "diseases": 69,
+            "expected_withheld": 6.901957076675806,
+            "p_no_training_representation": 1.3199281938419232e-70,
+            "p_no_validation_representation": 0.0006776934483526073,
+            "quota": 7,
+            "sd_withheld": 2.4842760314319845
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "generator_capacity": [
+          {
+            "band": "1",
+            "diseases": 320,
+            "expected_withheld": 32.009076297626926,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.3038251865966286e-15,
+            "quota": 32,
+            "sd_withheld": 5.28567478795311
+          },
+          {
+            "band": "2-5",
+            "diseases": 291,
+            "expected_withheld": 29.108253758154486,
+            "p_no_training_representation": 4.14059331772221e-309,
+            "p_no_validation_representation": 3.049422933919347e-14,
+            "quota": 29,
+            "sd_withheld": 5.04760109996073
+          },
+          {
+            "band": "6-20",
+            "diseases": 691,
+            "expected_withheld": 69.11959913018815,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.70387018787881e-33,
+            "quota": 69,
+            "sd_withheld": 7.625434563304427
+          },
+          {
+            "band": "21-100",
+            "diseases": 540,
+            "expected_withheld": 54.01531625224544,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.93155046122759e-26,
+            "quota": 54,
+            "sd_withheld": 6.792257059229695
+          },
+          {
+            "band": "101-1000",
+            "diseases": 563,
+            "expected_withheld": 56.31596861113737,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.024300853744814e-27,
+            "quota": 56,
+            "sd_withheld": 6.927447813404787
+          },
+          {
+            "band": "1001+",
+            "diseases": 8172,
+            "expected_withheld": 817.4317859506476,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 818,
+            "sd_withheld": 12.934123134533127
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "phenotype_count": [
+          {
+            "band": "0-1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-3",
+            "diseases": 611,
+            "expected_withheld": 61.117330055781416,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.4032608161291783e-29,
+            "quota": 61,
+            "sd_withheld": 7.199400242988392
+          },
+          {
+            "band": "4-5",
+            "diseases": 484,
+            "expected_withheld": 48.41372790016072,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.9747506546356383e-23,
+            "quota": 48,
+            "sd_withheld": 6.448342389729605
+          },
+          {
+            "band": "6-10",
+            "diseases": 884,
+            "expected_withheld": 88.42507327219438,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 4.415475214675796e-43,
+            "quota": 89,
+            "sd_withheld": 8.540248557974015
+          },
+          {
+            "band": "11-20",
+            "diseases": 1369,
+            "expected_withheld": 136.9388295357852,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 4.284681674092549e-68,
+            "quota": 137,
+            "sd_withheld": 10.358566326747168
+          },
+          {
+            "band": "21-50",
+            "diseases": 2820,
+            "expected_withheld": 282.0799848728373,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.8280457254167863e-152,
+            "quota": 282,
+            "sd_withheld": 13.645414159491752
+          },
+          {
+            "band": "51+",
+            "diseases": 4409,
+            "expected_withheld": 441.025054363241,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.337367179741608e-266,
+            "quota": 441,
+            "sd_withheld": 15.214493667110487
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "profile_support_size": [
+          {
+            "band": "0",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-4",
+            "diseases": 774,
+            "expected_withheld": 77.42195329488513,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.3591783408895866e-37,
+            "quota": 77,
+            "sd_withheld": 8.036468624437376
+          },
+          {
+            "band": "5-10",
+            "diseases": 1148,
+            "expected_withheld": 114.8325612177366,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.581029558449152e-56,
+            "quota": 115,
+            "sd_withheld": 9.598846213274134
+          },
+          {
+            "band": "11-25",
+            "diseases": 1971,
+            "expected_withheld": 197.15590432069584,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.626272739388192e-101,
+            "quota": 197,
+            "sd_withheld": 12.01598160609962
+          },
+          {
+            "band": "26-50",
+            "diseases": 2214,
+            "expected_withheld": 221.46279663420628,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.1887677948784857e-115,
+            "quota": 222,
+            "sd_withheld": 12.554086841223235
+          },
+          {
+            "band": "51+",
+            "diseases": 4470,
+            "expected_withheld": 447.1267845324761,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.3009094043677514e-271,
+            "quota": 447,
+            "sd_withheld": 15.243440271400534
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ]
+      },
+      "withheld_diseases": 1058
+    },
+    {
+      "fraction_requested": 0.15,
+      "realised_fraction": 0.15004254514512622,
+      "retained_diseases": 8990,
+      "strata": {
+        "gene_count": [
+          {
+            "band": "0",
+            "diseases": 2994,
+            "expected_withheld": 449.2273801645079,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.567655608886631e-253,
+            "quota": 449,
+            "sd_withheld": 16.545942464603467
+          },
+          {
+            "band": "1",
+            "diseases": 6692,
+            "expected_withheld": 1004.0847121111847,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 1004,
+            "sd_withheld": 17.705922605253434
+          },
+          {
+            "band": "2-3",
+            "diseases": 561,
+            "expected_withheld": 84.1738678264158,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.6124554071466357e-41,
+            "quota": 84,
+            "sd_withheld": 8.23139935363347
+          },
+          {
+            "band": "4-10",
+            "diseases": 261,
+            "expected_withheld": 39.16110428287794,
+            "p_no_training_representation": 3.607148717991373e-224,
+            "p_no_validation_representation": 2.1001216521770062e-19,
+            "quota": 39,
+            "sd_withheld": 5.6979810981043775
+          },
+          {
+            "band": "11+",
+            "diseases": 69,
+            "expected_withheld": 10.35293561501371,
+            "p_no_training_representation": 4.016881699950952e-58,
+            "p_no_validation_representation": 1.2921739469327292e-05,
+            "quota": 11,
+            "sd_withheld": 2.9568525039449733
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "generator_capacity": [
+          {
+            "band": "1",
+            "diseases": 320,
+            "expected_withheld": 48.01361444644039,
+            "p_no_training_representation": 3.114677723650137e-277,
+            "p_no_validation_representation": 1.0686382857301974e-23,
+            "quota": 48,
+            "sd_withheld": 6.291153049844117
+          },
+          {
+            "band": "2-5",
+            "diseases": 291,
+            "expected_withheld": 43.66238063723173,
+            "p_no_training_representation": 5.045680415673726e-251,
+            "p_no_validation_representation": 1.3883624081515433e-21,
+            "quota": 44,
+            "sd_withheld": 6.007791309217446
+          },
+          {
+            "band": "6-20",
+            "diseases": 691,
+            "expected_withheld": 103.67939869528222,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.506154808001964e-51,
+            "quota": 104,
+            "sd_withheld": 9.075998398285295
+          },
+          {
+            "band": "21-100",
+            "diseases": 540,
+            "expected_withheld": 81.02297437836816,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 6.010191802318424e-40,
+            "quota": 81,
+            "sd_withheld": 8.08432800498607
+          },
+          {
+            "band": "101-1000",
+            "diseases": 563,
+            "expected_withheld": 84.47395291670605,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.1419393123872401e-41,
+            "quota": 84,
+            "sd_withheld": 8.245235695973374
+          },
+          {
+            "band": "1001+",
+            "diseases": 8172,
+            "expected_withheld": 1226.1476789259714,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 1226,
+            "sd_withheld": 15.394543075244396
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "phenotype_count": [
+          {
+            "band": "0-1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-3",
+            "diseases": 611,
+            "expected_withheld": 91.67599508367212,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.82838022657524e-45,
+            "quota": 92,
+            "sd_withheld": 8.56892083087551
+          },
+          {
+            "band": "4-5",
+            "diseases": 484,
+            "expected_withheld": 72.62059185024108,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 8.949846255346706e-36,
+            "quota": 73,
+            "sd_withheld": 7.674991466377442
+          },
+          {
+            "band": "6-10",
+            "diseases": 884,
+            "expected_withheld": 132.63760990829158,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.750642675229994e-66,
+            "quota": 133,
+            "sd_withheld": 10.16483475002656
+          },
+          {
+            "band": "11-20",
+            "diseases": 1369,
+            "expected_withheld": 205.4082443036778,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 6.985795031835492e-105,
+            "quota": 205,
+            "sd_withheld": 12.329045723178934
+          },
+          {
+            "band": "21-50",
+            "diseases": 2820,
+            "expected_withheld": 423.11997730925594,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 8.454746602516453e-236,
+            "quota": 423,
+            "sd_withheld": 16.241140885460428
+          },
+          {
+            "band": "51+",
+            "diseases": 4409,
+            "expected_withheld": 661.5375815448615,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 661,
+            "sd_withheld": 18.108701741134297
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "profile_support_size": [
+          {
+            "band": "0",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-4",
+            "diseases": 774,
+            "expected_withheld": 116.13292994232769,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.155242204123196e-57,
+            "quota": 116,
+            "sd_withheld": 9.565222251629427
+          },
+          {
+            "band": "5-10",
+            "diseases": 1148,
+            "expected_withheld": 172.2488418266049,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.799012010145465e-87,
+            "quota": 172,
+            "sd_withheld": 11.42480630235852
+          },
+          {
+            "band": "11-25",
+            "diseases": 1971,
+            "expected_withheld": 295.7338564810438,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.3174318734465295e-156,
+            "quota": 296,
+            "sd_withheld": 14.301746202845472
+          },
+          {
+            "band": "26-50",
+            "diseases": 2214,
+            "expected_withheld": 332.19419495130944,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 4.6375416587559064e-178,
+            "quota": 332,
+            "sd_withheld": 14.942213603299365
+          },
+          {
+            "band": "51+",
+            "diseases": 4470,
+            "expected_withheld": 670.6901767987142,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 671,
+            "sd_withheld": 18.143154772235835
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ]
+      },
+      "withheld_diseases": 1587
+    },
+    {
+      "fraction_requested": 0.2,
+      "realised_fraction": 0.19996218209322114,
+      "retained_diseases": 8462,
+      "strata": {
+        "gene_count": [
+          {
+            "band": "0",
+            "diseases": 2994,
+            "expected_withheld": 598.6867731871041,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 599,
+            "sd_withheld": 18.531684463738472
+          },
+          {
+            "band": "1",
+            "diseases": 6692,
+            "expected_withheld": 1338.1469225678359,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 1338,
+            "sd_withheld": 19.83087826890944
+          },
+          {
+            "band": "2-3",
+            "diseases": 561,
+            "expected_withheld": 112.17878415429706,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 9.243870540131755e-57,
+            "quota": 112,
+            "sd_withheld": 9.21928115263829
+          },
+          {
+            "band": "4-10",
+            "diseases": 261,
+            "expected_withheld": 52.190129526330715,
+            "p_no_training_representation": 4.784945622409006e-189,
+            "p_no_validation_representation": 2.2754340889105684e-26,
+            "quota": 52,
+            "sd_withheld": 6.381817658094157
+          },
+          {
+            "band": "11+",
+            "diseases": 69,
+            "expected_withheld": 13.79739056443226,
+            "p_no_training_representation": 2.3709600010447712e-49,
+            "p_no_validation_representation": 1.9517846828977686e-07,
+            "quota": 14,
+            "sd_withheld": 3.3117157107337043
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "generator_capacity": [
+          {
+            "band": "1",
+            "diseases": 320,
+            "expected_withheld": 63.987898269830765,
+            "p_no_training_representation": 2.334909834640408e-233,
+            "p_no_validation_representation": 2.879925174117442e-32,
+            "quota": 64,
+            "sd_withheld": 7.046178450227747
+          },
+          {
+            "band": "2-5",
+            "diseases": 291,
+            "expected_withheld": 58.18899498912735,
+            "p_no_training_representation": 1.7128413233256595e-211,
+            "p_no_validation_representation": 2.306723582257527e-29,
+            "quota": 58,
+            "sd_withheld": 6.7288093805828515
+          },
+          {
+            "band": "6-20",
+            "diseases": 691,
+            "expected_withheld": 138.1738678264158,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.9920903467242943e-70,
+            "quota": 138,
+            "sd_withheld": 10.165243767179367
+          },
+          {
+            "band": "21-100",
+            "diseases": 540,
+            "expected_withheld": 107.97957833033942,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.3379328774646087e-54,
+            "quota": 108,
+            "sd_withheld": 9.054559207507591
+          },
+          {
+            "band": "101-1000",
+            "diseases": 563,
+            "expected_withheld": 112.5787085184835,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.751984911878288e-57,
+            "quota": 113,
+            "sd_withheld": 9.23477804747664
+          },
+          {
+            "band": "1001+",
+            "diseases": 8172,
+            "expected_withheld": 1634.090952065803,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 1634,
+            "sd_withheld": 17.242101218722947
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "phenotype_count": [
+          {
+            "band": "0-1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-3",
+            "diseases": 611,
+            "expected_withheld": 122.17689325895812,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 6.323671329669736e-62,
+            "quota": 122,
+            "sd_withheld": 9.5973098765605
+          },
+          {
+            "band": "4-5",
+            "diseases": 484,
+            "expected_withheld": 96.78169613311903,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 7.296998529980666e-49,
+            "quota": 97,
+            "sd_withheld": 8.596096621335663
+          },
+          {
+            "band": "6-10",
+            "diseases": 884,
+            "expected_withheld": 176.7665689704075,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.1862934756445945e-90,
+            "quota": 177,
+            "sd_withheld": 11.38475554454012
+          },
+          {
+            "band": "11-20",
+            "diseases": 1369,
+            "expected_withheld": 273.74822728561975,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.0117884810569995e-144,
+            "quota": 274,
+            "sd_withheld": 13.80870177505672
+          },
+          {
+            "band": "21-50",
+            "diseases": 2820,
+            "expected_withheld": 563.8933535028837,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 564,
+            "sd_withheld": 18.190302478347686
+          },
+          {
+            "band": "51+",
+            "diseases": 4409,
+            "expected_withheld": 881.633260849012,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 881,
+            "sd_withheld": 20.281996473308464
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "profile_support_size": [
+          {
+            "band": "0",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-4",
+            "diseases": 774,
+            "expected_withheld": 154.77072894015316,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.726661319126094e-79,
+            "quota": 155,
+            "sd_withheld": 10.713181251049075
+          },
+          {
+            "band": "5-10",
+            "diseases": 1148,
+            "expected_withheld": 229.55658504301786,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.5605698558994e-119,
+            "quota": 229,
+            "sd_withheld": 12.795941114117294
+          },
+          {
+            "band": "11-25",
+            "diseases": 1971,
+            "expected_withheld": 394.12546090573886,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 6.208503460524455e-215,
+            "quota": 394,
+            "sd_withheld": 16.018153603434143
+          },
+          {
+            "band": "26-50",
+            "diseases": 2214,
+            "expected_withheld": 442.7162711543916,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.4172545002468566e-245,
+            "quota": 443,
+            "sd_withheld": 16.735485952432303
+          },
+          {
+            "band": "51+",
+            "diseases": 4470,
+            "expected_withheld": 893.8309539566985,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 894,
+            "sd_withheld": 20.320584344779608
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ]
+      },
+      "withheld_diseases": 2115
+    },
+    {
+      "fraction_requested": 0.25,
+      "realised_fraction": 0.2499763638082632,
+      "retained_diseases": 7933,
+      "strata": {
+        "gene_count": [
+          {
+            "band": "0",
+            "diseases": 2994,
+            "expected_withheld": 748.4292332419401,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 749,
+            "sd_withheld": 20.06192733841568
+          },
+          {
+            "band": "1",
+            "diseases": 6692,
+            "expected_withheld": 1672.8418266048975,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 1673,
+            "sd_withheld": 21.46840130298488
+          },
+          {
+            "band": "2-3",
+            "diseases": 561,
+            "expected_withheld": 140.23674009643565,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 4.725508343887743e-73,
+            "quota": 140,
+            "sd_withheld": 9.980557836421443
+          },
+          {
+            "band": "4-10",
+            "diseases": 261,
+            "expected_withheld": 65.2438309539567,
+            "p_no_training_representation": 3.09408496378558e-162,
+            "p_no_validation_representation": 8.339436425876912e-34,
+            "quota": 65,
+            "sd_withheld": 6.908792473464916
+          },
+          {
+            "band": "11+",
+            "diseases": 69,
+            "expected_withheld": 17.248369102770162,
+            "p_no_training_representation": 1.4549421133193524e-42,
+            "p_no_validation_representation": 2.227941680219264e-09,
+            "quota": 17,
+            "sd_withheld": 3.5851786751621666
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "generator_capacity": [
+          {
+            "band": "1",
+            "diseases": 320,
+            "expected_withheld": 79.99243641864423,
+            "p_no_training_representation": 5.0285436755543915e-200,
+            "p_no_validation_representation": 2.035355495684951e-41,
+            "quota": 80,
+            "sd_withheld": 7.6280124647375045
+          },
+          {
+            "band": "2-5",
+            "diseases": 291,
+            "expected_withheld": 72.7431218682046,
+            "p_no_training_representation": 2.175892831390219e-181,
+            "p_no_validation_representation": 1.1395388509629064e-37,
+            "quota": 73,
+            "sd_withheld": 7.284436832034766
+          },
+          {
+            "band": "6-20",
+            "diseases": 691,
+            "expected_withheld": 172.73366739150987,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.7319743471363008e-90,
+            "quota": 172,
+            "sd_withheld": 11.004632753891322
+          },
+          {
+            "band": "21-100",
+            "diseases": 540,
+            "expected_withheld": 134.98723645646214,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.925169359664895e-70,
+            "quota": 135,
+            "sd_withheld": 9.80223407417949
+          },
+          {
+            "band": "101-1000",
+            "diseases": 563,
+            "expected_withheld": 140.7366928240522,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.5598528585378344e-73,
+            "quota": 141,
+            "sd_withheld": 9.99733437817761
+          },
+          {
+            "band": "1001+",
+            "diseases": 8172,
+            "expected_withheld": 2042.806845041127,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 2043,
+            "sd_withheld": 18.66585752031774
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "phenotype_count": [
+          {
+            "band": "0-1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-3",
+            "diseases": 611,
+            "expected_withheld": 152.73555828684883,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 9.997108429392009e-80,
+            "quota": 153,
+            "sd_withheld": 10.389802058445683
+          },
+          {
+            "band": "4-5",
+            "diseases": 484,
+            "expected_withheld": 120.98856008319939,
+            "p_no_training_representation": 9.274973910897737e-308,
+            "p_no_validation_representation": 7.540886010346662e-63,
+            "quota": 121,
+            "sd_withheld": 9.305914211343458
+          },
+          {
+            "band": "6-10",
+            "diseases": 884,
+            "expected_withheld": 220.97910560650467,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 7.08684514910782e-117,
+            "quota": 221,
+            "sd_withheld": 12.324844994372024
+          },
+          {
+            "band": "11-20",
+            "diseases": 1369,
+            "expected_withheld": 342.21764205351235,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.0795215198999886e-186,
+            "quota": 342,
+            "sd_withheld": 14.948947150007394
+          },
+          {
+            "band": "21-50",
+            "diseases": 2820,
+            "expected_withheld": 704.9333459393023,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 705,
+            "sd_withheld": 19.692355937663887
+          },
+          {
+            "band": "51+",
+            "diseases": 4409,
+            "expected_withheld": 1102.1457880306325,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 1102,
+            "sd_withheld": 21.95677032607065
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "profile_support_size": [
+          {
+            "band": "0",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-4",
+            "diseases": 774,
+            "expected_withheld": 193.48170558759574,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 9.228841560360754e-102,
+            "quota": 194,
+            "sd_withheld": 11.597815851137451
+          },
+          {
+            "band": "5-10",
+            "diseases": 1148,
+            "expected_withheld": 286.9728656518862,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.4305634759508764e-154,
+            "quota": 287,
+            "sd_withheld": 13.852558376999232
+          },
+          {
+            "band": "11-25",
+            "diseases": 1971,
+            "expected_withheld": 492.7034130660868,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.8527387281848675e-278,
+            "quota": 493,
+            "sd_withheld": 17.340843155217893
+          },
+          {
+            "band": "26-50",
+            "diseases": 2214,
+            "expected_withheld": 553.4476694714948,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 1.498847e-317,
+            "quota": 553,
+            "sd_withheld": 18.117408798306386
+          },
+          {
+            "band": "51+",
+            "diseases": 4470,
+            "expected_withheld": 1117.3943462229365,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 1117,
+            "sd_withheld": 21.998544568186258
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ]
+      },
+      "withheld_diseases": 2644
+    },
+    {
+      "fraction_requested": 0.3,
+      "realised_fraction": 0.2999905455233053,
+      "retained_diseases": 7404,
+      "strata": {
+        "gene_count": [
+          {
+            "band": "0",
+            "diseases": 2994,
+            "expected_withheld": 898.171693296776,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 898,
+            "sd_withheld": 21.23202621123671
+          },
+          {
+            "band": "1",
+            "diseases": 6692,
+            "expected_withheld": 2007.536730641959,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 2008,
+            "sd_withheld": 22.720531855655697
+          },
+          {
+            "band": "2-3",
+            "diseases": 561,
+            "expected_withheld": 168.29469603857427,
+            "p_no_training_representation": 2.15319422141685e-310,
+            "p_no_validation_representation": 1.6389354475785843e-90,
+            "quota": 168,
+            "sd_withheld": 10.562667385395818
+          },
+          {
+            "band": "4-10",
+            "diseases": 261,
+            "expected_withheld": 78.29753238158268,
+            "p_no_training_representation": 1.4229439291400025e-140,
+            "p_no_validation_representation": 9.181023334279819e-42,
+            "quota": 78,
+            "sd_withheld": 7.311743304129929
+          },
+          {
+            "band": "11+",
+            "diseases": 69,
+            "expected_withheld": 20.699347641108066,
+            "p_no_training_representation": 4.937655675047577e-37,
+            "p_no_validation_representation": 1.8649640367881237e-11,
+            "quota": 21,
+            "sd_withheld": 3.794281891214416
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "generator_capacity": [
+          {
+            "band": "1",
+            "diseases": 320,
+            "expected_withheld": 95.99697456745768,
+            "p_no_training_representation": 3.6188795282873434e-173,
+            "p_no_validation_representation": 3.2548795885429785e-51,
+            "quota": 96,
+            "sd_withheld": 8.072911333938524
+          },
+          {
+            "band": "2-5",
+            "diseases": 291,
+            "expected_withheld": 87.29724874728184,
+            "p_no_training_representation": 4.234709153131533e-157,
+            "p_no_validation_representation": 1.46492941008751e-46,
+            "quota": 87,
+            "sd_withheld": 7.709296875764393
+          },
+          {
+            "band": "6-20",
+            "diseases": 691,
+            "expected_withheld": 207.29346695660396,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.4352231942012186e-112,
+            "quota": 207,
+            "sd_withheld": 11.646470806832577
+          },
+          {
+            "band": "21-100",
+            "diseases": 540,
+            "expected_withheld": 161.99489458258486,
+            "p_no_training_representation": 3.6553844197651725e-298,
+            "p_no_validation_representation": 4.834248336242815e-87,
+            "quota": 162,
+            "sd_withheld": 10.37394300562212
+          },
+          {
+            "band": "101-1000",
+            "diseases": 563,
+            "expected_withheld": 168.89467712962087,
+            "p_no_training_representation": 1.4639221452225e-311,
+            "p_no_validation_representation": 7.649731443385289e-91,
+            "quota": 169,
+            "sd_withheld": 10.58042240804605
+          },
+          {
+            "band": "1001+",
+            "diseases": 8172,
+            "expected_withheld": 2451.5227380164506,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 2452,
+            "sd_withheld": 19.754531528369778
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "phenotype_count": [
+          {
+            "band": "0-1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-3",
+            "diseases": 611,
+            "expected_withheld": 183.29422331473953,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 8.268818710506843e-99,
+            "quota": 183,
+            "sd_withheld": 10.995780510682517
+          },
+          {
+            "band": "4-5",
+            "diseases": 484,
+            "expected_withheld": 145.19542403327975,
+            "p_no_training_representation": 8.223328261812862e-266,
+            "p_no_validation_representation": 7.835105754399318e-78,
+            "quota": 145,
+            "sd_withheld": 9.848675609367847
+          },
+          {
+            "band": "6-10",
+            "diseases": 884,
+            "expected_withheld": 265.19164224260186,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5.022043791148107e-145,
+            "quota": 265,
+            "sd_withheld": 13.043683568171161
+          },
+          {
+            "band": "11-20",
+            "diseases": 1369,
+            "expected_withheld": 410.68705682140495,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.222671693817015e-231,
+            "quota": 411,
+            "sd_withheld": 15.820834776506304
+          },
+          {
+            "band": "21-50",
+            "diseases": 2820,
+            "expected_withheld": 845.9733383757209,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 846,
+            "sd_withheld": 20.84089979873794
+          },
+          {
+            "band": "51+",
+            "diseases": 4409,
+            "expected_withheld": 1322.658315212253,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 1323,
+            "sd_withheld": 23.237384684598897
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ],
+        "profile_support_size": [
+          {
+            "band": "0",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "1",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          },
+          {
+            "band": "2-4",
+            "diseases": 774,
+            "expected_withheld": 232.1926822350383,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 3.2521878258023185e-126,
+            "quota": 232,
+            "sd_withheld": 12.274250922687935
+          },
+          {
+            "band": "5-10",
+            "diseases": 1148,
+            "expected_withheld": 344.38914626075444,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 2.902693743525585e-191,
+            "quota": 345,
+            "sd_withheld": 14.660499840907175
+          },
+          {
+            "band": "11-25",
+            "diseases": 1971,
+            "expected_withheld": 591.2813652264347,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 591,
+            "sd_withheld": 18.352236561614767
+          },
+          {
+            "band": "26-50",
+            "diseases": 2214,
+            "expected_withheld": 664.1790677885979,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 5e-324,
+            "quota": 664,
+            "sd_withheld": 19.174094891109785
+          },
+          {
+            "band": "51+",
+            "diseases": 4470,
+            "expected_withheld": 1340.9577384891745,
+            "p_no_training_representation": 0.0,
+            "p_no_validation_representation": 0.0,
+            "quota": 1341,
+            "sd_withheld": 23.28159538223485
+          },
+          {
+            "band": "missing",
+            "diseases": 0,
+            "expected_withheld": 0.0,
+            "p_no_training_representation": null,
+            "p_no_validation_representation": null,
+            "quota": 0,
+            "sd_withheld": 0.0
+          }
+        ]
+      },
+      "withheld_diseases": 3173
+    }
+  ],
+  "universe": {
+    "disease_nodes": 29866,
+    "eligibility_rule": "profile phenotype support >= 2",
+    "eligible_diseases": 10577,
+    "exclusions": {
+      "below_min_phenotypes": 19289,
+      "note": "The only exclusion reason observable from a materialised kg.json. Identifier-mapping outcomes happen during KG construction and leave no trace in the artifact, so no mapping success rate is reported here."
+    }
+  }
+}

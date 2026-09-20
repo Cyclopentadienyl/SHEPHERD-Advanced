@@ -607,20 +607,51 @@ class Ontology:
     # Export
     # =========================================================================
     def get_all_terms(self, include_obsolete: bool = False) -> List[str]:
-        """獲取所有術語 ID"""
+        """Every term id, **in sorted order**.
+
+        The order is part of the contract, not an accident of parsing.
+        ``KnowledgeGraphBuilder.add_ontology`` inserts nodes in the order this
+        returns them, and ``KnowledgeGraph.add_node`` assigns each node the next
+        integer index — so this list decides which integer names which disease.
+        Those integers are what the graph tensors are indexed by, what the
+        generated cohorts store, what the disease allocation partitions, and
+        what ``universe_digest`` is computed over.
+
+        `pronto` parses large ontologies across a thread pool, so its own
+        iteration order varies between two loads of the same file **in the same
+        process**. Left unsorted, two builds from identical annotation files
+        produced graphs that were identical in content and different in every
+        integer index: a `kg.json` digest that identified a build rather than a
+        graph, an allocation that withheld a different set of diseases under the
+        same seed, and a `universe_digest` that could not be compared across
+        builds. Sorting here is what makes a rebuild reproduce the workspace
+        rather than merely resemble it.
+
+        Sorting rather than pinning `threads=1`: this holds whatever `pronto`
+        does next, and costs one pass over ids the caller is about to iterate
+        anyway.
+        """
         if self._mode == "pronto":
-            return [
+            return sorted(
                 t.id for t in self._pronto_ont.terms()
                 if include_obsolete or not t.obsolete
-            ]
+            )
         else:
-            return [
+            return sorted(
                 term_id for term_id, term in self._terms.items()
                 if include_obsolete or not term.is_obsolete
-            ]
+            )
 
     def to_edges(self) -> List[Tuple[str, str, str]]:
-        """導出為邊列表"""
+        """The hierarchy as ``(child, parent, "is_a")`` triples, **sorted**.
+
+        For the same reason ``get_all_terms`` is sorted: the builder appends
+        these to ``KnowledgeGraph._edges`` in the order given, `save_json`
+        writes that order, and the digest is taken over what it wrote. Both
+        `pronto`'s term iteration and `superclasses()` are free to vary, and
+        `self._parents` holds sets in the legacy path — three ways for the same
+        hierarchy to serialise differently.
+        """
         edges = []
 
         if self._mode == "pronto":
@@ -634,7 +665,7 @@ class Ontology:
                 for parent_id in parents:
                     edges.append((child_id, parent_id, "is_a"))
 
-        return edges
+        return sorted(edges)
 
     def __repr__(self) -> str:
         return f"Ontology({self.name}, version={self.version}, terms={self.num_terms}, mode={self._mode})"

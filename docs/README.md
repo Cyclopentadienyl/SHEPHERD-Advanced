@@ -60,6 +60,8 @@ work shipped is stale, not authoritative.
 |---|---|
 | [`working/README.md`](working/README.md) | The convention, and the list of live phases |
 | [`working/BACKLOG.md`](working/BACKLOG.md) | The one ordered list across all live phases: what is open, in what order, what blocks what, and the measured facts that set that order. Ordering and dependencies only — the decisions themselves stay in the phase folders |
+| [`working/PLAN_CONFIGURABILITY_AND_PROVENANCE.md`](working/PLAN_CONFIGURABILITY_AND_PROVENANCE.md) | **Approved for implementation.** Configurability as a stated requirement — the system is a clinical model *and* a research framework — and the two places existing code works against it: a measurement refusal that could be a record, and a checkpoint whose provenance metadata cannot identify its training inputs. Proposals A and B, with what each explicitly does not do |
+| [`working/EVALUATION_COHORTS.md`](working/EVALUATION_COHORTS.md) | What the original team actually did about train/validation/test — read from their repository, not recalled — what of it is obtainable, and the three-cohort division of labour: MyGene2 for research comparison, a disease-disjoint synthetic split for unseen-disease generalisation, the institutional cohort as the acceptance benchmark. Includes what a fifteen-case cohort can and cannot decide |
 | [`working/results-review/README.md`](working/results-review/README.md) | Results-review phase: what the specs cover, and how to run the closure audit |
 | [`working/results-review/SPEC_0_INDEX.md`](working/results-review/SPEC_0_INDEX.md) | Index, requirements traceability, gates, open institutional values, backlog |
 | [`working/results-review/SPEC_1_RESULTS_REVIEW.md`](working/results-review/SPEC_1_RESULTS_REVIEW.md) | Scorer/view authority, SP sort and filter policy, decomposition, two-surface UX, limits |
@@ -70,6 +72,8 @@ work shipped is stale, not authoritative.
 | [`working/scorer-measurement/README.md`](working/scorer-measurement/README.md) | Scorer-measurement phase (work item B-0): the A/B/C/D mode ladder and the stage map |
 | [`working/scorer-measurement/PLAN_B03.md`](working/scorer-measurement/PLAN_B03.md) | B-0.3 proposal — Modes B and C, and the three decisions that keep the ladder interpretable |
 | [`working/scorer-measurement/PLAN_B04.md`](working/scorer-measurement/PLAN_B04.md) | B-0.4 proposal — vectorising the shortest-path primitive's body, why the production caller is deferred to B-1, and the correction to what B-0.4 was previously thought to be |
+| [`working/PLAN_ONTOLOGY_PROVENANCE.md`](working/PLAN_ONTOLOGY_PROVENANCE.md) | Ontology provenance and selection — what the loader does not record, why selection belongs to the build rather than to configuration, and the proposed phasing. **Draft, not approved** |
+| [`working/scorer-measurement/PLAN_B04_PRODUCTIONISATION.md`](working/scorer-measurement/PLAN_B04_PRODUCTIONISATION.md) | Backlog item 5a — how B-0.4's selected index reaches production, the decisions it asks a reviewer to make, and which of PLAN_B04 §13's readings this hardware can produce. **Draft, not approved for implementation** |
 | [`working/scorer-measurement/PLAN_B02_shipped.md`](working/scorer-measurement/PLAN_B02_shipped.md) | The plan the shipped B-0.2 harness was built from. History, not authority |
 | [`working/task-scope/README.md`](working/task-scope/README.md) | Five scope questions raised by the institution's supplied-candidate-list use case: the reserved `candidate_genes` interface, legacy removal, the supplied-universe request/result variant, where the SP ablation belongs, and causal-gene scoring as its own work item. **Scope decisions reviewed; the reserved-interface item is implemented, the rest unscheduled** |
 | [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) | Scoping for the scorer-retraining phase: the scorer-bundle unit of comparison, the experiment order, the versioned checkpoint scorer schema and its inference boundary, and the four kinds of legacy checkpoint. Nothing scheduled, no gate cleared |
@@ -99,6 +103,7 @@ and other documents.
 | [`../medical-kg-blueprint.md`](../medical-kg-blueprint.md) | Project-level engineering blueprint; referenced from the repository root |
 | [`../medical-kg-todo.md`](../medical-kg-todo.md) | Project-level task list |
 | [`../deployment-guide.md`](../deployment-guide.md) | Deployment guide; referenced by `deploy.sh` |
+| [`../deployment-guide.en.md`](../deployment-guide.en.md) | English edition of the deployment guide; the Chinese original is authoritative for `deploy.cmd`'s pointer |
 | [`../data/external/README.md`](../data/external/README.md) | How to obtain and place external data sources — belongs with the data |
 | [`../configs/deployment/README.md`](../configs/deployment/README.md) | Deployment config conventions |
 | [`../models/pretrained/README.md`](../models/pretrained/README.md) | What belongs in the pretrained-model directory |

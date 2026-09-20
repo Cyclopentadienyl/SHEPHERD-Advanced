@@ -41,11 +41,11 @@ what changed the ordering.
 
 | # | Fact | Where |
 |---|---|---|
-| M1 | **No scanned checkpoint carries `metadata` or `in_channels_dict`.** All carry `config`, `data_fingerprint`, `epoch`, `logs`. The claim is about the **current producers and the scanned family**, not about every checkpoint the project has ever written — no historical audit was run, and none is needed to reject the frozen evaluator as the acceptance oracle | checkpoint scan, both workspaces |
-| M2 | **`in_channels` is 128** in every checkpoint; the frozen evaluator's hardcoded fallback is 256, which is the size mismatch it dies on | same |
-| M3 | **The filename number is `val_mrr`** — `model-45-0.6975.pt` carries `logs["val_mrr"] = 0.69754…` | same |
-| M4 | **100% of validation diseases appear in training** — 7,970 of 7,970. Train: 100,000 samples over 10,576 diseases; val: 15,000 over 7,970 | overlap audit |
-| M5 | **SP reachability is dense**: a typical phenotype reaches 71.3% of diseases within 5 hops (16,845 of 23,640) | artifact scan |
+| M1 | **No scanned checkpoint carries `metadata` or `in_channels_dict`.** All carry `config`, `data_fingerprint`, `epoch`, `logs`, `state_dict`. The claim is about the **current producers and the scanned family**, not about every checkpoint the project has ever written — no historical audit was run, and none is needed to reject the frozen evaluator as the acceptance oracle. **Confirmed by artifact** over 15 checkpoints in two families, `hgt` (10) and `gat` (5): both watched keys absent in all 15, the four expected keys present in all 15, nothing unreadable | [`EVIDENCE_M1_M3_hgt.json`](EVIDENCE_M1_M3_hgt.json) `39176ea3…`, [`EVIDENCE_M1_M3_gat.json`](EVIDENCE_M1_M3_gat.json) `5473fedb…` |
+| M2 | **`in_channels` is 128** in every checkpoint; the frozen evaluator's hardcoded fallback is 256, which is the size mismatch it dies on. **Confirmed by artifact**: read from `feature_encoder.projections.<node_type>.weight` rather than from a config field, 45 projections across 15 checkpoints, every one 128, none without a readable width | same |
+| M3 | **The filename number is `val_mrr`** — `model-45-0.6975.pt` carries `logs["val_mrr"] = 0.69754…`. **Confirmed by artifact**: 13 agreements, **0 disagreements**, each compared at the precision its filename was written to; the 2 uncomparable are both `last.pt`, which carries no score. `val_mrr` is the ranking metric in all 15 | same |
+| M4 | **100% of validation diseases appear in training** — 7,970 of 7,970. Train: 100,000 samples over 10,576 diseases; val: 15,000 over 7,970. **Confirmed by artifact, every digit**, with both split digests recorded | [`EVIDENCE_M4.json`](EVIDENCE_M4.json) `b3aed32a…` |
+| M5 | **SP reachability is dense** — but the recorded figure was wrong and is superseded. Measured on `shortest_paths.pt` `7268900c…`: the **median** phenotype reaches **19,216.5 of 29,866** diseases (**64.3%**) within the configured 5 hops; the **mean** is 16,845.5 (**56.4%**); q1 51.2%, q3 68.9%, max 78.2%; **270 of 19,836 phenotypes reach none**. Dense is a property of the graph, not of one node — q1 is already above half. The recorded "71.3% (16,845 of 23,640)" divided a mean by a denominator from a **different artifact**; see §2.4 | [`EVIDENCE_M5.json`](EVIDENCE_M5.json) `58d79584…` |
 | M6 | **The SP lookup breaches the provisional latency budget in 22 of 60 measurements**, worst 3,722 ms, on the real artifact and a GB10 SPARK. Approach A brings that to **0 of 60** at a cost of 3.44 GB permanent residence; the earlier "1.7-2.5x" figure came from a different artifact vintage and host and is superseded | `scorer-measurement/PLAN_B04.md` §12.3 |
 | M7 | **Zero duplicate rows** on two independently built artifacts of different HPO vintages — evidence about the generator's invariant, not clearance for one file; every future artifact is protected by the load-time assertion | same, §10.1 |
 | M8 | **The trainer's own validation loop is Mode-A-shaped, not Mode-C-shaped** — per-batch subgraph forward, cosine against *the subgraph's* disease rows, top-20 truncation, MRR from the same function Mode A calls. See §2.1 | read from `trainer.py`, `metrics.py`, `measurement.py` |
@@ -89,7 +89,7 @@ that exist. Only the rows below are open.
 | # | Open item |
 |---|---|
 | D1 | **Record the limitation, not a field.** Historical epoch RNG state was never saved, so the historical stochastic validation traversal is not exactly reproducible. Sample order in a *new* run is pinned by `shuffle=False` plus the samples digest |
-| D2 | **Closed by 1e.** `amp_dtype` and `torch_compile_wrapped` are on `MeasurementManifest`, and the latter is on `DifferentialResult` too — that is the artifact whose regime actually varies. **The field is named for what its probe can see**: `isinstance` against the dynamo wrapper proves the object is wrapped, not that a compiled graph ran, since graph breaks and eager fallback leave a wrapped model running eagerly. Renamed from `torch_compiled` in review round 1 for the reason `cuda_executed` was renamed from `calibration_eligible`. Two corrections to this row's own wording: `amp_enabled` was not "recorded", it was **hardcoded `False`** in `build_manifest`; and a structural claim is not an observation, so `assert_no_autocast` now **refuses** to run either traversal inside an autocast block rather than letting the manifest describe a run that did not happen. `observe_torch_compile_wrapper` is one tri-state function, not compile-metadata machinery. **`isinstance` against the imported wrapper class is the only evidence**, aggregated over two import paths (`torch._dynamo`, `torch._dynamo.eval_frame`) so a release that moves one still answers exactly. No class resolves -> `None`. **There is no attribute fallback, and three review rounds are why.** R1: the first version turned "not observable" into `False`, never reached its own documented fallback, and claimed "never raises" while `hasattr` propagates any `non-AttributeError`. R2: the repair over-corrected — `_orig_mod` alone became `True`, letting **any** object opt in by naming a field, and the test written for it froze that false positive as a specification. R3: pairing the attribute with a `torch._dynamo` module prefix did not rescue it either — `startswith` also matches `torch._dynamoevil`, and `__module__` is **assignable class metadata**, so it records what a class says about itself rather than how it was built. `_orig_mod` is a necessary marker, never sufficient evidence, and no arrangement of weak signals makes it so. Every mechanism confirmed by execution, and each superseded version fails cases the next one added |
+| D2 | **Closed by 1e.** `amp_dtype` and `torch_compile_wrapped` are on `MeasurementManifest`, and the latter is on `DifferentialResult` too — that is the artifact whose regime actually varies. **The field is named for what its probe can see**: `isinstance` against the dynamo wrapper proves the object is wrapped, not that a compiled graph ran, since graph breaks and eager fallback leave a wrapped model running eagerly. Renamed from `torch_compiled` in review round 1 for the reason `cuda_executed` was renamed from `calibration_eligible`. Two corrections to this row's own wording: `amp_enabled` was not "recorded", it was **hardcoded `False`** in `build_manifest`; and a structural claim is not an observation, so 1e made `assert_no_autocast` **refuse** to run either traversal inside an autocast block rather than let the manifest describe a run that did not happen. **Superseded by Proposal B**, which removed that ground instead of living with it: the fields now record the regime observed at the computation that produced each mode's numbers, and `assert_manifest_describes_regime` refuses only the case a single field cannot describe — numbers produced under one regime and recorded under another. `observe_torch_compile_wrapper` is one tri-state function, not compile-metadata machinery. **`isinstance` against the imported wrapper class is the only evidence**, aggregated over two import paths (`torch._dynamo`, `torch._dynamo.eval_frame`) so a release that moves one still answers exactly. No class resolves -> `None`. **There is no attribute fallback, and three review rounds are why.** R1: the first version turned "not observable" into `False`, never reached its own documented fallback, and claimed "never raises" while `hasattr` propagates any `non-AttributeError`. R2: the repair over-corrected — `_orig_mod` alone became `True`, letting **any** object opt in by naming a field, and the test written for it froze that false positive as a specification. R3: pairing the attribute with a `torch._dynamo` module prefix did not rescue it either — `startswith` also matches `torch._dynamoevil`, and `__module__` is **assignable class metadata**, so it records what a class says about itself rather than how it was built. `_orig_mod` is a necessary marker, never sufficient evidence, and no arrangement of weak signals makes it so. Every mechanism confirmed by execution, and each superseded version fails cases the next one added |
 | D3 | **Closed.** `_remap_indices` (`data_loader.py:956-964`) maps `batch["disease_ids"]` into subgraph-local space, the same space as the score-matrix columns, and trainer and Mode A read the same remapped tensor. The range invariant is enforced at **three independent boundaries** — loader, loss, harness — none of them in the CUDA hot path. See §2.3. **The legal-truth equality test is done (1e)**, and it is not the one 1d already had: both 1d cohorts are identity-mapped (`original_indices["disease"] == [0..n-1]`), under which a side reading the wrong id space produces the right numbers anyway. 1e adds a hand-built batch with a non-identity, non-sorted map so local != global. A trainer emitting global ids is refused there by **`DiagnosisLoss`**, not by the harness — the boundary §2.3 measured, confirmed by execution after the test's first draft predicted the wrong one |
 | D4 | No excluded-sample list is required **while the run is fail-fast**. Record that the run does not silently skip samples and that ranked plus ground-truth-absent account for the intact cohort. `n_ground_truth_absent` is a count, **not** an excluded- or failed-sample list; if skip-and-continue is ever introduced, skipped ids and reasons become required then |
 | D5 | Exact artifact identity. A/B/C already digest checkpoint, samples, node features, edge indices and num_nodes (`measure_scorer.py:79-92`). Open: the **shortest-path artifact digest, added when Mode D consumes it**, and comparing recorded digests against the institution-approved artifact set at acceptance. No registry, no compatibility database |
@@ -192,6 +192,146 @@ Still to cover, and only reachable once 1c exists: **equality of the legal truth
 id consumed by the trainer reference and by Mode A** on the same batch.
 
 ---
+
+
+### 2.4 What M5's recorded figure got wrong
+
+Recorded as *"a typical phenotype reaches 71.3% of diseases within 5 hops (16,845
+of 23,640)"*. The measurement that replaced it disagrees in two independent ways,
+and the sentence above is retired rather than adjusted.
+
+**The denominator came from a different artifact.** 23,640 appears in
+`scorer-measurement/PLAN_B04.md` §9.1 as **"Disease targets"** for
+`shortest_paths.pt` SHA-256 `9ada0c1a…` — 19,540 phenotypes, 429,971,678 rows.
+The artifact audited here is `7268900c…` — 19,836 phenotypes, 430,585,772 rows —
+and its graph holds **29,866** diseases, agreed between `num_nodes.json` and the
+producer's own sidecar. Whatever "Disease targets" counted, it is not this
+graph's disease count, so 71.3% is a ratio across two artifacts.
+
+**What "Disease targets" counted is not established here, and nothing needs it.**
+It may be an earlier vintage's disease count or the number of diseases actually
+present in that table; this run does not say, and M5's schema deliberately does
+not record a second denominator. Item 3 — the `DISEASE_SCORER_POLICY.md` §3.5
+correction — needs only that reachability is *dense*, and that holds under either
+reading: the median phenotype reaches 64.3% of the graph's diseases and q1
+reaches 51.2%.
+
+**"Typical" was a mean.** Mean 16,845.5 and median 19,216.5 differ by 2,371
+diseases, 7.9 percentage points. The word chosen implied the second and the
+number reported was the first.
+
+**A prediction recorded in §5.2 of the previous revision was wrong, and is
+corrected there.** It said the recorded figure was probably an overestimate
+*because* phenotypes reaching no disease have no rows and would be dropped by a
+count taken over the table. The mechanism is real and the direction was right,
+but the magnitude is not: **270 of 19,836 phenotypes (1.36%)** reach nothing, far
+too few to move a median by fifteen points. The denominator is the cause.
+
+**Artifact vintages differ across the facts.** M6 and M7 were measured on
+`9ada0c1a…`; M5 here is on `7268900c…`. Both are recorded by digest so the two
+are never silently compared.
+
+**One property re-confirmed in passing.** M7 recorded zero duplicate
+`(phenotype, target)` pairs on two independently built artifacts. This is a
+third, of a newer vintage: **0 duplicate pairs collapsed** out of 334,147,192
+disease rows.
+
+**The run's resource cost is recorded separately and more weakly.**
+[`EVIDENCE_ITEM10_run_metrics.json`](EVIDENCE_ITEM10_run_metrics.json)
+`305fb1a2…` holds the wall time, peak RSS, major page faults and bytes read
+for the four runs. It is **transcribed by hand** from `/usr/bin/time -v` rather
+than emitted by a committed script, so it is a weaker class of artifact than the
+four beside it and says so in its own text. The console transcripts it was taken
+from are not committed: §5.2 forbids absolute paths in evidence, and both the
+`.out` and `.time` files carry them.
+
+Two things in it are worth more than operational curiosity. The shortest-path scan
+read **10.78 GB** from the filesystem against an artifact of **10.76 GB** — that
+the whole table was read is established by disk traffic, independently of the
+sidecar's `num_pairs` check, which concludes the same thing from tensor length.
+And it took **21,846 major page faults** against 0-8 on the three runs that read
+no large artifact, which is what a mapped read produces and a resident read does
+not.
+
+
+### 2.5 A defect that only the deployment hardware could show
+
+Found while running the full suite on the institutional machine after item 10's
+evidence run — not by looking for it.
+
+`tests/unit/test_retrieval.py` reported **4 skips** there against **3** on a CPU
+container. The extra one is `TestFactoryFunctions::test_create_index_auto`, and
+the direction is backwards from the usual: a test that *passes* without CUDA
+*skips* with it.
+
+**The mechanism — and the seam this file first named wrongly.** The visible
+symptom is in `resolve_backend`: it resolves to `cuvs` when `is_gpu_available()`
+is true, and the block beneath it, commented *"Verify it can actually be
+instantiated"*, validates only whether the platform is Windows. That description
+is accurate and it is not where the defect was.
+
+`_register_backends` guarded on whether a backend's **module** imports. Neither
+backend imports its dependency at module level — `CuVSIndex` imports
+`cuvs.neighbors` and `cupy` inside `_validate_cuvs`, `VoyagerIndex` imports
+`voyager` inside a method — so that guard never fired for **either** backend and
+every backend was registered on every host. `resolve_backend` then behaved
+correctly given a registry that was wrong: `"cuvs"` was in it, so it was returned,
+and the `["cuvs", "voyager"]` fallback beneath never ran because nothing raised.
+
+Registration was the seam because selection, fallback *and* the operator report
+all read the same registry: `scripts/build_index.py` printed
+`Available backends: ['voyager', 'cuvs']` on a host with neither cuvs nor cupy.
+
+**The test converted that into green.** It caught `ImportError` and skipped with
+*"No vector backend available"* — false on that machine: voyager was installed,
+and `test_create_index_voyager` passed in the same run.
+
+**What this is and is not.** Not on the clinical path: the vector index was
+detached from diagnosis by institutional decision and the
+`diagnosis-retrieval-detachment` contract still enforces that. It is on the path
+of the planned natural-language / vector-mapping work, and it was invisible on
+every machine except one with CUDA and without cuVS — which describes the
+deployment target and no CPU development box.
+
+**It also contradicted a completed stage.** Stage 5 was *honest cuVS reporting and
+orphan removal*. Its result lives in `scripts/validate_installation.py`, whose
+comment forbids claiming availability on the strength of `import cuvs` alone —
+*"a combination observed on a real deployment machine"*. That honesty was applied
+there and not here, so two files answered the same question differently on the
+same host. `_is_cuvs_available` was left behind by the same stage with zero
+callers.
+
+#### What was fixed, and what was deliberately left
+
+Registration now asks whether each backend's **immediate required packages are
+discoverable** — `voyager` for Voyager, `cuvs` **and** `cupy` for cuVS, since
+`_validate_cuvs` imports both and cuvs-without-cupy is the state already observed
+on a deployment machine. cuVS stays unregistered on Windows whatever is
+discoverable; Voyager is gated on every platform. The registry is rebuilt rather
+than accumulated, and cleared in place rather than rebound so a caller holding it
+is not left reading a detached copy. Discovery fails closed: `find_spec` raises
+for ordinary conditions, and an optional-dependency probe must never be the
+reason `import src.retrieval` fails. `_is_cuvs_available` is deleted.
+`resolve_backend` is unchanged.
+
+**Discovery is the ceiling of the claim, on purpose.** It says the package is
+findable. It does not say the package imports, that a CUDA build matches the
+driver, that an index can be constructed, or that a search returns anything.
+`validate_installation.py` remains the place where the deeper states are
+distinguished, and this does not duplicate it into the import path.
+
+Three limitations, recorded rather than discovered later:
+
+  - **Discoverable is weaker than importable.** A package that is findable but
+    raises on import still registers, and still fails at construction.
+  - **Availability is inferred by the registry, not answered by the backend.** The
+    structural fix is a `VectorIndexBase.is_available()` classmethod so each
+    backend states its own contract. That is a design change to a detached
+    subsystem and belongs with the natural-language retrieval integration, when
+    its real support contract is known — not here.
+  - **The probe logic still lives in two places**, here and in
+    `validate_installation.py`. Consolidating them is worth doing and is not this
+    fix.
 
 ## 3. What these facts broke
 
@@ -373,12 +513,52 @@ says it is total.
 This does not invalidate any engineering result. It **bounds what every number
 may claim**, and the bound is tighter than the caveat currently drafted.
 
-### 3.3 A policy inference is contradicted
+**Fixed under 11i, and `EVIDENCE_M4.json` is now a baseline rather than a
+description of the present.** Generation consumes a disease allocation, so the
+partitions are disjoint by construction. The M4 figure describes the regime that
+produced it and is kept unchanged for that reason; the audit that produced it
+gained a `--require-disjoint` gate and a cross-check of the sample files against
+`split_manifest.json`, which is the one claim the generating process cannot make
+about itself. Two consequences are **not** closed by the fix and are recorded
+rather than assumed away: every checkpoint in the repository was trained under
+the old regime, and a disease-level cut does not close the channel where one
+phenotype set carries two different labels across it — `scripts/audit_generator_fidelity.py`
+measures that.
 
-`DISEASE_SCORER_POLICY.md` §3.5 records, explicitly as unmeasured, that most
+### 3.3 A policy inference is contradicted — in its premise, not its conclusion
+
+`DISEASE_SCORER_POLICY.md` §3.5 recorded, explicitly as unmeasured, that most
 candidates fall outside the 5-hop table so the SP term degenerates to a
-reachability indicator. M5 says the opposite. The correction is factual and
-touches no normative statement.
+reachability indicator.
+
+**The premise is refuted, per phenotype.** The median phenotype reaches 64.3% of
+diseases within the configured 5 hops, q1 51.2%, max 78.16%; 270 of 19,836
+phenotypes (1.36%) reach none at all.
+
+**1.36% sizes phenotypes that reach nothing — not unreachable candidates.** Using
+it for the second would understate them by orders of magnitude: the median
+phenotype still leaves ~10,650 diseases unreachable and the best-connected leaves
+~6,522. Unreachable pairs are common at every phenotype, and M5 does not size them
+as a fraction of pairs.
+
+**M5 does not reach the patient level at all.** The deployed scorer takes no union
+over a patient's phenotypes and does not use the nearest reachable one: for each
+candidate it iterates over every phenotype, gives each unreachable pair
+`unreachable_distance`, and averages (`src/inference/scoring.py::sp_mean_distances`).
+A per-phenotype distribution therefore cannot be carried across to what a patient
+sees, in either direction.
+
+**The conclusion is not refuted with the premise, and saying so would be the same
+error in the other direction.** A candidate whose *mean* distance is 5 scores `1/6`
+against a floor of `1/7` — one phenotype's five-hop path does not produce that
+score by itself — so near-degeneracy could still arise from the distribution of
+mean distances. Neither the reachable-distance distribution nor the patient-level
+mean-distance distribution is measured, and no current artifact carries either.
+
+The correction is factual and touches no normative statement. It also lands in
+`SP_SCORE_GUIDE.md`, which restated the same claim for operators in two places —
+one of them saying in as many words that the size of the group "has not been
+measured on this deployment".
 
 ### 3.4 No accepted holdout protocol, and nothing owned that
 
@@ -471,25 +651,63 @@ depends on is resolved.
 | **1b** | Characterization tests freezing `Trainer._validate` / `Trainer.evaluate` observable behaviour — 32 tests. Shared-pass behaviour is driven through **both** entry points; caller-specific contracts stay separate. Each contract group mutation-checked against a representative defect (9 mutations). Found that the malformed-truth refusal has **two independent sources**, and which fires depends on the sign of the bad id — so the tests run both signs | 1a2 | author | **done** |
 | **1c** | Extract the pass those two already duplicate — private, narrow. Behaviour-neutral: the 32 characterization tests pass **unchanged**, and each shared operation went 2 occurrences to 1 | 1b | author | **done** |
 | **1d** | Same-batch differential calibration — `src/evaluation/differential.py`, 20 bounded tests. One materialised batch list to both paths; per-sample top-20, truth, reciprocal rank, then aggregate MRR. Five legs mutation-checked (scoring, pooling, truth, truncation, aggregate-only). Review round 1 upheld three findings — the aggregate did not gate the verdict, the supplied-`mode_a_result` seam let an acceptance gate accept evidence about itself, and the import contract was directional; two further sub-requests were declined with citations (§6). Found that **bit-exactness is a contract only when AMP is off** (§3.1.3), and that the shared synthetic cohort is too narrow to exercise the truncation at all — so the fixture gained size parameters and a second, wider cohort | 1c | author | **done** |
-| **1e** | D2 manifest additions and the legal-truth equality test (§2.3) — **done**. `amp_dtype` + `torch_compile_wrapped` on the manifest and on `DifferentialResult`; `assert_no_autocast` turns the manifest's `amp_enabled=False` from a structural claim into an enforced one, in both traversals. Legal-truth equality tested under a **non-identity** id map, which is the case 1d's identity-mapped cohorts could not distinguish. Found that `build_manifest` had `amp_enabled` **hardcoded**, and that the wrong-space mutation is refused by the loss rather than the harness | 1c, 1d | author | **done** |
-| **2** | Update the contamination caveat to the measured 100% (§3.2), with both split file hashes | **10 (M4 evidence)** | author | small |
-| **3** | `DISEASE_SCORER_POLICY.md` §3.5 correction (§3.3) | **10 (M5 evidence)** | author | ~5 lines |
+| **1e** | D2 manifest additions and the legal-truth equality test (§2.3) — **done**. `amp_dtype` + `torch_compile_wrapped` on the manifest and on `DifferentialResult`; `assert_no_autocast` turned the manifest's `amp_enabled=False` from a structural claim into an enforced one, in both traversals — **later superseded by Proposal B**, which records the observed regime rather than forbidding a non-default one. Legal-truth equality tested under a **non-identity** id map, which is the case 1d's identity-mapped cohorts could not distinguish. Found that `build_manifest` had `amp_enabled` **hardcoded**, and that the wrong-space mutation is refused by the loss rather than the harness | 1c, 1d | author | **done** |
+| **P** | **Configurability and provenance** — `PLAN_CONFIGURABILITY_AND_PROVENANCE.md`, both proposals **done and approved**. **A**: `training_input_digests` on the checkpoint, a sibling of `data_fingerprint`, covering the semantic roles a run consumed including a resume parent that was actually loaded; `file_sha256` moved to `src/utils/fingerprint.py`. **B**: the AMP regime is **recorded at the computation that produced each mode's numbers** rather than forbidden — `EncodedGraph` carries the embeddings with their regime into the B/C traversals, and the invariant enforced is `encoded.regime == manifest.regime == scoring regime`, checked per batch. Capture only: no current-workspace comparison, no registry, no AMP CLI, no threshold | — | author | **done** |
+| **2** | Contamination caveat updated to the measured 100% (§3.2). Both measurement entry points' `--split` help now names **two** independent reasons `val` is not held-out — checkpoint selection, and that `sample_generator.py` slices one shuffled pool and never partitions by disease, so the overlap is structural rather than incidental to one workspace. The figure cites `EVIDENCE_M4.json`, which carries both split digests, rather than inlining hashes that are workspace-specific into help shown for any workspace | 10 — satisfied | author | **done** |
+| **3** | `DISEASE_SCORER_POLICY.md` §3.5 corrected (§3.3), and the same claim where it was restated in `SP_SCORE_GUIDE.md`. **The premise is refuted per phenotype; the conclusion is not, and neither is anything at the patient level** — see §3.3 | 10 — satisfied | author | **done** |
 | **4** | Reply to the sustained-with-narrowing contamination review | 2 | author | text only |
 | **5** | **B-0.4 prototype phase** — both prototypes measured on the real artifact, twice; approach A selected for the primary GB10 platform | — **independent of 1 and of 10** | author | **measurement complete and reviewed** |
-| **12** | **`evaluate([])` silently evaluates the val set** — `test_dataloader or self.val_dataloader` (`trainer.py:813`), so an explicit empty list is falsy and becomes a full validation pass. Frozen by a 1b test marked *observed, not endorsed*. Kept out of 1c deliberately, since an extraction commit must stay behaviour-neutral; raised here so the frozen defect is **not stranded** as a permanent monument to a known bug | 1c | author | small, unscheduled |
+| **12** | **`evaluate([])` silently evaluated the val set** — `test_dataloader or self.val_dataloader` (`trainer.py:869`), so an explicit empty list was falsy and became a full validation pass: a caller asking for one cohort received numbers about a different set of patients. Selection is now `is None`. The other half was equally silent — `mean_loss` divides by `max(num_batches, 1)`, so an empty traversal returns `{"loss": 0.0}`, a statement about a model made without reading a patient — so an empty cohort is **refused**, matching `RankingMetrics`, `measurement.py` and `differential.py`, which already decline to invent a value for one. Checked after the traversal, so an empty generator is caught as surely as an empty list. The 1b test that froze this as *observed, not endorsed* said the fix had to be made by editing it rather than by an extraction nobody re-read; it was | 1c | author | **done** |
+| **13** | **Backend registration did not check dependencies**, so `auto` could select an unusable backend, the fallback chain beneath it could never run, and `build_index.py` printed backends the host did not have. Affected **both** backends: neither imports its dependency at module level, so the module-import guard never fired. Not on the diagnosis path — retrieval is detached by decision and the contract holds. See §2.5 | — | author | **done** — registration gated on discoverable dependencies; three limitations recorded, not closed |
 | **5a** | **B-0.4 productionisation** — wire A into `_load_shortest_paths` and `sp_mean_distances`, then `PLAN_B04.md` §13's gate. **Production code: needs its own plan and review before any edit.** Its *implementation* depends on no calibration, split or checkpoint decision; its **acceptance does need a designated loadable checkpoint** plus compatible graph and SP artifacts — see §3.5 | 5; acceptance also needs a loadable checkpoint | author + institution | not started |
-| **11** | **Decide the evaluation-holdout protocol** (M9, §3.4) — **first** which claim each phase needs, then the unit that supports it: held-out sample views, disease-disjoint, or an external cohort. A **protocol decision**, not a code fix; the mechanical guards are already in and the tools already accept a supplied `test` split. Blocks 8a, `scorer-retraining` acceptance, and any held-out or generalisation claim. Does **not** block 1b/1c/1d | 2, 10 | needs review | design question |
-| **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, **10 (the same M1-M3 audit)** | institution | question |
-| **7a** | Engineering differential calibration run | 1d, **10 (M1-M3 evidence)**, D5 artifact set, a designated loadable checkpoint | author | blocked |
+| **11** | **Decide the evaluation-holdout protocol** (M9, §3.4). **Institutional input received and recorded** in [`EVALUATION_COHORTS.md`](EVALUATION_COHORTS.md): three cohorts with three different jobs, MyGene2 for research comparison and the institutional offline cohort as the acceptance benchmark. What remains open is that document's §5 — how many diseases to reserve, whether the in-hospital set is larger than the extraction limit, and whether generator fidelity is addressed first. A **protocol decision**, not a code fix. Blocks 8a, `scorer-retraining` acceptance, and any held-out or generalisation claim. Does **not** block 1b/1c/1d | 2, 10 | needs review | design question, **partly answered** |
+| **6** | Which checkpoint is authoritative. Engineering supplies hashes, logs, artifact-compatibility evidence and load results; the **institution decides**. The question must separate the *deployed* checkpoint from the one `select_checkpoint_in_dir` picks by the highest **contaminated** `val_mrr` — `model-22` winning that metric makes it neither clinically authoritative nor a held-out-generalisation winner | 2, 10 — **satisfied**, `EVIDENCE_M1_M3_hgt.json` and `EVIDENCE_M1_M3_gat.json` | institution | question, **unblocked** |
+| **7a** | Engineering differential calibration run | 1d, 10 — **satisfied**, and every scanned checkpoint carries a `data_fingerprint`; D5 artifact set; a designated loadable checkpoint | author | blocked on 1d and the checkpoint designation only |
 | **7b** | Institutional measurement (B-0.2 / B-0.3) | 7a, 2, 3, 6, deployment CUDA verification | both | blocked |
+| **11i** | **Item 11's implementation arm** — the ordered work in [`EVALUATION_COHORTS.md`](EVALUATION_COHORTS.md) §6.6, tracked here so "where are we" is answerable from one table. **1** correct the document — done, revision 20. **2** split feasibility audit (`scripts/audit_split_feasibility.py`) — **done**, evidence committed as `EVIDENCE_split_feasibility_homelab.json` (schema 2, identical-sibling, KG `6889ed11…`). Worst validation-representation risk across four stratifications is a 69-disease band at 2.9% (f = 0.05) and 0.0013% (f = 0.15), so **stratified allocation is not built** and `disease_allocation.py` no longer calls that reading provisional. The figures belong to one MONDO vintage; a run on the institute's graph is a second vintage, not a second machine. **3** partition before generation (`src/kg/disease_allocation.py`, and `scripts/audit_split_overlap.py` reframed from a measurement into a gate) — done. **4** characterise the generator (`scripts/audit_generator_fidelity.py`) — done for the half needing no external tool; the upstream-simulator comparison is **deferred with its reason recorded** (§6.6). **5** evaluation records beside the checkpoint (`src/evaluation/sidecar.py`) — done. **6** UI — **out of this project's scope**, so the arm is complete at step 5. **Old paths removed, not kept beside the new ones**: a workspace cut before the allocation step is refused at every entry point, and the cohort kind (generated / supplied) is stated by the caller rather than inferred from whether a manifest exists — an inference that could not tell a legitimately manifest-free supplied cohort from a pre-allocation defect. Refusal means **verified**, not present: `verify_generated_cohorts` binds the manifest to the sample files' exact digests, to the disease sets recomputed from those records, to its own allocated digests and to disjointness. One exception is named rather than glossed — `scripts/evaluate_model.py` is behaviourally frozen as Mode A's calibration reference and gets no preflight; its bytes are pinned by `tests/unit/test_frozen_evaluator.py`, which turns backlog item 9's precondition from a sentence into a check. Note that 11i does **not** answer item 11: §5's (i), (ii) and (iv) are institutional questions, and this arm builds what makes them answerable | 11 | author | **done in engineering**; §5's (i), (ii) and (iv) remain institutional decisions |
 | **8a** | B-0.5 protocol and output-contract **design**. **Consumes item 11's holdout decision and may not redefine it** | 1, **11** | author | **before** any expensive run |
 | **8b** | B-0.5 institutional execution | 8a, 7b, 6, exact artifacts, production-path prerequisites | both | blocked |
 | **9** | Mechanical rename (~70 refs, 9 files), then rewrite the checklist, then delete the oracle-only surface | **1d passed review incl. its institutional CUDA run** | author | behaviour-neutral |
-| **10** | **Commit bounded evidence for M1-M5** — three JSON files and the three scripts that emit them. **Not raw console output** (§5.2). Blocks 2, 3, 6 and 7a | — | institution + author | small, see §5.1-5.2 |
+| **10** | **Commit bounded evidence for M1-M5** — four JSON files and the three scripts that emit them. **Not raw console output** (§5.2). Unblocks 2, 3, 6 and 7a | — | institution + author | **done** — run on the deployment-sibling machine, evidence cited by digest in §2; M1-M4 confirmed, M5 corrected (§2.4) |
 
 **Parked deliberately, not forgotten:** `task-scope/` Q2–Q5 (settled, unscheduled)
 and `scorer-retraining/` (scoping only, four gates uncleared). Neither blocks nor
 is blocked by anything above.
+
+**Ontology provenance is unrecorded and its version is not pinnable — raised by
+the maintainer, and the sharper half of the packaging problem below.** Verified
+against the code rather than recalled:
+
+| | Established |
+|---|---|
+| Cache location | `Path.home()/'.shepherd'/'ontologies'` — **outside the project**, in the operator's home |
+| On a missing file | `urlretrieve('http://purl.obolibrary.org/obo/mondo.obo')` — **whatever is latest**, with no pinning |
+| The `version` argument | Used only as an in-memory cache key; the filename is `mondo.obo` regardless. **It reads as version selection and is not** |
+| Is the version knowable? | **Yes** — the OBO header carries `data-version`, and `hierarchy.py` already parses it |
+| Is it recorded? | **No.** The manifest carries a recipe for `node_features.pt` and digests for the tensors, and nothing says which ontology produced `kg.json` |
+
+This is not hypothetical: the two machines used this session differ in MONDO
+vintage (29,866 vs 32,109 disease nodes, different `kg_digest`) purely because
+they were deployed on different dates. The differing digest *detects* it, which
+is the manifest working — but it cannot say what differed, and a site cannot
+deliberately reproduce another site's graph.
+
+**The inert `version` argument is the part that should not wait**, whatever is
+decided about pinning: an API that looks like it pins and does not is worse than
+one that does not offer it. Recording `data-version` beside the build is the
+cheap half and needs no new subsystem. Pinning — where the files live, whether a
+mismatch refuses or warns — is a design question with real alternatives and
+deserves its own plan. Both are out of scope for 5a.
+
+**A workspace export/import pair — the maintainer's idea, recorded so it is not
+lost.** Not a review finding and not scheduled. The hop-bound work exposed the
+underlying problem: a workspace is seven files plus a shortest-path pair, the
+`.pt` and its `.meta.json` belong to one build, and nothing stops a hand copy
+from separating them. A packaging step that moves a workspace whole would remove
+that class of accident at the source. **Whatever it would do, it replaces no
+verification** — the manifest digests, the schema-3 recipe and the hop-bound
+checks stay exactly where they are; an importer that trusted its own bundle
+would reintroduce what they exist to catch.
 
 ---
 
@@ -553,16 +771,19 @@ M6 and M7 have committed artifacts — `EVIDENCE_B04_baseline_synthetic.json` an
 `EVIDENCE_B04_artifact_spark.json` sit beside `PLAN_B04.md`, and anyone may
 recompute from them.
 
-**M1-M5 have no artifact.** They exist as text pasted into a review thread and
-summarised here. That is the wrong way round: M1 and M2 are what established that
+**M1-M5 had no artifact.** They existed as text pasted into a review thread and
+summarised here. That was the wrong way round: M1 and M2 are what established that
 the calibration target does not exist — the largest decision this phase has made
 — and M4 is what bounds every number the project will report. Those are precisely
-the facts that most need to be independently checkable, and they are the ones a
-reviewer has to take on trust.
+the facts that most needed to be independently checkable, and they were the ones a
+reviewer had to take on trust.
 
-Nothing here is disputed. The point is that "reviewed and approved" currently
-means *approved on a summary* for five of the eight established facts, and the
-existing `EVIDENCE_*.json` convention already shows what fixes it.
+**Closed.** Four evidence files now sit beside this one, each emitted by a
+committed script and cited by digest in §2. M1-M4 were confirmed against the
+artifacts, every digit. M5 was not: the recorded figure combined a mean with a
+denominator from a different artifact, which is exactly the class of error that
+survives indefinitely in prose and does not survive one reproducible run. §2.4
+records it.
 
 ### 5.2 What that evidence may and may not contain
 
@@ -576,13 +797,35 @@ reproducible, and the bounded schema is what keeps the artifact publishable.
 |---|---|---|
 | M1-M3 | input digests, checkpoint count, key-presence summary, `in_channels` summary, and the filename-vs-`logs` metric comparison | checkpoint tensors, absolute paths, operator or host names |
 | M4 | both split hashes, the two disease counts, and the size of their intersection | any patient id, sample id, or per-disease list |
-| M5 | the SP artifact digest, the disease denominator, the hop bound, the reachable count and percentage, **and the phenotype-selection rule** | per-phenotype rows |
+| M5 | the SP artifact digest **and its sidecar's**, the disease denominator, the **configured** hop bound beside the observed one, the reachable count and percentage, **and the phenotype-selection rule** | per-phenotype rows |
 
-**"A typical phenotype reaches 71.3%" is not reproducible as written**, and
-putting it in JSON would not make it so. The selection rule has to be
+**"A typical phenotype reaches 71.3%" was not reproducible as written**, and
+putting it in JSON would not have made it so. The selection rule had to be
 operational — which phenotype or phenotypes, chosen how, and whether 71.3% is one
-phenotype's value, a median or a mean. Until the emitting script states that, M5
-is a number without a definition, and item 3 depends on it.
+phenotype's value, a median or a mean.
+
+`scripts/audit_sp_reachability.py` states it by **removing the choice**: the
+distribution is computed over every phenotype in the graph, and the report's
+`selection_rule` says so. Two design points follow.
+
+  - **Phenotypes reaching no disease are counted.** They have no rows in the
+    artifact, so a count taken over the table drops exactly the zeroes and reports
+    a distribution shifted upward.
+  - **The hop bound is the configured one, not the largest distance present.** An
+    artifact built to 5 hops whose longest path happens to be 4 would otherwise be
+    reported as a 4-hop artifact, and every percentage in it read against a bound
+    nobody chose. The configured value is read from the producer's
+    `<artifact>.meta.json`; the observed maximum is recorded beside it.
+
+**The run has happened, and it corrected this file's own prediction.** A previous
+revision said here that the recorded 71.3% was probably an overestimate *because*
+zero-reach phenotypes were being dropped. Measured: **270 of 19,836 phenotypes
+(1.36%)** reach nothing — the mechanism is real, the direction was right, and the
+magnitude is nowhere near enough to explain a fifteen-point gap. The cause is the
+denominator, which came from a different artifact. §2.4 records what was measured
+and what the recorded figure actually was. That 1.36% counts *phenotypes reaching
+nothing*; it is not the prevalence of unreachable phenotype–candidate pairs, and
+§3.3 records why the two must not be substituted for each other.
 
 **No evidence database, registry or index.** Three files beside the plans they
 support, exactly as `EVIDENCE_B04_*.json` already sit beside `PLAN_B04.md`.

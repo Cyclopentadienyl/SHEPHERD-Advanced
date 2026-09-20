@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""
+r"""
 Measure the disease scorer — Mode A.
 ====================================
 The offline counterpart to `scripts/evaluate_model.py`, which this replaces once
@@ -37,7 +37,6 @@ Module: scripts/measure_scorer.py
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import platform
@@ -54,43 +53,106 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.evaluation.caveats import COHORT_KIND_HELP, SPLIT_ARGUMENT_HELP
+from src.evaluation.measurement import validate_measurement_seed
+from src.evaluation.cohort import (
+    COHORT_KINDS,
+    DEFAULT_COHORT_KIND,
+    resolve_cohort,
+    verify_generated_cohorts,
+    verify_graph_artifacts,
+)
+from src.utils.fingerprint import compute_input_digests
+from src.utils.fingerprint import file_sha256 as _file_sha256
+
 logger = logging.getLogger(__name__)
 
-
-def file_sha256(path: Path) -> Optional[str]:
-    """Raw content digest, or ``None`` if the file is not there.
-
-    **Public and shared.** `scripts/calibrate_mode_a.py` hashes the same artifacts
-    before and after the two runs, and a second implementation there could differ
-    from this one in exactly the way the digests exist to detect.
-
-    `hashlib.file_digest` (stdlib, 3.11+) reads in chunks, so a multi-gigabyte
-    checkpoint is not loaded into memory to be identified. This hashes **bytes**
-    and nothing else: no canonical form, no key ordering, no serialisation policy.
-    Two runs quoting the same digest consumed the same file, which is the entire
-    claim being made.
-    """
-    if not path.exists():
-        return None
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
+#: The seed applied when the operator states none.
+#:
+#: **A documented constant rather than `None`.** An unseeded measurement is not
+#: reproducible, so it cannot be evidence; and its manifest recorded three null
+#: RNG identities, which made two materially different runs indistinguishable to
+#: the ledger's contradiction check. With a default seed the default run is
+#: reproducible in the streams this harness owns.
+#:
+#: **That is not the same as bit-determinism.** A seed controls Python, NumPy,
+#: torch and the per-worker streams torch derives; it says nothing about CUDA
+#: kernel non-determinism, which is why the manifest records
+#: `deterministic_algorithms`, `cudnn_deterministic` and `cudnn_benchmark`
+#: separately. A seeded rerun that disagrees is a finding to investigate, and a
+#: proven contradiction only when those fields say the regime was deterministic.
+DEFAULT_MEASUREMENT_SEED = 0
 
 
-def artifact_digests(checkpoint: Path, data_dir: Path, split: str) -> Dict[str, Optional[str]]:
+#: Re-exported so callers that import the name from here keep working. The
+#: definition moved to `src/utils/fingerprint.py`, the bottom layer, because
+#: consumers importing a hashing primitive **from a script** made an entry point
+#: into a library.
+#:
+#: **Moving the definition did not by itself remove the edge**, and an earlier
+#: revision claimed it had. `scripts/benchmark_sp_lookup.py` now imports from
+#: `src.utils.fingerprint` directly, which is the edge that had no business
+#: existing — the SP benchmark has nothing to do with scorer measurement. The
+#: remaining importer is `scripts/calibrate_mode_a.py`, which reaches for
+#: `artifact_digests` as well: one measurement script using another's domain
+#: concept, which is cohesion rather than a layering fault.
+file_sha256 = _file_sha256
+
+
+def artifact_digests(
+    checkpoint: Path, data_dir: Path, split: str, cohort_kind: str = DEFAULT_COHORT_KIND
+) -> Dict[str, Optional[str]]:
     """Every file a Mode A number depends on, by role.
 
     Paths are recorded too, but a path is not an identity — `checkpoints/best.pt`
     names a different file after every improvement — and the structural
     fingerprint is not one either, since two checkpoints trained on the same graph
     share it.
+
+    **This stays here, deliberately, while `file_sha256` moved.** The plan proposed
+    moving both into `src/utils/fingerprint.py`; doing so would put this function's
+    vocabulary — a *checkpoint*, a *split* — into a utility module that has no
+    business knowing what either is, and the training caller would then import a
+    measurement-shaped signature to hash its own inputs. The generic contract
+    (`compute_input_digests`) is shared; the **role vocabulary is not**, because
+    each run names the roles it consumed. This is one measurement script importing
+    another's domain concept, which is cohesion; the benchmark reaching in here for
+    a hash function was not.
     """
-    return {
-        "checkpoint": file_sha256(checkpoint),
-        "samples": file_sha256(data_dir / f"{split}_samples.json"),
-        "node_features": file_sha256(data_dir / "node_features.pt"),
-        "edge_indices": file_sha256(data_dir / "edge_indices.pt"),
-        "num_nodes": file_sha256(data_dir / "num_nodes.json"),
+    cohort = resolve_cohort(data_dir, split, cohort_kind)
+    # **Every graph consumer, regardless of cohort kind.** A supplied
+    # institutional cohort is scored against `node_features.pt` and
+    # `edge_indices.pt` exactly like a generated one, so binding the graph only
+    # for generated cohorts would protect validation while leaving institutional
+    # evaluation free to consume a mixed workspace.
+    verify_graph_artifacts(data_dir)
+    if cohort.is_generated:
+        # The manifest must describe these exact files, not merely exist beside
+        # them. Without this a legacy overlapping workspace passes by having any
+        # manifest dropped into it, and the digest recorded below would name a cut
+        # the samples never came from.
+        verify_generated_cohorts(data_dir)
+    roles = {
+        "checkpoint": checkpoint,
+        "samples": cohort.samples,
+        "node_features": data_dir / "node_features.pt",
+        "edge_indices": data_dir / "edge_indices.pt",
+        "num_nodes": data_dir / "num_nodes.json",
     }
+
+    # **The manifest says how the cohort was cut, which the sample digest cannot.**
+    # Two byte-different `val_samples.json` could have been cut at the disease
+    # level or sliced at the sample level, and a `val_mrr` means a different thing
+    # under each: generalisation to diseases with no labelled examples, or
+    # recognition of new phenotype subsets of diseases that have them.
+    #
+    # Present for a generated cohort and absent for a supplied one — and that
+    # absence is a fact about the *kind*, checked by `resolve_cohort`, not a file
+    # that happened to be missing. A generated cohort without a manifest does not
+    # reach here.
+    if cohort.split_manifest is not None:
+        roles["split_manifest"] = cohort.split_manifest
+    return compute_input_digests(roles)
 
 
 def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
@@ -243,12 +305,21 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    mode: str = "A",
                    candidate_construction: Optional[str] = None,
                    model_construction: str = "frozen evaluator (legacy)",
-                   model: Any = None) -> Any:
+                   model: Any = None,
+                   regime: Any = None) -> Any:
     """Build the manifest for one mode.
 
     `candidate_construction` defaults to the subgraph description derived from
     `DIAGNOSIS_SUBGRAPH_HOPS`, so it cannot drift from `subgraph_hops` in the same
     artifact. Mode C passes its own, having no expansion to describe.
+
+    `regime` is the `AutocastRegime` observed **at the computation that produced
+    this mode's numbers** — Mode A's own forward runs in the ambient context of
+    this call, while Modes B and C must pass the regime `encode_full_graph`
+    reported, since their embeddings were computed earlier and possibly elsewhere.
+    Omitting it observes the ambient context here, which is right for Mode A and
+    wrong for B and C; `assert_manifest_describes_regime` refuses the mismatch
+    rather than letting it through.
 
     `model` is optional and is used only to **observe** whether what ran was a
     `torch.compile` wrapper object. Omitting it records
@@ -258,15 +329,21 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     """
     from src.evaluation.measurement import (
         LEGACY_TRUNCATION_K,
+        METRIC_SCHEMA_VERSION,
         MeasurementManifest,
+        observe_autocast_regime,
         observe_torch_compile_wrapper,
     )
+
+    observed_regime = regime if regime is not None else observe_autocast_regime(device)
     from src.kg.data_loader import DIAGNOSIS_SUBGRAPH_HOPS
     from src.utils.fingerprint import compute_fingerprint
 
     return MeasurementManifest(
         mode=mode,
         split=args.split,
+        metric_schema_version=METRIC_SCHEMA_VERSION,
+        cohort_kind=args.cohort_kind,
         n_samples=n_samples,
         candidate_construction=(
             subgraph_candidate_construction()
@@ -290,7 +367,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
-        artifact_digests=artifact_digests(args.checkpoint, args.data_dir, args.split),
+        artifact_digests=artifact_digests(
+            args.checkpoint, args.data_dir, args.split, args.cohort_kind
+        ),
         cuda_executed=(
             device.type == "cuda" if cuda_executed is None else cuda_executed
         ),
@@ -299,12 +378,11 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_version=torch.version.cuda,
         device=str(device),
         dtype=str(torch.get_default_dtype()),
-        # Structural, and enforced rather than trusted: no traversal in
-        # `src/evaluation/measurement.py` opens an autocast context, and
-        # `assert_no_autocast` refuses to run inside one opened by a caller. So
-        # these two are facts about the run, not defaults that happen to be right.
-        amp_enabled=False,
-        amp_dtype=None,
+        # Observed, not asserted. No traversal in `src/evaluation/measurement.py`
+        # opens an autocast context, but a caller can, and a literal `False` then
+        # described a run that did not happen.
+        amp_enabled=observed_regime.enabled,
+        amp_dtype=observed_regime.dtype,
         torch_compile_wrapped=observe_torch_compile_wrapper(model),
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         cudnn_deterministic=torch.backends.cudnn.deterministic if torch.cuda.is_available() else None,
@@ -319,9 +397,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Measure the disease scorer (Mode A)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--split", required=True,
-                        choices=["train", "val", "test"],
-                        help='Which samples file to measure. **Required — there is no default.** Generated workspaces normally contain train and val only; a test split exists only where an evaluation protocol created one. `val` is the checkpoint-selection split under the current trainer (early_stopping_monitor=val_mrr), so metrics measured on it are model-selection-contaminated and are not held-out generalisation.')
+    parser.add_argument("--split", required=True, help=SPLIT_ARGUMENT_HELP)
+    parser.add_argument("--cohort-kind", default=DEFAULT_COHORT_KIND,
+                        choices=COHORT_KINDS, help=COHORT_KIND_HELP)
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the measurement JSON is written")
     parser.add_argument("--predictions-output", type=Path, default=None,
@@ -346,8 +424,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
                              "cuda_executed=false in the manifest")
-    parser.add_argument("--seed", type=int, default=None,
-                        help="Seeds Python, NumPy and torch. Recorded in the manifest")
+    parser.add_argument("--seed", type=int, default=DEFAULT_MEASUREMENT_SEED,
+                        help=f"Seeds Python, NumPy and torch, and is recorded in the "
+                             f"manifest as the applied value. Defaults to "
+                             f"{DEFAULT_MEASUREMENT_SEED}: an unseeded run is not "
+                             "reproducible and cannot be evidence, and two of them "
+                             "would carry identical recorded semantics while having "
+                             "consumed different random streams")
     parser.add_argument("--modes", default="A",
                         help="One of: A, A,B, C, A,B,C. Default A, which is the "
                              "calibration path and must stay the default. "
@@ -433,10 +516,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
 
-    if args.seed is not None:
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
+    validate_measurement_seed(args.seed, "--seed")
+
+    # **Always seeded, and the applied value is what the manifest records.**
+    # `--seed` used to default to `None`, which left the RNGs at whatever state
+    # the process started in and wrote three nulls into the manifest. Two such
+    # runs consumed different worker streams, different negatives and different
+    # candidate universes while producing an identical semantics digest — so the
+    # ledger saw one measurement with two answers and refused the second as a
+    # contradiction. A default that is a number makes the default run
+    # reproducible.
+    #
+    # **What a seed does and does not establish.** It identifies and controls the
+    # random streams this harness owns — Python, NumPy, torch, and through torch
+    # the per-worker streams. It does not make CUDA execution bit-deterministic;
+    # that is why the manifest records `deterministic_algorithms`,
+    # `cudnn_deterministic` and `cudnn_benchmark` as separate facts. So a seeded
+    # rerun that disagrees is a finding to investigate, not a proven
+    # contradiction, unless those fields say the regime was deterministic.
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     device, cuda_executed = _resolve_device(args.device)
     logger.info("Device: %s (%s)", device, platform.platform())
@@ -476,14 +576,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     # One config object, two consumers. Not two instances that happen to agree.
     loader_config = build_loader_config(args)
 
-    def manifest_for(mode: str, candidates: str, construction: str, model: Any = None):
+    def manifest_for(mode: str, candidates: str, construction: str,
+                     model: Any = None, regime: Any = None):
         return build_manifest(
             args, graph_data, len(samples), device, loader_config, cuda_executed,
             mode=mode, candidate_construction=candidates,
-            model_construction=construction, model=model,
+            model_construction=construction, model=model, regime=regime,
         )
 
-    embeddings = None
+    encoded = None
+    embedding_regime = None
     production_model = None
     if wants_production:
         from src.models.gnn.shepherd_gnn import build_shepherd_model
@@ -494,7 +596,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         # constructions to be the same model. C is never compared to A directly.
         if "B" in modes:
             assert_constructions_agree(legacy_model, production_model)
-        embeddings = encode_full_graph(production_model, graph_data, device)
+        # Kept **whole**. An earlier version split it here into a bare dict and a
+        # regime, which left the traversals unable to verify that their manifest
+        # describes the regime these embeddings were computed under — fp32
+        # embeddings scored under bfloat16 would have passed.
+        encoded = encode_full_graph(production_model, graph_data, device)
+        embedding_regime = encoded.regime
 
     results: Dict[str, Any] = {}
     if "A" in modes:
@@ -516,8 +623,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             manifest_b=manifest_for(
                 "B", subgraph_candidate_construction(),
                 "production (build_shepherd_model)", model=production_model,
+                regime=embedding_regime,
             ) if "B" in modes else None,
-            full_graph_embeddings=embeddings,
+            full_graph_embeddings=encoded,
             device=device,
         )
         if mode_b is not None:
@@ -525,11 +633,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if "C" in modes:
         results["C"] = run_mode_c(
-            full_graph_embeddings=embeddings,
+            full_graph_embeddings=encoded,
             samples=samples,
             manifest=manifest_for(
                 "C", "every disease in the knowledge graph",
                 "production (build_shepherd_model)", model=production_model,
+                regime=embedding_regime,
             ),
             device=device,
             batch_size=args.batch_size,

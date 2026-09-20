@@ -209,12 +209,34 @@ the default and that η must *earn* adoption with evidence. It was not derived f
 A future reader should not mistake it for an empirical finding, nor reopen it as though it were an
 unexamined default.
 
-### 3.5 Engineering inference — weigh accordingly, none is measured
+### 3.5 Engineering inference — weigh accordingly; one item is now measured, the rest are not
 
-- Over the full disease universe most candidates fall outside the 5-hop table and receive the same
-  floor value, so the SP term degenerates towards a binary reachability indicator. That
-  systematically disadvantages candidates with no KG path — the cases GNN generalisation exists to
-  surface.
+- ~~Over the full disease universe most candidates fall outside the 5-hop table and receive the same
+  floor value, so the SP term degenerates towards a binary reachability indicator.~~ **The premise is
+  measured and false at the per-phenotype level.** On the deployment artifact the median phenotype
+  reaches **19,216.5 of 29,866** diseases within the configured 5 hops (**64.3%**), first quartile
+  51.2%, maximum 78.16%; **270 of 19,836** phenotypes (1.36%) reach none at all
+  ([`EVIDENCE_M5.json`](working/EVIDENCE_M5.json), BACKLOG §2.4).
+
+  **What that 1.36% does and does not size.** It counts phenotypes that reach *no* disease. It is
+  **not** the prevalence of unreachable phenotype–candidate pairs, and using it that way would
+  understate them by orders of magnitude: the median phenotype still leaves ~10,650 diseases
+  unreachable, and even the best-connected phenotype in the graph leaves ~6,522. Unreachable pairs
+  are common at every phenotype; M5 does not size them as a fraction of pairs.
+
+  **What M5 does not establish at all: the deployed, patient-level score.** M5 counts per phenotype.
+  The deployed scorer does not take a union over a patient's phenotypes and does not use the nearest
+  reachable one — for each candidate it iterates over **every** phenotype, gives each unreachable
+  pair `unreachable_distance`, and averages
+  (`src/inference/scoring.py::sp_mean_distances`). Per-phenotype reachability therefore cannot be
+  carried across to patient-level coverage in either direction.
+
+  **What does not follow, in either direction.** The conclusion no longer follows from the refuted
+  premise, but is not thereby refuted. A candidate whose **mean** distance is 5 scores `1/6` against
+  a floor of `1/7` — a five-hop path from one phenotype does not by itself produce that score — so
+  near-degeneracy could still arise from the distribution of mean distances rather than from
+  unreachability. Neither the reachable-distance distribution nor the patient-level mean-distance
+  distribution is measured, and no current artifact carries either.
 - Because the SP range is `[1/7, 1/2]` while the embedding term spans `[0, 1]`, η is not the
   effective weight. The **maximum theoretical spans** stand at 0.7 versus 0.107; the actual
   contribution of each term depends on their observed spread, which has not been measured.
@@ -228,7 +250,7 @@ unexamined default.
 
 | Alternative | Why not chosen |
 |---|---|
-| **Keep η in ranking, applied to the full universe** | Requires SP over ~27,990 candidates, where the term degenerates towards a reachability indicator (§3.5). Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
+| **Keep η in ranking, applied to the full universe** | Requires SP over the whole disease universe — ~27,990 when this table was written, 29,866 on the audited deployment workspace. The degeneracy this row relied on is **no longer an established reason**: §3.5's premise was measured and refuted, and what remains of the concern is unsettled rather than supported. Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
 | **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** |
 | **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. |

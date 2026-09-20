@@ -34,6 +34,8 @@ from torch import Tensor
 
 __all__ = [
     "LEGACY_TRUNCATION_K",
+    "AutocastRegime",
+    "EncodedGraph",
     "MeasurementManifest",
     "ModeAResult",
     "ModeResult",
@@ -344,36 +346,155 @@ def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
         return None
 
 
-def assert_no_autocast(device: Any) -> None:
-    """Refuse to measure inside an autocast block.
+@dataclass(frozen=True)
+class AutocastRegime:
+    """The autocast state at a **harness boundary**, and nothing wider.
 
-    The manifest records `amp_enabled=False` and `amp_dtype=None` for every mode,
-    because none of the traversals here opens an `autocast` context — unlike
-    `Trainer._run_evaluation_pass`, which does. That is a **structural** claim
-    about this module, and a caller who wrapped `run_mode_a(...)` in
-    `with autocast(...)` would make the manifest describe a run that did not
-    happen while every number in it shifted.
+    Named for what it can see. This is read at the point the harness performs or
+    calls a computation; an autocast context opened *inside* a model is not
+    observable from here and is not claimed. The same discipline as
+    `torch_compile_wrapped`, and for the same reason: a field whose name promises
+    more than its probe can see gets read for the promise.
 
-    So the claim is enforced rather than asserted in prose. One boolean read per
-    run, before the loop: nothing is checked per batch and nothing synchronises a
-    device.
+    `dtype` is `None` exactly when `enabled` is false, so a reader never has to
+    decide whether a dtype beside a disabled regime means anything.
+    """
 
-    This is not a judgement that AMP is wrong to use. `BACKLOG.md` §3.1.3 records
-    why the differential calibration must be able to run under it and report the
-    effect. What may not happen is a run measuring one regime and recording the
-    other.
+    enabled: bool
+    dtype: Optional[str]
+
+
+def observe_autocast_regime(device: Any) -> AutocastRegime:
+    """Read the ambient autocast state for `device`'s type.
+
+    Device-independent: `torch.is_autocast_enabled("cuda")` answers on a CPU-only
+    host, and `torch.device("cuda:1").type` resolves to `"cuda"`, so an indexed
+    device is handled.
     """
     import torch as _torch
 
     device_type = _torch.device(device).type if device is not None else "cpu"
-    if _torch.is_autocast_enabled(device_type):
+    if not _torch.is_autocast_enabled(device_type):
+        return AutocastRegime(enabled=False, dtype=None)
+    return AutocastRegime(enabled=True, dtype=str(_torch.get_autocast_dtype(device_type)))
+
+
+@dataclass(frozen=True)
+class EncodedGraph:
+    """Full-graph embeddings **and the regime they were computed under**.
+
+    The pair travels together because the second cannot be recovered from the
+    first, and because observing it anywhere other than at the computation gives
+    the wrong answer. Modes B and C score from these embeddings but do not produce
+    them, and their manifests are built afterwards — an earlier design observed
+    the regime at manifest construction, which is a different context and would
+    have labelled these embeddings with it.
+
+    A frozen dataclass rather than a bare tuple: callers read its named fields,
+    and `encoded.embeddings` says what a `[0]` does not. It travels **whole** into
+    the B and C traversals, which is what lets them verify that their manifest
+    describes the regime these embeddings were actually computed under — splitting
+    it at the caller left that association unverifiable.
+    """
+
+    embeddings: Dict[str, Any]
+    regime: AutocastRegime
+
+
+def assert_manifest_describes_regime(
+    manifest: Any, device: Any, encoded: Optional["EncodedGraph"] = None
+) -> None:
+    """Refuse when the manifest's recorded regime is not the one now in force.
+
+    **A consistency check, not an absence check.** The version this replaces
+    refused *any* autocast, because `build_manifest` wrote `amp_enabled=False` as a
+    literal and a run under autocast would have shifted every score while the
+    artifact claimed fp32. That was a real ground — inability to produce an honest
+    artifact — but a removable one: recording what applied removes it, and
+    refusing instead cost the harness a legitimate research question, *"what is
+    this mode's MRR under the AMP setting the deployment actually uses?"*
+
+    What remains refused is narrower and is the case a single field genuinely
+    cannot describe: numbers produced under one regime and recorded under
+    another. For Modes B and C that includes embeddings computed in one context
+    and scored in a different one — their manifests carry the **embedding**
+    regime, so a traversal running under a different one is refused rather than
+    averaged into a single claim.
+
+    **Two associations, not one.** `encoded` is the full-graph embeddings Modes B
+    and C score from, and its regime is the one they were computed under. Checking
+    only the current scoring context leaves the other half unverified: fp32
+    embeddings scored under bfloat16 would pass, which is precisely the
+    mixed-regime run this function exists to refuse. An earlier version took only
+    the current context — and the Mode C test written for it asserted success on
+    exactly that run, freezing the defect as a specification.
+
+    **Called per batch, not once per run.** A generator that enters an autocast
+    context and yields from inside it leaves that context active while the
+    consumer works, and closes it between batches — verified by execution, and the
+    regime can therefore differ from batch to batch. An entry check would see the
+    context the *stream* was created in and miss the one each forward runs in.
+
+    The cost is one thread-local read. This is not the D3 situation: that guard
+    was removed from the hot path because `bool(tensor.any())` on a CUDA tensor
+    forces a host-device synchronisation on every batch. Nothing here touches a
+    tensor or a device.
+    """
+    recorded = AutocastRegime(enabled=manifest.amp_enabled, dtype=manifest.amp_dtype)
+
+    if encoded is not None and encoded.regime != recorded:
         raise RuntimeError(
-            f"autocast is enabled for '{device_type}' and this measurement would "
-            f"run at {_torch.get_autocast_dtype(device_type)} while its manifest "
-            "recorded amp_enabled=False. Measure outside the autocast block, or "
-            "use the differential calibration, which records the AMP state it "
-            "observed instead of claiming one"
+            f"the full-graph embeddings were computed under {encoded.regime} while "
+            f"this manifest records {recorded}. Modes B and C score numbers these "
+            "embeddings produced, so a manifest describing a different regime "
+            "describes a run that did not happen"
         )
+
+    observed = observe_autocast_regime(device)
+    if observed != recorded:
+        raise RuntimeError(
+            f"this measurement is running under {observed} while its manifest "
+            f"records {recorded}. The artifact would describe a run that did not "
+            "happen. Build the manifest in the same context the computation runs "
+            "in — for modes B and C that is the context the full-graph embeddings "
+            "were computed in, which `EncodedGraph` carries for exactly this "
+            "reason"
+        )
+
+
+#: Bumped when the metric set or any metric's definition changes: a name added or
+#: removed, a denominator redefined, a `hits@K` membership change, an aggregation
+#: rule change. Lives beside `_authoritative`, which is what it versions.
+METRIC_SCHEMA_VERSION = 1
+
+#: The domain a measurement seed must fall in.
+#:
+#: One seed drives Python, NumPy and torch, and NumPy's legacy seeder accepts only
+#: ``[0, 2**32 - 1]`` — so a value outside it is not a seed for this harness even
+#: where one of the three would take it. ``bool`` is an ``int`` subclass, so
+#: ``True`` would otherwise pass as ``1`` and record a run's RNG identity as a
+#: flag; the type is checked exactly.
+MAX_MEASUREMENT_SEED = 2 ** 32 - 1
+
+
+def validate_measurement_seed(value: Any, where: str) -> int:
+    """A seed that actually identifies this harness's random streams.
+
+    Checked at both boundaries it crosses — the measurement CLI, where a bad value
+    would seed nothing usable, and the ledger, where it would stand as the
+    recorded identity of a stream. Neither can rely on the other having run.
+
+    Raises:
+        ValueError: for a non-integer, a bool, or a value outside
+            ``[0, MAX_MEASUREMENT_SEED]``.
+    """
+    if type(value) is not int or not 0 <= value <= MAX_MEASUREMENT_SEED:
+        raise ValueError(
+            f"{where} must be an integer in [0, {MAX_MEASUREMENT_SEED}], got "
+            f"{value!r}. One seed drives Python, NumPy and torch, and it is what "
+            "gives this run's random streams an identity."
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -391,6 +512,27 @@ class MeasurementManifest:
 
     mode: str
     split: str
+    metric_schema_version: int
+    """Which set of metrics, under which definitions, `authoritative_metrics` holds.
+
+    **Separate from `canonical_tie_policy_version`, which cannot stand in for it.**
+    The tie policy versions how equal scores become ranks. It says nothing about
+    which metric names are emitted, what each denominator counts, which K values
+    `hits@K` covers, or how per-sample values are aggregated -- all of which change
+    what a number means while leaving the tie policy untouched. Bump this whenever
+    any of those changes; two records under one version must be comparable."""
+    cohort_kind: str
+    """Whether this cohort came from this project's generator or from outside.
+
+    `generated` is disease-disjoint by construction and carries a
+    `split_manifest` digest below; `supplied` is an institutional or external
+    patient set that was never cut from this disease universe, so its overlap
+    with training is an open measurement rather than a contract.
+
+    **Stated on the manifest rather than inferred downstream from whether a
+    `split_manifest` digest is present.** Absence of a role could mean several
+    things later; this field means one, and `resolve_cohort` is what makes it
+    agree with the roles at construction."""
     n_samples: int
     # candidate construction
     candidate_construction: str
@@ -457,9 +599,19 @@ class MeasurementManifest:
     The boolean alone cannot say what a run computed in. `amp_enabled=False` with
     no dtype leaves a reader unable to tell an fp32 run from one whose dtype was
     simply not recorded, and BACKLOG §3.1.3 established that the AMP regime decides
-    which of two different questions a comparison answered. For every mode in this
-    module it is `None`, and `assert_no_autocast` is what makes that a fact rather
-    than an expectation."""
+    which of two different questions a comparison answered.
+
+    **Observed, not assumed.** An earlier revision wrote both fields as literals
+    and said "no traversal here opens an autocast context, therefore False". No
+    traversal here does open one — but a *caller* can, and the literals then
+    described a run that did not happen. They now carry what
+    `observe_autocast_regime` read at the computation that produced this mode's
+    numbers: its own forward for Mode A, and the full-graph embedding call for
+    Modes B and C. `assert_manifest_describes_regime` refuses a traversal whose
+    regime differs from what its manifest records.
+
+    **A harness-boundary regime.** An autocast context opened inside a model is
+    not observable from these boundaries and is not claimed."""
 
     torch_compile_wrapped: Optional[bool]
     """Whether the model that ran **was a `torch.compile` wrapper object** —
@@ -658,7 +810,7 @@ def _authoritative(ranks: List[int]) -> Dict[str, float]:
     }
 
 
-def encode_full_graph(model: Any, graph_data: Dict[str, Any], device: Any) -> Dict[str, Any]:
+def encode_full_graph(model: Any, graph_data: Dict[str, Any], device: Any) -> EncodedGraph:
     """Embed every node once, the way the deployed pipeline does.
 
     `src/inference/pipeline.py:_precompute_node_embeddings` is the same three
@@ -675,8 +827,13 @@ def encode_full_graph(model: Any, graph_data: Dict[str, Any], device: Any) -> Di
     x_dict = {k: v.to(device) for k, v in graph_data["x_dict"].items()}
     edge_index_dict = {k: v.to(device) for k, v in graph_data["edge_index_dict"].items()}
     model.eval()
+    # Observed **here**, inside the function that performs the forward, so a caller
+    # who wraps this call in an autocast context is described by it. Observing at
+    # the caller — or worse, at manifest construction later — reads a different
+    # context and would label these embeddings with it.
+    regime = observe_autocast_regime(device)
     with _torch.no_grad():
-        return model(x_dict, edge_index_dict)
+        return EncodedGraph(embeddings=model(x_dict, edge_index_dict), regime=regime)
 
 
 def _score_from_full_graph(
@@ -776,7 +933,7 @@ def run_modes_ab(
     dataloader: Iterable[Dict[str, Any]],
     manifest_a: MeasurementManifest,
     manifest_b: Optional[MeasurementManifest] = None,
-    full_graph_embeddings: Optional[Dict[str, Any]] = None,
+    full_graph_embeddings: Optional["EncodedGraph"] = None,
     device: Optional[Any] = None,
 ) -> "tuple":
     """Score a cohort exactly as the legacy evaluator does, and report honestly.
@@ -820,7 +977,11 @@ def run_modes_ab(
     from src.utils.metrics import RankingMetrics
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
-    assert_no_autocast(device)
+    # Fail fast, before a dataloader is touched. The per-batch checks below are
+    # what actually enforce this; this one buys a clear error before any work.
+    assert_manifest_describes_regime(manifest_a, device)
+    if manifest_b is not None:
+        assert_manifest_describes_regime(manifest_b, device, full_graph_embeddings)
     model.eval()
 
     want_b = manifest_b is not None
@@ -842,6 +1003,13 @@ def run_modes_ab(
 
     with _torch.no_grad():
         for batch_data in dataloader:
+            # **After the yield, before any tensor work.** A generator can enter
+            # an autocast context and yield from inside it, so the regime a batch
+            # is scored under is not knowable before it arrives.
+            assert_manifest_describes_regime(manifest_a, device)
+            if want_b:
+                assert_manifest_describes_regime(manifest_b, device, full_graph_embeddings)
+
             batch = batch_data["batch"]
             subgraph_x = {k: v.to(device) for k, v in batch_data["subgraph_x_dict"].items()}
             subgraph_edges = {
@@ -907,7 +1075,7 @@ def run_modes_ab(
             # index by, and the assertion below says so in code — "they share a
             # variable" is a structural claim, and structural claims decay.
             b_scores, b_ids = _score_from_full_graph(
-                full_graph_embeddings, batch_data, global_ids, device
+                full_graph_embeddings.embeddings, batch_data, global_ids, device
             )
             if b_ids is not global_ids:
                 raise AssertionError(
@@ -1057,7 +1225,7 @@ def _assert_ids_in_range(samples: Any, n_phenotypes: int, n_diseases: int) -> No
 
 
 def run_mode_c(
-    full_graph_embeddings: Dict[str, Any],
+    full_graph_embeddings: "EncodedGraph",
     samples: Iterable[Any],
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
@@ -1099,9 +1267,9 @@ def run_mode_c(
     from src.inference.scoring import cosine_score_matrix, masked_mean_pool
 
     device = _torch.device(device) if device is not None else _torch.device("cpu")
-    assert_no_autocast(device)
-    phenotype_emb = full_graph_embeddings["phenotype"].to(device)
-    disease_emb = full_graph_embeddings["disease"].to(device)
+    assert_manifest_describes_regime(manifest, device, full_graph_embeddings)
+    phenotype_emb = full_graph_embeddings.embeddings["phenotype"].to(device)
+    disease_emb = full_graph_embeddings.embeddings["disease"].to(device)
     all_disease_ids = _torch.arange(disease_emb.size(0), device=device)
 
     materialised = list(samples)

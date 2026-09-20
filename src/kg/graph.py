@@ -38,6 +38,7 @@ from src.core.types import (
     NodeType,
 )
 from src.core.schema import KnowledgeGraphSchema, get_kg_schema
+from src.kg.artifacts import GRAPH_ARTIFACTS
 
 if TYPE_CHECKING:
     pass
@@ -48,6 +49,66 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # Knowledge Graph
 # ==============================================================================
+#: How node features are initialised, recorded in the manifest so a later
+#: operator reads a recipe rather than only a digest. Changing the draw means
+#: changing this name — a switch to pretrained, ortholog-derived or otherwise
+#: different features must not silently inherit the semantics of a normal draw.
+FEATURE_INITIALISATION = "standard-normal"
+FEATURE_INITIALISATION_VERSION = 1
+
+#: The node features an export writes are drawn from this seed unless a caller
+#: names another. Fixed so that rebuilding a workspace from the same annotation
+#: files reproduces it rather than merely resembling it; a parameter rather than
+#: a constant in the call so a caller who wants a different initialisation can
+#: have one. Deliberately unrelated to the allocation seed: those are independent
+#: streams by design, and coupling them would make changing one move the other.
+DEFAULT_FEATURE_SEED = 20260909
+
+#: What `torch.Generator.manual_seed` accepts, measured rather than assumed:
+#: outside this it raises `ValueError: Overflow when unpacking long long`.
+FEATURE_SEED_RANGE = (-(2 ** 63), 2 ** 64 - 1)
+
+
+def validate_feature_seed(value: Any) -> None:
+    """The seed the node feature draw is taken from.
+
+    Bounded because `torch` bounds it, not because this project chose to. The
+    range is the one `manual_seed` actually accepts; a value outside it raises
+    inside the export, which is after `kg.json` has been written.
+
+    ``True`` is refused for the usual reason, and `torch` refuses it too — but
+    later, and from a message about C++ types.
+    """
+    low, high = FEATURE_SEED_RANGE
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"feature_seed must be an integer, got {value!r}")
+    if not low <= value <= high:
+        raise ValueError(
+            f"feature_seed must be in [{low}, {high}] — the range torch's "
+            f"generator accepts — got {value}"
+        )
+
+
+def validate_feature_dim(value: Any) -> None:
+    """The width of the node feature vectors this export writes.
+
+    **Zero is the case that makes this necessary.** A negative width raises and
+    a fractional one raises, both loudly and both after `kg.json` is already on
+    disk — but ``feature_dim=0`` is accepted by ``torch.randn`` and produces
+    real tensors with no features in them. That workspace passes every digest
+    check and every verifier, and the model built from it has nothing to read.
+    An error that arrives at training time, from a workspace that looks correct,
+    is the expensive kind.
+
+    ``True`` is refused for the same reason it is refused elsewhere: it is an
+    ``int``, and a one-wide feature vector is not what the caller meant.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"feature_dim must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"feature_dim must be >= 1, got {value}")
+
+
 class KnowledgeGraph:
     """
     Heterogeneous Knowledge Graph
@@ -482,6 +543,7 @@ class KnowledgeGraph:
         self,
         output_dir: Optional[Path] = None,
         feature_dim: int = 256,
+        feature_seed: int = DEFAULT_FEATURE_SEED,
     ) -> Dict[str, Any]:
         """
         Export graph data files for GNN training and inference.
@@ -502,6 +564,8 @@ class KnowledgeGraph:
         Returns:
             Dict with keys "x_dict", "edge_index_dict", "num_nodes_dict".
         """
+        validate_feature_dim(feature_dim)
+        validate_feature_seed(feature_seed)
         try:
             import torch
         except ImportError:
@@ -512,13 +576,23 @@ class KnowledgeGraph:
 
         node_mapping = self.get_node_id_mapping()
 
-        # --- Node features (random init) ---
+        # **A local generator, not `torch.manual_seed`.** Seeding the global RNG
+        # would make this export change what every later draw in the process
+        # produces — a side effect on a caller who asked for a graph file. The
+        # generator is CPU-side and its stream depends on the torch version, so
+        # what this buys is "the same build reproduces the same features", not a
+        # guarantee across versions.
+        feature_generator = torch.Generator().manual_seed(feature_seed)
+
+        # --- Node features (drawn from `feature_seed`) ---
         x_dict: Dict[str, Any] = {}
         num_nodes_dict: Dict[str, int] = {}
         for node_type, mapping in node_mapping.items():
             n = len(mapping)
             if n > 0:
-                x_dict[node_type] = torch.randn(n, feature_dim)
+                x_dict[node_type] = torch.randn(
+                    n, feature_dim, generator=feature_generator
+                )
                 num_nodes_dict[node_type] = n
 
         # --- Edge indices from KG structure ---
@@ -568,9 +642,9 @@ class KnowledgeGraph:
         if output_dir is not None:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(x_dict, output_dir / "node_features.pt")
-            torch.save(edge_index_dict, output_dir / "edge_indices.pt")
-            with open(output_dir / "num_nodes.json", "w") as f:
+            torch.save(x_dict, output_dir / GRAPH_ARTIFACTS["node_features"])
+            torch.save(edge_index_dict, output_dir / GRAPH_ARTIFACTS["edge_indices"])
+            with open(output_dir / GRAPH_ARTIFACTS["num_nodes"], "w") as f:
                 json.dump(num_nodes_dict, f)
             logger.info(
                 f"Graph data exported to {output_dir}: "

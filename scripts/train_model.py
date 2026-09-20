@@ -72,6 +72,11 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
+from src.evaluation.cohort import (
+    MANIFEST_FILENAME,
+    verify_generated_cohorts,
+    verify_graph_artifacts,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -430,6 +435,110 @@ def load_samples(data_dir: Path, split: str = "train") -> List[DiagnosisSample]:
     return samples
 
 
+def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optional[Path]:
+    """Load a parent checkpoint if one was asked for and is there, and return the
+    path **that was actually loaded**.
+
+    Returns `None` when nothing was requested, and `None` when a path was
+    requested but does not exist — in that case the run warns and continues, so it
+    did not consume the parent and must not record it.
+
+    **Deciding and loading are one operation on purpose.** Split apart, "which
+    path did we load" and "which path do we record" are two answers that can
+    disagree, and nothing downstream could tell. Here the returned value *is* the
+    argument `load_checkpoint` received, so recording something the run did not
+    load is not a bug that can be introduced without editing this function.
+
+    **Extracted so the decision itself is testable.** Its three outcomes used to
+    be reachable only by running `train()`, so the tests exercised the role
+    builder's response to an argument and assumed the caller supplied it
+    correctly — the same weakness as testing a copy of production instead of
+    production.
+
+    One further property comes free, and it matters. `train()` now binds
+    `resumed_from` in exactly one place, from this call. Constructing the digest
+    map above that line makes `resumed_from` undefined, which is an `F821` that
+    the lint gate in `tests/unit/test_training_provenance.py` already fails on —
+    verified by moving the block and watching it fire. The pre-initialised
+    `resumed_from = None` this replaces left a window where a reordering would
+    have compiled and silently recorded no parent.
+    """
+    if not requested:
+        return None
+
+    resume_path = Path(requested)
+    if not resume_path.exists():
+        logger.warning(f"Checkpoint not found: {resume_path}")
+        return None
+
+    logger.info(f"Resuming from checkpoint: {resume_path}")
+    trainer.load_checkpoint(resume_path)
+    return resume_path
+
+
+def training_input_roles(
+    data_dir: Path, *, with_validation: bool,
+    resumed_from: Optional[Path] = None,
+) -> Dict[str, Path]:
+    """The semantic input roles a training run consumes, by role name.
+
+    **Named rather than inlined so the tests can exercise this instead of
+    restating it.** A test that rebuilds the same dict beside the source proves
+    the test and the test's copy agree, which is not the contract anyone cares
+    about — the first version of these tests did exactly that and missed a scope
+    error in the caller.
+
+    `with_validation` is the caller's observation that validation actually ran, not
+    an assumption that a file exists. `create_dataloaders` returns `None` for the
+    validation loader when there are no validation samples, and a run in that state
+    trains without validation — recording the role anyway would claim an input the
+    run's results do not rest on. Note the wording: an existing-but-empty
+    `val_samples.json` *is* opened and parsed before the loader becomes `None`, so
+    the honest statement is that the samples were **not used by a validation
+    pass**, not that the file was never touched.
+
+    `resumed_from` is the parent checkpoint, when one was **actually loaded**. A
+    resumed run restores model weights, optimizer, scheduler, scaler and training
+    state from it, so two runs over identical workspace files but different parents
+    produce materially different results — and a digest map that could not tell
+    them apart would contradict this field's whole claim. `None` covers both "no
+    resume was requested" and "one was requested but the path did not exist", since
+    `train()` warns and continues in the second case: the run did not consume it,
+    and recording the role with a `None` digest would say something different.
+
+    **One role, not a lineage.** The parent's own provenance lives in the parent;
+    nothing here walks it, and there is no registry or parent/child graph.
+
+    Nothing globs the directory. An unrelated split appearing beside these files
+    must not change the record of a run that never read it.
+    """
+    roles = {
+        "train_samples": data_dir / "train_samples.json",
+        "node_features": data_dir / "node_features.pt",
+        "edge_indices": data_dir / "edge_indices.pt",
+        "num_nodes": data_dir / "num_nodes.json",
+    }
+    if with_validation:
+        roles["val_samples"] = data_dir / "val_samples.json"
+    if resumed_from is not None:
+        roles["resume_checkpoint"] = Path(resumed_from)
+
+    # **The manifest says how the workspace was cut, which the sample digests
+    # cannot.** Two byte-different sample files could have been split at the
+    # disease level or at the sample level, and nothing in their digests
+    # distinguishes those regimes.
+    #
+    # **Recorded here, verified in `train`.** The manifest is a training input
+    # like any other and its digest belongs in this map — but the *check* that it
+    # describes this workspace belongs at the top of the run, ahead of the
+    # directories and the config file, not at the point where a role map is
+    # assembled two thirds of the way through. Running it here as well would read
+    # both cohorts a second time to re-establish what has already been
+    # established.
+    roles["split_manifest"] = data_dir / MANIFEST_FILENAME
+    return roles
+
+
 def create_dataloaders(
     config: TrainConfig,
     graph_data: Dict[str, Any],
@@ -552,6 +661,26 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
         logger.info(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
+    # **Refuse before the first run artifact exists.** Everything below this line
+    # creates or writes something: run directories, `config.yaml`, a checkpoint
+    # directory, then the graph tensors and a model built from them. Whether this
+    # workspace's graph is the export its manifest names, and whether its cohorts
+    # are the ones that manifest describes, is knowable from the files alone — so
+    # it is knowable before any of that. Verifying later left a run that had
+    # already written its configuration and loaded a mixed graph.
+    #
+    # No rollback and no transactional writing: the refusal simply moves ahead of
+    # the side effects.
+    data_dir = Path(config.data_dir)
+    if not data_dir.exists():
+        logger.error(f"Data directory not found: {data_dir}")
+        logger.info("Please run data preprocessing first:")
+        logger.info("  python scripts/preprocess_data.py")
+        return {}
+
+    verify_graph_artifacts(data_dir)
+    verify_generated_cohorts(data_dir)
+
     # Create output directories
     output_dir = Path(config.output_dir)
     # Auto-derive an architecture-scoped checkpoint dir
@@ -573,14 +702,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
         yaml.dump(asdict(config), f)
     logger.info(f"Configuration saved to {config_path}")
 
-    # Load data
-    data_dir = Path(config.data_dir)
-    if not data_dir.exists():
-        logger.error(f"Data directory not found: {data_dir}")
-        logger.info("Please run data preprocessing first:")
-        logger.info("  python scripts/preprocess_data.py")
-        return {}
-
+    # Load data — verified above, before anything was written.
     graph_data = load_graph_data(data_dir)
     train_loader, val_loader = create_dataloaders(config, graph_data)
 
@@ -651,20 +773,50 @@ def train(config: TrainConfig) -> Dict[str, float]:
         config=trainer_config,
     )
 
-    # Compute and attach data fingerprint for KG version tracking.
-    # This gets embedded in every checkpoint saved by Trainer and
-    # ModelCheckpoint callback (they read trainer.data_fingerprint).
-    from src.utils.fingerprint import compute_fingerprint
+    # Two identities, attached side by side, answering different questions.
+    #
+    #   data_fingerprint        is this checkpoint STRUCTURALLY COMPATIBLE with
+    #                           the graph in front of me?
+    #   training_input_digests  WHICH EXACT INPUTS produced it?
+    #
+    # The first cannot answer the second: it records node types, counts, feature
+    # dims and edge types, and sample files do not enter it at all. Two runs over
+    # different sample files therefore share a fingerprint, and a comparison
+    # between their checkpoints cannot attribute a difference to data rather than
+    # to configuration, randomness or training behaviour.
+    #
+    # Both are read by name in `ModelCheckpoint._save_checkpoint`; setting an
+    # attribute here is not enough on its own.
+    from src.utils.fingerprint import compute_fingerprint, compute_input_digests
+
+    # Resume if specified. One binding site, from one call: see
+    # `resolve_resume_checkpoint` for why that placement is load-bearing.
+    resumed_from = resolve_resume_checkpoint(trainer, config.resume_from)
+
+    # **After the resume decision, not before it.** A first version attached the
+    # digests above this block, where `resumed_from` cannot exist yet; a resumed
+    # run would then have recorded every current file and stayed silent about the
+    # parent checkpoint whose weights, optimizer, scheduler, scaler and training
+    # state it restored. Two runs over identical workspace files with different
+    # parents would have carried identical digests.
+    #
+    # Both attributes are read by name in `ModelCheckpoint._save_checkpoint`, and
+    # nothing reads them before `trainer.train()` below, so attaching them here
+    # changes nothing except what they can see.
     trainer.data_fingerprint = compute_fingerprint(graph_data)
 
-    # Resume if specified
-    if config.resume_from:
-        resume_path = Path(config.resume_from)
-        if resume_path.exists():
-            logger.info(f"Resuming from checkpoint: {resume_path}")
-            trainer.load_checkpoint(resume_path)
-        else:
-            logger.warning(f"Checkpoint not found: {resume_path}")
+    # Only the roles this run consumed. `val_loader is None` is the observation
+    # that validation did not run — `create_dataloaders` returns it that way when
+    # the workspace has no validation samples, and it is what this scope actually
+    # holds. A first version read `val_samples`, which lives in
+    # `create_dataloaders` and is not in scope here at all.
+    trainer.training_input_digests = compute_input_digests(
+        training_input_roles(
+            data_dir,
+            with_validation=val_loader is not None,
+            resumed_from=resumed_from,
+        )
+    )
 
     # Train
     logger.info("Starting training...")
@@ -685,95 +837,6 @@ def train(config: TrainConfig) -> Dict[str, float]:
     logger.info(f"Final metrics saved to {metrics_path}")
 
     return final_metrics
-
-
-# =============================================================================
-# Synthetic Data Generation (for testing)
-# =============================================================================
-def generate_synthetic_data(
-    data_dir: Path,
-    num_phenotypes: int = 5000,
-    num_diseases: int = 1000,
-    num_genes: int = 10000,
-    num_train_samples: int = 1000,
-    num_val_samples: int = 200,
-    hidden_dim: int = 256,
-) -> None:
-    """
-    Generate synthetic data for testing the training pipeline
-
-    This creates placeholder data with correct structure for testing.
-    """
-    logger.info("Generating synthetic data for testing...")
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # Node features (random embeddings)
-    x_dict = {
-        "phenotype": torch.randn(num_phenotypes, hidden_dim),
-        "disease": torch.randn(num_diseases, hidden_dim),
-        "gene": torch.randn(num_genes, hidden_dim),
-    }
-    torch.save(x_dict, data_dir / "node_features.pt")
-
-    # Edge indices (random connections)
-    def random_edges(n_src, n_dst, n_edges):
-        src = torch.randint(0, n_src, (n_edges,))
-        dst = torch.randint(0, n_dst, (n_edges,))
-        return torch.stack([src, dst])
-
-    # Forward edges
-    phenotype_gene_edges = random_edges(num_phenotypes, num_genes, 20000)
-    gene_disease_edges = random_edges(num_genes, num_diseases, 15000)
-    phenotype_disease_edges = random_edges(num_phenotypes, num_diseases, 10000)
-
-    edge_index_dict = {
-        # Forward edges
-        ("phenotype", "associated_with", "gene"): phenotype_gene_edges,
-        ("gene", "causes", "disease"): gene_disease_edges,
-        ("phenotype", "observed_in", "disease"): phenotype_disease_edges,
-        # Reverse edges (for bidirectional message passing)
-        ("gene", "rev_associated_with", "phenotype"): phenotype_gene_edges.flip(0),
-        ("disease", "rev_causes", "gene"): gene_disease_edges.flip(0),
-        ("disease", "rev_observed_in", "phenotype"): phenotype_disease_edges.flip(0),
-    }
-    torch.save(edge_index_dict, data_dir / "edge_indices.pt")
-
-    # Node counts
-    num_nodes = {
-        "phenotype": num_phenotypes,
-        "disease": num_diseases,
-        "gene": num_genes,
-    }
-    with open(data_dir / "num_nodes.json", "w") as f:
-        json.dump(num_nodes, f)
-
-    # Training samples
-    import random
-
-    def generate_samples(n_samples):
-        samples = []
-        for i in range(n_samples):
-            n_phenotypes = random.randint(3, 10)
-            samples.append({
-                "patient_id": f"patient_{i:05d}",
-                "phenotype_ids": random.sample(range(num_phenotypes), n_phenotypes),
-                "disease_id": random.randint(0, num_diseases - 1),
-            })
-        return samples
-
-    train_samples = generate_samples(num_train_samples)
-    with open(data_dir / "train_samples.json", "w") as f:
-        json.dump(train_samples, f)
-
-    val_samples = generate_samples(num_val_samples)
-    with open(data_dir / "val_samples.json", "w") as f:
-        json.dump(val_samples, f)
-
-    logger.info(f"Synthetic data generated in {data_dir}")
-    logger.info(f"  Nodes: {num_nodes}")
-    logger.info(f"  Edges: {sum(e.size(1) for e in edge_index_dict.values())}")
-    logger.info(f"  Train samples: {num_train_samples}")
-    logger.info(f"  Val samples: {num_val_samples}")
 
 
 # =============================================================================

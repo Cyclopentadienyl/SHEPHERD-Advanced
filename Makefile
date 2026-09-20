@@ -10,10 +10,10 @@ help:
 	@echo "  Testing"
 	@echo "    make test             - Run the full test suite"
 	@echo "    make test-unit        - Run unit tests only (part of 'check')"
-	@echo "    make test-integration - Run integration tests (not in 'check'; see the note below)"
+	@echo "    make test-integration - Run integration tests only (part of 'check')"
 	@echo ""
 	@echo "  Gates (baseline-green — these must pass)"
-	@echo "    make check            - lint-imports + test-unit"
+	@echo "    make check            - lint-imports + test-unit + test-integration"
 	@echo "    make lint-imports     - Enforce the layered architecture (import-linter)"
 	@echo ""
 	@echo "  Debt reports (NOT baseline-green — they report existing issues)"
@@ -47,12 +47,23 @@ test-integration:
 # known-failing check here would make the gate meaningless — contributors would
 # learn to ignore a red `make check`, which is worse than not having one.
 #
-# `test-integration` was excluded because TestVectorIndexE2E failed on hosts where
-# the cuVS backend could not initialise. That test was removed with the vector
-# index's detachment from diagnosis, so the failure cannot recur. The suite is
-# still outside `check` only because it has not yet been demonstrated green across
-# the supported platforms; promoting it is a separate, measured decision.
-check: lint-imports test-unit
+# `test-integration` is in the gate as of the pipeline refactor. It was excluded
+# because TestVectorIndexE2E failed on hosts where the cuVS backend could not
+# initialise; that test went away with the vector index's detachment, and the
+# exclusion outlived its reason.
+#
+# What promoted it was the cost of leaving it out. The refactor that made the
+# graph source and the split manifest mandatory broke this suite in two steps
+# and left it broken across five commits — ten failures and thirteen errors —
+# while `make check` stayed green the whole time, because the callers it broke
+# were integration callers. A gate that cannot see the pipeline is how a branch
+# forks its own pipeline without anyone noticing.
+#
+# It qualifies on the terms this file already sets: demonstrated green here over
+# repeated runs, ~30s, no network, and CPU-only by explicit `--device cpu` rather
+# than by the absence of a GPU — so the one host-dependent-looking assertion
+# (`cuda_executed is False`) holds on CUDA machines too.
+check: lint-imports test-unit test-integration
 
 # .import-linter.ini is not one of import-linter's auto-discovered filenames
 # (.importlinter / setup.cfg / pyproject.toml), so the config path is explicit.

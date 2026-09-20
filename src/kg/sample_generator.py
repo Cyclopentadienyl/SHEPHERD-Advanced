@@ -16,102 +16,570 @@ Output format matches what scripts/train_model.py expects:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import random
+import math
+import os
+import re
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from src.kg.artifacts import (
+    GRAPH_ARTIFACTS,
+    SPLIT_MANIFEST_SCHEMA_VERSION,
+    validate_graph_export_recipe,
+)
+from src.kg.disease_allocation import (
+    DiseaseAllocation,
+    derive_stream,
+    disease_set_digest,
+    require_eligible,
+    universe_digest,
+    validate_allocation,
+)
 from src.kg.graph import KnowledgeGraph
+from src.utils.fingerprint import file_sha256
 
 logger = logging.getLogger(__name__)
+
+#: What `file_sha256` returns, and the only shape a digest can have.
+_IS_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+#: Bumped when generation changes in a way that makes two cohorts from the same
+#: allocation, budgets and seed differ. Recorded in the split manifest: the
+#: coverage-first pass changes the sample distribution relative to pure
+#: replacement sampling, and a reader comparing two workspaces has to be able to
+#: see that they were produced under different rules.
+GENERATION_ALGORITHM = "coverage-first-then-replacement"
+GENERATION_ALGORITHM_VERSION = 1
+
+
+
+def retained_phenotype_count(
+    n_phenotypes: int,
+    min_phenotypes: int,
+    max_phenotypes: int,
+    phenotype_drop_rate: float,
+) -> int:
+    """How many phenotypes a generated sample keeps — the ``k`` in ``C(P, k)``.
+
+    **The one definition, called rather than restated.** ``_generate_samples``
+    uses it to build every sample, and the split feasibility audit uses it to
+    compute generator-capacity bands. A second copy of this arithmetic would let
+    the audit report the capacity of a generator nobody runs, and the copy would
+    stay green while doing so — which is exactly the failure mode a shared
+    ``build_eligible_disease_profiles`` already rules out for eligibility.
+
+    The floor is ``min_phenotypes`` and the ceilings are ``max_phenotypes`` and
+    the disease's own phenotype count, so the result is always in
+    ``[min(min_phenotypes, n_phenotypes), n_phenotypes]``.
+    """
+    keep = max(min_phenotypes, int(n_phenotypes * (1.0 - phenotype_drop_rate)))
+    return min(keep, max_phenotypes, n_phenotypes)
+
+
+def _sha256_text(text: str) -> str:
+    """Digest of the UTF-8 bytes a caller is about to write.
+
+    Equal to `file_sha256` of the resulting file by construction, because the
+    same string is what gets written. Kept private: this is a serialisation
+    detail of one writer, not a second digesting policy for the project.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _require_persistable(
+    output_dir: Path,
+    graph_digests: Optional[Dict[str, str]],
+    graph_export: Optional[Dict[str, Any]],
+) -> None:
+    """Everything a persisting call must satisfy, before anything is generated.
+
+    **The whole point is where it runs, not what it checks.** These same three
+    refusals used to fire after `train_samples.json` and `val_samples.json` had
+    been written, so a caller that forgot a digest or a recipe destroyed an
+    existing workspace's cohorts and then refused — leaving new cohort files
+    beside the old manifest, a mixed generation that no reader can make sense of.
+    Nothing is rolled back here because nothing has happened yet.
+
+    **The recipe's domains, not merely its keys.** Checking presence alone let
+    this writer persist a schema-3 manifest that every reader refuses; a producer
+    whose output is guaranteed to be rejected is broken whichever side is right.
+    The rules are `validate_graph_export_recipe`'s, so writer and reader cannot
+    drift apart.
+
+    Raises:
+        ValueError: naming what was missing or malformed.
+    """
+    refuse_if_checkpoints_exist(output_dir)
+
+    supplied = graph_digests or {}
+    unbound = sorted(role for role in GRAPH_ARTIFACTS if not supplied.get(role))
+    if unbound:
+        raise ValueError(
+            f"this workspace would leave {', '.join(unbound)} unbound. "
+            "Only the writer of the graph export can vouch for those digests, "
+            "so they are supplied rather than recomputed here — and a manifest "
+            "without them cannot show that the tensors a model consumes are "
+            "this graph's."
+        )
+
+    # **Not an integrity check, and not offered as one.** A well-formed digest
+    # can still belong to another graph; what proves otherwise is the consumer
+    # re-hashing the file against this value, which is where that trust lives
+    # and stays. This refuses only the strings `file_sha256` could never return,
+    # so it rejects nothing a real producer supplies and costs an hour-long
+    # build nothing to learn late.
+    # **The value itself, never `str()` of it.** Coercing first accepted a
+    # 64-digit integer — `int("1" * 64)` stringifies to 64 characters that are
+    # all valid hex — and the manifest then recorded a JSON *number* that no
+    # consumer comparing against a hexdigest could ever match. `isinstance`
+    # rather than `type(...) is` on purpose: unlike the allocation seed, where
+    # `str()` formatting and JSON encoding could disagree about an `int`
+    # subclass, the regex and `json.dumps` both read a `str` subclass's actual
+    # value, so they cannot diverge and a stricter test would refuse a caller
+    # for nothing.
+    malformed = sorted(
+        role for role in GRAPH_ARTIFACTS
+        if not (isinstance(supplied[role], str) and _IS_SHA256.fullmatch(supplied[role]))
+    )
+    if malformed:
+        raise ValueError(
+            f"the digests supplied for {', '.join(malformed)} are not SHA-256 "
+            "digests, so no file could ever match them. This says nothing about "
+            "whether a well-formed digest is this graph's — only a consumer "
+            "re-hashing the file can say that."
+        )
+
+    try:
+        validate_graph_export_recipe(graph_export)
+    except ValueError as exc:
+        raise ValueError(
+            f"this workspace {exc}. Schema {SPLIT_MANIFEST_SCHEMA_VERSION} "
+            "promises node_features.pt can be rebuilt, not merely recognised, "
+            "and only the writer of the export knows what it passed."
+        ) from exc
 
 
 def generate_training_samples(
     kg: KnowledgeGraph,
-    num_train: int = 5000,
-    num_val: int = 1000,
+    allocation: DiseaseAllocation,
+    num_train: int,
+    num_val: int,
     min_phenotypes: int = 2,
     max_phenotypes: int = 15,
     phenotype_drop_rate: float = 0.3,
-    seed: int = 42,
     output_dir: Optional[Path] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Generate training and validation samples from a KnowledgeGraph.
+    graph_digests: Optional[Dict[str, str]] = None,
+    graph_export: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """Generate simulated patients from a **disease allocation**.
 
-    For each sample:
-      1. Pick a random disease that has at least `min_phenotypes` phenotypes
-      2. Randomly drop some phenotypes (simulating incomplete observation)
-      3. Record the disease index as ground truth
-      4. Optionally collect associated genes
+    **The allocation is supplied, not decided here** (§6.2). Each partition is
+    generated separately from its own diseases and its own random stream, so the
+    two cohorts are disease-disjoint by construction rather than by luck. The
+    superseded version drew one pooled set and sliced it by index, which splits
+    patients and leaves every multi-sample disease on both sides.
+
+    ``kg`` is still taken because the manifest records the graph the allocation
+    was cut from; the samples themselves come from the allocation's profiles.
 
     Args:
-        kg: KnowledgeGraph instance with nodes and edges loaded.
-        num_train: Number of training samples.
-        num_val: Number of validation samples.
-        min_phenotypes: Minimum phenotypes a disease must have to be eligible.
-        max_phenotypes: Maximum phenotypes to include per sample.
-        phenotype_drop_rate: Fraction of phenotypes to randomly drop per sample.
-        seed: Random seed for reproducibility.
-        output_dir: If provided, save train_samples.json and val_samples.json.
+        kg: the KnowledgeGraph the allocation was built from.
+        allocation: from ``allocate_diseases`` or ``train_only_allocation``.
+        num_train: training sample budget. Must reach every allocated training
+            disease — see ``_generate_partition``.
+        num_val: validation sample budget. ``0`` means no validation cohort, and
+            then the allocation must have no validation partition either.
+        min_phenotypes / max_phenotypes / phenotype_drop_rate: generation config.
+        output_dir: when given, writes ``train_samples.json``,
+            ``val_samples.json`` and ``split_manifest.json``.
+        graph_export: the recipe those artifacts came out of — feature width,
+            seed and initialisation name. On a persisted call its **shape** is
+            validated by the same rule the reader applies, so this writer cannot
+            produce a manifest its own readers refuse. What stays unverified is
+            the **causal** claim: that these numbers are the ones that produced
+            those bytes. Only the caller of the export knows that, and no check
+            here can recover it — a digest says which bytes exist, not which
+            arguments made them.
+        graph_digests: the digests of the graph artifacts, **computed by whoever
+            wrote them**, keyed by manifest role. Required when writing a
+            manifest. This function does not hash them itself and must not: it
+            would be digesting whatever files happen to sit in ``output_dir``,
+            which is a statement about the directory rather than about the export
+            this allocation was cut from. Only the writer can make that binding.
 
     Returns:
-        (train_samples, val_samples) as lists of dicts.
+        ``(train_samples, val_samples, manifest)``.
     """
-    rng = random.Random(seed)
+    _validate_generation_inputs(
+        num_train, num_val, min_phenotypes, max_phenotypes, phenotype_drop_rate
+    )
+    validate_allocation(allocation)
+    require_eligible(allocation, min_phenotypes)
+
+    # **The allocation must have been cut from the graph now being generated
+    # from.** ``kg`` was previously accepted and never read, so an allocation
+    # built from one knowledge graph could be generated against another: same
+    # disease indices, different phenotype content, and samples drawn from
+    # profiles the allocation never saw. Recomputing eligibility here and
+    # comparing content digests is what makes the docstring's claim true.
+    observed = universe_digest(build_eligible_disease_profiles(kg, min_phenotypes))
+    if observed != allocation.universe_digest:
+        raise ValueError(
+            "this allocation was cut from a different disease universe than the "
+            f"graph supplied ({allocation.universe_digest[:12]}... vs "
+            f"{observed[:12]}...). Re-allocate from this graph, or generate "
+            "against the graph the allocation was cut from."
+        )
+
+    if num_val == 0 and allocation.val:
+        raise ValueError(
+            f"num_val is 0 but the allocation withholds {len(allocation.val)} "
+            "diseases; use train_only_allocation, or ask for validation samples"
+        )
+    if num_val > 0 and not allocation.val:
+        raise ValueError(
+            f"num_val is {num_val} but the allocation has no validation partition"
+        )
+
+    # **Before generation, not before the write.** A persisting call's arguments
+    # are knowable from the arguments alone, so there is no reason to spend the
+    # generation on a call that cannot legitimately persist — and every reason
+    # not to reach `mkdir` with a refusal still pending. An in-memory manifest
+    # makes no claim about a directory, so it needs none of this.
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        _require_persistable(output_dir, graph_digests, graph_export)
+
+    config = dict(
+        min_phenotypes=min_phenotypes,
+        max_phenotypes=max_phenotypes,
+        phenotype_drop_rate=phenotype_drop_rate,
+    )
+
+    train_samples = _generate_partition(
+        allocation.train, num_train, "train", allocation.seed, **config
+    )
+    val_samples = _generate_partition(
+        allocation.val, num_val, "val", allocation.seed, **config
+    )
+
+    logger.info(
+        "Generated %d train and %d val samples", len(train_samples), len(val_samples)
+    )
+
+    # **Everything that can refuse has already refused.** `_require_persistable`
+    # ran before generation, and the coverage assertions inside
+    # `build_split_manifest` run below — both before the first byte is written.
+    # What is left after that point is `mkdir` and three writes.
+    #
+    # **Serialised once, so the digest is of the bytes that land.** The manifest
+    # has to describe the files on disk rather than an equivalent-looking
+    # re-serialisation of the same objects, which is why this used to write the
+    # cohorts and hash them back. Hashing the very string that is written is the
+    # same guarantee without the ordering: `json.dump(obj, handle)` and
+    # `handle.write(json.dumps(obj))` produce identical bytes, and
+    # `test_the_manifest_digests_the_files_that_were_written` re-checks that
+    # against `file_sha256` of the written file rather than trusting it here.
+    #
+    # **UTF-8 is named rather than inherited.** `open(path, "w")` takes the
+    # process locale, so the same records could serialise to different bytes on
+    # two machines — and two sites comparing digests is exactly what these
+    # digests are for.
+    artifacts: Dict[str, Optional[str]] = {"train_samples": None, "val_samples": None}
+    cohorts: Dict[str, str] = {}
+    if output_dir is not None:
+        # Measured at the real build's budget (200k train, 40k val): ~44 MB of
+        # strings, against a machine with 130 GB. Cheap where it buys the
+        # ordering above, and pure waste on the in-memory path, which writes
+        # nothing and digests nothing — so it is built here rather than above.
+        cohorts = {
+            "train_samples.json": json.dumps(train_samples),
+            "val_samples.json": json.dumps(val_samples),
+        }
+        artifacts["train_samples"] = _sha256_text(cohorts["train_samples.json"])
+        artifacts["val_samples"] = _sha256_text(cohorts["val_samples.json"])
+
+    # **The graph digests are supplied by whoever wrote those files, never taken
+    # here.** Hashing `output_dir/*.pt` would digest whatever happens to sit
+    # there, which need not be the export of the graph this allocation was cut
+    # from: a caller can pass graph A with its allocation while the directory
+    # holds graph B's tensors, and the manifest would record A's universe digest
+    # beside B's file digests as one provenance chain. Only the writer of an
+    # export can vouch that these are the artifacts it just produced. Their
+    # completeness is checked in `_require_persistable`, before any of this.
+    artifacts.update(graph_digests or {})
+
+    manifest = build_split_manifest(
+        allocation=allocation,
+        train_samples=train_samples,
+        val_samples=val_samples,
+        config=config,
+        num_train=num_train,
+        num_val=num_val,
+        artifacts=artifacts,
+        graph_export=graph_export,
+    )
+
+    if output_dir is not None:
+        # Serialised before `mkdir` for the same reason as the cohorts: a value
+        # no encoder takes must not be discovered with a directory already made.
+        manifest_text = json.dumps(manifest, indent=2, sort_keys=True)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in cohorts.items():
+            with open(output_dir / name, "w", encoding="utf-8") as handle:
+                handle.write(text)
+
+        # **Renamed into place.** Not a workspace transaction and not offered as
+        # one: the cohorts beside it are ordinary writes, and a process killed
+        # between them leaves a partial directory. What this buys is narrower and
+        # real — the manifest is never a half-written file that parses as nothing
+        # and reads as a workspace that has one.
+        target = output_dir / "split_manifest.json"
+        handle = tempfile.NamedTemporaryFile(
+            "w", dir=str(output_dir), prefix=target.name, suffix=".tmp",
+            delete=False, encoding="utf-8",
+        )
+        try:
+            with handle:
+                handle.write(manifest_text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(handle.name, target)
+        except BaseException:
+            Path(handle.name).unlink(missing_ok=True)
+            raise
+        logger.info("Samples and split manifest saved to %s", output_dir)
+
+    return train_samples, val_samples, manifest
+
+
+def validate_sample_budgets(num_train: Any, num_val: Any) -> None:
+    """The sample budgets, checked against their whole domain — the one copy.
+
+    **Phase one of a two-phase preflight, and the reason it is here rather than
+    in the build script.** Whether a budget is a usable number is knowable from
+    the budget alone, so it is knowable before an ontology is read; whether it is
+    *large enough* needs the allocation, so it cannot be. Splitting the check on
+    that line is what lets the cheap half run first.
+
+    A second copy in the script would be the failure this exists to prevent. The
+    build path used to check only "not ``None``" and "not smaller than the
+    partition", and ``50000.0`` and ``True`` slip through both: a float is never
+    less than a disease count, and ``True`` covers a one-disease partition. The
+    graph was then written and the generator refused afterwards — the half-built
+    workspace the preflight is for. One validator called from both places cannot
+    drift into that shape again.
+
+    ``None`` is refused here rather than by a separate "explicit budgets" check,
+    because a missing budget and a nonsensical one are the same event to every
+    caller: no usable number was supplied.
+    """
+    for name, value in (("num_train", num_train), ("num_val", num_val)):
+        if value is None:
+            raise ValueError(
+                f"{name} is required and has no default; every allocated disease "
+                "must receive at least one sample, so any fixed default would "
+                "fail on a real disease universe"
+            )
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer, got {value!r}")
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0, got {value}")
+
+
+def validate_phenotype_count(name: str, value: Any, minimum: int) -> None:
+    """One phenotype-count bound, checked against its own domain.
+
+    **Exposed rather than restated.** ``min_phenotypes`` decides which diseases
+    are eligible, so a caller that cuts an allocation from it acts on the value
+    long before generation validates it — and by then a workspace is on disk.
+    That caller needs this rule, not a copy of it: two copies agree until one is
+    extended.
+
+    ``True`` is refused explicitly. It is an ``int`` in Python, so a bare
+    ``isinstance`` check would read it as a phenotype floor of 1 and proceed.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+
+
+def _validate_generation_inputs(
+    num_train: Any,
+    num_val: Any,
+    min_phenotypes: Any,
+    max_phenotypes: Any,
+    phenotype_drop_rate: Any,
+) -> None:
+    """Narrow domain checks, before the graph is walked or anything is written.
+
+    The same reason the audit validates at its API rather than only at argparse:
+    this function is importable, and a budget of ``True`` would otherwise pass as
+    ``1`` while a non-finite drop rate would surface as an obscure failure deep
+    inside sampling.
+    """
+    validate_sample_budgets(num_train, num_val)
+    validate_phenotype_count("min_phenotypes", min_phenotypes, 1)
+    validate_phenotype_count("max_phenotypes", max_phenotypes, min_phenotypes)
+    if isinstance(phenotype_drop_rate, bool) or not isinstance(
+        phenotype_drop_rate, (int, float)
+    ):
+        raise ValueError(
+            f"phenotype_drop_rate must be a number, got {phenotype_drop_rate!r}"
+        )
+    if not math.isfinite(phenotype_drop_rate) or not 0.0 <= phenotype_drop_rate <= 1.0:
+        raise ValueError(
+            f"phenotype_drop_rate must be finite and in [0, 1], got {phenotype_drop_rate}"
+        )
+
+
+def refuse_if_checkpoints_exist(workspace: Path) -> None:
+    """Refuse to regenerate samples where trained checkpoints already live.
+
+    **A split regime is not a label, and this makes that an enforced fact rather
+    than a policy.** Checkpoints trained on a sample-level split carry a
+    ``val_mrr`` measuring recognition of new phenotype subsets of diseases they
+    have labelled examples of. Checkpoints trained on a disease-disjoint split
+    carry a ``val_mrr`` measuring generalisation to diseases they have none for.
+    Two different quantities under one name.
+
+    They meet in ``src/utils/checkpoint_paths.py``, whose selector reads the raw
+    ranking metric out of each checkpoint's own logs and has no way to tell the
+    regimes apart. Regenerating samples in place would leave both kinds in one
+    directory for it to compare.
+
+    There is no override flag, and none is wanted: a fresh workspace is cheap.
+    The graph artifacts can simply be copied, which is better than rebuilding
+    them — an identical ``kg.json`` digest proves both workspaces were cut from
+    the same graph.
+    """
+    checkpoints = workspace / "checkpoints"
+    if not checkpoints.is_dir():
+        return
+    existing = sorted(path.name for path in checkpoints.iterdir())
+    if not existing:
+        return
+    raise FileExistsError(
+        f"{workspace} already holds trained checkpoints ({', '.join(existing[:3])}"
+        f"{'...' if len(existing) > 3 else ''}). Regenerating samples here would "
+        "put two split regimes in one checkpoint directory, where the ranking-"
+        "metric selector cannot tell them apart. Generate into a fresh workspace "
+        "and copy the graph artifacts across."
+    )
+
+
+def build_split_manifest(
+    *,
+    allocation: DiseaseAllocation,
+    train_samples: Sequence[Dict[str, Any]],
+    val_samples: Sequence[Dict[str, Any]],
+    config: Dict[str, Any],
+    num_train: int,
+    num_val: int,
+    artifacts: Dict[str, Optional[str]],
+    graph_export: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """What the sample digests cannot say: how this workspace was cut.
+
+    Two byte-different sample files could have been cut the same way or
+    differently, and their digests cannot tell them apart. The manifest can.
+
+    **The realised sets are derived from the emitted records, never copied from
+    the allocation.** A realised field populated from allocation metadata would
+    restate the allocation rather than evidence it, and the coverage assertion
+    below would be checking a value against itself.
+
+    ``graph_export`` is the recipe the tensors came out of — the feature width,
+    the seed, and the name of the initialisation. **A digest proves identity and
+    explains nothing.** ``node_features.pt`` is bound by its digest, so a
+    workspace built with ``feature_seed=7`` verifies perfectly and a later
+    operator has no way to recover the 7. The recipe is what makes "rebuild
+    this" an instruction rather than a guess, and naming the initialisation is
+    what stops a future switch to different features inheriting the semantics of
+    a normal draw.
+
+    ``artifacts`` is recorded as given. Whether it binds the whole graph export is
+    checked where a **workspace** is produced — ``generate_training_samples`` with
+    an ``output_dir`` — because that is where the claim is made. Building a
+    manifest in memory to inspect a cut produces no graph export to bind.
+    """
+
+    realised_train = {int(sample["disease_id"]) for sample in train_samples}
+    realised_val = {int(sample["disease_id"]) for sample in val_samples}
+
+    if realised_train != set(allocation.train_ids):
+        raise AssertionError(
+            f"training coverage broken: {len(set(allocation.train_ids) - realised_train)} "
+            "allocated diseases received no sample"
+        )
+    if realised_val != set(allocation.val_ids):
+        raise AssertionError(
+            f"validation coverage broken: {len(set(allocation.val_ids) - realised_val)} "
+            "allocated diseases received no sample"
+        )
+
+    manifest = {
+        "schema_version": SPLIT_MANIFEST_SCHEMA_VERSION,
+        "generation": {
+            "algorithm": GENERATION_ALGORITHM,
+            "algorithm_version": GENERATION_ALGORITHM_VERSION,
+            "num_train": num_train,
+            "num_val": num_val,
+            **config,
+        },
+        "graph_export": dict(graph_export or {}),
+        "allocation": allocation.provenance(),
+        "realised": {
+            "train_diseases": len(realised_train),
+            "val_diseases": len(realised_val),
+            "train_digest": disease_set_digest(sorted(realised_train)),
+            "val_digest": disease_set_digest(sorted(realised_val)),
+            "derived_from": "the emitted sample records, not the allocation",
+        },
+        "artifacts": artifacts,
+        "disjoint": not (realised_train & realised_val),
+    }
+    if not manifest["disjoint"]:  # pragma: no cover - impossible from one allocation
+        raise AssertionError("train and validation partitions overlap at the disease level")
+    return manifest
+
+
+def build_eligible_disease_profiles(
+    kg: KnowledgeGraph,
+    min_phenotypes: int = 2,
+) -> List[Tuple[int, Dict[str, Any]]]:
+    """Disease profiles filtered to those a sample can actually be generated from.
+
+    **The one definition of "eligible", shared rather than restated.** Sample
+    generation and the split feasibility audit must describe the *same* disease
+    universe: an audit that measured a different universe from the one the
+    generator partitions would report costs for a split nobody runs. Two
+    implementations of one filter can disagree; one cannot.
+
+    Returned as a list of ``(disease_index, profile)`` pairs, in dictionary order.
+    A profile is ``{"phenotype_ids": [...], "gene_ids": [...]}``.
+
+    Args:
+        kg: KnowledgeGraph with nodes and edges loaded.
+        min_phenotypes: A disease needs at least this many phenotypes to be
+            eligible, because a sample keeps at least this many of them.
+
+    Returns:
+        Eligible ``(disease_index, profile)`` pairs; empty when none qualify.
+    """
     node_mapping = kg.get_node_id_mapping()
-
     disease_profiles = _build_disease_profiles(kg, node_mapping)
-
-    # Filter diseases with enough phenotypes
-    eligible_diseases = [
+    return [
         (disease_idx, profile)
         for disease_idx, profile in disease_profiles.items()
         if len(profile["phenotype_ids"]) >= min_phenotypes
     ]
-
-    if not eligible_diseases:
-        logger.warning(
-            "No diseases with enough phenotypes found. "
-            f"Need >= {min_phenotypes} phenotypes per disease."
-        )
-        return [], []
-
-    logger.info(
-        f"Found {len(eligible_diseases)} eligible diseases "
-        f"(with >= {min_phenotypes} phenotypes)"
-    )
-
-    total = num_train + num_val
-    samples = _generate_samples(
-        eligible_diseases=eligible_diseases,
-        total=total,
-        min_phenotypes=min_phenotypes,
-        max_phenotypes=max_phenotypes,
-        phenotype_drop_rate=phenotype_drop_rate,
-        rng=rng,
-    )
-
-    rng.shuffle(samples)
-    train_samples = samples[:num_train]
-    val_samples = samples[num_train:]
-
-    logger.info(
-        f"Generated {len(train_samples)} train, {len(val_samples)} val samples"
-    )
-
-    if output_dir is not None:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(output_dir / "train_samples.json", "w") as f:
-            json.dump(train_samples, f)
-        with open(output_dir / "val_samples.json", "w") as f:
-            json.dump(val_samples, f)
-        logger.info(f"Samples saved to {output_dir}")
-
-    return train_samples, val_samples
 
 
 def _build_disease_profiles(
@@ -133,10 +601,6 @@ def _build_disease_profiles(
     profiles: Dict[int, Dict[str, Set[int]]] = {}
     for d_idx in disease_mapping.values():
         profiles[d_idx] = {"phenotype_ids": set(), "gene_ids": set()}
-
-    # Reverse lookups: node_id_str -> idx
-    disease_strs = {v: k for k, v in disease_mapping.items()}
-    gene_strs = {v: k for k, v in gene_mapping.items()}
 
     # Two-pass edge traversal:
     # Pass 1: collect direct edges (phenotype-disease, gene-disease)
@@ -177,46 +641,80 @@ def _build_disease_profiles(
 
     return {
         d_idx: {
-            "phenotype_ids": list(prof["phenotype_ids"]),
-            "gene_ids": list(prof["gene_ids"]),
+            # **Sorted, so sampling cannot depend on set iteration order.** For
+            # the integer ids used today CPython's order is already stable across
+            # processes, so this is canonicalisation and defence in depth rather
+            # than a live bug fix: it makes order-independence a structural fact
+            # instead of an implementation detail, keeps serialised profiles
+            # byte-stable, and survives a future move to string identifiers.
+            "phenotype_ids": sorted(prof["phenotype_ids"]),
+            "gene_ids": sorted(prof["gene_ids"]),
         }
         for d_idx, prof in profiles.items()
     }
 
 
-def _generate_samples(
-    eligible_diseases: List[Tuple[int, Dict[str, Any]]],
-    total: int,
+def _generate_partition(
+    diseases: Sequence[Tuple[int, Dict[str, Any]]],
+    count: int,
+    id_prefix: str,
+    seed: int,
+    *,
     min_phenotypes: int,
     max_phenotypes: int,
     phenotype_drop_rate: float,
-    rng: random.Random,
 ) -> List[Dict[str, Any]]:
-    """Generate simulated patient samples."""
-    samples = []
+    """One cohort, from one partition, with coverage made true by construction.
 
-    for i in range(total):
-        disease_idx, profile = rng.choice(eligible_diseases)
-        all_phenos = profile["phenotype_ids"]
+    **A budget alone does not guarantee coverage.** Drawing ``count`` diseases
+    with replacement can miss one at any budget, so every allocated disease is
+    emitted once first and only the remainder is drawn. Refusing a budget smaller
+    than the partition is the other half: without it the guarantee is unachievable
+    rather than merely unmet.
 
-        # Randomly drop phenotypes
-        n_keep = max(
-            min_phenotypes,
-            int(len(all_phenos) * (1.0 - phenotype_drop_rate)),
+    **Each partition gets its own patient-id namespace.** A shared
+    ``sim_patient_%06d`` counter restarts per call, so two partitions generated
+    separately would both begin at zero and collide.
+
+    The order is shuffled before ids are assigned, so file order carries no
+    signal about which pass produced a record.
+    """
+    if not diseases:
+        if count:
+            raise ValueError(
+                f"cannot generate {count} {id_prefix} samples from no diseases"
+            )
+        return []
+    # A budget of zero against a non-empty partition falls through to the coverage
+    # check below and is refused there. An early return on ``count == 0`` used to
+    # skip it, so a partition with diseases and no budget produced nothing while
+    # the run still looked successful.
+    if count < len(diseases):
+        raise ValueError(
+            f"{id_prefix} budget of {count} cannot cover {len(diseases)} allocated "
+            "diseases; every allocated disease must receive at least one sample"
         )
-        n_keep = min(n_keep, max_phenotypes, len(all_phenos))
 
-        selected_phenos = rng.sample(all_phenos, n_keep)
+    rng = derive_stream(seed, id_prefix)
+    picks = list(diseases) + [
+        rng.choice(diseases) for _ in range(count - len(diseases))
+    ]
+    rng.shuffle(picks)
 
+    samples: List[Dict[str, Any]] = []
+    for index, (disease_idx, profile) in enumerate(picks):
+        all_phenos = profile["phenotype_ids"]
+        n_keep = retained_phenotype_count(
+            len(all_phenos), min_phenotypes, max_phenotypes, phenotype_drop_rate
+        )
         sample: Dict[str, Any] = {
-            "patient_id": f"sim_patient_{i:06d}",
-            "phenotype_ids": selected_phenos,
+            "patient_id": f"sim_{id_prefix}_{index:06d}",
+            "phenotype_ids": rng.sample(all_phenos, n_keep),
             "disease_id": disease_idx,
         }
-
         if profile["gene_ids"]:
             sample["gene_ids"] = profile["gene_ids"]
-
         samples.append(sample)
-
     return samples
+
+

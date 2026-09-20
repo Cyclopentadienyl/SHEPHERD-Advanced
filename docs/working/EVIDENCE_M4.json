@@ -1,0 +1,30 @@
+{
+  "counts": {
+    "shared_diseases": 7970,
+    "train_diseases": 10576,
+    "train_samples": 100000,
+    "val_diseases": 7970,
+    "val_diseases_absent_from_train": 0,
+    "val_samples": 15000
+  },
+  "deployment_relationship": "identical-sibling",
+  "digests": {
+    "train_samples": "47ab5628a9583b1fca5707bc4234ac2def143ec6207cc23bcaa4c1ab810567e9",
+    "val_samples": "04f6194257088e0bd03f8f1153525057d41f8a2c81d5a9bfc75bc90b82b54f9b"
+  },
+  "excluded_by_design": [
+    "patient ids",
+    "sample ids",
+    "per-disease lists (only set sizes are recorded)"
+  ],
+  "fact": "M4",
+  "overlap": {
+    "as_written": "7970 of 7970",
+    "shared_over_evaluation": 1.0
+  },
+  "splits": {
+    "evaluation": "val",
+    "training": "train"
+  },
+  "what_this_shows": "how much of the val cohort's disease set already appears in train, which bounds what any val metric can be evidence of"
+}

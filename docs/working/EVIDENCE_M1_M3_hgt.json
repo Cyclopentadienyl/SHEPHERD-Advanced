@@ -1,0 +1,65 @@
+{
+  "checkpoint_digests": {
+    "last.pt": "298b1170d98d0ebef8e6ff62581a3026519e790c9070fd4e315f0192810c0512",
+    "model-07-0.3643.pt": "bc88f0ef109a60a9bfe1eb5eff3c808468ac1426ff2a8f96a2610e8db030287a",
+    "model-08-0.3672.pt": "c598ee4484d7f103e6d9f0dcd2752c0586e462befa6d65e6f9b3bca1920d01ed",
+    "model-09-0.3637.pt": "b490977f80ac5782e691e44412c4f1ee95a7fa4224a12a9ef6e931ddd6e7a50f",
+    "model-20-0.7344.pt": "e4a2630919215eac0ef8567faeb30943d3f2b7a984411b2c98a22902ee20524f",
+    "model-21-0.7366.pt": "dc2644c2016e9a74d8fa37b2029c6add167d5dc88ed884d36dd06fa0712384f1",
+    "model-22-0.7372.pt": "2e47cdc67d42a743d7010b03080644f120c40ab6e2fa5a9cbc48fbdf0457dacc",
+    "model-42-0.6963.pt": "db0fb9b533f0a5ff349ff2e64d2611469654fbcd7060c1389ad187d90d47126b",
+    "model-45-0.6975.pt": "a722ffb19f79f4a5d8b4c9b7f87746717aa5d7c2a5c97b077f7bab91c87e5f0c",
+    "model-49-0.6986.pt": "270f9034fcf8af9e5d7d21a52b4cfe0f55233871e53679292861517d6e6f9fc5"
+  },
+  "deployment_relationship": "identical-sibling",
+  "excluded_by_design": [
+    "checkpoint tensors",
+    "absolute paths (only basenames are recorded)",
+    "operator and host names"
+  ],
+  "fact": "M1-M3",
+  "runtime": {
+    "cuda_available": true,
+    "device_name": "NVIDIA GB10",
+    "machine": "aarch64",
+    "python": "3.12.3",
+    "system": "Linux",
+    "torch": "2.10.0+cu130",
+    "torch_cuda": "13.0"
+  },
+  "summary": {
+    "filename_vs_logs": {
+      "agree": 9,
+      "disagree": 0,
+      "disagreeing_filenames": [],
+      "uncomparable": 1,
+      "uncomparable_filenames": [
+        "last.pt"
+      ]
+    },
+    "in_channels": {
+      "established": true,
+      "n_loaded_exposing_projection_widths": 10,
+      "n_loaded_without_projection_widths": 0,
+      "value_counts": {
+        "128": 30
+      }
+    },
+    "key_presence_counts": {
+      "config": 10,
+      "data_fingerprint": 10,
+      "epoch": 10,
+      "logs": 10,
+      "state_dict": 10
+    },
+    "load_error_categories": {},
+    "logs_ranking_metric_counts": {
+      "val_mrr": 10
+    },
+    "n_checkpoints_found": 10,
+    "n_loaded": 10,
+    "n_unreadable": 0,
+    "unreadable_filenames": []
+  },
+  "what_this_shows": "which keys a family of checkpoints carries, the input width they were built with, and whether the number in a filename is the ranking metric in its logs"
+}

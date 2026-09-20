@@ -1,0 +1,65 @@
+{
+  "deployment_relationship": "identical-sibling",
+  "excluded_by_design": [
+    "the console transcripts (.out) and raw /usr/bin/time reports (.time), which carry absolute paths",
+    "operator and host names",
+    "command lines"
+  ],
+  "observations": {
+    "memory_mapping_took_effect": "21,846 major page faults on the shortest-path scan against 0-8 on the three runs that read no large artifact. Major faults are pages served from disk, which is what a mapped read produces and a resident read does not.",
+    "peak_rss_includes_the_mapped_table": "11.23 GiB peak, of which 10.03 GiB is the mapped artifact. ru_maxrss counts file-backed resident pages, so this figure does not distinguish them from anonymous memory; the operator's system monitor, which excludes page cache, showed roughly 6.7 GB peak falling to 5.9 GB. The two are consistent only if the table was mapped.",
+    "the_whole_table_was_read": "audit_sp_reachability read 10,777,264,128 bytes (10.78 GB) against an artifact of 10,764,644,300 bytes (10.76 GB). Independent of the sidecar's num_pairs check, which reaches the same conclusion from the tensor length rather than from disk traffic."
+  },
+  "provenance_class": "TRANSCRIBED BY HAND from /usr/bin/time -v output produced on the deployment-sibling machine. Weaker than the four evidence files beside it, which are emitted by committed scripts and reproducible from them. Nothing here is re-derivable; it is a record, not a measurement anyone can repeat from this repository.",
+  "runs": {
+    "audit_checkpoint_family.py (gat)": {
+      "cpu_percent": 185,
+      "elapsed_seconds": 1.25,
+      "exit_status": 0,
+      "filesystem_input_blocks": 327104,
+      "filesystem_input_bytes": 167477248,
+      "major_page_faults": 0,
+      "max_rss_gib": 0.63,
+      "max_rss_kib": 660304,
+      "system_seconds": 0.32,
+      "user_seconds": 2.0
+    },
+    "audit_checkpoint_family.py (hgt)": {
+      "cpu_percent": 149,
+      "elapsed_seconds": 1.71,
+      "exit_status": 0,
+      "filesystem_input_blocks": 937552,
+      "filesystem_input_bytes": 480026624,
+      "major_page_faults": 8,
+      "max_rss_gib": 0.65,
+      "max_rss_kib": 682436,
+      "system_seconds": 0.46,
+      "user_seconds": 2.09
+    },
+    "audit_sp_reachability.py": {
+      "cpu_percent": 316,
+      "elapsed_seconds": 9.16,
+      "exit_status": 0,
+      "filesystem_input_blocks": 21049344,
+      "filesystem_input_bytes": 10777264128,
+      "major_page_faults": 21846,
+      "max_rss_gib": 11.23,
+      "max_rss_kib": 11774364,
+      "system_seconds": 6.51,
+      "user_seconds": 22.47
+    },
+    "audit_split_overlap.py": {
+      "cpu_percent": 177,
+      "elapsed_seconds": 1.39,
+      "exit_status": 0,
+      "filesystem_input_blocks": 47792,
+      "filesystem_input_bytes": 24469504,
+      "major_page_faults": 0,
+      "max_rss_gib": 0.59,
+      "max_rss_kib": 614320,
+      "system_seconds": 0.23,
+      "user_seconds": 2.23
+    }
+  },
+  "what_this_is": "Resource cost of the item-10 evidence run. Metadata about the run that produced EVIDENCE_M1_M3_hgt/gat, EVIDENCE_M4 and EVIDENCE_M5 \u2014 not an M-fact, and not governed by BACKLOG 5.2's evidence schema, which covers what those four files record."
+}

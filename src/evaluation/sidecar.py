@@ -1,0 +1,472 @@
+"""
+Evaluation records live beside the checkpoint, not inside it.
+=============================================================
+`EVALUATION_COHORTS.md` §6.5. Writing a result into the `.pt` changes its
+SHA-256, and the M1–M5 chain cites checkpoints *by* digest — so recording a
+number inside the weights would invalidate every citation of the weights the
+number is about.
+
+The alternative is a ledger keyed by the digest, which is what this is: a JSON
+file beside the checkpoints holding one record per (checkpoint, cohort, mode,
+tie policy). The digest stays stable, and a reader can ask what results exist for
+a set of weights without knowing where anyone happened to point `--output`.
+
+**What an absent record means, exactly.** It does not establish that a checkpoint
+was never evaluated. This provenance system is not closed and an evaluation can
+happen outside it. What absence supports is the narrower, true statement: *this
+ledger holds no result for these weights*. Every function here is written so that
+distinction survives — nothing infers, nothing defaults, and nothing fills a gap
+with a plausible value.
+
+**Not a registry, and deliberately not becoming one.** No parent/child graph, no
+lineage walk, no run ids, no cross-file joins. A record points back at the
+measurement artifact it came from by digest and stops there; the full manifest
+lives in that artifact and is not copied.
+
+**Contradiction is refused, not merged.** A key identifies one measurement. If
+the same key arrives with different numbers, one of the two is wrong about what
+it measured, and a ledger that silently kept the newer one would erase the
+evidence that they disagreed. There is no override flag: correcting a bad record
+means editing a readable JSON file, which leaves a diff, rather than passing a
+flag that leaves nothing.
+
+Standard library only — no torch, no I/O beyond one file.
+
+Module: src/evaluation/sidecar.py
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+#: Bumped when a record's shape changes in a way that makes an old file
+#: unreadable under the new rules. A reader that finds a version it does not know
+#: refuses rather than guessing which fields it can trust.
+LEDGER_SCHEMA_VERSION = 1
+
+#: The conventional file name, beside the checkpoints it describes.
+LEDGER_FILENAME = "evaluations.json"
+
+#: Manifest fields that can change a number, hashed into one semantics digest.
+#:
+#: **A false contradiction is worse than a missed one, and this list is chosen on
+#: that asymmetry.** A missed contradiction leaves two records the reader can
+#: compare; a false one *blocks a legitimate append*, so the rule is to include
+#: anything that could move a metric. An earlier key of
+#: (checkpoint, cohort, mode, tie policy) failed exactly this way: `batch_size` is
+#: documented on the manifest as semantics rather than performance — Mode A's
+#: candidate universe is the batch's subgraph — so two honest runs at different
+#: batch sizes collided and the second was refused as a contradiction.
+#:
+#: Explicit rather than "every field", so that adding a non-semantic field later
+#: does not churn every key and silence the contradiction check. That claim is
+#: only worth making if it is checkable: this list and ``NON_SEMANTIC_FIELDS``
+#: below must together cover every field of ``MeasurementManifest``, and
+#: ``tests/unit/test_evaluation_sidecar.py`` fails if a new field belongs to
+#: neither. A field cannot be omitted by oversight, only by decision.
+SEMANTIC_MANIFEST_FIELDS: Tuple[str, ...] = (
+    # what was ranked, and against what
+    "mode",
+    "cohort_kind",
+    "candidate_construction",
+    "negative_sampling_strategy",
+    "num_negative_samples",
+    "subgraph_strategy",
+    "subgraph_hops",
+    "num_neighbors",
+    "max_subgraph_nodes",
+    # how the batches were formed. `num_workers` is semantics, not performance:
+    # PyTorch seeds each worker as base_seed + worker_id, so a different worker
+    # count consumes a different random stream and yields a different candidate
+    # universe — which `measure_scorer`'s own --num-workers help says.
+    "batch_size",
+    "shuffle",
+    "num_workers",
+    "python_seed",
+    "numpy_seed",
+    "torch_seed",
+    # how scores became numbers
+    "score_semantics",
+    "model_construction",
+    "legacy_truncation_k",
+    "legacy_tie_policy",
+    "canonical_tie_policy_version",
+    "metric_schema_version",
+    # the numerical regime. `torch_compile_wrapped` is included although `None`
+    # means "not observed" rather than "not compiled": two runs where one was
+    # observed and one was not are not provably the same measurement, and the
+    # asymmetry above says include.
+    "software_revision",
+    "torch_version",
+    "cuda_version",
+    "device",
+    "dtype",
+    "amp_enabled",
+    "amp_dtype",
+    "torch_compile_wrapped",
+    "deterministic_algorithms",
+    "cudnn_deterministic",
+    "cudnn_benchmark",
+)
+
+#: Manifest fields deliberately outside the digest, each for a stated reason.
+#:
+#: Present so that "the list covers everything that can move a metric" is a
+#: checkable claim rather than an assertion. Adding a field to
+#: ``MeasurementManifest`` without deciding which side it falls on fails a test.
+NON_SEMANTIC_FIELDS: Dict[str, str] = {
+    "split": "the cohort role, already a key field in its own right",
+    "n_samples": (
+        "derived from the cohort, which the cohort digest already identifies; it "
+        "cannot differ between two runs over the same cohort digest"
+    ),
+    "checkpoint_path": "a path is not an identity; the checkpoint digest is",
+    "data_dir": "a path is not an identity; the artifact digests are",
+    "graph_fingerprint": (
+        "structural identity — node types, counts, feature dims. The graph "
+        "artifact digests below are strictly stronger: identical bytes imply "
+        "identical structure, and two graphs can share a fingerprint and differ"
+    ),
+    "artifact_digests": (
+        "hashed selectively rather than wholesale: checkpoint and samples are "
+        "already key fields, and the rest are covered by SEMANTIC_ARTIFACT_ROLES"
+    ),
+    "cuda_executed": (
+        "implied by `device`, which is in the digest; `_resolve_device` sets the "
+        "two together, so it cannot vary independently"
+    ),
+}
+
+#: Artifact roles whose bytes change what was measured. The graph tensors and the
+#: allocation are as much a part of the measurement as the checkpoint is.
+SEMANTIC_ARTIFACT_ROLES: Tuple[str, ...] = (
+    "node_features", "edge_indices", "num_nodes", "split_manifest",
+)
+
+#: What makes two records the same measurement.
+#:
+#: ``mode`` was in an earlier version of this key and is now inside the semantics
+#: digest with everything else that can move a number. What remains outside it are
+#: the two identities a reader looks a record up by: whose weights, and which
+#: cohort.
+KEY_FIELDS: Tuple[str, ...] = (
+    "checkpoint_digest",
+    "cohort_role",
+    "cohort_digest",
+    "measurement_semantics_digest",
+)
+
+
+def measurement_semantics_digest(manifest: Dict[str, Any]) -> str:
+    """SHA-256 over everything about a run that could change its numbers.
+
+    **Not the source artifact's digest.** That changes with a timestamp, a
+    reordered dict or an added descriptive field, so using it as identity would
+    make every re-run a new record and the contradiction check would never fire.
+    This hashes a named list of semantic fields, so two runs that differ in
+    nothing that matters produce the same digest.
+
+    **What "the same measurement" means here is narrower than bit-determinism.**
+    Two records under one digest were produced under identical recorded
+    semantics, seeds included. Whether they were therefore *bound* to agree
+    depends on the regime those fields describe: under `deterministic_algorithms`
+    a disagreement is a contradiction, and under a non-deterministic CUDA regime
+    it is a finding to investigate. The ledger refuses the second record either
+    way, because two answers filed under one identity cannot both stand — but the
+    refusal is an instruction to look, not a proof of a defect.
+
+    A field the manifest does not carry is hashed as ``null`` rather than skipped,
+    so a manifest that dropped one cannot collide with a manifest carrying a value
+    there. An explicitly-null field and an absent one do hash alike, which is
+    correct for the fields that legitimately carry ``null`` — ``amp_dtype`` is
+    ``None`` exactly when AMP is off — and is not a case a well-formed manifest
+    produces otherwise.
+    """
+    artifacts = manifest.get("artifact_digests", {})
+    payload = {
+        field: manifest.get(field, None) for field in SEMANTIC_MANIFEST_FIELDS
+    }
+    payload["artifacts"] = {
+        role: artifacts.get(role, None) for role in SEMANTIC_ARTIFACT_ROLES
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def empty_ledger() -> Dict[str, Any]:
+    """A ledger holding nothing, which is a different thing from no ledger."""
+    return {
+        "schema_version": LEDGER_SCHEMA_VERSION,
+        "what_this_is": (
+            "evaluation results for the checkpoints in this directory, keyed by "
+            "checkpoint digest. An absent record means this ledger holds no "
+            "result for those weights, not that they were never evaluated"
+        ),
+        "records": [],
+    }
+
+
+def read_ledger(path: Path) -> Dict[str, Any]:
+    """Load a ledger, or an empty one where no file exists.
+
+    A missing file is not an error: the first record has to be appendable to a
+    directory that has none. A file with an unknown ``schema_version`` **is** an
+    error, because reading it under this version's rules would be a guess about
+    which of its fields still mean what they say.
+    """
+    if not path.exists():
+        return empty_ledger()
+    ledger = json.loads(path.read_text())
+    version = ledger.get("schema_version")
+    if version != LEDGER_SCHEMA_VERSION:
+        raise ValueError(
+            f"{path} is ledger schema {version!r}; this code reads "
+            f"{LEDGER_SCHEMA_VERSION}. Read it with the revision that wrote it "
+            "rather than reinterpreting its fields under new rules."
+        )
+    if not isinstance(ledger.get("records"), list):
+        raise ValueError(f"{path} has no records list")
+    return ledger
+
+
+def record_key(record: Dict[str, Any]) -> Tuple[Any, ...]:
+    """The identity of a measurement, as a tuple.
+
+    A tuple rather than a joined string: joining needs a separator, a separator
+    needs escaping, and an unescaped one lets two different keys collide. Nothing
+    is gained by it here — the key is only ever compared, never used as a
+    filename or a dict key in the artifact.
+    """
+    missing = [field for field in KEY_FIELDS if field not in record]
+    if missing:
+        raise ValueError(f"record is missing key field(s): {', '.join(missing)}")
+    return tuple(record[field] for field in KEY_FIELDS)
+
+
+def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[str, Any]:
+    """One record from one measurement artifact as ``measure_scorer`` writes it.
+
+    Reads the manifest rather than taking the fields as arguments, so a record
+    cannot describe a run different from the one whose artifact it came from —
+    the same reason ``build_loader_config``'s output is handed to both the
+    dataloader and the manifest instead of being rebuilt.
+
+    The cohort's **kind** is derived from the roles the measurement recorded, not
+    re-asserted here. A generated cohort carries a ``split_manifest`` role because
+    ``resolve_cohort`` requires one; a supplied cohort has none because it was
+    never cut from this project's disease universe. Those are the only two
+    possibilities that reach a measurement artifact — a workspace built before the
+    allocation step is refused at the measurement, not recorded with a null.
+    """
+    manifest = report["manifest"]
+    # **A run with no usable RNG identity cannot be a ledger record.** Two
+    # unseeded runs consume different worker streams, different negatives and a
+    # different candidate universe while hashing to the same semantics digest, so
+    # the ledger would see one measurement with two answers and refuse the second
+    # as a contradiction.
+    #
+    # The domain is checked as well as presence: `True` is an `int`, so a manifest
+    # could otherwise record a stream's identity as a flag, and a value outside
+    # NumPy's `[0, 2**32 - 1]` is not a seed for this harness even where one of
+    # the three RNGs would take it. `measure_scorer` validates the same way, so
+    # this is a floor for other callers rather than a case the CLI can produce.
+    from src.evaluation.measurement import validate_measurement_seed
+
+    for field in ("python_seed", "numpy_seed", "torch_seed"):
+        value = manifest.get(field)
+        if value is None:
+            raise ValueError(
+                f"this measurement records no {field}, so its random stream has "
+                "no identity and a repeat of it cannot be told apart from a "
+                "materially different run. Re-measure with a stated --seed."
+            )
+        validate_measurement_seed(value, f"the recorded {field}")
+    digests = manifest["artifact_digests"]
+    metrics = dict(report["authoritative_metrics"])
+    return {
+        "checkpoint_digest": digests["checkpoint"],
+        "cohort_role": manifest["split"],
+        "cohort_digest": digests["samples"],
+        "mode": manifest["mode"],
+        "canonical_tie_policy_version": manifest["canonical_tie_policy_version"],
+        "metric_schema_version": manifest["metric_schema_version"],
+        "measurement_semantics_digest": measurement_semantics_digest(manifest),
+        "cohort": {
+            "kind": manifest["cohort_kind"],
+            "split_manifest_digest": digests.get("split_manifest"),
+            "why_this_is_here": (
+                "a generated cohort is disease-disjoint by construction and its "
+                "manifest says which cut produced it; a supplied cohort carries no "
+                "allocation, and its overlap with training is a measurement. The "
+                "sample digest alone distinguishes neither"
+            ),
+        },
+        "metrics": metrics,
+        "n_ranked": report["n_ranked"],
+        "n_ground_truth_absent": report["n_ground_truth_absent"],
+        "runtime": {
+            "software_revision": manifest["software_revision"],
+            "cuda_executed": manifest["cuda_executed"],
+            "torch_version": manifest["torch_version"],
+            "amp_enabled": manifest["amp_enabled"],
+        },
+        "source_artifact_digest": source_digest,
+    }
+
+
+def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, Any]:
+    """Add a record, refusing a key that already carries different numbers.
+
+    Re-appending an identical record is a no-op rather than a duplicate row: a
+    ledger rebuilt from the same artifacts twice should be the same ledger.
+
+    Two records under one key carry differing numbers for a measurement whose
+    recorded semantics are identical, seeds included. The second is refused with
+    the differing names in the message — not because one of them is provably
+    wrong, but because the ledger cannot choose between them and neither may stand
+    unexamined. Whether the difference is a defect or variation the regime
+    permits is a question for a person: `measurement_semantics_digest` records
+    that a seed controls this harness's streams and not CUDA determinism, so
+    `deterministic_algorithms` and the cuDNN fields inform that investigation
+    rather than settling it.
+    """
+    key = record_key(record)
+    for existing in ledger["records"]:
+        if record_key(existing) != key:
+            continue
+        if existing == record:
+            return ledger
+        differing = sorted(
+            name
+            for name in set(existing["metrics"]) | set(record["metrics"])
+            if existing["metrics"].get(name) != record["metrics"].get(name)
+        )
+        raise ValueError(
+            f"this ledger already holds a record for checkpoint "
+            f"{record['checkpoint_digest'][:12]}... on cohort "
+            f"{record['cohort_digest'][:12]}... under identical measurement "
+            f"semantics ({record['measurement_semantics_digest'][:12]}...), and the "
+            + (
+                f"two disagree on: {', '.join(differing)}. "
+                if differing
+                else "two differ outside their metrics. "
+            )
+            + "The ledger cannot choose between them, and neither may stand "
+            "unexamined: whether this is a defect or variation the recorded "
+            "regime permits is for a person to determine. Nothing was written."
+        )
+    return {**ledger, "records": ledger["records"] + [record]}
+
+
+def find_checkpoint(directory: Path, digest: str) -> Optional[Path]:
+    """A file in this directory whose bytes are the ones the report measured.
+
+    **Otherwise "beside the checkpoint" is not a fact.** A ledger written into a
+    directory that does not hold the weights it describes is a record filed under
+    the wrong address, and the reader's whole reason for looking there is gone.
+
+    Candidates are hashed in sorted order and the search stops at the first match,
+    so the full scan is paid only when there is no match — the case that ends in a
+    refusal anyway. Several files with identical bytes are fine: the digest is the
+    identity, not the name.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    for candidate in sorted(directory.glob("*.pt")):
+        if candidate.is_file() and file_sha256(candidate) == digest:
+            return candidate
+    return None
+
+
+def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str, Any]]:
+    """Every result this ledger holds for one set of weights.
+
+    An empty list is the honest answer to "what has this checkpoint been measured
+    on", scoped to this ledger. It is never an answer to "has it been evaluated".
+    """
+    return [
+        record
+        for record in ledger["records"]
+        if record["checkpoint_digest"] == checkpoint_digest
+    ]
+
+
+def ledger_digest(path: Path) -> Optional[str]:
+    """The bytes a ledger held when it was read, or ``None`` if there was no file."""
+    from src.utils.fingerprint import file_sha256
+
+    return file_sha256(path)
+
+
+def write_ledger(
+    path: Path, ledger: Dict[str, Any], expected_digest: Optional[str]
+) -> None:
+    """Write the ledger, replacing the old file only once the new one is complete.
+
+    **A partial write is closed; concurrent append is not, and that is stated
+    rather than implied.** Writing to a temporary file in the same directory and
+    renaming it makes the replacement atomic on every platform this runs on, so
+    an interruption cannot leave unparseable JSON where a directory's entire
+    evaluation history used to be — records that are not recoverable from the
+    checkpoints.
+
+    ``expected_digest`` is **best-effort stale-write detection, not mutual
+    exclusion.** It catches the ordinary accident: a writer that read the ledger,
+    another writer replaced it, and the first then writes over that. It does
+    **not** make concurrent append safe — two writers whose check-then-replace
+    windows overlap both pass the comparison and the second replacement still
+    erases the first append, with no trace. Closing that needs real exclusion,
+    which is not built: the ledger is **single-writer by operational rule**, and
+    locking earns its place only if the institutional workflow actually appends
+    concurrently.
+
+    The parameter is required rather than defaulted, so a caller cannot skip the
+    check by forgetting it, and ``None`` carries a claim of its own: *I read no
+    file*. A ledger appearing under a writer that expected none is another
+    writer's creation, and is refused for the same reason.
+    """
+    if ledger_digest(path) != expected_digest:
+        raise ValueError(
+            f"{path} changed since it was read"
+            + ("" if expected_digest is not None else " (this writer expected no "
+               "file to exist there)")
+            + ", so appending would erase whatever the other writer added. The "
+            "ledger is single-writer: re-read it and append again."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        "w", dir=str(path.parent), prefix=path.name, suffix=".tmp", delete=False
+    )
+    try:
+        with handle:
+            json.dump(ledger, handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(handle.name, path)
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
+
+
+__all__ = [
+    "KEY_FIELDS",
+    "NON_SEMANTIC_FIELDS",
+    "ledger_digest",
+    "SEMANTIC_ARTIFACT_ROLES",
+    "SEMANTIC_MANIFEST_FIELDS",
+    "measurement_semantics_digest",
+    "LEDGER_FILENAME",
+    "LEDGER_SCHEMA_VERSION",
+    "append_record",
+    "build_record",
+    "empty_ledger",
+    "find_checkpoint",
+    "read_ledger",
+    "record_key",
+    "records_for",
+    "write_ledger",
+]

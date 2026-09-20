@@ -46,9 +46,19 @@ PRECONDITION FOR REUSE — define the similarity contract first.
     so the score fell as similarity rose. Any reuse must define the contract at the
     interface, not reinterpret backend-specific values at the call site.
 
-    Relatedly: ``resolve_backend()`` selects a backend by import availability. That
-    does not prove the backend can be constructed or searched — see
-    ``scripts/validate_installation.py`` for the three states worth distinguishing.
+    Relatedly: ``resolve_backend()`` selects from the backends
+    ``_register_backends()`` registered, and registration asks only whether a
+    backend's **immediate required packages are discoverable** — ``voyager`` for
+    Voyager, ``cuvs`` *and* ``cupy`` for cuVS. That is weaker than importability
+    and much weaker than usability: it does not prove the packages import, that a
+    CUDA build matches the driver, that an index can be constructed, or that a
+    search returns anything. ``scripts/validate_installation.py`` is where the
+    states worth distinguishing are distinguished.
+
+    This sentence previously claimed selection was "by import availability", which
+    the code did not do: both backends import their dependency lazily inside a
+    method, so the module-import guard around registration never fired and every
+    backend was registered on every host.
 
 WHAT IS REUSABLE, AND WHAT IS NOT.
     The backends and the factory here are general vector-index mechanics and are

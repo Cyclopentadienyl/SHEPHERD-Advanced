@@ -98,7 +98,7 @@ def build_cohort(
     )
     batches = list(loader)
     args = argparse.Namespace(
-        checkpoint=checkpoint_path, data_dir=data_dir, split="test",
+        checkpoint=checkpoint_path, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=batch_size, num_workers=0, seed=None,
     )
     manifest = build_manifest(args, graph_data, len(samples), device, loader_config)

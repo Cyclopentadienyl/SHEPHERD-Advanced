@@ -44,12 +44,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
+from src.kg.artifacts import verify_graph_source
 from src.core.types import (
     DataSource,
     DiagnosisCandidate,
@@ -135,6 +137,18 @@ class PipelineConfig:
     # If False, pipeline raises at init when both signals are not available.
     sp_optional: bool = True
 
+    # The hop bound for a shortest-path table whose sidecar is absent.
+    #
+    # **Supplied, never assumed.** `max_hops` sets the unreachable sentinel, and
+    # a wrong one reorders candidates rather than merely mis-scoring them: a
+    # legitimate 3-hop table read against 5 flips a pair whose distances are
+    # [1, unreachable] and [3, 3]. The producer's CLI accepts 1..127, so a
+    # non-5-hop artifact is inside the supported range and losing its sidecar in
+    # a copy is an ordinary accident. Nothing the loader can measure tells the
+    # two apart — the recorded distances bound the ceiling from below and never
+    # from above — so the operator states it or shortest-path scoring stays off.
+    sp_hop_bound: Optional[int] = None
+
     ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
 
     # Output control
@@ -179,6 +193,62 @@ class ValidationResult:
 # ==============================================================================
 # Diagnosis Pipeline
 # ==============================================================================
+def _as_int(value: Any) -> Optional[int]:
+    """One integer, or ``None``.
+
+    **This is display metadata, so it never raises.** It runs after the model
+    has been built and returned; an exception here would take a working
+    checkpoint out of service over a number shown in a status panel. Everything
+    it cannot interpret becomes ``None``, and the key simply carries no value.
+
+    Three refusals are deliberate rather than incidental:
+
+    * ``True`` is an ``int`` in Python. Reported as epoch 1, it would be
+      metadata the checkpoint never contained.
+    * ``1.9`` is not "epoch 1". Truncating it invents a value; ``3.0`` is
+      genuinely the integer 3 and is kept.
+    * ``inf`` raises ``OverflowError`` from ``int()`` — the conversion failure
+      that motivated writing this down.
+    * ``"7"`` parses, and parsing it reports a number the checkpoint did not
+      contain. A string is already JSON-safe; converting it is invention, not
+      protection.
+    """
+    if isinstance(value, (bool, str, bytes)):
+        return None
+    try:
+        as_float = float(value)
+        if not math.isfinite(as_float) or as_float != int(as_float):
+            return None
+        return int(value)
+    except Exception:  # noqa: BLE001 — see the docstring: display never raises
+        return None
+
+
+def _as_metric(value: Any) -> Optional[Union[float, str]]:
+    """One metric value, as a float where that is what it is.
+
+    Non-raising for the same reason as ``_as_int``. Scalar conversion fails in
+    more ways than a type error: a multi-element tensor raises ``ValueError``, a
+    tensor that cannot be read on this device raises ``RuntimeError``, and an
+    out-of-range integer raises ``OverflowError``. None of them is a reason to
+    stop serving a model.
+
+    A non-finite metric is kept as its name rather than dropped: a ``nan``
+    validation loss is a fact about the run worth showing, and ``NaN`` is not
+    valid JSON. ``True`` is refused, as it is for epochs — reporting a loss of
+    1.0 because the trainer logged a flag is worse than reporting nothing. So
+    is a string: these read the numbers a trainer recorded, and a string is not
+    one of them.
+    """
+    if isinstance(value, (bool, str, bytes)):
+        return None
+    try:
+        number = float(value)
+    except Exception:  # noqa: BLE001 — see the docstring: display never raises
+        return None
+    return number if math.isfinite(number) else str(number)
+
+
 class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
@@ -215,6 +285,7 @@ class DiagnosisPipeline:
         checkpoint_path: Optional[str] = None,
         graph_data: Optional[Dict[str, Any]] = None,
         data_dir: Optional[str] = None,
+        kg_path: Optional[str] = None,
         device: Optional[str] = None,
     ):
         """
@@ -233,6 +304,15 @@ class DiagnosisPipeline:
             data_dir: Path to processed data directory containing
                      node_features.pt, edge_indices.pt, num_nodes.json.
                      Alternative to graph_data for GNN inference.
+            kg_path: Where `kg` was loaded from. **Required whenever `data_dir`
+                     is used for GNN inference**, and checked:
+                     `data_dir` proves a workspace is internally consistent, and
+                     two consistent workspaces can still be crossed — one's
+                     `kg.json` paired with the other's tensors, so embedding rows
+                     are read through another graph's node identifiers. Only the
+                     caller knows where the object came from, so only the caller
+                     can state it; an in-memory graph has no source digest and is
+                     not pretended to have one.
             device: Device for GNN inference ("cpu", "cuda", or None for auto).
         """
         self.kg = kg
@@ -243,6 +323,7 @@ class DiagnosisPipeline:
         self._node_embeddings: Optional[Dict[str, Any]] = None
         self._node_id_to_idx: Optional[Dict[str, Dict[str, int]]] = None
         self._graph_data: Optional[Dict[str, Any]] = graph_data
+        self._kg_path: Optional[str] = kg_path
         self._gnn_ready = False
 
         # Shortest path lookup state (populated by _load_shortest_paths)
@@ -255,6 +336,10 @@ class DiagnosisPipeline:
         self._sp_di: Optional["torch.Tensor"] = None
         self._sp_offsets: Optional[Dict[int, Tuple[int, int]]] = None
         self._sp_max_hops: int = 5
+        #: Where `_sp_max_hops` came from — "sidecar" when a file declared it,
+        #: "assumed" when none was there. Published, because a log line is not a
+        #: surface anyone watches and the two states score differently.
+        self._sp_hop_bound_source: Optional[str] = None
         self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
@@ -348,6 +433,35 @@ class DiagnosisPipeline:
 
         # Step 1: Load graph data
         if self._graph_data is None and data_dir is not None:
+            # **The clinical path is a graph consumer, and the costliest one.**
+            # A same-shaped `node_features.pt` from another workspace is refused
+            # by training and by measurement, and without this it would still be
+            # loaded here, paired with a checkpoint, precomputed into embeddings
+            # and served. The check runs before any of that.
+            #
+            # Only for the file-backed path. A caller supplying `graph_data`
+            # directly makes no claim about a persisted workspace, so there is no
+            # manifest for it to match and nothing to verify.
+            # **`kg_path` is required here, not optional.** Verifying only that
+            # `data_dir` is internally consistent leaves the `kg` object bound to
+            # nothing: a caller can still pair workspace B's graph with workspace
+            # A's tensors and get embeddings read through the wrong node
+            # identifiers. An optional check is no check for the caller who omits
+            # it, and that caller is the one this exists for.
+            #
+            # Nothing legitimate is lost. A caller who built its graph in memory
+            # never had a source file and belongs on the `graph_data` seam above,
+            # which makes no persisted-workspace claim; a caller who loaded one
+            # from disk knows where from and can say so.
+            if self._kg_path is None:
+                raise ValueError(
+                    "loading graph data from a workspace requires kg_path — where "
+                    "the `kg` object came from. Without it the graph object is "
+                    "bound to nothing, and this workspace's tensors could belong "
+                    "to a different graph entirely. Pass kg_path, or pass "
+                    "graph_data directly if the graph was not loaded from a file."
+                )
+            verify_graph_source(Path(self._kg_path), Path(data_dir))
             self._graph_data = self._load_graph_data(data_dir)
 
         if self._graph_data is None:
@@ -382,10 +496,15 @@ class DiagnosisPipeline:
         )
 
         if not self._sp_ready and not self.config.sp_optional:
+            # **Names the state, not a guess at its cause.** This used to say
+            # "no shortest_paths.pt found", which is false whenever the table is
+            # present and something else about it is unusable — an unknown hop
+            # bound, for one. The loader logs the specific reason at the point it
+            # establishes it; this says what the configuration then does about it.
             logger.error(
-                "Shortest path lookup required (sp_optional=False) but "
-                "no shortest_paths.pt found in data_dir. Run "
-                "scripts/compute_shortest_paths.py to generate it."
+                "Shortest path lookup required (sp_optional=False) but it is "
+                "not available; see the shortest-path load messages above for "
+                "which condition stopped it. GNN scoring is disabled."
             )
             self._gnn_ready = False
 
@@ -458,6 +577,15 @@ class DiagnosisPipeline:
         If the file is missing and sp_optional=True, the pipeline silently
         falls back to pure GNN scoring (eta is ignored, treated as 1.0).
         """
+        # **Cleared on entry, not assumed clean.** This is re-callable, and the
+        # tensors below are overwritten before the ceiling is known — so a second
+        # call that refuses would otherwise leave `_sp_ready` True from the first,
+        # with a lookup over the previous table's bytes and the previous ceiling
+        # while the observable attributes show the new ones.
+        self._sp_ready = False
+        self._sp_lookup = None
+        self._sp_hop_bound_source = None
+
         sp_path = data_dir / "shortest_paths.pt"
         if not sp_path.exists():
             logger.info(
@@ -518,35 +646,119 @@ class DiagnosisPipeline:
         for i, ph in enumerate(unique_phs):
             self._sp_offsets[ph] = (starts_list[i], ends_list[i])
 
-        self._sp_ready = True
+        # **The ceiling, before anything is published.** `max_hops` sets the
+        # unreachable sentinel every shortest-path score is measured against, so
+        # a wrong one does not merely mis-score — it reorders candidates. The
+        # previous shape read the sidecar inside `except Exception: pass`, which
+        # meant a missing file, malformed JSON, an absent key, a string, a
+        # boolean or a value the producer would never write all arrived at the
+        # same silent 5.
+        from src.inference.scoring import SPLookup, validate_hop_bound
 
-        # Load metadata sidecar if present
         meta_path = sp_path.with_suffix(".meta.json")
         if meta_path.exists():
+            # **Present means binding.** A sidecar that is here and unusable is a
+            # broken artifact, not an absent one, and defaulting past it would
+            # score against a number its own file contradicts.
             try:
-                with open(meta_path) as f:
-                    meta = json.load(f)
-                self._sp_max_hops = int(meta.get("max_hops", 5))
-            except Exception:
-                pass
+                meta = json.loads(meta_path.read_text())
+            except Exception as exc:
+                raise ValueError(
+                    f"{meta_path} is present but not readable JSON "
+                    f"({type(exc).__name__}). It carries the hop bound the "
+                    "tensors do not; serving past it would score against a "
+                    "ceiling nobody chose."
+                ) from exc
+            if not isinstance(meta, dict):
+                raise ValueError(
+                    f"{meta_path} is not a JSON object, so it describes no artifact"
+                )
+            max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
+            hop_bound_source = "sidecar"
+        elif self.config.sp_hop_bound is not None:
+            # **Stated by the deployment, and validated like any other.** This is
+            # the cheap recovery a missing sidecar needs: the producer has no
+            # metadata-only mode and re-running the BFS is the heaviest
+            # prerequisite there is, so an operator who knows what the table was
+            # built to says so here rather than rebuilding it. Recorded as
+            # `configured`, because a stated bound and a read one are different
+            # evidence.
+            max_hops = validate_hop_bound(
+                self.config.sp_hop_bound, "config.sp_hop_bound"
+            )
+            hop_bound_source = "configured"
+        else:
+            # **No sidecar and nothing stated: shortest-path scoring stays off.**
+            #
+            # A previous revision assumed the producer's default of 5 here and
+            # merely recorded that it had assumed. Recording a guess does not
+            # stop it: a legitimate 3-hop table read against 5 reorders
+            # candidates, and the floor check below cannot see it because the
+            # observed maximum is 3 either way. The producer accepts 1..127, so
+            # that table is inside the supported range rather than a
+            # hypothetical.
+            #
+            # This is not a refusal of the workspace. The tensors are sound and
+            # the pipeline serves without shortest paths — the state an absent
+            # table already produces — and one configuration value turns it back
+            # on. What is refused is scoring against a ceiling nobody chose.
+            logger.error(
+                "%s has no %s and config.sp_hop_bound is unset, so the hop "
+                "bound this table was built to is unknown. It sets the "
+                "unreachable sentinel every shortest-path score is measured "
+                "against and cannot be recovered from the tensors, which bound "
+                "it from below only. Shortest-path scoring is off; set "
+                "SHEPHERD_SP_HOP_BOUND to the value the table was built with, "
+                "or rebuild it with scripts/compute_shortest_paths.py to "
+                "restore the sidecar.",
+                sp_path, meta_path.name,
+            )
+            return
+
+        # **A floor, and honest about being only that.** The distances recorded
+        # are bounded by the ceiling the table was built to, so `max(distance)`
+        # proves the bound is not too LOW and can never prove it is not too high:
+        # a 3-hop table is consistent with a declared 5. That one direction is
+        # still worth checking, because it is the direction a stale sidecar
+        # carried over from a smaller run fails in — and there the sentinel lands
+        # *below* real recorded distances, so an unreachable phenotype outranks a
+        # connected one. Costs a couple of milliseconds over hundreds of millions
+        # of int8 rows.
+        if n_pairs:
+            observed = int(self._sp_di.max())
+            if observed > max_hops:
+                raise ValueError(
+                    f"{sp_path} records a distance of {observed}, above the "
+                    f"max_hops={max_hops} taken from the {hop_bound_source}. The "
+                    "unreachable sentinel would sit below distances that are "
+                    "really in the table, which reorders candidates rather than "
+                    "merely mis-scoring them."
+                )
 
         # Bundle the same tensors for the shared scoring primitives. The
         # individual attributes stay exactly as they were — they are part of this
         # class's observable surface — and this is a view over them, built once
         # after max_hops is known.
-        from src.inference.scoring import SPLookup
-
-        self._sp_lookup = SPLookup(
+        lookup = SPLookup(
             target=self._sp_tg,
             target_type=self._sp_ty,
             distance=self._sp_di,
             offsets=self._sp_offsets,
-            max_hops=self._sp_max_hops,
+            max_hops=max_hops,
         )
+
+        # **Published last.** `_sp_ready` used to be set before the sidecar was
+        # read and before this view existed, so a refusal landed on a pipeline
+        # already advertising a usable lookup — and on a second call it was
+        # already True, making "publish only after validation" a no-op.
+        self._sp_max_hops = max_hops
+        self._sp_hop_bound_source = hop_bound_source
+        self._sp_lookup = lookup
+        self._sp_ready = True
 
         logger.info(
             f"Loaded shortest paths: {n_pairs:,} pairs, "
-            f"max_hops={self._sp_max_hops}"
+            f"max_hops={max_hops} ({hop_bound_source})"
         )
 
     def _load_model_from_checkpoint(
@@ -605,10 +817,19 @@ class DiagnosisPipeline:
             logger.error(f"Failed to build model from {ckpt_path}: {exc}")
             return None
 
-        # Store checkpoint training metadata for UI display
+        # Store checkpoint training metadata for UI display.
+        #
+        # **Normalised to JSON primitives here, at the only place that knows what
+        # these values are.** A checkpoint's `logs` are whatever the trainer put
+        # there, and a metric recorded as `loss.detach()` rather than
+        # `loss.item()` is a zero-dimensional tensor. It reaches the API through
+        # `checkpoint_meta`, which is `Dict[str, Any]` and so accepts it, and
+        # fails where the response is encoded -- a serving concern created by a
+        # training detail, discovered at the HTTP boundary. Converting at the
+        # source is what keeps the boundary a formality.
         self._checkpoint_meta = {
-            "epoch": checkpoint.get("epoch"),
-            "params": sum(p.numel() for p in model.parameters()),
+            "epoch": _as_int(checkpoint.get("epoch")),
+            "params": int(sum(p.numel() for p in model.parameters())),
             "device": str(device) if device else "cpu",
         }
         # Extract best metrics from logs if available
@@ -616,7 +837,9 @@ class DiagnosisPipeline:
         if isinstance(logs, dict):
             for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
                 if key in logs:
-                    self._checkpoint_meta[key] = logs[key]
+                    metric = _as_metric(logs[key])
+                    if metric is not None:
+                        self._checkpoint_meta[key] = metric
 
         # Move to device
         if device is None:
@@ -1385,6 +1608,7 @@ class DiagnosisPipeline:
             "eta_configured": self.config.eta,
             "eta_effective": effective_eta,
             "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
+            "sp_hop_bound_source": self._sp_hop_bound_source if self._sp_ready else None,
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,
@@ -1409,6 +1633,7 @@ def create_diagnosis_pipeline(
     checkpoint_path: Optional[str] = None,
     graph_data: Optional[Dict[str, Any]] = None,
     data_dir: Optional[str] = None,
+    kg_path: Optional[str] = None,
     device: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
@@ -1421,6 +1646,7 @@ def create_diagnosis_pipeline(
         checkpoint_path: Path to trained model checkpoint
         graph_data: Pre-loaded graph data dict
         data_dir: Path to processed data directory
+        kg_path: Where `kg` was loaded from, so the composition can be checked
         device: Device for GNN inference
 
     Returns:
@@ -1433,5 +1659,6 @@ def create_diagnosis_pipeline(
         checkpoint_path=checkpoint_path,
         graph_data=graph_data,
         data_dir=data_dir,
+        kg_path=kg_path,
         device=device,
     )

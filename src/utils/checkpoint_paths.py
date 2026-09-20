@@ -169,7 +169,13 @@ def select_auto_checkpoint(
             ranked.append((max(p.stat().st_mtime for p in pts), d))
     if not ranked:
         return None, None, "no architecture-subdir checkpoints found"
-    ranked.sort(key=lambda t: t[0], reverse=True)
+    # **Name breaks the tie, not the filesystem.** `iterdir()` order is
+    # unspecified — ext4 returns directory-hash order, which depends on the
+    # names and on a per-filesystem seed — so two architectures whose newest
+    # checkpoint shares an mtime would otherwise pick which model gets served
+    # by a property of the disk. Rare, and not a thing to leave to chance in the
+    # component that decides what a clinician is scored against.
+    ranked.sort(key=lambda t: (-t[0], t[1].name))
     arch_dir = ranked[0][1]
     selected = select_checkpoint_in_dir(arch_dir, score_fn=score_fn)
     return selected, arch_dir.name, f"auto: latest-trained architecture '{arch_dir.name}'"

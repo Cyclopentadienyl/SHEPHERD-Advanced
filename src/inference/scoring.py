@@ -58,7 +58,7 @@ importable without torch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -80,6 +80,56 @@ __all__ = [
 # =============================================================================
 # Shortest-path lookup table
 # =============================================================================
+#: The hop bound the producer validates before it writes anything
+#: (`scripts/compute_shortest_paths.py` refuses outside this range), and the same
+#: range `scripts/audit_sp_reachability.py` holds a sidecar to. Declared here so
+#: the serving path cannot come to accept an artifact the evidence path refuses —
+#: the split-authority failure is the one this constant exists to prevent.
+PRODUCER_HOP_RANGE = (1, 127)
+
+#: What the loader assumes when no sidecar records the ceiling. It is the
+#: producer's own CLI default and the value every operator-facing build path in
+#: this repository uses, so it is the right number for a real artifact whose
+#: sidecar went missing — but it is an *assumption*, and `validate_hop_bound`
+#: plus the floor check are what keep it from being a silent one.
+ASSUMED_HOP_BOUND = 5
+
+
+def validate_hop_bound(value: Any, source: str) -> int:
+    """The hop bound's domain, in the one place both boundaries can read it.
+
+    **`bool` is excluded by name.** `isinstance(True, int)` is True and `true` is
+    valid JSON, so a sidecar carrying `"max_hops": true` would otherwise become a
+    ceiling of 1 and an unreachable sentinel of 2.0 — below real recorded
+    distances, which reorders candidates rather than merely mis-scoring them.
+
+    **The range is the producer's, not one invented here.** A loader accepting
+    what the producer refuses to write and the audit refuses to read is the split
+    authority this is for.
+
+    Args:
+        value: the candidate bound.
+        source: where it came from, for the message — a path, or a description.
+
+    Raises:
+        ValueError: naming the source and what was wrong.
+    """
+    low, high = PRODUCER_HOP_RANGE
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"{source} carries max_hops={value!r}, which is not an integer. The "
+            "hop bound sets the unreachable sentinel every shortest-path score "
+            "is measured against."
+        )
+    if not low <= value <= high:
+        raise ValueError(
+            f"{source} declares max_hops={value}, outside the [{low}, {high}] "
+            "the producer validates before writing. This bound did not come "
+            "from it."
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class SPLookup:
     """The CSR-style shortest-path table, as `_load_shortest_paths` builds it.

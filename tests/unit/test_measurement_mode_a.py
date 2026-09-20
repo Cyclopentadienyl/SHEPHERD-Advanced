@@ -21,6 +21,7 @@ from src.evaluation.measurement import (  # noqa: E402
     LEGACY_TRUNCATION_K,
     run_mode_a,
 )
+from scripts.measure_scorer import DEFAULT_MEASUREMENT_SEED  # noqa: E402
 from tests.fixtures.synthetic_workspace import (  # noqa: E402
     assert_candidate_universe_is_stable,
     build_workspace,
@@ -50,8 +51,8 @@ def _run(data_dir, checkpoint, batch_size=3):
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
     model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
-        checkpoint=checkpoint, data_dir=data_dir, split="test",
-        batch_size=batch_size, num_workers=0, seed=None,
+        checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
+        batch_size=batch_size, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
     )
     # One config object to both consumers, exactly as the CLI does it — otherwise
     # this helper would be testing a wiring the CLI does not use.
@@ -192,8 +193,8 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
 
     _, data_dir, checkpoint = workspace
     args = argparse.Namespace(
-        checkpoint=checkpoint, data_dir=data_dir, split="test",
-        batch_size=3, num_workers=0, seed=None,
+        checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
+        batch_size=3, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
     )
     graph_data = read_graph_artifacts(data_dir)
     build = lambda: build_manifest(  # noqa: E731 - one expression, twice
@@ -214,19 +215,70 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
     assert "2-hop" not in after.candidate_construction
 
 
-def test_measuring_inside_an_autocast_block_is_refused(workspace):
-    """The manifest's `amp_enabled=False` is a structural claim about this module
-    — no traversal here opens an autocast context. A caller who wrapped the run in
-    one would shift every score while the manifest went on recording fp32.
+def test_measuring_inside_an_autocast_block_is_recorded_not_refused(workspace):
+    """The capability the previous version removed.
 
-    So the claim is enforced, not asserted in prose. The refusal is the mutation
-    check for it: this is exactly the state that would otherwise be misrecorded.
+    *"What is Mode A's MRR under the AMP setting the deployment actually uses?"*
+    is a legitimate research question, and it sits inside the intended envelope.
+    The earlier refusal stood on a real ground — `build_manifest` wrote
+    `amp_enabled=False` as a literal, so a run under autocast produced an artifact
+    describing a run that did not happen — but that ground is removable, and
+    recording what applied removes it.
+
+    `_run` builds the manifest and drives the traversal in one call, so both see
+    this context and the artifact describes the run it came from.
     """
     _, data_dir, checkpoint = workspace
 
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        with pytest.raises(RuntimeError, match="autocast is enabled"):
-            _run(data_dir, checkpoint)
+        manifest = _run(data_dir, checkpoint).manifest
+
+    assert manifest.amp_enabled is True
+    assert manifest.amp_dtype == "torch.bfloat16"
+
+
+def test_a_manifest_recording_a_different_regime_is_refused(workspace):
+    """What remains refused, and it is narrower than before: numbers produced
+    under one regime and recorded under another.
+
+    A single field cannot describe that, which is the one ground the earlier
+    blanket refusal genuinely had. Here the manifest is built outside the context
+    the traversal runs in.
+    """
+    import argparse
+
+    from scripts.measure_scorer import (
+        build_legacy_mode_a_model,
+        build_loader_config,
+        build_manifest,
+    )
+    from src.evaluation.measurement import run_mode_a
+    from src.kg.data_loader import create_diagnosis_dataloader
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+
+    _, data_dir, checkpoint = workspace
+    device = torch.device("cpu")
+    graph_data = read_graph_artifacts(data_dir)
+    samples = read_samples(data_dir, "test")
+    model = build_legacy_mode_a_model(checkpoint, device)
+    args = argparse.Namespace(
+        checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
+        batch_size=3, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
+    )
+    loader_config = build_loader_config(args)
+
+    # Built out here: fp32.
+    manifest = build_manifest(
+        args, graph_data, len(samples), device, loader_config, model=model
+    )
+    loader = create_diagnosis_dataloader(
+        samples=samples, graph_data=graph_data, config=loader_config
+    )
+
+    # Run in there: bfloat16.
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
+        with pytest.raises(RuntimeError, match="records"):
+            run_mode_a(model=model, dataloader=loader, manifest=manifest, device=device)
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +446,7 @@ def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
 
     device = torch.device("cpu")
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=3, num_workers=0, seed=None)
     loader_config = build_loader_config(args)
     loader = create_diagnosis_dataloader(
@@ -431,7 +483,7 @@ def test_a_cohort_smaller_than_the_manifest_claims_is_an_error(workspace):
 
     device = torch.device("cpu")
     graph_data, samples = load_legacy_mode_a_inputs(data_dir, "test")
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=3, num_workers=0, seed=None)
     loader_config = build_loader_config(args)
     loader = create_diagnosis_dataloader(
@@ -473,7 +525,7 @@ def test_every_way_the_cohort_can_shrink_is_refused(workspace, kwargs, expected)
     from src.evaluation.measurement import _assert_cohort_is_intact
 
     graph_data, _ = load_legacy_mode_a_inputs(data_dir, "test")
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=3, num_workers=0, seed=None)
     declared = kwargs.pop("declared", 6)
     manifest = build_manifest(
@@ -609,6 +661,140 @@ def test_artifact_digests_identify_content_not_paths(workspace, tmp_path):
     assert file_sha256(tmp_path / "absent.bin") is None
 
 
+class TestTheRandomStreamHasAnIdentity:
+    """An unseeded measurement is not reproducible, so it cannot be evidence.
+
+    `--seed` defaulted to `None` and the RNGs were seeded only when a value was
+    supplied, so a default run wrote three nulls into the manifest. Two such runs
+    consumed different worker streams -- PyTorch seeds each worker as
+    `base_seed + worker_id` -- different negatives and a different candidate
+    universe, while hashing to the same measurement semantics. The ledger then saw
+    one measurement with two answers and refused the second as a contradiction.
+    """
+
+    def test_the_default_run_is_seeded_and_records_the_applied_value(self):
+        from scripts.measure_scorer import DEFAULT_MEASUREMENT_SEED, parse_args
+
+        args = parse_args(["--checkpoint", "c.pt", "--data-dir", "d",
+                           "--split", "val", "--output", "o.json"])
+
+        assert args.seed == DEFAULT_MEASUREMENT_SEED
+        assert isinstance(args.seed, int) and not isinstance(args.seed, bool)
+
+    @pytest.mark.parametrize("bad", [-1, 2 ** 32])
+    def test_the_cli_refuses_a_seed_outside_its_domain(self, bad):
+        """Checked at the CLI as well as at the ledger: neither boundary can rely
+        on the other having run, and a value NumPy's seeder rejects would seed
+        nothing usable here. A non-integer never reaches this check -- argparse's
+        `type=int` is the right layer for that, and the next case pins it."""
+        from scripts.measure_scorer import main
+
+        with pytest.raises(ValueError, match="must be an integer in"):
+            main(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                  "--output", "o.json", "--seed", str(bad)])
+
+    def test_a_non_integer_seed_is_refused_by_argparse(self):
+        from scripts.measure_scorer import parse_args
+
+        with pytest.raises(SystemExit):
+            parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                        "--output", "o.json", "--seed", "not-a-number"])
+
+    def test_the_manifest_never_records_a_null_rng_identity(self, workspace):
+        """The three seed fields are what give the stream an identity in the
+        semantics digest; a null there makes two different runs look alike."""
+        _, data_dir, checkpoint = workspace
+        result = _run(data_dir, checkpoint)
+
+        for field in ("python_seed", "numpy_seed", "torch_seed"):
+            assert getattr(result.manifest, field) is not None, field
+
+
+class TestTheRolesAMeasurementRecords:
+    """Which files a number is bound to, and the one that says what `val` means.
+
+    A `val_mrr` under a disease-disjoint cut measures generalisation to diseases
+    with no labelled examples. Under a sample-level slice it measures recognition
+    of new phenotype subsets of diseases that have them. Two different quantities
+    under one name, and nothing in `val_samples.json`'s digest separates them --
+    only `split_manifest.json` does.
+    """
+
+    @staticmethod
+    def _workspace(root, *, manifest: bool = True, supplied: bool = False):
+        from tests.fixtures.generated_workspace import (
+            one_sample_per_disease,
+            profiles_for,
+            write_generated_workspace,
+        )
+
+        root.mkdir(parents=True, exist_ok=True)
+        # Written before the manifest, so the manifest binds these bytes rather
+        # than being overwritten by them afterwards.
+        for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
+            (root / name).write_bytes(b"content-of-" + name.encode())
+        profiles = profiles_for([0, 1, 2])
+        if manifest:
+            write_generated_workspace(root, train_ids=[0, 1], val_ids=[2],
+                                      profiles=profiles)
+        else:
+            for split, ids in (("train", [0, 1]), ("val", [2])):
+                (root / f"{split}_samples.json").write_text(json.dumps(
+                    one_sample_per_disease(split, ids, profiles)
+                ))
+        if supplied:
+            (root / "test_samples.json").write_text(json.dumps(
+                one_sample_per_disease("test", [0], profiles)
+            ))
+        (root / "ckpt.pt").write_bytes(b"weights")
+        return root
+
+    def test_a_generated_cohort_records_the_cut_it_came_from(self, tmp_path):
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws")
+        digests = artifact_digests(root / "ckpt.pt", root, "val", "generated")
+
+        assert digests["split_manifest"] is not None
+        assert digests["split_manifest"] != digests["samples"]
+
+    def test_a_supplied_cohort_records_no_allocation(self, tmp_path):
+        """Not a missing file: nobody cut it from this disease universe, so there
+        is no allocation for it to name."""
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws", supplied=True)
+        digests = artifact_digests(root / "ckpt.pt", root, "test", "supplied")
+
+        assert "split_manifest" not in digests
+        assert (root / "split_manifest.json").exists(), (
+            "the workspace's own manifest is there and still does not apply"
+        )
+
+    def test_a_pre_allocation_workspace_cannot_be_measured(self, tmp_path):
+        """Its cohorts overlap, so a val number from it measures something else.
+        Refused rather than recorded with a null."""
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws", manifest=False)
+        with pytest.raises(ValueError, match="generated before the disease allocation"):
+            artifact_digests(root / "ckpt.pt", root, "val", "generated")
+
+    def test_nothing_else_in_the_directory_becomes_a_role(self, tmp_path):
+        """A record of the directory is not a record of the run."""
+        from scripts.measure_scorer import artifact_digests
+
+        root = self._workspace(tmp_path / "ws")
+        (root / "notes.txt").write_bytes(b"scratch")
+        (root / "mygene2_samples.json").write_bytes(b"[]")
+        digests = artifact_digests(root / "ckpt.pt", root, "val", "generated")
+
+        assert set(digests) == {
+            "checkpoint", "samples", "node_features", "edge_indices", "num_nodes",
+            "split_manifest",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Oracle parity on padded phenotype ids
 # ---------------------------------------------------------------------------
@@ -651,7 +837,7 @@ def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
         DiagnosisSample(patient_id="P-one", phenotype_ids=[0], disease_id=0),
         DiagnosisSample(patient_id="P-two", phenotype_ids=[0, 1], disease_id=1),
     ]
-    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test",
+    args = argparse.Namespace(checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
                               batch_size=2, num_workers=0, seed=None)
     loader_config = build_loader_config(args)
     loader = create_diagnosis_dataloader(
@@ -699,3 +885,55 @@ def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
 
     assert result.n_ranked == len(samples)
     assert all(rank >= 1 for rank in result.canonical_ranks)
+
+
+class TestTheCalibrationCliSharesTheSeedValidator:
+    """The same rule, called at the same point in the run.
+
+    `calibrate_mode_a` accepted any argparse integer and created its workdir,
+    resolved a device, hashed the artifacts and launched the frozen-oracle
+    subprocess before NumPy rejected a negative or oversized seed inside the seed
+    bootstrap. A second validator would be worse than none; the fix is to call the
+    one that already exists, as early as the value is knowable.
+    """
+
+    @staticmethod
+    def _argv(tmp_path, seed):
+        return ["--checkpoint", str(tmp_path / "c.pt"), "--data-dir", str(tmp_path),
+                "--split", "val", "--workdir", str(tmp_path / "wd"),
+                "--seed", str(seed)]
+
+    @pytest.mark.parametrize("bad", [-1, 2 ** 32])
+    def test_an_out_of_domain_seed_starts_nothing(self, monkeypatch, tmp_path, bad):
+        import scripts.calibrate_mode_a as calibrate
+
+        launched: list = []
+        for name in ("run_oracle", "run_harness", "artifact_digests"):
+            monkeypatch.setattr(
+                calibrate, name,
+                lambda *a, _n=name, **k: launched.append(_n),
+            )
+
+        with pytest.raises(ValueError, match="must be an integer in"):
+            calibrate.main(self._argv(tmp_path, bad))
+
+        assert launched == [], "work started before the seed was checked"
+        assert not (tmp_path / "wd").exists(), "the workdir was created"
+
+    @pytest.mark.parametrize("good", [0, 2 ** 32 - 1])
+    def test_both_endpoints_are_accepted(self, monkeypatch, tmp_path, good):
+        """The domain check must not reject the ends of the domain it enforces."""
+        import scripts.calibrate_mode_a as calibrate
+
+        reached: list = []
+        monkeypatch.setattr(
+            calibrate, "_resolve_device",
+            lambda *a, **k: reached.append("device") or (_ for _ in ()).throw(
+                RuntimeError("stop here")
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="stop here"):
+            calibrate.main(self._argv(tmp_path, good))
+
+        assert reached == ["device"], "a valid endpoint was refused"
