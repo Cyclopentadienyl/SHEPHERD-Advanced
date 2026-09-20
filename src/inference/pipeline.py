@@ -324,6 +324,10 @@ class DiagnosisPipeline:
         self._sp_di: Optional["torch.Tensor"] = None
         self._sp_offsets: Optional[Dict[int, Tuple[int, int]]] = None
         self._sp_max_hops: int = 5
+        #: Where `_sp_max_hops` came from — "sidecar" when a file declared it,
+        #: "assumed" when none was there. Published, because a log line is not a
+        #: surface anyone watches and the two states score differently.
+        self._sp_hop_bound_source: Optional[str] = None
         self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
@@ -556,6 +560,15 @@ class DiagnosisPipeline:
         If the file is missing and sp_optional=True, the pipeline silently
         falls back to pure GNN scoring (eta is ignored, treated as 1.0).
         """
+        # **Cleared on entry, not assumed clean.** This is re-callable, and the
+        # tensors below are overwritten before the ceiling is known — so a second
+        # call that refuses would otherwise leave `_sp_ready` True from the first,
+        # with a lookup over the previous table's bytes and the previous ceiling
+        # while the observable attributes show the new ones.
+        self._sp_ready = False
+        self._sp_lookup = None
+        self._sp_hop_bound_source = None
+
         sp_path = data_dir / "shortest_paths.pt"
         if not sp_path.exists():
             logger.info(
@@ -616,35 +629,98 @@ class DiagnosisPipeline:
         for i, ph in enumerate(unique_phs):
             self._sp_offsets[ph] = (starts_list[i], ends_list[i])
 
-        self._sp_ready = True
+        # **The ceiling, before anything is published.** `max_hops` sets the
+        # unreachable sentinel every shortest-path score is measured against, so
+        # a wrong one does not merely mis-score — it reorders candidates. The
+        # previous shape read the sidecar inside `except Exception: pass`, which
+        # meant a missing file, malformed JSON, an absent key, a string, a
+        # boolean or a value the producer would never write all arrived at the
+        # same silent 5.
+        from src.inference.scoring import (
+            ASSUMED_HOP_BOUND,
+            SPLookup,
+            validate_hop_bound,
+        )
 
-        # Load metadata sidecar if present
         meta_path = sp_path.with_suffix(".meta.json")
         if meta_path.exists():
+            # **Present means binding.** A sidecar that is here and unusable is a
+            # broken artifact, not an absent one, and defaulting past it would
+            # score against a number its own file contradicts.
             try:
-                with open(meta_path) as f:
-                    meta = json.load(f)
-                self._sp_max_hops = int(meta.get("max_hops", 5))
-            except Exception:
-                pass
+                meta = json.loads(meta_path.read_text())
+            except Exception as exc:
+                raise ValueError(
+                    f"{meta_path} is present but not readable JSON "
+                    f"({type(exc).__name__}). It carries the hop bound the "
+                    "tensors do not; serving past it would score against a "
+                    "ceiling nobody chose."
+                ) from exc
+            if not isinstance(meta, dict):
+                raise ValueError(
+                    f"{meta_path} is not a JSON object, so it describes no artifact"
+                )
+            max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
+            hop_bound_source = "sidecar"
+        else:
+            # **Assumed, and recorded as assumed.** The defect here was the
+            # silence, not the number: every operator-facing build path in this
+            # repository uses the producer's default of 5, and the workspace
+            # inventories in `docs/` do not list the sidecar, so an operator who
+            # copied a workspace by this repo's own documentation has a real
+            # 5-hop table with no sidecar beside it. Refusing would replace a
+            # correct score with a different one and throw away the only cheap
+            # recovery — the producer has no metadata-only mode, and re-running
+            # the BFS is the heaviest prerequisite there is. What was missing is
+            # that nothing said the number was an assumption; `get_pipeline_config`
+            # now does.
+            max_hops = ASSUMED_HOP_BOUND
+            hop_bound_source = "assumed"
+
+        # **A floor, and honest about being only that.** The distances recorded
+        # are bounded by the ceiling the table was built to, so `max(distance)`
+        # proves the bound is not too LOW and can never prove it is not too high:
+        # a 3-hop table is consistent with a declared 5. That one direction is
+        # still worth checking, because it is the direction a stale sidecar
+        # carried over from a smaller run fails in — and there the sentinel lands
+        # *below* real recorded distances, so an unreachable phenotype outranks a
+        # connected one. Costs a couple of milliseconds over hundreds of millions
+        # of int8 rows.
+        if n_pairs:
+            observed = int(self._sp_di.max())
+            if observed > max_hops:
+                raise ValueError(
+                    f"{sp_path} records a distance of {observed}, above the "
+                    f"max_hops={max_hops} taken from the {hop_bound_source}. The "
+                    "unreachable sentinel would sit below distances that are "
+                    "really in the table, which reorders candidates rather than "
+                    "merely mis-scoring them."
+                )
 
         # Bundle the same tensors for the shared scoring primitives. The
         # individual attributes stay exactly as they were — they are part of this
         # class's observable surface — and this is a view over them, built once
         # after max_hops is known.
-        from src.inference.scoring import SPLookup
-
-        self._sp_lookup = SPLookup(
+        lookup = SPLookup(
             target=self._sp_tg,
             target_type=self._sp_ty,
             distance=self._sp_di,
             offsets=self._sp_offsets,
-            max_hops=self._sp_max_hops,
+            max_hops=max_hops,
         )
+
+        # **Published last.** `_sp_ready` used to be set before the sidecar was
+        # read and before this view existed, so a refusal landed on a pipeline
+        # already advertising a usable lookup — and on a second call it was
+        # already True, making "publish only after validation" a no-op.
+        self._sp_max_hops = max_hops
+        self._sp_hop_bound_source = hop_bound_source
+        self._sp_lookup = lookup
+        self._sp_ready = True
 
         logger.info(
             f"Loaded shortest paths: {n_pairs:,} pairs, "
-            f"max_hops={self._sp_max_hops}"
+            f"max_hops={max_hops} ({hop_bound_source})"
         )
 
     def _load_model_from_checkpoint(
@@ -1494,6 +1570,7 @@ class DiagnosisPipeline:
             "eta_configured": self.config.eta,
             "eta_effective": effective_eta,
             "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
+            "sp_hop_bound_source": self._sp_hop_bound_source if self._sp_ready else None,
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,

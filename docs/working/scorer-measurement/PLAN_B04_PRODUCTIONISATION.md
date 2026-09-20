@@ -463,7 +463,18 @@ Found while reading the SP path. All three are in
 point from the one this plan edits. **They are listed so they are not lost, and
 excluded so this change stays reviewable.**
 
-1. **`max_hops` falls back to 5 in silence.** `_load_shortest_paths` reads
+1. **`max_hops` falls back to 5 in silence — FIXED, ahead of the indexed path
+   as §10 step 0 requires.** The investigation changed the fix materially from
+   what this plan first proposed, and the changes are recorded in the commit
+   rather than here. In short: refusing a *missing* sidecar was wrong — it would
+   have replaced a correct score with a different one, since every
+   operator-facing build path uses the producer's default of 5 and the workspace
+   inventories in `docs/` do not list the sidecar. The defect was the silence,
+   not the number. What ships: a present sidecar is binding and validated
+   against the producer's own `[1, 127]`; a missing one still assumes 5 and
+   **records that it assumed**, surfaced through `get_pipeline_config`; and a
+   one-sided floor check refuses any bound the table itself contradicts.
+   Original description, kept because it is what the defect was: `_load_shortest_paths` reads
    `shortest_paths.meta.json` inside `try: ... except Exception: pass`, so a
    missing or malformed sidecar leaves `_sp_max_hops = 5`. `max_hops` sets the
    unreachable sentinel (`max_hops + 1`), so a table built with a different
