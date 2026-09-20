@@ -206,6 +206,23 @@ class HPOAnnotationParser:
             f"Parsed {len(annotations)} phenotype-disease annotations "
             f"(skipped {skipped_not} NOT, {skipped_unmapped} unmapped disease IDs)"
         )
+        # **Kept, because a log line reaches no artifact.** How many annotation
+        # rows this parse could not place is evidence about the pairing of an
+        # annotation file with an ontology, and it is exactly the number that
+        # moves when the two come from different vintages. Recorded as an
+        # attribute rather than added to the return value: twelve call sites
+        # unpack this result today, and none of them needs the counters.
+        #
+        # Named for what it counts. These are **rows of `phenotype.hpoa`**, at
+        # this parsing stage, and `unmapped` includes identifier types that are
+        # deliberately unsupported — DECIPHER among them — not only vintage
+        # mismatches. The builder drops further edges elsewhere when a node is
+        # absent, and those are not in this number.
+        self.last_hpoa_counts = {
+            "rows_parsed": len(annotations),
+            "rows_skipped_negated": skipped_not,
+            "rows_skipped_unresolved_disease_id": skipped_unmapped,
+        }
         return annotations
 
     def parse_genes_to_phenotype(

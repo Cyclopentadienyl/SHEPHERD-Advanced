@@ -197,6 +197,40 @@ def build_knowledge_graph(
     )
     logger.info(f"  -> {n_gp_edges} gene-phenotype edges")
 
+    # --- What this build consumed, collected from what it actually opened ---
+    #
+    # **Collected here, not discovered later.** This function is the only place
+    # that holds all four handles at once; a scan of the ontology cache after
+    # the fact would record whatever sits there now, which is a fact about the
+    # machine and not about this build. The writer takes them as given for the
+    # same reason it takes the graph digests as given.
+    from src.kg.provenance import source_entry
+    from src.utils.fingerprint import file_sha256
+
+    sources = []
+    for role, ontology in (("mondo", mondo), ("hpo", hpo)):
+        path = ontology.source_path
+        if path is None:
+            # Nothing to identify. Recorded as a missing role rather than as a
+            # guess: `missing_roles` in the record says which inputs went
+            # unnamed, which is the honest shape of not knowing.
+            logger.warning("%s ontology has no source path; it cannot be identified", role)
+            continue
+        sources.append(source_entry(
+            role=role, path=path, digest=file_sha256(path),
+            # The raw `data-version`, never `version` — that property falls back
+            # to the OBO format version, which would record a file format as
+            # though it were a release.
+            declared_version=ontology.declared_version,
+        ))
+    for role, path in (("phenotype_hpoa", hpoa_path), ("genes_to_phenotype", g2p_path)):
+        sources.append(source_entry(role=role, path=path, digest=file_sha256(path)))
+
+    # Named by the file and the stage they were counted at, because
+    # `rows_skipped_unresolved_disease_id` is rows of one file at one parse and
+    # not a total of everything a build discarded.
+    source_counters = dict(getattr(parser, "last_hpoa_counts", {}) or {})
+
     # --- Finalize KG, in memory ---
     kg = builder.build()
     stats = kg.get_statistics()
@@ -214,6 +248,8 @@ def build_knowledge_graph(
             kg,
             workspace,
             feature_dim=feature_dim,
+            sources=sources,
+            source_counters=source_counters,
             samples=(
                 SampleBudget(
                     num_train=num_train,

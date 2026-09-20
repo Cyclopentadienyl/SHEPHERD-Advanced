@@ -544,6 +544,80 @@ them apart rather than sending an operator to the logs.
 
 ---
 
+## 4.4 The build provenance record (`kg.provenance.json`)
+
+Every build writes `kg.provenance.json` beside `kg.json`, recording **which
+files** the graph was built from.
+
+### Why it exists
+
+`kg.json` has always carried a digest, but a digest only says *which bytes*. Two
+machines whose ontologies differ by a deployment date produce different
+`kg_digest` values — **the divergence is detected and cannot be explained**.
+
+### What it holds
+
+| Field | Meaning |
+|---|---|
+| `kg_digest` | SHA-256 of the `kg.json` written in the same build. **This is what binds the record to its graph** |
+| `origin` | `files` for a real build, `synthetic` for an in-memory demo or test graph |
+| `sources` | Per input: role, filename, content digest, declared version |
+| `missing_roles` | Inputs that could not be identified |
+| `counters` | Parsing statistics, e.g. `rows_skipped_unresolved_disease_id` |
+| `incomplete_by_design` | **What this record deliberately does not cover** |
+
+The four roles are `mondo`, `hpo`, `phenotype_hpoa`, `genes_to_phenotype`.
+**The filename is a hint; the digest is the identity** — a file under the same
+directory name can be replaced in place.
+
+`declared_version` is the raw `data-version` from an ontology header, and
+**absent means `null`**. It is never filled in from the OBO format version.
+
+Read `counters` literally: `rows_skipped_unresolved_disease_id` counts **rows of
+`phenotype.hpoa` at one parsing stage**, including deliberately unsupported
+identifier types such as DECIPHER. It is **not a count of lost diseases** and not
+a total of version mismatches. The builder drops further edges elsewhere when a
+node is absent, and those are not in this number.
+
+### What it does not claim
+
+`incomplete_by_design` is written into the file itself: ontology imports resolved
+at parse time, parser and builder versions, and graph construction parameters are
+all outside it. It is a **list of source files, not a rebuild recipe**.
+
+### Three states
+
+| State | Meaning | Treatment |
+|---|---|---|
+| No such file | Built before this existed | **unknown**. Never back-filled from whatever the cache holds now |
+| Present and matching `kg.json` | This graph's sources | Trust it |
+| **Present but missing, corrupt or mismatched** | A claim that does not hold | **Reported as that**, never folded into unknown |
+
+The third is the one that matters: two graph-only workspaces whose provenance
+files were swapped during a copy have **every file well-formed** and only the
+pairing wrong. Comparing the record's `kg_digest` against the `kg.json` present
+is what tells them apart.
+
+**Verifying provenance is separate from deciding whether to serve.** Inference
+does not consume this record; what to do about a broken claim is the caller's
+decision.
+
+### Older workspaces
+
+A schema-3 workspace built before Phase 1 **does not become invalid** for lacking
+the file. When the manifest declares no provenance, the reader does not look for
+it.
+
+### Relationship to ontology versions
+
+`latest` is a **cache default, not a freshness guarantee** — it means "use the
+cached file; download only if absent", and does not check the remote for a newer
+release on each call. To change an ontology version, replace the file in the
+cache directory; the next build's provenance records the new digest and
+`data-version`.
+
+---
+
 ## Summary: deployment checklist ✅
 
 ### Windows x86 + Blackwell

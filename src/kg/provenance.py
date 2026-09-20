@@ -1,0 +1,247 @@
+"""What a knowledge graph was built from, recorded beside the graph itself.
+
+**A digest says which bytes; it does not say what produced them.** `kg.json` has
+had a digest since the manifest bound it, and nothing anywhere said which MONDO
+release, which HPO release or which annotation files went into it. Two sites
+whose ontologies differ by a deployment date detect the divergence — their
+`kg_digest` values differ — and cannot say what diverged, which is detection
+without diagnosis.
+
+**The record names its graph.** It carries the SHA-256 of the `kg.json` written
+in the same build, so a record that has been separated from its graph and placed
+beside another can be told apart from one that belongs. Without that, two
+graph-only workspaces whose provenance files were swapped during a copy would
+each read as describing the other's inputs, with every file well-formed.
+
+**What it does not claim.** This is a record of the *source files* a build
+consumed. It is not a rebuild recipe: the parser version, the builder's
+parameters, and any ontology imports resolved at parse time are outside it, and
+§`incomplete_by_design` says so in the file rather than leaving a reader to
+assume otherwise.
+
+Module: src/kg/provenance.py
+"""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+#: The file, beside `kg.json`, that records what the graph was built from.
+PROVENANCE_FILENAME = "kg.provenance.json"
+
+#: Bumped when the record's shape changes in a way that makes an old file
+#: unreadable under the new rules. A reader that does not recognise a version
+#: reports that, rather than guessing which fields still mean what they say.
+PROVENANCE_SCHEMA_VERSION = 1
+
+#: The roles a real build consumes. Declared so a record missing one is visible
+#: as incomplete rather than merely short, and so a fifth input is a deliberate
+#: schema change instead of a silent omission.
+SOURCE_ROLES = ("mondo", "hpo", "phenotype_hpoa", "genes_to_phenotype")
+
+#: What this record deliberately does not establish. Written into every file so
+#: the limits travel with it and a later reader cannot mistake a source list for
+#: a reproduction recipe.
+INCOMPLETE_BY_DESIGN = (
+    "ontology imports resolved at parse time are not identified",
+    "parser and builder versions are not recorded",
+    "graph construction parameters are not recorded",
+)
+
+
+class ProvenanceError(ValueError):
+    """A provenance record that cannot be trusted to describe its graph."""
+
+
+def source_entry(
+    role: str,
+    path: Any,
+    digest: str,
+    declared_version: Optional[str] = None,
+) -> Dict[str, Any]:
+    """One consumed file, as it goes into the record.
+
+    `path` is kept as a **locator, not an identity** — a directory name can be
+    reused across vintages and a file replaced in place under it, which is
+    exactly how two builds diverge while looking alike. The digest is what
+    identifies the bytes. Only the file's basename is kept, because the absolute
+    path of an operator's home directory is not evidence and §5.2 of the backlog
+    keeps it out of artifacts.
+
+    `declared_version` is the raw `data-version` an ontology header carries, or
+    None. **It is never filled in from a format version**: `Ontology.version`
+    falls back to `format_version` and then to `"Unknown"`, so reading that
+    property would let a file's OBO format masquerade as a release.
+    """
+    if role not in SOURCE_ROLES:
+        raise ProvenanceError(
+            f"{role!r} is not one of the roles a build consumes ({', '.join(SOURCE_ROLES)})"
+        )
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise ProvenanceError(
+            f"the digest recorded for {role} is not a SHA-256 hexdigest ({digest!r})"
+        )
+    if declared_version is not None and not isinstance(declared_version, str):
+        raise ProvenanceError(
+            f"{role} declares a version that is not a string ({declared_version!r})"
+        )
+    return {
+        "role": role,
+        "filename": Path(path).name if path is not None else None,
+        "digest": digest,
+        "declared_version": declared_version,
+    }
+
+
+def build_provenance(
+    kg_digest: str,
+    sources: Optional[List[Dict[str, Any]]] = None,
+    counters: Optional[Dict[str, Any]] = None,
+    origin: str = "files",
+) -> Dict[str, Any]:
+    """Assemble the record for one build.
+
+    Args:
+        kg_digest: SHA-256 of the `kg.json` this build wrote. The binding that
+            makes the record about *this* graph rather than a plausible one.
+        sources: `source_entry` results for the files actually consumed.
+        counters: parsing statistics, each named by what it actually counts.
+        origin: `"files"` when real inputs produced the graph, `"synthetic"`
+            when it was constructed in memory by a demo or a test. **A synthetic
+            build records that it has no sources; it never invents digests.**
+    """
+    if origin not in ("files", "synthetic"):
+        raise ProvenanceError(f"origin must be 'files' or 'synthetic', got {origin!r}")
+    if not isinstance(kg_digest, str) or len(kg_digest) != 64:
+        raise ProvenanceError(
+            f"kg_digest is not a SHA-256 hexdigest ({kg_digest!r}); without it "
+            "the record cannot say which graph it describes"
+        )
+    entries = list(sources or [])
+    if origin == "synthetic" and entries:
+        raise ProvenanceError(
+            "a synthetic build recorded source files. Nothing read them, so "
+            "recording them would attribute a graph to inputs it never had."
+        )
+    missing = [role for role in SOURCE_ROLES if role not in {e["role"] for e in entries}]
+    return {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "kg_digest": kg_digest,
+        "origin": origin,
+        "sources": entries,
+        # Named rather than implied: a reader can tell "this build had no real
+        # inputs" from "this build had them and one went unrecorded".
+        "missing_roles": missing if origin == "files" else list(SOURCE_ROLES),
+        "counters": dict(counters or {}),
+        "incomplete_by_design": list(INCOMPLETE_BY_DESIGN),
+    }
+
+
+def write_provenance(workspace: Path, record: Dict[str, Any]) -> str:
+    """Serialise the record whole, then rename it into place.
+
+    Returns its SHA-256, so the caller can bind it into a manifest without
+    re-reading the file. Same whole-then-replace shape as the split manifest, and
+    for the same reason: a value no encoder takes must not leave a truncated file
+    that parses as nothing and reads as a record that exists.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    payload = json.dumps(record, indent=2, sort_keys=True)
+    target = Path(workspace) / PROVENANCE_FILENAME
+    handle = tempfile.NamedTemporaryFile(
+        "w", dir=str(workspace), prefix=target.name, suffix=".tmp",
+        delete=False, encoding="utf-8",
+    )
+    try:
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(handle.name, target)
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
+    return file_sha256(target)
+
+
+def read_provenance(workspace: Path) -> Optional[Dict[str, Any]]:
+    """The record, or None when the workspace declares none.
+
+    None means *this build predates provenance*, and a caller must not fill it
+    in from anything present now: the ontology sitting in a cache today is not
+    evidence about a build made months ago.
+
+    Raises:
+        ProvenanceError: the file is there and unusable, which is a different
+            state from its absence and is reported as one.
+    """
+    path = Path(workspace) / PROVENANCE_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ProvenanceError(
+            f"{path} is present but not readable JSON ({type(exc).__name__}); "
+            "a record that cannot be parsed is not an absent one"
+        ) from exc
+    if not isinstance(record, dict):
+        raise ProvenanceError(f"{path} is not a JSON object, so it describes no build")
+    version = record.get("schema_version")
+    if version != PROVENANCE_SCHEMA_VERSION:
+        raise ProvenanceError(
+            f"{path} is provenance schema {version!r}; this code reads "
+            f"{PROVENANCE_SCHEMA_VERSION}. Which of its fields still mean what "
+            "they say is a guess."
+        )
+    return record
+
+
+def verify_provenance(workspace: Path, kg_digest: str) -> Optional[Dict[str, Any]]:
+    """The record, checked against the graph actually present.
+
+    **This is the whole point of the file.** A record names the `kg.json` it was
+    written beside; a reader that trusts the directory instead would accept one
+    workspace's inputs as another's, which is the failure a copy produces and
+    every file involved looks correct.
+
+    Returns the record when it belongs to this graph, or None when none is
+    declared. Raises when one is declared and does not hold — **a mismatch is
+    reported as a mismatch and never folded into "unknown"**, because the two
+    states mean opposite things about what is known.
+
+    Verifying provenance says nothing about whether a pipeline should serve.
+    Inference does not consume this record, and what a caller does about a
+    broken claim is that caller's decision.
+    """
+    record = read_provenance(workspace)
+    if record is None:
+        return None
+    recorded = record.get("kg_digest")
+    if recorded != kg_digest:
+        raise ProvenanceError(
+            f"{Path(workspace) / PROVENANCE_FILENAME} records a graph whose "
+            f"digest is {str(recorded)[:12]}..., and the kg.json beside it "
+            f"digests to {kg_digest[:12]}.... This record describes another "
+            "build; reading its sources as this graph's would attribute inputs "
+            "it never had."
+        )
+    return record
+
+
+__all__ = [
+    "INCOMPLETE_BY_DESIGN",
+    "PROVENANCE_FILENAME",
+    "PROVENANCE_SCHEMA_VERSION",
+    "ProvenanceError",
+    "SOURCE_ROLES",
+    "build_provenance",
+    "read_provenance",
+    "source_entry",
+    "verify_provenance",
+    "write_provenance",
+]

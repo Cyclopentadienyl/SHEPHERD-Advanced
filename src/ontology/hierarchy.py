@@ -129,6 +129,28 @@ class Ontology:
             return self._header.data_version or self._header.format_version or "Unknown"
 
     @property
+    def declared_version(self) -> Optional[str]:
+        """The `data-version` the file declares, or None when it declares none.
+
+        **Separate from `version` on purpose.** That property falls back to the
+        format version and then to the string `"Unknown"`, which is right for a
+        log line and wrong for provenance: it would let a file's OBO *format*
+        stand in for a release, and a record that says "1.2" when the file
+        declared no release is a record that invents one.
+
+        Provenance uses this. The content digest is the identity; this is the
+        label the file chose to carry, and its absence is recorded as absence.
+        """
+        if self._mode == "pronto":
+            return self._pronto_ont.metadata.data_version or None
+        return self._header.data_version or None
+
+    @property
+    def source_path(self) -> Optional[Path]:
+        """The file this ontology was parsed from, when one is known."""
+        return self._source_path
+
+    @property
     def num_terms(self) -> int:
         """非廢棄術語數量"""
         if self._mode == "pronto":

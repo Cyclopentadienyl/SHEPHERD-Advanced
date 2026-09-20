@@ -111,6 +111,10 @@ class WorkspaceWrite(NamedTuple):
     train_samples: List[Dict[str, Any]]
     val_samples: List[Dict[str, Any]]
     manifest: Optional[Dict[str, Any]]
+    #: SHA-256 of the `kg.provenance.json` this build wrote. Always produced,
+    #: including for a graph-only write, because the graph is what the sources
+    #: made and it exists on both paths.
+    provenance_digest: Optional[str] = None
 
 
 def write_workspace(
@@ -122,6 +126,8 @@ def write_workspace(
     samples: Optional[SampleBudget] = None,
     train_label: str = "num_train",
     val_label: str = "num_val",
+    sources: Optional[List[Dict[str, Any]]] = None,
+    source_counters: Optional[Dict[str, Any]] = None,
 ) -> WorkspaceWrite:
     """Write `kg.json`, the graph tensors, and — when asked — bound cohorts.
 
@@ -158,6 +164,7 @@ def write_workspace(
     """
     from src.kg.artifacts import GRAPH_ARTIFACTS
     from src.kg.sample_generator import refuse_if_checkpoints_exist
+    from src.kg.provenance import build_provenance, write_provenance
     from src.utils.fingerprint import file_sha256
 
     workspace = Path(workspace)
@@ -248,8 +255,31 @@ def write_workspace(
         for role, filename in GRAPH_ARTIFACTS.items()
     }
 
+    # **Written here, between the graph and the manifest, and on both paths.**
+    # The record carries `kg.json`'s digest, so it can only be assembled once
+    # that file is final — and it must exist before the manifest, which binds
+    # it. A graph-only write returns below without a manifest, which is exactly
+    # why the record cannot live in one: the build whose inputs most need naming
+    # is the one that produces no manifest at all.
+    #
+    # **Sources are supplied, never discovered.** Only the caller that opened
+    # the ontology and annotation files knows what this graph was made from;
+    # scanning a cache afterwards would record whatever is there now, which is
+    # a statement about the machine rather than about the build. A caller with
+    # no real inputs — a demo, a test, the probe — passes none and the record
+    # says `synthetic` rather than inventing digests.
+    provenance_digest = write_provenance(
+        workspace,
+        build_provenance(
+            kg_digest=graph_digests["kg"],
+            sources=sources,
+            counters=source_counters,
+            origin="files" if sources is not None else "synthetic",
+        ),
+    )
+
     if samples is None:
-        return WorkspaceWrite(graph_digests, None, [], [], None)
+        return WorkspaceWrite(graph_digests, None, [], [], None, provenance_digest)
 
     from src.kg.sample_generator import generate_training_samples
 
@@ -265,7 +295,7 @@ def write_workspace(
         num_val=samples.num_val,
         min_phenotypes=samples.min_phenotypes,
         output_dir=workspace,
-        graph_digests=graph_digests,
+        graph_digests={**graph_digests, "provenance": provenance_digest},
         # **What the digests cannot say.** They prove these are the bytes this
         # writer exported; they do not say how to make them again. The recipe
         # is what turns "rebuild this workspace" into an instruction.
@@ -282,7 +312,8 @@ def write_workspace(
         len(val_samples), manifest["realised"]["val_diseases"], manifest["disjoint"],
     )
     return WorkspaceWrite(
-        graph_digests, allocation, train_samples, val_samples, manifest
+        graph_digests, allocation, train_samples, val_samples, manifest,
+        provenance_digest
     )
 
 

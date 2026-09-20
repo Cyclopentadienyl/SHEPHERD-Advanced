@@ -1047,6 +1047,70 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 
 ---
 
+## 4.4 建圖來源紀錄（kg.provenance.json）
+
+每次建圖都會在 `kg.json` 旁產生 `kg.provenance.json`，記錄這個圖是**從哪些檔案**
+建出來的。
+
+### 為什麼需要它
+
+`kg.json` 一直有 digest，但 digest 只說「是哪些位元組」。兩台機器的本體版本若因部署
+日期而不同，它們的 `kg_digest` 會不一樣——**偵測得到，卻說不出差在哪**。
+
+### 紀錄內容
+
+| 欄位 | 意義 |
+|---|---|
+| `kg_digest` | 同一次建圖寫出的 `kg.json` 的 SHA-256。**這是紀錄與圖的綁定** |
+| `origin` | `files`（真實建圖）或 `synthetic`（demo／測試用的記憶體圖） |
+| `sources` | 每個輸入的角色、檔名、內容 digest、宣告版本 |
+| `missing_roles` | 未能識別的輸入角色 |
+| `counters` | 解析統計，例如 `rows_skipped_unresolved_disease_id` |
+| `incomplete_by_design` | **這份紀錄刻意不涵蓋的東西** |
+
+`sources` 的四個角色是 `mondo`、`hpo`、`phenotype_hpoa`、`genes_to_phenotype`。
+**檔名只是線索，digest 才是身分**——同一個目錄名下的檔案可以被原地替換。
+
+`declared_version` 是本體檔頭的原始 `data-version`，**沒有就是 `null`**，不會用
+OBO 的 format version 冒充 release。
+
+`counters` 的命名要照字面讀：`rows_skipped_unresolved_disease_id` 是
+**`phenotype.hpoa` 在那一個解析階段跳過的列數**，其中包含刻意不支援的 ID 類型
+（如 DECIPHER），**不是「遺失的疾病數」，也不是版本不符的總量**。builder 另外還會
+因節點不存在而丟邊，那些不在這個數字裡。
+
+### 這份紀錄不宣稱什麼
+
+`incomplete_by_design` 直接寫在檔案裡：本體解析時解析的 imports、parser 與 builder
+的版本、建圖參數，**都不在紀錄範圍內**。它是**來源檔清單，不是重建配方**。
+
+### 三種狀態
+
+| 狀態 | 意義 | 該怎麼看 |
+|---|---|---|
+| 沒有這個檔案 | 這個 workspace 建於此功能之前 | **unknown**。不會、也不該用現在快取裡的檔案回填 |
+| 有，且與 `kg.json` 相符 | 這個圖的來源 | 可信 |
+| **有，但缺檔／損壞／不相符** | 一個不成立的宣稱 | **回報為此狀態**，不等同 unknown |
+
+第三種最重要：兩個 graph-only workspace 在搬移時互換了 provenance 檔案，**每個檔案都
+合法**，只有配對錯了。reader 比對紀錄裡的 `kg_digest` 與現場的 `kg.json` 就能分辨。
+
+**來源驗證與「是否提供服務」是分開的。** 推論不消費這份紀錄；驗證失敗要怎麼處理是
+呼叫端的決定。
+
+### 舊 workspace
+
+Phase 1 之前建的 schema-3 workspace **不會因為沒有這個檔案而失效**。manifest 沒有
+宣告 provenance 時，reader 不會去找它。
+
+### 與本體版本的關係
+
+目前 `latest` 是**快取預設值，不是新鮮度保證**——它的意思是「用快取裡那份；沒有才
+下載」，不會每次去確認遠端是否有更新版本。要更換本體版本，換掉快取目錄裡的檔案，
+下次建圖的 provenance 就會記下新的 digest 與 `data-version`。
+
+---
+
 ## 總結：部署檢查清單 ✅
 
 ### Windows x86 + Blackwell

@@ -119,6 +119,43 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
                 "samples are one production event; this file came from another."
             )
         observed[role] = digest
+
+    # **Verified only when the manifest says there is one.** A workspace built
+    # before provenance existed declares none, and requiring the file would make
+    # every current deployment rebuild for a record describing builds it never
+    # made. Declared-and-broken is a different state from never-declared, and
+    # the two are not merged: the first raises here, the second returns quietly.
+    #
+    # Two bindings, because either alone leaves a hole. The manifest names the
+    # provenance file's digest, which catches a record replaced after the build;
+    # the record names `kg.json`'s digest, which catches one that was never this
+    # graph's — the case a copy produces, where every file is well-formed and
+    # only the pairing is wrong.
+    recorded_provenance = artifacts.get("provenance")
+    if recorded_provenance is not None:
+        from src.kg.provenance import PROVENANCE_FILENAME, verify_provenance
+
+        provenance_path = data_dir / PROVENANCE_FILENAME
+        if not provenance_path.is_file():
+            raise ValueError(
+                f"{manifest_path} records a {PROVENANCE_FILENAME} that is not "
+                "beside it. The record of what this graph was built from was "
+                "declared and is gone, which is not the same as never having "
+                "had one."
+            )
+        observed_provenance = file_sha256(provenance_path)
+        if observed_provenance != recorded_provenance:
+            raise ValueError(
+                f"{provenance_path} is not the record {manifest_path} describes "
+                f"({str(recorded_provenance)[:12]}... vs "
+                f"{str(observed_provenance)[:12]}...). It was replaced after the "
+                "build, so what it says this graph came from is not what was "
+                "recorded at the time."
+            )
+        # And the record's own claim about which graph it describes.
+        verify_provenance(data_dir, observed["kg"])
+        observed["provenance"] = observed_provenance
+
     return observed
 
 

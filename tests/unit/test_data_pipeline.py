@@ -1268,10 +1268,20 @@ class TestBuildPathOrdering:
     def _stub_build_stages(monkeypatch, kg):
         import scripts.build_knowledge_graph as build
 
+        class _Ontology:
+            """Carries what the build reads off a real ontology.
+
+            `source_path = None` on purpose: this stub was never parsed from a
+            file, and the build records that as a role it could not identify
+            rather than inventing a digest for one.
+            """
+            source_path = None
+            declared_version = None
+
         class _Loader:
             def __init__(self, *a, **k): pass
-            def load_mondo(self): return object()
-            def load_hpo(self): return object()
+            def load_mondo(self): return _Ontology()
+            def load_hpo(self): return _Ontology()
 
         class _Parser:
             def __init__(self, *a, **k): pass
@@ -1415,4 +1425,4 @@ class TestBuildPathOrdering:
 
         for role, filename in GRAPH_ARTIFACTS.items():
             assert manifest["artifacts"][role] == file_sha256(tmp_dir / filename)
-        assert set(verify_graph_artifacts(tmp_dir)) == set(GRAPH_ARTIFACTS)
+        assert set(GRAPH_ARTIFACTS) <= set(verify_graph_artifacts(tmp_dir))
