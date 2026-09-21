@@ -1047,6 +1047,86 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 
 ---
 
+## 4.4 建圖來源紀錄（kg.provenance.json）
+
+每次建圖都會在 `kg.json` 旁產生 `kg.provenance.json`，記錄這個圖是**從哪些檔案**
+建出來的。
+
+### 為什麼需要它
+
+`kg.json` 一直有 digest，但 digest 只說「是哪些位元組」。兩台機器的本體版本若因部署
+日期而不同，它們的 `kg_digest` 會不一樣——**偵測得到，卻說不出差在哪**。
+
+### 紀錄內容
+
+| 欄位 | 意義 |
+|---|---|
+| `kg_digest` | 同一次建圖寫出的 `kg.json` 的 SHA-256。**這是紀錄與圖的綁定** |
+| `origin` | `files`（真實建圖）或 `synthetic`（demo／測試用的記憶體圖） |
+| `sources` | 每個輸入的角色、檔名、內容 digest、宣告版本 |
+| `missing_roles` | 未能識別的輸入角色 |
+| `counters` | 解析統計，例如 `rows_skipped_unresolved_disease_id` |
+| `incomplete_by_design` | **這份紀錄刻意不涵蓋的東西** |
+
+`sources` 的四個角色是 `mondo`、`hpo`、`phenotype_hpoa`、`genes_to_phenotype`。
+**檔名只是線索，digest 才是身分**——同一個目錄名下的檔案可以被原地替換。
+
+`declared_version` 是本體檔頭的原始 `data-version`，**沒有就是 `null`**，不會用
+OBO 的 format version 冒充 release。
+
+`counters` 的命名要照字面讀：`rows_skipped_unresolved_disease_id` 是
+**`phenotype.hpoa` 在那一個解析階段跳過的列數**，其中包含刻意不支援的 ID 類型
+（如 DECIPHER），**不是「遺失的疾病數」，也不是版本不符的總量**。builder 另外還會
+因節點不存在而丟邊，那些不在這個數字裡。
+
+### 這份紀錄不宣稱什麼
+
+`incomplete_by_design` 直接寫在檔案裡：本體解析時解析的 imports、parser 與 builder
+的版本、建圖參數，**都不在紀錄範圍內**。它是**來源檔清單，不是重建配方**。
+
+### 三種狀態
+
+| 狀態 | 意義 | 該怎麼看 |
+|---|---|---|
+| 沒有這個檔案 | 這個 workspace 建於此功能之前 | **unknown**。不會、也不該用現在快取裡的檔案回填 |
+| 有，且與 `kg.json` 相符 | 這個圖的來源 | 可信 |
+| **有，但缺檔／損壞／不相符** | 一個不成立的宣稱 | **回報為此狀態**，不等同 unknown |
+
+第三種最重要：兩個 graph-only workspace 在搬移時互換了 provenance 檔案，**每個檔案都
+合法**，只有配對錯了。`workspace_provenance_status()` 比對紀錄裡的 `kg_digest` 與現場的
+`kg.json` 就能分辨。
+
+**來源驗證不會擋下服務。** 來源狀態是「這個圖從哪裡來」的敘述，不是「這個圖能不能
+用」的判定——後者由 `kg.json` 與三個張量的 digest 綁定負責，那些仍然會拒絕。
+`workspace_provenance_status()` **不拋例外**，只回傳狀態；要不要因為來源有問題而停止
+什麼，是呼叫端的政策決定，目前沒有任何程式這樣做。這個承諾同時涵蓋磁碟層面與「檔案存不存在」的探測，不只是
+內容層面：`kg.json`、來源紀錄或 `manifest.json` 若本行程無法開啟或解碼，**或是
+workspace 目錄本身無法進入**（此時連 `Path.is_file()` 都會拋例外——`pathlib` 對
+`EACCES` 是往外拋，不是回傳 `False`），都會以 `unreadable` 狀態回傳並在 detail 裡
+帶上原因，而不是從一個所有呼叫端都沒有包 try 的函數裡丟出例外。「無從得知紀錄在不
+在」會據實回報，不會被講成「紀錄不在」。manifest 這一項尤其要分清楚——manifest 讀不到的意思是
+**「無從得知是否曾宣告過來源紀錄」**，不是**「從未宣告過」**，而只有後者才能推得
+「這個 workspace 建於 provenance 之前」。要不要因為 manifest 壞掉而拒絕整個
+workspace，仍然是 `verify_graph_artifacts()` 的職責。
+
+> **修正紀錄**：本節的早期版本讓 `verify_graph_artifacts()` 在來源紀錄損壞時直接拋
+> 例外。那個函數被 `verify_graph_source()` 呼叫，而後者在 `DiagnosisPipeline`
+> 載入張量前執行——結果是「一張便條不見了」會讓模型無法初始化，冷啟動時 `/diagnose`
+> 回 503，而張量本身完好無損。已改為回報而非拒絕。
+
+### 舊 workspace
+
+Phase 1 之前建的 schema-3 workspace **不會因為沒有這個檔案而失效**。manifest 沒有
+宣告 provenance 時，reader 不會去找它。
+
+### 與本體版本的關係
+
+目前 `latest` 是**快取預設值，不是新鮮度保證**——它的意思是「用快取裡那份；沒有才
+下載」，不會每次去確認遠端是否有更新版本。要更換本體版本，換掉快取目錄裡的檔案，
+下次建圖的 provenance 就會記下新的 digest 與 `data-version`。
+
+---
+
 ## 總結：部署檢查清單 ✅
 
 ### Windows x86 + Blackwell

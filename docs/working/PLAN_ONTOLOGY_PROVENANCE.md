@@ -326,7 +326,7 @@ each one forces.
 | Phase | What | Needs a design decision? |
 |---|---|---|
 | **0** | **DONE.** The `version` promise is refused rather than ignored: only `"latest"` is honoured, at the shared path so all four loaders inherit it, before any cache read or fetch. **`force_download` left alone**; a test class exists so a future tidy-up of "unused flags" cannot take it | **No.** Correcting a misleading API |
-| **1** | `kg.provenance.json` on every build (§3.5), bound **to its graph and from the manifest**, covering **all four source files** (§3.6), with the parsing counters named precisely (§3.7) and the reader work that makes the binding real (§3.5.1) | **Yes, one**: where the record is written. §3.5 proposes an answer |
+| **1** | **DONE.** `kg.provenance.json` on every build including graph-only, carrying `kg.json`'s digest and bound from the manifest; all four source files by digest with raw `data-version`; parser counters named by the rows and stage they count; reader verification at `workspace_provenance_status` — **not** at `verify_graph_artifacts`, where it was first put and where it would have blocked GNN initialisation over a note that gates nothing (see §5) | Settled as §3.5 proposed |
 | **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2) | Small: where roots are configured |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
 
@@ -400,15 +400,35 @@ it. Ordinary unit tests; no probe, no new framework.
 
 ## 5. Where this sits against 5a
 
-Nothing here blocks or is blocked by backlog item 5a. 5a's step 0 is complete
-and approved; step 2 (moving approach A into `src/inference/sp_index.py`) is
-next and touches none of this.
+**State, as of Phase 1 landing.** 5a's step 0 is complete and approved.
+Step 2 — moving approach A into `src/inference/sp_index.py` — has not started;
+that file does not exist. So 5a is where it was when this plan was written.
 
-**Recommendation on order**, unchanged by this revision and endorsed by review.
-Phase 0 is small, independent and corrects something misleading, so it can land
-between 5a's steps without entangling them.
-Phases 1-3 should wait until 5a reaches its stopping point — implemented, with
-the integrated gate readings pending a designated measurement subject — so that
-two multi-commit efforts are not open in the same files at once. 5a touches
-`src/inference/`; phases 1-2 touch `src/ontology/`, `src/kg/` and the manifest
-schema, so the overlap is small but the review attention is not.
+**The ordering recommendation below was not followed, and this section says so
+rather than reading as if it had been.** It said phases 1-3 should wait until
+5a reached its stopping point. Phase 0 and Phase 1 both landed while 5a sat at
+step 0. Recording that plainly matters more than the recommendation did: a plan
+whose sequencing text still reads as a live constraint, while the work it
+constrains has already shipped, is a document that cannot be used to decide
+anything — every later reader has to discover for themselves which half is
+current.
+
+**What the constraint was actually protecting, and what it cost to skip it.**
+Never a code dependency. Phase 1 touched `src/kg/`, `src/ontology/`,
+`scripts/` and the manifest schema; 5a touches `src/inference/`. The two sets
+do not intersect, and nothing in Phase 1 had to wait on anything in 5a. What
+the constraint protected was review attention — one multi-commit effort open at
+a time. That cost was paid rather than avoided: Phase 1 took three review
+rounds, and two of its findings (provenance raising inside the artifact
+verifier that `_init_gnn_inference` calls; the pre-write gate encoding with
+different arguments from the writer) were failures of *reach* — a change whose
+consequences ran further than the files it edited. Those are exactly the
+findings a divided review is worst at catching.
+
+**Standing order for phases 2-3, stated as a check rather than a preference.**
+Phase 2 edits the build CLI and adds a resolver; Phase 3 changes what a
+workspace contains. Neither starts while a 5a step is open in review. The
+condition is observable, not a judgement: `src/inference/sp_index.py` exists,
+its dispatch is wired, and 5a's own steps are closed. If a phase is started
+before that anyway, it is this paragraph that gets rewritten first — not
+silently left standing.

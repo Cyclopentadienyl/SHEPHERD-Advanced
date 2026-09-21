@@ -34,6 +34,7 @@ Module: src/kg/workspace.py
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
@@ -111,6 +112,10 @@ class WorkspaceWrite(NamedTuple):
     train_samples: List[Dict[str, Any]]
     val_samples: List[Dict[str, Any]]
     manifest: Optional[Dict[str, Any]]
+    #: SHA-256 of the `kg.provenance.json` this build wrote. Always produced,
+    #: including for a graph-only write, because the graph is what the sources
+    #: made and it exists on both paths.
+    provenance_digest: Optional[str] = None
 
 
 def write_workspace(
@@ -122,6 +127,8 @@ def write_workspace(
     samples: Optional[SampleBudget] = None,
     train_label: str = "num_train",
     val_label: str = "num_val",
+    sources: Optional[List[Dict[str, Any]]] = None,
+    source_counters: Optional[Dict[str, Any]] = None,
 ) -> WorkspaceWrite:
     """Write `kg.json`, the graph tensors, and — when asked — bound cohorts.
 
@@ -158,6 +165,12 @@ def write_workspace(
     """
     from src.kg.artifacts import GRAPH_ARTIFACTS
     from src.kg.sample_generator import refuse_if_checkpoints_exist
+    from src.kg.provenance import (
+        ProvenanceError,
+        build_provenance,
+        encode_provenance,
+        write_provenance,
+    )
     from src.utils.fingerprint import file_sha256
 
     workspace = Path(workspace)
@@ -232,6 +245,44 @@ def write_workspace(
             train_label=train_label, val_label=val_label,
         )
 
+    # **The new inputs join the old refusals rather than trailing them.**
+    # `sources` and `source_counters` come from a caller and are knowable before
+    # anything is written — so a malformed entry or a counter no encoder takes
+    # must refuse here, not after `kg.json` and three tensors have been
+    # overwritten. Measured on the shape that got this wrong: an unserialisable
+    # counter raised `TypeError` with four graph artifacts already written, and
+    # over an existing workspace it left new tensors beside the previous
+    # manifest.
+    #
+    # The record is assembled against a placeholder digest purely to prove it
+    # encodes; the real one is not known until `kg.json` exists, and the record
+    # written below is built again with it. Encoding twice costs nothing and is
+    # what makes the refusal structural rather than a list of fields someone
+    # re-checks by hand.
+    #
+    # **`encode_provenance`, not `json.dumps` -- the gate must run the writer's
+    # encoder, not an encoder.** These were two calls with different arguments,
+    # and they disagreed: a counter keyed `{1: 2, "OMIM": 3}` encodes under the
+    # default and fails `sort_keys=True`, so the gate passed and the writer then
+    # raised `TypeError` with `kg.json` and three tensors already on disk --
+    # precisely the failure the gate exists to prevent, reintroduced by the gate
+    # itself. One function now answers for both.
+    if sources is not None or source_counters is not None:
+        try:
+            encode_provenance(build_provenance(
+                kg_digest="0" * 64,
+                sources=sources,
+                counters=source_counters,
+                origin="files" if sources is not None else "synthetic",
+            ))
+        except ProvenanceError as exc:
+            raise WorkspaceRefusal(f"the provenance this build would record is unusable: {exc}") from exc
+        except (TypeError, ValueError) as exc:
+            raise WorkspaceRefusal(
+                "the provenance this build would record cannot be serialised "
+                f"({type(exc).__name__}: {exc}). Nothing has been written."
+            ) from exc
+
     # Every refusal is behind us; this is the first thing that exists afterwards.
     workspace.mkdir(parents=True, exist_ok=True)
     kg_path = workspace / GRAPH_ARTIFACTS["kg"]
@@ -248,8 +299,31 @@ def write_workspace(
         for role, filename in GRAPH_ARTIFACTS.items()
     }
 
+    # **Written here, between the graph and the manifest, and on both paths.**
+    # The record carries `kg.json`'s digest, so it can only be assembled once
+    # that file is final — and it must exist before the manifest, which binds
+    # it. A graph-only write returns below without a manifest, which is exactly
+    # why the record cannot live in one: the build whose inputs most need naming
+    # is the one that produces no manifest at all.
+    #
+    # **Sources are supplied, never discovered.** Only the caller that opened
+    # the ontology and annotation files knows what this graph was made from;
+    # scanning a cache afterwards would record whatever is there now, which is
+    # a statement about the machine rather than about the build. A caller with
+    # no real inputs — a demo, a test, the probe — passes none and the record
+    # says `synthetic` rather than inventing digests.
+    provenance_digest = write_provenance(
+        workspace,
+        build_provenance(
+            kg_digest=graph_digests["kg"],
+            sources=sources,
+            counters=source_counters,
+            origin="files" if sources is not None else "synthetic",
+        ),
+    )
+
     if samples is None:
-        return WorkspaceWrite(graph_digests, None, [], [], None)
+        return WorkspaceWrite(graph_digests, None, [], [], None, provenance_digest)
 
     from src.kg.sample_generator import generate_training_samples
 
@@ -265,7 +339,7 @@ def write_workspace(
         num_val=samples.num_val,
         min_phenotypes=samples.min_phenotypes,
         output_dir=workspace,
-        graph_digests=graph_digests,
+        graph_digests={**graph_digests, "provenance": provenance_digest},
         # **What the digests cannot say.** They prove these are the bytes this
         # writer exported; they do not say how to make them again. The recipe
         # is what turns "rebuild this workspace" into an instruction.
@@ -282,7 +356,8 @@ def write_workspace(
         len(val_samples), manifest["realised"]["val_diseases"], manifest["disjoint"],
     )
     return WorkspaceWrite(
-        graph_digests, allocation, train_samples, val_samples, manifest
+        graph_digests, allocation, train_samples, val_samples, manifest,
+        provenance_digest
     )
 
 

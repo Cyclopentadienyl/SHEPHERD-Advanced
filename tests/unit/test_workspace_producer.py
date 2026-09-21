@@ -229,7 +229,11 @@ class TestTheDemoWorkspaceIsAProductionWorkspace:
 
         workspace = self._run(tmp_path, monkeypatch)
 
-        assert set(verify_graph_artifacts(workspace)) == set(GRAPH_ARTIFACTS)
+        # Superset, not equality: the verifier returns what it checked, and it
+        # now also checks the provenance record when a manifest declares one.
+        # Pinning the exact set would make every future binding a test edit
+        # rather than a contract change.
+        assert set(GRAPH_ARTIFACTS) <= set(verify_graph_artifacts(workspace))
         verify_graph_source(workspace / "kg.json", workspace)
         cohorts = verify_generated_cohorts(workspace)
         assert cohorts.verified == ("train", "val")
@@ -288,7 +292,7 @@ class TestTheDemoWorkspaceIsAProductionWorkspace:
             p.name: (p.stat().st_mtime_ns, file_sha256(p)) for p in artifacts
         }
         # The six the manifest binds, plus the manifest itself.
-        assert len(before) == 7, f"expected seven files, got {sorted(before)}"
+        assert len(before) == 8, f"expected eight files, got {sorted(before)}"
 
         ckpt_dir = workspace / "checkpoints" / "gat"
         ckpt_dir.mkdir(parents=True, exist_ok=True)

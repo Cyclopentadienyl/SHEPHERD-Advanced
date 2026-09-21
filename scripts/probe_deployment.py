@@ -1128,7 +1128,7 @@ def phase_real_build(
         different workspace each time, a digest would identify a run rather than
         a graph, and two sites could not confirm they held the same one.
 
-        All seven files, not the four graph artifacts. The first version of this
+        Every canonical file, not the four graph artifacts. The first version of this
         probe checked only those, which would have called a workspace reproduced
         while its cohorts were not — and the cohorts are what a measurement is
         taken over. The digests are recorded so two reports from two machines
@@ -1147,16 +1147,23 @@ def phase_real_build(
             generate_samples=True, num_train=num_train, num_val=num_val,
             val_disease_fraction=0.15, sample_seed=SEED,
         )
-        # The seven files a generated workspace is: the four graph artifacts,
-        # both cohorts and the manifest. Named rather than globbed, so "the same
-        # workspace" means the same thing here as it does to the verifiers, and
-        # an unrelated file dropped into the directory neither joins the claim
-        # nor breaks it.
+        # What a generated workspace is: the four graph artifacts, both cohorts,
+        # the manifest, and the provenance record. Named rather than globbed, so
+        # "the same workspace" means the same thing here as it does to the
+        # verifiers, and an unrelated file dropped into the directory neither
+        # joins the claim nor breaks it.
+        #
+        # Provenance belongs in this comparison rather than beside it: it is
+        # derived from the same inputs, so two builds that agree on everything
+        # else and disagree here would mean the record is picking up something
+        # the build did not.
         from src.kg.artifacts import GRAPH_ARTIFACTS, MANIFEST_FILENAME
+        from src.kg.provenance import PROVENANCE_FILENAME
 
         names = sorted(
             list(GRAPH_ARTIFACTS.values())
-            + ["train_samples.json", "val_samples.json", MANIFEST_FILENAME]
+            + ["train_samples.json", "val_samples.json",
+               MANIFEST_FILENAME, PROVENANCE_FILENAME]
         )
         # **Absence is checked before content, in both directions.** Hashing a
         # path that is not there raises out of the comprehension, and what the
