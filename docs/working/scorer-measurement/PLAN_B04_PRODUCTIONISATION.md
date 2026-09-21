@@ -590,8 +590,9 @@ dependency and skips the task.
    different final model is recognised as needing a re-run rather than silently
    covered.
 
-**Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` and
-`EVIDENCE_M1_M3_gat.json` record ten checkpoints each by digest, from a machine
+**Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` records **ten**
+checkpoints by digest and `EVIDENCE_M1_M3_gat.json` records **five** — this
+section said "ten each", which is wrong for the GAT file — from a machine
 in an `identical-sibling` deployment relationship, with load results and an
 `in_channels` of 128 established across the family. Those digests are a
 designation list, not a decision: one is chosen, its availability on the
@@ -616,9 +617,21 @@ file being where the measurement runs**, and then three numbers taken from it:
 
 | Needed | How | Who |
 |---|---|---|
-| One evidenced checkpoint present on the measuring machine | copy it — the digests in `EVIDENCE_M1_M3_*.json` say which files qualify | **the operator**; the file is not in this repository and cannot be |
-| Its parameter count and resident size | load it and read them | engineering, once the file is there |
+| One evidenced checkpoint present on the measuring machine | copy it — the digests in `EVIDENCE_M1_M3_*.json` say which files were seen, which is not the same as which are compatible with *this* artifact set | **the operator**; the file is not in this repository and cannot be |
+| A compatible load against the graph export and SP table the readings are taken over | attempt it; appearing in the evidence list is not proof of it | engineering, once the file is there |
+| Its parameter count and resident size | load it and read them. **Parameter bytes are not the pipeline's RSS/UMA** — they are one term in it | engineering |
 | The deployment shape it stands for, stated | write it into this section beside the digest | engineering |
+
+**And the rest of the measurement environment has to be ready**, not only the
+checkpoint: a compatible graph export, an SP artifact matching it, and the
+runtime. "Only one file is missing" is true of *this* list and is not a claim
+that everything else is in place — it is a claim that nothing on this list waits
+on a decision.
+
+*The search behind this: `find` over the repository and over `/home`, `/root`,
+`/opt` and `/data` to depth 6, excluding `.venv`, returns no `.pt`. That covers
+the paths a checkpoint would plausibly be on and does not prove the machine has
+none anywhere.*
 
 **Until the file arrives, the SP-only supplementary figure is the only memory
 reading this plan can produce**, and §6.2 has it. That is not a reason to delay
