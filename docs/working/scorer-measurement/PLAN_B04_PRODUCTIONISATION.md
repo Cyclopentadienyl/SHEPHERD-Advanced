@@ -655,14 +655,18 @@ the gate is not claimed complete.
 
 ---
 
-## 8. Four adjacent defects: two closed here, two still open
+## 8. Four adjacent defects: all four now closed
 
 Found while reading the SP path. **Two are closed**: defect 1 landed as §10
 step 0, and defect 4 was absorbed by the replacement in this plan's own change.
-**Two remain open**, both in `scripts/compute_shortest_paths.py` — a different
-entry point from the one this plan edits, listed so they are not lost and
-excluded so this change stayed reviewable. They are the subject of
-[`PLAN_SP_ARTIFACT_INTEGRITY.md`](../PLAN_SP_ARTIFACT_INTEGRITY.md).
+**The other two are closed too**, by
+[`PLAN_SP_ARTIFACT_INTEGRITY.md`](../PLAN_SP_ARTIFACT_INTEGRITY.md), which was
+written because they are in `scripts/compute_shortest_paths.py` — a different
+entry point from the one this plan edits, so excluding them kept this change
+reviewable. Defect 2's answer turned out not to be an ordering at all: the two
+files now record a shared `build_id`, so a half-updated pair refuses instead of
+being served in whichever order it was written. Defect 3's is the source KG's
+digest, compared against the graph that actually supplies the node mapping.
 
 *(This heading said "three not bundled" and was written when defect 1 was still
 open. Counting it among the deferred after it shipped is the kind of arithmetic

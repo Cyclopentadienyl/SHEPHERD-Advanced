@@ -339,6 +339,16 @@ class DiagnosisPipeline:
         #: "assumed" when none was there. Published, because a log line is not a
         #: surface anyone watches and the two states score differently.
         self._sp_hop_bound_source: Optional[str] = None
+        #: SHA-256 of the `kg.json` this pipeline's graph was verified against,
+        #: when it was loaded from a workspace. **None for a graph supplied in
+        #: memory**, which is not an oversight: that caller made no claim about
+        #: a persisted workspace, so there is nothing to bind an artifact to.
+        #: The shortest-path artifact is checked against *this*, never against
+        #: whatever `kg.json` happens to sit beside it — otherwise the binding
+        #: could be bypassed by deleting a file.
+        self._graph_kg_digest: Optional[str] = None
+        #: "unrecorded" | "verified", once a table has been accepted.
+        self._sp_kg_binding: Optional[str] = None
         self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
@@ -460,7 +470,12 @@ class DiagnosisPipeline:
                     "to a different graph entirely. Pass kg_path, or pass "
                     "graph_data directly if the graph was not loaded from a file."
                 )
-            verify_graph_source(Path(self._kg_path), Path(data_dir))
+            # **The return value is kept.** It carries the manifest-bound
+            # digests, and this used to discard them — so the shortest-path
+            # binding would have had to hash `kg.json` a second time, or bind to
+            # a file rather than to the graph that was actually verified.
+            bound = verify_graph_source(Path(self._kg_path), Path(data_dir))
+            self._graph_kg_digest = bound["kg"]
             self._graph_data = self._load_graph_data(data_dir)
 
         if self._graph_data is None:
@@ -595,6 +610,7 @@ class DiagnosisPipeline:
         self._sp_ready = False
         self._sp_lookup = None
         self._sp_hop_bound_source = None
+        self._sp_kg_binding = None
 
         sp_path = data_dir / "shortest_paths.pt"
         if not sp_path.exists():
@@ -605,6 +621,13 @@ class DiagnosisPipeline:
             return
 
         from src.inference.scoring import validate_hop_bound
+        from src.inference.sp_artifact import (
+            kg_binding_state,
+            read_binding,
+            read_sidecar,
+            require_paired,
+            sidecar_path,
+        )
         from src.inference.sp_index import (
             SPArtifactError,
             build_sp_index,
@@ -684,25 +707,53 @@ class DiagnosisPipeline:
         # `validate_sp_artifact` checks the distances against it, and because a
         # deployment that cannot establish it should not pay for a sort it is
         # about to discard.
-        meta_path = sp_path.with_suffix(".meta.json")
-        if meta_path.exists():
-            # **Present means binding.** A sidecar that is here and unusable is a
-            # broken deployment, not a silent default: the previous shape read it
-            # inside `except Exception: pass`, so a missing file, malformed JSON,
-            # an absent key, a string, a boolean and a value the producer would
-            # never write all arrived at the same silent 5.
-            try:
-                meta = json.loads(meta_path.read_text())
-            except Exception as exc:
-                raise ValueError(
-                    f"{meta_path} is present but not readable JSON "
-                    f"({type(exc).__name__}: {exc}). The hop bound it declares "
-                    "cannot be recovered from the tensors."
-                ) from exc
-            if not isinstance(meta, dict):
-                raise ValueError(
-                    f"{meta_path} is not a JSON object, so it describes no artifact"
-                )
+        meta_path = sidecar_path(sp_path)
+
+        # **Present means binding, and the read happens once.** A sidecar that is
+        # here and unusable is a broken deployment, not a silent default: the
+        # previous shape read it inside `except Exception: pass`, so a missing
+        # file, malformed JSON, an absent key, a string, a boolean and a value
+        # the producer would never write all arrived at the same silent 5. The
+        # shared reader is the same one the benchmark and the reachability audit
+        # use, so a pair this refuses is not one a tool quietly measures.
+        meta = read_sidecar(sp_path)
+
+        # **Does this pair claim itself, and which graph does it claim?** Rule 0
+        # first: only a pair in which *neither* file declares the protocol is
+        # legacy. Anything partial refuses, because a new tensor beside a
+        # previous run's sidecar is exactly a partial declaration — and a present
+        # sidecar is binding for the hop bound, so that table would otherwise be
+        # scored against the old ceiling while passing every other check.
+        binding = read_binding(meta, sp_data.keys(), source=str(sp_path))
+        require_paired(binding, sp_data.get("build_id"), source=str(sp_path))
+
+        # **Bound to the graph that supplies the node mapping**, never to a file
+        # beside the table. `_graph_kg_digest` is set only where a workspace was
+        # verified; a caller that supplied its graph in memory has none, and a
+        # declared binding that cannot be checked is not an exemption for a
+        # consumer whose ranking depends on these distances.
+        binding_state = kg_binding_state(
+            binding, self._graph_kg_digest, source=str(sp_path)
+        )
+        if binding_state == "unverifiable":
+            raise SPArtifactError(
+                f"{sp_path} records the graph it was computed from, and this "
+                "pipeline cannot check it: its graph was supplied in memory, so "
+                "no verified workspace digest exists to compare against. The "
+                "shortest-path term is part of the ranking, so an unverifiable "
+                "binding is refused rather than assumed. Build the pipeline from "
+                "a workspace, or use a table published without a binding."
+            )
+        if binding_state == "unrecorded":
+            logger.warning(
+                "%s carries no source binding — it predates the pairing "
+                "protocol. Which graph it was computed from is **unrecorded**, "
+                "not verified. Rebuild it with scripts/compute_shortest_paths.py "
+                "to record one.",
+                sp_path,
+            )
+
+        if meta is not None:
             max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
             hop_bound_source = "sidecar"
         elif self.config.sp_hop_bound is not None:
@@ -779,6 +830,7 @@ class DiagnosisPipeline:
         # anything here is set.
         self._sp_max_hops = max_hops
         self._sp_hop_bound_source = hop_bound_source
+        self._sp_kg_binding = binding_state
         self._sp_lookup = lookup
         self._sp_ready = True
 
@@ -1634,6 +1686,10 @@ class DiagnosisPipeline:
             "eta_effective": effective_eta,
             "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
             "sp_hop_bound_source": self._sp_hop_bound_source if self._sp_ready else None,
+            # **"unrecorded" is not "verified".** Reported so a surface cannot
+            # present a table whose source was never recorded as one that was
+            # checked.
+            "sp_kg_binding": self._sp_kg_binding if self._sp_ready else None,
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,

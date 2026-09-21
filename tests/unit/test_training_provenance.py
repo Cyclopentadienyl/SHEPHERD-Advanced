@@ -457,7 +457,9 @@ _F821_CLEAN = (
     "scripts/measure_scorer.py",
     "scripts/benchmark_sp_lookup.py",
     "scripts/sp_scan_reference.py",
+    "scripts/audit_sp_reachability.py",
     "src/inference/sp_index.py",
+    "src/inference/sp_artifact.py",
     "src/utils/fingerprint.py",
     "tests/unit/test_training_provenance.py",
 )

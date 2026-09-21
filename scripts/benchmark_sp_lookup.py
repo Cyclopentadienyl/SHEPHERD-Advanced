@@ -278,13 +278,21 @@ def build_artifact_lookup(
     Returns `(columns, max_hops, slice_lengths, disease_targets, provenance)`.
     """
     from src.inference.scoring import validate_hop_bound
+    from src.inference.sp_artifact import (
+        kg_binding_state,
+        read_binding,
+        read_sidecar,
+        require_paired,
+        sidecar_path,
+    )
     from src.inference.sp_index import validate_sp_artifact
 
-    meta_path = path.with_suffix(".meta.json")
-    if meta_path.exists():
-        meta = json.loads(meta_path.read_text())
-        if not isinstance(meta, dict):
-            raise SystemExit(f"{meta_path} is not a JSON object")
+    # **The same reader the service uses.** A pair the pipeline refuses must not
+    # be one this quietly measures — two readers of one schema is how a
+    # benchmark comes to quote numbers for an artifact that will never serve.
+    meta_path = sidecar_path(path)
+    meta = read_sidecar(path)
+    if meta is not None:
         max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
 
     raw = torch.load(path, map_location="cpu", weights_only=True)
@@ -292,6 +300,15 @@ def build_artifact_lookup(
     missing = required - set(raw.keys())
     if missing:
         raise SystemExit(f"{path} is missing required keys: {sorted(missing)}")
+
+    binding = read_binding(meta, raw.keys(), source=str(path))
+    require_paired(binding, raw.get("build_id"), source=str(path))
+
+    # **This tool reads only the integer ids inside the tensor**, so it does not
+    # need the graph the artifact names — which makes it the one caller that may
+    # proceed with the binding unverified. It says so in its output rather than
+    # leaving the reading to look like a verified one.
+    binding_state = kg_binding_state(binding, None, source=str(path))
 
     phenotype = raw.pop("phenotype_idx")
     target = raw.pop("target_idx")
@@ -331,6 +348,11 @@ def build_artifact_lookup(
         # the one `measure_scorer.py` already uses; a second copy here would be
         # another place for the two to drift.
         "sha256": file_sha256(path),
+        # "unrecorded" — published before the pairing protocol; "unverifiable" —
+        # bound to a graph this tool did not load, which it does not need and
+        # therefore did not check. Never "verified" from here.
+        "kg_binding": binding_state,
+        "max_hops_source": "sidecar" if meta is not None else "argument",
         "n_pairs": int(phenotype.numel()),
         "n_phenotypes": len(keys),
         "n_disease_targets": len(disease_targets),

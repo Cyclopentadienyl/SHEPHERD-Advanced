@@ -165,22 +165,24 @@ def _read_sidecar(artifact: Path) -> Dict[str, int]:
     to what the artifact and the workspace actually contain. A sidecar that
     survives all of that is describing this table.
     """
-    import json as _json
+    from src.inference.sp_artifact import read_sidecar, sidecar_path
+    from src.inference.sp_index import SPArtifactError
 
-    sidecar = artifact.with_suffix(".meta.json")
-    if not sidecar.exists():
+    sidecar = sidecar_path(artifact)
+    # **The shared reader parses it, so this script and the service agree on
+    # what a readable sidecar is.** The refusal is still this script's, in its
+    # own vocabulary: it exits rather than raising into a caller that has none.
+    try:
+        meta = read_sidecar(artifact)
+    except SPArtifactError as exc:
+        raise SystemExit(str(exc)) from exc
+    if meta is None:
         raise SystemExit(
             f"{sidecar} is missing. It carries the configured hop bound, which the "
             "tensors do not: the largest distance present is a property of the data, "
             "not of what the artifact was built to. Without it every percentage here "
             "would be read against a bound nobody chose."
         )
-    try:
-        meta = _json.loads(sidecar.read_text())
-    except Exception as exc:  # noqa: BLE001 - a malformed sidecar is a refusal
-        raise SystemExit(f"{sidecar} is not readable JSON: {type(exc).__name__}") from exc
-    if not isinstance(meta, dict):
-        raise SystemExit(f"{sidecar} is not a JSON object; it does not describe an artifact")
 
     validated: Dict[str, int] = {}
     for key in REQUIRED_SIDECAR_INTS:
@@ -393,6 +395,15 @@ def _refuse_out_of_range(name: str, values: Any, ceiling: int) -> None:
         )
 
 
+def _table_keys(table: Any) -> Any:
+    """The `.pt` mapping's keys, whatever shape `_load_table` returned."""
+    return table.keys() if hasattr(table, "keys") else ()
+
+
+def _table_build_id(table: Any) -> Any:
+    return table.get("build_id") if hasattr(table, "get") else None
+
+
 def _load_table(artifact: Path) -> Any:
     """The artifact, memory-mapped where the format allows it.
 
@@ -419,10 +430,35 @@ def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str,
 
     from src.utils.fingerprint import file_sha256
 
+    from src.inference.sp_artifact import (
+        kg_binding_state,
+        read_binding,
+        read_sidecar,
+        require_paired,
+        sidecar_path,
+    )
+    from src.inference.sp_index import SPArtifactError
+
     table = _load_table(artifact)
     n_rows = _validate_columns(table, artifact)
     meta = _read_sidecar(artifact)
     configured_hops = meta["max_hops"]
+
+    # **The pairing, through the same reader the service uses.** Without it this
+    # script would keep reporting reachability percentages for a tensor and a
+    # sidecar left over from different runs — a table the pipeline refuses to
+    # serve, described here as though it were the one in production.
+    try:
+        raw_meta = read_sidecar(artifact) or {}
+        binding = read_binding(raw_meta, _table_keys(table), source=str(artifact))
+        require_paired(binding, _table_build_id(table), source=str(artifact))
+    except SPArtifactError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    # This audit counts rows by their integer ids and never loads the graph the
+    # artifact names, so it is the caller that may proceed with the binding
+    # unverified — and says so, rather than letting a reading look checked.
+    kg_binding = kg_binding_state(binding, None, source=str(artifact))
 
     num_nodes = _json.loads((data_dir / "num_nodes.json").read_text())
     n_diseases = int(num_nodes["disease"])
@@ -483,7 +519,14 @@ def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str,
             "whether reachability is dense in the graph or in one node."
         ),
         "artifact_digest": file_sha256(artifact),
-        "sidecar_digest": file_sha256(artifact.with_suffix(".meta.json")),
+        "sidecar_digest": file_sha256(sidecar_path(artifact)),
+        # **A digest identifies each file; it does not pair them.** `kg_binding`
+        # is what the pair says about the graph it was computed from:
+        # "unrecorded" for a table published before the pairing protocol, and
+        # "unverifiable" when it names a graph this audit did not load — which
+        # it does not need, and therefore did not check. Never "verified" from
+        # here; a reader wanting that must run the check where the graph is.
+        "kg_binding": kg_binding,
         "hop_bound_configured": configured_hops,
         "hop_bound_observed": observed_hops,
         "reachable_diseases_per_phenotype": summarise_distribution(counts, n_diseases),

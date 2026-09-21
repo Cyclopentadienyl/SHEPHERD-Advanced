@@ -33,7 +33,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import math
 import multiprocessing as mp
@@ -42,7 +41,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -348,19 +347,55 @@ def compute_shortest_paths(
 def save_shortest_paths(
     sp_data: Dict[str, torch.Tensor],
     output_path: Path,
-    metadata: Dict[str, int],
+    metadata: Dict[str, Any],
+    *,
+    kg_digest: Optional[str],
 ) -> None:
-    """Save shortest path tensors and a small JSON metadata sidecar."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(sp_data, output_path)
+    """Publish the tensor and its sidecar as one pair.
 
-    metadata_path = output_path.with_suffix(".meta.json")
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
+    **The two files record that they belong together.** They used to be written
+    one after the other with nothing relating them, so a failure between them
+    left a new tensor beside a previous run's sidecar — and a present sidecar is
+    binding for the hop bound, so that table was scored against the old ceiling
+    while passing every check. Swapping the order only mirrors the failure;
+    what makes it detectable is the `build_id` both files now carry.
+
+    `kg_digest` is the SHA-256 of the KG file the distances were computed from,
+    and it is **required to be passed, not required to be a value**. The CLI
+    always has one. A library caller computing from a graph it built in memory
+    has no source file, and passing None publishes an honestly **unrecorded**
+    pair rather than a falsely bound one — inventing a digest there would be the
+    claim this binding exists to check.
+    """
+    from src.inference.sp_artifact import (
+        SP_SCHEMA_VERSION,
+        new_build_id,
+        publish_sp_artifact,
+        sidecar_path,
+    )
+
+    if kg_digest is not None:
+        build_id = new_build_id()
+        sp_data = {**sp_data, "build_id": build_id}
+        metadata = {
+            **metadata,
+            "schema_version": SP_SCHEMA_VERSION,
+            "build_id": build_id,
+            "kg_digest": kg_digest,
+        }
+
+    publish_sp_artifact(sp_data, output_path, metadata)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     logger.info(f"Saved {output_path} ({size_mb:.2f} MB)")
-    logger.info(f"Saved {metadata_path}")
+    logger.info(f"Saved {sidecar_path(output_path)}")
+    if kg_digest is None:
+        logger.warning(
+            "No source KG digest was supplied, so %s is published without a "
+            "binding: a reader cannot tell which graph it was computed from, "
+            "and will report its provenance as unrecorded.",
+            output_path,
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -400,11 +435,35 @@ def main() -> int:
         logger.error(f"max_hops must be in [1, 127], got {args.max_hops}")
         return 1
 
+    # **Taken before the read, and this is the one that is recorded.** The
+    # digest names the input this run was given. Re-hashing at the end and
+    # recording *that* would record whatever is at the path now and call it the
+    # input, which is the failure the binding exists to prevent, reached from
+    # the other direction.
+    from src.utils.fingerprint import file_sha256
+
+    kg_digest = file_sha256(args.kg_path)
+
     logger.info(f"Loading KG from {args.kg_path}...")
     kg = KnowledgeGraph.load_json(str(args.kg_path))
     logger.info(f"Loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
     sp_data = compute_shortest_paths(kg, max_hops=args.max_hops, workers=args.workers)
+
+    # **A comparison, not a lock.** The BFS runs for hours at deployment scale
+    # and nothing holds the source file still. This catches a file that differs
+    # at the end from the beginning; it cannot see a change made and reverted in
+    # between. The recorded digest does not change — an operator is told that
+    # the snapshot assumption was visibly broken, and the artifact still says
+    # which bytes it was given.
+    if file_sha256(args.kg_path) != kg_digest:
+        logger.warning(
+            "%s changed while the shortest paths were being computed. The "
+            "recorded kg_digest is the one read before the traversal, which is "
+            "the graph these distances describe; the file at that path is now a "
+            "different one. Recompute if that was not deliberate.",
+            args.kg_path,
+        )
 
     metadata = {
         "max_hops": args.max_hops,
@@ -417,7 +476,7 @@ def main() -> int:
     }
 
     output_path = args.output_dir / "shortest_paths.pt"
-    save_shortest_paths(sp_data, output_path, metadata)
+    save_shortest_paths(sp_data, output_path, metadata, kg_digest=kg_digest)
 
     return 0
 

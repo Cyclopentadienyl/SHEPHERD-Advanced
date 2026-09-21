@@ -266,6 +266,8 @@ def test_the_benchmark_measures_against_the_declared_bound_not_the_observed_one(
     pipeline._sp_lookup = None
     pipeline._sp_max_hops = 5
     pipeline._sp_hop_bound_source = None
+    pipeline._sp_kg_binding = None
+    pipeline._graph_kg_digest = None
     pipeline._load_shortest_paths(data_dir)
 
     columns, resolved, _, _, _ = build_artifact_lookup(artifact, 99)

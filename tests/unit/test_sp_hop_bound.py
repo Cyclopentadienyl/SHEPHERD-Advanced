@@ -63,6 +63,11 @@ def _loader(tmp_path, *, distances, sidecar):
     pipeline._sp_lookup = None
     pipeline._sp_max_hops = 5
     pipeline._sp_hop_bound_source = None
+    pipeline._sp_kg_binding = None
+    # Mirrors a pipeline whose graph came from a verified workspace. These
+    # tables are published without a binding, so nothing is compared against it;
+    # the artifact-binding tests set it deliberately.
+    pipeline._graph_kg_digest = None
     return pipeline, data_dir
 
 
@@ -387,6 +392,8 @@ class TestTheLoaderRefusesAPresentButUnusableTable:
         pipeline._sp_lookup = None
         pipeline._sp_max_hops = 5
         pipeline._sp_hop_bound_source = None
+        pipeline._sp_kg_binding = None
+        pipeline._graph_kg_digest = None
         return pipeline, data_dir
 
     def test_an_unreadable_artifact_is_refused_rather_than_ignored(self, tmp_path):
