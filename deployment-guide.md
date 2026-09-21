@@ -1026,7 +1026,7 @@ export SHEPHERD_SP_HOP_BOUND=5
 為 `unrecorded`（未記錄）而不是已驗證，記一則警告，然後照常服務。重新建置就會記錄
 下來。
 
-`GET /api/v1/pipeline/config` 會回報 `sp_kg_binding`：表確實指向正在服務的那個圖
+`GET /api/v1/pipeline/status` 會回報 `sp_kg_binding`：表確實指向正在服務的那個圖
 時為 `verified`，比這個協定更早的表為 `unrecorded`。**只要最短路徑是開啟的，它就
 不會是空的**——如果它是 `unrecorded`，代表沒有任何檢查確認過那張表從哪裡來。
 

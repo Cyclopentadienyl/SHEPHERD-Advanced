@@ -151,7 +151,7 @@ def summarise_distribution(counts: Any, denominator: int) -> Dict[str, Any]:
     }
 
 
-def _read_sidecar(artifact: Path) -> Dict[str, int]:
+def _read_sidecar(artifact: Path, document: Any = None) -> Dict[str, int]:
     """The producer's own record of what it built, or a refusal.
 
     `<artifact>.meta.json` carries the **configured** `max_hops` and the node
@@ -172,10 +172,18 @@ def _read_sidecar(artifact: Path) -> Dict[str, int]:
     # **The shared reader parses it, so this script and the service agree on
     # what a readable sidecar is.** The refusal is still this script's, in its
     # own vocabulary: it exits rather than raising into a caller that has none.
+    #
+    # **`document` is handed in by `build_report` so the file is read once.**
+    # Reading it here for the integers and again there for the pairing let a
+    # publisher completing between the two give this function one version and
+    # the pairing check another: the bound from the old sidecar, the pairing
+    # passing on the new one, inside an ordinary two-file publication window.
     try:
-        meta = read_sidecar(artifact)
+        if document is None:
+            document = read_sidecar(artifact)
     except SPArtifactError as exc:
         raise SystemExit(str(exc)) from exc
+    meta = document.meta if document is not None else None
     if meta is None:
         raise SystemExit(
             f"{sidecar} is missing. It carries the configured hop bound, which the "
@@ -426,6 +434,7 @@ def _load_table(artifact: Path) -> Any:
 
 
 def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str, Any]:
+    import hashlib as _hashlib
     import json as _json
 
     from src.utils.fingerprint import file_sha256
@@ -435,13 +444,20 @@ def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str,
         read_binding,
         read_sidecar,
         require_paired,
-        sidecar_path,
     )
     from src.inference.sp_index import SPArtifactError
 
     table = _load_table(artifact)
     n_rows = _validate_columns(table, artifact)
-    meta = _read_sidecar(artifact)
+
+    # **One read of the sidecar, and everything below comes from it**: the
+    # integers, the schema, the pairing, the hop bound and the digest reported.
+    try:
+        document = read_sidecar(artifact)
+    except SPArtifactError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    meta = _read_sidecar(artifact, document)
     configured_hops = meta["max_hops"]
 
     # **The pairing, through the same reader the service uses.** Without it this
@@ -449,8 +465,11 @@ def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str,
     # sidecar left over from different runs — a table the pipeline refuses to
     # serve, described here as though it were the one in production.
     try:
-        raw_meta = read_sidecar(artifact) or {}
-        binding = read_binding(raw_meta, _table_keys(table), source=str(artifact))
+        binding = read_binding(
+            document.meta if document is not None else None,
+            _table_keys(table),
+            source=str(artifact),
+        )
         require_paired(binding, _table_build_id(table), source=str(artifact))
     except SPArtifactError as exc:
         raise SystemExit(str(exc)) from exc
@@ -519,7 +538,10 @@ def build_report(artifact: Path, data_dir: Path, relationship: str) -> Dict[str,
             "whether reachability is dense in the graph or in one node."
         ),
         "artifact_digest": file_sha256(artifact),
-        "sidecar_digest": file_sha256(sidecar_path(artifact)),
+        # **Hashed from the bytes that were read**, not by re-reading the
+        # path. A digest taken afterwards can name a different version from the
+        # one every number above was computed against.
+        "sidecar_digest": _hashlib.sha256(document.raw).hexdigest(),
         # **A digest identifies each file; it does not pair them.** `kg_binding`
         # is what the pair says about the graph it was computed from:
         # "unrecorded" for a table published before the pairing protocol, and

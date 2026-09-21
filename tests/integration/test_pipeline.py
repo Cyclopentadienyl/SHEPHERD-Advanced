@@ -482,13 +482,17 @@ class TestShortestPathIntegration:
             "max_hops": max_hops,
             "num_pairs": int(sp_data["distance"].numel()),
         }
-        # **`kg_digest=None` on purpose, and it is not a shortcut.** These
-        # fixtures compute from a KG built in memory, so there is no source file
-        # to hash; passing None publishes an honestly *unrecorded* pair rather
-        # than a falsely bound one. The bound path is covered separately, by
-        # tests that write a real `kg.json` and hash it.
+        # **Bound to the workspace's own `kg.json`.** `bind_workspace` wrote
+        # it and the pipeline verifies it, so this is the digest the loader will
+        # compare against — which makes these fixtures exercise the shape that
+        # ships rather than a legacy one.
+        from src.utils.fingerprint import file_sha256
+
         sp_module.save_shortest_paths(
-            sp_data, data_dir / "shortest_paths.pt", meta, kg_digest=None
+            sp_data,
+            data_dir / "shortest_paths.pt",
+            meta,
+            kg_digest=file_sha256(data_dir / "kg.json"),
         )
 
     def test_a_table_bound_to_another_graph_stops_the_pipeline_being_built(
@@ -745,11 +749,21 @@ class TestShortestPathIntegration:
         sp_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sp_module)
         sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=5)
+        # This pipeline has no workspace — it was constructed from a KG held
+        # in memory — so the digest it would compare against is supplied the way
+        # a verified workspace would have set it. Without that the binding is
+        # unverifiable and the table is refused, which is the designed answer
+        # and not what this test is about.
+        from src.utils.fingerprint import file_sha256
+
+        medium_kg.save_json(str(tmp_path / "kg.json"))
+        kg_digest = file_sha256(tmp_path / "kg.json")
+        pipeline._graph_kg_digest = kg_digest
         sp_module.save_shortest_paths(
             sp_data,
             tmp_path / "shortest_paths.pt",
             {"max_hops": 5, "num_pairs": int(sp_data["distance"].numel())},
-            kg_digest=None,
+            kg_digest=kg_digest,
         )
 
         pipeline._load_shortest_paths(tmp_path)

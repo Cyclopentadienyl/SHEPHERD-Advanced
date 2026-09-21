@@ -291,9 +291,9 @@ def build_artifact_lookup(
     # be one this quietly measures — two readers of one schema is how a
     # benchmark comes to quote numbers for an artifact that will never serve.
     meta_path = sidecar_path(path)
-    meta = read_sidecar(path)
-    if meta is not None:
-        max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
+    sidecar = read_sidecar(path)
+    if sidecar is not None:
+        max_hops = validate_hop_bound(sidecar.meta.get("max_hops"), str(meta_path))
 
     raw = torch.load(path, map_location="cpu", weights_only=True)
     required = {"phenotype_idx", "target_idx", "target_type", "distance"}
@@ -301,7 +301,9 @@ def build_artifact_lookup(
     if missing:
         raise SystemExit(f"{path} is missing required keys: {sorted(missing)}")
 
-    binding = read_binding(meta, raw.keys(), source=str(path))
+    binding = read_binding(
+        sidecar.meta if sidecar else None, raw.keys(), source=str(path)
+    )
     require_paired(binding, raw.get("build_id"), source=str(path))
 
     # **This tool reads only the integer ids inside the tensor**, so it does not
@@ -352,7 +354,7 @@ def build_artifact_lookup(
         # bound to a graph this tool did not load, which it does not need and
         # therefore did not check. Never "verified" from here.
         "kg_binding": binding_state,
-        "max_hops_source": "sidecar" if meta is not None else "argument",
+        "max_hops_source": "sidecar" if sidecar is not None else "argument",
         "n_pairs": int(phenotype.numel()),
         "n_phenotypes": len(keys),
         "n_disease_targets": len(disease_targets),

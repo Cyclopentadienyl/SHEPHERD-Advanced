@@ -52,13 +52,16 @@ import secrets
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, NamedTuple, Optional
 
 from src.inference.sp_index import SPArtifactError
 
 __all__ = [
     "ACCEPTED_SCHEMA_VERSIONS",
+    "Sidecar",
     "SPBinding",
+    "declares_binding",
+    "is_kg_digest",
     "SP_BINDING_FIELDS",
     "SP_SCHEMA_VERSION",
     "kg_binding_state",
@@ -87,6 +90,17 @@ _BUILD_ID = re.compile(r"[0-9a-f]{32}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
 
+def is_kg_digest(value: Any) -> bool:
+    """Is this the shape `file_sha256` returns — lowercase hex, 64 characters?
+
+    **Exported so the producer asks the same question the readers ask.** A
+    writer that checks only `len(value) == 64` publishes a pair whose own
+    reader refuses it, and the operator learns at the next cold start rather
+    than at the run that wrote it. One rule, one place.
+    """
+    return isinstance(value, str) and _DIGEST.match(value) is not None
+
+
 @dataclass(frozen=True)
 class SPBinding:
     """What the pair declares about itself.
@@ -112,18 +126,39 @@ def sidecar_path(tensor_path: Any) -> Path:
     return Path(tensor_path).with_suffix(".meta.json")
 
 
-def read_sidecar(tensor_path: Any) -> Optional[Dict[str, Any]]:
-    """The sidecar as a mapping, or None when there is no file.
+class Sidecar(NamedTuple):
+    """One read of the sidecar: what it says, and the bytes it said it in.
 
-    **Present and unusable raises.** A sidecar that is here and cannot be parsed
-    is a broken deployment, not an absent one: the previous shape read it inside
-    `except Exception: pass`, so a missing file, malformed JSON, an absent key
-    and a value the producer would never write all arrived at the same silent
-    default.
+    **Both, from one read, on purpose.** A caller that parses the file for its
+    integers and then reads it again to validate the pairing can validate a
+    different version from the one it computed with — a publisher completing
+    between the two is enough, and the window is a normal two-file publication.
+    Anything a caller needs about the sidecar comes from this one object.
+    """
+
+    meta: Dict[str, Any]
+    raw: bytes
+
+
+def read_sidecar(tensor_path: Any) -> Optional[Sidecar]:
+    """The sidecar, read once, or None when there is genuinely no file.
+
+    **Present and unusable raises**, and "present" is wider than "is a readable
+    file". A sidecar that is here and cannot be parsed is a broken deployment,
+    not an absent one: the previous shape read it inside `except Exception:
+    pass`, so a missing file, malformed JSON, an absent key and a value the
+    producer would never write all arrived at the same silent default.
+
+    **A directory at the sidecar's path is not an absent sidecar.** `is_file()`
+    answers False for one, so a check built on it alone hands the caller the
+    fallback path — a configured hop bound, or shortest paths switched off —
+    for a workspace that is plainly broken. Only a path that does not exist
+    returns None.
     """
     path = sidecar_path(tensor_path)
     try:
-        present = path.is_file()
+        present = path.exists()
+        regular = path.is_file()
     except OSError as exc:
         raise SPArtifactError(
             f"{path} could not be looked up ({type(exc).__name__}: {exc}); "
@@ -132,8 +167,16 @@ def read_sidecar(tensor_path: Any) -> Optional[Dict[str, Any]]:
         ) from exc
     if not present:
         return None
+    if not regular:
+        raise SPArtifactError(
+            f"{path} exists and is not a regular file. It is present, so the "
+            "hop bound and the binding it should carry are unreadable rather "
+            "than unstated, and the fallback an absent sidecar takes would be "
+            "applied to a workspace that is broken."
+        )
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise SPArtifactError(
             f"{path} is present and could not be read as UTF-8 text "
@@ -148,7 +191,26 @@ def read_sidecar(tensor_path: Any) -> Optional[Dict[str, Any]]:
         ) from exc
     if not isinstance(meta, dict):
         raise SPArtifactError(f"{path} is not a JSON object, so it describes no artifact")
-    return meta
+    return Sidecar(meta=meta, raw=raw)
+
+
+def declares_binding(
+    sidecar: Optional[Dict[str, Any]],
+    tensor_keys: Iterable[str],
+) -> bool:
+    """Rule 0's question: does **either** file declare this protocol?
+
+    **Every reserved field, on both sides.** Asking the tensor only about
+    `build_id` made a tensor carrying `schema_version` or `kg_digest` — and
+    nothing else — read as a pair that declared nothing, so it was accepted as
+    legacy and served. A partial declaration is the state this protocol exists
+    to catch; it must never be mistaken for the absence of one.
+    """
+    meta = sidecar or {}
+    keys = set(tensor_keys)
+    return any(field in meta for field in SP_BINDING_FIELDS) or any(
+        field in keys for field in SP_BINDING_FIELDS
+    )
 
 
 def read_binding(
@@ -171,16 +233,24 @@ def read_binding(
     """
     meta = sidecar or {}
     tensor_keys = set(tensor_keys)
-    declared_in_sidecar = [field for field in SP_BINDING_FIELDS if field in meta]
-    declared_in_tensor = TENSOR_BUILD_ID_KEY in tensor_keys
 
-    if not declared_in_sidecar and not declared_in_tensor:
+    if not declares_binding(meta, tensor_keys):
         return SPBinding(recorded=False)
 
     # From here the pair is new-format and every field is required. Partial is
     # a refusal, never a fall back to legacy: the state this exists to catch —
     # a new tensor beside an old sidecar — is exactly a partial declaration.
+    # **Type first, membership second.** `True == 1` and `1.0 == 1`, so both
+    # are members of `(1,)` and a bare `in` accepts a JSON `true` or `1.0` as
+    # schema 1. The check is what decides whether the rest of the fields still
+    # mean what they say, so it does not get to be approximate.
     version = meta.get("schema_version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise SPArtifactError(
+            f"{source} declares schema_version {version!r}, which is not an "
+            "integer. `true` and `1.0` compare equal to 1 in Python and are "
+            "not versions."
+        )
     if version not in ACCEPTED_SCHEMA_VERSIONS:
         raise SPArtifactError(
             f"{source} declares schema_version {version!r}; this code reads "
@@ -194,7 +264,7 @@ def read_binding(
             f"{source}: the sidecar's build_id is not a 32-character hexadecimal "
             f"token ({sidecar_build_id!r}); the pair cannot be checked"
         )
-    if not declared_in_tensor:
+    if TENSOR_BUILD_ID_KEY not in tensor_keys:
         raise SPArtifactError(
             f"{source}: the sidecar declares build_id {sidecar_build_id[:12]}... "
             "and the tensor carries none. One side of a pair is not a pair — "
@@ -203,7 +273,7 @@ def read_binding(
         )
 
     kg_digest = meta.get("kg_digest")
-    if not isinstance(kg_digest, str) or not _DIGEST.match(kg_digest):
+    if not is_kg_digest(kg_digest):
         raise SPArtifactError(
             f"{source}: the sidecar's kg_digest is not a SHA-256 hexdigest "
             f"({kg_digest!r}); which graph these distances describe is unstated"

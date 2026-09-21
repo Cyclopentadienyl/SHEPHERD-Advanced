@@ -612,16 +612,9 @@ class DiagnosisPipeline:
         self._sp_hop_bound_source = None
         self._sp_kg_binding = None
 
-        sp_path = data_dir / "shortest_paths.pt"
-        if not sp_path.exists():
-            logger.info(
-                f"No shortest_paths.pt found in {data_dir}; "
-                f"scoring will use pure GNN (eta=1.0 effective)"
-            )
-            return
-
         from src.inference.scoring import validate_hop_bound
         from src.inference.sp_artifact import (
+            declares_binding,
             kg_binding_state,
             read_binding,
             read_sidecar,
@@ -634,6 +627,30 @@ class DiagnosisPipeline:
             validate_sp_columns,
             validate_sp_values,
         )
+
+        sp_path = data_dir / "shortest_paths.pt"
+
+        # **Read once, and before the absent decision.** A sidecar that declares
+        # the pairing protocol beside a table that is not here is one side of a
+        # pair, not an absent artifact — a publication that lost its tensor, or
+        # a tensor deleted from a workspace that still advertises one. Treating
+        # it as absent takes the "serve without shortest paths" path for a
+        # deployment that is broken, and on a reload replaces a healthy service
+        # with one scoring on the GNN alone.
+        sidecar = read_sidecar(sp_path)
+        if not sp_path.exists():
+            if sidecar is not None and declares_binding(sidecar.meta, ()):
+                raise SPArtifactError(
+                    f"{sidecar_path(sp_path)} declares a published pair and "
+                    f"{sp_path} is not here. One side of a pair is not an "
+                    "absent artifact: the table this sidecar describes was "
+                    "either never written or has been removed."
+                )
+            logger.info(
+                f"No shortest_paths.pt found in {data_dir}; "
+                f"scoring will use pure GNN (eta=1.0 effective)"
+            )
+            return
 
         # **Present and unreadable is a refusal, not a shrug.** This warned and
         # returned, which made a corrupt table indistinguishable from an absent
@@ -673,6 +690,38 @@ class DiagnosisPipeline:
             source=str(sp_path),
         )
 
+        # **Before the empty decision, not after it.** These checks used to sit
+        # below the early return, so a mixed publication whose new tensor
+        # happened to be empty reached "no rows, treat as absent" and switched
+        # shortest paths off — and on a reload that replaced a healthy SP-ready
+        # service with one scoring on the GNN alone, reporting success. A pair
+        # that does not claim itself is refused whether it carries a million
+        # rows or none.
+        binding = read_binding(
+            sidecar.meta if sidecar else None, sp_data.keys(), source=str(sp_path)
+        )
+        require_paired(binding, sp_data.get("build_id"), source=str(sp_path))
+        binding_state = kg_binding_state(
+            binding, self._graph_kg_digest, source=str(sp_path)
+        )
+        if binding_state == "unverifiable":
+            raise SPArtifactError(
+                f"{sp_path} records the graph it was computed from, and this "
+                "pipeline cannot check it: its graph was supplied in memory, so "
+                "no verified workspace digest exists to compare against. The "
+                "shortest-path term is part of the ranking, so an unverifiable "
+                "binding is refused rather than assumed. Build the pipeline from "
+                "a workspace, or use a table published without a binding."
+            )
+        if binding_state == "unrecorded":
+            logger.warning(
+                "%s carries no source binding — it predates the pairing "
+                "protocol. Which graph it was computed from is **unrecorded**, "
+                "not verified. Rebuild it with scripts/compute_shortest_paths.py "
+                "to record one.",
+                sp_path,
+            )
+
         # **A table with no rows is the absent case, not a ready one.** D5 took
         # the weaker of the two defensible readings deliberately: an empty table
         # makes no false claim, and is indistinguishable in effect from having
@@ -708,53 +757,12 @@ class DiagnosisPipeline:
         # deployment that cannot establish it should not pay for a sort it is
         # about to discard.
         meta_path = sidecar_path(sp_path)
-
-        # **Present means binding, and the read happens once.** A sidecar that is
-        # here and unusable is a broken deployment, not a silent default: the
-        # previous shape read it inside `except Exception: pass`, so a missing
-        # file, malformed JSON, an absent key, a string, a boolean and a value
-        # the producer would never write all arrived at the same silent 5. The
-        # shared reader is the same one the benchmark and the reachability audit
-        # use, so a pair this refuses is not one a tool quietly measures.
-        meta = read_sidecar(sp_path)
-
-        # **Does this pair claim itself, and which graph does it claim?** Rule 0
-        # first: only a pair in which *neither* file declares the protocol is
-        # legacy. Anything partial refuses, because a new tensor beside a
-        # previous run's sidecar is exactly a partial declaration — and a present
-        # sidecar is binding for the hop bound, so that table would otherwise be
-        # scored against the old ceiling while passing every other check.
-        binding = read_binding(meta, sp_data.keys(), source=str(sp_path))
-        require_paired(binding, sp_data.get("build_id"), source=str(sp_path))
-
-        # **Bound to the graph that supplies the node mapping**, never to a file
-        # beside the table. `_graph_kg_digest` is set only where a workspace was
-        # verified; a caller that supplied its graph in memory has none, and a
-        # declared binding that cannot be checked is not an exemption for a
-        # consumer whose ranking depends on these distances.
-        binding_state = kg_binding_state(
-            binding, self._graph_kg_digest, source=str(sp_path)
-        )
-        if binding_state == "unverifiable":
-            raise SPArtifactError(
-                f"{sp_path} records the graph it was computed from, and this "
-                "pipeline cannot check it: its graph was supplied in memory, so "
-                "no verified workspace digest exists to compare against. The "
-                "shortest-path term is part of the ranking, so an unverifiable "
-                "binding is refused rather than assumed. Build the pipeline from "
-                "a workspace, or use a table published without a binding."
-            )
-        if binding_state == "unrecorded":
-            logger.warning(
-                "%s carries no source binding — it predates the pairing "
-                "protocol. Which graph it was computed from is **unrecorded**, "
-                "not verified. Rebuild it with scripts/compute_shortest_paths.py "
-                "to record one.",
-                sp_path,
-            )
-
-        if meta is not None:
-            max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
+        if sidecar is not None:
+            # **The same parsed object the binding was checked against.** Reading
+            # the file a second time for the bound would let a publication that
+            # completes in between hand this one version and the pairing check
+            # another.
+            max_hops = validate_hop_bound(sidecar.meta.get("max_hops"), str(meta_path))
             hop_bound_source = "sidecar"
         elif self.config.sp_hop_bound is not None:
             # **Configuration is the cheap recovery a missing sidecar needs**: the

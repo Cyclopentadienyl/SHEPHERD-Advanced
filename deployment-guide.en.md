@@ -562,7 +562,7 @@ from that, and all three are deployment problems rather than data problems:
 service reports its provenance as `unrecorded` rather than verified, logs one
 warning, and serves. Rebuilding records one.
 
-`GET /api/v1/pipeline/config` reports `sp_kg_binding`: `verified` when the table
+`GET /api/v1/pipeline/status` reports `sp_kg_binding`: `verified` when the table
 names the graph being served, `unrecorded` for a table older than the protocol.
 **It is never absent while shortest paths are on** — if it says `unrecorded`, no
 check confirmed where that table came from.

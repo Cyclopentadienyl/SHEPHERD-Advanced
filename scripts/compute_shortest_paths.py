@@ -361,41 +361,54 @@ def save_shortest_paths(
     what makes it detectable is the `build_id` both files now carry.
 
     `kg_digest` is the SHA-256 of the KG file the distances were computed from,
-    and it is **required to be passed, not required to be a value**. The CLI
-    always has one. A library caller computing from a graph it built in memory
-    has no source file, and passing None publishes an honestly **unrecorded**
-    pair rather than a falsely bound one — inventing a digest there would be the
-    claim this binding exists to check.
+    and it is **required to have a value**. An earlier version accepted None for
+    a caller computing from a graph built in memory, and made the `build_id` in
+    the same branch — so that caller published a pair with no pairing token
+    either, and an interrupted publication was undetectable in an artifact this
+    producer had just written. Pairing and provenance are separate claims and
+    the first is not optional: a new publication says which run wrote it.
+
+    Refused **before any live file is touched**, so a caller without a digest
+    leaves the workspace exactly as it was. Reading artifacts published before
+    this existed is unaffected — they are legacy and the readers say so.
+
+    **The shape is asked of the shared module, not re-derived here.** A length
+    check accepts 64 characters that are not hexadecimal, which the readers
+    refuse — a writer whose rule is looser than its reader's publishes a pair
+    that only fails at the next cold start.
     """
     from src.inference.sp_artifact import (
         SP_SCHEMA_VERSION,
+        is_kg_digest,
         new_build_id,
         publish_sp_artifact,
         sidecar_path,
     )
 
-    if kg_digest is not None:
-        build_id = new_build_id()
-        sp_data = {**sp_data, "build_id": build_id}
-        metadata = {
-            **metadata,
-            "schema_version": SP_SCHEMA_VERSION,
-            "build_id": build_id,
-            "kg_digest": kg_digest,
-        }
+    if not is_kg_digest(kg_digest):
+        raise ValueError(
+            f"kg_digest must be the SHA-256 of the KG these distances were "
+            f"computed from; got {kg_digest!r}. A published table says which "
+            "graph it describes and which run wrote it — a caller without a "
+            "source file has nothing to record, and publishing anyway would "
+            "leave a pair no reader could tell apart from an interrupted one. "
+            "Nothing has been written."
+        )
+
+    build_id = new_build_id()
+    sp_data = {**sp_data, "build_id": build_id}
+    metadata = {
+        **metadata,
+        "schema_version": SP_SCHEMA_VERSION,
+        "build_id": build_id,
+        "kg_digest": kg_digest,
+    }
 
     publish_sp_artifact(sp_data, output_path, metadata)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     logger.info(f"Saved {output_path} ({size_mb:.2f} MB)")
     logger.info(f"Saved {sidecar_path(output_path)}")
-    if kg_digest is None:
-        logger.warning(
-            "No source KG digest was supplied, so %s is published without a "
-            "binding: a reader cannot tell which graph it was computed from, "
-            "and will report its provenance as unrecorded.",
-            output_path,
-        )
 
 
 def parse_args() -> argparse.Namespace:

@@ -28,11 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.inference.sp_artifact import (  # noqa: E402
     ACCEPTED_SCHEMA_VERSIONS,
+    SP_BINDING_FIELDS,
     SP_SCHEMA_VERSION,
     SPBinding,
+    declares_binding,
     kg_binding_state,
     new_build_id,
-    publish_sp_artifact,
     read_binding,
     read_sidecar,
     require_paired,
@@ -77,6 +78,21 @@ def publish(tmp_path, *, kg_digest, name="shortest_paths.pt", data=None, extra=N
     return path
 
 
+def publish_legacy(tmp_path, *, name="shortest_paths.pt", data=None, extra=None):
+    """A pair in the shape that existed before this protocol.
+
+    Not through the producer: the producer now refuses to write one, which is
+    the point of finding 2. Legacy pairs are what is already on disk at every
+    deployment, so they are built here the way the previous producer built
+    them — `torch.save` and a sidecar with no reserved field in it.
+    """
+    path = Path(tmp_path) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(data or rows(), path)
+    sidecar_path(path).write_text(json.dumps(meta(**(extra or {})), indent=2, sort_keys=True))
+    return path
+
+
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
 
@@ -110,18 +126,39 @@ class TestTheProducerPublishesAPairThatClaimsItself:
         for key in ("max_hops", "num_pairs", "num_phenotypes", "num_diseases"):
             assert key in sidecar
 
-    def test_without_a_source_digest_it_publishes_an_unrecorded_pair(self, tmp_path):
-        """A caller computing from a graph it built in memory has no file to
-        hash. Publishing *unrecorded* is honest; inventing a digest would be the
-        claim this binding exists to check."""
-        path = publish(tmp_path, kg_digest=None)
+    def test_publishing_without_a_source_digest_is_refused(self, tmp_path):
+        """**A new publication has no reason to be unrecorded.** An earlier
+        shape let `kg_digest=None` through and wrote a pair carrying
+        `schema_version` and `build_id` and no graph — declared under Rule 0,
+        so never legacy, and permanently *unverifiable* at the one consumer
+        whose ranking depends on it. The producer knows which file it read;
+        a table it cannot name the graph for is not one to publish."""
+        with pytest.raises(ValueError, match="SHA-256"):
+            publish(tmp_path, kg_digest=None)
 
-        sidecar = json.loads(sidecar_path(path).read_text())
-        tensor = torch.load(path, map_location="cpu", weights_only=True)
+    @pytest.mark.parametrize("bad", [None, "", "a" * 63, "z" * 64, 12345, DIGEST_A.upper()])
+    def test_a_digest_that_is_not_one_is_refused(self, tmp_path, bad):
+        with pytest.raises(ValueError, match="SHA-256"):
+            publish(tmp_path, kg_digest=bad)
 
-        assert "build_id" not in sidecar and "kg_digest" not in sidecar
-        assert "build_id" not in tensor
-        assert read_binding(sidecar, tensor.keys()).recorded is False
+    def test_that_refusal_happens_before_any_file_is_touched(self, tmp_path):
+        """A validation after the write is a validation of nothing: the
+        artifact is already on disk and already being read."""
+        with pytest.raises(ValueError):
+            publish(tmp_path, kg_digest=None)
+
+        assert list(Path(tmp_path).iterdir()) == []
+
+    def test_an_existing_pair_survives_that_refusal(self, tmp_path):
+        """The operator re-runs the producer wrongly; the artifact that was
+        serving is still the artifact that is serving."""
+        path = publish(tmp_path, kg_digest=DIGEST_A)
+        before = (path.read_bytes(), sidecar_path(path).read_bytes())
+
+        with pytest.raises(ValueError):
+            publish(tmp_path, kg_digest=None)
+
+        assert (path.read_bytes(), sidecar_path(path).read_bytes()) == before
 
 
 class TestRuleZero:
@@ -131,13 +168,13 @@ class TestRuleZero:
     legacy and be served."""
 
     def test_neither_side_declaring_is_the_only_legacy(self, tmp_path):
-        path = publish(tmp_path, kg_digest=None)
+        path = publish_legacy(tmp_path)
         tensor = torch.load(path, map_location="cpu", weights_only=True)
 
-        assert read_binding(read_sidecar(path), tensor.keys()) == SPBinding(recorded=False)
+        assert read_binding(read_sidecar(path).meta, tensor.keys()) == SPBinding(recorded=False)
 
     def test_a_sidecar_declaring_alone_is_refused_not_legacy(self, tmp_path):
-        path = publish(tmp_path, kg_digest=None)
+        path = publish_legacy(tmp_path)
         sidecar = json.loads(sidecar_path(path).read_text())
         sidecar.update(
             {"schema_version": SP_SCHEMA_VERSION, "build_id": new_build_id(),
@@ -146,7 +183,7 @@ class TestRuleZero:
         sidecar_path(path).write_text(json.dumps(sidecar))
 
         with pytest.raises(SPArtifactError, match="One side of a pair is not a pair"):
-            read_binding(read_sidecar(path), ["phenotype_idx"])
+            read_binding(read_sidecar(path).meta, ["phenotype_idx"])
 
     def test_a_tensor_declaring_alone_is_refused_not_legacy(self, tmp_path):
         """The mirror, and the one a check written against the sidecar alone
@@ -154,16 +191,58 @@ class TestRuleZero:
         with pytest.raises(SPArtifactError, match="schema_version"):
             read_binding({"max_hops": 5}, ["phenotype_idx", "build_id"])
 
-    @pytest.mark.parametrize("version", [0, "", False, None, 2, "1"])
+    def test_a_tensor_declaring_a_reserved_field_alone_is_not_legacy(self, tmp_path):
+        """**Rule 0 asks about every reserved field, on both files.** Asking
+        the tensor only about `build_id` let a tensor carrying `schema_version`
+        or `kg_digest` and nothing else answer "nothing is declared here", so
+        the pair resolved as legacy and was served — a partial declaration read
+        as the absence of one, which is the state the rule exists to catch."""
+        for field in SP_BINDING_FIELDS:
+            assert declares_binding(None, ["phenotype_idx", field]) is True, field
+            assert declares_binding({field: "x"}, ["phenotype_idx"]) is True, field
+
+        assert declares_binding({"max_hops": 5}, ["phenotype_idx"]) is False
+
+    @pytest.mark.parametrize("field", SP_BINDING_FIELDS)
+    def test_a_tensor_declaring_a_reserved_field_alone_is_refused(self, field):
+        with pytest.raises(SPArtifactError, match="schema_version"):
+            read_binding({"max_hops": 5}, ["phenotype_idx", field])
+
+    @pytest.mark.parametrize("version", [0, "", False, None, 2, "1", True, 1.0])
     def test_an_unaccepted_schema_version_is_refused(self, version):
         """Membership, not truthiness: `0`, `""` and `False` are all falsy and
-        none of them means absent."""
-        assert version not in ACCEPTED_SCHEMA_VERSIONS
+        none of them means absent. And type before membership: `True == 1` and
+        `1.0 == 1`, so both are members of `(1,)` and a bare `in` reads a JSON
+        `true` as schema 1 — after which every other field in the sidecar is
+        trusted to mean what this version says it means."""
+        assert version is True or version == 1.0 or version not in ACCEPTED_SCHEMA_VERSIONS, (
+            "this case is an accepted version and belongs in the accepting test"
+        )
         with pytest.raises(SPArtifactError, match="schema_version"):
             read_binding(
                 {"schema_version": version, "build_id": "a" * 32, "kg_digest": DIGEST_A},
                 ["build_id"],
             )
+
+    @pytest.mark.parametrize("version", [True, 1.0])
+    def test_the_two_that_membership_alone_would_accept(self, version):
+        """Why the type check is not belt-and-braces: without it these two
+        reach `in (1,)` and pass."""
+        assert version in ACCEPTED_SCHEMA_VERSIONS, (
+            "the premise of the type check no longer holds"
+        )
+
+    def test_the_accepted_version_is_accepted(self):
+        """The mirror, so a reader that refuses everything cannot pass the
+        tests above."""
+        binding = read_binding(
+            {"schema_version": SP_SCHEMA_VERSION, "build_id": "a" * 32, "kg_digest": DIGEST_A},
+            ["build_id"],
+        )
+        assert binding == SPBinding(
+            recorded=True, schema_version=SP_SCHEMA_VERSION,
+            build_id="a" * 32, kg_digest=DIGEST_A,
+        )
 
     @pytest.mark.parametrize(
         "field,value,fragment",
@@ -174,6 +253,8 @@ class TestRuleZero:
             ("build_id", 12345, "hexadecimal"),
             ("kg_digest", "a" * 63, "SHA-256"),
             ("kg_digest", None, "SHA-256"),
+            ("kg_digest", "z" * 64, "SHA-256"),
+            ("kg_digest", ("a" * 64).upper(), "SHA-256"),
         ],
     )
     def test_a_malformed_declared_field_is_refused(self, field, value, fragment):
@@ -204,7 +285,7 @@ class TestAMixedPairIsRefused:
 
         path = mixed / "shortest_paths.pt"
         tensor = torch.load(path, map_location="cpu", weights_only=True)
-        binding = read_binding(read_sidecar(path), tensor.keys())
+        binding = read_binding(read_sidecar(path).meta, tensor.keys())
 
         with pytest.raises(SPArtifactError, match="published by different"):
             require_paired(binding, tensor["build_id"])
@@ -325,7 +406,7 @@ class TestInterruptedPublication:
 
         path = Path(tmp_path) / "shortest_paths.pt"
         tensor = torch.load(path, map_location="cpu", weights_only=True)
-        binding = read_binding(read_sidecar(path), tensor.keys())
+        binding = read_binding(read_sidecar(path).meta, tensor.keys())
 
         with pytest.raises(SPArtifactError, match="published by different"):
             require_paired(binding, tensor["build_id"])
@@ -335,7 +416,7 @@ class TestInterruptedPublication:
         path = publish(tmp_path, kg_digest=DIGEST_A)
 
         tensor = torch.load(path, map_location="cpu", weights_only=True)
-        binding = read_binding(read_sidecar(path), tensor.keys())
+        binding = read_binding(read_sidecar(path).meta, tensor.keys())
 
         require_paired(binding, tensor["build_id"])
         assert kg_binding_state(binding, DIGEST_A) == "verified"
@@ -374,7 +455,7 @@ class TestTheLoaderEnforcesTheBinding:
         """Refusing these would break every deployment for a claim they never
         made. Serving them while calling the provenance *verified* would be
         worse — so it is neither."""
-        publish(tmp_path, kg_digest=None)
+        publish_legacy(tmp_path)
         pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
 
         pipeline._load_shortest_paths(Path(tmp_path))
@@ -429,6 +510,89 @@ class TestTheLoaderEnforcesTheBinding:
         assert pipeline._sp_ready is False
         assert pipeline._sp_hop_bound_source is None
         assert pipeline._sp_kg_binding is None
+
+    def test_a_sidecar_declaring_a_pair_whose_table_is_not_here_is_refused(self, tmp_path):
+        """**One side of a pair is not an absent artifact.** The sidecar is
+        read before the absent decision, not after it: a publication that lost
+        its tensor, or a tensor deleted from a workspace that still advertises
+        one, used to take the "serve without shortest paths" path — and on a
+        reload that replaced a healthy service with one scoring on the GNN
+        alone, reporting success."""
+        path = publish(tmp_path, kg_digest=DIGEST_A)
+        path.unlink()
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+
+        with pytest.raises(ValueError, match="not an absent artifact"):
+            pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
+
+    def test_a_legacy_sidecar_whose_table_is_not_here_is_still_absent(self, tmp_path):
+        """The boundary on the other side. A sidecar predating the protocol
+        claims no pair, so a workspace that has one and no table is the state
+        that has always been allowed to serve without shortest paths —
+        refusing it would break deployments over a claim they never made."""
+        path = publish_legacy(tmp_path)
+        path.unlink()
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+
+        pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_kg_binding is None
+
+    def test_a_mixed_pair_whose_new_tensor_is_empty_is_refused(self, tmp_path):
+        """**The binding is checked before the empty decision.** An empty table
+        is treated as absent, and while that return came first a mixed
+        publication whose new tensor happened to carry no rows reached it and
+        switched shortest paths off — a refusal downgraded to a silent mode
+        change, reported as success. A pair that does not claim itself is
+        refused whether it carries a million rows or none."""
+        publish(tmp_path, kg_digest=DIGEST_A, data=rows(0))
+        stale = sidecar_path(Path(tmp_path) / "shortest_paths.pt").read_bytes()
+        publish(tmp_path, kg_digest=DIGEST_A, data=rows(0))
+        sidecar_path(Path(tmp_path) / "shortest_paths.pt").write_bytes(stale)
+
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+        with pytest.raises(ValueError, match="published by different"):
+            pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
+
+    def test_an_empty_table_from_another_graph_is_refused(self, tmp_path):
+        publish(tmp_path, kg_digest=DIGEST_A, data=rows(0))
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_B)
+
+        with pytest.raises(ValueError, match="different graph"):
+            pipeline._load_shortest_paths(Path(tmp_path))
+
+    def test_an_intact_empty_pair_is_still_the_absent_case(self, tmp_path):
+        """The boundary preserved: moving the binding gate above the empty
+        return must not turn a well-bound empty table into a refusal. D5 reads
+        it as absent, and an empty table makes no false claim."""
+        publish(tmp_path, kg_digest=DIGEST_A, data=rows(0))
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+
+        pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+    def test_a_directory_where_the_sidecar_should_be_is_refused(self, tmp_path):
+        """`is_file()` answers False for a directory, so a check built on it
+        alone hands the loader the fallback an absent sidecar takes — a
+        configured hop bound, or shortest paths off — for a workspace that is
+        plainly broken."""
+        publish(tmp_path, kg_digest=DIGEST_A)
+        meta_path = sidecar_path(Path(tmp_path) / "shortest_paths.pt")
+        meta_path.unlink()
+        meta_path.mkdir()
+
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+        with pytest.raises(ValueError, match="not a regular file"):
+            pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
 
     def test_the_refusal_does_not_reach_the_graph_verifier(self, tmp_path):
         """**Scope.** A rejected shortest-path table must not stop a consumer
@@ -535,7 +699,7 @@ class TestItReachesTheServiceResponse:
     `PipelineStatusResponse` lists its fields explicitly and the route maps them
     one by one, so a new key in `get_pipeline_config()` goes no further unless
     both are edited. The deployment guides tell an operator to read
-    `sp_kg_binding` from `GET /api/v1/pipeline/config`; this is what makes that
+    `sp_kg_binding` from `GET /api/v1/pipeline/status`; this is what makes that
     sentence true rather than aspirational.
     """
 
@@ -552,6 +716,41 @@ class TestItReachesTheServiceResponse:
         source = inspect.getsource(route)
         assert 'sp_kg_binding=config.get("sp_kg_binding")' in source, (
             "the field exists on the model and nothing fills it"
+        )
+
+    @pytest.mark.parametrize("guide", ["deployment-guide.md", "deployment-guide.en.md"])
+    def test_the_endpoint_the_guides_name_is_the_one_that_carries_it(self, guide):
+        """**The guide names a route, and an operator will call that route.**
+        It said `/pipeline/config`, which serves `UIConfigResponse` — saved UI
+        settings, never this field — so following the instruction returned a
+        200 with no `sp_kg_binding` in it and no error to explain why. The
+        field is on `/pipeline/status`. Resolved against the router rather
+        than string-matched, so moving the field moves this test's subject.
+        """
+        import re
+
+        from src.api.routes import pipeline as route
+
+        text = (REPO / guide).read_text(encoding="utf-8")
+        named = {
+            match.group(1)
+            for line in text.splitlines()
+            if "sp_kg_binding" in line
+            for match in re.finditer(r"GET (/api/v1/\S+?)`", line)
+        }
+        assert named, f"{guide} tells the operator to read sp_kg_binding from nowhere"
+
+        carriers = {
+            "/api/v1" + r.path
+            for r in route.router.routes
+            if "GET" in getattr(r, "methods", set())
+            and "sp_kg_binding" in getattr(
+                getattr(r, "response_model", None), "model_fields", {}
+            )
+        }
+        assert named <= carriers, (
+            f"{guide} names {sorted(named)}; the field is served by "
+            f"{sorted(carriers)}"
         )
 
     def test_the_pipeline_reports_it_beside_the_hop_bound(self, tmp_path):

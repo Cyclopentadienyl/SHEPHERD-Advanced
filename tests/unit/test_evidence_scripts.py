@@ -394,6 +394,106 @@ def test_a_missing_sidecar_is_refused(tmp_path):
               "--output", str(tmp_path / "x.json")])
 
 
+def _bind(root: Path, *, kg_digest: str, build_id: str = "a" * 32,
+          sidecar_build_id: str = None):
+    """Turn the fixture's legacy pair into a declared one, in place.
+
+    Written by hand rather than through the producer because the point of some
+    of these is a pair the producer would never publish — a tensor and a
+    sidecar from different runs.
+    """
+    table = torch.load(root / "sp.pt", map_location="cpu", weights_only=True)
+    table["build_id"] = build_id
+    torch.save(table, root / "sp.pt")
+
+    meta = json.loads((root / "sp.meta.json").read_text())
+    meta.update({"schema_version": 1, "kg_digest": kg_digest,
+                 "build_id": sidecar_build_id or build_id})
+    (root / "sp.meta.json").write_text(json.dumps(meta))
+    return root
+
+
+def test_the_sidecar_is_read_once_so_the_report_describes_one_version(tmp_path, monkeypatch):
+    """**The digest names which sidecar was read, and it has to be the one the
+    numbers came from.** Reading the file for its integers and reading it again
+    to hash it are two reads, and a publication completing between them — a
+    normal two-file write, not a rare race — gives a report whose hop bound is
+    from one version and whose digest is of another. The reader hands back the
+    parsed object and the bytes it parsed, from one read; this is the fixture
+    that would catch a second one.
+    """
+    from src.inference import sp_artifact
+
+    root = _sp_workspace(tmp_path / "ws", max_hops=5)
+    original = (root / "sp.meta.json").read_bytes()
+    calls = {"n": 0}
+    real = sp_artifact.read_sidecar
+
+    def counting(artifact):
+        document = real(artifact)
+        calls["n"] += 1
+        # A second publication lands between the reads. Any later read sees 9.
+        meta = json.loads((root / "sp.meta.json").read_text())
+        meta["max_hops"] = 9
+        (root / "sp.meta.json").write_text(json.dumps(meta))
+        return document
+
+    monkeypatch.setattr(sp_artifact, "read_sidecar", counting)
+    out = tmp_path / "m5.json"
+    _run("audit_sp_reachability",
+         ["--artifact", str(root / "sp.pt"), "--data-dir", str(root), "--output", str(out)])
+    report = json.loads(out.read_text())
+
+    assert calls["n"] == 1, "the sidecar was read more than once"
+    assert report["hop_bound_configured"] == 5
+    assert report["sidecar_digest"] == hashlib.sha256(original).hexdigest(), (
+        "the digest is of a version of the sidecar the report did not read"
+    )
+
+
+def test_the_report_says_which_graph_binding_it_had(tmp_path):
+    """This audit counts integer ids and never loads a graph, so it is the
+    consumer that may proceed unverified — and must label it rather than let a
+    reading look checked."""
+    assert _m5(tmp_path)["kg_binding"] == "unrecorded"
+
+    bound = _bind(_sp_workspace(tmp_path / "b"), kg_digest="a" * 64)
+    out = tmp_path / "bound.json"
+    _run("audit_sp_reachability",
+         ["--artifact", str(bound / "sp.pt"), "--data-dir", str(bound), "--output", str(out)])
+
+    assert json.loads(out.read_text())["kg_binding"] == "unverifiable"
+
+
+def test_a_mixed_pair_is_refused_rather_than_summarised(tmp_path):
+    """A tensor and a sidecar from different runs is a table the pipeline
+    refuses to serve. Reporting reachability percentages for it describes an
+    artifact that is not the one in production."""
+    root = _bind(_sp_workspace(tmp_path / "ws"), kg_digest="a" * 64,
+                 build_id="a" * 32, sidecar_build_id="b" * 32)
+
+    with pytest.raises(SystemExit, match="published by different"):
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+    assert not (tmp_path / "x.json").exists()
+
+
+def test_a_directory_where_the_sidecar_should_be_is_refused(tmp_path):
+    """**Present and unusable, not absent.** `is_file()` answers False for a
+    directory, so a check built on it alone reports the sidecar missing — and
+    on the path that tolerates a missing one, applies an absent artifact's
+    fallback to a workspace that is plainly broken."""
+    root = _sp_workspace(tmp_path / "ws")
+    (root / "sp.meta.json").unlink()
+    (root / "sp.meta.json").mkdir()
+
+    with pytest.raises(SystemExit, match="not a regular file"):
+        _run("audit_sp_reachability",
+             ["--artifact", str(root / "sp.pt"), "--data-dir", str(root),
+              "--output", str(tmp_path / "x.json")])
+
+
 def test_duplicate_pairs_are_collapsed_rather_than_counted_twice(tmp_path):
     """The report calls these distinct diseases. An earlier version counted rows
     and justified it as M7 "enforced at load time" — untrue for this path, which
@@ -644,6 +744,7 @@ _REQUIRED = {
     "m1": ("fact", "checkpoint_digests", "summary", "runtime", "deployment_relationship"),
     "m4": ("fact", "digests", "counts", "overlap", "deployment_relationship"),
     "m5": ("fact", "artifact_digest", "sidecar_digest", "hop_bound_configured",
+           "kg_binding",
            "reachable_diseases_per_phenotype", "selection_rule", "deployment_relationship"),
 }
 

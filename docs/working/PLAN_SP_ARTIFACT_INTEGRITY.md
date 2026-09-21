@@ -175,6 +175,17 @@ four files were on disk.
 found beside `--output-dir`. Hashing whatever is next to the destination would
 record the claim the binding exists to check.
 
+**It is required, and refused before any live file is touched.** A publication
+with no digest would carry `schema_version` and `build_id` and no graph — a
+declared pair under Rule 0, so never legacy, and permanently *unverifiable* at
+the one consumer whose ranking depends on it. Nothing a new run writes needs to
+be in that state: the producer knows which file it read. A caller with no source
+file to hash has nothing to record and does not publish; artifacts written
+before this protocol are unaffected, because they are legacy and the readers say
+so. The shape rule — lowercase hex, 64 characters — lives once, in the shared
+module, and the producer asks it rather than re-deriving a length check, so a
+writer cannot publish a pair its own reader refuses.
+
 **The assumption this makes, stated rather than left implicit:** the source file
 is not modified while the BFS runs, which at deployment scale is hours. The
 digest is taken from the path that was loaded and is recorded as *the input this
