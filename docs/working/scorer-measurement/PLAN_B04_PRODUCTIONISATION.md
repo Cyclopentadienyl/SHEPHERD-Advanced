@@ -94,15 +94,27 @@ kept alive behind a switch. This plan ships one implementation.
 
 ## 3. Where the code lives — one copy, not two
 
-`scripts/sp_index_prototypes.py` holds both prototypes and is imported by
-`scripts/benchmark_sp_lookup.py` and pinned by
-`tests/unit/test_sp_index_prototypes.py`. Copying A into `src/` would leave two
-implementations of the shipped primitive, which is the defect class this
-project has repaired three times (`setup_demo`'s second workspace producer, and
-twice before).
+**Settled, and further than this section proposed.** `scripts/sp_index_prototypes.py`
+held both candidate implementations and was imported by `benchmark_sp_lookup.py`
+and pinned by `tests/unit/test_sp_index_prototypes.py`. The proposal below was
+that A move to `src/inference/sp_index.py` while the prototypes module
+re-exported it under the old name and kept B.
 
-**Proposal.** A moves to `src/inference/sp_index.py`. The prototypes module
-imports it and re-exports it under its existing name, keeping B where it is.
+What shipped keeps the goal and drops the re-export. The primitive lives in
+`src/inference/sp_index.py`; `scripts/sp_index_prototypes.py` is **gone**, and
+so is B. The reason is not tidiness: B's query walks `SPLookup.offsets`, and the
+served lookup no longer has offsets — the composite key replaced them. Keeping B
+would have meant keeping the CSR layout alive in `scripts/` for it, which is the
+second construction path this revision exists to remove. Git history holds it;
+`PLAN_B04.md` §12's matrix is the record of what it measured.
+
+The benchmark now times two things: `indexed`, which is what ships, and
+`reference`, the independent Python-dictionary scan in
+`scripts/sp_scan_reference.py` that the equivalence tests use. That reference
+is not a candidate — it is O(rows) in Python — and production does not import
+it.
+
+**The original proposal, for the record:**
 
 - one implementation of A, in the layer that ships it;
 - `benchmark_sp_lookup.py` can still re-run the §12 matrix, which is what makes
@@ -121,7 +133,9 @@ imports it and re-exports it under its existing name, keeping B where it is.
 | `src/inference/sp_index.py` | **new, and the only home of the primitive.** `SPLookup` — now the index itself — `build_sp_index(phenotype, target, target_type, distance, max_hops)`, `sp_mean_distances`, the domain derivation and the uniqueness refusal. One builder; no presorted variant, because nothing hands it a sorted table |
 | `src/inference/scoring.py` | `SPLookup` and `sp_mean_distances` **move out**. What stays is what is not about the index: `sp_scores_from_distances`, `validate_hop_bound`, the hop-bound constants, and the cosine/pooling primitives. It does not re-export the moved names — one name, one home, and five import sites updated |
 | `src/inference/pipeline.py` | `_load_shortest_paths` validates the raw tensors, resolves `max_hops` **before** the expensive work, and hands raw columns to the builder. `_sp_ph` / `_sp_tg` / `_sp_ty` / `_sp_di` / `_sp_offsets` are **retired**: the composite key encodes all three id columns, the query needs no offsets, and keeping them is the copy this design exists to avoid |
-| `scripts/benchmark_sp_lookup.py`, `scripts/sp_index_prototypes.py` | Updated to the new entry point. B stays only for as long as it is an active comparator; it does not justify private dependencies from the official module, and git history holds it either way |
+| `scripts/benchmark_sp_lookup.py` | Builds through the one builder, ending its duplicate reader of the loader's layout — a duplicate its own docstring asked to have reconciled the next time the production loader changed. Implementations become `indexed` and `reference` |
+| `scripts/sp_index_prototypes.py` | **Deleted.** A moved; B's query walks `SPLookup.offsets`, which the served lookup no longer has, so keeping B would keep the retired layout alive. Git history holds it |
+| `scripts/sp_scan_reference.py` | **New.** The independent baseline: rows in a Python dictionary, no shared structure or arithmetic with the served index, so the equivalence tests compare two programs |
 | `tests/` | Fixtures and imports move with the refactor. What is preserved is the **behaviour asserted on valid inputs, the independent expected values, and the coverage** — not the text of the files |
 
 **The scan is deleted from the served path**, and that is the point of the
@@ -494,6 +508,33 @@ claims CI cannot establish, and every item here is deterministic and CPU-only.
 
 ---
 
+## 6.2 The one memory figure this change can honestly report
+
+**Measured on this machine, at 4,996,922 rows** — synthetic, de-duplicated,
+built through `build_sp_index`:
+
+| Quantity | Value |
+|---|---|
+| Index resident | 44.97 MB, **9.00 bytes/row** |
+| The four-column layout it replaces (int32, int32, int8, int8) | 49.97 MB, 10.00 bytes/row |
+| Steady-state change | **−10.0%**, before counting the retired offsets dict |
+
+**What this establishes and what it does not.** Bytes per row is a property of
+the *shape* — one int64 key plus one int8 distance — so it extrapolates, and it
+confirms the arithmetic in `sp_index.py`'s docstring rather than restating it.
+It says nothing about deployment scale: 5M rows is about 1/86th of the row count
+`PLAN_B04.md` §10 records, and **peak** does not extrapolate the way resident
+does, because the sort's permutation and its output are transient terms with
+their own scaling. The `ru_maxrss` reading taken alongside this is not quoted:
+it is a process high-water mark already polluted by the columns the test itself
+allocated.
+
+So: resident is measured and extrapolable; peak at deployment scale is
+**pending a run on the real artifact**, and `PLAN_B04.md`'s figures remain
+evidence about the design that kept the id columns, not about this one.
+
+---
+
 ## 7. The §13 gate — what this machine can answer, and what it cannot
 
 | # | Reading | Status |
@@ -644,8 +685,10 @@ is now inside this change**, for the reason given under it.
    is why it answers 6.0 above — so what the replacement owes is not new logic
    but **proof through the official entry point**, which is §6.1 item 6. The
    existing equivalence test uses `[-1, 0, 10_000]`
-   (`tests/unit/test_sp_index_prototypes.py:176`), none of which aliases, which
-   is why the suite has never seen it.
+   (`tests/unit/test_sp_index_prototypes.py:176` as it then was), none of which
+   aliases, which is why the suite had never seen it. Its successor,
+   `tests/unit/test_sp_index.py`, covers `2**32`, `2**31`, a negative and an
+   ordinary absent id, through the official entry point.
 
    The same mechanism one step earlier is §6.1 item 7: the loader narrows
    int64 columns to int32/int8, and a value the narrow type cannot hold wraps

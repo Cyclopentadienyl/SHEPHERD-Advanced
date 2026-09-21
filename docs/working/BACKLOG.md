@@ -739,7 +739,7 @@ structural claim that decays.
 
 | Line | Files it touches |
 |---|---|
-| **B-0.4** (item 5) | `scripts/benchmark_sp_lookup.py`; `scripts/sp_index_prototypes.py` — both prototypes; `src/inference/scoring.py` — `sp_mean_distances`, `SPLookup`; `tests/unit/test_scoring_primitives.py`; `tests/unit/test_sp_index_prototypes.py`; `tests/integration/test_benchmark_sp_lookup.py` |
+| **B-0.4** (item 5) and **5a** | `src/inference/sp_index.py` — `SPLookup`, `build_sp_index`, `sp_mean_distances`; `src/inference/pipeline.py` — `_load_shortest_paths`, `_calculate_sp_score`; `src/inference/scoring.py` — `sp_scores_from_distances`, `validate_hop_bound`; `scripts/benchmark_sp_lookup.py`; `scripts/sp_scan_reference.py`; `tests/unit/test_sp_index.py`; `tests/unit/test_scoring_primitives.py`; `tests/integration/test_benchmark_sp_lookup.py`; `tests/integration/test_pipeline.py` |
 | **Calibration** (1b-1e) | `src/training/trainer.py`; `src/evaluation/measurement.py`; `scripts/measure_scorer.py`; `scripts/calibrate_mode_a.py`; new trainer and D3 tests |
 
 **Disjoint, and the layer contract keeps them that way.** The one file that could

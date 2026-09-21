@@ -1,15 +1,22 @@
 """
 Benchmark: shortest-path lookup cost — work item B-0.4, baseline stage.
 ======================================================================
-Measures `sp_mean_distances` (`src/inference/scoring.py`) across the matrix
+Measures `sp_mean_distances` (`src/inference/sp_index.py`) across the matrix
 `docs/working/scorer-measurement/PLAN_B04.md` §5.4 defines, on **both caller
 shapes**: the singleton loop production ships today, and the batched call B-1
 and the offline harness will use.
 
-The gate in PLAN_B04 §3.1 has since been crossed, so `--implementations` also
-times the two prototypes in `scripts/sp_index_prototypes.py`. Read the plan
-before extending this script; several of its shapes are decisions rather than
-conveniences.
+**One shipped implementation, one baseline.** The three-way comparison this
+script ran during B-0.4 — the old tensor scan against two candidate indexes —
+selected the global composite key, and 5a made it the only served primitive.
+What remains is `indexed`, which is what ships, and `reference`, the
+independent Python-dictionary scan the equivalence tests use, kept so the
+speedup has something to be measured against. The second candidate is in git
+history; it depended on the CSR offsets layout that the served lookup no longer
+has, so keeping it would have meant keeping that layout alive.
+
+Read the plan before extending this script; several of its shapes are decisions
+rather than conveniences.
 
 **Linux only, by design.** Memory residence is the quantity this benchmark
 exists to weigh, and it is read the way Linux reports it: `/proc/self/status`,
@@ -158,46 +165,48 @@ def build_synthetic_lookup(
     max_hops: int,
     seed: int,
 ) -> Tuple[Any, List[int], List[int]]:
-    """A `SPLookup` with the CSR shape `_load_shortest_paths` produces.
+    """The four raw columns, in the shape the artifact has on disk.
 
     Uniqueness of `(phenotype, target, target_type)` holds by construction,
     because targets are sampled without replacement within each phenotype — the
-    same property the real table has (`scoring.py:91-94`).
+    same property the real table has, and the one `build_sp_index` refuses a
+    table for lacking.
 
-    Returns `(lookup, slice_lengths, disease_targets)`.
+    **Returns columns, not a lookup.** Both implementations this benchmark times
+    are built from the same rows, and building the served index here would make
+    the reference a derivative of it.
+
+    Returns `(columns, slice_lengths, disease_targets)`.
     """
-    from src.inference.scoring import SPLookup
-
     generator = torch.Generator().manual_seed(seed)
     lengths = _slice_lengths(n_phenotypes, mean_length, distribution, generator)
 
+    phenotypes: List[torch.Tensor] = []
     targets: List[torch.Tensor] = []
     types: List[torch.Tensor] = []
     distances: List[torch.Tensor] = []
-    offsets: Dict[int, Tuple[int, int]] = {}
 
-    cursor = 0
     actual: List[int] = []
     for phenotype, length in enumerate(lengths):
         length = min(length, target_space)
         picked = torch.randperm(target_space, generator=generator)[:length]
-        targets.append(picked)
-        types.append(torch.randint(0, 2, (length,), generator=generator, dtype=torch.int8))
+        phenotypes.append(torch.full((length,), phenotype, dtype=torch.int64))
+        targets.append(picked.to(torch.int64))
+        types.append(
+            torch.randint(0, 2, (length,), generator=generator, dtype=torch.int64)
+        )
         distances.append(
             torch.randint(1, max_hops + 1, (length,), generator=generator, dtype=torch.int8)
         )
-        offsets[phenotype] = (cursor, cursor + length)
-        cursor += length
         actual.append(length)
 
-    lookup = SPLookup(
-        target=torch.cat(targets),
-        target_type=torch.cat(types),
-        distance=torch.cat(distances),
-        offsets=offsets,
-        max_hops=max_hops,
+    columns = (
+        torch.cat(phenotypes),
+        torch.cat(targets),
+        torch.cat(types),
+        torch.cat(distances),
     )
-    return lookup, actual, list(range(target_space))
+    return columns, actual, list(range(target_space))
 
 
 def synthetic_tables(
@@ -206,13 +215,13 @@ def synthetic_tables(
     n_phenotypes = max(PHENOTYPE_COUNTS) * 4
     for mean_length in SYNTHETIC_MEAN_SLICE_LENGTHS:
         for distribution in SYNTHETIC_DISTRIBUTIONS:
-            lookup, lengths, targets = build_synthetic_lookup(
+            columns, lengths, targets = build_synthetic_lookup(
                 n_phenotypes, mean_length, distribution, SYNTHETIC_TARGET_SPACE,
                 max_hops, seed,
             )
             yield (
                 {"mean_slice_length": mean_length, "distribution": distribution},
-                lookup, lengths, targets,
+                columns, lengths, targets,
             )
 
 
@@ -222,21 +231,23 @@ def synthetic_tables(
 def build_artifact_lookup(
     path: Path, max_hops: int
 ) -> Tuple[Any, List[int], List[int], Dict[str, Any]]:
-    """An `SPLookup` over the artifact's **own slices**, not a table shaped like it.
+    """The artifact's **own rows**, not a table shaped like them.
 
-    This mirrors `DiagnosisPipeline._load_shortest_paths` (`pipeline.py:470-545`):
-    same required keys, same dtype compaction, same sort-by-phenotype, same
-    offsets from run boundaries. **It is a second reader of that layout and is
-    meant to stop being one: reconcile it whenever the production SP loader is
-    next changed, whether or not B-0.4 selects a prototype.** Tying it to a
-    prototype would leave the duplicate permanent if no prototype is selected.
-    Recorded rather than left to be discovered, because
-    `src/kg/storage/file_storage.py` exists to end exactly this kind of
-    duplication.
+    **This used to be a second reader of the loader's layout**, mirroring
+    `_load_shortest_paths`'s dtype compaction, sort-by-phenotype and offsets from
+    run boundaries, and it carried a note saying so and asking to be reconciled
+    the next time the production loader changed. That is this change. It now
+    reads the four columns, checks them with the same
+    `validate_sp_artifact` the loader calls, and hands them back — the index is
+    built from them exactly once, by the one builder, wherever it is needed.
 
-    Returns `(lookup, slice_lengths, disease_targets, provenance)`.
+    Slice lengths are still reported, because the workload shaping needs them;
+    they are counted off the phenotype column rather than read out of an offsets
+    table that no longer exists.
+
+    Returns `(columns, slice_lengths, disease_targets, provenance)`.
     """
-    from src.inference.scoring import SPLookup
+    from src.inference.sp_index import validate_sp_artifact
 
     raw = torch.load(path, map_location="cpu", weights_only=True)
     required = {"phenotype_idx", "target_idx", "target_type", "distance"}
@@ -244,26 +255,26 @@ def build_artifact_lookup(
     if missing:
         raise SystemExit(f"{path} is missing required keys: {sorted(missing)}")
 
-    phenotype = raw["phenotype_idx"].to(torch.int32)
-    order = phenotype.argsort()
-    phenotype = phenotype[order]
-    target = raw["target_idx"].to(torch.int32)[order]
-    target_type = raw["target_type"].to(torch.int8)[order]
-    distance = raw["distance"][order]
+    phenotype = raw.pop("phenotype_idx")
+    target = raw.pop("target_idx")
+    target_type = raw.pop("target_type")
+    distance = raw.pop("distance")
     del raw
 
-    boundaries = torch.where(phenotype[1:] != phenotype[:-1])[0] + 1
-    starts = torch.cat([torch.zeros(1, dtype=torch.int64), boundaries])
-    ends = torch.cat([boundaries, torch.tensor([phenotype.numel()], dtype=torch.int64)])
-    keys = phenotype[starts].tolist()
-    starts_list, ends_list = starts.tolist(), ends.tolist()
-    offsets = {k: (starts_list[i], ends_list[i]) for i, k in enumerate(keys)}
-    lengths = [ends_list[i] - starts_list[i] for i in range(len(keys))]
-
-    lookup = SPLookup(
-        target=target, target_type=target_type, distance=distance,
-        offsets=offsets, max_hops=max_hops,
+    validate_sp_artifact(
+        phenotype, target, target_type, distance, max_hops, source=str(path)
     )
+
+    ordered = phenotype[phenotype.argsort()]
+    boundaries = torch.where(ordered[1:] != ordered[:-1])[0] + 1
+    starts = torch.cat([torch.zeros(1, dtype=torch.int64), boundaries])
+    ends = torch.cat([boundaries, torch.tensor([ordered.numel()], dtype=torch.int64)])
+    keys = ordered[starts].tolist()
+    starts_list, ends_list = starts.tolist(), ends.tolist()
+    lengths = [ends_list[i] - starts_list[i] for i in range(len(keys))]
+    del ordered, boundaries, starts, ends
+
+    columns = (phenotype, target, target_type, distance)
 
     # Candidates are drawn from the real disease target space, not an invented one.
     disease_targets = torch.unique(target[target_type == DISEASE_TYPE_IDX]).tolist()
@@ -290,7 +301,7 @@ def build_artifact_lookup(
             f"p{int(q * 100)}": float(torch.quantile(length_t, q)) for q in quantiles
         },
     }
-    return lookup, lengths, disease_targets, provenance
+    return columns, lengths, disease_targets, provenance
 
 
 # =============================================================================
@@ -305,10 +316,10 @@ def _time_once(fn, *args) -> float:
 def _callers(query_fn):
     """Both caller shapes for one query function.
 
-    The prototypes take an index where the current primitive takes an `SPLookup`,
-    but the signature is otherwise identical — deliberately, since PLAN_B04 §4.1
-    keeps the caller unchanged. So one factory serves all three implementations
-    and there is no second copy of the loop to drift.
+    The served primitive and the reference take the same arguments — deliberately,
+    since PLAN_B04 §4.1 keeps the caller unchanged and an adapter between them
+    would be a place to hand the two sides different inputs. So one factory
+    serves both and there is no second copy of the loop to drift.
     """
 
     def singleton(table, phenotypes: Sequence[int], candidates: Sequence[int]) -> None:
@@ -408,38 +419,46 @@ def _rss_bytes() -> Dict[str, Optional[int]]:
     return values
 
 
-def build_index(implementation: str, lookup) -> Tuple[Any, Dict[str, Any]]:
-    """Build one prototype's index, timing it and recording what it costs.
+def build_index(implementation: str, columns) -> Tuple[Any, Dict[str, Any]]:
+    """Build one implementation's table, timing it and recording what it costs.
 
-    **Two memory numbers, deliberately not merged.** `resident_bytes_actual` is
-    what the prototype object holds in *this* process, beside the loader's own
-    tensors; `production_incremental_bytes_projected` is the steady-state
-    increment if the loader reordered in place instead of keeping both copies.
-    The second is a projection from the design and is labelled as one — reporting
-    it as measured residence is how a memory verdict goes wrong.
+    **One memory number now, and it is measured.** The pair this replaces
+    reported what a prototype object held *beside* the loader's own tensors, and
+    separately projected what production would hold if the loader reordered in
+    place instead of keeping both copies. The projection existed because the
+    prototype was not what shipped. It is now: `resident_bytes` is the served
+    lookup's own tensors, and there is no second copy to project away.
+    `PLAN_B04.md`'s figures describe the design that kept the id columns and are
+    not evidence about this one.
+
+    The reference is built here too, so its cost is reported on the same terms
+    rather than hidden — it is a Python dictionary over every row, which is the
+    honest reason it is a correctness baseline and not a candidate.
     """
-    from scripts.sp_index_prototypes import (
-        build_global_key_index,
-        build_slice_sorted_index,
-    )
+    from scripts.sp_scan_reference import build_reference_table
+    from src.inference.sp_index import build_sp_index
 
-    builders = {"global": build_global_key_index, "slices": build_slice_sorted_index}
+    max_hops = int(columns[3].max()) if columns[3].numel() else 0
+    builders = {
+        "indexed": lambda: build_sp_index(*columns, max_hops),
+        "reference": lambda: build_reference_table(*columns, max_hops),
+    }
     before = _rss_bytes()
     start = time.perf_counter()
-    index = builders[implementation](lookup)
+    table = builders[implementation]()
     elapsed = time.perf_counter() - start
     after = _rss_bytes()
-    return index, {
+    record = {
         "record": "index_build",
         "implementation": implementation,
         "build_seconds": elapsed,
-        "prototype_resident_bytes_actual": index.resident_bytes_actual,
-        "production_incremental_bytes_projected":
-            index.production_incremental_bytes_projected,
         "rss_before": before,
         "rss_after": after,
-        "rows": int(lookup.target.numel()),
+        "rows": int(columns[0].numel()),
     }
+    if implementation == "indexed":
+        record["resident_bytes"] = table.resident_bytes()
+    return table, record
 
 
 def _repeat(fn, *args) -> Dict[str, float]:
@@ -463,7 +482,7 @@ def _repeat(fn, *args) -> Dict[str, float]:
 # =============================================================================
 def time_table(
     labels: Dict[str, Any],
-    lookup: Any,
+    columns: Any,
     lengths: Sequence[int],
     targets: Sequence[int],
     phenotype_ids: Sequence[int],
@@ -475,24 +494,20 @@ def time_table(
 ) -> None:
     """Time every requested implementation over the same cells.
 
-    `tables` maps an implementation name to the object its query function takes —
-    the `SPLookup` for `current`, a prototype index otherwise. All of them see the
-    **same** phenotypes and candidates in the same cell, so a difference between
-    two rows is the implementation and not the workload.
+    `tables` maps an implementation name to the object its query function takes.
+    Both take the same argument shape, deliberately — an adapter between them
+    would be a place to hand the two sides different inputs without anyone
+    noticing. All of them see the **same** phenotypes and candidates in the same
+    cell, so a difference between two rows is the implementation and not the
+    workload.
     """
-    from src.inference.scoring import sp_mean_distances
+    from scripts.sp_scan_reference import sp_mean_distances_reference
+    from src.inference.sp_index import sp_mean_distances
 
-    if tables is None:
-        tables = {"current": lookup}
-    query_fns = {"current": sp_mean_distances}
-    if any(name != "current" for name in tables):
-        from scripts.sp_index_prototypes import (
-            sp_mean_distances_global,
-            sp_mean_distances_slices,
-        )
-
-        query_fns["global"] = sp_mean_distances_global
-        query_fns["slices"] = sp_mean_distances_slices
+    query_fns = {
+        "indexed": sp_mean_distances,
+        "reference": sp_mean_distances_reference,
+    }
 
     by_length = sorted(range(len(lengths)), key=lambda i: -lengths[i])
     generator = torch.Generator().manual_seed(seed)
@@ -637,9 +652,12 @@ def main(argv: Optional[List[str]] = None) -> int:
              "artifacts are cited by digest and must not be replaced silently.",
     )
     parser.add_argument(
-        "--implementations", default="current",
+        "--implementations", default="indexed",
         help=(
-            "Comma-separated: current, global, slices. **Run one prototype per "
+            "Comma-separated: indexed, reference. `indexed` is what ships; "
+            "`reference` is the independent Python-dictionary scan the "
+            "equivalence tests use, kept here so the speedup has a baseline — "
+            "it is O(rows) in Python and is not a candidate. **Run one per "
             "process** — peak RSS is a process high-water mark, so building two "
             "in one process attributes the second's cost to whichever ran first."
         ),
@@ -652,12 +670,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     require_linux_memory_accounting()
 
     requested = [name.strip() for name in args.implementations.split(",") if name.strip()]
-    unknown = [name for name in requested if name not in ("current", "global", "slices")]
+    unknown = [name for name in requested if name not in ("indexed", "reference")]
     if unknown:
         parser.error(f"unknown implementation(s): {', '.join(unknown)}")
     if not requested:
         parser.error("--implementations may not be empty")
-    prototypes = [name for name in requested if name != "current"]
 
     torch.manual_seed(args.seed)
     cells = itertools.count()
@@ -665,26 +682,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     skipped: List[Dict[str, Any]] = []
     builds: List[Dict[str, Any]] = []
 
-    def prepare(lookup) -> Dict[str, Any]:
+    def prepare(columns) -> Dict[str, Any]:
+        """Every table this run will time, each built from the same rows.
+
+        **No implementation is exempt.** The shape this replaces handed
+        `current` the loader's own object and built only the prototypes, so one
+        of the three never appeared in the build records and its cost was
+        invisible.
+        """
         tables: Dict[str, Any] = {}
         for name in requested:
-            if name == "current":
-                tables[name] = lookup
-                continue
-            index, record = build_index(name, lookup)
-            tables[name] = index
+            table, record = build_index(name, columns)
+            tables[name] = table
             builds.append(record)
             print(json.dumps(record), flush=True)
         return tables
 
     if args.artifact is not None:
         mode = "artifact"
-        lookup, lengths, targets, artifact_meta = build_artifact_lookup(
+        columns, lengths, targets, artifact_meta = build_artifact_lookup(
             args.artifact, args.max_hops
         )
-        phenotype_ids = sorted(lookup.offsets)
-        time_table({"table": "artifact"}, lookup, lengths, targets, phenotype_ids,
-                   args.seed, rows, skipped, cells, prepare(lookup))
+        phenotype_ids = torch.unique(columns[0]).tolist()
+        time_table({"table": "artifact"}, columns, lengths, targets, phenotype_ids,
+                   args.seed, rows, skipped, cells, prepare(columns))
         source: Dict[str, Any] = {"source": "artifact", **artifact_meta}
         # A real artifact is one of §3.1's two requirements. The other is a
         # deployment-equivalent CPU, which this script cannot self-attest — and
@@ -695,9 +716,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     else:
         mode = "synthetic"
-        for labels, lookup, lengths, targets in synthetic_tables(args.max_hops, args.seed):
-            time_table(labels, lookup, lengths, targets, list(range(len(lengths))),
-                       args.seed, rows, skipped, cells, prepare(lookup))
+        for labels, columns, lengths, targets in synthetic_tables(args.max_hops, args.seed):
+            time_table(labels, columns, lengths, targets, list(range(len(lengths))),
+                       args.seed, rows, skipped, cells, prepare(columns))
         source = {
             "source": "synthetic",
             "reason": "no shortest_paths.pt supplied; none exists in development",
@@ -712,14 +733,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     report = {
-        "stage": "B-0.4 prototype" if prototypes else "B-0.4 baseline",
+        "stage": "5a served primitive" if requested == ["indexed"] else "5a comparison",
         "implementations": requested,
         "index_builds": builds,
-        # `ru_maxrss` is a process high-water mark, so a second prototype built in
-        # the same process inherits the first's peak. True only when exactly one
-        # prototype was built here; the numbers are reported either way and the
-        # flag says how to read them.
-        "memory_attribution_isolated": len(prototypes) <= 1,
+        # `ru_maxrss` is a process high-water mark, so a second table built in the
+        # same process inherits the first's peak. True only when exactly one was
+        # built here; the numbers are reported either way and the flag says how
+        # to read them.
+        "memory_attribution_isolated": len(requested) <= 1,
         "slice_source": source,
         "provenance": provenance(args, mode),
         "verdict": verdict,

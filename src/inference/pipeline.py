@@ -326,15 +326,14 @@ class DiagnosisPipeline:
         self._kg_path: Optional[str] = kg_path
         self._gnn_ready = False
 
-        # Shortest path lookup state (populated by _load_shortest_paths)
-        # Sparse storage: parallel tensors of (phenotype_idx, target_idx,
-        # target_type, distance). See scripts/compute_shortest_paths.py.
-        # When None, the pipeline degrades to pure GNN scoring (eta=1.0).
-        self._sp_ph: Optional["torch.Tensor"] = None
-        self._sp_tg: Optional["torch.Tensor"] = None
-        self._sp_ty: Optional["torch.Tensor"] = None
-        self._sp_di: Optional["torch.Tensor"] = None
-        self._sp_offsets: Optional[Dict[int, Tuple[int, int]]] = None
+        # Shortest path lookup state (populated by _load_shortest_paths).
+        # `_sp_lookup` is the whole of it: a sorted composite key over
+        # (phenotype, target_type, target) beside the distances in that order.
+        # The parallel id columns and the CSR offsets table that used to live
+        # here are gone — the key encodes them and the query searches it, so
+        # keeping them would keep a second shape for a second implementation to
+        # be written against. When `_sp_ready` is False the pipeline degrades to
+        # pure GNN scoring (eta=1.0).
         self._sp_max_hops: int = 5
         #: Where `_sp_max_hops` came from — "sidecar" when a file declared it,
         #: "assumed" when none was there. Published, because a log line is not a
@@ -557,10 +556,9 @@ class DiagnosisPipeline:
         return graph_data
 
     def _load_shortest_paths(self, data_dir: Path) -> None:
-        """
-        Load pre-computed shortest path lookup table from data_dir.
+        """Load the shortest-path table and build the index the scorer reads.
 
-        Expected format (produced by scripts/compute_shortest_paths.py):
+        Expected format (produced by `scripts/compute_shortest_paths.py`):
             shortest_paths.pt: dict with keys
                 phenotype_idx: int64 tensor (N,)
                 target_idx:    int64 tensor (N,)
@@ -568,20 +566,32 @@ class DiagnosisPipeline:
                 distance:      int8  tensor (N,)
             shortest_paths.meta.json: {"max_hops": int, ...}
 
-        Builds a CSR-style lookup: the four columns are sorted by phenotype_idx into the flat
-        tensors ``_sp_ph`` / ``_sp_tg`` / ``_sp_ty`` / ``_sp_di``, and ``_sp_offsets`` maps
-        phenotype_idx → (start, end) so each phenotype's entries are one contiguous slice.
-        This keeps the table compact (int32/int8, no per-pair Python objects) while giving
-        per-query access without scanning the whole table.
+        **The four columns do not survive this method, and that is the design.**
+        They are validated, handed to `build_sp_index`, and folded into one
+        sorted int64 composite key beside the distances. Nothing reads them
+        back — the query searches the key — so the CSR offsets table and the
+        parallel `_sp_ph` / `_sp_tg` / `_sp_ty` / `_sp_di` attributes this class
+        used to publish are gone. Keeping them would be keeping the copy this
+        design exists to avoid, and would keep alive the shape a second
+        implementation could be written against.
 
-        If the file is missing and sp_optional=True, the pipeline silently
-        falls back to pure GNN scoring (eta is ignored, treated as 1.0).
+        **Order matters here more than anywhere else in this class.** The hop
+        bound is resolved *before* the table is validated, because the bound is
+        what the distances are checked against; validation runs *before* any
+        narrowing, because a value a narrow type cannot hold wraps rather than
+        raising; and `_sp_ready` is published *after* the index exists, because
+        every step between can refuse.
+
+        A missing file is not a refusal: the pipeline serves without shortest
+        paths, which is the state `DISEASE_SCORER_POLICY.md` §2 blesses. A file
+        that is present and unusable is refused, because absent-by-configuration
+        and present-but-broken are different deployments and only one of them
+        was chosen.
         """
-        # **Cleared on entry, not assumed clean.** This is re-callable, and the
-        # tensors below are overwritten before the ceiling is known — so a second
-        # call that refuses would otherwise leave `_sp_ready` True from the first,
-        # with a lookup over the previous table's bytes and the previous ceiling
-        # while the observable attributes show the new ones.
+        # **Cleared on entry, not assumed clean.** This is re-callable, and a
+        # second call that refuses must not leave `_sp_ready` True from the
+        # first, with a lookup over the previous table's bytes and the previous
+        # ceiling while the observable attributes show the new ones.
         self._sp_ready = False
         self._sp_lookup = None
         self._sp_hop_bound_source = None
@@ -594,80 +604,57 @@ class DiagnosisPipeline:
             )
             return
 
+        from src.inference.scoring import validate_hop_bound
+        from src.inference.sp_index import (
+            SPArtifactError,
+            build_sp_index,
+            validate_sp_artifact,
+        )
+
+        # **Present and unreadable is a refusal, not a shrug.** This warned and
+        # returned, which made a corrupt table indistinguishable from an absent
+        # one: the operator saw the same "scoring will use pure GNN" they would
+        # have seen with no file at all, and the remedy for each is the
+        # opposite. Removing the file reaches the absent path deliberately.
         try:
             sp_data = torch.load(sp_path, map_location="cpu", weights_only=True)
-        except Exception as e:
-            logger.warning(f"Failed to load {sp_path}: {e}")
-            return
+        except Exception as exc:
+            raise SPArtifactError(
+                f"{sp_path} is present and could not be read "
+                f"({type(exc).__name__}: {exc}). An unreadable table is not an "
+                "absent one; remove the file to serve without shortest paths."
+            ) from exc
 
-        # Validate expected keys
-        required = {"phenotype_idx", "target_idx", "target_type", "distance"}
-        if not required.issubset(sp_data.keys()):
-            logger.warning(
-                f"shortest_paths.pt missing required keys. "
-                f"Expected {required}, got {set(sp_data.keys())}"
+        required = ("phenotype_idx", "target_idx", "target_type", "distance")
+        missing = [key for key in required if key not in sp_data]
+        if missing:
+            raise SPArtifactError(
+                f"{sp_path} is missing {missing}. The columns are parallel and "
+                "the index cannot be built from a subset of them."
             )
-            return
+        n_pairs = int(sp_data["distance"].numel())
 
-        n_pairs = sp_data["distance"].numel()
-
-        # Compact to int32 one at a time, freeing originals to limit peak RAM.
-        ph_t = sp_data["phenotype_idx"].to(torch.int32)
-        del sp_data["phenotype_idx"]
-        tg_t = sp_data["target_idx"].to(torch.int32)
-        del sp_data["target_idx"]
-        ty_t = sp_data["target_type"].to(torch.int8)
-        del sp_data["target_type"]
-        di_t = sp_data["distance"]  # already int8
-        del sp_data
-
-        # Sort by phenotype_idx so each phenotype's entries are contiguous.
-        sort_idx = ph_t.argsort()
-        self._sp_ph = ph_t[sort_idx]
-        del ph_t
-        self._sp_tg = tg_t[sort_idx]
-        del tg_t
-        self._sp_ty = ty_t[sort_idx]
-        del ty_t
-        self._sp_di = di_t[sort_idx]
-        del di_t, sort_idx
-
-        # Build offset table using tensor ops (no .tolist()).
-        # Find indices where phenotype_idx changes value.
-        changes = torch.where(self._sp_ph[1:] != self._sp_ph[:-1])[0] + 1
-        starts = torch.cat([torch.zeros(1, dtype=torch.int64), changes])
-        ends = torch.cat([changes, torch.tensor([len(self._sp_ph)], dtype=torch.int64)])
-        unique_phs = self._sp_ph[starts].tolist()  # only ~19K ints, trivial
-        starts_list = starts.tolist()
-        ends_list = ends.tolist()
-        del changes, starts, ends
-
-        self._sp_offsets: Dict[int, Tuple[int, int]] = {}
-        for i, ph in enumerate(unique_phs):
-            self._sp_offsets[ph] = (starts_list[i], ends_list[i])
-
-        # **The ceiling, before anything is published.** `max_hops` sets the
-        # unreachable sentinel every shortest-path score is measured against, so
-        # a wrong one does not merely mis-score — it reorders candidates. The
-        # previous shape read the sidecar inside `except Exception: pass`, which
-        # meant a missing file, malformed JSON, an absent key, a string, a
-        # boolean or a value the producer would never write all arrived at the
-        # same silent 5.
-        from src.inference.scoring import SPLookup, validate_hop_bound
-
+        # **The ceiling, before the table is checked against it and before any
+        # of the expensive work.** `max_hops` sets the unreachable sentinel every
+        # shortest-path score is measured against, so a wrong one does not merely
+        # mis-score — it reorders candidates. It is resolved first because
+        # `validate_sp_artifact` checks the distances against it, and because a
+        # deployment that cannot establish it should not pay for a sort it is
+        # about to discard.
         meta_path = sp_path.with_suffix(".meta.json")
         if meta_path.exists():
             # **Present means binding.** A sidecar that is here and unusable is a
-            # broken artifact, not an absent one, and defaulting past it would
-            # score against a number its own file contradicts.
+            # broken deployment, not a silent default: the previous shape read it
+            # inside `except Exception: pass`, so a missing file, malformed JSON,
+            # an absent key, a string, a boolean and a value the producer would
+            # never write all arrived at the same silent 5.
             try:
                 meta = json.loads(meta_path.read_text())
             except Exception as exc:
                 raise ValueError(
                     f"{meta_path} is present but not readable JSON "
-                    f"({type(exc).__name__}). It carries the hop bound the "
-                    "tensors do not; serving past it would score against a "
-                    "ceiling nobody chose."
+                    f"({type(exc).__name__}: {exc}). The hop bound it declares "
+                    "cannot be recovered from the tensors."
                 ) from exc
             if not isinstance(meta, dict):
                 raise ValueError(
@@ -676,13 +663,9 @@ class DiagnosisPipeline:
             max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
             hop_bound_source = "sidecar"
         elif self.config.sp_hop_bound is not None:
-            # **Stated by the deployment, and validated like any other.** This is
-            # the cheap recovery a missing sidecar needs: the producer has no
-            # metadata-only mode and re-running the BFS is the heaviest
-            # prerequisite there is, so an operator who knows what the table was
-            # built to says so here rather than rebuilding it. Recorded as
-            # `configured`, because a stated bound and a read one are different
-            # evidence.
+            # **Configuration is the cheap recovery a missing sidecar needs**: the
+            # producer has no metadata-only mode and re-running the BFS is the
+            # heaviest offline job this project has.
             max_hops = validate_hop_bound(
                 self.config.sp_hop_bound, "config.sp_hop_bound"
             )
@@ -693,10 +676,9 @@ class DiagnosisPipeline:
             # A previous revision assumed the producer's default of 5 here and
             # merely recorded that it had assumed. Recording a guess does not
             # stop it: a legitimate 3-hop table read against 5 reorders
-            # candidates, and the floor check below cannot see it because the
+            # candidates, and no check on the tensors can see it because the
             # observed maximum is 3 either way. The producer accepts 1..127, so
-            # that table is inside the supported range rather than a
-            # hypothetical.
+            # that table is inside the supported range rather than hypothetical.
             #
             # This is not a refusal of the workspace. The tensors are sound and
             # the pipeline serves without shortest paths — the state an absent
@@ -715,42 +697,45 @@ class DiagnosisPipeline:
             )
             return
 
-        # **A floor, and honest about being only that.** The distances recorded
-        # are bounded by the ceiling the table was built to, so `max(distance)`
-        # proves the bound is not too LOW and can never prove it is not too high:
-        # a 3-hop table is consistent with a declared 5. That one direction is
-        # still worth checking, because it is the direction a stale sidecar
-        # carried over from a smaller run fails in — and there the sentinel lands
-        # *below* real recorded distances, so an unreachable phenotype outranks a
-        # connected one. Costs a couple of milliseconds over hundreds of millions
-        # of int8 rows.
-        if n_pairs:
-            observed = int(self._sp_di.max())
-            if observed > max_hops:
-                raise ValueError(
-                    f"{sp_path} records a distance of {observed}, above the "
-                    f"max_hops={max_hops} taken from the {hop_bound_source}. The "
-                    "unreachable sentinel would sit below distances that are "
-                    "really in the table, which reorders candidates rather than "
-                    "merely mis-scoring them."
-                )
-
-        # Bundle the same tensors for the shared scoring primitives. The
-        # individual attributes stay exactly as they were — they are part of this
-        # class's observable surface — and this is a view over them, built once
-        # after max_hops is known.
-        lookup = SPLookup(
-            target=self._sp_tg,
-            target_type=self._sp_ty,
-            distance=self._sp_di,
-            offsets=self._sp_offsets,
-            max_hops=max_hops,
+        # **On the tensors as loaded.** Dtypes, dimensions, column lengths, signs,
+        # the producer's `target_type` encoding, and the distance ceiling — all
+        # before anything is cast. The ceiling check is a floor and honest about
+        # being one: `max(distance)` proves the declared bound is not too LOW and
+        # can never prove it is not too high, because a 3-hop table is consistent
+        # with a declared 5. That one direction is the direction a stale sidecar
+        # from a smaller run fails in, and there the sentinel lands *below*
+        # distances really in the table, so an unreachable phenotype outranks a
+        # connected one.
+        validate_sp_artifact(
+            sp_data["phenotype_idx"],
+            sp_data["target_idx"],
+            sp_data["target_type"],
+            sp_data["distance"],
+            max_hops,
+            source=str(sp_path),
         )
 
+        # **`pop`, not `[]`.** The builder reads the columns and never writes
+        # them, but it releases its own reference to each as it folds it into the
+        # key — and that only frees anything if this method is not still holding
+        # one. At hundreds of millions of rows the difference is the whole of the
+        # saving.
+        lookup = build_sp_index(
+            sp_data.pop("phenotype_idx"),
+            sp_data.pop("target_idx"),
+            sp_data.pop("target_type"),
+            sp_data.pop("distance"),
+            max_hops,
+        )
+        del sp_data
+
         # **Published last.** `_sp_ready` used to be set before the sidecar was
-        # read and before this view existed, so a refusal landed on a pipeline
+        # read and before the lookup existed, so a refusal landed on a pipeline
         # already advertising a usable lookup — and on a second call it was
-        # already True, making "publish only after validation" a no-op.
+        # already True, making "publish only after validation" a no-op. The index
+        # build joins that same fallible tail: it can refuse for duplicate rows
+        # or a domain int64 cannot hold, and those refusals must land before
+        # anything here is set.
         self._sp_max_hops = max_hops
         self._sp_hop_bound_source = hop_bound_source
         self._sp_lookup = lookup
@@ -758,7 +743,8 @@ class DiagnosisPipeline:
 
         logger.info(
             f"Loaded shortest paths: {n_pairs:,} pairs, "
-            f"max_hops={max_hops} ({hop_bound_source})"
+            f"max_hops={max_hops} ({hop_bound_source}), "
+            f"index {lookup.resident_bytes() / 1e9:.2f} GB resident"
         )
 
     def _load_model_from_checkpoint(
@@ -1329,10 +1315,8 @@ class DiagnosisPipeline:
         Returns 0.0 if the SP table is not loaded or no phenotypes can be
         looked up.
         """
-        from src.inference.scoring import (
-            sp_mean_distances,
-            sp_scores_from_distances,
-        )
+        from src.inference.scoring import sp_scores_from_distances
+        from src.inference.sp_index import sp_mean_distances
 
         if not self._sp_ready or self._sp_lookup is None:
             return 0.0

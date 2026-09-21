@@ -514,11 +514,21 @@ class TestShortestPathIntegration:
         )
         assert pipeline._gnn_ready
         assert pipeline._sp_ready
-        # CSR-style lookup: _sp_offsets maps phenotype_idx -> (start, end) into the flat
-        # _sp_tg/_sp_ty/_sp_di tensors (see DiagnosisPipeline._load_shortest_paths).
-        assert pipeline._sp_offsets is not None
-        assert len(pipeline._sp_offsets) > 0
-        assert len(pipeline._sp_di) > 0
+        # **Asserted through what the lookup does, not through its fields.** The
+        # previous version reached for `_sp_offsets` and `_sp_di`, which were the
+        # CSR layout's internals; 5a replaced that layout with a composite key
+        # and the assertions broke without anything about the pipeline's
+        # behaviour changing. What this test is for is that the table loaded and
+        # can be queried.
+        lookup = pipeline._sp_lookup
+        assert lookup is not None and lookup.n_rows > 0
+        assert lookup.max_hops == pipeline._sp_max_hops
+
+        from src.inference.sp_index import sp_mean_distances
+
+        distances, available = sp_mean_distances(lookup, [0], [0, 1], 1)
+        assert distances.dtype == torch.float64
+        assert available.tolist() == [True, True]
 
     def test_sp_optional_fallback_when_missing(
         self, medium_kg, gnn_model_and_data, tmp_path
@@ -678,8 +688,9 @@ class TestShortestPathIntegration:
 
         # Build SP table with the production script, then load it through the pipeline's OWN
         # loader. Hand-building the lookup state here is what let this test rot when the table
-        # moved from a per-pair dict to the CSR-style _sp_offsets layout; going through
-        # _load_shortest_paths keeps it honest against future changes to that structure.
+        # moved from a per-pair dict to a CSR layout, and again when 5a replaced that with a
+        # composite key; going through _load_shortest_paths keeps it honest against the next
+        # change to that structure, and there is now only one builder it could go through.
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "compute_shortest_paths",

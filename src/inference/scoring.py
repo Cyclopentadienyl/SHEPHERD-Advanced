@@ -30,8 +30,10 @@ shape is therefore not an optimisation to retrofit later, it is the interface.
 
 Separation of concerns, deliberately:
 
-  - **Lookup** (`sp_mean_distances`) returns the *measured quantity* — mean hop
-    distance — together with an availability mask.
+  - **Lookup** (`sp_index.sp_mean_distances`) returns the *measured quantity* —
+    mean hop distance — together with an availability mask. It lives in
+    `src/inference/sp_index.py` with the index it reads, because the lookup and
+    the structure it searches are one design and were briefly two.
   - **Transform** (`sp_scores_from_distances`) turns that into the score the
     system has historically used.
 
@@ -57,20 +59,17 @@ importable without torch.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Sequence
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
 __all__ = [
-    "SPLookup",
     "pool_patient_embeddings",
     "masked_mean_pool",
     "cosine_scores",
     "cosine_score_matrix",
-    "sp_mean_distances",
     "sp_scores_from_distances",
     "mix_embedding_and_sp_scores",
     "normalise_cosine_to_unit_interval",
@@ -128,36 +127,6 @@ def validate_hop_bound(value: Any, source: str) -> int:
             "from it."
         )
     return value
-
-
-@dataclass(frozen=True)
-class SPLookup:
-    """The CSR-style shortest-path table, as `_load_shortest_paths` builds it.
-
-    ``offsets`` maps a phenotype index to its ``(start, end)`` slice of the three
-    parallel tensors. A pair absent from a phenotype's slice means "no path found
-    within ``max_hops``".
-
-    Exactly one row exists per (phenotype, target, target_type): the offline BFS
-    records a node the first time it is reached, which is its minimum distance
-    (`scripts/compute_shortest_paths.py:79-89`). Lookup may therefore take the
-    first match without ambiguity.
-    """
-
-    target: Tensor
-    target_type: Tensor
-    distance: Tensor
-    offsets: Dict[int, Tuple[int, int]]
-    max_hops: int
-
-    @property
-    def unreachable_distance(self) -> float:
-        """What a phenotype contributes when it cannot reach the target.
-
-        One more than the search bound, so an unreachable phenotype penalises the
-        mean without erasing the contribution of the ones that did connect.
-        """
-        return float(self.max_hops + 1)
 
 
 # =============================================================================
@@ -284,100 +253,6 @@ def normalise_cosine_to_unit_interval(cosine: Tensor) -> Tensor:
     return (cosine + 1.0) / 2.0
 
 
-# =============================================================================
-# Shortest-path distance
-# =============================================================================
-def sp_mean_distances(
-    lookup: SPLookup,
-    phenotype_indices: Sequence[int],
-    target_indices: Sequence[int],
-    target_type_idx: int,
-) -> Tuple[Tensor, Tensor]:
-    """Mean hop distance from the patient's phenotypes to each candidate.
-
-    Returns ``(mean_distance, available)``, both ``(C,)``. ``available`` is False
-    only when there was nothing to measure from — no phenotype indices, or no
-    candidates. It is **not** the full unavailability contract: a missing table,
-    an unmapped target or an unmapped phenotype set are detected by the caller
-    before this function is reached. A candidate that is simply far away *is*
-    available, with a large distance.
-
-    A phenotype with no path to a candidate contributes
-    ``lookup.unreachable_distance`` rather than being dropped, so a candidate all
-    of whose phenotypes are unreachable is still *computed*: it has a real value,
-    the largest one.
-
-    **The result is float64, and that is a contract rather than a default.** The
-    code this replaces accumulated the total and divided in Python doubles
-    (`_calculate_sp_score` before commit `337266f`), so a float32 result would not
-    be behaviour-preserving: a mean such as 83/24 differs between the two at the
-    eighth significant digit.
-
-    That difference cannot reorder candidates, and the margin is worth stating in
-    one coordinate system at a time rather than mixing them. Within a single
-    result every candidate is scored against the same phenotype set, so ``N`` is
-    fixed and the achievable means are ``k / N``:
-
-      - **Raw distance.** Distinct means differ by at least ``1 / N``, so at the
-        contractual maximum of 100 phenotypes (`src/api/routes/diagnose.py:56`)
-        the smallest gap is 1e-2, against a float32 spacing near ``d = 6`` of
-        ``2**-21 = 4.8e-7`` — four orders of magnitude.
-      - **Transformed score.** The gap becomes about ``0.0204 / N``, so 2.0e-4 at
-        ``N = 100``, against a float32 spacing near ``1/7`` of ``2**-26 = 1.5e-8``
-        — again four orders of magnitude.
-
-    (Means with *different* denominators can come far closer — adjacent fractions
-    with denominators up to 64 differ by as little as ``1 / (63 * 64) = 2.5e-4``
-    — but that is a comparison across results with different phenotype counts,
-    which `docs/DISEASE_SCORER_POLICY.md` does not treat as commensurable anyway.)
-
-    The drift is corrected regardless of that margin: B-0 exists to make the
-    offline measurement describe the deployed system exactly, and "too small to
-    matter" is the argument that lets drift in. The tensor is one value per
-    candidate, so the memory cost of the wider type is nothing worth trading for.
-
-    **The interface is batched; this implementation is not yet vectorised.** It
-    scans each phenotype's slice once per candidate, so the cost is
-    ``O(candidates x phenotypes x slice length)`` — about 4,000 slice scans at 200
-    candidates and 20 phenotypes, and over 550,000 at full-universe scale. A
-    batched representation (sorted composite keys with ``torch.searchsorted``, or
-    a sparse index) replaces this next; the signature is already the one it will
-    have, so callers do not change. **That replacement inherits the float64
-    contract**, and inherits it for the *whole* computation: it is not free to
-    narrow the dtype back to float32 to save memory, and it may not reduce or
-    divide in float32 and then widen the rounded result into a float64 output.
-    Widening after the fact satisfies the output dtype while having already lost
-    the precision the contract is about.
-    """
-    n_candidates = len(target_indices)
-    distances = torch.zeros(n_candidates, dtype=torch.float64)
-    available = torch.zeros(n_candidates, dtype=torch.bool)
-
-    if not phenotype_indices or n_candidates == 0:
-        return distances, available
-
-    unreachable = lookup.unreachable_distance
-
-    for position, target_idx in enumerate(target_indices):
-        total = 0.0
-        for ph_idx in phenotype_indices:
-            offsets = lookup.offsets.get(ph_idx)
-            if offsets is None:
-                total += unreachable
-                continue
-            start, end = offsets
-            target_slice = lookup.target[start:end]
-            type_slice = lookup.target_type[start:end]
-            distance_slice = lookup.distance[start:end]
-            match = (target_slice == target_idx) & (type_slice == target_type_idx)
-            hits = distance_slice[match]
-            total += float(hits[0]) if len(hits) > 0 else unreachable
-        distances[position] = total / len(phenotype_indices)
-        available[position] = True
-
-    return distances, available
-
-
 def sp_scores_from_distances(mean_distances: Tensor) -> Tensor:
     """Convert mean hop distance to the similarity score, ``1 / (1 + d)``.
 
@@ -389,8 +264,8 @@ def sp_scores_from_distances(mean_distances: Tensor) -> Tensor:
     reason about.
 
     The output dtype follows the input's. Precision is therefore decided where the
-    distance is measured, not here; `sp_mean_distances` produces float64 for the
-    reason given there.
+    distance is measured, not here; `sp_index.sp_mean_distances` produces float64
+    for the reason given there.
     """
     return 1.0 / (1.0 + mean_distances)
 

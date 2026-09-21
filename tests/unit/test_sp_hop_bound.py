@@ -354,3 +354,134 @@ class TestTheProvenanceReachesACaller:
         status = _status_of(config, data_dir=None, checkpoint_path=None)
         assert status.sp_max_hops == 3
         assert status.sp_hop_bound_source == "sidecar"
+
+
+class TestTheLoaderRefusesAPresentButUnusableTable:
+    """**Absent and broken are different deployments.** The `torch.load` handler
+    warned and returned, so a corrupt artifact produced the same "scoring will
+    use pure GNN" line an absent one does — and the remedies are opposite. D1
+    resolved this to refusal; removing the file is how an operator reaches the
+    absent path deliberately.
+
+    Each case also checks that nothing was published. The index build joins the
+    fallible tail, so a refusal after the hop bound is resolved must still leave
+    `_sp_ready` False rather than a pipeline advertising a lookup it does not
+    have.
+    """
+
+    @staticmethod
+    def _pipeline(tmp_path, payload):
+        from src.inference.pipeline import DiagnosisPipeline
+
+        data_dir = tmp_path / "ws"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if isinstance(payload, bytes):
+            (data_dir / "shortest_paths.pt").write_bytes(payload)
+        else:
+            torch.save(payload, data_dir / "shortest_paths.pt")
+        (data_dir / "shortest_paths.meta.json").write_text(json.dumps({"max_hops": 5}))
+
+        pipeline = DiagnosisPipeline.__new__(DiagnosisPipeline)
+        pipeline.config = _config()
+        pipeline._sp_ready = False
+        pipeline._sp_lookup = None
+        pipeline._sp_max_hops = 5
+        pipeline._sp_hop_bound_source = None
+        return pipeline, data_dir
+
+    def test_an_unreadable_artifact_is_refused_rather_than_ignored(self, tmp_path):
+        pipeline, data_dir = self._pipeline(tmp_path, b"not a torch file at all")
+
+        with pytest.raises(ValueError, match="could not be read"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+    def test_a_missing_column_is_refused(self, tmp_path):
+        pipeline, data_dir = self._pipeline(
+            tmp_path, {"phenotype_idx": torch.zeros(3, dtype=torch.int64)}
+        )
+
+        with pytest.raises(ValueError, match="missing"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+
+    def test_duplicate_rows_are_refused_and_nothing_is_published(self, tmp_path):
+        """**The publish-last invariant, tested where it can actually fail.**
+        The duplicate check lives inside the index build, which runs after the
+        hop bound is resolved — so this is the case that catches a `_sp_ready`
+        set one line too early."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 0], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 4], dtype=torch.int64),
+                "target_type": torch.tensor([1, 1], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="duplicate"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False, "ready was published before the build"
+        assert pipeline._sp_lookup is None
+        assert pipeline._sp_hop_bound_source is None
+
+    def test_a_third_target_type_is_refused_as_an_artifact(self, tmp_path):
+        """The producer writes 0 and 1. A third value means the table came from
+        something else, and which rows are genes is then a guess."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 2], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="target_type"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+
+    def test_a_negative_id_is_refused_before_it_can_be_narrowed(self, tmp_path):
+        """**Before narrowing, which is the whole point of the ordering.** A
+        value the narrow type cannot hold does not raise on the way in — it
+        wraps — so a check afterwards inspects the wrapped value."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, -5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 1], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="negative"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+
+    def test_the_sound_table_still_loads(self, tmp_path):
+        """Without this, every refusal above holds for a loader that refuses
+        everything."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 0], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is True
+        assert pipeline._sp_lookup.n_rows == 2
+        assert pipeline._sp_hop_bound_source == "sidecar"

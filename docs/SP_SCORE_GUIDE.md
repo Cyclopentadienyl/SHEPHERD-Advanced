@@ -396,7 +396,7 @@ UNREACHABLE = max_hops + 1                      # 6 with the default max_hops = 
 
 total = 0.0
 for ph_idx in patient_phenotype_indices:
-    d = lookup(ph_idx, target_idx, target_type)  # linear scan of this phenotype's slice
+    d = lookup(ph_idx, target_idx, target_type)  # binary search of a sorted composite key
     total += d if d is not None else UNREACHABLE
 
 avg_distance = total / len(patient_phenotype_indices)

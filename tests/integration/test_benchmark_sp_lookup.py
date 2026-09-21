@@ -68,16 +68,17 @@ def test_artifact_lookup_slices_are_the_files_own_rows(tmp_path):
     artifact = tmp_path / "shortest_paths.pt"
     expected = write_artifact(artifact)
 
-    lookup, lengths, disease_targets, provenance = build_artifact_lookup(artifact, 5)
+    columns, lengths, disease_targets, provenance = build_artifact_lookup(artifact, 5)
 
-    assert set(lookup.offsets) == set(expected)
-    for phenotype, targets in expected.items():
-        start, end = lookup.offsets[phenotype]
-        assert sorted(lookup.target[start:end].tolist()) == targets
-        assert end - start == len(targets)
-    assert lengths == [
-        lookup.offsets[p][1] - lookup.offsets[p][0] for p in sorted(lookup.offsets)
-    ]
+    phenotype, target, _, _ = columns
+    by_phenotype = {}
+    for p, t in zip(phenotype.tolist(), target.tolist()):
+        by_phenotype.setdefault(p, []).append(t)
+
+    assert set(by_phenotype) == set(expected)
+    for p, targets in expected.items():
+        assert sorted(by_phenotype[p]) == targets
+    assert lengths == [len(by_phenotype[p]) for p in sorted(by_phenotype)]
     assert provenance["n_pairs"] == sum(len(v) for v in expected.values())
     assert len(provenance["sha256"]) == 64
 
@@ -87,10 +88,11 @@ def test_candidates_are_drawn_from_the_real_disease_target_space(tmp_path):
     artifact = tmp_path / "shortest_paths.pt"
     write_artifact(artifact)
 
-    lookup, _, disease_targets, _ = build_artifact_lookup(artifact, 5)
+    columns, _, disease_targets, _ = build_artifact_lookup(artifact, 5)
 
+    _, target, target_type, _ = columns
     assert disease_targets, "fixture produced no disease targets"
-    present = set(lookup.target[lookup.target_type == 1].tolist())
+    present = set(target[target_type == 1].tolist())
     assert set(disease_targets) == present
 
 
@@ -199,7 +201,7 @@ def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatc
 
 
 # =============================================================================
-# Prototype selection (B-0.4 prototype phase)
+# Implementation comparison (5a: the served index against the reference)
 # =============================================================================
 @linux_only
 def test_unknown_implementation_is_rejected():
@@ -207,15 +209,15 @@ def test_unknown_implementation_is_rejected():
     from scripts.benchmark_sp_lookup import main
 
     with pytest.raises(SystemExit):
-        main(["--implementations", "current,globl"])
+        main(["--implementations", "indexed,referenc"])
 
 
 @linux_only
 def test_memory_attribution_flag_is_honest(tmp_path, monkeypatch):
-    """`ru_maxrss` is a process high-water mark, so two prototypes in one process
+    """`ru_maxrss` is a process high-water mark, so two tables in one process
     cannot both be attributed. The report must say so rather than imply isolation.
 
-    Asserted in both directions: one prototype is isolated, two are not.
+    Asserted in both directions: one table is isolated, two are not.
     """
     import scripts.benchmark_sp_lookup as bench
 
@@ -228,19 +230,19 @@ def test_memory_attribution_flag_is_honest(tmp_path, monkeypatch):
     monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
 
     one = tmp_path / "one.json"
-    assert bench.main(["--implementations", "global", "--output", str(one)]) == 0
+    assert bench.main(["--implementations", "indexed", "--output", str(one)]) == 0
     single = json.loads(one.read_text())
     assert single["memory_attribution_isolated"] is True
-    assert single["stage"] == "B-0.4 prototype"
-    assert [b["implementation"] for b in single["index_builds"]] == ["global"]
+    assert single["stage"] == "5a served primitive"
+    assert [b["implementation"] for b in single["index_builds"]] == ["indexed"]
 
     both = tmp_path / "both.json"
     assert bench.main(
-        ["--implementations", "current,global,slices", "--output", str(both)]
+        ["--implementations", "indexed,reference", "--output", str(both)]
     ) == 0
     pair = json.loads(both.read_text())
     assert pair["memory_attribution_isolated"] is False
-    assert pair["implementations"] == ["current", "global", "slices"]
+    assert pair["implementations"] == ["indexed", "reference"]
 
 
 @linux_only
@@ -258,7 +260,7 @@ def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
 
     output = tmp_path / "cells.json"
     assert bench.main(
-        ["--implementations", "current,global,slices", "--output", str(output)]
+        ["--implementations", "indexed,reference", "--output", str(output)]
     ) == 0
     rows = json.loads(output.read_text())["rows"]
 
@@ -269,8 +271,8 @@ def test_every_implementation_sees_the_same_cells(tmp_path, monkeypatch):
             for r in rows if r["implementation"] == name
         )
 
-    assert cells("current") == cells("global") == cells("slices")
-    assert cells("current"), "the matrix produced no rows to compare"
+    assert cells("indexed") == cells("reference")
+    assert cells("indexed"), "the matrix produced no rows to compare"
 
 
 @linux_only
@@ -295,7 +297,7 @@ def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, mon
 
     output = tmp_path / "rotation.json"
     assert bench.main(
-        ["--implementations", "current,global,slices", "--output", str(output)]
+        ["--implementations", "indexed,reference", "--output", str(output)]
     ) == 0
     rows = json.loads(output.read_text())["rows"]
 
@@ -308,9 +310,9 @@ def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, mon
         first_per_cell[key] = row["implementation"]
 
     assert len(first_per_cell) > 1, "fixture must produce more than one timed cell"
-    assert "current" in first_per_cell.values(), "no cell measured current first"
-    assert {v for v in first_per_cell.values()} - {"current"}, (
-        f"no cell measured a prototype first: {first_per_cell}"
+    assert "indexed" in first_per_cell.values(), "no cell measured indexed first"
+    assert {v for v in first_per_cell.values()} - {"indexed"}, (
+        f"no cell measured the reference first: {first_per_cell}"
     )
 
     def workload(name):
@@ -320,7 +322,7 @@ def test_implementation_order_rotates_and_workload_stays_identical(tmp_path, mon
             for r in rows if r["implementation"] == name
         )
 
-    assert workload("current") == workload("global") == workload("slices")
+    assert workload("indexed") == workload("reference")
 
 
 @linux_only
@@ -383,17 +385,20 @@ def test_a_cell_wanting_more_candidates_than_exist_is_reported_skipped(tmp_path,
 
 
 @linux_only
-@pytest.mark.parametrize("prototype", ["global", "slices"])
-def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, prototype):
-    """BLOCKING regression: run the **documented two-implementation configs**.
+def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch):
+    """BLOCKING regression: run the **documented two-implementation config**.
 
     An earlier version chose the shape order with `(cell_index + position) % 2`,
     meaning to decorrelate it from the rotated implementation order. With two
     implementations the rotation moves `position` in lockstep with `cell_index`,
     so the sum was constant per implementation *identity*: on the real artifact
-    `current` came out singleton-first in 60/60 rows and the prototype
-    batched-first in 60/60. Any warm-up or cache asymmetry between the shapes
-    then attached permanently to one implementation.
+    one came out singleton-first in 60/60 rows and the other batched-first in
+    60/60. Any warm-up or cache asymmetry between the shapes then attached
+    permanently to one implementation.
+
+    Still two implementations after 5a, and still worth running as a pair: the
+    served index and the independent reference are exactly the comparison this
+    regression could corrupt.
 
     A single-implementation run cannot see this, and the previous test used one.
     These use `current,global` and `current,slices` — the two commands PLAN_B04
@@ -409,13 +414,13 @@ def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, 
     monkeypatch.setattr(bench, "MAX_REPEATS", 1)
     monkeypatch.setattr(bench, "TARGET_MEASURE_SECONDS", 0.0)
 
-    output = tmp_path / f"order_{prototype}.json"
+    output = tmp_path / "order_indexed_reference.json"
     assert bench.main(
-        ["--implementations", f"current,{prototype}", "--output", str(output)]
+        ["--implementations", "indexed,reference", "--output", str(output)]
     ) == 0
     rows = json.loads(output.read_text())["rows"]
 
-    for implementation in ("current", prototype):
+    for implementation in ("indexed", "reference"):
         orders = {r["measured_first"] for r in rows if r["implementation"] == implementation}
         assert orders == {"singleton", "batched"}, (
             f"{implementation} was always measured {orders} first across every "
@@ -426,7 +431,7 @@ def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, 
     positions = {
         (r["implementation"], r["implementation_position"]) for r in rows
     }
-    for implementation in ("current", prototype):
+    for implementation in ("indexed", "reference"):
         assert {p for i, p in positions if i == implementation} == {0, 1}, implementation
 
     def workload(name):
@@ -436,7 +441,7 @@ def test_shape_order_alternates_for_every_implementation(tmp_path, monkeypatch, 
             for r in rows if r["implementation"] == name
         )
 
-    assert workload("current") == workload(prototype)
+    assert workload("indexed") == workload("reference")
 
     # Within one cell every implementation must share the shape order, which is
     # what keeps the two comparable at all.
