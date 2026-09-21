@@ -456,12 +456,13 @@ the gate is not claimed complete.
 
 ---
 
-## 8. Three adjacent defects, recorded and deliberately not bundled
+## 8. Four adjacent defects, recorded and deliberately not bundled
 
-Found while reading the SP path. All three are in
+Found while reading the SP path. The first three are in
 `scripts/compute_shortest_paths.py` or its sidecar contract — a different entry
-point from the one this plan edits. **They are listed so they are not lost, and
-excluded so this change stays reviewable.**
+point from the one this plan edits. The fourth is in the served primitive
+itself and is listed last, with the reason it is still not bundled. **They are
+listed so they are not lost, and excluded so this change stays reviewable.**
 
 1. **`max_hops` falls back to 5 in silence — FIXED, ahead of the indexed path
    as §10 step 0 requires.** The investigation changed the fix materially from
@@ -503,10 +504,42 @@ excluded so this change stays reviewable.**
    written into a workspace they were not computed from, with nothing binding
    them.
 
-Proposal: defects 2 and 3 become one small backlog item after 5a lands. **Defect
-1 is not among them** — it is listed in §10 as step 0, a precondition of
-activating the indexed path, and the draft's closing line contradicted that by
-sweeping all three into the same post-5a bucket.
+4. **The scan accepts an out-of-domain target and answers about a different
+   one.** `sp_mean_distances` compares an int32 column against a Python int
+   (`src/inference/scoring.py:372`), and torch does not refuse a scalar the
+   dtype cannot hold — it wraps it. Measured on a two-row lookup with
+   torch 2.10.0+cu130:
+
+   ```
+   int32 tensor([0,1,2]) == 2**32  ->  [True, False, False]
+   int8  tensor([0,1,2]) == 256    ->  [True, False, False]
+
+   target=2**32      scan=[1.0]  global=[6.0]
+   target_type=256   scan=[1.0]  global=[6.0]
+   ```
+
+   So a caller asking about target `2**32` receives **target 0's real
+   distance**, marked available. Approach A masks the out-of-domain id and
+   returns unreachable, which is why the two disagree.
+
+   **Why it is not bundled, and what it constrains.** It is pre-existing and
+   independent of the index: the scan has behaved this way since B-0, and no
+   caller on the diagnosis path is known to supply an out-of-domain id — node
+   indices come from the graph's own mapping (`pipeline.py:1352`, `:1358`).
+   Fixing it edits `src/inference/scoring.py`, which this plan may not touch
+   until it is approved. What it does constrain is **step 4**: once dispatch
+   chooses between the index and the scan, this is two shipped paths giving
+   different answers to the same call, so the equivalence tests must cover the
+   aliasing case explicitly. The existing equivalence test uses
+   `[-1, 0, 10_000]` (`tests/unit/test_sp_index_prototypes.py:176`), none of
+   which aliases, which is why the suite has never seen it.
+
+Proposal: defects 2 and 3 become one small backlog item after 5a lands, and
+defect 4 joins them or becomes its own item — the reviewer's call, since unlike
+2 and 3 it is on the served path. **Defect 1 is not among them** — it is listed
+in §10 as step 0, a precondition of activating the indexed path, and the draft's
+closing line contradicted that by sweeping all three into the same post-5a
+bucket.
 
 ---
 
@@ -523,10 +556,59 @@ shape. No pre-built response to a gate failure that has not happened.
 0. **`max_hops` sidecar defect fixed, reviewed and landed** (§8.1). A
    precondition of step 3, not of steps 1-2.
 1. This plan reviewed and approved.
-2. Move A to `src/inference/sp_index.py`; prototypes module re-exports it. A
-   references no part of B — every `slices` symbol in that file is below A's
-   section — so the move is a clean lift. The 28 existing tests pass unchanged,
-   against the moved code.
+2. Move A to `src/inference/sp_index.py`; prototypes module re-exports it. The
+   28 existing tests pass unchanged, against the moved code.
+
+   **The stated justification was checked and does not hold; the step still
+   does, on a narrower one.** "Every `slices` symbol in that file is below A's
+   section" is untrue as written — `__all__` names all three B symbols at
+   `scripts/sp_index_prototypes.py:46,48,50`, above A's section header at
+   `:189` — though they are string literals, so nothing follows from it. What
+   is true, and was verified by an AST closure rather than by reading: **no A
+   symbol reaches any B symbol**, in either the public or the private direction.
+
+   **But "clean lift" is wrong, and the difference is the whole of step 2's
+   work.** A's three public symbols have a transitive closure of nine
+   file-internal names defined *outside* A's section — `DuplicateRowError`,
+   `_Domain`, `_derive_domain`, `_phenotype_column`, `_tensor_bytes`,
+   `_all_unreachable`, `_empty_result`, `INT64_MAX`, `_DUPLICATE_MESSAGE` — and
+   **B requires every one of them too**. Moving lines 189-342 alone yields nine
+   `NameError`s; moving them with their helpers makes B import private names
+   back out of `src.inference.sp_index`. A tenth helper, `_query_values`
+   (`:172-185`), sits under the "Shared helpers" banner and is called **only**
+   by B (`:463`), so a mechanical "take the shared block as well" drags a
+   B-only function into production. The physical section banners do not match
+   the actual A/B usage, and the split has to follow the usage.
+
+   **A split that drops one of the nine is invisible to this gate.** The module
+   carries `from __future__ import annotations`, so a dataclass field annotated
+   with a name that is no longer in scope constructs *and instantiates* without
+   error — measured. The 28 tests do not exercise it, and `make check` runs
+   `lint-imports` and the tests rather than `make lint`. `scripts/sp_index_prototypes.py`
+   has therefore been added to `_F821_CLEAN` (`tests/unit/test_training_provenance.py`),
+   which is the one check in the default gate that sees it.
+
+   **§4 and this step do not agree, and the reviewer has to settle it.** §4
+   places `build_global_key_index_presorted` — "new code and not a move" — in
+   the file this step creates, and requires `build_global_key_index` to remain
+   in the prototypes module as the **sorting wrapper**, which is not a
+   re-export. That seam is D4's, and D4 is open. Either step 2 is the literal
+   move described here and D4's seam arrives with step 3, or step 2 builds the
+   seam and is no longer a move. **This plan does not choose**; it records that
+   the two sections currently describe different work.
+
+   **One forward-compatibility fact the choice should be made against.** At the
+   point the loader must apply D3's composite sort (`src/inference/pipeline.py:625`),
+   neither `_sp_offsets` (`:645-647`) nor `max_hops` (`:676`) exists yet — but A's
+   only public builder takes a `lookup` and needs both, through
+   `_phenotype_column` reading `lookup.offsets` and the constructor snapshotting
+   `unreachable_distance`. `build_global_key_index_presorted` as §4 describes it
+   takes a lookup too, so it does not by itself resolve this. What the loader
+   can call at sort time is the domain derivation, which already takes raw
+   columns — and it is private. Also: the loader *has* `_sp_ph` (`:626`, never
+   deleted), so a lookup-only signature makes `_phenotype_column` rebuild a
+   column that already exists — 3.44 GB at the 429,971,678 rows
+   `scripts/sp_index_prototypes.py:19` quotes.
 3. Wire the index into `_load_shortest_paths` per D1-D3.
 4. Dispatch in `sp_mean_distances`; equivalence tests indexed-vs-scan.
 5. Mutation-check the load-time uniqueness assertion and the dispatch.

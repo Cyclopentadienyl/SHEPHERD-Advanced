@@ -406,7 +406,8 @@ return 1.0 / (1.0 + avg_distance)                # → [1/7, 1/2]
 **Two distinct return regimes, currently indistinguishable to a caller.** The computation above
 yields a value in `[1/7, 1/2]`. Separately, the function returns **`0.0`** when it cannot compute at
 all — no shortest-path table loaded, no node mapping, the target absent from the mapping, or none of
-the patient's phenotypes resolvable (`src/inference/pipeline.py:1333, 1337, 1347, 1358`). Because
+the patient's phenotypes resolvable (`src/inference/pipeline.py:1338, 1342, 1352, 1363`), and a fifth
+the earlier text did not name: the primitive reporting `available[0]` false (`:1374`). Because
 `0.0 < 1/7`, **a lookup or mapping failure produces a lower value than a genuine "no path found"**,
 and nothing currently distinguishes the two. Any surface that displays SP should treat `0.0` as
 *unavailable*, not as a distance.

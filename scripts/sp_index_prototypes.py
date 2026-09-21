@@ -79,9 +79,13 @@ class _Domain:
     """The id ranges actually present in a table, and the strides built from them.
 
     **Every number comes from the tensors, never from
-    `shortest_paths.meta.json`.** The loader treats that sidecar as optional and
-    swallows any failure reading it (`pipeline.py:523-531`), and it can be stale
-    or mismatched with the `.pt` beside it. Correctness may not depend on it.
+    `shortest_paths.meta.json`.** The conclusion is unchanged; the reason
+    recorded here was, and had stopped being true. A sidecar that is *present*
+    is now binding: the loader raises rather than guessing when it cannot be
+    read, and leaves shortest-path scoring off when no bound can be established
+    at all (`pipeline.py:658-676`). What the sidecar states is `max_hops` — not
+    the id ranges — and it can still be stale relative to the `.pt` beside it.
+    The domains are a property of the rows, so they are read from the rows.
     """
 
     max_phenotype: int
@@ -135,9 +139,10 @@ def _derive_domain(phenotype: Tensor, target: Tensor, target_type: Tensor) -> _D
 def _phenotype_column(lookup) -> Tensor:
     """Rebuild the phenotype column `SPLookup` discarded in favour of `offsets`.
 
-    The loader keeps `_sp_ph` but `SPLookup` does not carry it, so approach A
-    reconstructs it. Contiguity is guaranteed by the loader's phenotype sort
-    (`pipeline.py:496-519`), so this is one assignment per phenotype rather than
+    The loader keeps `_sp_ph` — assigned at `pipeline.py:626` and never deleted
+    — but `SPLookup` does not carry it, so approach A reconstructs it.
+    Contiguity is guaranteed by the loader's phenotype sort
+    (`pipeline.py:625-632`), so this is one assignment per phenotype rather than
     per row.
     """
     column = torch.empty(lookup.target.numel(), dtype=torch.int64)
@@ -194,7 +199,7 @@ class GlobalKeyIndex:
 
     `target`, `target_type` and `phenotype` are **not** retained: the key encodes
     all three. A production adoption would still have to keep them, because
-    `pipeline.py:533-536` calls `_sp_tg`/`_sp_ty`/`_sp_di` part of the class's
+    `pipeline.py:742-748` makes `_sp_tg`/`_sp_ty`/`_sp_di` part of the class's
     observable surface — so the memory this prototype reports is a **lower bound**
     on approach A's resident cost, not an estimate of it.
     """
@@ -220,7 +225,7 @@ class GlobalKeyIndex:
         retaining both copies: the key column, and nothing else.
 
         A projection from the design, not a measurement — and a **lower bound** on
-        the real thing, since `pipeline.py:533-536` calls `_sp_tg`/`_sp_ty`/`_sp_di`
+        the real thing, since `pipeline.py:742-748` makes `_sp_tg`/`_sp_ty`/`_sp_di`
         part of the class's observable surface, so production would keep the
         reordered target and target_type as well. The transient cost of the
         reorder itself is not here; only the RSS figures capture that.
@@ -277,7 +282,7 @@ def sp_mean_distances_global(
 
     **float64 for the whole computation**, per the primitive's contract. The sum
     is exact whatever its order: distances are BFS hop counts stored as int8
-    (`pipeline.py:493`) and `unreachable_distance` is `max_hops + 1`, so every
+    (`pipeline.py:621`) and `unreachable_distance` is `max_hops + 1`, so every
     term is a small integer and every partial sum is an integer well inside
     float64's exactly-representable range. Pairwise or sequential summation give
     the same bits, which is what lets the equivalence test assert equality rather

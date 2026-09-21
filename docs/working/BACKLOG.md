@@ -739,7 +739,7 @@ structural claim that decays.
 
 | Line | Files it touches |
 |---|---|
-| **B-0.4** (item 5) | `scripts/benchmark_sp_lookup.py`; `src/inference/scoring.py` — `sp_mean_distances`, `SPLookup`; `tests/unit/test_scoring_primitives.py` |
+| **B-0.4** (item 5) | `scripts/benchmark_sp_lookup.py`; `scripts/sp_index_prototypes.py` — both prototypes; `src/inference/scoring.py` — `sp_mean_distances`, `SPLookup`; `tests/unit/test_scoring_primitives.py`; `tests/unit/test_sp_index_prototypes.py`; `tests/integration/test_benchmark_sp_lookup.py` |
 | **Calibration** (1b-1e) | `src/training/trainer.py`; `src/evaluation/measurement.py`; `scripts/measure_scorer.py`; `scripts/calibrate_mode_a.py`; new trainer and D3 tests |
 
 **Disjoint, and the layer contract keeps them that way.** The one file that could
@@ -747,7 +747,9 @@ have been shared is `src/inference/scoring.py` — it holds both the SP primitiv
 B-0.4 rewrites *and* the cosine primitives a naive extraction might have reached
 for. `src.training` sits **below** `src.inference`, so the trainer cannot import
 them; `trainer.py` today imports only `src.training.*` and `src.utils.*`, and
-`make lint-imports` reports 3 contracts kept. A B-0.4 regression therefore has no
+`make lint-imports` reports 4 contracts kept — 3 when this paragraph was
+written, and `scorer-independence` was added afterwards to close the direction
+the layers contract cannot express. A B-0.4 regression therefore has no
 path to the calibration reference.
 
 **Only two orderings are genuinely forced**, both already in the table:
