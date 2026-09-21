@@ -995,6 +995,34 @@ class TestAFileThatParsesIsNotARecord:
         assert not status.is_known
 
 
+#: Imports this module with the POSIX-only id functions removed, which is what
+#: a Windows `os` amounts to for the purpose at hand. Defined once so the
+#: simulation and the test of the simulation run the same bytes.
+#:
+#: **The removal is conditional, and that is the whole point.** `del os.geteuid`
+#: raises `AttributeError` on a host that never had it — so an unconditional
+#: delete turns this regression test into a failure on exactly the platform it
+#: was written to protect, before the import it is checking ever runs.
+#:
+#: The whole family goes, not just `geteuid`: the defect is *a POSIX-only `os`
+#: attribute read at import time*, and pinning the test to one symbol would let
+#: the same mistake back in under `getuid`.
+_IMPORT_WITH_NO_POSIX_IDS = """
+import importlib
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+for name in ("geteuid", "getuid", "getegid", "getgid"):
+    if hasattr(os, name):
+        delattr(os, name)
+    assert not hasattr(os, name), name
+
+importlib.import_module("tests.unit.test_kg_provenance")
+print("collected")
+"""
+
+
 class TestThisModuleCollectsOnAPlatformWithoutPosixIds:
     """**A skip condition runs at import, before pytest can skip anything.**
 
@@ -1005,31 +1033,66 @@ class TestThisModuleCollectsOnAPlatformWithoutPosixIds:
     down with it. The predicates are measured now and touch only `os.chmod` and
     `open`, which exist everywhere.
 
-    Checked by importing this module in a subprocess whose `os` has no
-    `geteuid`, which is what the platform difference amounts to. Asserting on
-    the source text instead would pass for any spelling that still called it.
+    Checked by importing this module in a subprocess whose `os` has had those
+    attributes removed, which is what the platform difference amounts to.
+    Asserting on the source text instead would pass for any spelling that still
+    called them.
+
+    **Neither test here is a Windows run**, and nothing in this file can be:
+    both machines this project is developed on are Linux aarch64. What they
+    establish is that the module imports without those attributes, and that the
+    check itself does not assume the host has them.
     """
 
-    def test_importing_it_without_os_geteuid_succeeds(self):
+    @staticmethod
+    def _run(program, *, host_has_posix_ids=True):
         import subprocess
         import sys
 
         root = Path(__file__).resolve().parents[2]
-        result = subprocess.run(
-            [sys.executable, "-c",
-             "import os, sys\n"
-             "sys.path.insert(0, sys.argv[1])\n"
-             "del os.geteuid\n"
-             "assert not hasattr(os, 'geteuid')\n"
-             "import importlib\n"
-             "importlib.import_module('tests.unit.test_kg_provenance')\n"
-             "print('collected')",
-             str(root)],
-            capture_output=True, text=True, cwd=str(root),
-        )
+        if host_has_posix_ids:
+            argv = [sys.executable, "-c", program, str(root)]
+        else:
+            # A host that never had them, so the program meets the same `os` a
+            # Windows interpreter would hand it.
+            argv = [
+                sys.executable, "-c",
+                "import os, sys\n"
+                "for name in ('geteuid', 'getuid', 'getegid', 'getgid'):\n"
+                "    if hasattr(os, name):\n"
+                "        delattr(os, name)\n"
+                "exec(compile(sys.argv[2], '<program>', 'exec'))\n",
+                str(root), program,
+            ]
+        return subprocess.run(argv, capture_output=True, text=True, cwd=str(root))
+
+    def test_importing_it_without_the_posix_ids_succeeds(self):
+        result = self._run(_IMPORT_WITH_NO_POSIX_IDS)
 
         assert result.returncode == 0, (
-            "this module cannot be imported where os.geteuid is absent, which "
-            f"is every Windows checkout:\n{result.stderr[-2000:]}"
+            "this module cannot be imported where the POSIX id functions are "
+            f"absent, which is every Windows checkout:\n{result.stderr[-2000:]}"
+        )
+        assert "collected" in result.stdout
+
+    def test_the_check_itself_does_not_assume_a_posix_host(self):
+        """**The regression test for the regression test.**
+
+        Its first version opened with an unconditional `del os.geteuid`, which
+        raises on a host that does not have it — so on Windows this file failed
+        at the one test written to prove it would not. The failure is invisible
+        from Linux, where the delete always succeeds, so the host is simulated
+        rather than assumed: the program runs against an `os` with the family
+        already gone, which is the state a Windows interpreter starts in.
+
+        Still not a Windows run. It is the part of the Windows failure that can
+        be reproduced here, and it is the part that was wrong.
+        """
+        result = self._run(_IMPORT_WITH_NO_POSIX_IDS, host_has_posix_ids=False)
+
+        assert result.returncode == 0, (
+            "the check assumes the host has the attributes it removes, so it "
+            "fails on the platform it exists to protect:\n"
+            f"{result.stderr[-2000:]}"
         )
         assert "collected" in result.stdout
