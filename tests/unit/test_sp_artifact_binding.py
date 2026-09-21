@@ -578,6 +578,54 @@ class TestTheLoaderEnforcesTheBinding:
         assert pipeline._sp_ready is False
         assert pipeline._sp_lookup is None
 
+    def test_a_corrupt_sidecar_beside_an_empty_table_is_refused(self, tmp_path):
+        """What moving the checks above the empty return actually bought. The
+        sidecar is read, parsed and validated before "no rows, treat as
+        absent", so a broken one is refused rather than going unconsulted."""
+        publish(tmp_path, kg_digest=DIGEST_A, data=rows(0))
+        sidecar_path(Path(tmp_path) / "shortest_paths.pt").write_text("{not json")
+
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+        with pytest.raises(ValueError, match="not readable JSON"):
+            pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
+
+    @pytest.mark.parametrize("max_hops", [None, 0, "five"])
+    def test_an_empty_table_does_not_validate_the_hop_bound(self, tmp_path, max_hops):
+        """**The gap that remains, pinned rather than assumed.** `max_hops` is
+        the sentinel distances are scored against, and an empty table scores
+        nothing, so the bound is never resolved and never refused. Stated here
+        so the boundary is a measured fact — and so narrowing it later is a
+        deliberate change with a failing test, not a silent one."""
+        publish(tmp_path, kg_digest=DIGEST_A, data=rows(0))
+        meta_path = sidecar_path(Path(tmp_path) / "shortest_paths.pt")
+        declared = json.loads(meta_path.read_text())
+        if max_hops is None:
+            declared.pop("max_hops")
+        else:
+            declared["max_hops"] = max_hops
+        meta_path.write_text(json.dumps(declared))
+
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+        pipeline._load_shortest_paths(Path(tmp_path))
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_hop_bound_source is None
+
+    def test_a_non_empty_table_does_validate_the_hop_bound(self, tmp_path):
+        """The mirror, so the test above is a statement about empty tables
+        rather than about the bound never being checked."""
+        publish(tmp_path, kg_digest=DIGEST_A)
+        meta_path = sidecar_path(Path(tmp_path) / "shortest_paths.pt")
+        declared = json.loads(meta_path.read_text())
+        declared["max_hops"] = "five"
+        meta_path.write_text(json.dumps(declared))
+
+        pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
+        with pytest.raises(ValueError):
+            pipeline._load_shortest_paths(Path(tmp_path))
+
     def test_a_directory_where_the_sidecar_should_be_is_refused(self, tmp_path):
         """`is_file()` answers False for a directory, so a check built on it
         alone hands the loader the fallback an absent sidecar takes — a

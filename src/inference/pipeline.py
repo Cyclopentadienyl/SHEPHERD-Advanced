@@ -734,10 +734,19 @@ class DiagnosisPipeline:
         # the pure-GNN score an absent file produces. Zero rows would change
         # both what the service reports and the numbers it returns.
         #
-        # Taken before the hop bound is resolved, because nothing here depends
-        # on it: an absent table does not read the sidecar either. The cost is
-        # that a corrupt sidecar beside an empty table is not refused; it is
-        # also not consulted, and SP is off either way.
+        # **Taken after the pair has been checked and before the hop bound is
+        # resolved**, and the comment this replaces described the older order.
+        # An empty table now reaches here having had its sidecar read, parsed,
+        # and its schema, pairing and graph binding validated — a corrupt
+        # sidecar beside an empty table is refused rather than ignored, which
+        # is what moving those checks above this return bought.
+        #
+        # What an empty table still skips is exactly `validate_hop_bound`:
+        # `max_hops` missing, zero or non-numeric is not refused here, because
+        # the bound is the sentinel distances are scored against and nothing
+        # will be scored. Measured, so the gap is stated rather than assumed —
+        # each of those three publishes an empty table with SP off, while a
+        # sidecar that is not readable JSON refuses.
         if n_pairs == 0:
             logger.warning(
                 "%s carries no rows. An empty table binds nothing, so it is "
