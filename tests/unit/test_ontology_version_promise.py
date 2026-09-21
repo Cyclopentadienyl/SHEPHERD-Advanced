@@ -32,11 +32,14 @@ def loader(tmp_path, monkeypatch):
     """
     from src.ontology.loader import OntologyLoader
 
-    (tmp_path / "mondo.obo").write_text("format-version: 1.2\n")
-    (tmp_path / "hpo.obo").write_text("format-version: 1.2\n")
+    # Enough of a header that the resolver can identify each file: selection
+    # now goes through `select_ontology_file`, which reads what a file declares
+    # rather than opening `<name>.obo` by convention.
+    (tmp_path / "mondo.obo").write_text("format-version: 1.2\nontology: mondo\n")
+    (tmp_path / "hpo.obo").write_text("format-version: 1.2\nontology: hpo\n")
 
     instance = OntologyLoader(cache_dir=tmp_path)
-    calls = {"download": 0, "load": 0}
+    calls = {"download": 0, "load": 0, "expect": []}
 
     def _fake_download(name, force):
         calls["download"] += 1
@@ -46,8 +49,9 @@ def loader(tmp_path, monkeypatch):
         """Accepts the attributes the loader sets after parsing; a bare
         `object()` cannot, which is the only thing this needs to be."""
 
-    def _fake_load(path):
+    def _fake_load(path, expect=None):
         calls["load"] += 1
+        calls["expect"].append(expect)
         return _Parsed()
 
     monkeypatch.setattr(instance, "_download_ontology", _fake_download)
@@ -80,7 +84,7 @@ class TestAVersionItCannotHonourIsRefused:
         with pytest.raises(ValueError):
             instance.load_mondo(version="v5")
 
-        assert calls == {"download": 0, "load": 0}
+        assert calls == {"download": 0, "load": 0, "expect": []}
 
     def test_two_different_versions_no_longer_pass_for_two_things(self, loader):
         """What the argument actually did. Both strings resolved to one file,
@@ -160,3 +164,28 @@ class TestForceDownloadIsNotCollateralDamage:
         instance.load_mondo()
 
         assert calls["load"] == 1, "the second call re-parsed instead of caching"
+
+
+class TestTheNamedLoadersPassTheirRole:
+    """The role check is only a gate where the role is supplied.
+
+    `load_hpo` knows it wants HPO. Not saying so left `PLAN_ONTOLOGY_PHASE2.md`
+    §3.4's check reachable only from the build script, so the same file was
+    refused through the CLI and accepted through the library.
+    """
+
+    @pytest.mark.parametrize("method,expected", [
+        ("load_mondo", "mondo"),
+        ("load_hpo", "hpo"),
+        ("load_go", "go"),
+        ("load_mp", "mp"),
+    ])
+    def test_the_role_reaches_load(self, loader, tmp_path, method, expected):
+        instance, calls, _ = loader
+        (tmp_path / f"{expected}.obo").write_text(
+            f"format-version: 1.2\nontology: {expected}\n"
+        )
+
+        getattr(instance, method)()
+
+        assert calls["expect"] == [expected]

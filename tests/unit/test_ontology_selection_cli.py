@@ -56,15 +56,31 @@ def obo(path: Path, *, ontology="mondo", version="releases/2026-09-01",
 
 
 def owl(path: Path, *, version="http://purl.obolibrary.org/obo/mondo/2026-09-01/mondo.owl",
-        iri="http://purl.obolibrary.org/obo/mondo.owl") -> Path:
+        iri="http://purl.obolibrary.org/obo/mondo.owl", classes=1, imports=()) -> Path:
+    """Real RDF/XML, namespaces declared.
+
+    **The first version of this helper emitted `<rdf:RDF>` with no `xmlns`
+    declarations at all** — undeclared prefixes, so not well-formed XML and not
+    something any loader would open. It satisfied a scanner matching literal
+    text, which is how the scanner's namespace blindness went unnoticed. A
+    fixture that no real reader accepts cannot prove a reader accepts it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    body = [f'  <owl:Ontology rdf:about="{iri}">']
+    if version:
+        body.append(f'    <owl:versionIRI rdf:resource="{version}"/>')
+    body.extend(f'    <owl:imports rdf:resource="{item}"/>' for item in imports)
+    body.append("  </owl:Ontology>")
+    body += [
+        f'  <owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_{i:07d}"/>'
+        for i in range(classes)
+    ]
     path.write_text(
-        "<rdf:RDF>\n"
-        f'<owl:Ontology rdf:about="{iri}">\n'
-        f'  <owl:versionIRI rdf:resource="{version}"/>\n'
-        "</owl:Ontology>\n"
-        '<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_0000001"/>\n'
-        "</rdf:RDF>\n"
+        '<?xml version="1.0"?>\n'
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+        '         xmlns:owl="http://www.w3.org/2002/07/owl#">\n'
+        + "\n".join(body)
+        + "\n</rdf:RDF>\n"
     )
     return path
 
@@ -292,3 +308,137 @@ class TestProvenanceIsUnchangedInShape:
 
         assert file_sha256(loaded.source_path) == file_sha256(wanted)
         assert file_sha256(loaded.source_path) != file_sha256(cache / "mondo.obo")
+
+
+class TestTheNamedLoadersUseTheSameSelection:
+    """`load_mondo()` / `load_hpo()` are still public, and were a second rule.
+
+    They opened `<cache_dir>/<name>.obo` and fell back to `<name>.owl`, so a
+    cache holding both took the OBO **silently** — the implicit precedence
+    §3.1.2 declines to reinstate, still live on the library path while the CLI
+    refused. And they never passed the role they obviously knew, so the §3.4
+    check was reachable only from the build script.
+
+    Two semantics for one question is the parallel pipeline this phase exists to
+    avoid, so these enter through the public API rather than through
+    `load(..., expect=...)`.
+    """
+
+    @pytest.fixture
+    def offline(self, tmp_path, monkeypatch):
+        """No configured sources, so a miss cannot become a real download."""
+        import src.ontology.settings as settings_module
+
+        config = tmp_path / "offline.yaml"
+        config.write_text("ontology:\n  sources:\n    mondo: []\n    hpo: []\n")
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(config))
+
+    def test_load_hpo_applies_the_role_check(self, tmp_path, offline):
+        cache = tmp_path / "cache"
+        obo(cache / "hpo.obo", ontology="mondo", terms=("MONDO:0000001",))
+
+        with pytest.raises((OntologyRoleError, RuntimeError)):
+            OntologyLoader(cache_dir=cache).load_hpo()
+
+    def test_load_hpo_still_loads_a_correct_file(self, tmp_path, offline):
+        """Or the refusal above is a loader that rejects everything."""
+        cache = tmp_path / "cache"
+        obo(cache / "hpo.obo", ontology="hpo", terms=("HP:0000001",))
+
+        assert OntologyLoader(cache_dir=cache).load_hpo().num_terms == 1
+
+    def test_load_mondo_refuses_an_ambiguous_cache_like_the_cli(self, tmp_path, offline):
+        from src.ontology.resolver import AmbiguousOntologyError
+
+        cache = tmp_path / "cache"
+        obo(cache / "mondo.obo", version="releases/2026-09-01")
+        owl(cache / "mondo.owl")
+
+        with pytest.raises(AmbiguousOntologyError):
+            OntologyLoader(cache_dir=cache).load_mondo()
+
+    def test_the_owl_fixture_is_a_file_the_real_loader_accepts(self, tmp_path, offline):
+        """**The fixture has to be real or it proves nothing.** An earlier one
+        emitted undeclared XML prefixes that no reader would open, which is how
+        the scanner's namespace blindness survived a passing test."""
+        path = owl(tmp_path / "mondo.owl", classes=2)
+
+        loaded = OntologyLoader(cache_dir=tmp_path / "cache").load(path, expect="mondo")
+
+        assert loaded.num_terms >= 1
+
+
+class TestAPolicyRefusalIsNotAStaleCacheSuccess:
+    """§3.5's refusals reaching the operator instead of being logged past.
+
+    Every `OntologyDownloadError` used to be collected as a warning and the old
+    cache returned — so a destination this server may **never** fetch from was
+    reported as a successful build, on an input nobody asked for. The function's
+    own docstring said a refused destination is not a reason to fall back while
+    the code did exactly that.
+    """
+
+    @pytest.fixture
+    def blocked(self, tmp_path, monkeypatch, select):
+        """**Depends on `select` so it patches last.** `select` holds the
+        configuration empty; a fixture that ran before it would be overwritten,
+        the default PURLs would be used, and on a machine with a network the
+        test would quietly fetch the real ontology and prove nothing."""
+        import src.ontology.settings as settings_module
+
+        config = tmp_path / "blocked.yaml"
+        config.write_text(
+            "ontology:\n  sources:\n    mondo:\n      - http://127.0.0.1/blocked.obo\n"
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(config))
+
+    def test_force_download_against_a_refused_source_does_not_serve_the_cache(
+        self, tmp_path, blocked, select
+    ):
+        cache = tmp_path / "cache"
+        obo(cache / "mondo.obo", version="releases/2019-01-01")
+
+        with pytest.raises(RuntimeError, match="refused by the destination policy"):
+            select(cache_dir=cache, force_download=True,
+                   loader=OntologyLoader(cache_dir=cache))
+
+    def test_the_refusal_names_the_remedy(self, tmp_path, blocked, select):
+        cache = tmp_path / "cache"
+        obo(cache / "mondo.obo")
+
+        with pytest.raises(RuntimeError) as caught:
+            select(cache_dir=cache, force_download=True,
+                   loader=OntologyLoader(cache_dir=cache))
+
+        message = str(caught.value)
+        assert "allowed_hosts" in message
+        assert "127.0.0.1" in message
+
+    def test_a_transfer_failure_may_still_fall_back(self, tmp_path, select, monkeypatch):
+        """**The distinction, not a blanket refusal.** A transfer that failed
+        may succeed next time; a destination the policy forbids will not. Only
+        the second is a configuration error to report."""
+        import src.ontology.settings as settings_module
+        from src.ontology import download as download_module
+        from src.ontology.download import OntologyDownloadError
+
+        config = tmp_path / "ok.yaml"
+        config.write_text(
+            "ontology:\n  sources:\n    mondo:\n      - https://purl.example/mondo.obo\n"
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(config))
+
+        def flaky(url, target, **kwargs):
+            raise OntologyDownloadError("connection reset")
+
+        monkeypatch.setattr(download_module, "download_ontology", flaky)
+
+        cache = tmp_path / "cache"
+        present = obo(cache / "mondo.obo", version="releases/2019-01-01")
+
+        loaded = select(cache_dir=cache, loader=OntologyLoader(cache_dir=cache))
+
+        assert loaded.source_path == present

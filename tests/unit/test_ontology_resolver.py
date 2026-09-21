@@ -54,14 +54,31 @@ def obo(path: Path, *, ontology="mondo", version="releases/2026-09-01",
 
 def owl(path: Path, *, version="http://purl.obolibrary.org/obo/mondo/releases/2026-09-01/mondo.owl",
         iri="http://purl.obolibrary.org/obo/mondo.owl", classes=1, imports=()) -> Path:
+    """Real RDF/XML, namespaces declared.
+
+    **The first version of this helper emitted `<rdf:RDF>` with no `xmlns`
+    declarations at all** — undeclared prefixes, so not well-formed XML and not
+    something any loader would open. It satisfied a scanner matching literal
+    text, which is how the scanner's namespace blindness went unnoticed. A
+    fixture that no real reader accepts cannot prove a reader accepts it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = [f'<owl:Ontology rdf:about="{iri}">']
+    body = [f'  <owl:Ontology rdf:about="{iri}">']
     if version:
-        body.append(f'  <owl:versionIRI rdf:resource="{version}"/>')
-    body.extend(f'  <owl:imports rdf:resource="{item}"/>' for item in imports)
-    body.append("</owl:Ontology>")
-    body += [f'<owl:Class rdf:about="http://example/C{i}"/>' for i in range(classes)]
-    path.write_text("<rdf:RDF>\n" + "\n".join(body) + "\n</rdf:RDF>\n")
+        body.append(f'    <owl:versionIRI rdf:resource="{version}"/>')
+    body.extend(f'    <owl:imports rdf:resource="{item}"/>' for item in imports)
+    body.append("  </owl:Ontology>")
+    body += [
+        f'  <owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_{i:07d}"/>'
+        for i in range(classes)
+    ]
+    path.write_text(
+        '<?xml version="1.0"?>\n'
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+        '         xmlns:owl="http://www.w3.org/2002/07/owl#">\n'
+        + "\n".join(body)
+        + "\n</rdf:RDF>\n"
+    )
     return path
 
 
@@ -369,3 +386,116 @@ class TestSelection:
             pytest.skip("this platform does not allow the symlink")
 
         assert select_ontology_file("mondo", roots=[root, link]).path == path
+
+
+class TestOwlIsReadAsXmlNotAsText:
+    """The scanner defeating the very refusal it feeds.
+
+    The first version matched the literal strings `owl:Class` and `rdf:about`
+    line by line. A prefix is chosen by the document, and an attribute may sit
+    on a different line from its element — so a real, loadable OWL file
+    reported no ontology and no terms, was filtered out of its own candidate
+    list, and a directory holding it beside an `.obo` resolved to **one**
+    candidate and was taken silently. Losing a display field would be a
+    nuisance; losing the ambiguity is the rule not working.
+    """
+
+    RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    OWL = "http://www.w3.org/2002/07/owl#"
+
+    def _swapped_prefixes(self, path: Path) -> Path:
+        path.write_text(
+            '<?xml version="1.0"?>\n'
+            f'<o:RDF xmlns:o="{self.RDF}" xmlns:w="{self.OWL}">\n'
+            '<w:Ontology o:about="http://purl.obolibrary.org/obo/mondo.owl">\n'
+            '  <w:versionIRI o:resource="http://purl.obolibrary.org/obo/mondo/'
+            'releases/2026-09-01/mondo.owl"/>\n'
+            '</w:Ontology>\n'
+            '<w:Class o:about="http://purl.obolibrary.org/obo/MONDO_0000001"/>\n'
+            '</o:RDF>\n'
+        )
+        return path
+
+    def _attribute_on_the_next_line(self, path: Path) -> Path:
+        path.write_text(
+            f'<rdf:RDF xmlns:rdf="{self.RDF}" xmlns:owl="{self.OWL}">\n'
+            '<owl:Ontology\n'
+            '    rdf:about="http://purl.obolibrary.org/obo/mondo.owl"/>\n'
+            '<owl:Class\n'
+            '    rdf:about="http://purl.obolibrary.org/obo/MONDO_0000002"/>\n'
+            '<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_0000003"/>\n'
+            '</rdf:RDF>\n'
+        )
+        return path
+
+    def test_a_document_choosing_its_own_prefixes_is_identified(self, tmp_path):
+        identity = scan_identity(self._swapped_prefixes(tmp_path / "a.owl"))
+
+        assert canonical_ontology_name(identity["declared_ontology"]) == "mondo"
+        assert identity["term_count"] == 1
+        assert "2026-09-01" in (identity["data_version"] or "")
+
+    def test_an_attribute_on_the_next_line_is_identified(self, tmp_path):
+        identity = scan_identity(self._attribute_on_the_next_line(tmp_path / "b.owl"))
+
+        assert canonical_ontology_name(identity["declared_ontology"]) == "mondo"
+        assert identity["term_count"] == 2
+
+    def test_an_import_is_found_whatever_the_prefix(self, tmp_path):
+        path = tmp_path / "c.owl"
+        path.write_text(
+            f'<r:RDF xmlns:r="{self.RDF}" xmlns:w="{self.OWL}">\n'
+            '<w:Ontology r:about="http://purl.obolibrary.org/obo/hp.owl">\n'
+            '<w:imports\n    r:resource="http://purl.obolibrary.org/obo/pato.owl"/>\n'
+            '</w:Ontology></r:RDF>\n'
+        )
+
+        assert scan_identity(path)["declared_imports"] == (
+            "http://purl.obolibrary.org/obo/pato.owl",
+        )
+
+    @pytest.mark.parametrize("shape", ["_swapped_prefixes", "_attribute_on_the_next_line"])
+    def test_such_a_file_is_a_candidate_and_the_ambiguity_survives(self, tmp_path, shape):
+        """The case that matters: the refusal, not the field."""
+        root = tmp_path / "roots"
+        obo(root / "mondo.obo", version="releases/2026-09-01")
+        getattr(self, shape)(root / "release-2026.owl")
+
+        with pytest.raises(AmbiguousOntologyError) as caught:
+            select_ontology_file("mondo", roots=[root])
+
+        assert {item.path.suffix for item in caught.value.candidates} == {".obo", ".owl"}
+
+    def test_a_file_that_is_not_well_formed_xml_is_reported(self, tmp_path):
+        path = tmp_path / "broken.owl"
+        path.write_text('<rdf:RDF xmlns:rdf="%s"><owl:Ontology' % self.RDF)
+
+        with pytest.raises(OntologyResolutionError, match="well-formed"):
+            scan_identity(path)
+
+    def test_and_it_is_skipped_rather_than_failing_the_listing(self, tmp_path):
+        """One unusable file does not stop the others being described."""
+        root = tmp_path / "roots"
+        obo(root / "mondo.obo")
+        (root / "broken.owl").write_text("<rdf:RDF")
+
+        assert [item.path.name for item in enumerate_candidates([root])] == ["mondo.obo"]
+
+    def test_the_xml_reader_issues_no_request_for_an_import(self, tmp_path, monkeypatch):
+        """`ElementTree` has no notion of `owl:imports`, and this pins it: the
+        parser that replaced the regex must not be one that resolves."""
+        def explode(*a, **k):
+            raise AssertionError("the OWL scan reached the network")
+
+        for name in ("socket", "create_connection", "getaddrinfo", "gethostbyname"):
+            monkeypatch.setattr(socket, name, explode, raising=False)
+
+        path = tmp_path / "d.owl"
+        path.write_text(
+            f'<rdf:RDF xmlns:rdf="{self.RDF}" xmlns:owl="{self.OWL}">\n'
+            '<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/mondo.owl">\n'
+            '<owl:imports rdf:resource="http://purl.obolibrary.org/obo/pato.owl"/>\n'
+            '</owl:Ontology></rdf:RDF>\n'
+        )
+
+        assert scan_identity(path)["declared_imports"]

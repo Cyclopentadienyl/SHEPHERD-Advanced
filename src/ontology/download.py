@@ -58,7 +58,9 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ALLOWED_SCHEMES",
     "DestinationPolicy",
+    "OntologyDestinationRefused",
     "OntologyDownloadError",
+    "OntologyTruncatedError",
     "check_destination",
     "download_ontology",
 ]
@@ -77,6 +79,22 @@ MAX_REDIRECTS = 5
 
 class OntologyDownloadError(RuntimeError):
     """A fetch was refused or failed. Never a silent fallback to something else."""
+
+
+class OntologyDestinationRefused(OntologyDownloadError):
+    """**Policy said no.** Its own type because the remedy is different.
+
+    A transfer that failed may succeed on the next attempt or from another
+    source, so a caller may reasonably carry on and use what it already has. A
+    destination this server is not permitted to fetch from will be refused
+    every time, and treating it as "could not fetch just now" turns a
+    configuration error into a silent success on stale bytes — which is the
+    defect this type exists to make impossible to write.
+    """
+
+
+class OntologyTruncatedError(OntologyDownloadError):
+    """Fewer bytes arrived than the response declared."""
 
 
 @dataclass(frozen=True)
@@ -104,7 +122,7 @@ class DestinationPolicy:
         try:
             infos = socket.getaddrinfo(host, None)
         except OSError as exc:
-            raise OntologyDownloadError(
+            raise OntologyDestinationRefused(
                 f"{host} could not be resolved ({type(exc).__name__}: {exc}), so "
                 "where a request to it would go is unknown — which is not the "
                 "same as its being acceptable"
@@ -125,7 +143,7 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
     parts = urlsplit(url)
     scheme = (parts.scheme or "").lower()
     if scheme not in ALLOWED_SCHEMES:
-        raise OntologyDownloadError(
+        raise OntologyDestinationRefused(
             f"the {why} {url!r} uses the scheme {scheme or '(none)'!r}; only "
             f"{', '.join(ALLOWED_SCHEMES)} are permitted. urlretrieve would "
             "otherwise accept file://, ftp:// and data: URLs, which is more "
@@ -134,7 +152,7 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
 
     host = parts.hostname
     if not host:
-        raise OntologyDownloadError(f"the {why} {url!r} names no host")
+        raise OntologyDestinationRefused(f"the {why} {url!r} names no host")
 
     if policy.permits_host(host):
         logger.info("%s: %s is on the configured allow list", why, host)
@@ -157,7 +175,7 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
 
     addresses = policy.resolve(host)
     if not addresses:
-        raise OntologyDownloadError(
+        raise OntologyDestinationRefused(
             f"the {why} {url!r} resolved to no address at all, so where a "
             "request to it would go is unknown"
         )
@@ -166,7 +184,7 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
         try:
             address = ipaddress.ip_address(raw)
         except ValueError:
-            raise OntologyDownloadError(
+            raise OntologyDestinationRefused(
                 f"the {why} {url!r} resolved to {raw!r}, which is not an "
                 "address this policy can classify"
             ) from None
@@ -177,11 +195,35 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
         _require_global(address, host, url, why)
 
 
+def _declared_length(response: Any) -> Optional[int]:
+    """`Content-Length`, when the response declares one that can be checked.
+
+    Returns None for a chunked or identity-closed response, which declares no
+    length — **the check is then not possible rather than passed**, and saying
+    None is how that stays visible instead of becoming a zero that every
+    transfer beats.
+    """
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("Content-Length")
+    except AttributeError:
+        return None
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
 def _require_global(address, host: str, url: str, why: str) -> None:
     """One classification, so a literal and a resolved answer are judged alike."""
     if address.is_global:
         return
-    raise OntologyDownloadError(
+    raise OntologyDestinationRefused(
         f"the {why} {url!r} resolves to {address}, which is not a globally "
         "routable address (loopback, private, link-local or reserved). This "
         "server does not fetch from its own network unless an administrator "
@@ -258,11 +300,31 @@ def download_ontology(
     try:
         with handle:
             with opener.open(url, timeout=timeout) as response:
+                declared = _declared_length(response)
+                received = 0
                 while True:
                     chunk = response.read(1 << 20)
                     if not chunk:
                         break
+                    received += len(chunk)
                     handle.write(chunk)
+            # **A short read ends the loop exactly like a complete one.**
+            # `HTTPResponse.read(amt)` returns b"" when the connection closes
+            # early; it does not raise. `urlretrieve`, which this replaced,
+            # compared the bytes read against `Content-Length` and raised
+            # `ContentTooShortError` — dropping that check made a truncated
+            # transfer indistinguishable from a finished one, and temp-and-
+            # replace then published it over a good file. The cut can land on a
+            # stanza boundary, so the fragment parses, passes the role check,
+            # and has its digest recorded as the input.
+            if declared is not None and received < declared:
+                raise OntologyTruncatedError(
+                    f"{url} declared {declared} bytes and delivered {received}. "
+                    "The transfer ended early; nothing has been written, and "
+                    "whatever was already in place is untouched. A truncated "
+                    "ontology can still parse — it would simply be missing "
+                    "everything after the cut."
+                )
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(staged, destination)

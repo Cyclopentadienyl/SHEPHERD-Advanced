@@ -383,3 +383,105 @@ class TestTheSettingsContract:
         for name in DEFAULT_ONTOLOGY_SOURCES:
             for url in settings.urls_for(name):
                 assert url.split(":", 1)[0] in ALLOWED_SCHEMES
+
+
+class TestATruncatedTransferIsNotAFinishedOne:
+    """The check `urlretrieve` had and this downloader dropped.
+
+    `HTTPResponse.read(amt)` returns `b""` when the connection closes early —
+    it does not raise — so a short read ends the loop exactly like a complete
+    one, and temp-and-replace then publishes the fragment over a good file. The
+    cut can land on a stanza boundary, in which case the fragment parses, passes
+    the role check, and has its digest recorded as the input.
+    """
+
+    @staticmethod
+    def _opener(body: bytes, declared: int | None):
+        """A real `http.client.HTTPResponse` over a controlled socket.
+
+        Not a stub that raises: the whole point is that nothing raises. A test
+        whose opener threw `OSError` would pass against the broken version.
+        """
+        import http.client
+        import io
+
+        header = b"HTTP/1.1 200 OK\r\n"
+        header += (
+            f"Content-Length: {declared}\r\n".encode()
+            if declared is not None
+            else b"Transfer-Encoding: chunked\r\n"
+        )
+        raw = header + b"\r\n" + body
+
+        class Sock:
+            def __init__(self):
+                self._f = io.BytesIO(raw)
+
+            def makefile(self, *a, **k):
+                return self._f
+
+        class Opener:
+            def open(self, url, timeout=None):
+                response = http.client.HTTPResponse(Sock(), method="GET")
+                response.begin()
+                return response
+
+        return lambda *handlers: Opener()
+
+    def test_a_short_body_is_refused(self, tmp_path):
+        target = tmp_path / "mondo.obo"
+
+        with pytest.raises(OntologyDownloadError, match="delivered"):
+            download_ontology(
+                "https://purl.example/obo/mondo.obo", target,
+                policy=policy({"purl.example": [PUBLIC]}),
+                opener_factory=self._opener(b"format-version: 1.2\n", 120),
+            )
+
+        assert not target.exists()
+
+    def test_the_file_already_in_place_survives_it(self, tmp_path):
+        """**The damage the missing check actually did.** A stanza-aligned cut
+        parses, so the fragment would have replaced a complete ontology and
+        been recorded as the input."""
+        target = tmp_path / "mondo.obo"
+        good = b"format-version: 1.2\nontology: mondo\n\n[Term]\nid: MONDO:1\nname: t\n"
+        target.write_bytes(good)
+
+        with pytest.raises(OntologyDownloadError):
+            download_ontology(
+                "https://purl.example/obo/mondo.obo", target,
+                policy=policy({"purl.example": [PUBLIC]}),
+                opener_factory=self._opener(b"format-version: 1.2\n[Term]\n", 900),
+            )
+
+        assert target.read_bytes() == good
+        assert not [p for p in tmp_path.iterdir() if p.name.endswith(".part")]
+
+    def test_a_complete_body_is_accepted(self, tmp_path):
+        """Or the check above would be satisfied by refusing everything."""
+        target = tmp_path / "mondo.obo"
+        body = b"format-version: 1.2\n"
+
+        download_ontology(
+            "https://purl.example/obo/mondo.obo", target,
+            policy=policy({"purl.example": [PUBLIC]}),
+            opener_factory=self._opener(body, len(body)),
+        )
+
+        assert target.read_bytes() == body
+
+    def test_a_response_declaring_no_length_is_not_failed_for_it(self, tmp_path):
+        """**Not possible to check is not the same as checked.** A chunked
+        response carries no `Content-Length`, and treating the absence as zero
+        would make every such transfer pass a check that never ran — while
+        treating it as failure would refuse a legitimate server."""
+        target = tmp_path / "mondo.obo"
+
+        download_ontology(
+            "https://purl.example/obo/mondo.obo", target,
+            policy=policy({"purl.example": [PUBLIC]}),
+            opener_factory=self._opener(b"0\r\n\r\n", None),
+        )
+
+        assert target.exists()

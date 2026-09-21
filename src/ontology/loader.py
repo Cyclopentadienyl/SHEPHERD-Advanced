@@ -226,7 +226,27 @@ class OntologyLoader:
         version: str,
         force_download: bool
     ) -> 'Ontology':
-        """載入已知本體"""
+        """Load a named ontology from the cache, or fetch it.
+
+        **Selection here is the same selection the build uses**, and it used to
+        be a second one. This method opened `<cache_dir>/<name>.obo` and fell
+        back to `<name>.owl`, so a cache holding both took the OBO silently —
+        exactly the implicit precedence `PLAN_ONTOLOGY_PHASE2.md` §3.1.2
+        declines to reinstate, still live on the library path while the CLI
+        refused. Two semantics for one question is the parallel pipeline this
+        phase exists to avoid, so this defers to `select_ontology_file` over
+        the cache directory.
+
+        **And the role is passed.** `load_hpo` knows it wants HPO; not saying
+        so left the §3.4 check reachable only from the build script, so
+        `load_hpo()` on a file declaring `mondo` returned a MONDO ontology
+        under the HPO name while the same file through the CLI was refused.
+        """
+        from src.ontology.resolver import (
+            NoOntologyCandidateError,
+            select_ontology_file,
+        )
+
         self._require_supported_version(ontology_name, version)
         cache_key = f"{ontology_name}_{version}"
 
@@ -235,22 +255,21 @@ class OntologyLoader:
             logger.info(f"Using cached {ontology_name} ontology")
             return self._loaded_ontologies[cache_key]
 
-        # Check file cache (try OBO first, then OWL)
-        cache_file_obo = self.cache_dir / f"{ontology_name}.obo"
-        cache_file_owl = self.cache_dir / f"{ontology_name}.owl"
-
         cache_file = None
-        if cache_file_obo.exists() and not force_download:
-            cache_file = cache_file_obo
-        elif cache_file_owl.exists() and not force_download:
-            cache_file = cache_file_owl
+        if not force_download:
+            try:
+                cache_file = select_ontology_file(
+                    ontology_name, roots=[self.cache_dir]
+                ).path
+            except NoOntologyCandidateError:
+                cache_file = None
 
-        if cache_file is None or force_download:
+        if cache_file is None:
             # Download
             cache_file = self._download_ontology(ontology_name, force_download)
 
-        # Load from file
-        ontology = self.load(cache_file)
+        # Load from file — with the role, so this entry point is a gate too.
+        ontology = self.load(cache_file, expect=ontology_name)
 
         # Set source info
         ontology._source = DataSource[ontology_name.upper()] if ontology_name.upper() in DataSource.__members__ else None
@@ -290,6 +309,7 @@ class OntologyLoader:
         """
         from src.ontology.download import (
             DestinationPolicy,
+            OntologyDestinationRefused,
             OntologyDownloadError,
             download_ontology,
         )
@@ -299,15 +319,49 @@ class OntologyLoader:
         cache_file = self.cache_dir / f"{ontology_name}.obo"
         cache_file_owl = self.cache_dir / f"{ontology_name}.owl"
 
-        refusals = []
+        refused: list = []
+        failed: list = []
         for url in settings.urls_for(ontology_name):
             target = cache_file_owl if url.lower().endswith(".owl") else cache_file
             logger.info(f"Downloading {ontology_name} ontology from {url}")
             try:
                 return download_ontology(url, target, policy=policy)
+            except OntologyDestinationRefused as exc:
+                refused.append(f"  {url}\n    {exc}")
+                logger.error("policy refused %s (%s)", url, exc)
             except OntologyDownloadError as exc:
-                refusals.append(f"{url}: {exc}")
+                failed.append(f"  {url}: {exc}")
                 logger.warning("could not fetch %s (%s)", url, exc)
+
+        # **A policy refusal is not "could not fetch just now".** Every source
+        # being refused means the configuration says this server may not fetch
+        # any of them, and that answer does not improve by retrying. Serving
+        # the old file instead reports a configuration error to the operator as
+        # a successful build — on an input nobody asked for and nobody was told
+        # about. The docstring above said so while the code did the opposite.
+        if refused and not failed:
+            raise RuntimeError(
+                f"every configured source for {ontology_name} was refused by "
+                "the destination policy, so nothing was fetched:\n"
+                + "\n".join(refused)
+                + "\n\nThis is a configuration decision, not a transient "
+                "failure: fix the sources or add the host to "
+                "`ontology.allowed_hosts` in configs/deployment.yaml. A file "
+                "already in the cache is deliberately NOT used here — it would "
+                "hide this from the build that reported success."
+            )
+
+        # **Only a transfer that failed may fall back**, and only when a fresh
+        # copy was not explicitly demanded. `--force-download` asking for a new
+        # file and receiving the old one silently is the same downgrade in a
+        # smaller costume.
+        if force_download:
+            raise RuntimeError(
+                f"a fresh copy of {ontology_name} was requested and no source "
+                "delivered one:\n" + "\n".join(refused + failed)
+                + "\n\nWhat is already in the cache has not been used, "
+                "because it is not what was asked for."
+            )
 
         # Only after every configured source has been tried. A file already on
         # disk is the "nothing new arrived" answer, and it is logged as such.

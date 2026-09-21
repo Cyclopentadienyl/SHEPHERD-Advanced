@@ -38,6 +38,7 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
+from xml.etree import ElementTree
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -170,14 +171,23 @@ _OBO_STANZA = re.compile(rb"^\[[^\]]*\]\s*$")
 _OBO_TERM = re.compile(rb"^\[Term\]\s*$")
 _OBO_TAG = re.compile(rb"^([A-Za-z_-]+):[ \t]*(.*?)\s*$")
 
-#: RDF/XML carries these as attributes and they are not confined to a header,
-#: so the whole file is scanned for them. `owl:Class rdf:about` is the closest
-#: analogue to an OBO `[Term]` stanza, and `term_count_basis` says which was
-#: counted rather than letting two different numbers share one name.
-_OWL_VERSION_IRI = re.compile(rb"owl:versionIRI\s+rdf:resource\s*=\s*[\"']([^\"']+)[\"']")
-_OWL_IMPORT = re.compile(rb"owl:imports\s+rdf:resource\s*=\s*[\"']([^\"']+)[\"']")
-_OWL_CLASS = re.compile(rb"<owl:Class\s+rdf:about\s*=")
-_OWL_ONTOLOGY_IRI = re.compile(rb"<owl:Ontology\s+rdf:about\s*=\s*[\"']([^\"']+)[\"']")
+#: RDF/XML is read as XML, **by namespace rather than by prefix**. The first
+#: version matched the literal strings `owl:Class` and `rdf:about` line by
+#: line, which is wrong twice over: a prefix is chosen by the document
+#: (`xmlns:w="…owl#"` is as valid as `xmlns:owl=`), and an attribute may sit on
+#: a different line from its element. Both shapes made a real, loadable OWL
+#: file report no ontology and no terms — so it was filtered out of its own
+#: candidate list, and a directory holding it beside an `.obo` resolved to one
+#: candidate and was taken silently. That is the ambiguity refusal defeated by
+#: a scanner, which is worse than not listing the file at all.
+_OWL_NS = "http://www.w3.org/2002/07/owl#"
+_RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_OWL_ONTOLOGY = f"{{{_OWL_NS}}}Ontology"
+_OWL_CLASS_TAG = f"{{{_OWL_NS}}}Class"
+_OWL_VERSION_TAG = f"{{{_OWL_NS}}}versionIRI"
+_OWL_IMPORTS_TAG = f"{{{_OWL_NS}}}imports"
+_RDF_ABOUT = f"{{{_RDF_NS}}}about"
+_RDF_RESOURCE = f"{{{_RDF_NS}}}resource"
 
 
 def scan_identity(path: Any) -> Dict[str, Any]:
@@ -212,6 +222,11 @@ def scan_identity(path: Any) -> Dict[str, Any]:
     basis = "obo [Term] stanzas" if path.suffix.lower() == ".obo" else "owl:Class declarations"
     is_obo = path.suffix.lower() == ".obo"
     in_header = True
+    # **Fed the same bytes the digest sees, so it is still one pass.** An
+    # incremental parser keeps the memory bounded and, unlike pronto, resolves
+    # nothing: `ElementTree` has no notion of `owl:imports` and issues no
+    # request for one.
+    xml = None if is_obo else ElementTree.XMLPullParser(events=("start",))
 
     try:
         with open(path, "rb") as handle:
@@ -239,20 +254,36 @@ def scan_identity(path: Any) -> Dict[str, Any]:
                     elif key == "import" and value:
                         imports.append(value)
                 else:
-                    terms += len(_OWL_CLASS.findall(line))
-                    for match in _OWL_IMPORT.finditer(line):
-                        imports.append(match.group(1).decode("utf-8", "replace"))
-                    if data_version is None:
-                        found = _OWL_VERSION_IRI.search(line)
-                        if found:
-                            data_version = found.group(1).decode("utf-8", "replace")
-                    if declared is None:
-                        found = _OWL_ONTOLOGY_IRI.search(line)
-                        if found:
-                            declared = found.group(1).decode("utf-8", "replace")
+                    xml.feed(line)
+                    for _, element in xml.read_events():
+                        tag = element.tag
+                        if tag == _OWL_CLASS_TAG:
+                            terms += 1
+                        elif tag == _OWL_IMPORTS_TAG:
+                            target = element.get(_RDF_RESOURCE)
+                            if target:
+                                imports.append(target)
+                        elif tag == _OWL_VERSION_TAG and data_version is None:
+                            data_version = element.get(_RDF_RESOURCE) or None
+                        elif tag == _OWL_ONTOLOGY and declared is None:
+                            declared = element.get(_RDF_ABOUT) or None
+        if xml is not None:
+            # **Close before trusting the counts.** A document that ends
+            # mid-element has not been fully described, and reporting a partial
+            # count as identity is how a truncated file comes to look like a
+            # smaller release.
+            xml.close()
+            for _, element in xml.read_events():
+                if element.tag == _OWL_CLASS_TAG:
+                    terms += 1
     except OSError as exc:
         raise OntologyResolutionError(
             f"{path} could not be read ({type(exc).__name__}: {exc})"
+        ) from exc
+    except ElementTree.ParseError as exc:
+        raise OntologyResolutionError(
+            f"{path} is not well-formed XML ({exc}); it cannot be identified as "
+            "an ontology file, so it is neither listed nor selected"
         ) from exc
 
     return {
