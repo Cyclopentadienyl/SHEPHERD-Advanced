@@ -51,6 +51,12 @@ class PipelineStatusResponse(BaseModel):
     #: "sidecar" or "assumed" — whether a file declared the hop bound or the
     #: loader fell back to the producer's default. The two score differently.
     sp_hop_bound_source: Optional[str] = None
+    #: "verified" — the table names the graph being served and the two agree;
+    #: "unrecorded" — published before the pairing protocol, so where it came
+    #: from was never written down. **Never absent while shortest paths are on**,
+    #: because a surface that cannot tell those apart will show an unchecked
+    #: table as a checked one.
+    sp_kg_binding: Optional[str] = None
     kg_nodes: int = 0
     kg_edges: int = 0
     has_model: bool = False
@@ -181,6 +187,7 @@ def _status_of(
         eta_effective=config.get("eta_effective", 0.0),
         sp_max_hops=config.get("sp_max_hops"),
         sp_hop_bound_source=config.get("sp_hop_bound_source"),
+        sp_kg_binding=config.get("sp_kg_binding"),
         kg_nodes=config.get("kg_nodes", 0),
         kg_edges=config.get("kg_edges", 0),
         has_model=config.get("has_model", False),

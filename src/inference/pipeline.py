@@ -339,6 +339,16 @@ class DiagnosisPipeline:
         #: "assumed" when none was there. Published, because a log line is not a
         #: surface anyone watches and the two states score differently.
         self._sp_hop_bound_source: Optional[str] = None
+        #: SHA-256 of the `kg.json` this pipeline's graph was verified against,
+        #: when it was loaded from a workspace. **None for a graph supplied in
+        #: memory**, which is not an oversight: that caller made no claim about
+        #: a persisted workspace, so there is nothing to bind an artifact to.
+        #: The shortest-path artifact is checked against *this*, never against
+        #: whatever `kg.json` happens to sit beside it — otherwise the binding
+        #: could be bypassed by deleting a file.
+        self._graph_kg_digest: Optional[str] = None
+        #: "unrecorded" | "verified", once a table has been accepted.
+        self._sp_kg_binding: Optional[str] = None
         self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
@@ -460,7 +470,12 @@ class DiagnosisPipeline:
                     "to a different graph entirely. Pass kg_path, or pass "
                     "graph_data directly if the graph was not loaded from a file."
                 )
-            verify_graph_source(Path(self._kg_path), Path(data_dir))
+            # **The return value is kept.** It carries the manifest-bound
+            # digests, and this used to discard them — so the shortest-path
+            # binding would have had to hash `kg.json` a second time, or bind to
+            # a file rather than to the graph that was actually verified.
+            bound = verify_graph_source(Path(self._kg_path), Path(data_dir))
+            self._graph_kg_digest = bound["kg"]
             self._graph_data = self._load_graph_data(data_dir)
 
         if self._graph_data is None:
@@ -595,22 +610,47 @@ class DiagnosisPipeline:
         self._sp_ready = False
         self._sp_lookup = None
         self._sp_hop_bound_source = None
-
-        sp_path = data_dir / "shortest_paths.pt"
-        if not sp_path.exists():
-            logger.info(
-                f"No shortest_paths.pt found in {data_dir}; "
-                f"scoring will use pure GNN (eta=1.0 effective)"
-            )
-            return
+        self._sp_kg_binding = None
 
         from src.inference.scoring import validate_hop_bound
+        from src.inference.sp_artifact import (
+            declares_binding,
+            kg_binding_state,
+            read_binding,
+            read_sidecar,
+            require_paired,
+            sidecar_path,
+        )
         from src.inference.sp_index import (
             SPArtifactError,
             build_sp_index,
             validate_sp_columns,
             validate_sp_values,
         )
+
+        sp_path = data_dir / "shortest_paths.pt"
+
+        # **Read once, and before the absent decision.** A sidecar that declares
+        # the pairing protocol beside a table that is not here is one side of a
+        # pair, not an absent artifact — a publication that lost its tensor, or
+        # a tensor deleted from a workspace that still advertises one. Treating
+        # it as absent takes the "serve without shortest paths" path for a
+        # deployment that is broken, and on a reload replaces a healthy service
+        # with one scoring on the GNN alone.
+        sidecar = read_sidecar(sp_path)
+        if not sp_path.exists():
+            if sidecar is not None and declares_binding(sidecar.meta, ()):
+                raise SPArtifactError(
+                    f"{sidecar_path(sp_path)} declares a published pair and "
+                    f"{sp_path} is not here. One side of a pair is not an "
+                    "absent artifact: the table this sidecar describes was "
+                    "either never written or has been removed."
+                )
+            logger.info(
+                f"No shortest_paths.pt found in {data_dir}; "
+                f"scoring will use pure GNN (eta=1.0 effective)"
+            )
+            return
 
         # **Present and unreadable is a refusal, not a shrug.** This warned and
         # returned, which made a corrupt table indistinguishable from an absent
@@ -650,6 +690,38 @@ class DiagnosisPipeline:
             source=str(sp_path),
         )
 
+        # **Before the empty decision, not after it.** These checks used to sit
+        # below the early return, so a mixed publication whose new tensor
+        # happened to be empty reached "no rows, treat as absent" and switched
+        # shortest paths off — and on a reload that replaced a healthy SP-ready
+        # service with one scoring on the GNN alone, reporting success. A pair
+        # that does not claim itself is refused whether it carries a million
+        # rows or none.
+        binding = read_binding(
+            sidecar.meta if sidecar else None, sp_data.keys(), source=str(sp_path)
+        )
+        require_paired(binding, sp_data.get("build_id"), source=str(sp_path))
+        binding_state = kg_binding_state(
+            binding, self._graph_kg_digest, source=str(sp_path)
+        )
+        if binding_state == "unverifiable":
+            raise SPArtifactError(
+                f"{sp_path} records the graph it was computed from, and this "
+                "pipeline cannot check it: its graph was supplied in memory, so "
+                "no verified workspace digest exists to compare against. The "
+                "shortest-path term is part of the ranking, so an unverifiable "
+                "binding is refused rather than assumed. Build the pipeline from "
+                "a workspace, or use a table published without a binding."
+            )
+        if binding_state == "unrecorded":
+            logger.warning(
+                "%s carries no source binding — it predates the pairing "
+                "protocol. Which graph it was computed from is **unrecorded**, "
+                "not verified. Rebuild it with scripts/compute_shortest_paths.py "
+                "to record one.",
+                sp_path,
+            )
+
         # **A table with no rows is the absent case, not a ready one.** D5 took
         # the weaker of the two defensible readings deliberately: an empty table
         # makes no false claim, and is indistinguishable in effect from having
@@ -662,10 +734,19 @@ class DiagnosisPipeline:
         # the pure-GNN score an absent file produces. Zero rows would change
         # both what the service reports and the numbers it returns.
         #
-        # Taken before the hop bound is resolved, because nothing here depends
-        # on it: an absent table does not read the sidecar either. The cost is
-        # that a corrupt sidecar beside an empty table is not refused; it is
-        # also not consulted, and SP is off either way.
+        # **Taken after the pair has been checked and before the hop bound is
+        # resolved**, and the comment this replaces described the older order.
+        # An empty table now reaches here having had its sidecar read, parsed,
+        # and its schema, pairing and graph binding validated — a corrupt
+        # sidecar beside an empty table is refused rather than ignored, which
+        # is what moving those checks above this return bought.
+        #
+        # What an empty table still skips is exactly `validate_hop_bound`:
+        # `max_hops` missing, zero or non-numeric is not refused here, because
+        # the bound is the sentinel distances are scored against and nothing
+        # will be scored. Measured, so the gap is stated rather than assumed —
+        # each of those three publishes an empty table with SP off, while a
+        # sidecar that is not readable JSON refuses.
         if n_pairs == 0:
             logger.warning(
                 "%s carries no rows. An empty table binds nothing, so it is "
@@ -684,26 +765,13 @@ class DiagnosisPipeline:
         # `validate_sp_artifact` checks the distances against it, and because a
         # deployment that cannot establish it should not pay for a sort it is
         # about to discard.
-        meta_path = sp_path.with_suffix(".meta.json")
-        if meta_path.exists():
-            # **Present means binding.** A sidecar that is here and unusable is a
-            # broken deployment, not a silent default: the previous shape read it
-            # inside `except Exception: pass`, so a missing file, malformed JSON,
-            # an absent key, a string, a boolean and a value the producer would
-            # never write all arrived at the same silent 5.
-            try:
-                meta = json.loads(meta_path.read_text())
-            except Exception as exc:
-                raise ValueError(
-                    f"{meta_path} is present but not readable JSON "
-                    f"({type(exc).__name__}: {exc}). The hop bound it declares "
-                    "cannot be recovered from the tensors."
-                ) from exc
-            if not isinstance(meta, dict):
-                raise ValueError(
-                    f"{meta_path} is not a JSON object, so it describes no artifact"
-                )
-            max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
+        meta_path = sidecar_path(sp_path)
+        if sidecar is not None:
+            # **The same parsed object the binding was checked against.** Reading
+            # the file a second time for the bound would let a publication that
+            # completes in between hand this one version and the pairing check
+            # another.
+            max_hops = validate_hop_bound(sidecar.meta.get("max_hops"), str(meta_path))
             hop_bound_source = "sidecar"
         elif self.config.sp_hop_bound is not None:
             # **Configuration is the cheap recovery a missing sidecar needs**: the
@@ -779,6 +847,7 @@ class DiagnosisPipeline:
         # anything here is set.
         self._sp_max_hops = max_hops
         self._sp_hop_bound_source = hop_bound_source
+        self._sp_kg_binding = binding_state
         self._sp_lookup = lookup
         self._sp_ready = True
 
@@ -1634,6 +1703,10 @@ class DiagnosisPipeline:
             "eta_effective": effective_eta,
             "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
             "sp_hop_bound_source": self._sp_hop_bound_source if self._sp_ready else None,
+            # **"unrecorded" is not "verified".** Reported so a surface cannot
+            # present a table whose source was never recorded as one that was
+            # checked.
+            "sp_kg_binding": self._sp_kg_binding if self._sp_ready else None,
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,

@@ -482,9 +482,59 @@ class TestShortestPathIntegration:
             "max_hops": max_hops,
             "num_pairs": int(sp_data["distance"].numel()),
         }
+        # **Bound to the workspace's own `kg.json`.** `bind_workspace` wrote
+        # it and the pipeline verifies it, so this is the digest the loader will
+        # compare against — which makes these fixtures exercise the shape that
+        # ships rather than a legacy one.
+        from src.utils.fingerprint import file_sha256
+
         sp_module.save_shortest_paths(
-            sp_data, data_dir / "shortest_paths.pt", meta
+            sp_data,
+            data_dir / "shortest_paths.pt",
+            meta,
+            kg_digest=file_sha256(data_dir / "kg.json"),
         )
+
+    def test_a_table_bound_to_another_graph_stops_the_pipeline_being_built(
+        self, medium_kg, gnn_model_and_data, tmp_path
+    ):
+        """**The refusal reaches the thing that publishes, which is the point.**
+
+        `_load_shortest_paths` raises and `_init_gnn_inference` does not catch
+        it, so `_gnn_ready` is never set and a candidate pipeline is never
+        completed — which is what leaves a running service in place on reload
+        and answers 503 at cold start. Asserted here rather than inferred from
+        the loader's unit tests, because "the check exists" and "the check is
+        reached from the path that publishes" are two claims.
+        """
+        import importlib.util
+
+        model, graph_data = gnn_model_and_data
+        data_dir = tmp_path / "data"
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
+
+        spec = importlib.util.spec_from_file_location(
+            "compute_shortest_paths",
+            Path(__file__).parent.parent.parent / "scripts" / "compute_shortest_paths.py",
+        )
+        sp_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sp_module)
+        sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=5)
+        sp_module.save_shortest_paths(
+            sp_data,
+            data_dir / "shortest_paths.pt",
+            {"max_hops": 5, "num_pairs": int(sp_data["distance"].numel())},
+            kg_digest="b" * 64,      # a graph this workspace was not built from
+        )
+
+        with pytest.raises(ValueError, match="different graph"):
+            DiagnosisPipeline(
+                kg=medium_kg,
+                model=model,
+                data_dir=str(data_dir),
+                kg_path=str(kg_path),
+                device="cpu",
+            )
 
     def test_sp_table_loads_when_present(
         self, medium_kg, gnn_model_and_data, tmp_path
@@ -699,10 +749,21 @@ class TestShortestPathIntegration:
         sp_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sp_module)
         sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=5)
+        # This pipeline has no workspace — it was constructed from a KG held
+        # in memory — so the digest it would compare against is supplied the way
+        # a verified workspace would have set it. Without that the binding is
+        # unverifiable and the table is refused, which is the designed answer
+        # and not what this test is about.
+        from src.utils.fingerprint import file_sha256
+
+        medium_kg.save_json(str(tmp_path / "kg.json"))
+        kg_digest = file_sha256(tmp_path / "kg.json")
+        pipeline._graph_kg_digest = kg_digest
         sp_module.save_shortest_paths(
             sp_data,
             tmp_path / "shortest_paths.pt",
             {"max_hops": 5, "num_pairs": int(sp_data["distance"].numel())},
+            kg_digest=kg_digest,
         )
 
         pipeline._load_shortest_paths(tmp_path)

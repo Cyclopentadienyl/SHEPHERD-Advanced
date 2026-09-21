@@ -590,8 +590,9 @@ dependency and skips the task.
    different final model is recognised as needing a re-run rather than silently
    covered.
 
-**Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` and
-`EVIDENCE_M1_M3_gat.json` record ten checkpoints each by digest, from a machine
+**Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` records **ten**
+checkpoints by digest and `EVIDENCE_M1_M3_gat.json` records **five** — this
+section said "ten each", which is wrong for the GAT file — from a machine
 in an `identical-sibling` deployment relationship, with load results and an
 `in_channels` of 128 established across the family. Those digests are a
 designation list, not a decision: one is chosen, its availability on the
@@ -605,6 +606,37 @@ and loadability but no parameter count or resident size, and I will not assert a
 deployment shape I have not measured. The blocking condition is therefore
 *"awaiting a designated measurement subject"* — satisfiable by this project, not
 by the institution.
+
+**What is actually missing, checked rather than assumed.** Both evidence files
+were re-read for this: `checkpoint_digests`, `in_channels`, `key_presence_counts`
+and `load_error_categories` are all there; `parameters` and anything resident is
+not. And no checkpoint file is present on the machine this is being written on —
+`find . -name "*.pt"` outside `.venv` returns nothing. So designation is not
+blocked on a decision, a policy or another work item. It is blocked on **one
+file being where the measurement runs**, and then three numbers taken from it:
+
+| Needed | How | Who |
+|---|---|---|
+| One evidenced checkpoint present on the measuring machine | copy it — the digests in `EVIDENCE_M1_M3_*.json` say which files were seen, which is not the same as which are compatible with *this* artifact set | **the operator**; the file is not in this repository and cannot be |
+| A compatible load against the graph export and SP table the readings are taken over | attempt it; appearing in the evidence list is not proof of it | engineering, once the file is there |
+| Its parameter count and resident size | load it and read them. **Parameter bytes are not the pipeline's RSS/UMA** — they are one term in it | engineering |
+| The deployment shape it stands for, stated | write it into this section beside the digest | engineering |
+
+**And the rest of the measurement environment has to be ready**, not only the
+checkpoint: a compatible graph export, an SP artifact matching it, and the
+runtime. "Only one file is missing" is true of *this* list and is not a claim
+that everything else is in place — it is a claim that nothing on this list waits
+on a decision.
+
+*The search behind this: `find` over the repository and over `/home`, `/root`,
+`/opt` and `/data` to depth 6, excluding `.venv`, returns no `.pt`. That covers
+the paths a checkpoint would plausibly be on and does not prove the machine has
+none anywhere.*
+
+**Until the file arrives, the SP-only supplementary figure is the only memory
+reading this plan can produce**, and §6.2 has it. That is not a reason to delay
+the producer work, which needs no checkpoint at all — which is why the two run
+in parallel rather than in sequence.
 
 ### 7.2 What this plan completes unaided
 
@@ -623,13 +655,22 @@ the gate is not claimed complete.
 
 ---
 
-## 8. Four adjacent defects: three not bundled, one that this change absorbs
+## 8. Four adjacent defects: all four now closed
 
-Found while reading the SP path. The first three are in
-`scripts/compute_shortest_paths.py` or its sidecar contract — a different entry
-point from the one this plan edits, listed so they are not lost and excluded so
-this change stays reviewable. **The fourth is in the served primitive itself and
-is now inside this change**, for the reason given under it.
+Found while reading the SP path. **Two are closed**: defect 1 landed as §10
+step 0, and defect 4 was absorbed by the replacement in this plan's own change.
+**The other two are closed too**, by
+[`PLAN_SP_ARTIFACT_INTEGRITY.md`](../PLAN_SP_ARTIFACT_INTEGRITY.md), which was
+written because they are in `scripts/compute_shortest_paths.py` — a different
+entry point from the one this plan edits, so excluding them kept this change
+reviewable. Defect 2's answer turned out not to be an ordering at all: the two
+files now record a shared `build_id`, so a half-updated pair refuses instead of
+being served in whichever order it was written. Defect 3's is the source KG's
+digest, compared against the graph that actually supplies the node mapping.
+
+*(This heading said "three not bundled" and was written when defect 1 was still
+open. Counting it among the deferred after it shipped is the kind of arithmetic
+a status line gets wrong by standing still.)*
 
 1. **`max_hops` falls back to 5 in silence — FIXED, ahead of the indexed path
    as §10 step 0 requires.** The investigation changed the fix materially from

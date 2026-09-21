@@ -1010,6 +1010,30 @@ export SHEPHERD_SP_HOP_BOUND=5
 - 換載不同工作區時（透過 `/api/v1/pipeline/reload`），必須確認這個 bound 對新的表
   仍然適用。
 
+### 表與圖對不上的時候
+
+最短路徑表是**成對發布**的——`shortest_paths.pt` 與 `shortest_paths.meta.json`
+兩個檔案記錄同一個 `build_id`，另外還記錄了距離是從哪個圖算出來的 SHA-256。由此
+產生三種拒絕，而且三種都是部署問題，不是資料問題：
+
+| 日誌訊息 | 發生了什麼 | 怎麼處理 |
+|---|---|---|
+| *"published by different runs"* | 兩個檔案來自不同次建置。發布過程中斷，或其中一個被別處的檔案蓋過 | 對這個工作區重跑 `scripts/compute_shortest_paths.py`。**不要**從別處複製其中一個檔案去湊成對 |
+| *"computed from a different graph"* | 這張表屬於另一個工作區的 `kg.json`，它的節點索引指向的是別的節點 | 改用**這個**工作區建出來的表，或在這裡重新建 |
+| *"One side of a pair is not a pair"* | 一個檔案宣告了協定、另一個沒有——表發布了但 sidecar 沒跟上，或反過來 | 重跑生成腳本;這一對要嘛一起發布,要嘛都不發布 |
+
+**在這個機制之前建的表仍然可以載入。** 它沒有綁定資訊，所以服務會把它的來源回報
+為 `unrecorded`（未記錄）而不是已驗證，記一則警告，然後照常服務。重新建置就會記錄
+下來。
+
+`GET /api/v1/pipeline/status` 會回報 `sp_kg_binding`：表確實指向正在服務的那個圖
+時為 `verified`，比這個協定更早的表為 `unrecorded`。**只要最短路徑是開啟的，它就
+不會是空的**——如果它是 `unrecorded`，代表沒有任何檢查確認過那張表從哪裡來。
+
+**用記憶體中的圖（而非工作區）建立管線時**根本無法檢查綁定，此時宣告了綁定的表會
+被**拒絕**而不是被假定成立。請改用工作區建立，或使用未帶綁定的表。
+
+
 ### 缺 sidecar 又沒設定時會發生什麼
 
 在預設配置（GNN 已載入、`sp_optional=True`）下，**服務不會停止**，而是改為純 GNN

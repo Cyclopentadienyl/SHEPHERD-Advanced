@@ -544,6 +544,33 @@ them apart rather than sending an operator to the logs.
 
 ---
 
+
+### When the table and its graph do not match
+
+A shortest-path table is published as **a pair** — `shortest_paths.pt` and
+`shortest_paths.meta.json` — and both files record the same `build_id`, plus the
+SHA-256 of the graph the distances were computed from. Three refusals follow
+from that, and all three are deployment problems rather than data problems:
+
+| What the log says | What happened | What to do |
+|---|---|---|
+| *"published by different runs"* | The two files are from different builds. A publication was interrupted between them, or one was copied over the other | Re-run `scripts/compute_shortest_paths.py` for this workspace. Do **not** copy one file from elsewhere to make them match |
+| *"computed from a different graph"* | The table belongs to another workspace's `kg.json`. Its node indices point at different nodes | Use the table built from *this* workspace, or rebuild it here |
+| *"One side of a pair is not a pair"* | One file declares the protocol and the other does not — a table published without its sidecar, or the reverse | Re-run the generator; the pair is published together or not at all |
+
+**A table built before this existed still loads.** It carries no binding, so the
+service reports its provenance as `unrecorded` rather than verified, logs one
+warning, and serves. Rebuilding records one.
+
+`GET /api/v1/pipeline/status` reports `sp_kg_binding`: `verified` when the table
+names the graph being served, `unrecorded` for a table older than the protocol.
+**It is never absent while shortest paths are on** — if it says `unrecorded`, no
+check confirmed where that table came from.
+
+**Building from a graph held in memory rather than from a workspace** cannot
+check a binding at all, and a table that declares one is refused rather than
+assumed. Build from a workspace, or use a table published without a binding.
+
 ## 4.4 The build provenance record (`kg.provenance.json`)
 
 Every build writes `kg.provenance.json` beside `kg.json`, recording **which
