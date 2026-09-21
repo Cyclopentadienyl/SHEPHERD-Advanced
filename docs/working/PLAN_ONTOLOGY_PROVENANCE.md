@@ -178,7 +178,7 @@ known ontology from its PURL, then verify and record the `data-version` and
 digest of what arrived.
 
 > **Revision proposed.** [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)
-> §3.4 argues two of the grounds above do not survive scrutiny, and that the
+> §3.6 argues two of the grounds above do not survive scrutiny, and that the
 > curated list should live in `configs/deployment.yaml` so a rotted PURL is an
 > operator edit rather than a code change. The "never a free-text field typed
 > by a UI user" half stands. Not yet reviewed.
@@ -333,7 +333,7 @@ each one forces.
 |---|---|---|
 | **0** | **DONE.** The `version` promise is refused rather than ignored: only `"latest"` is honoured, at the shared path so all four loaders inherit it, before any cache read or fetch. **`force_download` left alone**; a test class exists so a future tidy-up of "unused flags" cannot take it | **No.** Correcting a misleading API |
 | **1** | **DONE.** `kg.provenance.json` on every build including graph-only, carrying `kg.json`'s digest and bound from the manifest; all four source files by digest with raw `data-version`; parser counters named by the rows and stage they count; reader verification at `workspace_provenance_status` — **not** at `verify_graph_artifacts`, where it was first put and where it would have blocked GNN initialisation over a note that gates nothing (see §5) | Settled as §3.5 proposed |
-| **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2). **Expanded into [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)**, which takes §4.2's measurement and proposes revising §3.3 | Larger than this row assumed — see that document's §3.4 |
+| **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2). **Expanded into [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)**, which takes §4.2's measurement and proposes revising §3.3 | Larger than this row assumed — see that document's §3.6 |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
 
 **Why 3 comes last.** Once 1 and 2 are done, packaging is moving things that are
