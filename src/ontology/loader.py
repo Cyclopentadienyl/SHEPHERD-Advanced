@@ -21,9 +21,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Dict, Optional
-from urllib.request import urlretrieve
-from urllib.error import URLError
-
 import pronto
 
 from src.core.types import DataSource
@@ -74,6 +71,7 @@ class OntologyLoader:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self._loaded_ontologies: Dict[str, 'Ontology'] = {}
+        self._ontology_settings = None
 
     #: The only value `version` can honour. Anything else names a release this
     #: loader has no way to fetch or select, and saying so is the whole point of
@@ -110,6 +108,18 @@ class OntologyLoader:
                 "ontology you want in place — do not rely on this argument to "
                 "choose one."
             )
+
+    def _settings(self):
+        """The deployment's ontology settings, read once per loader.
+
+        Read lazily rather than in `__init__`, so constructing a loader for a
+        directory of files does not require a configuration file to exist.
+        """
+        if self._ontology_settings is None:
+            from src.ontology.settings import load_ontology_settings
+
+            self._ontology_settings = load_ontology_settings()
+        return self._ontology_settings
 
     #: Imports are never resolved. See `load` — this is the whole of the
     #: imports policy's first step, and it is a constant so that no call site
@@ -260,34 +270,47 @@ class OntologyLoader:
     }
 
     def _download_ontology(self, ontology_name: str, force_download: bool) -> Path:
-        """Download ontology file, with manual download instructions on failure."""
-        # Try OBO first
-        url = self.ONTOLOGY_URLS.get(ontology_name)
+        """Fetch an ontology, through the one guarded path.
+
+        **Every attempt uses `download_ontology`, the OWL fallback included.**
+        A fallback with its own fetch is the gate not existing: the scheme and
+        destination rules of `PLAN_ONTOLOGY_PHASE2.md` §3.5 would hold for the
+        path usually taken and not for the one taken when something has already
+        gone wrong — which is the path a rotted PURL leads to.
+
+        **The URLs come from configuration**, not from a constant in this file.
+        `ONTOLOGY_URLS` at `:45` made a PURL that stops resolving into a code
+        change; `configs/deployment.yaml` makes it an edit. `ONTOLOGY_URLS` and
+        `ONTOLOGY_OWL_URLS` remain as this class's declared defaults and are
+        read through the settings, so there is one list and not two.
+
+        A refused destination is **not** a reason to fall back to a stale cache:
+        a refusal says this server may not fetch from there, and quietly serving
+        older bytes instead answers a question nobody asked.
+        """
+        from src.ontology.download import (
+            DestinationPolicy,
+            OntologyDownloadError,
+            download_ontology,
+        )
+
+        settings = self._settings()
+        policy = DestinationPolicy(allowed_hosts=settings.allowed_hosts)
         cache_file = self.cache_dir / f"{ontology_name}.obo"
-
-        if url:
-            logger.info(f"Downloading {ontology_name} ontology from {url}")
-            try:
-                urlretrieve(url, cache_file)
-                logger.info(f"Downloaded {ontology_name} to {cache_file}")
-                return cache_file
-            except URLError as e:
-                logger.warning(f"Failed to download OBO: {e}")
-
-        # Try OWL as fallback
-        owl_url = self.ONTOLOGY_OWL_URLS.get(ontology_name)
         cache_file_owl = self.cache_dir / f"{ontology_name}.owl"
 
-        if owl_url:
-            logger.info(f"Trying OWL format from {owl_url}")
+        refusals = []
+        for url in settings.urls_for(ontology_name):
+            target = cache_file_owl if url.lower().endswith(".owl") else cache_file
+            logger.info(f"Downloading {ontology_name} ontology from {url}")
             try:
-                urlretrieve(owl_url, cache_file_owl)
-                logger.info(f"Downloaded {ontology_name} OWL to {cache_file_owl}")
-                return cache_file_owl
-            except URLError as e:
-                logger.error(f"Failed to download OWL: {e}")
+                return download_ontology(url, target, policy=policy)
+            except OntologyDownloadError as exc:
+                refusals.append(f"{url}: {exc}")
+                logger.warning("could not fetch %s (%s)", url, exc)
 
-        # Check if we have a cached version
+        # Only after every configured source has been tried. A file already on
+        # disk is the "nothing new arrived" answer, and it is logged as such.
         if cache_file.exists():
             logger.warning(f"Download failed, using existing cache: {cache_file}")
             return cache_file
