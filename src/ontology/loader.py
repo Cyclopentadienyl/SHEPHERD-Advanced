@@ -27,6 +27,7 @@ from urllib.error import URLError
 import pronto
 
 from src.core.types import DataSource
+from src.ontology.roles import check_ontology_role
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,15 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Ontology Loader using Pronto
 # =============================================================================
+class OntologyImportError(ValueError):
+    """The file declares imports, which this project does not resolve.
+
+    Its own type so a caller can tell "this artifact needs a dependency story"
+    from "this file is the wrong ontology" — different remedies, and a single
+    `ValueError` would make them one message to an operator.
+    """
+
+
 class OntologyLoader:
     """
     本體載入器 (使用 pronto 後端)
@@ -101,15 +111,49 @@ class OntologyLoader:
                 "choose one."
             )
 
-    def load(self, path: Path) -> 'Ontology':
-        """
-        載入本體檔案
+    #: Imports are never resolved. See `load` — this is the whole of the
+    #: imports policy's first step, and it is a constant so that no call site
+    #: can reintroduce the default by omitting the argument.
+    IMPORT_DEPTH = 0
+
+    def load(self, path: Path, expect: Optional[str] = None) -> 'Ontology':
+        """Parse one ontology file. **Nothing is fetched and nothing is guessed.**
 
         Args:
-            path: OBO/OWL 檔案路徑
+            path: the OBO/OWL file to read.
+            expect: the canonical ontology this file is being used as, e.g.
+                `"hpo"`. When given, the role check of `PLAN_ONTOLOGY_PHASE2.md`
+                §3.4 runs before this returns.
 
         Returns:
-            Ontology 物件
+            The loaded `Ontology`.
+
+        Raises:
+            FileNotFoundError: the path is not there.
+            OntologyImportError: the file declares an import (see below).
+            OntologyRoleError: `expect` was given and the file is not it.
+
+        **The imports policy, and why `import_depth=0` alone is not it.**
+        `pronto 2.7.3` defaults `import_depth` to `-1`: a root file carrying
+        `import:` lines resolves them without bound, over the network, at parse
+        time — and the root file's digest does not cover what they contributed.
+        Setting the depth to 0 stops the fetching and **introduces a worse
+        defect**, measured rather than assumed:
+
+            import_depth=0   loads silently, one term, no warning, imports == {}
+            import_depth=1   raises URLError
+            import_depth=-1  raises URLError
+
+        A build would then be missing whatever the import carried, with nothing
+        saying so — the silent suppression `PLAN_ONTOLOGY_PROVENANCE.md` §4.2
+        rules out. `metadata.imports` keeps the declared set at depth 0, which
+        is what makes an honest refusal possible: **parse without fetching, then
+        refuse on the declaration.**
+
+        Every declared import is refused, including one pointing at a local
+        file. Resolving those is a dependency story with its own digests and its
+        own provenance schema, and nothing measured says an artifact in use
+        needs it.
         """
         if not path.exists():
             raise FileNotFoundError(f"Ontology file not found: {path}")
@@ -117,10 +161,28 @@ class OntologyLoader:
         logger.info(f"Loading ontology from {path}")
 
         # pronto 自動偵測格式 (OBO, OWL, JSON)
-        pronto_ont = pronto.Ontology(str(path))
+        pronto_ont = pronto.Ontology(str(path), import_depth=self.IMPORT_DEPTH)
+
+        declared_imports = tuple(getattr(pronto_ont.metadata, "imports", ()) or ())
+        if declared_imports:
+            listed = "\n".join(f"  {item}" for item in sorted(declared_imports))
+            raise OntologyImportError(
+                f"{path} declares {len(declared_imports)} import(s) and this "
+                f"project requires a self-contained ontology file:\n{listed}\n"
+                "They were not fetched. Resolving them would pull content this "
+                "file's digest does not cover, and ignoring them would build a "
+                "graph missing whatever they carry while looking complete. "
+                "Supply a file that declares no imports."
+            )
 
         # 包裝成我們的 Ontology 類
         ontology = Ontology(pronto_ont, source_path=path)
+
+        if expect is not None:
+            # **Before this returns, so no caller can reach a build without
+            # it.** A check the caller has to remember is a check that is
+            # missing wherever somebody forgot.
+            check_ontology_role(ontology, expect, source=path)
 
         logger.info(f"Loaded {ontology.num_terms} terms from {path.name}")
         return ontology
