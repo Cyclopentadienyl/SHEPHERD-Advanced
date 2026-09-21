@@ -79,9 +79,15 @@ sidecar, scored against a ceiling that describes a table that was never written.
 Ordering moves which file is stale; it does not let a reader tell.
 
 **What makes it detectable is a relationship recorded in both files**, and that
-is what this plan adds. With one, the order genuinely stops mattering — a crash
-at any point leaves two files that do not claim each other, and the loader
-refuses rather than guessing which is current.
+is what this plan adds. With one, the order genuinely stops mattering: whichever
+file was replaced first, a pair that is half-updated does not claim itself, and
+the reader refuses rather than guessing which half is current.
+
+**"A crash at any point leaves two files that do not claim each other" would be
+too strong**, and §6.1 is the precise version. Under temp-and-replace most crash
+points leave a pair that is entirely intact — the old one before either replace,
+the new one after both — and those are accepted. What is refused is the window
+between the two replaces, which is the only state in which the files disagree.
 
 ---
 
@@ -174,9 +180,22 @@ is not modified while the BFS runs, which at deployment scale is hours. The
 digest is taken from the path that was loaded and is recorded as *the input this
 run was given*; a file swapped underneath a running job would be recorded
 incorrectly, exactly as `file_sha256`'s own docstring already warns for the
-general case. Detecting that needs the digest taken before and after the read
-and compared — cheap for the KG file, and the plan takes it, because a mismatch
-there means the artifact describes a graph that no longer exists at that path.
+general case.
+
+The digest is taken **before the read and again after the job**, and the two are
+compared — cheap for one file. Two things about that comparison, because it is
+easy to read more into it than it carries:
+
+- **The digest recorded is the one taken at load**, always. The second reading
+  is a signal, never a replacement: overwriting the record with an end-of-job
+  digest of the same path would record whatever is there *now* and call it the
+  input, which is the failure this binding exists to prevent, reached from the
+  other direction.
+- **It is a comparison, not a lock.** It catches a file that differs at the end
+  from the beginning. It cannot detect a change made and reverted during the
+  BFS, and it holds nothing still. The snapshot assumption above is what
+  correctness rests on; this only tells an operator when that assumption was
+  visibly broken.
 
 ### 4.5 Every reader of the pair, not only the serving one
 
@@ -198,6 +217,19 @@ That does not mean dragging the pipeline into the tools: what is shared is
 reading and validating the two files, not building an index or loading a model.
 `audit_sp_reachability.py` was not in the first draft's inventory at all, which
 is the sort of omission a reader list exists to prevent.
+
+**The validation does not vary by caller; what the caller does with it may.**
+The shared reader returns one result, and two of its states must stay distinct:
+
+| Result | Every caller |
+|---|---|
+| The pair or the schema is **known invalid** — mismatched `build_id`, a partial declaration, an unrecognised schema, a `kg_digest` that differs | **Refuse.** No caller proceeds over this |
+| **The KG binding is unverified** because no comparable graph was supplied | Not a verdict on the artifact. A ranking consumer refuses (§5.1); a tool measuring only the integer ids inside the tensor may proceed **and must label the limitation in its output** |
+
+A reader that uses an *external* graph to interpret the node mapping is in the
+first consumer's position, not the second's, whatever kind of program it is.
+What varies is whether a caller needs the binding — never whether the files
+were checked.
 
 ---
 
@@ -234,12 +266,17 @@ is reported as **unrecorded provenance**, never as *verified*.
 | Declared but incomplete — a field missing, empty, or of the wrong type | A publication that did not finish, or a hand edit | **Refuse.** Naming the field |
 | `schema_version` not recognised | Written by a newer producer | **Refuse.** Which of its fields still mean what they say is a guess — the same rule `read_provenance` already applies |
 
+**Then, and only for a pair that reached "proceed" above**, the KG binding:
+
+| State | Meaning | Treatment |
+|---|---|---|
+| `kg_digest` equal to the **consumed** graph's digest | Computed from this graph | Proceed |
+| `kg_digest` different | Computed from another graph | **Refuse.** Node indices mean different nodes |
+| The consumed graph has no trustworthy digest | Cannot be checked | **Not an exemption.** See §5.1 — this is the row the first draft got backwards |
+
 `schema_version` is compared against an explicit list of accepted values, not
 tested for truthiness: `0`, `""` and `False` are all falsy and none of them is
 "absent".
-| `kg_digest` present and equal to the **consumed** graph's digest | Computed from this graph | Proceed |
-| `kg_digest` present and different | Computed from another graph | **Refuse.** Node indices mean different nodes |
-| `kg_digest` present and the consumed graph has no trustworthy digest | Cannot be checked | **Refuse for a ranking consumer.** See below — this is the one row the first draft got backwards |
 
 ### 5.1 The binding is to the graph that supplies the node mapping
 
@@ -326,8 +363,11 @@ against a hand-built dict.
    and the test must contain a pair that proves it.
 4. **A failed reload keeps the previous service.** Asserted on the real reload
    path, against the app state, not only on the loader.
-5. **Old artifacts still load.** A sidecar with neither field reads as unknown,
-   not as broken, and serves.
+5. **Old artifacts still load** — and "old" is Rule 0's definition, not the
+   sidecar's alone. A pair in which **neither side** declares the protocol reads
+   as unknown, not as broken, and serves. The test covers both sides, because a
+   case written against the sidecar only would pass for a tensor that declares
+   one while the sidecar does not — which Rule 0 refuses.
 6. **The refusal is scoped to consumers of the ranking, not to every reader
    of the workspace.** Two halves, and the first draft of this item stated only
    one of them and would have been wrong for it.
@@ -374,6 +414,18 @@ against a hand-built dict.
    This plan does **not** implement the target, add a switch for it, or make SP
    optional. That is B-1's, it is gated, and building it here would be the
    parallel pipeline this programme keeps refusing to grow.
+
+   **One boundary recorded for B-1 now, while the reasoning is in front of
+   someone.** When SP no longer affects candidates, order or the ranking score,
+   a pipeline may serve GNN results while marking the SP contextual analysis
+   **unavailable** — that is the decoupling the target exists for. What may
+   *not* follow from it is a relaxation of validation: a broken or
+   known-mismatched table must not be displayed as though its numbers were
+   valid, and must not be replaced by zero or any other plausible-looking score.
+   `unavailable` is already the policy's word for this, and it is the same
+   distinction `SP_SCORE_GUIDE.md` draws between a genuine "no path found" and a
+   lookup failure that collapses to `0.0`. Lower coupling of *availability*, not
+   lower standards for *data*.
 7. **Mutation.** Each check has a mutant that fails exactly the test claiming
    it: `build_id` comparison removed, `kg_digest` comparison removed, the
    legacy precedence rule inverted so a partial declaration falls back to
