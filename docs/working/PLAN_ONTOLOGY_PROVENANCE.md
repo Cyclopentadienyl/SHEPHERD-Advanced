@@ -177,6 +177,12 @@ stating precisely, because it is not the one assumed.
 known ontology from its PURL, then verify and record the `data-version` and
 digest of what arrived.
 
+> **Revision proposed.** [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)
+> §3.4 argues two of the grounds above do not survive scrutiny, and that the
+> curated list should live in `configs/deployment.yaml` so a rotted PURL is an
+> operator edit rather than a code change. The "never a free-text field typed
+> by a UI user" half stands. Not yet reviewed.
+
 ### 3.4 The inversion worth making
 
 Today auto-download is the primary path, and **the build CLI has no
@@ -327,7 +333,7 @@ each one forces.
 |---|---|---|
 | **0** | **DONE.** The `version` promise is refused rather than ignored: only `"latest"` is honoured, at the shared path so all four loaders inherit it, before any cache read or fetch. **`force_download` left alone**; a test class exists so a future tidy-up of "unused flags" cannot take it | **No.** Correcting a misleading API |
 | **1** | **DONE.** `kg.provenance.json` on every build including graph-only, carrying `kg.json`'s digest and bound from the manifest; all four source files by digest with raw `data-version`; parser counters named by the rows and stage they count; reader verification at `workspace_provenance_status` — **not** at `verify_graph_artifacts`, where it was first put and where it would have blocked GNN initialisation over a note that gates nothing (see §5) | Settled as §3.5 proposed |
-| **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2) | Small: where roots are configured |
+| **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2). **Expanded into [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)**, which takes §4.2's measurement and proposes revising §3.3 | Larger than this row assumed — see that document's §3.4 |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
 
 **Why 3 comes last.** Once 1 and 2 are done, packaging is moving things that are
@@ -352,9 +358,18 @@ pull further ontologies over the network at parse time, and the root file's
 digest does not cover what they contributed.
 
 **Verified: the default is unbounded and the loader passes no override.
-Unverified: whether the MONDO and HPO artifacts these deployments use actually
-declare imports** — no such file exists in the environment this plan was written
-in, so the exposure is conditional and stated as conditional.
+Unverified when this was written: whether the MONDO and HPO artifacts these
+deployments use actually declare imports** — no such file existed in the
+environment this plan was written in, so the exposure was conditional and stated
+as conditional.
+
+**Since measured, in [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md) §2.**
+None of the four `.obo` artifacts `ONTOLOGY_URLS` names declares an import in
+its header. That narrows the exposure for those files and does **not** remove
+the need for a policy, because Phase 2 makes an operator-supplied file the
+primary input. §2.1 there also measures what `import_depth=0` does on its own —
+it loads silently with the import dropped, which is the suppression this section
+rules out — so the policy refuses on the declared set rather than on the depth.
 
 Phase 2 must therefore state a policy rather than inherit one. The narrow option
 is to require self-contained files and refuse an input whose imports cannot be

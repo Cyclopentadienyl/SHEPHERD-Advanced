@@ -683,9 +683,10 @@ against the code rather than recalled:
 |---|---|
 | Cache location | `Path.home()/'.shepherd'/'ontologies'` — **outside the project**, in the operator's home |
 | On a missing file | `urlretrieve('http://purl.obolibrary.org/obo/mondo.obo')` — **whatever is latest**, with no pinning |
-| The `version` argument | Used only as an in-memory cache key; the filename is `mondo.obo` regardless. **It reads as version selection and is not** |
+| The `version` argument | Used only as an in-memory cache key; the filename is `mondo.obo` regardless. **It reads as version selection and is not** — **closed by Phase 0**, which refuses any value but `"latest"` rather than ignoring it |
 | Is the version knowable? | **Yes** — the OBO header carries `data-version`, and `hierarchy.py` already parses it |
-| Is it recorded? | **No.** The manifest carries a recipe for `node_features.pt` and digests for the tensors, and nothing says which ontology produced `kg.json` |
+| Is it recorded? | **Was no; closed by Phase 1.** `kg.provenance.json` carries all four source files by role, digest and raw `data-version`, bound to `kg.json`'s digest |
+| Can a site select one? | **Still no.** The build reads `<cache_dir>/<name>.obo` by convention, so the record answers "what was used" for an input nobody chose. This is Phase 2 |
 
 This is not hypothetical: the two machines used this session differ in MONDO
 vintage (29,866 vs 32,109 disease nodes, different `kg_digest`) purely because
@@ -698,7 +699,17 @@ decided about pinning: an API that looks like it pins and does not is worse than
 one that does not offer it. Recording `data-version` beside the build is the
 cheap half and needs no new subsystem. Pinning — where the files live, whether a
 mismatch refuses or warns — is a design question with real alternatives and
-deserves its own plan. Both are out of scope for 5a.
+deserves its own plan. Both were out of scope for 5a.
+
+**Where this stands now.** Phase 0 and Phase 1 of
+[`PLAN_ONTOLOGY_PROVENANCE.md`](PLAN_ONTOLOGY_PROVENANCE.md) are implemented and
+merged, which closes the two rows marked above. Phase 2 — a path per ontology on
+the build CLI, a resolver over configured roots, and a stated imports policy —
+is planned in [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md) and awaits
+design review. It carries the parent plan's §4.2 imports question, now measured,
+and proposes revising §3.3 so the curated source list is operator-editable.
+Phase 3 (packaging) is unstarted and converges with the export/import idea
+below.
 
 **A workspace export/import pair — the maintainer's idea, recorded so it is not
 lost.** Not a review finding and not scheduled. The hop-bound work exposed the
