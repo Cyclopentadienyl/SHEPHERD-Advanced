@@ -1279,9 +1279,27 @@ class TestBuildPathOrdering:
             declared_version = None
 
         class _Loader:
-            def __init__(self, *a, **k): pass
-            def load_mondo(self): return _Ontology()
-            def load_hpo(self): return _Ontology()
+            """The interface the build uses after Phase 2.
+
+            `load(path, expect=...)` rather than `load_mondo()` / `load_hpo()`:
+            the build now *selects* a file and loads it, so a stub offering the
+            old convenience methods would be a stub of an interface nothing
+            calls.
+            """
+            def __init__(self, *a, **k):
+                import tempfile
+
+                # One candidate per ontology, so selection resolves rather than
+                # falling through to a download this stub cannot perform.
+                self.cache_dir = Path(tempfile.mkdtemp())
+                for slot, prefix in (("mondo", "MONDO"), ("hpo", "HP")):
+                    (self.cache_dir / f"{slot}.obo").write_text(
+                        "format-version: 1.2\n"
+                        f"ontology: {slot}\n"
+                        f"\n[Term]\nid: {prefix}:0000001\nname: t\n"
+                    )
+
+            def load(self, path, expect=None): return _Ontology()
 
         class _Parser:
             def __init__(self, *a, **k): pass

@@ -85,6 +85,87 @@ def require_usable_budgets(num_train: Optional[int], num_val: Optional[int]) -> 
         ) from exc
 
 
+def _select_and_load(
+    loader,
+    ontology: str,
+    explicit_path,
+    cache_dir,
+    force_download: bool,
+):
+    """One ontology, chosen then loaded. **`PLAN_ONTOLOGY_PHASE2.md` §3.1.**
+
+    The precedence table, in order:
+
+    ==========================================  =============================
+    Given                                       Taken
+    ==========================================  =============================
+    an explicit path                            that file; missing refuses
+    no path, exactly one candidate              that file
+    no path, more than one candidate            refuse, listing them
+    no path, none, a source configured          download
+    no path, none, no source                    refuse with the manual hints
+    ==========================================  =============================
+
+    **`--force-download` with an explicit path refuses.** Naming a file and
+    demanding a fresh download are two different instructions, and the shape
+    this must not take is a flag that survives in the signature while the
+    resolver returns before anything reads it — a control that looks live and
+    is not, which is the defect `_require_supported_version` was added for on
+    the `version` argument.
+
+    The role check runs inside `load`, so a file that is not the ontology this
+    slot asked for stops the build here rather than producing a workspace with
+    an entire node type missing.
+    """
+    from src.ontology.resolver import (
+        AmbiguousOntologyError,
+        NoOntologyCandidateError,
+        select_ontology_file,
+    )
+    from src.ontology.settings import load_ontology_settings
+
+    if explicit_path is not None and force_download:
+        raise SystemExit(
+            f"--{ontology}-path names a file and --force-download asks for a "
+            "fresh copy; those are two different instructions and this build "
+            "will not guess which one you meant. Drop one of them."
+        )
+
+    settings = load_ontology_settings()
+    roots = list(settings.roots)
+    # **The cache is a root whether it was named or defaulted**, and the first
+    # version of this only added it when `--ontology-cache-dir` was passed.
+    # That silently dropped `~/.shepherd/ontologies` — the default, and where
+    # every existing install's files already are — so a build that used to open
+    # them would have found no candidate and re-downloaded. `loader.cache_dir`
+    # is the resolved one either way.
+    #
+    # **Last, and not special beyond that.** Its position is not precedence:
+    # two candidates still refuse, wherever they are.
+    cache_root = Path(cache_dir) if cache_dir is not None else getattr(loader, "cache_dir", None)
+    if cache_root is not None:
+        roots.append(Path(cache_root))
+
+    if force_download:
+        logger.info("--force-download: fetching %s rather than using what is present", ontology)
+        return loader.load(loader._download_ontology(ontology, True), expect=ontology)
+
+    try:
+        candidate = select_ontology_file(
+            ontology, roots=roots, explicit_path=explicit_path
+        )
+    except AmbiguousOntologyError as exc:
+        raise SystemExit(str(exc)) from exc
+    except NoOntologyCandidateError:
+        logger.info(
+            "no %s file under %s; falling back to the configured sources",
+            ontology, ", ".join(str(root) for root in roots) or "(no roots)",
+        )
+        return loader.load(loader._download_ontology(ontology, False), expect=ontology)
+
+    return loader.load(candidate.path, expect=ontology)
+
+
 def build_knowledge_graph(
     external_dir: Path,
     workspace: Path,
@@ -95,6 +176,9 @@ def build_knowledge_graph(
     val_disease_fraction: float = 0.15,
     sample_seed: int = 42,
     ontology_cache_dir: Path | None = None,
+    mondo_path: Path | None = None,
+    hpo_path: Path | None = None,
+    force_download: bool = False,
 ) -> None:
     """
     Build a production knowledge graph from HPO annotation files.
@@ -149,10 +233,19 @@ def build_knowledge_graph(
         sys.exit(1)
 
     # --- Load ontologies ---
+    # **Selection, not convention** (`PLAN_ONTOLOGY_PHASE2.md` §3.1). The build
+    # used to open `<cache_dir>/<name>.obo` by name, so Phase 1's provenance
+    # recorded what was used for an input nobody chose. Now a path names the
+    # file, the configured roots are searched when none is given, and more than
+    # one candidate refuses rather than picking.
     logger.info("Loading ontologies...")
     ont_loader = OntologyLoader(cache_dir=ontology_cache_dir)
-    mondo = ont_loader.load_mondo()
-    hpo = ont_loader.load_hpo()
+    mondo = _select_and_load(
+        ont_loader, "mondo", mondo_path, ontology_cache_dir, force_download
+    )
+    hpo = _select_and_load(
+        ont_loader, "hpo", hpo_path, ontology_cache_dir, force_download
+    )
 
     # --- Build KG ---
     config = KGBuilderConfig(
@@ -346,7 +439,33 @@ def main():
         "--ontology-cache-dir",
         type=str,
         default=None,
-        help="Directory for cached ontology files (default: ~/.shepherd/ontologies/)",
+        help="Directory for cached ontology files (default: ~/.shepherd/ontologies/). "
+             "Searched LAST, after the roots in configs/deployment.yaml. It no "
+             "longer opens <name>.obo by convention: if it holds more than one "
+             "candidate for an ontology — a .obo and a .owl, for instance — the "
+             "build refuses and asks for --mondo-path / --hpo-path",
+    )
+    parser.add_argument(
+        "--mondo-path",
+        type=str,
+        default=None,
+        help="The MONDO ontology file to build from. Wins over every root and "
+             "over the cache; a path that does not exist refuses rather than "
+             "falling back",
+    )
+    parser.add_argument(
+        "--hpo-path",
+        type=str,
+        default=None,
+        help="The HPO ontology file to build from, with the same rule as "
+             "--mondo-path",
+    )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Fetch the ontologies again rather than using what is present. "
+             "Refused together with --mondo-path / --hpo-path: naming a file "
+             "and demanding a fresh download are two different instructions",
     )
     parser.add_argument(
         "--generate-samples",
@@ -394,6 +513,9 @@ def main():
         val_disease_fraction=args.val_disease_fraction,
         sample_seed=args.sample_seed,
         ontology_cache_dir=Path(args.ontology_cache_dir) if args.ontology_cache_dir else None,
+        mondo_path=Path(args.mondo_path) if args.mondo_path else None,
+        hpo_path=Path(args.hpo_path) if args.hpo_path else None,
+        force_download=args.force_download,
     )
 
 

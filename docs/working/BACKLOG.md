@@ -703,11 +703,16 @@ deserves its own plan. Both were out of scope for 5a.
 
 **Where this stands now.** Phase 0 and Phase 1 of
 [`PLAN_ONTOLOGY_PROVENANCE.md`](PLAN_ONTOLOGY_PROVENANCE.md) are implemented and
-merged, which closes the two rows marked above. Phase 2 — a path per ontology on
-the build CLI, a resolver over configured roots, and a stated imports policy —
-is planned in [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md) and awaits
-design review. It carries the parent plan's §4.2 imports question, now measured,
-and proposes revising §3.3 so the curated source list is operator-editable.
+merged, which closes the two rows marked above. **Phase 2 is implemented** to
+[`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md), whose design passed review:
+`--mondo-path` / `--hpo-path` on the build CLI, a resolver over configured roots
+that refuses rather than ranking, an imports policy that refuses every declared
+import, a role check that stops a file being built into the wrong slot, and the
+source list moved from `loader.py` into `configs/deployment.yaml` with the
+scheme and destination rules enforced on every request. **One item is owed and
+undelivered by design**: editing those URLs from the interface (§3.6.1) — the
+backend is built for it, the front end is outside this programme.
+
 Phase 3 (packaging) is unstarted and converges with the export/import idea
 below.
 

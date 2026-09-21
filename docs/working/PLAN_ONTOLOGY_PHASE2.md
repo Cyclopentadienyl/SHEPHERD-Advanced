@@ -530,6 +530,46 @@ no test touches DNS or any host)
 
 ---
 
+### 4.1 Where each condition is held
+
+Filled in as the work landed, so "30 conditions to be met" became "30 conditions
+with a named test" rather than a claim.
+
+| # | Condition | Test |
+|---|---|---|
+| 1 | explicit path used; missing refuses | `test_ontology_resolver.py::TestSelection::test_an_explicit_path_that_does_not_exist_refuses` |
+| 2 | explicit path wins with rivals on disk | `…::test_an_explicit_path_wins_while_other_versions_sit_on_disk` |
+| 3 | two roots refuse, naming both | `…::test_two_roots_each_holding_one_refuse`, `…::test_more_than_one_candidate_refuses_and_names_them` |
+| 4 | two releases in one root refuse | `…::test_more_than_one_candidate_refuses_and_names_them` |
+| 5 | exactly one is used | `…::test_exactly_one_candidate_is_taken` |
+| 6 | `force_download` contradiction; not decorative | `test_ontology_selection_cli.py::TestForceDownload` (3) |
+| 7 | `--ontology-cache-dir` with one file works | `…::test_exactly_one_candidate_in_the_cache_still_works` |
+| 8 | `.obo` + `.owl` in one cache refuses | `test_ontology_resolver.py::…::test_obo_is_not_preferred_over_owl`, `test_ontology_selection_cli.py::…::test_a_cache_holding_obo_and_owl_refuses` |
+| 9 | cache + another root refuse | `test_ontology_selection_cli.py::…::test_a_root_and_the_cache_each_holding_one_refuses` |
+| 10 | naming a path fixes it | `…::test_naming_a_path_fixes_that` |
+| 11 | identity, not presence | `test_ontology_resolver.py::TestIdentityWithoutAParser` (7) |
+| 12 | no directory creation | `…::test_it_creates_no_directories` |
+| 13 | enumeration issues no request | `…::test_it_issues_no_network_request` |
+| 14 | a declared import refuses, named | `test_ontology_imports_and_role.py::…::test_a_declared_import_is_refused_and_named` |
+| 15 | a local import refuses too | `…::test_an_import_pointing_at_a_local_file_is_refused_too` |
+| 16 | self-contained loads, nothing fetched | `…::test_a_self_contained_file_loads`, `…::test_nothing_is_fetched_while_parsing` |
+| 17 | wrong slot refuses, named | `…::TestTheRoleCheck::test_the_reproduction_is_refused`, `test_ontology_selection_cli.py::…::test_a_wrong_slot_stops_the_build` |
+| 18 | cross-namespace terms still load | `…::test_cross_namespace_terms_do_not_make_a_file_wrong` |
+| 19 | `hp` and `hpo` are one | `…::test_hp_and_hpo_are_the_same_slot`, `test_ontology_resolver.py::TestTheAliases` |
+| 20 | a failed role check does not fall back | `test_ontology_selection_cli.py::…::test_it_does_not_fall_back_to_the_cache` |
+| 21 | bad scheme refused when read | `test_ontology_download_policy.py::…::test_the_settings_reader_asks_the_same_module` |
+| 22 | redirect to `ftp` refused | `…::test_a_redirect_to_ftp_is_refused` (premise measured by `…::test_the_stdlib_would_follow_https_to_ftp`) |
+| 23 | ordinary redirect still followed | `…::test_an_ordinary_redirect_is_still_followed` |
+| 24 | the OWL fallback shares the downloader | `…::test_the_owl_fallback_has_no_fetch_of_its_own` |
+| 25 | private / loopback / link-local refused | `…::test_an_address_inside_the_network_is_refused` (6) |
+| 26 | a literal private IP refused | `…::test_a_literal_private_address_is_refused` |
+| 27 | an allow-listed mirror permitted | `…::test_an_allowed_host_is_permitted_inside_the_network` |
+| 28 | redirect into the network refused | `…::test_a_redirect_into_the_network_is_refused` |
+| 29 | one private answer among several refuses | `…::test_one_private_answer_among_several_refuses` |
+| 30 | provenance unchanged in shape | `test_ontology_selection_cli.py::TestProvenanceIsUnchangedInShape` (2) |
+
+---
+
 ## 5. Sequence
 
 Ordered so that the contested section (§3.6) is last and the rest can proceed
