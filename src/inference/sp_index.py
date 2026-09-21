@@ -72,6 +72,7 @@ __all__ = [
     "sp_mean_distances",
     "validate_sp_artifact",
     "validate_sp_columns",
+    "validate_sp_values",
 ]
 
 #: Python's integers are arbitrary precision, so the domain check below can be
@@ -266,8 +267,29 @@ def validate_sp_artifact(
     n_rows = validate_sp_columns(
         phenotype, target, target_type, distance, source=source
     )
-    if not n_rows:
-        return 0
+    validate_sp_values(target_type, distance, max_hops, source=source)
+    return n_rows
+
+
+def validate_sp_values(
+    target_type: Tensor,
+    distance: Tensor,
+    max_hops: int,
+    *,
+    source: str = "the shortest-path table",
+) -> None:
+    """The value rules, split from the structural ones because they need `max_hops`.
+
+    **The split is not cosmetic.** A caller that must decide something *before*
+    the hop bound is resolved — the loader deciding whether a table has any rows
+    at all — needs the structural checks and cannot yet run these. Folding the
+    two together forced that caller to choose between validating nothing and
+    validating twice, and it chose nothing: four malformed tables with an empty
+    `distance` column were accepted as "no rows" without any column being
+    looked at.
+    """
+    if not distance.numel():
+        return
 
     observed_types = set(int(v) for v in torch.unique(target_type).tolist())
     unexpected = sorted(observed_types - set(SP_TARGET_TYPES))
@@ -299,7 +321,6 @@ def validate_sp_artifact(
             "would sit below distances that are really in the table, which "
             "reorders candidates rather than merely mis-scoring them."
         )
-    return n_rows
 
 
 def _derive_domain(phenotype: Tensor, target: Tensor, target_type: Tensor) -> KeyDomain:

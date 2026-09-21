@@ -467,6 +467,65 @@ class TestTheLoaderRefusesAPresentButUnusableTable:
 
         assert pipeline._sp_ready is False
 
+    @pytest.mark.parametrize(
+        "label,payload",
+        [
+            (
+                "distance emptied while the id columns keep a row",
+                {
+                    "phenotype_idx": torch.tensor([0], dtype=torch.int64),
+                    "target_idx": torch.tensor([0], dtype=torch.int64),
+                    "target_type": torch.tensor([1], dtype=torch.int64),
+                    "distance": torch.empty(0, dtype=torch.int8),
+                },
+            ),
+            (
+                "a two-dimensional distance column",
+                {
+                    "phenotype_idx": torch.empty(0, dtype=torch.int64),
+                    "target_idx": torch.empty(0, dtype=torch.int64),
+                    "target_type": torch.empty(0, dtype=torch.int64),
+                    "distance": torch.empty((0, 2), dtype=torch.int8),
+                },
+            ),
+            (
+                "an empty float distance column",
+                {
+                    "phenotype_idx": torch.empty(0, dtype=torch.int64),
+                    "target_idx": torch.empty(0, dtype=torch.int64),
+                    "target_type": torch.empty(0, dtype=torch.int64),
+                    "distance": torch.empty(0, dtype=torch.float32),
+                },
+            ),
+            (
+                "an id column that is a Python list",
+                {
+                    "phenotype_idx": [],
+                    "target_idx": torch.empty(0, dtype=torch.int64),
+                    "target_type": torch.empty(0, dtype=torch.int64),
+                    "distance": torch.empty(0, dtype=torch.int8),
+                },
+            ),
+        ],
+    )
+    def test_a_malformed_table_is_not_an_empty_one(self, tmp_path, label, payload):
+        """**Zero rows is a conclusion, not a premise.**
+
+        A first version of the empty-table path read `distance.numel()` and
+        returned on 0 — asking one column how long it is and then skipping every
+        check on all four. All four tables here were accepted as "no rows". The
+        damage is on reload rather than at cold start: a refusal keeps the
+        running pipeline, and an acceptance replaces a healthy SP-ready pipeline
+        with one serving on the GNN alone, reporting success.
+        """
+        pipeline, data_dir = self._pipeline(tmp_path, payload)
+
+        with pytest.raises(ValueError):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False, label
+        assert pipeline._sp_lookup is None
+
     def test_the_sound_table_still_loads(self, tmp_path):
         """Without this, every refusal above holds for a loader that refuses
         everything."""

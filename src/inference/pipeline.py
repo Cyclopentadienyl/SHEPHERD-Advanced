@@ -608,7 +608,8 @@ class DiagnosisPipeline:
         from src.inference.sp_index import (
             SPArtifactError,
             build_sp_index,
-            validate_sp_artifact,
+            validate_sp_columns,
+            validate_sp_values,
         )
 
         # **Present and unreadable is a refusal, not a shrug.** This warned and
@@ -632,7 +633,22 @@ class DiagnosisPipeline:
                 f"{sp_path} is missing {missing}. The columns are parallel and "
                 "the index cannot be built from a subset of them."
             )
-        n_pairs = int(sp_data["distance"].numel())
+        # **Structure first, and "how many rows" is its answer rather than its
+        # input.** Reading `distance.numel()` directly and branching on it looked
+        # equivalent and was not: it asks one column how long it is and then
+        # skips every check on all four. Four malformed tables reached the
+        # absent path that way — `distance` emptied while the id columns kept a
+        # row, a `(0, 2)` distance column, an empty float column, and an id
+        # column that was a Python list — and on a reload each of them replaced
+        # a healthy SP-ready pipeline with one serving on the GNN alone, while
+        # reporting success.
+        n_pairs = validate_sp_columns(
+            sp_data["phenotype_idx"],
+            sp_data["target_idx"],
+            sp_data["target_type"],
+            sp_data["distance"],
+            source=str(sp_path),
+        )
 
         # **A table with no rows is the absent case, not a ready one.** D5 took
         # the weaker of the two defensible readings deliberately: an empty table
@@ -724,18 +740,16 @@ class DiagnosisPipeline:
             )
             return
 
-        # **On the tensors as loaded.** Dtypes, dimensions, column lengths, signs,
-        # the producer's `target_type` encoding, and the distance ceiling — all
-        # before anything is cast. The ceiling check is a floor and honest about
-        # being one: `max(distance)` proves the declared bound is not too LOW and
-        # can never prove it is not too high, because a 3-hop table is consistent
-        # with a declared 5. That one direction is the direction a stale sidecar
-        # from a smaller run fails in, and there the sentinel lands *below*
-        # distances really in the table, so an unreachable phenotype outranks a
-        # connected one.
-        validate_sp_artifact(
-            sp_data["phenotype_idx"],
-            sp_data["target_idx"],
+        # **The value rules, which are the half that needed the bound.** The
+        # producer's `target_type` encoding, and distances inside `1 .. max_hops`.
+        # The ceiling is a floor and honest about being one: `max(distance)`
+        # proves the declared bound is not too LOW and can never prove it is not
+        # too high, because a 3-hop table is consistent with a declared 5. That
+        # one direction is the direction a stale sidecar from a smaller run fails
+        # in, and there the sentinel lands *below* distances really in the table,
+        # so an unreachable phenotype outranks a connected one. Both run on the
+        # tensors as loaded, before anything is cast.
+        validate_sp_values(
             sp_data["target_type"],
             sp_data["distance"],
             max_hops,

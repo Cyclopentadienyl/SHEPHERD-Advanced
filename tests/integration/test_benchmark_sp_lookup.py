@@ -211,7 +211,7 @@ def test_synthetic_run_never_claims_an_artifact_measurement(tmp_path, monkeypatc
 # One implementation, and the bound it measures against
 # =============================================================================
 def test_the_benchmark_measures_against_the_declared_bound_not_the_observed_one(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     """**The defect §8.1 removed from the loader, found back in its consumer.**
 
@@ -225,9 +225,25 @@ def test_the_benchmark_measures_against_the_declared_bound_not_the_observed_one(
 
     Two implementations agreeing with each other could never have caught it —
     both received the same corrupted bound.
+
+    **The RSS reading is substituted, and nothing else is.** `build_index` takes
+    one so its cost is reported, and `_rss_bytes` imports `resource`, which does
+    not exist on Windows — so this test, which is about a hop bound and not
+    about memory, failed at collection-adjacent import on any non-Linux host
+    before the substitution. `@linux_only` would also have fixed it and would
+    have cost the coverage everywhere else. The artifact reader, the builder and
+    the query are the real ones; only the meter is stubbed, and it returns
+    `None` rather than a number, so nothing here can be mistaken for a
+    measurement.
     """
+    import scripts.benchmark_sp_lookup as bench
     from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
     from src.inference.sp_index import sp_mean_distances
+
+    monkeypatch.setattr(
+        bench, "_rss_bytes",
+        lambda: {"peak_rss_bytes": None, "current_rss_bytes": None},
+    )
 
     data_dir = tmp_path / "ws"
     data_dir.mkdir(parents=True, exist_ok=True)
