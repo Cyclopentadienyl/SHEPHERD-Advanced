@@ -177,11 +177,18 @@ stating precisely, because it is not the one assumed.
 known ontology from its PURL, then verify and record the `data-version` and
 digest of what arrived.
 
-> **Revision proposed.** [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)
-> §3.6 argues two of the grounds above do not survive scrutiny, and that the
-> curated list should live in `configs/deployment.yaml` so a rotted PURL is an
-> operator edit rather than a code change. The "never a free-text field typed
-> by a UI user" half stands. Not yet reviewed.
+> **Superseded in part.** The recommendation above is **no longer the
+> project's position on who may edit the list.**
+> [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md) §3.6 shows that two of
+> the grounds do not survive scrutiny, and §3.6.1 records the requirement the
+> maintainer actually stated: **an operator with data-management rights can see
+> and edit the source URLs in the interface.** That is owed and undelivered, not
+> forbidden — so this section must not be read as a standing ban on a URL
+> surface.
+>
+> What survives is narrower and still holds: **not a free-text field exposed to
+> every user of the application**, and every fetch constrained at the request
+> boundary by the scheme and destination rules of Phase 2 §3.5.
 
 ### 3.4 The inversion worth making
 

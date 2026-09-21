@@ -150,17 +150,63 @@ reads, and ordering by a self-declared version string is a guess wearing a
 comparison. Ambiguity is an operator's decision and the refusal hands them the
 three facts they need to take it.
 
-Two existing surfaces have to be placed rather than left to interact by accident:
+#### 3.1.1 What that fixes, and what it leaves free
 
-- **`--ontology-cache-dir` becomes a root**, the last one searched, so an
-  existing invocation keeps working and its directory is now enumerated rather
-  than opened by convention. It is not special beyond its position.
-- **`force_download` with an explicit path is a contradiction and refuses.**
-  Naming a file and demanding a fresh download are two different instructions.
-  With no explicit path it keeps its current meaning — bypass what is present
-  and fetch. **What it must not become is a flag that survives in the signature
-  while the resolver returns before anything reads it**; that failure has its own
-  acceptance case.
+**This is a default about ambiguity, not a hard-coded choice**, and the
+difference is worth stating because "written into the rule" reads like "you are
+stuck with one vendor, version, URL or directory". Nothing of the sort is fixed:
+
+| | |
+|---|---|
+| **Fixed** | Only this: with no basis for choosing, do not choose |
+| **Not fixed** | Which ontology, which release, which URL, which directory, how many coexist |
+| **The cost** | Multi-candidate builds are not fully hands-off until a path is named |
+| **Not the cost** | Automation. Naming a path automates completely, with no file deleted and no code changed |
+
+**One selection entry point, shared.** The resolver lists candidates; a single
+caller turns a list into a choice. The CLI passes a path to it and a later UI
+shows the candidates and passes the chosen one — so ambiguity must never make
+the listing surface unusable, which is the outcome a refusal buried inside the
+loader would produce.
+
+**If a persisted default is wanted later**, the smallest form that stays inside
+"do not guess" is storing the path an operator already chose and replaying it as
+an explicit choice through that same entry point. **Not delivered by Phase 2**,
+recorded so it is not reinvented as a `first` / `latest` / strategy framework.
+
+#### 3.1.2 `--ontology-cache-dir`: a deliberate behaviour change, not preserved behaviour
+
+**The first draft claimed an existing invocation keeps working. That is not
+true and the claim is withdrawn.** `_load_known_ontology` prefers `<name>.obo`
+over `<name>.owl` in the same directory today. Under §3.1 both are valid
+candidates, so a cache holding both — which is what the OBO→OWL download
+fallback of §1.4 produces — **refuses** where it used to load. A second case:
+the named cache holds one file and a configured root holds another.
+
+Placing the cache last does not rescue either, precisely because the policy does
+not select by root order. So:
+
+- The flag is still accepted and still works **when there is exactly one
+  candidate**, which is the common case.
+- A deployment that was relying on implicit OBO-over-OWL precedence **needs to
+  add `--mondo-path` / `--hpo-path`**, and the refusal message says so.
+- The refusal lists each candidate's `data-version`, so when the two are the
+  same release in two encodings the operator sees that immediately and the
+  decision is trivial.
+
+**Implicit OBO precedence was considered and is not reinstated.** It looks like
+a format rule rather than a version rule, but `.obo` and `.owl` in one directory
+are not guaranteed to be the same release — the fallback writes whichever
+succeeded, whenever it ran — and §1.4 records that the OWL parse path is not the
+one measured. Restoring it would be a stated rule, not a quiet one; this section
+is where a reviewer who wants it should say so.
+
+**`force_download` with an explicit path is a contradiction and refuses.**
+Naming a file and demanding a fresh download are two different instructions.
+With no explicit path it keeps its current meaning — bypass what is present and
+fetch. **What it must not become is a flag that survives in the signature while
+the resolver returns before anything reads it**; that failure has its own
+acceptance case.
 
 ### 3.2 The resolver
 
@@ -272,11 +318,51 @@ not existing. Tested with controlled responses; no request to any real host is
 needed to cover it.
 
 **`http`/`https` does not mean "external".** It admits `localhost`, link-local
-addresses and anything on the hospital's own network. An in-house mirror is a
-legitimate and probably desirable source, so the destination rule is a
-**deployment setting** — an administrator states what this server may fetch from
-— rather than either a blanket block or a blanket trust. Phase 2 provides the
-enforcement point and a default; it does not decide a site's network policy.
+addresses and anything on the hospital's own network.
+
+#### 3.5.1 The default, stated so it can be tested
+
+**The first draft said "an enforcement point and a default" and never said what
+the default was** — a sentence shaped like a contract that specifies nothing,
+which is the failure this programme keeps removing. An implementer could ship
+the scheme check alone and believe this section was delivered. So:
+
+**Default: every address the destination resolves to must be globally routable.
+A host on the operator's allow list is exempt.**
+
+`ipaddress` decides it without a network call, and one predicate covers both
+families and every case that matters — measured:
+
+| Destination | `is_global` |
+|---|---|
+| `8.8.8.8`, `2606:4700::1111` | True → allowed |
+| `127.0.0.1`, `::1` | False (loopback) |
+| `10.0.0.5`, `192.168.1.10`, `172.16.0.1`, `fd00::1` | False (private) |
+| `169.254.169.254` | False (link-local — the cloud metadata address) |
+| `0.0.0.0` | False (unspecified) |
+
+- **Applied to the initial URL and to every redirect target**, in the same
+  downloader as the scheme rule of §3.5. One gate, one place.
+- **The check is on the resolved addresses, not the hostname text.** A literal
+  private IP in a URL has no hostname to match against a list, and a name that
+  resolves into the hospital's network is inside it whatever it is called.
+  Both are measured cases in §4.
+- **An in-house mirror is a supported and probably desirable source**, reached
+  by an administrator adding its host to the allow list. The default is not a
+  blanket block on the hospital's network; it is "say so on purpose".
+
+**The residual, bounded rather than implied away.** This is check-then-connect:
+the resolution the check sees is not the one the socket uses, so a name whose
+answer changes between them is not covered. Closing that means connecting to a
+pinned address while preserving the `Host` header, which is a larger change than
+Phase 2 and is **not claimed here**. What this default does cover is the
+ordinary cases — a misconfigured URL, a redirect into the internal network, a
+literal internal address — which is what a build tool fetching four known
+artifacts is actually exposed to.
+
+Phase 2 provides the enforcement point and this default. **It does not decide a
+site's network policy**, and `http`/`https` plus `is_global` does not make a
+destination trustworthy — only reachable-by-policy.
 
 ### 3.6 Revising the parent plan's §3.3 — the source list becomes editable
 
@@ -329,12 +415,14 @@ So the contract is recorded as owed, not as forbidden:
 read as one once this section is accepted. What stands from it is narrower: not a
 free-text field exposed to every user of the application.
 
-**Changing a source is not switching a graph.** Editing a URL, downloading a
-file, and building a workspace from it are three steps, and only the third
-changes what anything is served from. A running pipeline's graph is bound by the
-manifest and this design must not give the settings surface a route to swap it;
-a new ontology means a new build, which means the existing verification applies
-unchanged.
+**Changing a source is not switching a graph**, and the first draft's wording
+was loose about the last step. Editing a URL, downloading a file, and building a
+workspace are three things, and **none of them changes what is being served**:
+the third produces a *new, verifiable workspace*. Putting that workspace into
+service is a separate load-and-publish step that already exists and already
+verifies. So a successful build must not be implemented as an automatic switch,
+and the settings surface gets no route to swap a running pipeline's graph —
+which is bound by its manifest, as it was before this plan.
 
 ### 3.7 What this does not build
 
@@ -359,55 +447,84 @@ controlled responses where a fetch is involved, and no request to any real host.
 
 1. An explicit path is used, and one that does not exist **refuses** rather than
    opening `<cache_dir>/<name>.obo`.
-2. **Two candidates across two roots refuse**, and the message carries each one's
-   path, `data-version` and digest.
-3. **Two releases in one root refuse** the same way.
-4. **Exactly one candidate is used**, so the refusals above are not a resolver
+2. **An explicit path still succeeds while other valid candidates sit on disk**,
+   and provenance records the named file's digest — not a rival's. This is what
+   makes §3.1's refusal a default about ambiguity rather than a limit on
+   coexistence, and the first draft's case 1 did not say the rivals were there.
+3. **Two candidates across two roots refuse**, and the message carries each one's
+   path, `data-version` and digest, and names `--mondo-path` / `--hpo-path` as
+   the way to resolve it.
+4. **Two releases in one root refuse** the same way.
+5. **Exactly one candidate is used**, so the refusals above are not a resolver
    that rejects everything.
-5. **`--ontology-cache-dir` still works**, now as the last root.
 6. **`force_download` with an explicit path refuses**; without one it still
    bypasses what is present. A mutant that leaves the flag in the signature while
    the resolver returns first must fail a test.
 
+**Migration from the cache convention** (§3.1.2 — these change behaviour, and
+the tests exist so the change is deliberate rather than discovered)
+
+7. **`--ontology-cache-dir` holding one file still works**, now as the last root.
+8. **A cache holding both `<name>.obo` and `<name>.owl` refuses**, where today
+   the OBO wins silently. The message shows both `data-version` values.
+9. **A cache with one file and another root with one file refuses**, rather than
+   the cache's position deciding it.
+10. Adding `--mondo-path` to either of those makes the build succeed — the
+    documented migration actually works.
+
 **The resolver**
 
-7. Identity, not presence: `data-version`, digest, size and term count for each
-   file found.
-8. **Constructing a resolver creates no directories** (§1.3's `mkdir`).
-9. **Enumeration issues no network request**, including for the term count, and
-   including when a listed file declares an import.
+11. Identity, not presence: `data-version`, digest, size and term count for each
+    file found.
+12. **Constructing a resolver creates no directories** (§1.3's `mkdir`).
+13. **Enumeration issues no network request**, including for the term count, and
+    including when a listed file declares an import.
 
 **Imports**
 
-10. A file declaring an import is **refused, naming it** — it must not load with
+14. A file declaring an import is **refused, naming it** — it must not load with
     the import dropped.
-11. A file declaring an import that points at a **local** file is refused too
+15. A file declaring an import that points at a **local** file is refused too
     (§3.3 as written, not as the first draft said).
-12. A self-contained file loads with nothing fetched.
+16. A self-contained file loads with nothing fetched.
 
 **Role**
 
-13. A file declaring `ontology: mondo` in the HPO slot **refuses**, naming the
+17. A file declaring `ontology: mondo` in the HPO slot **refuses**, naming the
     file, what it declares and what was expected. The reproduction in §3.4 is the
     fixture.
-14. A legitimate ontology carrying cross-references to other namespaces **still
+18. A legitimate ontology carrying cross-references to other namespaces **still
     loads** — the check is not "every term has one prefix".
-15. `hp` and `hpo` are accepted as the same ontology.
-16. An explicit path failing the role check does **not** fall back to a cache.
+19. `hp` and `hpo` are accepted as the same ontology.
+20. An explicit path failing the role check does **not** fall back to a cache.
 
-**Downloads**
+**Downloads — scheme**
 
-17. A source whose scheme is not allowed is refused **when the list is read**,
+21. A source whose scheme is not allowed is refused **when the list is read**,
     naming the entry.
-18. A permitted initial URL that **redirects to `ftp://` is refused at the
+22. A permitted initial URL that **redirects to `ftp://` is refused at the
     redirect**, which is the measured gap the config-time check misses.
-19. An ordinary `https` → `https` PURL redirect is still followed.
-20. **The OWL fallback goes through the same downloader** and is refused by the
+23. An ordinary `https` → `https` PURL redirect is still followed.
+24. **The OWL fallback goes through the same downloader** and is refused by the
     same rules; a test must fail if it acquires its own fetch path.
+
+**Downloads — destination** (§3.5.1; a stub resolver supplies the addresses, so
+no test touches DNS or any host)
+
+25. A host resolving to a **private, loopback or link-local** address is refused,
+    naming the address. `169.254.169.254` is one of the cases.
+26. A **literal private IP** in the URL is refused — the check is on addresses,
+    not on whether a hostname appears in a list.
+27. A host on the **allow list resolving inside the network is permitted**, so an
+    in-house mirror works. Without this the default is a blanket block.
+28. A permitted public URL that **redirects to a private address is refused at
+    the redirect**, the destination twin of case 22.
+29. A host resolving to **several addresses, one of them private**, is refused —
+    not admitted because one answer was acceptable.
 
 **Provenance**
 
-21. Unchanged in shape, and now describing a selected input: a build given
+30. Unchanged in shape, and now describing a selected input: a build given
     explicit paths records the same four roles with the same digests and declared
     versions Phase 1 records today.
 
@@ -446,7 +563,13 @@ whatever a reviewer decides about it.
   of those, and only for gross mismatch.
 - The imports policy makes a build self-contained **with respect to declared
   imports**. It says nothing about what a file's own content contains.
-- §3.5 provides an enforcement point and a default. It does not decide a site's
-  network policy, and `http`/`https` alone does not make a destination safe.
+- §3.5 provides an enforcement point and the default of §3.5.1. It does not
+  decide a site's network policy, and neither `http`/`https` nor `is_global`
+  makes a destination trustworthy — only reachable-by-policy.
+- **The destination check is check-then-connect.** A name whose resolution
+  changes between the check and the socket is not covered; pinning the connection
+  to a checked address is outside Phase 2 and is not claimed.
+- **Acceptance is 30 conditions to be met, not 30 tests that pass.** No Phase 2
+  code exists yet.
 - Nothing here touches `DISEASE_SCORER_POLICY.md`, the shortest-path artifacts,
   or any checkpoint.
