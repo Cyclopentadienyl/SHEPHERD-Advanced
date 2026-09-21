@@ -435,16 +435,29 @@ def test_a_checkpoint_predating_the_field_still_verifies_structurally():
     assert verify_fingerprint({"data_fingerprint": compute_fingerprint(graph)}, graph) == []
 
 
-#: Files this work touched that are F821-clean, **repo-relative**; the test
-#: resolves them against the repository root rather than the caller's cwd.
+#: Files this gate covers, **repo-relative**; the test resolves them against the
+#: repository root rather than the caller's cwd.
 #: `src/training/callbacks.py` is excluded: it carries 33 pre-existing
 #: `Undefined name 'Trainer'` findings from quoted forward references without a
 #: `TYPE_CHECKING` import, none of them from this change and none of them this
 #: item's to fix.
+#:
+#: **The SP files are here for a hazard, not for tidiness.** Backlog item 5a
+#: moved the shortest-path primitive into `src/inference/sp_index.py` and left an
+#: independent reference in `scripts/sp_scan_reference.py`. Both carry
+#: `from __future__ import annotations`, which makes a dataclass field annotated
+#: with a name that is no longer in scope construct *and instantiate* without
+#: error — measured, on the file this replaced: the module imported and all 28 of
+#: its tests passed with the annotation dangling. `make check` runs
+#: `lint-imports` and the tests rather than `make lint`, so F821 — the one check
+#: in the default gate that sees it — was never reached. Listing them costs one
+#: ruff invocation.
 _F821_CLEAN = (
     "scripts/train_model.py",
     "scripts/measure_scorer.py",
     "scripts/benchmark_sp_lookup.py",
+    "scripts/sp_scan_reference.py",
+    "src/inference/sp_index.py",
     "src/utils/fingerprint.py",
     "tests/unit/test_training_provenance.py",
 )

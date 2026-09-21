@@ -36,14 +36,13 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from src.inference.scoring import (  # noqa: E402
-    SPLookup,
     cosine_scores,
     mix_embedding_and_sp_scores,
     normalise_cosine_to_unit_interval,
     pool_patient_embeddings,
-    sp_mean_distances,
     sp_scores_from_distances,
 )
+from src.inference.sp_index import build_sp_index, sp_mean_distances  # noqa: E402
 
 # Declared tolerances. Scores feed a ranking and a clinician-facing display;
 # 1e-6 is far below any difference either could act on, and far above the
@@ -58,18 +57,42 @@ def embeddings():
     return torch.randn(40, 16)
 
 
+#: The rows the `lookup` fixture is built from: a present pair, an absent pair
+#: (no path within max_hops), a target that exists only as a gene, and a
+#: phenotype — 2 — with no rows at all.
+#:
+#: **Held as rows, not read back off the fixture.** The legacy reference below
+#: walks these; a reference that reached into `SPLookup` would be checking the
+#: index against its own internals rather than against an independent
+#: computation.
+SP_ROWS = (
+    # phenotype, target, target_type, distance
+    (0, 5, 1, 2),
+    (0, 7, 1, 4),
+    (0, 9, 0, 1),
+    (1, 5, 1, 3),
+    (1, 8, 1, 5),
+)
+SP_MAX_HOPS = 5
+
+
 @pytest.fixture
 def lookup():
-    """Three phenotypes over a small table, covering every case that matters:
-    a present pair, an absent pair (no path within max_hops), and a phenotype
-    with no slice at all."""
-    #            ph0        ph0        ph0        ph1        ph1
-    target = torch.tensor([5, 7, 9, 5, 8], dtype=torch.int32)
-    ttype = torch.tensor([1, 1, 0, 1, 1], dtype=torch.int8)
-    distance = torch.tensor([2, 4, 1, 3, 5], dtype=torch.int8)
-    offsets = {0: (0, 3), 1: (3, 5)}  # phenotype 2 deliberately absent
-    return SPLookup(target=target, target_type=ttype, distance=distance,
-                    offsets=offsets, max_hops=5)
+    """`SP_ROWS`, **built through the one builder** like every other lookup in
+    the repository.
+
+    Assembling the object field by field is the second construction path this
+    refactor removed, and a fixture is where one would come back first: smallest
+    blast radius, least chance of being noticed.
+    """
+    columns = list(zip(*SP_ROWS))
+    return build_sp_index(
+        torch.tensor(columns[0], dtype=torch.int64),
+        torch.tensor(columns[1], dtype=torch.int64),
+        torch.tensor(columns[2], dtype=torch.int64),
+        torch.tensor(columns[3], dtype=torch.int8),
+        max_hops=SP_MAX_HOPS,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -144,20 +167,24 @@ def test_normalisation_preserves_order(embeddings):
 # ---------------------------------------------------------------------------
 # Shortest-path distance
 # ---------------------------------------------------------------------------
-def _legacy_sp_score(lookup, phenotype_indices, target_idx, target_type_idx):
-    """The formula as it was written inline in the pipeline, reimplemented here
-    so this test does not depend on the code under test being right."""
-    unreachable = float(lookup.max_hops + 1)
+def _legacy_sp_score(phenotype_indices, target_idx, target_type_idx):
+    """The formula as it was written inline in the pipeline, reimplemented over
+    `SP_ROWS` so this test does not depend on the code under test being right.
+
+    It walks rows in Python and compares exact integers. That is deliberately
+    not how the served primitive works — and it is why this test would have
+    caught the dtype aliasing the old tensor-comparing scan had, where a Python
+    int wider than the column's dtype matched the wrong row.
+    """
+    unreachable = float(SP_MAX_HOPS + 1)
     total = 0.0
     for ph in phenotype_indices:
-        offsets = lookup.offsets.get(ph)
-        if offsets is None:
-            total += unreachable
-            continue
-        s, e = offsets
-        mask = (lookup.target[s:e] == target_idx) & (lookup.target_type[s:e] == target_type_idx)
-        hits = lookup.distance[s:e][mask]
-        total += float(hits[0]) if len(hits) > 0 else unreachable
+        hit = next(
+            (d for p, t, y, d in SP_ROWS
+             if p == ph and t == target_idx and y == target_type_idx),
+            None,
+        )
+        total += unreachable if hit is None else float(hit)
     return 1.0 / (1.0 + total / len(phenotype_indices))
 
 
@@ -168,7 +195,7 @@ def test_sp_score_matches_the_legacy_formula(lookup, phenotypes, target_idx):
 
     assert bool(available[0])
     assert float(sp_scores_from_distances(distances)[0]) == pytest.approx(
-        _legacy_sp_score(lookup, phenotypes, target_idx, 1), abs=ATOL, rel=RTOL
+        _legacy_sp_score(phenotypes, target_idx, 1), abs=ATOL, rel=RTOL
     )
 
 
@@ -437,6 +464,7 @@ def _ids():
 
 def test_pipeline_sp_score_routes_through_both_sp_primitives(monkeypatch, lookup):
     import src.inference.scoring as scoring
+    import src.inference.sp_index as sp_index
     from src.inference.pipeline import DiagnosisPipeline
 
     seen = {}
@@ -445,7 +473,7 @@ def test_pipeline_sp_score_routes_through_both_sp_primitives(monkeypatch, lookup
         seen["called"] = (list(phenotypes), list(targets), target_type)
         return torch.tensor([3.0]), torch.tensor([True])
 
-    monkeypatch.setattr(scoring, "sp_mean_distances", fake_distances)
+    monkeypatch.setattr(sp_index, "sp_mean_distances", fake_distances)
     monkeypatch.setattr(scoring, "sp_scores_from_distances", lambda d: d * 100.0)
 
     source, target = _ids()
@@ -460,11 +488,11 @@ def test_pipeline_sp_score_routes_through_both_sp_primitives(monkeypatch, lookup
 def test_pipeline_sp_score_honours_the_availability_mask(monkeypatch, lookup):
     """Unavailable collapses to 0.0 in this legacy wrapper. That is the behaviour
     being preserved, not the behaviour being endorsed — see the module docstring."""
-    import src.inference.scoring as scoring
+    import src.inference.sp_index as sp_index
     from src.inference.pipeline import DiagnosisPipeline
 
     monkeypatch.setattr(
-        scoring, "sp_mean_distances",
+        sp_index, "sp_mean_distances",
         lambda *a, **k: (torch.tensor([3.0]), torch.tensor([False])),
     )
 
@@ -616,10 +644,10 @@ def test_sp_score_wrapper_is_exactly_the_legacy_arithmetic(lookup):
 
     got = DiagnosisPipeline._calculate_sp_score(stub, phenotypes, target, 1)
 
-    assert got == _legacy_sp_score(lookup, [0, 1, 2], 5, 1)
+    assert got == _legacy_sp_score([0, 1, 2], 5, 1)
     # Named so a change to the fixture that made the mean integral would be
     # visible rather than silently weakening the test.
-    assert _legacy_sp_score(lookup, [0, 1, 2], 5, 1) == 1.0 / (1.0 + 11.0 / 3.0)
+    assert _legacy_sp_score([0, 1, 2], 5, 1) == 1.0 / (1.0 + 11.0 / 3.0)
 
 
 @pytest.mark.parametrize("target_idx", [5, 7, 99])
@@ -637,7 +665,7 @@ def test_sp_score_wrapper_matches_legacy_for_a_single_phenotype(lookup, target_i
 
     got = DiagnosisPipeline._calculate_sp_score(stub, [source], target, 1)
 
-    assert got == _legacy_sp_score(lookup, [0], target_idx, 1)
+    assert got == _legacy_sp_score([0], target_idx, 1)
 
 
 def test_reducing_in_float32_then_widening_loses_the_mean(lookup):

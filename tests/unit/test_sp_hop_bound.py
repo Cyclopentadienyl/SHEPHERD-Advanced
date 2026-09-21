@@ -354,3 +354,265 @@ class TestTheProvenanceReachesACaller:
         status = _status_of(config, data_dir=None, checkpoint_path=None)
         assert status.sp_max_hops == 3
         assert status.sp_hop_bound_source == "sidecar"
+
+
+class TestTheLoaderRefusesAPresentButUnusableTable:
+    """**Absent and broken are different deployments.** The `torch.load` handler
+    warned and returned, so a corrupt artifact produced the same "scoring will
+    use pure GNN" line an absent one does — and the remedies are opposite. D1
+    resolved this to refusal; removing the file is how an operator reaches the
+    absent path deliberately.
+
+    Each case also checks that nothing was published. The index build joins the
+    fallible tail, so a refusal after the hop bound is resolved must still leave
+    `_sp_ready` False rather than a pipeline advertising a lookup it does not
+    have.
+    """
+
+    @staticmethod
+    def _pipeline(tmp_path, payload):
+        from src.inference.pipeline import DiagnosisPipeline
+
+        data_dir = tmp_path / "ws"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if isinstance(payload, bytes):
+            (data_dir / "shortest_paths.pt").write_bytes(payload)
+        else:
+            torch.save(payload, data_dir / "shortest_paths.pt")
+        (data_dir / "shortest_paths.meta.json").write_text(json.dumps({"max_hops": 5}))
+
+        pipeline = DiagnosisPipeline.__new__(DiagnosisPipeline)
+        pipeline.config = _config()
+        pipeline._sp_ready = False
+        pipeline._sp_lookup = None
+        pipeline._sp_max_hops = 5
+        pipeline._sp_hop_bound_source = None
+        return pipeline, data_dir
+
+    def test_an_unreadable_artifact_is_refused_rather_than_ignored(self, tmp_path):
+        pipeline, data_dir = self._pipeline(tmp_path, b"not a torch file at all")
+
+        with pytest.raises(ValueError, match="could not be read"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+    def test_a_missing_column_is_refused(self, tmp_path):
+        pipeline, data_dir = self._pipeline(
+            tmp_path, {"phenotype_idx": torch.zeros(3, dtype=torch.int64)}
+        )
+
+        with pytest.raises(ValueError, match="missing"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+
+    def test_duplicate_rows_are_refused_and_nothing_is_published(self, tmp_path):
+        """**The publish-last invariant, tested where it can actually fail.**
+        The duplicate check lives inside the index build, which runs after the
+        hop bound is resolved — so this is the case that catches a `_sp_ready`
+        set one line too early."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 0], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 4], dtype=torch.int64),
+                "target_type": torch.tensor([1, 1], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="duplicate"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False, "ready was published before the build"
+        assert pipeline._sp_lookup is None
+        assert pipeline._sp_hop_bound_source is None
+
+    def test_a_third_target_type_is_refused_as_an_artifact(self, tmp_path):
+        """The producer writes 0 and 1. A third value means the table came from
+        something else, and which rows are genes is then a guess."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 2], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="target_type"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+
+    def test_a_negative_id_is_refused_before_it_can_be_narrowed(self, tmp_path):
+        """**Before narrowing, which is the whole point of the ordering.** A
+        value the narrow type cannot hold does not raise on the way in — it
+        wraps — so a check afterwards inspects the wrapped value."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, -5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 1], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="negative"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+
+    @pytest.mark.parametrize(
+        "label,payload",
+        [
+            (
+                "distance emptied while the id columns keep a row",
+                {
+                    "phenotype_idx": torch.tensor([0], dtype=torch.int64),
+                    "target_idx": torch.tensor([0], dtype=torch.int64),
+                    "target_type": torch.tensor([1], dtype=torch.int64),
+                    "distance": torch.empty(0, dtype=torch.int8),
+                },
+            ),
+            (
+                "a two-dimensional distance column",
+                {
+                    "phenotype_idx": torch.empty(0, dtype=torch.int64),
+                    "target_idx": torch.empty(0, dtype=torch.int64),
+                    "target_type": torch.empty(0, dtype=torch.int64),
+                    "distance": torch.empty((0, 2), dtype=torch.int8),
+                },
+            ),
+            (
+                "an empty float distance column",
+                {
+                    "phenotype_idx": torch.empty(0, dtype=torch.int64),
+                    "target_idx": torch.empty(0, dtype=torch.int64),
+                    "target_type": torch.empty(0, dtype=torch.int64),
+                    "distance": torch.empty(0, dtype=torch.float32),
+                },
+            ),
+            (
+                "an id column that is a Python list",
+                {
+                    "phenotype_idx": [],
+                    "target_idx": torch.empty(0, dtype=torch.int64),
+                    "target_type": torch.empty(0, dtype=torch.int64),
+                    "distance": torch.empty(0, dtype=torch.int8),
+                },
+            ),
+        ],
+    )
+    def test_a_malformed_table_is_not_an_empty_one(self, tmp_path, label, payload):
+        """**Zero rows is a conclusion, not a premise.**
+
+        A first version of the empty-table path read `distance.numel()` and
+        returned on 0 — asking one column how long it is and then skipping every
+        check on all four. All four tables here were accepted as "no rows". The
+        damage is on reload rather than at cold start: a refusal keeps the
+        running pipeline, and an acceptance replaces a healthy SP-ready pipeline
+        with one serving on the GNN alone, reporting success.
+        """
+        pipeline, data_dir = self._pipeline(tmp_path, payload)
+
+        with pytest.raises(ValueError):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False, label
+        assert pipeline._sp_lookup is None
+
+    def test_the_sound_table_still_loads(self, tmp_path):
+        """Without this, every refusal above holds for a loader that refuses
+        everything."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 0], dtype=torch.int64),
+                "distance": torch.tensor([2, 3], dtype=torch.int8),
+            },
+        )
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is True
+        assert pipeline._sp_lookup.n_rows == 2
+        assert pipeline._sp_hop_bound_source == "sidecar"
+
+    @pytest.mark.parametrize("below", [0, -1, -2])
+    def test_a_distance_below_one_is_refused_through_the_loader(self, tmp_path, below):
+        """**Measured before this check existed**, with `_sp_ready` True in
+        every case: distance -1 gave a mean of -1.0 and a score of `inf`; -2
+        gave -1.0; 0 gave a perfect 1.0. All three reached `_calculate_sp_score`
+        as numbers."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 1], dtype=torch.int64),
+                "distance": torch.tensor([1, below], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="records a distance of"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+
+class TestAnEmptyTableIsTheAbsentCase:
+    """**Not a refusal and not a ready pipeline.** An empty table binds nothing,
+    so there is nothing for SP to be ready for; D5 takes this reading over
+    refusing it because a table with no rows makes no false claim and is
+    indistinguishable in effect from having no file.
+
+    Publishing it instead is not an internal-shape difference. A query against
+    an empty index returns unreachable with `available` True, so the combined
+    score mixes SP in for every candidate — measured at 1/7 with the default
+    bound, against the pure-GNN value an absent file gives.
+    """
+
+    def test_no_rows_leaves_shortest_paths_off(self, tmp_path):
+        pipeline, data_dir = _loader(tmp_path, distances=[], sidecar={"max_hops": 5})
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+    def test_it_lands_in_the_same_state_as_no_file_at_all(self, tmp_path):
+        """The claim is equivalence with the absent case, so it is asserted
+        against the absent case rather than against a remembered value."""
+        empty_pipeline, empty_dir = _loader(
+            tmp_path / "empty", distances=[], sidecar={"max_hops": 5}
+        )
+        empty_pipeline._load_shortest_paths(empty_dir)
+
+        absent_dir = tmp_path / "absent"
+        absent_dir.mkdir(parents=True, exist_ok=True)
+        absent_pipeline, _ = _loader(
+            tmp_path / "scratch", distances=[1], sidecar={"max_hops": 5}
+        )
+        absent_pipeline._load_shortest_paths(absent_dir)
+
+        assert (empty_pipeline._sp_ready, empty_pipeline._sp_lookup) == (
+            absent_pipeline._sp_ready,
+            absent_pipeline._sp_lookup,
+        ) == (False, None)
+
+    def test_a_table_with_rows_still_loads(self, tmp_path):
+        """Without this, the two above hold for a loader that never publishes."""
+        pipeline, data_dir = _loader(tmp_path, distances=[1, 2], sidecar={"max_hops": 5})
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is True
+        assert pipeline._sp_lookup.n_rows == 2
