@@ -269,6 +269,11 @@ the domain.
 - each is a tensor, one-dimensional, and all four the same length;
 - index columns are integral and not `bool`;
 - `phenotype_idx` and `target_idx` are non-negative and within int32;
+  *(the int32 half is **superseded**: the loader no longer narrows. The columns
+  are consumed into an int64 key and released, so the range that matters is
+  int64's, which `_derive_domain`'s overflow check covers. Recorded rather than
+  dropped, so a reader does not go looking for a check that was deliberately
+  not written.)*
 - `target_type` is exactly within `{0, 1}`;
 - `distance` is integral and not `bool`, and on a non-empty table lies within
   `1 .. max_hops` — the producer's domain, stated as a rule a test can execute
@@ -505,6 +510,13 @@ claims CI cannot establish, and every item here is deterministic and CPU-only.
     or marked pending; the 3.44 GB projection is not evidence about it.
 11. **F821 covers the new production module** and whatever SP tooling is kept,
     not only the pre-move prototype.
+12. **The benchmark measures against the same bound the service does.** It
+    resolves `max_hops` from the sidecar, exactly as the loader does, and the
+    builder takes it as an argument. Re-deriving it from `max(distance)` is
+    §8.1's defect in the consumer that exists to measure §8.1's code: a
+    legitimate 5-hop table need contain no 5-hop row, and the two then disagree
+    on the unreachable sentinel. Two implementations agreeing with each other
+    cannot detect it, because both receive the same wrong bound.
 
 ---
 

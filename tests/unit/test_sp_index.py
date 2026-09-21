@@ -379,6 +379,25 @@ class TestTheArtifactContractIsSeparateFromTheAlgorithm:
         with pytest.raises(SPArtifactError, match="records a distance of 5"):
             validate_sp_artifact(*self._columns(distances=(1, 5)), 4)
 
+    @pytest.mark.parametrize("below", [0, -1, -2])
+    def test_a_distance_below_one_is_refused(self, below):
+        """**The other end of the same rule, and the one that was missing.**
+        `sp_scores_from_distances` is `1 / (1 + d)`: 0 scores a perfect 1.0, -1
+        divides by zero, -2 scores -1.0. Each reaches the combined score as a
+        number rather than as a refusal. The producer skips the source itself
+        (`if dist == 0: continue`), so 1 is its floor."""
+        with pytest.raises(SPArtifactError, match="records a distance of"):
+            validate_sp_artifact(*self._columns(distances=(1, below)), MAX_HOPS)
+
+    def test_a_distance_of_one_is_accepted(self):
+        assert validate_sp_artifact(*self._columns(distances=(1, 1)), MAX_HOPS) == 2
+
+    def test_the_same_zero_distance_indexes_fine_as_an_algorithm(self):
+        """The split again: a hop count of 0 is not something the producer
+        writes, and it is not something the index cannot handle."""
+        lookup = build_sp_index(*self._columns(distances=(0, 2)), MAX_HOPS)
+        assert lookup.n_rows == 2
+
     def test_a_distance_at_the_bound_is_accepted(self):
         assert validate_sp_artifact(*self._columns(distances=(1, 4)), 4) == 2
 

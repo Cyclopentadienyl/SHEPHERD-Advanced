@@ -241,13 +241,27 @@ def validate_sp_artifact(
     built to. A fixture exercising a third type is testing the algorithm, not
     violating the artifact.
 
-    The distance ceiling is the floor check that used to run after the offsets
-    were built: `max(distance)` proves the declared bound is not too **low** and
-    can never prove it is not too high, because a 3-hop table is consistent with
-    a declared 5. That one direction is still worth checking — it is the
-    direction a stale sidecar from a smaller run fails in, and there the
-    unreachable sentinel lands *below* distances really in the table, so an
-    unreachable phenotype outranks a connected one.
+    **Distances lie in `1 .. max_hops`, and both ends are load-bearing.** The
+    producer's BFS records the source at hop 0 and then skips it —
+    `if dist == 0: continue  # skip self` — so every row it writes is at least
+    1. Nothing downstream re-derives that, and `sp_scores_from_distances` is
+    `1 / (1 + d)`: a mean of -1 divides by zero and scores `inf`, -2 scores
+    -1.0, and 0 scores a perfect 1.0. Each of those reaches the combined score
+    as a number, which is worse than a refusal. Measured on this loader before
+    the check existed, with `_sp_ready` True in all four cases:
+
+        distance -1 -> mean -1.00 -> score inf
+        distance -2 -> mean -2.00 -> score -1.0
+        distance  0 -> mean  0.00 -> score 1.0
+        distance  1 -> mean  1.00 -> score 0.5   (control)
+
+    The ceiling is the floor check that used to run after the offsets were
+    built: `max(distance)` proves the declared bound is not too **low** and can
+    never prove it is not too high, because a 3-hop table is consistent with a
+    declared 5. That one direction is still worth checking — it is the direction
+    a stale sidecar from a smaller run fails in, and there the unreachable
+    sentinel lands *below* distances really in the table, so an unreachable
+    phenotype outranks a connected one.
     """
     n_rows = validate_sp_columns(
         phenotype, target, target_type, distance, source=source
@@ -264,6 +278,17 @@ def validate_sp_artifact(
             "query asks for those two. A third type means this table was built "
             "by something else, and which rows belong to which kind of node is "
             "a guess."
+        )
+
+    shortest = int(distance.min())
+    if shortest < 1:
+        raise SPArtifactError(
+            f"{source} records a distance of {shortest}; the producer skips the "
+            "source itself and writes hop counts of 1 or more. A value below 1 "
+            "is not a shorter path — it scores as one, and at 0 or less "
+            "`1 / (1 + d)` returns 1.0, a division by zero, or a negative "
+            "number, each of which reaches the combined score as a value rather "
+            "than as a refusal."
         )
 
     observed = int(distance.max())

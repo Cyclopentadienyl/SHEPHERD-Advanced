@@ -634,6 +634,33 @@ class DiagnosisPipeline:
             )
         n_pairs = int(sp_data["distance"].numel())
 
+        # **A table with no rows is the absent case, not a ready one.** D5 took
+        # the weaker of the two defensible readings deliberately: an empty table
+        # makes no false claim, and is indistinguishable in effect from having
+        # no file — which is a state `DISEASE_SCORER_POLICY.md` §2 blesses.
+        #
+        # Publishing it instead is not merely a different object shape. A query
+        # against an empty index returns `unreachable` with `available` True, so
+        # `_calculate_combined_score` mixes SP in at `1 / (1 + max_hops + 1)`
+        # for every candidate — measured at 1/7 with the default bound, against
+        # the pure-GNN score an absent file produces. Zero rows would change
+        # both what the service reports and the numbers it returns.
+        #
+        # Taken before the hop bound is resolved, because nothing here depends
+        # on it: an absent table does not read the sidecar either. The cost is
+        # that a corrupt sidecar beside an empty table is not refused; it is
+        # also not consulted, and SP is off either way.
+        if n_pairs == 0:
+            logger.warning(
+                "%s carries no rows. An empty table binds nothing, so it is "
+                "treated as absent: shortest-path scoring stays off and the "
+                "pipeline serves on the GNN alone (eta=1.0 effective). Rebuild "
+                "it with scripts/compute_shortest_paths.py if this is not "
+                "expected.",
+                sp_path,
+            )
+            return
+
         # **The ceiling, before the table is checked against it and before any
         # of the expensive work.** `max_hops` sets the unreachable sentinel every
         # shortest-path score is measured against, so a wrong one does not merely

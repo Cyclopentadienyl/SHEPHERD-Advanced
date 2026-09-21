@@ -34,7 +34,7 @@ cost stops being attributable. The report carries
 Two modes, and they are **not** interchangeable (PLAN_B04 §3.1):
 
   - **Synthetic** — a sensitivity sweep over declared slice-length shapes. It
-    validates the benchmark, compares implementations and exposes gross
+    validates the benchmark and exposes gross
     regressions. It **cannot** close the institutional gate, and it may not be
     described as a measured artifact distribution however its parameters were
     chosen.
@@ -125,9 +125,23 @@ SYNTHETIC_MEAN_SLICE_LENGTHS = (1_000, 10_000)
 #: Declared synthetic target-space size: roughly 28k diseases plus 20k genes.
 SYNTHETIC_TARGET_SPACE = 48_000
 
-#: Cells whose predicted element-touches exceed this are skipped and **reported
-#: as skipped**. A silent cap reads as "covered everything" when it did not.
-WORK_CEILING = 2_000_000_000
+#: Cells whose predicted work exceeds this are skipped and **reported as
+#: skipped**. A silent cap reads as "covered everything" when it did not.
+#:
+#: **The quantity changed with the implementation, and the number had to.** It
+#: used to be `candidates x elements in the queried slices` — the scan's cost,
+#: which is what was being measured then. The index does not touch slices: its
+#: work is one `searchsorted` probe and one gather per (phenotype, candidate)
+#: pair, so the predicted quantity is the **query grid**, `candidates x
+#: phenotypes`. Leaving the old metric in place would have skipped exactly the
+#: large-table cells this benchmark now exists to measure, and reported them as
+#: skipped for a cost the code no longer pays.
+#:
+#: At the declared matrix the grid never exceeds 500 x 100 = 50,000, so this
+#: does not fire today. It is kept, rather than deleted as dead, because the
+#: matrix is swept and a future row could reach it — and because a cap that is
+#: removed when it stops binding is a cap nobody notices returning.
+WORK_CEILING = 10_000_000
 
 MIN_REPEATS = 3
 MAX_REPEATS = 11
@@ -172,9 +186,9 @@ def build_synthetic_lookup(
     same property the real table has, and the one `build_sp_index` refuses a
     table for lacking.
 
-    **Returns columns, not a lookup.** Both implementations this benchmark times
-    are built from the same rows, and building the served index here would make
-    the reference a derivative of it.
+    **Returns columns, not a lookup.** The index is built by the one builder,
+    where its cost can be timed and reported, rather than here where it would
+    be indistinguishable from table generation.
 
     Returns `(columns, slice_lengths, disease_targets)`.
     """
@@ -245,9 +259,33 @@ def build_artifact_lookup(
     they are counted off the phenotype column rather than read out of an offsets
     table that no longer exists.
 
-    Returns `(columns, slice_lengths, disease_targets, provenance)`.
+    **The hop bound comes from the sidecar when there is one**, resolved by the
+    same `validate_hop_bound` the production loader calls. It used to be
+    whatever `--max-hops` defaulted to, and then — worse — the builder threw
+    that away and re-derived the bound from `int(distance.max())`. A legitimate
+    5-hop table need contain no 5-hop row, so a table of 1-hop rows read as
+    `max_hops=1` and every miss scored against a sentinel of 2 where production
+    uses 6. That is the defect the loader was corrected for in §8.1, reappearing
+    in the consumer that is supposed to measure the loader's work. Measured
+    before this fix, on one artifact with a `max_hops=5` sidecar and no row
+    longer than 1:
+
+        production pipeline : lookup.max_hops 5, miss 6.0
+        benchmark           : lookup.max_hops 1, miss 2.0
+
+    `max_hops` is the fallback for an artifact with no sidecar, not an override.
+
+    Returns `(columns, max_hops, slice_lengths, disease_targets, provenance)`.
     """
+    from src.inference.scoring import validate_hop_bound
     from src.inference.sp_index import validate_sp_artifact
+
+    meta_path = path.with_suffix(".meta.json")
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        if not isinstance(meta, dict):
+            raise SystemExit(f"{meta_path} is not a JSON object")
+        max_hops = validate_hop_bound(meta.get("max_hops"), str(meta_path))
 
     raw = torch.load(path, map_location="cpu", weights_only=True)
     required = {"phenotype_idx", "target_idx", "target_type", "distance"}
@@ -301,7 +339,7 @@ def build_artifact_lookup(
             f"p{int(q * 100)}": float(torch.quantile(length_t, q)) for q in quantiles
         },
     }
-    return columns, lengths, disease_targets, provenance
+    return columns, max_hops, lengths, disease_targets, provenance
 
 
 # =============================================================================
@@ -419,8 +457,12 @@ def _rss_bytes() -> Dict[str, Optional[int]]:
     return values
 
 
-def build_index(implementation: str, columns) -> Tuple[Any, Dict[str, Any]]:
-    """Build one implementation's table, timing it and recording what it costs.
+def build_index(columns, max_hops: int) -> Tuple[Any, Dict[str, Any]]:
+    """Build the served index, timing it and recording what it costs.
+
+    **`max_hops` is an argument because it is not derivable.** It sets the
+    unreachable sentinel, and `max(distance)` bounds it from below only — see
+    `build_artifact_lookup` for the measurement of what re-deriving it did.
 
     **One memory number now, and it is measured.** The pair this replaces
     reported what a prototype object held *beside* the loader's own tensors, and
@@ -430,35 +472,23 @@ def build_index(implementation: str, columns) -> Tuple[Any, Dict[str, Any]]:
     lookup's own tensors, and there is no second copy to project away.
     `PLAN_B04.md`'s figures describe the design that kept the id columns and are
     not evidence about this one.
-
-    The reference is built here too, so its cost is reported on the same terms
-    rather than hidden — it is a Python dictionary over every row, which is the
-    honest reason it is a correctness baseline and not a candidate.
     """
-    from scripts.sp_scan_reference import build_reference_table
     from src.inference.sp_index import build_sp_index
 
-    max_hops = int(columns[3].max()) if columns[3].numel() else 0
-    builders = {
-        "indexed": lambda: build_sp_index(*columns, max_hops),
-        "reference": lambda: build_reference_table(*columns, max_hops),
-    }
     before = _rss_bytes()
     start = time.perf_counter()
-    table = builders[implementation]()
+    table = build_sp_index(*columns, max_hops)
     elapsed = time.perf_counter() - start
     after = _rss_bytes()
-    record = {
+    return table, {
         "record": "index_build",
-        "implementation": implementation,
+        "implementation": "indexed",
         "build_seconds": elapsed,
         "rss_before": before,
         "rss_after": after,
         "rows": int(columns[0].numel()),
+        "resident_bytes": table.resident_bytes(),
     }
-    if implementation == "indexed":
-        record["resident_bytes"] = table.resident_bytes()
-    return table, record
 
 
 def _repeat(fn, *args) -> Dict[str, float]:
@@ -490,24 +520,19 @@ def time_table(
     rows: List[Dict[str, Any]],
     skipped: List[Dict[str, Any]],
     cell_counter: "itertools.count",
-    tables: Optional[Dict[str, Any]] = None,
+    table: Any = None,
 ) -> None:
-    """Time every requested implementation over the same cells.
+    """Time the served primitive over every cell of the matrix.
 
-    `tables` maps an implementation name to the object its query function takes.
-    Both take the same argument shape, deliberately — an adapter between them
-    would be a place to hand the two sides different inputs without anyone
-    noticing. All of them see the **same** phenotypes and candidates in the same
-    cell, so a difference between two rows is the implementation and not the
-    workload.
+    **One implementation is timed, because one ships.** The three-way comparison
+    this ran during B-0.4 selected the global composite key; the old scan is
+    gone from the served path and the second candidate is gone from the
+    repository. The Python-dictionary reference in `sp_scan_reference.py` stays
+    a correctness oracle for the tests and is deliberately *not* timed here: it
+    is not the implementation this replaced, so a ratio against it would not be
+    a speedup over anything that ever shipped.
     """
-    from scripts.sp_scan_reference import sp_mean_distances_reference
     from src.inference.sp_index import sp_mean_distances
-
-    query_fns = {
-        "indexed": sp_mean_distances,
-        "reference": sp_mean_distances_reference,
-    }
 
     by_length = sorted(range(len(lengths)), key=lambda i: -lengths[i])
     generator = torch.Generator().manual_seed(seed)
@@ -527,12 +552,13 @@ def time_table(
             touched = sum(lengths[i] for i in chosen)
 
             for n_candidate in CANDIDATE_COUNTS:
-                work = n_candidate * touched
+                work = n_candidate * n_phenotype
                 if work > WORK_CEILING:
                     skipped.append({
                         **labels, "candidates": n_candidate, "phenotypes": n_phenotype,
                         "phenotype_selection": selection,
-                        "predicted_element_touches": int(work),
+                        "predicted_query_grid": int(work),
+                        "queried_slice_elements": int(touched),
                         "reason": "exceeds WORK_CEILING",
                     })
                     continue
@@ -554,56 +580,47 @@ def time_table(
                 picked = torch.randperm(len(targets), generator=generator)[:n_candidate]
                 candidates = target_t[picked].tolist()
 
-                # Rotate which implementation is measured first, independently of
-                # the caller-shape alternation below. Iterating `tables` in
-                # insertion order would put `current` first in every cell of every
-                # documented command, so any warm-up or cache advantage would
-                # accrue to the same implementation throughout.
                 cell_index = next(cell_counter)
-                ordered = list(tables.items())
-                rotation = cell_index % len(ordered)
-                ordered = ordered[rotation:] + ordered[:rotation]
-
-                for position, (implementation, table) in enumerate(ordered):
-                    singleton, batched = _callers(query_fns[implementation])
-                    shapes = [("singleton", singleton), ("batched", batched)]
-                    # Alternate which shape runs first, so a small difference
-                    # between them is not confounded with a fixed measurement
-                    # order.
-                    #
-                    # **Counted per timed cell, not from `len(rows)`.** Each cell
-                    # appends two rows, so `len(rows)` is even at every cell
-                    # boundary and a `len(rows) % 2` test never fires — the first
-                    # version of this alternated nothing, and the evidence file
-                    # recorded `measured_first="singleton"` for all 240 rows while
-                    # §8.1 claimed otherwise.
-                    #
-                    # **From the cell alone, never from `position`.** An earlier
-                    # version used `(cell_index + position) % 2`, intending to
-                    # decorrelate the two orders. With two implementations the
-                    # rotation moves `position` in lockstep with `cell_index`, so
-                    # the sum is constant per implementation *identity*: `current`
-                    # came out singleton-first in 60/60 rows and the prototype
-                    # batched-first in 60/60. Rotating the implementations
-                    # cancelled the shape alternation instead of decorrelating it.
-                    #
-                    # Keyed on the cell, every implementation in a cell shares one
-                    # shape order and each alternates across cells.
-                    if cell_index % 2:
-                        shapes.reverse()
-                    for shape, fn in shapes:
-                        timing = _repeat(fn, table, phenotypes, candidates)
-                        rows.append({
-                            "implementation": implementation, **labels,
-                            "caller_shape": shape, "candidates": n_candidate,
-                            "phenotypes": n_phenotype,
-                            "phenotype_selection": selection,
-                            "queried_slice_total": int(touched),
-                            "measured_first": shapes[0][0],
-                            "implementation_position": position,
-                            **timing,
-                        })
-                        print(json.dumps(rows[-1]), flush=True)
+                singleton, batched = _callers(sp_mean_distances)
+                shapes = [("singleton", singleton), ("batched", batched)]
+                # Alternate which shape runs first, so a small difference
+                # between them is not confounded with a fixed measurement
+                # order.
+                #
+                # **Counted per timed cell, not from `len(rows)`.** Each cell
+                # appends two rows, so `len(rows)` is even at every cell
+                # boundary and a `len(rows) % 2` test never fires — the first
+                # version of this alternated nothing, and the evidence file
+                # recorded `measured_first="singleton"` for all 240 rows while
+                # §8.1 claimed otherwise.
+                #
+                # **From the cell alone.** An earlier version used
+                # `(cell_index + position) % 2`, where `position` was the
+                # implementation's place in a rotated order, intending to
+                # decorrelate the two. With two implementations the rotation
+                # moved `position` in lockstep with `cell_index`, so the sum was
+                # constant per implementation *identity*: one came out
+                # singleton-first in 60/60 rows and the other batched-first in
+                # 60/60 — the rotation cancelled the shape alternation instead
+                # of decorrelating it.
+                #
+                # With one implementation there is no rotation left to confound
+                # it, and the alternation stays because the two caller shapes
+                # are still compared to each other.
+                if cell_index % 2:
+                    shapes.reverse()
+                for shape, fn in shapes:
+                    timing = _repeat(fn, table, phenotypes, candidates)
+                    rows.append({
+                        "implementation": "indexed", **labels,
+                        "caller_shape": shape, "candidates": n_candidate,
+                        "phenotypes": n_phenotype,
+                        "phenotype_selection": selection,
+                        "queried_slice_total": int(touched),
+                        "measured_first": shapes[0][0],
+                        **timing,
+                    })
+                    print(json.dumps(rows[-1]), flush=True)
 
 
 def provenance(args: argparse.Namespace, mode: str) -> Dict[str, Any]:
@@ -651,17 +668,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Replace an existing --output file. Off by default: measurement "
              "artifacts are cited by digest and must not be replaced silently.",
     )
-    parser.add_argument(
-        "--implementations", default="indexed",
-        help=(
-            "Comma-separated: indexed, reference. `indexed` is what ships; "
-            "`reference` is the independent Python-dictionary scan the "
-            "equivalence tests use, kept here so the speedup has a baseline — "
-            "it is O(rows) in Python and is not a candidate. **Run one per "
-            "process** — peak RSS is a process high-water mark, so building two "
-            "in one process attributes the second's cost to whichever ran first."
-        ),
-    )
     args = parser.parse_args(argv)
 
     # After parsing so `--help` works everywhere; before any artifact is loaded or
@@ -669,43 +675,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     # loaded — `torch` is imported when this module is.
     require_linux_memory_accounting()
 
-    requested = [name.strip() for name in args.implementations.split(",") if name.strip()]
-    unknown = [name for name in requested if name not in ("indexed", "reference")]
-    if unknown:
-        parser.error(f"unknown implementation(s): {', '.join(unknown)}")
-    if not requested:
-        parser.error("--implementations may not be empty")
-
     torch.manual_seed(args.seed)
     cells = itertools.count()
     rows: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
     builds: List[Dict[str, Any]] = []
 
-    def prepare(columns) -> Dict[str, Any]:
-        """Every table this run will time, each built from the same rows.
-
-        **No implementation is exempt.** The shape this replaces handed
-        `current` the loader's own object and built only the prototypes, so one
-        of the three never appeared in the build records and its cost was
-        invisible.
-        """
-        tables: Dict[str, Any] = {}
-        for name in requested:
-            table, record = build_index(name, columns)
-            tables[name] = table
-            builds.append(record)
-            print(json.dumps(record), flush=True)
-        return tables
+    def prepare(columns, max_hops: int) -> Any:
+        """Build the one table this run will time, and report what it cost."""
+        table, record = build_index(columns, max_hops)
+        builds.append(record)
+        print(json.dumps(record), flush=True)
+        return table
 
     if args.artifact is not None:
         mode = "artifact"
-        columns, lengths, targets, artifact_meta = build_artifact_lookup(
+        columns, resolved_hops, lengths, targets, artifact_meta = build_artifact_lookup(
             args.artifact, args.max_hops
         )
         phenotype_ids = torch.unique(columns[0]).tolist()
         time_table({"table": "artifact"}, columns, lengths, targets, phenotype_ids,
-                   args.seed, rows, skipped, cells, prepare(columns))
+                   args.seed, rows, skipped, cells, prepare(columns, resolved_hops))
         source: Dict[str, Any] = {"source": "artifact", **artifact_meta}
         # A real artifact is one of §3.1's two requirements. The other is a
         # deployment-equivalent CPU, which this script cannot self-attest — and
@@ -718,7 +708,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         mode = "synthetic"
         for labels, columns, lengths, targets in synthetic_tables(args.max_hops, args.seed):
             time_table(labels, columns, lengths, targets, list(range(len(lengths))),
-                       args.seed, rows, skipped, cells, prepare(columns))
+                       args.seed, rows, skipped, cells,
+                       prepare(columns, args.max_hops))
         source = {
             "source": "synthetic",
             "reason": "no shortest_paths.pt supplied; none exists in development",
@@ -733,14 +724,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     report = {
-        "stage": "5a served primitive" if requested == ["indexed"] else "5a comparison",
-        "implementations": requested,
+        "stage": "5a served primitive",
+        "implementations": ["indexed"],
         "index_builds": builds,
         # `ru_maxrss` is a process high-water mark, so a second table built in the
-        # same process inherits the first's peak. True only when exactly one was
-        # built here; the numbers are reported either way and the flag says how
-        # to read them.
-        "memory_attribution_isolated": len(requested) <= 1,
+        # same process would inherit the first's peak. One table is built per run
+        # now, by construction rather than by instruction — this is kept as a
+        # field because consumers read it and because the guarantee is worth
+        # stating rather than leaving to be inferred from the absence of a flag.
+        "memory_attribution_isolated": len(builds) <= 1,
         "slice_source": source,
         "provenance": provenance(args, mode),
         "verdict": verdict,

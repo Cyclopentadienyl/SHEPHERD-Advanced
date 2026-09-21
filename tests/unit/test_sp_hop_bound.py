@@ -485,3 +485,75 @@ class TestTheLoaderRefusesAPresentButUnusableTable:
         assert pipeline._sp_ready is True
         assert pipeline._sp_lookup.n_rows == 2
         assert pipeline._sp_hop_bound_source == "sidecar"
+
+    @pytest.mark.parametrize("below", [0, -1, -2])
+    def test_a_distance_below_one_is_refused_through_the_loader(self, tmp_path, below):
+        """**Measured before this check existed**, with `_sp_ready` True in
+        every case: distance -1 gave a mean of -1.0 and a score of `inf`; -2
+        gave -1.0; 0 gave a perfect 1.0. All three reached `_calculate_sp_score`
+        as numbers."""
+        pipeline, data_dir = self._pipeline(
+            tmp_path,
+            {
+                "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
+                "target_idx": torch.tensor([4, 5], dtype=torch.int64),
+                "target_type": torch.tensor([1, 1], dtype=torch.int64),
+                "distance": torch.tensor([1, below], dtype=torch.int8),
+            },
+        )
+
+        with pytest.raises(ValueError, match="records a distance of"):
+            pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+
+class TestAnEmptyTableIsTheAbsentCase:
+    """**Not a refusal and not a ready pipeline.** An empty table binds nothing,
+    so there is nothing for SP to be ready for; D5 takes this reading over
+    refusing it because a table with no rows makes no false claim and is
+    indistinguishable in effect from having no file.
+
+    Publishing it instead is not an internal-shape difference. A query against
+    an empty index returns unreachable with `available` True, so the combined
+    score mixes SP in for every candidate — measured at 1/7 with the default
+    bound, against the pure-GNN value an absent file gives.
+    """
+
+    def test_no_rows_leaves_shortest_paths_off(self, tmp_path):
+        pipeline, data_dir = _loader(tmp_path, distances=[], sidecar={"max_hops": 5})
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+
+    def test_it_lands_in_the_same_state_as_no_file_at_all(self, tmp_path):
+        """The claim is equivalence with the absent case, so it is asserted
+        against the absent case rather than against a remembered value."""
+        empty_pipeline, empty_dir = _loader(
+            tmp_path / "empty", distances=[], sidecar={"max_hops": 5}
+        )
+        empty_pipeline._load_shortest_paths(empty_dir)
+
+        absent_dir = tmp_path / "absent"
+        absent_dir.mkdir(parents=True, exist_ok=True)
+        absent_pipeline, _ = _loader(
+            tmp_path / "scratch", distances=[1], sidecar={"max_hops": 5}
+        )
+        absent_pipeline._load_shortest_paths(absent_dir)
+
+        assert (empty_pipeline._sp_ready, empty_pipeline._sp_lookup) == (
+            absent_pipeline._sp_ready,
+            absent_pipeline._sp_lookup,
+        ) == (False, None)
+
+    def test_a_table_with_rows_still_loads(self, tmp_path):
+        """Without this, the two above hold for a loader that never publishes."""
+        pipeline, data_dir = _loader(tmp_path, distances=[1, 2], sidecar={"max_hops": 5})
+
+        pipeline._load_shortest_paths(data_dir)
+
+        assert pipeline._sp_ready is True
+        assert pipeline._sp_lookup.n_rows == 2
