@@ -499,3 +499,89 @@ class TestOwlIsReadAsXmlNotAsText:
         )
 
         assert scan_identity(path)["declared_imports"]
+
+
+class TestTheOwlScanHoldsNoTree:
+    """**Incremental feeding is not the same as bounded memory.**
+
+    The scanner that replaced the regex used `XMLPullParser`, whose default tree
+    builder keeps every element attached to its parent until the document ends;
+    reading its events empties a queue and frees nothing. Measured on generated
+    RDF/XML with a label and a subClassOf per class, the peak was about five
+    times the file — 36 MB in, 182 MB held — while a comment above the code
+    said "bounded". Enumeration scans every candidate before it filters, so a
+    large MONDO OWL was built into memory even when the build wanted HPO.
+
+    The target parser keeps counts and no elements. These cases pin the shape of
+    that, not a number from one machine: the peak must not grow with the file.
+    """
+
+    RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    OWL = "http://www.w3.org/2002/07/owl#"
+    RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
+    def _generate(self, path: Path, classes: int) -> Path:
+        with open(path, "w") as out:
+            out.write(
+                f'<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="{self.RDF}" '
+                f'xmlns:owl="{self.OWL}" xmlns:rdfs="{self.RDFS}">\n'
+                '<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/mondo.owl"/>\n'
+            )
+            for i in range(classes):
+                out.write(
+                    f'<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_{i:07d}">\n'
+                    f"  <rdfs:label>disease number {i} with a reasonably long label</rdfs:label>\n"
+                    f'  <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/'
+                    f'MONDO_{max(i - 1, 0):07d}"/>\n'
+                    "</owl:Class>\n"
+                )
+            out.write("</rdf:RDF>\n")
+        return path
+
+    @staticmethod
+    def _peak(path: Path):
+        import tracemalloc
+
+        tracemalloc.start()
+        try:
+            tracemalloc.reset_peak()
+            identity = scan_identity(path)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        return identity, peak
+
+    def test_the_peak_does_not_grow_with_the_file(self, tmp_path):
+        small_path = self._generate(tmp_path / "small.owl", 2_000)
+        large_path = self._generate(tmp_path / "large.owl", 20_000)
+
+        small, small_peak = self._peak(small_path)
+        large, large_peak = self._peak(large_path)
+
+        assert small["term_count"] == 2_000 and large["term_count"] == 20_000
+        # Ten times the file must not mean ten times the memory. The tree
+        # builder measured ~2.4 MB here against ~24 MB; the margin below is for
+        # interpreter noise, not for a tree that is retained after all.
+        assert large_peak < small_peak * 2 + 64 * 1024, (
+            f"peak grew with the file: {small_peak:,} -> {large_peak:,} bytes"
+        )
+        assert large_peak < large_path.stat().st_size // 4, (
+            f"peak {large_peak:,} bytes is a real fraction of a "
+            f"{large_path.stat().st_size:,}-byte file; something is being kept"
+        )
+
+    def test_the_digest_is_still_of_the_bytes_the_parser_saw(self, tmp_path):
+        """One pass for both answers, so the identity and the digest describe
+        the same bytes."""
+        path = self._generate(tmp_path / "m.owl", 50)
+
+        assert scan_identity(path)["digest"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_an_unterminated_document_is_still_refused(self, tmp_path):
+        """Dropping the tree must not drop the end-of-document check: a file
+        cut off mid-element is not a smaller release."""
+        path = self._generate(tmp_path / "m.owl", 10)
+        path.write_bytes(path.read_bytes()[:-20])
+
+        with pytest.raises(OntologyResolutionError, match="well-formed"):
+            scan_identity(path)

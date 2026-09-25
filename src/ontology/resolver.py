@@ -190,6 +190,37 @@ _RDF_ABOUT = f"{{{_RDF_NS}}}about"
 _RDF_RESOURCE = f"{{{_RDF_NS}}}resource"
 
 
+class _OwlIdentity:
+    """An ElementTree parser *target* that keeps counts and nothing else.
+
+    Given to `XMLParser(target=...)`, it receives each start tag with its
+    namespace-expanded name and attributes, and the parser keeps no element
+    once this method returns. Memory therefore depends on the deepest open
+    element, not on how many there have been.
+    """
+
+    def __init__(self) -> None:
+        self.terms = 0
+        self.imports: List[str] = []
+        self.data_version: Optional[str] = None
+        self.declared: Optional[str] = None
+
+    def start(self, tag: str, attrib: Dict[str, str]) -> None:
+        if tag == _OWL_CLASS_TAG:
+            self.terms += 1
+        elif tag == _OWL_IMPORTS_TAG:
+            target = attrib.get(_RDF_RESOURCE)
+            if target:
+                self.imports.append(target)
+        elif tag == _OWL_VERSION_TAG and self.data_version is None:
+            self.data_version = attrib.get(_RDF_RESOURCE) or None
+        elif tag == _OWL_ONTOLOGY and self.declared is None:
+            self.declared = attrib.get(_RDF_ABOUT) or None
+
+    def close(self) -> None:
+        return None
+
+
 def scan_identity(path: Any) -> Dict[str, Any]:
     """Digest, size and declared identity, in a single read.
 
@@ -222,11 +253,20 @@ def scan_identity(path: Any) -> Dict[str, Any]:
     basis = "obo [Term] stanzas" if path.suffix.lower() == ".obo" else "owl:Class declarations"
     is_obo = path.suffix.lower() == ".obo"
     in_header = True
-    # **Fed the same bytes the digest sees, so it is still one pass.** An
-    # incremental parser keeps the memory bounded and, unlike pronto, resolves
-    # nothing: `ElementTree` has no notion of `owl:imports` and issues no
-    # request for one.
-    xml = None if is_obo else ElementTree.XMLPullParser(events=("start",))
+    # **Fed the same bytes the digest sees, so it is still one pass.** And fed
+    # to a parser that **builds no tree**: `_OwlIdentity` is an ElementTree
+    # *target*, so each start tag is handed over and forgotten. The previous
+    # version used `XMLPullParser`, whose default tree builder keeps every
+    # element attached to its parent until the document ends — reading its
+    # events empties the queue and frees nothing. Measured on a generated
+    # RDF/XML with labels and subClassOf, the peak was about five times the
+    # file (36 MB in, 182 MB held), and enumeration scans every candidate
+    # before filtering, so a large MONDO OWL was built into memory even when
+    # the build wanted HPO. The comment above that code said "bounded"; it
+    # was not. Nothing here resolves anything either: expat fetches no
+    # external entity and has no notion of `owl:imports`.
+    owl = None if is_obo else _OwlIdentity()
+    xml = None if is_obo else ElementTree.XMLParser(target=owl)
 
     try:
         with open(path, "rb") as handle:
@@ -255,27 +295,16 @@ def scan_identity(path: Any) -> Dict[str, Any]:
                         imports.append(value)
                 else:
                     xml.feed(line)
-                    for _, element in xml.read_events():
-                        tag = element.tag
-                        if tag == _OWL_CLASS_TAG:
-                            terms += 1
-                        elif tag == _OWL_IMPORTS_TAG:
-                            target = element.get(_RDF_RESOURCE)
-                            if target:
-                                imports.append(target)
-                        elif tag == _OWL_VERSION_TAG and data_version is None:
-                            data_version = element.get(_RDF_RESOURCE) or None
-                        elif tag == _OWL_ONTOLOGY and declared is None:
-                            declared = element.get(_RDF_ABOUT) or None
         if xml is not None:
             # **Close before trusting the counts.** A document that ends
             # mid-element has not been fully described, and reporting a partial
             # count as identity is how a truncated file comes to look like a
-            # smaller release.
+            # smaller release. `close` raises on an unterminated document.
             xml.close()
-            for _, element in xml.read_events():
-                if element.tag == _OWL_CLASS_TAG:
-                    terms += 1
+            terms = owl.terms
+            imports = owl.imports
+            data_version = owl.data_version
+            declared = owl.declared
     except OSError as exc:
         raise OntologyResolutionError(
             f"{path} could not be read ({type(exc).__name__}: {exc})"
