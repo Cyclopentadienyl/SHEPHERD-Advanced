@@ -23,8 +23,17 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from src.ontology.loader import OntologyLoader  # noqa: E402
+from src.ontology.loader import (  # noqa: E402
+    OntologyFetchError,
+    OntologyImportError,
+    OntologyLoader,
+)
+from src.ontology.resolver import (  # noqa: E402
+    AmbiguousOntologyError,
+    OntologyResolutionError,
+)
 from src.ontology.roles import OntologyRoleError  # noqa: E402
+from src.ontology.settings import OntologySettingsError  # noqa: E402
 from src.ontology.settings import load_ontology_settings as _genuine_settings  # noqa: E402
 
 #: Captured before any fixture patches the module attribute. A test that reads
@@ -93,8 +102,13 @@ def select(tmp_path, monkeypatch):
     which is a different input on a machine that has configured roots.
     """
     module = build_module()
+    # **Empty means nothing to fetch.** `{}` left the default PURLs in place,
+    # so a regression in selection would have downloaded real MONDO during a
+    # unit test and passed — on this sandbox the network is reachable.
     empty = tmp_path / "empty.yaml"
-    empty.write_text("{}\n")
+    empty.write_text(
+        "ontology:\n  sources:\n    mondo: []\n    hpo: []\n    go: []\n    mp: []\n"
+    )
 
     import src.ontology.settings as settings_module
 
@@ -148,7 +162,7 @@ class TestThePrecedenceTable:
         obo(cache / "mondo.obo", version="releases/2026-09-01")
         owl(cache / "mondo.owl")
 
-        with pytest.raises(SystemExit) as caught:
+        with pytest.raises(AmbiguousOntologyError) as caught:
             select(cache_dir=cache)
 
         message = str(caught.value)
@@ -181,7 +195,7 @@ class TestThePrecedenceTable:
                             lambda config_path=None: _genuine_settings(config))
         assert _genuine_settings(config).roots == (root,), "the configured root did not take"
 
-        with pytest.raises(SystemExit, match="--mondo-path"):
+        with pytest.raises(AmbiguousOntologyError, match="--mondo-path"):
             select(cache_dir=cache)
 
     def test_the_loaders_default_cache_is_a_root_when_no_flag_is_given(self, tmp_path, select):
@@ -194,7 +208,7 @@ class TestThePrecedenceTable:
         present = obo(default_cache / "mondo.obo")
 
         class Loader(OntologyLoader):
-            def _download_ontology(self, name, force):
+            def _download_ontology(self, name, force, roots=()):
                 raise AssertionError("re-downloaded a file that was already present")
 
         loaded = select(cache_dir=None, loader=Loader(cache_dir=default_cache))
@@ -217,7 +231,7 @@ class TestForceDownload:
     def test_with_an_explicit_path_it_refuses(self, tmp_path, select):
         path = obo(tmp_path / "mondo.obo")
 
-        with pytest.raises(SystemExit, match="two different instructions"):
+        with pytest.raises(OntologyResolutionError, match="two different instructions"):
             select(explicit_path=path, force_download=True)
 
     def test_it_reaches_the_fetch_rather_than_the_resolver(self, tmp_path, select):
@@ -231,7 +245,7 @@ class TestForceDownload:
         calls = []
 
         class Loader(OntologyLoader):
-            def _download_ontology(self, name, force):
+            def _download_ontology(self, name, force, roots=()):
                 calls.append((name, force))
                 return fetched
 
@@ -246,7 +260,7 @@ class TestForceDownload:
         present = obo(cache / "mondo.obo")
 
         class Loader(OntologyLoader):
-            def _download_ontology(self, name, force):
+            def _download_ontology(self, name, force, roots=()):
                 raise AssertionError("fetched despite a candidate being present")
 
         assert select(cache_dir=cache, loader=Loader(cache_dir=cache)).source_path == present
@@ -416,13 +430,20 @@ class TestAPolicyRefusalIsNotAStaleCacheSuccess:
         assert "allowed_hosts" in message
         assert "127.0.0.1" in message
 
-    def test_a_transfer_failure_may_still_fall_back(self, tmp_path, select, monkeypatch):
-        """**The distinction, not a blanket refusal.** A transfer that failed
-        may succeed next time; a destination the policy forbids will not. Only
-        the second is a configuration error to report."""
+    def test_a_transfer_failure_is_reported_not_papered_over(self, tmp_path, select, monkeypatch):
+        """**It has to reach the transfer.** The version of this test that stood
+        here put a valid `mondo.obo` in the cache, so selection took it and the
+        stubbed download was never called — it passed without exercising
+        anything. The stale-cache fallback it was written for is gone: an
+        acceptable file would have been selected without a download, and a file
+        that was not selected was not selected for a reason, so there is
+        nothing valid to fall back to. What a failed transfer owes the operator
+        is a refusal that says so, names the roots, and points at the manual
+        route."""
         import src.ontology.settings as settings_module
         from src.ontology import download as download_module
         from src.ontology.download import OntologyDownloadError
+        from src.ontology.loader import OntologyFetchError
 
         config = tmp_path / "ok.yaml"
         config.write_text(
@@ -431,14 +452,372 @@ class TestAPolicyRefusalIsNotAStaleCacheSuccess:
         monkeypatch.setattr(settings_module, "load_ontology_settings",
                             lambda config_path=None: _genuine_settings(config))
 
+        attempts = []
+
         def flaky(url, target, **kwargs):
+            attempts.append(url)
             raise OntologyDownloadError("connection reset")
 
         monkeypatch.setattr(download_module, "download_ontology", flaky)
+        cache = tmp_path / "cache"
+        cache.mkdir()
+
+        with pytest.raises(OntologyFetchError) as caught:
+            select(cache_dir=cache, loader=OntologyLoader(cache_dir=cache))
+
+        assert attempts == ["https://purl.example/mondo.obo"], "the transfer was never reached"
+        message = str(caught.value)
+        assert str(cache) in message, "the roots searched are not named"
+        assert "manually" in message
+        assert "refused by the destination policy" not in message, (
+            "a transfer failure was reported as a configuration decision"
+        )
+
+
+def _config(tmp_path, body: str):
+    """Point the settings reader at a YAML written for this test."""
+    import src.ontology.settings as settings_module
+
+    path = tmp_path / f"cfg{abs(hash(body))}.yaml"
+    path.write_text(body)
+    return path, settings_module
+
+
+def _recording_download(body: bytes, calls: list):
+    """A `download_ontology` stand-in that records where it was asked to write."""
+    def fake(url, target, **kwargs):
+        calls.append((url, Path(target)))
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        Path(target).write_bytes(body)
+        return Path(target)
+    return fake
+
+
+HPO_BODY = (b"format-version: 1.2\ndata-version: hp/releases/2026-09-01\n"
+            b"ontology: hp.obo\n\n[Term]\nid: HP:0000001\nname: p\n")
+MONDO_NEW = (b"format-version: 1.2\ndata-version: releases/2026-09-01\n"
+             b"ontology: mondo\n\n[Term]\nid: MONDO:0000001\nname: d\n")
+
+
+class TestAMisfiledCacheFileIsNeverOverwritten:
+    """The review's first P2, reproduced end to end before it was fixed.
+
+    `<cache>/hpo.obo` declaring `mondo` was passed over for HPO and counted for
+    MONDO; the HPO slot then found no candidate and downloaded over it. The
+    MONDO slot's input was destroyed after it had been loaded, and provenance —
+    hashed after both slots — recorded the replacement's digest against
+    `mondo`. No role refusal fired, although §3.4 and acceptance 17 promise one.
+    """
+
+    @pytest.fixture
+    def reachable_hpo(self, tmp_path, monkeypatch, select):
+        from src.ontology import download as download_module
+
+        path, settings_module = _config(
+            tmp_path,
+            "ontology:\n  sources:\n    hpo:\n      - https://mirror.test/hp.obo\n"
+            "    mondo: []\n  allowed_hosts:\n    - mirror.test\n",
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(path))
+        calls: list = []
+        monkeypatch.setattr(download_module, "download_ontology",
+                            _recording_download(HPO_BODY, calls))
+        return calls
+
+    def test_the_download_is_refused_and_the_file_left_alone(self, tmp_path, select, reachable_hpo):
+        from src.ontology.loader import OntologyFetchError
 
         cache = tmp_path / "cache"
-        present = obo(cache / "mondo.obo", version="releases/2019-01-01")
+        misfiled = obo(cache / "hpo.obo", ontology="mondo", terms=("MONDO:0000001",))
+        before = misfiled.read_bytes()
+
+        with pytest.raises(OntologyFetchError) as caught:
+            select(ontology="hpo", cache_dir=cache, loader=OntologyLoader(cache_dir=cache))
+
+        assert misfiled.read_bytes() == before, "the misfiled file was overwritten"
+        assert reachable_hpo == [], "something was fetched before the refusal"
+        message = str(caught.value)
+        assert "hpo.obo" in message and "mondo" in message, "the refusal does not say why"
+
+    def test_in_build_order_the_mondo_input_survives_the_hpo_slot(self, tmp_path, select, reachable_hpo):
+        """The sequence the build actually runs: MONDO loads the misfiled file,
+        then HPO. Its digest has to still describe the bytes on disk."""
+        from src.ontology.loader import OntologyFetchError
+        from src.utils.fingerprint import file_sha256
+
+        cache = tmp_path / "cache"
+        misfiled = obo(cache / "hpo.obo", ontology="mondo", terms=("MONDO:0000001",))
+        loader = OntologyLoader(cache_dir=cache)
+
+        mondo = select(ontology="mondo", cache_dir=cache, loader=loader)
+        loaded_digest = file_sha256(mondo.source_path)
+        with pytest.raises(OntologyFetchError):
+            select(ontology="hpo", cache_dir=cache, loader=loader)
+
+        assert file_sha256(misfiled) == loaded_digest
+
+
+class TestVerifyThenPublish:
+    """A fresh copy replaces a working one only after it has passed."""
+
+    @pytest.fixture
+    def fresh(self, tmp_path, monkeypatch, select):
+        from src.ontology import download as download_module
+
+        path, settings_module = _config(
+            tmp_path,
+            "ontology:\n  sources:\n    mondo:\n      - https://mirror.test/mondo.obo\n"
+            "  allowed_hosts:\n    - mirror.test\n",
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(path))
+        calls: list = []
+
+        def use(body):
+            monkeypatch.setattr(download_module, "download_ontology",
+                                _recording_download(body, calls))
+            return calls
+        return use
+
+    def test_a_fresh_copy_that_fails_the_role_check_leaves_the_old_one(self, tmp_path, select, fresh):
+        cache = tmp_path / "cache"
+        old = obo(cache / "mondo.obo", version="releases/2025-01-01")
+        before = old.read_bytes()
+        fresh(HPO_BODY)
+
+        with pytest.raises(OntologyRoleError):
+            select(cache_dir=cache, force_download=True, loader=OntologyLoader(cache_dir=cache))
+
+        assert old.read_bytes() == before, "a refused download replaced a working release"
+        assert not [p.name for p in cache.iterdir() if p.name.endswith(".staged")]
+
+    def test_a_fresh_copy_that_declares_an_import_leaves_the_old_one(self, tmp_path, select, fresh):
+        from src.ontology.loader import OntologyImportError
+
+        cache = tmp_path / "cache"
+        old = obo(cache / "mondo.obo", version="releases/2025-01-01")
+        before = old.read_bytes()
+        fresh(MONDO_NEW.replace(b"ontology: mondo\n", b"ontology: mondo\nimport: http://x.invalid/y.obo\n"))
+
+        with pytest.raises(OntologyImportError):
+            select(cache_dir=cache, force_download=True, loader=OntologyLoader(cache_dir=cache))
+
+        assert old.read_bytes() == before
+
+    def test_a_good_fresh_copy_is_published_under_its_cache_name(self, tmp_path, select, fresh):
+        cache = tmp_path / "cache"
+        obo(cache / "mondo.obo", version="releases/2025-01-01")
+        calls = fresh(MONDO_NEW)
+
+        loaded = select(cache_dir=cache, force_download=True, loader=OntologyLoader(cache_dir=cache))
+
+        assert calls and calls[0][1].name.startswith(".") and calls[0][1].name.endswith(".staged"), (
+            "the download was not staged under a hidden name"
+        )
+        assert loaded.source_path == cache / "mondo.obo"
+        assert (cache / "mondo.obo").read_bytes() == MONDO_NEW
+        assert loaded.declared_version == "releases/2026-09-01"
+        assert not [p.name for p in cache.iterdir() if p.name.endswith(".staged")]
+
+    def test_a_fresh_copy_that_never_arrives_is_not_replaced_by_the_old_one(
+        self, tmp_path, select, fresh, monkeypatch
+    ):
+        """`--force-download` against a source that fails. The cached file is
+        exactly what was asked *not* to be used, so the build stops; serving it
+        would report a fresh copy that never arrived."""
+        from src.ontology import download as download_module
+        from src.ontology.download import OntologyDownloadError
+        from src.ontology.loader import OntologyFetchError
+
+        cache = tmp_path / "cache"
+        old = obo(cache / "mondo.obo", version="releases/2025-01-01")
+        before = old.read_bytes()
+        fresh(MONDO_NEW)  # the configuration; the transfer itself is replaced below
+
+        def fails(url, target, **kwargs):
+            raise OntologyDownloadError("connection reset")
+
+        monkeypatch.setattr(download_module, "download_ontology", fails)
+
+        with pytest.raises(OntologyFetchError, match="fresh copy was requested"):
+            select(cache_dir=cache, force_download=True, loader=OntologyLoader(cache_dir=cache))
+
+        assert old.read_bytes() == before
+
+    def test_a_url_with_a_query_string_keeps_its_format(self, tmp_path, select, monkeypatch):
+        """`mondo.owl?sig=abc` used to be written as `mondo.obo`, because the
+        suffix was read from the whole URL rather than its path."""
+        from src.ontology import download as download_module
+
+        path, settings_module = _config(
+            tmp_path,
+            "ontology:\n  sources:\n    mondo:\n      - https://mirror.test/mondo.owl?sig=abc\n"
+            "  allowed_hosts:\n    - mirror.test\n",
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(path))
+        calls: list = []
+        owl_body = owl(tmp_path / "src.owl").read_bytes()
+        monkeypatch.setattr(download_module, "download_ontology",
+                            _recording_download(owl_body, calls))
+        cache = tmp_path / "cache"
+        cache.mkdir()
 
         loaded = select(cache_dir=cache, loader=OntologyLoader(cache_dir=cache))
 
-        assert loaded.source_path == present
+        assert calls[0][1].name == ".mondo.owl.staged"
+        assert loaded.source_path == cache / "mondo.owl"
+
+
+class TestNothingToFetchIsSaidPlainly:
+
+    def test_no_source_names_the_roots_and_says_nothing_was_tried(self, tmp_path, select):
+        """It used to say a download failed and that URLs "may be outdated" when
+        nothing had been attempted, and named no root, although §3.1 and both
+        guides promise the roots searched."""
+        from src.ontology.loader import OntologyFetchError
+
+        cache = tmp_path / "cache"
+        cache.mkdir()
+
+        with pytest.raises(OntologyFetchError) as caught:
+            select(cache_dir=cache, loader=OntologyLoader(cache_dir=cache))
+
+        message = str(caught.value)
+        assert str(cache) in message
+        assert "nothing was attempted" in message
+        assert "outdated" not in message
+
+
+class TestTheNamedLoadersSearchTheConfiguredRoots:
+
+    def test_load_mondo_finds_a_file_under_ontology_roots(self, tmp_path, monkeypatch):
+        """They looked only in the cache, so a library caller on a deployment
+        with `paths.ontology_roots` fetched over the network while the
+        configured file sat there — and the fetched copy then made the next
+        build refuse as ambiguous."""
+        root = tmp_path / "configured"
+        staged = obo(root / "mondo.obo")
+        path, settings_module = _config(
+            tmp_path,
+            f"paths:\n  ontology_roots:\n    - {root}\n"
+            "ontology:\n  sources:\n    mondo: []\n",
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(path))
+
+        class Loader(OntologyLoader):
+            def _download_ontology(self, name, force, roots=()):
+                raise AssertionError("fetched while a configured file was present")
+
+        assert Loader(cache_dir=tmp_path / "cache").load_mondo().source_path == staged
+
+
+class TestTheBuildEntryPoint:
+
+    def _build_args(self, tmp_path):
+        external = tmp_path / "external"
+        external.mkdir()
+        for name in ("phenotype.hpoa", "genes_to_phenotype.txt"):
+            (external / name).write_text("")
+        return external
+
+    def test_a_path_with_force_download_is_refused_before_anything_is_fetched(
+        self, tmp_path, monkeypatch, select
+    ):
+        """It was checked per slot, so `--hpo-path` with `--force-download`
+        refused only after MONDO had been fetched and its cache replaced."""
+        module = build_module()
+
+        class Detonator:
+            def __init__(self, *a, **k):
+                raise AssertionError("a loader was constructed, so a fetch could follow")
+
+        monkeypatch.setattr(module, "OntologyLoader", Detonator)
+        hpo = obo(tmp_path / "hp.obo", ontology="hpo", terms=("HP:1",))
+
+        with pytest.raises(OntologyResolutionError, match="Nothing has been fetched"):
+            module.build_knowledge_graph(
+                external_dir=self._build_args(tmp_path), workspace=tmp_path / "ws",
+                hpo_path=hpo, force_download=True,
+            )
+
+    def test_a_refusal_is_an_exception_a_caller_can_catch(self, tmp_path, select):
+        """`probe_deployment` calls the build as a function and catches
+        `Exception`. `SystemExit` is not one, so the old refusal ended the
+        process and lost the probe's whole report."""
+        cache = tmp_path / "cache"
+        obo(cache / "mondo.obo", version="releases/2026-09-01")
+        owl(cache / "mondo.owl")
+
+        with pytest.raises(Exception) as caught:
+            select(cache_dir=cache)
+
+        assert isinstance(caught.value, AmbiguousOntologyError)
+        assert not isinstance(caught.value, SystemExit)
+
+    @pytest.mark.parametrize("refusal", [
+        AmbiguousOntologyError("two candidates", ()),
+        OntologyRoleError("two candidates"),
+        OntologyImportError("two candidates"),
+        OntologyFetchError("two candidates"),
+        OntologySettingsError("two candidates"),
+    ], ids=["ambiguous", "role", "imports", "fetch", "settings"])
+    def test_main_turns_a_refusal_into_an_exit_status(self, monkeypatch, capsys, refusal):
+        """Every ontology refusal, a malformed configuration included — each is
+        written for an operator, and a traceback buries the sentence."""
+        module = build_module()
+
+        def refuse(args):
+            raise refusal
+
+        monkeypatch.setattr(module, "_run_build", refuse)
+        monkeypatch.setattr(sys, "argv", ["build_knowledge_graph.py",
+                                          "--external-dir", "x", "--workspace", "y"])
+
+        with pytest.raises(SystemExit) as caught:
+            module.main()
+
+        assert caught.value.code == 2
+        assert "two candidates" in capsys.readouterr().err
+
+    def test_the_probe_passes_the_paths_through(self, tmp_path, monkeypatch):
+        """Both phase-F builds, observed rather than read from the source: a
+        probe that dropped the paths would build from whatever the roots held,
+        which is the ambiguity this phase refuses."""
+        import scripts.build_knowledge_graph as build
+
+        spec = importlib.util.spec_from_file_location(
+            "probe_deployment", REPO / "scripts" / "probe_deployment.py")
+        probe = importlib.util.module_from_spec(spec)
+        # Its dataclasses resolve their own module by name while being built.
+        sys.modules[spec.name] = probe
+        try:
+            spec.loader.exec_module(probe)
+        finally:
+            sys.modules.pop(spec.name, None)
+
+        args = probe.parse_args(["--work-dir", "w", "--mondo-path", "m.obo", "--hpo-path", "h.obo"])
+        assert args.mondo_path == Path("m.obo") and args.hpo_path == Path("h.obo")
+
+        calls = []
+
+        def record(**kwargs):
+            calls.append((kwargs.get("mondo_path"), kwargs.get("hpo_path")))
+            # Enough for the second probe to run, and nothing more.
+            workspace = Path(kwargs["workspace"])
+            workspace.mkdir(parents=True, exist_ok=True)
+            (workspace / "kg.json").write_text("{}")
+            raise RuntimeError("recorded, not built")
+
+        monkeypatch.setattr(build, "build_knowledge_graph", record)
+        external = tmp_path / "external"
+        external.mkdir()
+        for name in ("phenotype.hpoa", "genes_to_phenotype.txt"):
+            (external / name).write_text("")
+
+        probe.phase_real_build(probe.Report(), tmp_path / "work", external, 1, 1,
+                               mondo_path=Path("m.obo"), hpo_path=Path("h.obo"))
+
+        assert calls == [(Path("m.obo"), Path("h.obo"))] * 2

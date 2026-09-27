@@ -19,8 +19,9 @@ pronto 是專為生物醫學本體設計的 Python 庫，支援:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 import pronto
 
 from src.core.types import DataSource
@@ -32,6 +33,15 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Ontology Loader using Pronto
 # =============================================================================
+class OntologyFetchError(RuntimeError):
+    """No acceptable copy of an ontology could be obtained.
+
+    A `RuntimeError` so existing callers that caught the old untyped failure
+    still do; its own type so the build's entry point can turn it into an exit
+    status without swallowing unrelated runtime errors.
+    """
+
+
 class OntologyImportError(ValueError):
     """The file declares imports, which this project does not resolve.
 
@@ -48,19 +58,13 @@ class OntologyLoader:
     pronto 是專為生物醫學本體設計的庫，比手寫解析器更可靠
     """
 
-    # Known ontology URLs (OBO Foundry PURLs — stable permanent redirects)
-    ONTOLOGY_URLS = {
-        'hpo': 'http://purl.obolibrary.org/obo/hp.obo',
-        'mondo': 'http://purl.obolibrary.org/obo/mondo.obo',
-        'go': 'http://purl.obolibrary.org/obo/go.obo',
-        'mp': 'http://purl.obolibrary.org/obo/mp.obo',
-    }
-
-    # Alternative OWL URLs (if OBO fails)
-    ONTOLOGY_OWL_URLS = {
-        'hpo': 'http://purl.obolibrary.org/obo/hp.owl',
-        'mondo': 'http://purl.obolibrary.org/obo/mondo.owl',
-    }
+    # The download URLs live in `src/ontology/settings.py`
+    # (`DEFAULT_ONTOLOGY_SOURCES`), overridable from `configs/deployment.yaml`.
+    # `ONTOLOGY_URLS` and `ONTOLOGY_OWL_URLS` used to sit here; after the move
+    # nothing read them, they disagreed with the settings defaults (no OWL
+    # entries for GO or MP), and a docstring called them "one list and not
+    # two". They are gone rather than left to be edited by someone who
+    # believes they still do something.
 
     def __init__(self, cache_dir: Optional[Path] = None):
         """
@@ -173,9 +177,23 @@ class OntologyLoader:
         # pronto 自動偵測格式 (OBO, OWL, JSON)
         pronto_ont = pronto.Ontology(str(path), import_depth=self.IMPORT_DEPTH)
 
-        declared_imports = tuple(getattr(pronto_ont.metadata, "imports", ()) or ())
+        # **The union of two readings**, so the loader and the listing cannot
+        # disagree. pronto records only `owl:imports` directly under the first
+        # `owl:Ontology`; RDF/XML may state the same triple inside an
+        # `rdf:Description` about the ontology, which the listing saw and pronto
+        # did not — so a file listed as "will be refused" loaded with its import
+        # dropped. An import declared with no target (pronto records `None`) is
+        # still a declaration and still refused.
+        from src.ontology.resolver import declared_imports as _listed_imports
+
+        pronto_imports = set(getattr(pronto_ont.metadata, "imports", ()) or ())
+        declared_imports = tuple(sorted(
+            {str(item) for item in pronto_imports if item}
+            | set(_listed_imports(path))
+            | ({"(an import with no target)"} if None in pronto_imports else set())
+        ))
         if declared_imports:
-            listed = "\n".join(f"  {item}" for item in sorted(declared_imports))
+            listed = "\n".join(f"  {item}" for item in declared_imports)
             raise OntologyImportError(
                 f"{path} declares {len(declared_imports)} import(s) and this "
                 f"project requires a self-contained ontology file:\n{listed}\n"
@@ -255,21 +273,23 @@ class OntologyLoader:
             logger.info(f"Using cached {ontology_name} ontology")
             return self._loaded_ontologies[cache_key]
 
-        cache_file = None
-        if not force_download:
+        # **The same roots the build searches.** This used to look only in the
+        # cache directory, so a library caller on a deployment that configured
+        # `paths.ontology_roots` fetched over the network while the configured
+        # file sat there — and the fetched copy then made the next build refuse
+        # as ambiguous.
+        roots = list(self._settings().roots) + [self.cache_dir]
+
+        if force_download:
+            ontology = self._fetch_ontology(ontology_name, True, roots)
+        else:
             try:
-                cache_file = select_ontology_file(
-                    ontology_name, roots=[self.cache_dir]
-                ).path
+                chosen = select_ontology_file(ontology_name, roots=roots).path
             except NoOntologyCandidateError:
-                cache_file = None
-
-        if cache_file is None:
-            # Download
-            cache_file = self._download_ontology(ontology_name, force_download)
-
-        # Load from file — with the role, so this entry point is a gate too.
-        ontology = self.load(cache_file, expect=ontology_name)
+                ontology = self._fetch_ontology(ontology_name, False, roots)
+            else:
+                # With the role, so this entry point is a gate too.
+                ontology = self.load(chosen, expect=ontology_name)
 
         # Set source info
         ontology._source = DataSource[ontology_name.upper()] if ontology_name.upper() in DataSource.__members__ else None
@@ -288,44 +308,97 @@ class OntologyLoader:
         'mp': 'https://www.informatics.jax.org/vocabulary/mp_ontology  (download mp.obo)',
     }
 
-    def _download_ontology(self, ontology_name: str, force_download: bool) -> Path:
-        """Fetch an ontology, through the one guarded path.
+    #: A download sits under this name until it has passed the imports policy
+    #: and the role check. Hidden and not `.obo`/`.owl`, so the resolver never
+    #: lists a half-verified file as a candidate.
+    _STAGED = ".staged"
+
+    def _download_ontology(
+        self,
+        ontology_name: str,
+        force_download: bool,
+        roots: Sequence[Path] = (),
+    ) -> Path:
+        """Fetch an ontology to a **staging** path, through the one guarded path.
+
+        Returns a path the caller must verify and publish — see
+        `_fetch_ontology`, which is the only caller that should use this.
 
         **Every attempt uses `download_ontology`, the OWL fallback included.**
-        A fallback with its own fetch is the gate not existing: the scheme and
-        destination rules of `PLAN_ONTOLOGY_PHASE2.md` §3.5 would hold for the
-        path usually taken and not for the one taken when something has already
-        gone wrong — which is the path a rotted PURL leads to.
+        A fallback with its own fetch is the gate not existing, and the
+        fallback is the path a rotted PURL leads to.
 
-        **The URLs come from configuration**, not from a constant in this file.
-        `ONTOLOGY_URLS` at `:45` made a PURL that stops resolving into a code
-        change; `configs/deployment.yaml` makes it an edit. `ONTOLOGY_URLS` and
-        `ONTOLOGY_OWL_URLS` remain as this class's declared defaults and are
-        read through the settings, so there is one list and not two.
+        **Nothing already on disk is overwritten before it has been judged.**
+        The first version wrote straight to `<cache>/<name>.obo`. When that file
+        existed and declared another ontology — the misfiled case §3.4 is about
+        — the resolver passed it over for this slot and counted it for the other
+        one, and this download then replaced it: the other slot's input was
+        destroyed and its provenance recorded the digest of the replacement. So
+        a target that exists and is not this ontology's own file refuses, before
+        any fetch; and even this ontology's own file is replaced only after the
+        new copy has been verified.
 
-        A refused destination is **not** a reason to fall back to a stale cache:
-        a refusal says this server may not fetch from there, and quietly serving
-        older bytes instead answers a question nobody asked.
+        **No stale fallback.** A transfer that fails has nothing valid to fall
+        back to: an acceptable file for this slot would have been selected
+        without a download, and the files that were not selected were not
+        selected for a reason. A refusal says which of the two it was — a
+        policy decision the configuration must change, or a transfer that may
+        succeed on another attempt — because the remedies differ.
         """
+        from urllib.parse import urlsplit
+
         from src.ontology.download import (
             DestinationPolicy,
             OntologyDestinationRefused,
             OntologyDownloadError,
             download_ontology,
         )
+        from src.ontology.resolver import enumerate_candidates, scan_identity
 
         settings = self._settings()
-        policy = DestinationPolicy(allowed_hosts=settings.allowed_hosts)
-        cache_file = self.cache_dir / f"{ontology_name}.obo"
-        cache_file_owl = self.cache_dir / f"{ontology_name}.owl"
+        urls = settings.urls_for(ontology_name)
+        searched = ", ".join(str(root) for root in roots) or "(no roots)"
+        manual_hint = self.ONTOLOGY_MANUAL_INSTRUCTIONS.get(ontology_name, "")
 
+        if not urls:
+            raise OntologyFetchError(
+                f"no {ontology_name} ontology file was found under {searched}, "
+                f"and no download source is configured for {ontology_name}, so "
+                "nothing was attempted.\n"
+                + (f"  Download it manually from {manual_hint}\n" if manual_hint else "")
+                + "  and place it under one of the roots above, or name it "
+                "explicitly."
+            )
+
+        def target_for(url: str) -> Path:
+            suffix = ".owl" if urlsplit(url).path.lower().endswith(".owl") else ".obo"
+            return self.cache_dir / f"{ontology_name}{suffix}"
+
+        own = {c.path.resolve() for c in enumerate_candidates([self.cache_dir], ontology=ontology_name)}
+        for target in {target_for(url) for url in urls}:
+            if target.exists() and target.resolve() not in own:
+                try:
+                    declared = scan_identity(target)["declared_ontology"]
+                except Exception:
+                    declared = "(unidentifiable)"
+                raise OntologyFetchError(
+                    f"{target} is already there and is not a {ontology_name} "
+                    f"file (it declares {declared!r}). Downloading "
+                    f"{ontology_name} would overwrite it, and it may be another "
+                    "slot's input. It has been left untouched and nothing was "
+                    "fetched: move or rename it, or name the file for each "
+                    "ontology explicitly."
+                )
+
+        policy = DestinationPolicy(allowed_hosts=settings.allowed_hosts)
         refused: list = []
         failed: list = []
-        for url in settings.urls_for(ontology_name):
-            target = cache_file_owl if url.lower().endswith(".owl") else cache_file
+        for url in urls:
+            target = target_for(url)
+            staged = target.with_name(f".{target.name}{self._STAGED}")
             logger.info(f"Downloading {ontology_name} ontology from {url}")
             try:
-                return download_ontology(url, target, policy=policy)
+                return download_ontology(url, staged, policy=policy)
             except OntologyDestinationRefused as exc:
                 refused.append(f"  {url}\n    {exc}")
                 logger.error("policy refused %s (%s)", url, exc)
@@ -333,58 +406,60 @@ class OntologyLoader:
                 failed.append(f"  {url}: {exc}")
                 logger.warning("could not fetch %s (%s)", url, exc)
 
-        # **A policy refusal is not "could not fetch just now".** Every source
-        # being refused means the configuration says this server may not fetch
-        # any of them, and that answer does not improve by retrying. Serving
-        # the old file instead reports a configuration error to the operator as
-        # a successful build — on an input nobody asked for and nobody was told
-        # about. The docstring above said so while the code did the opposite.
         if refused and not failed:
-            raise RuntimeError(
+            raise OntologyFetchError(
                 f"every configured source for {ontology_name} was refused by "
                 "the destination policy, so nothing was fetched:\n"
                 + "\n".join(refused)
                 + "\n\nThis is a configuration decision, not a transient "
                 "failure: fix the sources or add the host to "
-                "`ontology.allowed_hosts` in configs/deployment.yaml. A file "
-                "already in the cache is deliberately NOT used here — it would "
-                "hide this from the build that reported success."
+                "`ontology.allowed_hosts` in configs/deployment.yaml."
             )
 
-        # **Only a transfer that failed may fall back**, and only when a fresh
-        # copy was not explicitly demanded. `--force-download` asking for a new
-        # file and receiving the old one silently is the same downgrade in a
-        # smaller costume.
-        if force_download:
-            raise RuntimeError(
-                f"a fresh copy of {ontology_name} was requested and no source "
-                "delivered one:\n" + "\n".join(refused + failed)
-                + "\n\nWhat is already in the cache has not been used, "
-                "because it is not what was asked for."
-            )
-
-        # Only after every configured source has been tried. A file already on
-        # disk is the "nothing new arrived" answer, and it is logged as such.
-        if cache_file.exists():
-            logger.warning(f"Download failed, using existing cache: {cache_file}")
-            return cache_file
-        if cache_file_owl.exists():
-            logger.warning(f"Download failed, using existing cache: {cache_file_owl}")
-            return cache_file_owl
-
-        # All attempts failed — give clear manual download instructions
-        manual_hint = self.ONTOLOGY_MANUAL_INSTRUCTIONS.get(ontology_name, "")
-        raise RuntimeError(
-            f"Failed to download {ontology_name} ontology.\n"
-            f"\n"
-            f"  Auto-download URLs may be outdated. Please download manually:\n"
-            f"    {manual_hint}\n"
-            f"\n"
-            f"  Then place the file at:\n"
-            f"    {cache_file}\n"
-            f"\n"
-            f"  The file will be cached and reused on subsequent runs."
+        what = (
+            "a fresh copy was requested and no source delivered one"
+            if force_download else
+            f"no {ontology_name} file was found under {searched} and no source "
+            "delivered one"
         )
+        raise OntologyFetchError(
+            f"{what}:\n" + "\n".join(refused + failed)
+            + "\n\n  The sources may be unreachable from this machine, or out "
+            "of date. Download the file manually"
+            + (f" from {manual_hint}" if manual_hint else "")
+            + f",\n  place it under one of the roots ({searched}), or name it "
+            "explicitly. Nothing already on disk has been used in its place."
+        )
+
+    def _fetch_ontology(
+        self,
+        ontology_name: str,
+        force_download: bool,
+        roots: Sequence[Path] = (),
+    ) -> 'Ontology':
+        """Download, **verify, then publish** — in that order.
+
+        The download lands under a hidden staging name; it is parsed with the
+        imports policy and the role check; only if both pass does it replace
+        the file at its cache name. Publishing first and checking afterwards
+        is the defect this project keeps finding in other clothes: a fresh copy
+        that turned out to declare an import, or to be the wrong ontology, used
+        to have already replaced a working cached release by the time it was
+        refused.
+        """
+        staged = Path(self._download_ontology(ontology_name, force_download, roots=roots))
+        is_staged = staged.name.startswith(".") and staged.name.endswith(self._STAGED)
+        try:
+            ontology = self.load(staged, expect=ontology_name)
+        except BaseException:
+            if is_staged:
+                staged.unlink(missing_ok=True)
+            raise
+        if is_staged:
+            final = staged.with_name(staged.name[1:-len(self._STAGED)])
+            os.replace(staged, final)
+            ontology._source_path = final
+        return ontology
 
 
 # =============================================================================

@@ -261,3 +261,92 @@ def _stub(prefix: str, declares: str = "stub"):
             return []
 
     return Stub()
+
+
+class TestTheLoaderAndTheListingAgreeOnImports:
+    """pronto records only `owl:imports` directly under the first
+    `owl:Ontology`; the listing records them wherever RDF/XML puts them. With
+    the loader refusing on pronto's set alone, a file listed as "will be
+    refused" loaded with its import silently dropped — the suppression §3.3
+    exists to prevent. The loader now refuses on the union."""
+
+    RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    OWL = "http://www.w3.org/2002/07/owl#"
+
+    def _owl(self, path: Path, body: str) -> Path:
+        path.write_text(
+            f'<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="{self.RDF}" xmlns:owl="{self.OWL}">\n'
+            + body + "\n</rdf:RDF>\n"
+        )
+        return path
+
+    def test_an_import_in_an_rdf_description_is_refused_at_load(self, tmp_path):
+        path = self._owl(tmp_path / "hp.owl", """
+<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/hp.owl"/>
+<rdf:Description rdf:about="http://purl.obolibrary.org/obo/hp.owl">
+  <owl:imports rdf:resource="http://purl.obolibrary.org/obo/hp/imports/uberon_import.owl"/>
+</rdf:Description>
+<owl:Class rdf:about="http://purl.obolibrary.org/obo/HP_0000001"/>""")
+
+        with pytest.raises(OntologyImportError, match="uberon_import"):
+            loader(tmp_path).load(path)
+
+    def test_an_import_written_as_a_nested_ontology_is_refused_and_named(self, tmp_path):
+        """pronto records `None` for this shape, so the refusal used to list
+        "None" while the listing reported no import at all."""
+        path = self._owl(tmp_path / "hp.owl", """
+<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/hp.owl">
+  <owl:imports><owl:Ontology rdf:about="http://purl.obolibrary.org/obo/pato.owl"/></owl:imports>
+</owl:Ontology>
+<owl:Class rdf:about="http://purl.obolibrary.org/obo/HP_0000001"/>""")
+
+        with pytest.raises(OntologyImportError) as caught:
+            loader(tmp_path).load(path)
+
+        assert "pato.owl" in str(caught.value)
+        assert "None" not in str(caught.value)
+
+    def test_an_import_with_no_target_is_still_refused(self, tmp_path):
+        """`<owl:imports/>` names nothing, and pronto records `{None}` for it —
+        measured. The listing has no target to show, so this refusal rests on
+        pronto's `None` alone; dropping it loads the file as self-contained."""
+        path = self._owl(tmp_path / "hp.owl", """
+<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/hp.owl">
+  <owl:imports/>
+</owl:Ontology>
+<owl:Class rdf:about="http://purl.obolibrary.org/obo/HP_0000001"/>""")
+
+        with pytest.raises(OntologyImportError, match="no target"):
+            loader(tmp_path).load(path)
+
+    def test_the_obo_import_check_reads_only_the_header(self, tmp_path, monkeypatch):
+        """So agreement costs a few kilobytes on a large MONDO, not a pass —
+        and an `import:` line after the first stanza, which OBO does not treat
+        as a header tag, is not reported as one."""
+        from src.ontology import resolver
+
+        path = obo(tmp_path / "mondo.obo", ontology="mondo", terms=("MONDO:1",) * 3,
+                   imports=("http://x.invalid/a.obo",))
+        with open(path, "a") as handle:
+            handle.write("\n[Term]\nid: MONDO:2\nimport: http://x.invalid/after-the-header.obo\n")
+        monkeypatch.setattr(resolver, "scan_identity",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("full scan")))
+
+        assert resolver.declared_imports(path) == ("http://x.invalid/a.obo",)
+
+
+class TestAReleaseProductIsItsOntology:
+
+    @pytest.mark.parametrize("declared", ["mondo/mondo-base", "mondo-simple"])
+    def test_an_explicitly_named_variant_passes_the_role_check(self, tmp_path, declared):
+        """It was refused by a message saying it would build zero nodes — while
+        it carried the right terms. The term test still guards the content."""
+        path = obo(tmp_path / "mondo-base.obo", ontology=declared, terms=("MONDO:0000001",))
+
+        assert loader(tmp_path).load(path, expect="mondo").num_terms == 1
+
+    def test_a_variant_of_another_ontology_is_still_refused(self, tmp_path):
+        path = obo(tmp_path / "x.obo", ontology="hp/hp-base", terms=("HP:1",))
+
+        with pytest.raises(OntologyRoleError):
+            loader(tmp_path).load(path, expect="mondo")

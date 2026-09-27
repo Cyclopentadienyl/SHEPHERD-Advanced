@@ -108,7 +108,20 @@ class OntologySettings:
             object.__setattr__(self, "sources", dict(DEFAULT_ONTOLOGY_SOURCES))
 
     def urls_for(self, ontology: str) -> Tuple[str, ...]:
-        return tuple(self.sources.get(str(ontology).lower(), ()))
+        return tuple(self.sources.get(_source_key(ontology), ()))
+
+
+def _source_key(name: Any) -> str:
+    """One spelling per ontology, the resolver's.
+
+    `ontology.sources.hp` used to be accepted, scheme-checked and then never
+    read, because the loader asks for `hpo` — the configured mirror was
+    ignored and the public PURL fetched instead, while everywhere else in this
+    project `hp` and `hpo` are one ontology.
+    """
+    from src.ontology.resolver import canonical_ontology_name
+
+    return canonical_ontology_name(name) or str(name).strip().lower()
 
 
 def _resolve(value: Any, *, key: str) -> Path:
@@ -146,12 +159,45 @@ def _require_allowed_scheme(url: str, *, key: str) -> None:
 
     from src.ontology.download import ALLOWED_SCHEMES
 
-    scheme = (urlsplit(url).scheme or "").lower()
+    try:
+        parts = urlsplit(url)
+        parts.hostname
+        parts.port
+    except ValueError as exc:
+        # A bare ValueError from the URL parser used to escape as-is, naming
+        # no key and no file.
+        raise OntologySettingsError(f"{key} lists {url!r}, which is not a well-formed URL ({exc})") from None
+    scheme = (parts.scheme or "").lower()
     if scheme not in ALLOWED_SCHEMES:
         raise OntologySettingsError(
             f"{key} lists {url!r}, whose scheme is {scheme or '(none)'!r}; only "
             f"{', '.join(ALLOWED_SCHEMES)} are permitted as ontology sources."
         )
+
+
+def _require_matchable_host(entry: str, *, key: str) -> str:
+    """An allow-list entry that a request's host can actually equal.
+
+    The policy compares the request's bare host name. An entry written as a URL,
+    with a port or with a path can never equal one, so it silently allowed
+    nothing — and the operator who added the in-house mirror got refusals with
+    no explanation.
+    """
+    import ipaddress
+
+    value = entry.strip().lower()
+    try:
+        ipaddress.ip_address(value.strip("[]"))
+        return value.strip("[]")
+    except ValueError:
+        pass
+    if any(mark in value for mark in ("://", "/", "@", ":")) or " " in value:
+        raise OntologySettingsError(
+            f"{key} lists {entry!r}, which a request's host can never equal — "
+            "list the bare host name, e.g. ontology-mirror.hospital.internal, "
+            "with no scheme, port or path"
+        )
+    return value
 
 
 def load_ontology_settings(config_path: Any = None) -> OntologySettings:
@@ -222,10 +268,13 @@ def load_ontology_settings(config_path: Any = None) -> OntologySettings:
             # someone edits the file, not at the first build that needs it.
             for entry in entries:
                 _require_allowed_scheme(entry, key=key)
-            sources[str(name).lower()] = entries
+            sources[_source_key(name)] = entries
 
-    allowed_hosts = _string_list(
-        ontology_block.get("allowed_hosts"), key="ontology.allowed_hosts"
+    allowed_hosts = tuple(
+        _require_matchable_host(entry, key="ontology.allowed_hosts")
+        for entry in _string_list(
+            ontology_block.get("allowed_hosts"), key="ontology.allowed_hosts"
+        )
     )
 
     return OntologySettings(

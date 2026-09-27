@@ -485,3 +485,371 @@ class TestATruncatedTransferIsNotAFinishedOne:
         )
 
         assert target.exists()
+
+
+import http.client as _http_client  # noqa: E402
+import io as _io  # noqa: E402
+import socket as _socket  # noqa: E402
+
+
+def _http(raw: bytes, url: str):
+    """A real `http.client.HTTPResponse` over bytes, shaped as urllib hands it on."""
+    class Sock:
+        def __init__(self):
+            self._f = _io.BytesIO(raw)
+
+        def makefile(self, *a, **k):
+            return self._f
+
+    response = _http_client.HTTPResponse(Sock(), method="GET")
+    response.begin()
+    response.url = url
+    response.msg = response.reason
+    return response
+
+
+class _CannedTransport(urllib.request.BaseHandler):
+    """Serves canned responses by URL, ahead of the real HTTP handlers.
+
+    Everything else in the opener is real — including the guarded redirect
+    handler `download_ontology` installs — which is the point: the guard was
+    only ever tested on its own, never shown to be in the path.
+    """
+
+    handler_order = 100
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.opened = []
+
+    def _serve(self, req):
+        self.opened.append(req.full_url)
+        return _http(self.responses[req.full_url], req.full_url)
+
+    http_open = _serve
+    https_open = _serve
+
+
+def _opener_with(transport):
+    return lambda *handlers: urllib.request.build_opener(*handlers, transport)
+
+
+class TestTheRedirectGuardIsInThePath:
+    """Acceptance 22, 23 and 28 through `download_ontology`, not beside it."""
+
+    def _policy(self):
+        return DestinationPolicy(
+            resolver=lambda host: {"inside.example": [PRIVATE]}.get(host, [PUBLIC]),
+            proxies={},
+        )
+
+    def test_a_redirect_to_ftp_is_refused_by_the_real_opener(self, tmp_path):
+        transport = _CannedTransport({
+            "https://purl.example/mondo.obo":
+                b"HTTP/1.1 302 Found\r\nLocation: ftp://elsewhere.example/mondo.obo\r\n"
+                b"Content-Length: 0\r\n\r\n",
+        })
+
+        with pytest.raises(OntologyDownloadError, match="scheme"):
+            download_ontology("https://purl.example/mondo.obo", tmp_path / "m.obo",
+                              policy=self._policy(), opener_factory=_opener_with(transport))
+
+        assert not (tmp_path / "m.obo").exists()
+
+    def test_a_redirect_into_the_network_is_refused_by_the_real_opener(self, tmp_path):
+        transport = _CannedTransport({
+            "https://purl.example/mondo.obo":
+                b"HTTP/1.1 302 Found\r\nLocation: https://inside.example/mondo.obo\r\n"
+                b"Content-Length: 0\r\n\r\n",
+        })
+
+        with pytest.raises(OntologyDownloadError, match=PRIVATE):
+            download_ontology("https://purl.example/mondo.obo", tmp_path / "m.obo",
+                              policy=self._policy(), opener_factory=_opener_with(transport))
+
+        assert transport.opened == ["https://purl.example/mondo.obo"], (
+            "the internal host was contacted before the refusal"
+        )
+
+    def test_an_ordinary_redirect_is_followed_by_the_real_opener(self, tmp_path):
+        body = b"format-version: 1.2\n"
+        transport = _CannedTransport({
+            "https://purl.example/mondo.obo":
+                b"HTTP/1.1 302 Found\r\nLocation: https://github.example/mondo.obo\r\n"
+                b"Content-Length: 0\r\n\r\n",
+            "https://github.example/mondo.obo":
+                b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode()
+                + b"\r\n\r\n" + body,
+        })
+
+        download_ontology("https://purl.example/mondo.obo", tmp_path / "m.obo",
+                          policy=self._policy(), opener_factory=_opener_with(transport))
+
+        assert (tmp_path / "m.obo").read_bytes() == body
+
+
+class TestTheRequestGoesWhereTheRuleLooked:
+
+    def test_the_opener_uses_the_proxies_the_rule_decided_on(self, tmp_path, monkeypatch):
+        """The check deferred an unresolvable name to *this* proxy. A request
+        that then went anywhere else — straight out, or to whatever the
+        environment names — would be one the rule never judged."""
+        for var in ("http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+            monkeypatch.delenv(var, raising=False)
+            monkeypatch.delenv(var.upper(), raising=False)
+        body = b"format-version: 1.2\n"
+        hosts = []
+
+        class Recording(_CannedTransport):
+            def _serve(self, req):
+                hosts.append(req.host)
+                return super()._serve(req)
+
+            http_open = _serve
+            https_open = _serve
+
+        transport = Recording({
+            "https://purl.example/mondo.obo":
+                b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode()
+                + b"\r\n\r\n" + body,
+        })
+        policy = DestinationPolicy(
+            resolver=TestNoLocalAnswerIsNotAPolicyVerdict._unresolvable,
+            proxies={"https": "http://proxy.example:3128"},
+        )
+
+        download_ontology("https://purl.example/mondo.obo", tmp_path / "m.obo",
+                          policy=policy, opener_factory=_opener_with(transport))
+
+        assert hosts == ["proxy.example:3128"]
+
+
+class TestNoLocalAnswerIsNotAPolicyVerdict:
+    """The review's second P2. On a network whose only egress is a proxy,
+    external names have no local answer; the lookup was typed as a refusal, so
+    every source was refused and the operator told it was "a configuration
+    decision". `urlretrieve` fetched through the same proxy without looking."""
+
+    @staticmethod
+    def _unresolvable(host):
+        raise _socket.gaierror(_socket.EAI_NONAME, "Name or service not known")
+
+    def test_through_a_proxy_an_unresolvable_name_is_left_to_the_proxy(self):
+        check_destination(
+            "https://purl.obolibrary.org/obo/mondo.obo",
+            DestinationPolicy(resolver=self._unresolvable,
+                              proxies={"https": "http://proxy.hospital:3128"}),
+        )
+
+    def test_without_a_proxy_it_is_a_transfer_failure_not_a_refusal(self):
+        from src.ontology.download import OntologyDestinationRefused, OntologyHostUnresolved
+
+        with pytest.raises(OntologyHostUnresolved) as caught:
+            check_destination("https://purl.obolibrary.org/obo/mondo.obo",
+                              DestinationPolicy(resolver=self._unresolvable, proxies={}))
+
+        assert not isinstance(caught.value, OntologyDestinationRefused)
+
+    def test_a_host_the_proxy_is_bypassed_for_gets_no_exemption(self):
+        from src.ontology.download import OntologyHostUnresolved
+
+        with pytest.raises(OntologyHostUnresolved):
+            check_destination(
+                "https://mirror.internal/mondo.obo",
+                DestinationPolicy(resolver=self._unresolvable,
+                                  proxies={"https": "http://proxy:3128",
+                                           "no": "mirror.internal"}),
+            )
+
+    def test_a_name_that_resolves_inside_is_refused_even_through_a_proxy(self):
+        """The exemption is for no local answer, not for having a proxy."""
+        with pytest.raises(OntologyDownloadError, match="globally routable"):
+            check_destination(
+                "https://sneaky.example/mondo.obo",
+                DestinationPolicy(resolver=lambda h: [PRIVATE],
+                                  proxies={"https": "http://proxy:3128"}),
+            )
+
+    def test_the_loader_reports_it_as_a_transfer_failure(self, tmp_path, monkeypatch):
+        """With no proxy the fetch fails, and the operator gets the manual route
+        rather than an instruction to edit `allowed_hosts`."""
+        import src.ontology.settings as settings_module
+        from src.ontology import download as download_module
+        from src.ontology.download import OntologyHostUnresolved
+        from src.ontology.loader import OntologyFetchError, OntologyLoader
+
+        config = tmp_path / "c.yaml"
+        config.write_text("ontology:\n  sources:\n    mondo:\n      - https://purl.example/mondo.obo\n")
+        genuine = settings_module.load_ontology_settings
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: genuine(config))
+
+        def offline(url, target, **kwargs):
+            raise OntologyHostUnresolved("purl.example could not be resolved here")
+
+        monkeypatch.setattr(download_module, "download_ontology", offline)
+
+        with pytest.raises(OntologyFetchError) as caught:
+            OntologyLoader(cache_dir=tmp_path / "cache")._download_ontology("mondo", False)
+
+        message = str(caught.value)
+        assert "refused by the destination policy" not in message
+        assert "manually" in message
+
+
+class TestTheTransferEdges:
+
+    def test_a_chunked_body_is_not_judged_by_a_content_length(self, tmp_path):
+        """Transfer-Encoding overrides Content-Length; a complete chunked body
+        compared with a length that does not describe it was refused."""
+        payload = b"format-version: 1.2\n"
+        raw = (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 500\r\n\r\n"
+               + hex(len(payload))[2:].encode() + b"\r\n" + payload + b"\r\n0\r\n\r\n")
+
+        class Opener:
+            def open(self, url, timeout=None):
+                return _http(raw, url)
+
+        download_ontology("https://purl.example/m.obo", tmp_path / "m.obo",
+                          policy=policy({"purl.example": [PUBLIC]}),
+                          opener_factory=lambda *h: Opener())
+
+        assert (tmp_path / "m.obo").read_bytes() == payload
+
+    def test_an_interrupt_mid_transfer_leaves_no_partial_file(self, tmp_path):
+        class Body:
+            headers = {}
+
+            def read(self, n):
+                raise KeyboardInterrupt
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        class Opener:
+            def open(self, url, timeout=None):
+                return Body()
+
+        with pytest.raises(KeyboardInterrupt):
+            download_ontology("https://purl.example/m.obo", tmp_path / "m.obo",
+                              policy=policy({"purl.example": [PUBLIC]}),
+                              opener_factory=lambda *h: Opener())
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_the_published_file_carries_the_umask_mode(self, tmp_path):
+        """`NamedTemporaryFile` creates 0600; another account reading a shared
+        root found the file unreadable and treated the root as empty."""
+        import os
+        import stat
+
+        payload = b"format-version: 1.2\n"
+
+        class Opener:
+            def open(self, url, timeout=None):
+                return _http(b"HTTP/1.1 200 OK\r\nContent-Length: "
+                             + str(len(payload)).encode() + b"\r\n\r\n" + payload, url)
+
+        target = download_ontology("https://purl.example/m.obo", tmp_path / "m.obo",
+                                   policy=policy({"purl.example": [PUBLIC]}),
+                                   opener_factory=lambda *h: Opener())
+        mask = os.umask(0)
+        os.umask(mask)
+
+        assert stat.S_IMODE(target.stat().st_mode) == 0o666 & ~mask
+
+    @pytest.mark.parametrize("url", ["http://[::1/mondo.obo", "http://host:notaport/mondo.obo"])
+    def test_a_malformed_url_is_refused_not_leaked(self, url):
+        with pytest.raises(OntologyDownloadError, match="well-formed"):
+            check_destination(url, policy())
+
+    def test_the_refusal_names_the_address(self):
+        """Acceptance 25 promises the address in the refusal; it was never
+        asserted."""
+        with pytest.raises(OntologyDownloadError, match=PRIVATE):
+            check_destination("https://mirror.internal/m.obo",
+                              policy({"mirror.internal": [PRIVATE]}))
+
+
+class TestTheOwlFallbackGoesThroughTheSameGate:
+    """Acceptance 24, behaviourally. The previous test grepped the source for
+    `urlretrieve`, which a new fetch path that is not called that would pass."""
+
+    def test_both_attempts_reach_download_ontology_and_nothing_else(self, tmp_path, monkeypatch):
+        import src.ontology.settings as settings_module
+        from src.ontology import download as download_module
+        from src.ontology.loader import OntologyLoader
+
+        def forbidden(*a, **k):
+            raise AssertionError("a fetch bypassed download_ontology")
+
+        monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+        monkeypatch.setattr(urllib.request, "urlretrieve", forbidden)
+        for name in ("socket", "create_connection", "getaddrinfo"):
+            monkeypatch.setattr(_socket, name, forbidden, raising=False)
+
+        config = tmp_path / "c.yaml"
+        config.write_text("ontology:\n  sources:\n    mondo:\n"
+                          "      - https://purl.example/mondo.obo\n"
+                          "      - https://purl.example/mondo.owl\n")
+        genuine = settings_module.load_ontology_settings
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: genuine(config))
+
+        seen = []
+
+        def recorder(url, target, **kwargs):
+            seen.append((url, Path(target).name))
+            if url.endswith(".obo"):
+                raise OntologyDownloadError("connection reset")
+            Path(target).write_text("<rdf:RDF/>")
+            return Path(target)
+
+        monkeypatch.setattr(download_module, "download_ontology", recorder)
+
+        staged = OntologyLoader(cache_dir=tmp_path / "cache")._download_ontology("mondo", False)
+
+        assert seen == [("https://purl.example/mondo.obo", ".mondo.obo.staged"),
+                        ("https://purl.example/mondo.owl", ".mondo.owl.staged")]
+        assert staged.name == ".mondo.owl.staged"
+
+
+class TestTheSettingsFindings:
+
+    def test_a_source_listed_as_hp_is_the_hpo_source(self, tmp_path):
+        """It was accepted, scheme-checked and never read: the loader asks for
+        `hpo`, and the public PURL was fetched instead of the configured
+        mirror."""
+        config = tmp_path / "c.yaml"
+        config.write_text("ontology:\n  sources:\n    hp:\n      - https://mirror.example/hp.obo\n")
+
+        assert load_ontology_settings(config).urls_for("hpo") == ("https://mirror.example/hp.obo",)
+
+    def test_a_malformed_source_url_is_a_settings_error(self, tmp_path):
+        config = tmp_path / "c.yaml"
+        config.write_text("ontology:\n  sources:\n    mondo:\n      - http://[::1/mondo.obo\n")
+
+        with pytest.raises(OntologySettingsError, match="well-formed"):
+            load_ontology_settings(config)
+
+    @pytest.mark.parametrize("entry", ["https://mirror.internal", "mirror.internal:8443",
+                                       "mirror.internal/onto", "user@mirror.internal"])
+    def test_an_allow_list_entry_that_can_never_match_is_refused(self, tmp_path, entry):
+        """The policy compares a bare host name, so these silently allowed
+        nothing and the operator got refusals with no explanation."""
+        config = tmp_path / "c.yaml"
+        config.write_text(f"ontology:\n  allowed_hosts:\n    - \"{entry}\"\n")
+
+        with pytest.raises(OntologySettingsError, match="bare host name"):
+            load_ontology_settings(config)
+
+    @pytest.mark.parametrize("entry,stored", [("Mirror.Internal", "mirror.internal"),
+                                              ("10.0.0.5", "10.0.0.5"), ("[fd00::1]", "fd00::1")])
+    def test_a_matchable_entry_is_kept(self, tmp_path, entry, stored):
+        config = tmp_path / "c.yaml"
+        config.write_text(f"ontology:\n  allowed_hosts:\n    - \"{entry}\"\n")
+
+        assert load_ontology_settings(config).allowed_hosts == (stored,)

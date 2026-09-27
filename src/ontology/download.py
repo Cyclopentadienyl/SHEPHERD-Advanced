@@ -50,7 +50,7 @@ import tempfile
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ __all__ = [
     "DestinationPolicy",
     "OntologyDestinationRefused",
     "OntologyDownloadError",
+    "OntologyHostUnresolved",
     "OntologyTruncatedError",
     "check_destination",
     "download_ontology",
@@ -97,6 +98,18 @@ class OntologyTruncatedError(OntologyDownloadError):
     """Fewer bytes arrived than the response declared."""
 
 
+class OntologyHostUnresolved(OntologyDownloadError):
+    """This host's resolver has no answer for the name. **Not a policy verdict.**
+
+    It was typed as a refusal, which told an operator on an offline machine
+    that the failure was "a configuration decision" and sent them to
+    `allowed_hosts` — and, worse, refused every source on a network whose only
+    egress is a proxy, where names are resolved by the proxy and not locally.
+    `urlretrieve` fetched through that proxy without a local lookup; this
+    downloader must not do less.
+    """
+
+
 @dataclass(frozen=True)
 class DestinationPolicy:
     """What this server may fetch from.
@@ -112,22 +125,34 @@ class DestinationPolicy:
 
     allowed_hosts: Tuple[str, ...] = ()
     resolver: Optional[Callable[[str], Sequence[str]]] = field(default=None, compare=False)
+    #: The proxies the request will go through, `urllib`'s own mapping of
+    #: scheme to proxy URL. None means "whatever the environment configures",
+    #: which is what the opener uses too; a test passes a mapping so both the
+    #: rule and the opener see the same one.
+    proxies: Optional[Dict[str, str]] = field(default=None, compare=False)
 
     def permits_host(self, host: str) -> bool:
         return host.lower() in {item.lower() for item in self.allowed_hosts}
 
     def resolve(self, host: str) -> List[str]:
-        if self.resolver is not None:
-            return list(self.resolver(host))
         try:
+            if self.resolver is not None:
+                return list(self.resolver(host))
             infos = socket.getaddrinfo(host, None)
         except OSError as exc:
-            raise OntologyDestinationRefused(
-                f"{host} could not be resolved ({type(exc).__name__}: {exc}), so "
-                "where a request to it would go is unknown — which is not the "
-                "same as its being acceptable"
+            raise OntologyHostUnresolved(
+                f"{host} could not be resolved here ({type(exc).__name__}: {exc})"
             ) from exc
         return [info[4][0] for info in infos]
+
+    def routes_through_proxy(self, scheme: str, host: str) -> bool:
+        """Will a request for this host go to a configured proxy?"""
+        proxies = self.proxies if self.proxies is not None else urllib.request.getproxies()
+        if scheme not in proxies:
+            return False
+        if self.proxies is not None:
+            return not urllib.request.proxy_bypass_environment(host, proxies)
+        return not urllib.request.proxy_bypass(host)
 
 
 def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source") -> None:
@@ -140,7 +165,14 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
     Raises:
         OntologyDownloadError: naming the URL and which rule refused it.
     """
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        parts.port  # raises for a port that is not a number
+    except ValueError as exc:
+        raise OntologyDestinationRefused(
+            f"the {why} {url!r} is not a well-formed URL ({exc})"
+        ) from None
     scheme = (parts.scheme or "").lower()
     if scheme not in ALLOWED_SCHEMES:
         raise OntologyDestinationRefused(
@@ -150,7 +182,6 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
             "than a download URL should mean."
         )
 
-    host = parts.hostname
     if not host:
         raise OntologyDestinationRefused(f"the {why} {url!r} names no host")
 
@@ -173,7 +204,24 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
         _require_global(literal, host, url, why)
         return
 
-    addresses = policy.resolve(host)
+    try:
+        addresses = policy.resolve(host)
+    except OntologyHostUnresolved:
+        if policy.routes_through_proxy(scheme, host):
+            # **The proxy resolves it, not this host.** On a network whose only
+            # egress is a proxy, external names have no local answer at all, so
+            # there is no address here to judge and nothing on this host's own
+            # network that the request could reach — it goes to the proxy the
+            # operator configured. A name that *does* resolve locally is still
+            # judged above, proxy or not. What the proxy itself will fetch is
+            # its policy: recorded as a residual beside check-then-connect.
+            logger.info(
+                "%s: %s has no local answer and is fetched through the "
+                "configured %s proxy, which resolves it",
+                why, host, scheme,
+            )
+            return
+        raise
     if not addresses:
         raise OntologyDestinationRefused(
             f"the {why} {url!r} resolved to no address at all, so where a "
@@ -195,6 +243,13 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
         _require_global(address, host, url, why)
 
 
+def _current_umask() -> int:
+    """The process umask. Set and restored, because there is no getter."""
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
 def _declared_length(response: Any) -> Optional[int]:
     """`Content-Length`, when the response declares one that can be checked.
 
@@ -208,7 +263,14 @@ def _declared_length(response: Any) -> Optional[int]:
         return None
     try:
         raw = headers.get("Content-Length")
+        encoding = headers.get("Transfer-Encoding") or ""
     except AttributeError:
+        return None
+    # **Transfer-Encoding overrides Content-Length** (RFC 9112 §6.1), and
+    # `http.client` reads a chunked body by its chunks. A server sending both
+    # would otherwise have a complete body compared with a length that does not
+    # describe it, and refused.
+    if "chunked" in str(encoding).lower():
         return None
     if raw is None:
         return None
@@ -289,7 +351,11 @@ def download_ontology(
 
     handler = _GuardedRedirectHandler(policy)
     factory = opener_factory or urllib.request.build_opener
-    opener = factory(handler)
+    handlers = [handler]
+    if policy.proxies is not None:
+        # The rule decided on these proxies; the request must use the same.
+        handlers.append(urllib.request.ProxyHandler(policy.proxies))
+    opener = factory(*handlers)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -327,6 +393,11 @@ def download_ontology(
                 )
             handle.flush()
             os.fsync(handle.fileno())
+        # `NamedTemporaryFile` creates 0600. `urlretrieve` wrote with a plain
+        # open(), so the published file used to carry the umask's mode, and a
+        # second account reading a shared ontology root found it unreadable and
+        # treated the root as empty.
+        os.chmod(staged, 0o666 & ~_current_umask())
         os.replace(staged, destination)
     except OntologyDownloadError:
         staged.unlink(missing_ok=True)
@@ -336,6 +407,11 @@ def download_ontology(
         raise OntologyDownloadError(
             f"fetching {url} failed ({type(exc).__name__}: {exc})"
         ) from exc
+    except BaseException:
+        # Ctrl-C mid-transfer is not an Exception and used to leave the
+        # `.part` file behind.
+        staged.unlink(missing_ok=True)
+        raise
 
     logger.info("fetched %s to %s", url, destination)
     return destination

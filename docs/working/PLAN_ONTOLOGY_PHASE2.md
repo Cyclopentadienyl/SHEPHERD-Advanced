@@ -216,9 +216,18 @@ No database, no install step, no state, and **no directory creation** (§1.3).
 
 **"Pure over the filesystem" has to hold for the term count too.** A count means
 a parse, and a parse at pronto's default resolves imports over the network — so
-enumeration would reach the internet before anyone has chosen a file. Listing
-uses the same `import_depth=0` rule as §3.3, and a file that declares an import
-is listed with its declaration visible rather than parsed further.
+enumeration would reach the internet before anyone has chosen a file.
+
+> **As implemented, listing does not call pronto at all**, which is stronger than
+> this paragraph first said ("the same `import_depth=0` rule as §3.3"). An OBO
+> file is read line by line for its header tags and `[Term]` stanzas; an OWL file
+> is fed in 64 KiB blocks to an XML parser whose target keeps counts and never
+> builds a tree, so memory stays flat whatever the file's size or line layout.
+> The format is decided by the **content**, not the suffix — pronto sniffs the
+> same way, so a `.owl` holding OBO text is listed as what pronto will parse.
+> Declared imports are recorded wherever the document states them and shown in
+> the listing and in an ambiguity refusal, so the operator sees that a
+> candidate will be refused at load before choosing it.
 
 Roots come from `configs/deployment.yaml`'s `paths:` block (line 148), which
 already holds `workspaces_root`, `cache_root` and friends — the parent plan's
@@ -250,7 +259,17 @@ Implemented as measured in §2.1, and the order matters:
    self-contained file is required.
 
 Step 3 is the whole policy. Step 1 alone is silent suppression, which the parent
-plan's §4.2 rules out and §2.1 measured. The wider option — support imports and
+plan's §4.2 rules out and §2.1 measured.
+
+> **Step 2 is not enough on its own for OWL, found in the pre-PR review and
+> measured.** pronto records only an `owl:imports` that sits directly under the
+> first `owl:Ontology` element. One stated on an `rdf:Description` of the
+> ontology IRI, or written as a nested `<owl:imports><owl:Ontology
+> rdf:about="…"/></owl:imports>`, leaves `metadata.imports` empty and the file
+> loads with the import dropped — the §2.1 defect by another route. So the
+> refusal is on the **union** of what pronto records and what the §3.2 scanner
+> finds, and an import element with no target is refused as one. The listing and
+> the loader now agree on what a file imports. The wider option — support imports and
 record each resolved dependency beside the root — stays available and is not
 proposed now.
 
@@ -286,6 +305,22 @@ back to a cached file when an explicitly named one fails the check; an explicit
 path that is wrong is an error to report, not a reason to open something else.
 `hp` and `hpo` are the same ontology under two spellings and the check has to
 know that.
+
+> **So are a publisher's release products**, found in the pre-PR review. Measured
+> from the headers of the 2026-09-01 releases (range requests, as in §2):
+> `mondo-simple.obo` declares `ontology: mondo/mondo-simple`, `mondo-base.obo`
+> `mondo/mondo-base`, `hp-base.obo` `hp/hp-base`, `hp-international.obo`
+> `hp/hp-international`, and `hp-simple-non-classified.obo`
+> `hp/hp-simple-non-classified`; none declares an import. The first
+> implementation refused an explicitly named `mondo-simple.obo` in the MONDO
+> slot as a role mismatch and silently dropped one from the resolver's listing.
+> A fixed list of variant suffixes (`simple`, `base`, `basic`, `full`, `plus`,
+> `edit`, `international`, `non-classified`) now reduces `<known
+> ontology>-<variant>[-<variant>…]` to the ontology — stacked, because the last
+> of those measured carries two — so such a file is a candidate and passes the
+> check. `mondo-simple` in the HPO slot is still refused, and an unknown stem
+> (`foo-base`) stays itself. An IRI's `#fragment` no longer changes the name
+> either.
 
 This asks for no version negotiation and refuses no old release. It answers
 "is this the right *kind* of file", which is a different question from "is this
@@ -364,6 +399,42 @@ Phase 2 provides the enforcement point and this default. **It does not decide a
 site's network policy**, and `http`/`https` plus `is_global` does not make a
 destination trustworthy — only reachable-by-policy.
 
+#### 3.5.2 Amendment: a name with no local answer is not a policy verdict
+
+**This changes the approved default and is flagged rather than folded in.** It
+was found in the pre-PR review, after §3.5.1 had been approved and implemented.
+
+As approved, "every address the destination resolves to" had one unstated case:
+**a name that does not resolve on this machine at all.** The implementation
+refused it. On a network whose only route out is an HTTP proxy, which is common
+in hospitals, external names often have no local DNS answer — resolving them is
+the proxy's job — so that refusal meant **no download could ever succeed there**,
+and it was reported as a policy refusal ("stop and fix the configuration") rather
+than as what it was.
+
+| A name that… | As approved and first implemented | Amended |
+|---|---|---|
+| resolves to global addresses only | allowed | allowed (unchanged) |
+| resolves to any non-global address | refused, naming it | refused, naming it — **proxy or not** (unchanged) |
+| is a literal address | judged as an address | judged as an address (unchanged) |
+| is on `ontology.allowed_hosts` | allowed | allowed (unchanged) |
+| **has no local answer, and the request goes to a configured proxy** | refused | **left to the proxy** |
+| **has no local answer, no proxy** | refused as policy | **a transfer failure**, reported with the manual route |
+
+"Goes to a configured proxy" means the standard `http_proxy` / `https_proxy`
+environment settings, with `no_proxy` honoured: a host the proxy is bypassed for
+gets no exemption, because that request would be resolved and connected here.
+
+**What this gives up, stated as a residual beside check-then-connect:** for a
+proxied name with no local answer, the application does not judge the
+destination; the proxy does. If the proxy resolves that name to an address inside
+the hospital and is permitted to connect there, the request reaches it — that is
+the proxy's egress policy, not something this check can see. What remains
+covered, for the initial URL and every redirect target alike, is every name this
+machine *can* resolve and every literal address, proxied or not. A reviewer who wants "refuse unless it resolves
+here" restored should say so; the cost is that proxy-only deployments must
+allow-list every source host.
+
 ### 3.6 Revising the parent plan's §3.3 — the source list becomes editable
 
 **This changes an approved decision and is flagged rather than folded in.**
@@ -435,6 +506,31 @@ which is bound by its manifest, as it was before this plan.
 - **No dependency resolver for imports** (§3.3).
 - **No change to the OWL path's behaviour** beyond applying §3.3, §3.4 and §3.5
   to it equally. §1.4's measurement gap is recorded, not closed.
+
+### 3.8 The fetch path, as the pre-PR review left it
+
+Found by a whole-branch adversarial review after the implementation was
+approved. Each is the programme's recurring defect — a fallible step placed
+after the state change it should have gated — and none changes a rule above;
+they make the rules hold on the download path.
+
+| Before | After |
+|---|---|
+| A download wrote straight to `<cache_dir>/<name>.<ext>`. **An `hpo.obo` that held MONDO was overwritten** by the HPO download, after the MONDO slot had already loaded it — and provenance then hashed the path, recording the new HPO bytes as the MONDO input | **The download is refused before anything is fetched** when the target path holds a file that is not a candidate for that ontology, naming it. The file is left alone. Provenance hashes each slot's file **immediately after that slot loads**, not after both have, so a later replacement cannot be recorded against an earlier slot. (A file changed between its own parse and its hash is not covered; nothing in the build writes there in between.) |
+| `force_download` replaced the cached file, then parsed it; a fresh copy failing the role or imports check left the cache holding a file that would be refused next time | **Verify, then publish.** The fetch lands in a hidden `.<name>.<ext>.staged` beside the target, is loaded with the slot's role and imports checks, and only then replaces the target (`os.replace`). A failure unlinks the staged file and the old one is untouched |
+| A failed transfer fell back to whatever file sat at the cache path, with a log warning. A download is only attempted when selection found no candidate, so that file was one the resolver had **already passed over** | **No fallback.** A failed transfer is reported with the manual route, as a policy refusal already was. With nothing configured to fetch, the refusal names the roots searched and says nothing was attempted |
+| The target's suffix was decided by `url.endswith(".owl")`, so an OWL source with a query string was written to `<name>.obo` | From the URL's path |
+| A chunked response was judged against a `Content-Length` it does not carry; an interrupt mid-transfer left a `.part`; the published file was `0600` | `Transfer-Encoding` overrides `Content-Length` (RFC 9112 §6.1); any exit unlinks the partial file; the file is published with the process umask's mode |
+| `build_knowledge_graph()` raised `SystemExit` for an ambiguity or a path-with-`--force-download` refusal, and let role, imports and fetch refusals escape as tracebacks. It is also called as a function (`scripts/probe_deployment.py`), and `SystemExit` is not an `Exception` | Typed exceptions a caller can catch; `main()` turns each into a message on stderr and exit status 2. The path-with-`--force-download` refusal now happens before the loader is constructed |
+
+**Also closed:** `load_mondo()` / `load_hpo()` searched only the cache and skipped
+the role check, where the build did not; they now search the configured roots
+plus the cache and select through the same entry point. `ONTOLOGY_URLS` /
+`ONTOLOGY_OWL_URLS` were left in `loader.py` after §3.6 moved the list to
+configuration, read by nothing, and are removed. `ontology.sources.hp` was
+accepted, scheme-checked and then never read; it is now the HPO source. An
+`allowed_hosts` entry that can never match (`https://host`, `host/path`,
+`host:443`) is refused when read, asking for the bare host name.
 
 ---
 
@@ -568,6 +664,35 @@ with a named test" rather than a claim.
 | 29 | one private answer among several refuses | `…::test_one_private_answer_among_several_refuses` |
 | 30 | provenance unchanged in shape | `test_ontology_selection_cli.py::TestProvenanceIsUnchangedInShape` (2) |
 
+Cases 2, 30, 22, 23 and 28 are also held end to end: 2 and 30 through the real
+build entry point with rival releases in a root and in the cache and every socket
+entry point detonating
+(`tests/integration/test_build_provenance.py::test_named_files_are_what_the_record_and_the_rebuild_command_name`),
+and 22/23/28 through a real `urllib` opener rather than by calling the redirect
+handler directly (`test_ontology_download_policy.py::TestTheRedirectGuardIsInThePath`).
+
+### 4.2 Conditions added by the pre-PR review
+
+Each is a confirmed finding of the whole-branch review (§3.2, §3.3, §3.4,
+§3.5.2, §3.8), with the tests that hold it.
+
+| # | Condition | Test |
+|---|---|---|
+| 31 | a misfiled cache file is never overwritten; nothing is fetched | `test_ontology_selection_cli.py::TestAMisfiledCacheFileIsNeverOverwritten` (2) |
+| 32 | a fresh copy is verified before it replaces anything | `…::TestVerifyThenPublish` (5) |
+| 33 | a failed transfer is reported, not replaced by a file on disk | `…::test_a_transfer_failure_is_reported_not_papered_over`, `…::test_a_fresh_copy_that_never_arrives_is_not_replaced_by_the_old_one` |
+| 34 | nothing configured to fetch says so, naming the roots | `…::TestNothingToFetchIsSaidPlainly` |
+| 35 | `load_mondo()` / `load_hpo()` search the configured roots | `…::TestTheNamedLoadersSearchTheConfiguredRoots` |
+| 36 | refusals are exceptions and an exit status; the probe forwards paths | `…::TestTheBuildEntryPoint` (4) |
+| 37 | release products are their ontology, stacked suffixes included | `test_ontology_resolver.py::…::test_a_release_product_is_its_ontology`, `test_ontology_imports_and_role.py::TestAReleaseProductIsItsOntology` (3) |
+| 38 | the loader refuses every import the listing shows, and a targetless one | `test_ontology_imports_and_role.py::TestTheLoaderAndTheListingAgreeOnImports` (4) |
+| 39 | the listing reads format by content, keeps memory flat, skips hidden files, warns on a misfiled file | `test_ontology_resolver.py::TestFindingsFromTheHolisticReview` |
+| 40 | no local answer is not a policy verdict; a proxy is deferred to only when the request goes to it, and the request uses that proxy | `test_ontology_download_policy.py::TestNoLocalAnswerIsNotAPolicyVerdict` (5), `…::TestTheRequestGoesWhereTheRuleLooked` |
+| 41 | chunked bodies, interrupts, file mode, malformed URLs | `…::TestTheTransferEdges` |
+| 42 | the OWL fallback reaches the one downloader, behaviourally | `…::TestTheOwlFallbackGoesThroughTheSameGate` |
+| 43 | `sources.hp`, malformed URLs and unmatchable allow-list entries in settings | `…::TestTheSettingsFindings` |
+| 44 | each slot is hashed when it loads, not after both | `tests/integration/test_build_provenance.py::test_each_slot_is_hashed_when_it_loads_not_after_both` |
+
 ---
 
 ## 5. Sequence
@@ -609,7 +734,15 @@ whatever a reviewer decides about it.
 - **The destination check is check-then-connect.** A name whose resolution
   changes between the check and the socket is not covered; pinning the connection
   to a checked address is outside Phase 2 and is not claimed.
-- **Acceptance is 30 conditions to be met, not 30 tests that pass.** No Phase 2
-  code exists yet.
+- **A proxied name with no local answer is judged by the proxy, not here**
+  (§3.5.2). That is an amendment to an approved default, flagged for review.
+- **Every condition in §4.1 and §4.2 has a named test, and a named test is not a
+  proof.** The tests were additionally run against deliberately broken copies of
+  the code (mutation testing) to check that they fail when the rule they name is
+  removed; that shows they detect those particular breakages, not that no other
+  breakage exists. The final sweep was 63 mutants, one per contract in §4.1 and
+  §4.2; five survived its first run, each for want of a test, and those tests
+  were added. The harness is a working script and is not committed.
+- **The UI slot of §3.6.1 is owed and not delivered.**
 - Nothing here touches `DISEASE_SCORER_POLICY.md`, the shortest-path artifacts,
   or any checkpoint.

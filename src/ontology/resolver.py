@@ -50,6 +50,7 @@ __all__ = [
     "OntologyCandidate",
     "OntologyResolutionError",
     "canonical_ontology_name",
+    "declared_imports",
     "enumerate_candidates",
     "scan_identity",
     "select_ontology_file",
@@ -73,6 +74,21 @@ _ALIASES = {
     "mp": "mp",
 }
 
+#: OBO Foundry publishes each ontology in several release products —
+#: `mondo-base`, `hp-simple`, `mondo-edit` and so on — and they declare
+#: themselves by that product name (`ontology: mondo/mondo-base`). **A base
+#: release of MONDO is MONDO.** Treating it as another ontology made a staged
+#: variant vanish from its own candidate list without a word, after which the
+#: build downloaded and used a different file; and an explicitly named variant
+#: was refused as "the wrong ontology" by a message claiming it would build zero
+#: nodes, while the file carried the right terms. Which product it was is what
+#: the digest and `data-version` record; the role check's term test still
+#: guards the content.
+_RELEASE_VARIANTS = (
+    "non-classified", "international", "simple", "basic", "base", "full",
+    "plus", "edit",
+)
+
 
 def canonical_ontology_name(name: Any) -> Optional[str]:
     """`hp` and `hpo` are one ontology; anything unrecognised is itself.
@@ -94,16 +110,34 @@ def canonical_ontology_name(name: Any) -> Optional[str]:
     key = name.strip().lower()
     if not key:
         return None
+    # An IRI fragment names a part of the ontology, not the ontology. Without
+    # this, `…/mondo.owl#` reduced to `mondo.owl#` and the file was dropped from
+    # its own candidate list.
+    key = key.split("#", 1)[0]
     if "/" in key or ":" in key:
         # An IRI, a URL or a versioned path. Trailing slashes first, so that
         # `.../mondo.owl/` does not reduce to the empty string.
         key = key.rstrip("/").rsplit("/", 1)[-1]
-        if not key:
-            return None
+    if not key:
+        return None
     for suffix in ONTOLOGY_SUFFIXES:
         if key.endswith(suffix):
             key = key[: -len(suffix)]
-    return _ALIASES.get(key, key)
+    if key in _ALIASES:
+        return _ALIASES[key]
+    # **Products stack.** HPO publishes `hp-simple-non-classified`, declared as
+    # `ontology: hp/hp-simple-non-classified`, so one suffix is not the rule.
+    stem = key
+    while True:
+        for variant in _RELEASE_VARIANTS:
+            if stem.endswith("-" + variant):
+                stem = stem[: -(len(variant) + 1)]
+                break
+        else:
+            break
+    if stem in _ALIASES:
+        return _ALIASES[stem]
+    return key
 
 
 class OntologyResolutionError(ValueError):
@@ -154,12 +188,23 @@ class OntologyCandidate:
     term_count_basis: str
 
     def describe(self) -> str:
-        """One line for a refusal an operator has to act on."""
+        """One line for a refusal an operator has to act on.
+
+        **Including the declared imports**, which §3.2 says a listing shows.
+        Without them an operator choosing between two candidates could pick the
+        one that is certain to be refused at load and learn that only then.
+        """
         version = self.data_version or "no data-version declared"
-        return (
+        line = (
             f"{self.path} — {version}, {self.term_count} "
             f"{self.term_count_basis}, sha256 {self.digest[:12]}..."
         )
+        if self.declared_imports:
+            line += (
+                f" — DECLARES {len(self.declared_imports)} IMPORT(S) "
+                f"({', '.join(self.declared_imports)}), so it will be refused at load"
+            )
+        return line
 
 
 # --- Identity, from one pass over the bytes -------------------------------
@@ -197,6 +242,18 @@ class _OwlIdentity:
     namespace-expanded name and attributes, and the parser keeps no element
     once this method returns. Memory therefore depends on the deepest open
     element, not on how many there have been.
+
+    **Named classes only.** `<owl:Class>` with no `rdf:about` is an anonymous
+    class expression inside an axiom — a restriction or a union — not a term,
+    and counting it made `term_count` larger than the ontology while its label
+    said "owl:Class declarations".
+
+    **An import is an import wherever RDF/XML puts it.** The usual form is
+    `<owl:imports rdf:resource="…"/>` under the ontology element, but the same
+    triple can be written inside an `rdf:Description` about the ontology, or as
+    `<owl:imports><owl:Ontology rdf:about="…"/></owl:imports>`. The loader
+    refuses on the union of this and pronto's own reading, so neither form is
+    loaded with its import silently dropped.
     """
 
     def __init__(self) -> None:
@@ -204,21 +261,86 @@ class _OwlIdentity:
         self.imports: List[str] = []
         self.data_version: Optional[str] = None
         self.declared: Optional[str] = None
+        self._depth = 0
+        self._inside_imports = 0
 
     def start(self, tag: str, attrib: Dict[str, str]) -> None:
+        self._depth += 1
+        if self._inside_imports:
+            target = attrib.get(_RDF_ABOUT) or attrib.get(_RDF_RESOURCE)
+            if target:
+                self.imports.append(target)
+            return
         if tag == _OWL_CLASS_TAG:
-            self.terms += 1
+            if attrib.get(_RDF_ABOUT):
+                self.terms += 1
         elif tag == _OWL_IMPORTS_TAG:
             target = attrib.get(_RDF_RESOURCE)
             if target:
                 self.imports.append(target)
+            else:
+                self._inside_imports = self._depth
         elif tag == _OWL_VERSION_TAG and self.data_version is None:
             self.data_version = attrib.get(_RDF_RESOURCE) or None
         elif tag == _OWL_ONTOLOGY and self.declared is None:
             self.declared = attrib.get(_RDF_ABOUT) or None
 
+    def end(self, tag: str) -> None:
+        if self._inside_imports and self._depth == self._inside_imports:
+            self._inside_imports = 0
+        self._depth -= 1
+
     def close(self) -> None:
         return None
+
+
+#: How much of a file to look at before deciding what format it is in.
+_SNIFF_BYTES = 4096
+
+#: XML is read in blocks rather than lines: a document written without line
+#: breaks is one "line", and reading it line by line held the whole file.
+_XML_BLOCK = 1 << 16
+
+
+def _sniff_is_xml(path: Path) -> bool:
+    """**What the content is, not what the name says.**
+
+    pronto decides the format from the bytes, so a resolver that decided from
+    the suffix disagreed with the loader it feeds: an `.owl` holding OBO text
+    was "not well-formed XML", dropped from the listing, and the build then
+    downloaded a different file — or took the only other candidate as
+    unambiguous. Whatever begins with `<` after a byte-order mark and white
+    space is XML; everything else is read as OBO.
+    """
+    with open(path, "rb") as handle:
+        head = handle.read(_SNIFF_BYTES)
+    return head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<")
+
+
+def _clean_obo_value(raw: str) -> str:
+    """A header value without its trailing `! comment` or `{qualifiers}`.
+
+    OBO allows both after any tag value, so `ontology: hp ! the HPO` declares
+    `hp`. Keeping the comment made a loadable file declare a name nothing
+    recognised, and it dropped out of its own candidate list. A backslash
+    escapes a literal `!`.
+    """
+    out: List[str] = []
+    escaped = False
+    for char in raw:
+        if escaped:
+            out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            out.append(char)
+            continue
+        if char == "!":
+            break
+        out.append(char)
+    value = "".join(out).strip()
+    return re.sub(r"\s*\{[^{}]*\}\s*$", "", value).strip()
 
 
 def scan_identity(path: Any) -> Dict[str, Any]:
@@ -250,8 +372,13 @@ def scan_identity(path: Any) -> Dict[str, Any]:
     declared: Optional[str] = None
     imports: List[str] = []
     terms = 0
-    basis = "obo [Term] stanzas" if path.suffix.lower() == ".obo" else "owl:Class declarations"
-    is_obo = path.suffix.lower() == ".obo"
+    try:
+        is_obo = not _sniff_is_xml(path)
+    except OSError as exc:
+        raise OntologyResolutionError(
+            f"{path} could not be read ({type(exc).__name__}: {exc})"
+        ) from exc
+    basis = "obo [Term] stanzas" if is_obo else "owl:Class declarations"
     in_header = True
     # **Fed the same bytes the digest sees, so it is still one pass.** And fed
     # to a parser that **builds no tree**: `_OwlIdentity` is an ElementTree
@@ -270,9 +397,14 @@ def scan_identity(path: Any) -> Dict[str, Any]:
 
     try:
         with open(path, "rb") as handle:
-            for line in handle:
-                digest.update(line)
-                if is_obo:
+            if is_obo:
+                first = True
+                for raw in handle:
+                    # The digest is of the bytes on disk, byte-order mark
+                    # included; only the copy that is parsed has it removed.
+                    digest.update(raw)
+                    line = raw.lstrip(b"\xef\xbb\xbf") if first else raw
+                    first = False
                     if _OBO_TERM.match(line):
                         terms += 1
                         in_header = False
@@ -286,25 +418,29 @@ def scan_identity(path: Any) -> Dict[str, Any]:
                     if tag is None:
                         continue
                     key = tag.group(1).decode("utf-8", "replace").lower()
-                    value = tag.group(2).decode("utf-8", "replace")
+                    value = _clean_obo_value(tag.group(2).decode("utf-8", "replace"))
                     if key == "data-version" and data_version is None:
                         data_version = value or None
                     elif key == "ontology" and declared is None:
                         declared = value or None
                     elif key == "import" and value:
                         imports.append(value)
-                else:
-                    xml.feed(line)
-        if xml is not None:
-            # **Close before trusting the counts.** A document that ends
-            # mid-element has not been fully described, and reporting a partial
-            # count as identity is how a truncated file comes to look like a
-            # smaller release. `close` raises on an unterminated document.
-            xml.close()
-            terms = owl.terms
-            imports = owl.imports
-            data_version = owl.data_version
-            declared = owl.declared
+            else:
+                while True:
+                    block = handle.read(_XML_BLOCK)
+                    if not block:
+                        break
+                    digest.update(block)
+                    xml.feed(block)
+                # **Close before trusting the counts.** A document that ends
+                # mid-element has not been fully described, and reporting a
+                # partial count as identity is how a truncated file comes to
+                # look like a smaller release. `close` raises on it.
+                xml.close()
+                terms = owl.terms
+                imports = owl.imports
+                data_version = owl.data_version
+                declared = owl.declared
     except OSError as exc:
         raise OntologyResolutionError(
             f"{path} could not be read ({type(exc).__name__}: {exc})"
@@ -380,6 +516,12 @@ def enumerate_candidates(
         for entry in entries:
             if entry.suffix.lower() not in ONTOLOGY_SUFFIXES:
                 continue
+            # Hidden files are not candidates: `._mondo.obo` is macOS metadata,
+            # and a dotted copy is what tools leave while writing. (The loader's
+            # own staging name, `.mondo.obo.staged`, is already excluded by its
+            # suffix; this is the second reason, not the only one.)
+            if entry.name.startswith("."):
+                continue
             try:
                 resolved = entry.resolve()
             except OSError:
@@ -394,6 +536,17 @@ def enumerate_candidates(
                 continue
             declared = identity["declared_ontology"]
             if wanted is not None and not _claims_ontology(name, declared, wanted):
+                if name == wanted:
+                    # **Not silent.** A file named for this ontology that
+                    # declares another is exactly the misfiled case §3.4 is
+                    # about, and an operator whose build then downloads a
+                    # replacement deserves to know why the file they staged
+                    # was passed over.
+                    logger.warning(
+                        "%s is named like a %s file but declares %r, so it is "
+                        "not a %s candidate",
+                        entry, wanted, declared, wanted,
+                    )
                 continue
             seen.add(resolved)
             found.append(
@@ -440,7 +593,7 @@ def select_ontology_file(
         path = Path(explicit_path)
         if not path.exists():
             raise OntologyResolutionError(
-                f"--{wanted}-path names {path}, which does not exist. An "
+                f"the explicitly named {wanted} file {path} does not exist. An "
                 "explicitly named file is not a hint: nothing falls back to a "
                 "configured root or to the ontology cache, because a build that "
                 "quietly used a different file than the one asked for is the "
@@ -468,7 +621,7 @@ def select_ontology_file(
         raise AmbiguousOntologyError(
             f"{len(candidates)} {wanted} ontology files are available and "
             f"nothing says which one this build should use:\n{listing}\n"
-            f"Pass --{wanted}-path to name one. They are not ranked by root "
+            f"{_how_to_name(wanted)} They are not ranked by root "
             "order, by modification time or by data-version — a release is a "
             "decision, and a string a file declares about itself is not a "
             "basis for taking it automatically.",
@@ -477,7 +630,56 @@ def select_ontology_file(
 
     chosen = candidates[0]
     logger.info(
-        "%s: one candidate under the configured roots, %s (%s)",
+        "%s: one candidate under the configured roots, %s (%s, sha256 %s)",
         wanted, chosen.path, chosen.data_version or "no data-version declared",
+        chosen.digest,
     )
     return chosen
+
+
+#: The ontologies the build CLI has a path flag for. The resolver is also
+#: called from the library, where there is no such flag, and naming one there
+#: sent a `load_go()` caller looking for `--go-path`, which does not exist.
+_CLI_PATH_FLAGS = ("mondo", "hpo")
+
+
+def _how_to_name(wanted: str) -> str:
+    if wanted in _CLI_PATH_FLAGS:
+        return (
+            f"Name one with --{wanted}-path on the build CLI, or explicit_path= "
+            "when calling select_ontology_file."
+        )
+    return "Name one with explicit_path= when calling select_ontology_file."
+
+
+def declared_imports(path: Any) -> Tuple[str, ...]:
+    """Every import a file declares, read the way the listing reads it.
+
+    **One rule for the loader and the listing.** pronto records only
+    `owl:imports` elements that are direct children of the first
+    `owl:Ontology`; the listing records them wherever RDF/XML puts them. With
+    the loader refusing on pronto's set alone, a file could be listed as
+    "will be refused" and then load with its import silently dropped. The
+    loader refuses on the union of the two.
+
+    For OBO only the header is read, since that is the only place an `import:`
+    tag may appear — so this costs a few kilobytes on a large MONDO, not a pass
+    over it.
+    """
+    path = Path(path)
+    if _sniff_is_xml(path):
+        return scan_identity(path)["declared_imports"]
+    found: List[str] = []
+    with open(path, "rb") as handle:
+        first = True
+        for raw in handle:
+            line = raw.lstrip(b"\xef\xbb\xbf") if first else raw
+            first = False
+            if _OBO_STANZA.match(line):
+                break
+            tag = _OBO_TAG.match(line)
+            if tag and tag.group(1).decode("utf-8", "replace").lower() == "import":
+                value = _clean_obo_value(tag.group(2).decode("utf-8", "replace"))
+                if value:
+                    found.append(value)
+    return tuple(found)

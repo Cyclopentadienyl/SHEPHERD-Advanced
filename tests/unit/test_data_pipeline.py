@@ -1314,6 +1314,17 @@ class TestBuildPathOrdering:
             def add_gene_phenotype_associations(self, *a, **k): return 0
             def build(self): return kg
 
+        import src.ontology.settings as settings_module
+
+        # Not the operator's `configs/deployment.yaml`: configured roots would
+        # add candidates beside the stub's cache and turn this into an
+        # ambiguity refusal that has nothing to do with build ordering.
+        monkeypatch.setattr(
+            settings_module, "load_ontology_settings",
+            lambda config_path=None: settings_module.OntologySettings(
+                sources={"mondo": (), "hpo": (), "go": (), "mp": ()}
+            ),
+        )
         monkeypatch.setattr(build, "OntologyLoader", _Loader)
         monkeypatch.setattr(build, "HPOAnnotationParser", _Parser)
         monkeypatch.setattr(build, "KnowledgeGraphBuilder", _Builder)

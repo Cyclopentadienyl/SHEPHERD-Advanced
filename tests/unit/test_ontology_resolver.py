@@ -585,3 +585,225 @@ class TestTheOwlScanHoldsNoTree:
 
         with pytest.raises(OntologyResolutionError, match="well-formed"):
             scan_identity(path)
+
+
+class TestFindingsFromTheHolisticReview:
+    """Each case names the defect it pins; all were reproduced before fixing."""
+
+    RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    OWL = "http://www.w3.org/2002/07/owl#"
+
+    def _owl(self, path: Path, body: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f'<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="{self.RDF}" xmlns:owl="{self.OWL}">\n'
+            + body + "\n</rdf:RDF>\n"
+        )
+        return path
+
+    # --- names ------------------------------------------------------------
+    @pytest.mark.parametrize("iri,expected", [
+        ("http://purl.obolibrary.org/obo/mondo.owl#", "mondo"),
+        ("http://purl.obolibrary.org/obo/hp.owl#section", "hpo"),
+    ])
+    def test_an_iri_fragment_does_not_change_the_ontology(self, iri, expected):
+        assert canonical_ontology_name(iri) == expected
+
+    @pytest.mark.parametrize("name,expected", [
+        ("mondo/mondo-base", "mondo"), ("mondo-simple", "mondo"), ("mondo-edit", "mondo"),
+        ("hp/hp-base", "hpo"), ("hp-international", "hpo"), ("hp-non-classified", "hpo"),
+        # Declared verbatim by HPO's 2026-09-01 `hp-simple-non-classified.obo`.
+        ("hp/hp-simple-non-classified", "hpo"),
+        ("foo-simple-base", "foo-simple-base"),
+        ("http://purl.obolibrary.org/obo/hp/hp-base.owl", "hpo"),
+        ("foo-base", "foo-base"),
+    ])
+    def test_a_release_product_is_its_ontology(self, name, expected):
+        """A base release of MONDO is MONDO. Only known ontologies are reduced,
+        so an unrelated `foo-base` stays itself."""
+        assert canonical_ontology_name(name) == expected
+
+    def test_a_release_variant_is_a_candidate_and_joins_the_ambiguity(self, tmp_path):
+        """It used to vanish from its own candidate list without a word, after
+        which the build downloaded and used a different file."""
+        root = tmp_path / "roots"
+        obo(root / "mondo.obo", version="releases/2026-09-01")
+        obo(root / "mondo-base.obo", ontology="mondo/mondo-base", version="releases/2026-09-01")
+
+        with pytest.raises(AmbiguousOntologyError) as caught:
+            select_ontology_file("mondo", roots=[root])
+
+        assert len(caught.value.candidates) == 2
+
+    # --- OBO header values ----------------------------------------------
+    @pytest.mark.parametrize("value", ["hp ! the Human Phenotype Ontology", "hp {source=\"x\"}",
+                                       "hp {a=\"b\"} ! comment"])
+    def test_a_trailing_comment_or_qualifier_is_not_part_of_the_name(self, tmp_path, value):
+        """`ontology: hp ! comment` declares `hp`. Keeping the comment dropped a
+        loadable file out of its own candidate list, bypassing the ambiguity
+        refusal."""
+        path = obo(tmp_path / "x.obo", ontology=value, terms=("HP:1",))
+
+        assert canonical_ontology_name(scan_identity(path)["declared_ontology"]) == "hpo"
+
+    def test_a_byte_order_mark_is_parsed_past_and_still_hashed(self, tmp_path):
+        path = tmp_path / "mondo.obo"
+        path.write_bytes(b"\xef\xbb\xbfformat-version: 1.2\nontology: mondo\n"
+                         b"data-version: releases/x\n\n[Term]\nid: MONDO:1\nname: t\n")
+        identity = scan_identity(path)
+
+        assert identity["declared_ontology"] == "mondo"
+        assert identity["digest"] == hashlib.sha256(path.read_bytes()).hexdigest(), (
+            "the digest must be of the bytes on disk, mark included"
+        )
+
+    # --- format by content ----------------------------------------------
+    def test_an_owl_named_file_holding_obo_text_is_read_as_obo(self, tmp_path):
+        """pronto decides the format from the bytes; the resolver decided from
+        the suffix, called such a file "not well-formed XML" and dropped it —
+        after which the build took the only other candidate as unambiguous."""
+        root = tmp_path / "roots"
+        (root).mkdir()
+        (root / "release.owl").write_text(
+            "format-version: 1.2\ndata-version: releases/2026-01-01\nontology: mondo\n"
+            "\n[Term]\nid: MONDO:1\nname: t\n"
+        )
+        obo(root / "mondo.obo", version="releases/2026-09-01")
+
+        with pytest.raises(AmbiguousOntologyError) as caught:
+            select_ontology_file("mondo", roots=[root])
+
+        names = {item.path.name for item in caught.value.candidates}
+        assert names == {"release.owl", "mondo.obo"}
+
+    def test_an_obo_named_file_holding_xml_is_read_as_xml(self, tmp_path):
+        path = self._owl(tmp_path / "odd.obo",
+                         '<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/mondo.owl"/>'
+                         '<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_1"/>')
+        identity = scan_identity(path)
+
+        assert identity["term_count_basis"] == "owl:Class declarations"
+        assert canonical_ontology_name(identity["declared_ontology"]) == "mondo"
+
+    # --- OWL counts and imports -----------------------------------------
+    def test_an_anonymous_class_expression_is_not_a_term(self, tmp_path):
+        path = self._owl(tmp_path / "m.owl", """
+<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/mondo.owl"/>
+<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_1">
+  <owl:equivalentClass><owl:Class><owl:unionOf rdf:parseType="Collection">
+    <owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_2"/>
+  </owl:unionOf></owl:Class></owl:equivalentClass>
+</owl:Class>""")
+
+        assert scan_identity(path)["term_count"] == 2, (
+            "the anonymous <owl:Class> inside the axiom was counted"
+        )
+
+    def test_an_import_stated_in_an_rdf_description_is_listed(self, tmp_path):
+        path = self._owl(tmp_path / "hp.owl", """
+<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/hp.owl"/>
+<rdf:Description rdf:about="http://purl.obolibrary.org/obo/hp.owl">
+  <owl:imports rdf:resource="http://purl.obolibrary.org/obo/hp/imports/uberon_import.owl"/>
+</rdf:Description>""")
+
+        assert scan_identity(path)["declared_imports"] == (
+            "http://purl.obolibrary.org/obo/hp/imports/uberon_import.owl",)
+
+    def test_an_import_written_as_a_nested_ontology_is_listed(self, tmp_path):
+        path = self._owl(tmp_path / "hp.owl", """
+<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/hp.owl">
+  <owl:imports><owl:Ontology rdf:about="http://purl.obolibrary.org/obo/pato.owl"/></owl:imports>
+</owl:Ontology>""")
+        identity = scan_identity(path)
+
+        assert identity["declared_imports"] == ("http://purl.obolibrary.org/obo/pato.owl",)
+        assert canonical_ontology_name(identity["declared_ontology"]) == "hpo", (
+            "the nested import was mistaken for the ontology's own declaration"
+        )
+
+    # --- the listing and its refusals -----------------------------------
+    def test_the_refusal_shows_a_candidates_declared_imports(self, tmp_path):
+        """§3.2 says the listing shows the declaration; without it an operator
+        could choose the file that is certain to be refused at load."""
+        root = tmp_path / "roots"
+        obo(root / "a.obo", imports=("http://x.invalid/y.obo",))
+        obo(root / "b.obo")
+
+        with pytest.raises(AmbiguousOntologyError) as caught:
+            select_ontology_file("mondo", roots=[root])
+
+        assert "http://x.invalid/y.obo" in str(caught.value)
+        assert "refused at load" in str(caught.value)
+
+    def test_the_refusal_carries_each_digest(self, tmp_path):
+        """Acceptance 3 promises path, data-version and digest; the digest was
+        never asserted."""
+        root = tmp_path / "roots"
+        a = obo(root / "a.obo", version="releases/1")
+        b = obo(root / "b.obo", version="releases/2")
+
+        with pytest.raises(AmbiguousOntologyError) as caught:
+            select_ontology_file("mondo", roots=[root])
+
+        for path in (a, b):
+            assert hashlib.sha256(path.read_bytes()).hexdigest()[:12] in str(caught.value)
+
+    def test_an_ontology_without_a_cli_flag_is_not_told_to_use_one(self, tmp_path):
+        """`load_go()` callers were told to pass `--go-path`, which does not
+        exist."""
+        root = tmp_path / "roots"
+        obo(root / "a.obo", ontology="go", terms=("GO:1",))
+        obo(root / "b.obo", ontology="go", terms=("GO:2",))
+
+        with pytest.raises(AmbiguousOntologyError) as caught:
+            select_ontology_file("go", roots=[root])
+
+        assert "--go-path" not in str(caught.value)
+        assert "explicit_path=" in str(caught.value)
+
+    def test_a_hidden_file_is_not_a_candidate(self, tmp_path):
+        """`._mondo.obo` is macOS metadata, not a second MONDO release, and a
+        listing that offered it would make a single-file root ambiguous."""
+        root = tmp_path / "roots"
+        obo(root / ".mondo.obo")
+        obo(root / "mondo.obo")
+
+        assert select_ontology_file("mondo", roots=[root]).path.name == "mondo.obo"
+
+    def test_a_misfiled_file_is_passed_over_out_loud(self, tmp_path, caplog):
+        root = tmp_path / "roots"
+        obo(root / "hpo.obo", ontology="mondo")
+
+        with caplog.at_level("WARNING"):
+            assert enumerate_candidates([root], ontology="hpo") == []
+
+        assert any("named like a hpo file but declares" in r.message for r in caplog.records)
+
+    def test_a_single_line_document_does_not_hold_the_file(self, tmp_path):
+        """XML is read in blocks; a newline-free document is one "line", and
+        reading line by line held all of it."""
+        import tracemalloc
+
+        def generate(n):
+            path = tmp_path / f"one{n}.owl"
+            path.write_text(
+                f'<rdf:RDF xmlns:rdf="{self.RDF}" xmlns:owl="{self.OWL}">'
+                '<owl:Ontology rdf:about="http://purl.obolibrary.org/obo/mondo.owl"/>'
+                + "".join(f'<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_{i:07d}"/>'
+                          for i in range(n))
+                + "</rdf:RDF>"
+            )
+            return path
+
+        peaks = []
+        for n in (5_000, 50_000):
+            path = generate(n)
+            tracemalloc.start()
+            try:
+                tracemalloc.reset_peak()
+                assert scan_identity(path)["term_count"] == n
+                peaks.append(tracemalloc.get_traced_memory()[1])
+            finally:
+                tracemalloc.stop()
+
+        assert peaks[1] < peaks[0] * 2 + 64 * 1024, f"peak grew with the file: {peaks}"

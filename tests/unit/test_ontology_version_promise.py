@@ -41,7 +41,7 @@ def loader(tmp_path, monkeypatch):
     instance = OntologyLoader(cache_dir=tmp_path)
     calls = {"download": 0, "load": 0, "expect": []}
 
-    def _fake_download(name, force):
+    def _fake_download(name, force, roots=()):
         calls["download"] += 1
         return tmp_path / f"{name}.obo"
 

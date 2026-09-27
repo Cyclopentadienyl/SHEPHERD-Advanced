@@ -118,14 +118,18 @@ def _select_and_load(
     an entire node type missing.
     """
     from src.ontology.resolver import (
-        AmbiguousOntologyError,
         NoOntologyCandidateError,
+        OntologyResolutionError,
         select_ontology_file,
     )
     from src.ontology.settings import load_ontology_settings
 
+    # **Typed errors, not SystemExit.** This is also called as a function —
+    # `scripts/probe_deployment.py` does — and SystemExit is not an Exception:
+    # a refusal here went straight past the probe's handler, ended the process
+    # and lost the whole report. Only `main` turns these into an exit status.
     if explicit_path is not None and force_download:
-        raise SystemExit(
+        raise OntologyResolutionError(
             f"--{ontology}-path names a file and --force-download asks for a "
             "fresh copy; those are two different instructions and this build "
             "will not guess which one you meant. Drop one of them."
@@ -148,22 +152,39 @@ def _select_and_load(
 
     if force_download:
         logger.info("--force-download: fetching %s rather than using what is present", ontology)
-        return loader.load(loader._download_ontology(ontology, True), expect=ontology)
+        return _with_digest(loader._fetch_ontology(ontology, True, roots=roots))
 
     try:
         candidate = select_ontology_file(
             ontology, roots=roots, explicit_path=explicit_path
         )
-    except AmbiguousOntologyError as exc:
-        raise SystemExit(str(exc)) from exc
     except NoOntologyCandidateError:
         logger.info(
             "no %s file under %s; falling back to the configured sources",
             ontology, ", ".join(str(root) for root in roots) or "(no roots)",
         )
-        return loader.load(loader._download_ontology(ontology, False), expect=ontology)
+        return _with_digest(loader._fetch_ontology(ontology, False, roots=roots))
 
-    return loader.load(candidate.path, expect=ontology)
+    return _with_digest(loader.load(candidate.path, expect=ontology))
+
+
+def _with_digest(ontology):
+    """Hash the file this slot loaded, **immediately after loading it**.
+
+    Provenance used to hash each `source_path` after both slots had loaded, so
+    anything that replaced a file in between — the misfiled-cache overwrite,
+    for one — had the replacement's digest recorded against the first slot. A
+    digest taken at load describes what was actually built from.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    path = getattr(ontology, "source_path", None)
+    if path is not None:
+        try:
+            ontology._loaded_digest = file_sha256(path)
+        except (OSError, AttributeError):
+            pass
+    return ontology
 
 
 def build_knowledge_graph(
@@ -239,6 +260,21 @@ def build_knowledge_graph(
     # file, the configured roots are searched when none is given, and more than
     # one candidate refuses rather than picking.
     logger.info("Loading ontologies...")
+    # **Both slots checked before either is fetched.** Checking inside each
+    # slot meant `--hpo-path` with `--force-download` was refused only after
+    # MONDO had already been downloaded and the cached `mondo.obo` replaced.
+    if force_download and (mondo_path is not None or hpo_path is not None):
+        from src.ontology.resolver import OntologyResolutionError
+
+        named = ", ".join(
+            flag for flag, value in (("--mondo-path", mondo_path), ("--hpo-path", hpo_path))
+            if value is not None
+        )
+        raise OntologyResolutionError(
+            f"{named} names a file and --force-download asks for a fresh copy; "
+            "those are two different instructions and this build will not guess "
+            "which one you meant. Nothing has been fetched. Drop one of them."
+        )
     ont_loader = OntologyLoader(cache_dir=ontology_cache_dir)
     mondo = _select_and_load(
         ont_loader, "mondo", mondo_path, ontology_cache_dir, force_download
@@ -310,7 +346,8 @@ def build_knowledge_graph(
             logger.warning("%s ontology has no source path; it cannot be identified", role)
             continue
         sources.append(source_entry(
-            role=role, path=path, digest=file_sha256(path),
+            role=role, path=path,
+            digest=getattr(ontology, "_loaded_digest", None) or file_sha256(path),
             # The raw `data-version`, never `version` — that property falls back
             # to the OBO format version, which would record a file format as
             # though it were a release.
@@ -409,6 +446,10 @@ def build_knowledge_graph(
         print("  # the tensors can vouch for their digests -- so this rebuilds:")
         print(f"  python scripts/build_knowledge_graph.py --workspace {workspace} \\")
         print(f"      --external-dir {external_dir} --generate-samples \\")
+        # **The files this build used, named.** Without them the printed
+        # command rebuilt from whatever the roots held next time, which after a
+        # new release lands is a different ontology under the same command.
+        print(f"      --mondo-path {mondo.source_path} --hpo-path {hpo.source_path} \\")
         print("      --num-train <n> --num-val <n>")
     print("=" * 60)
 
@@ -503,6 +544,21 @@ def main():
     )
     args = parser.parse_args()
 
+    from src.ontology.loader import OntologyFetchError, OntologyImportError
+    from src.ontology.resolver import OntologyResolutionError
+    from src.ontology.roles import OntologyRoleError
+    from src.ontology.settings import OntologySettingsError
+
+    try:
+        _run_build(args)
+    except (OntologyResolutionError, OntologyRoleError, OntologyImportError,
+            OntologyFetchError, OntologySettingsError) as exc:
+        # The refusals are written for an operator; a traceback would bury them.
+        print(f"\nOntology selection stopped the build:\n{exc}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _run_build(args):
     build_knowledge_graph(
         external_dir=Path(args.external_dir),
         workspace=Path(args.workspace),

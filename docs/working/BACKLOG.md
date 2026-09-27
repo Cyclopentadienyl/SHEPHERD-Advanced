@@ -682,11 +682,11 @@ against the code rather than recalled:
 | | Established |
 |---|---|
 | Cache location | `Path.home()/'.shepherd'/'ontologies'` — **outside the project**, in the operator's home |
-| On a missing file | `urlretrieve('http://purl.obolibrary.org/obo/mondo.obo')` — **whatever is latest**, with no pinning |
+| On a missing file | **Was** `urlretrieve('http://purl.obolibrary.org/obo/mondo.obo')` from a constant in `loader.py`. **Phase 2 changed how, not what:** the sources are configuration, every request and redirect passes the scheme and destination rules, and a fetched file is verified before it replaces anything. It is still **whatever is latest** at the source — Phase 2 lets a site name a file instead; it does not pin a download |
 | The `version` argument | Used only as an in-memory cache key; the filename is `mondo.obo` regardless. **It reads as version selection and is not** — **closed by Phase 0**, which refuses any value but `"latest"` rather than ignoring it |
 | Is the version knowable? | **Yes** — the OBO header carries `data-version`, and `hierarchy.py` already parses it |
 | Is it recorded? | **Was no; closed by Phase 1.** `kg.provenance.json` carries all four source files by role, digest and raw `data-version`, bound to `kg.json`'s digest |
-| Can a site select one? | **Still no.** The build reads `<cache_dir>/<name>.obo` by convention, so the record answers "what was used" for an input nobody chose. This is Phase 2 |
+| Can a site select one? | **Was no; closed by Phase 2.** `--mondo-path` / `--hpo-path` name the file; without them, exactly one candidate across the configured roots is taken, and more than one refuses rather than ranking |
 
 This is not hypothetical: the two machines used this session differ in MONDO
 vintage (29,866 vs 32,109 disease nodes, different `kg_digest`) purely because
@@ -712,6 +712,14 @@ source list moved from `loader.py` into `configs/deployment.yaml` with the
 scheme and destination rules enforced on every request. **One item is owed and
 undelivered by design**: editing those URLs from the interface (§3.6.1) — the
 backend is built for it, the front end is outside this programme.
+
+A whole-branch adversarial review before the PR found the fetch path still
+placing fallible steps after the state they should gate — a misfiled cache file
+overwritten, a fresh copy published before it was checked — and those are
+fixed (§3.8 there). **It also amended one approved default, flagged for
+review:** a name this machine cannot resolve is left to a configured proxy
+instead of being refused (§3.5.2), because proxy-only hospital networks could
+otherwise never download.
 
 Phase 3 (packaging) is unstarted and converges with the export/import idea
 below.
