@@ -1233,6 +1233,35 @@ PURL **就是**轉址：
 **更改來源不等於切換正在服務的圖。** 編輯 URL、下載檔案、建置 workspace 是三件不同
 的事，只有新的建置會產出新的 workspace；把它投入服務是既有的載入／發布步驟，未變。
 
+### 在這台機器上確認下載
+
+測試以受控的回應涵蓋下載規則；這台機器的網路、proxy 與憑證能否讓真實下載通過，只有
+機器本身能證明。部署探測腳本為此提供一個需明確開啟的階段：
+
+```bash
+python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
+    --report probe_report.json --download-only
+```
+
+它會從 `configs/deployment.yaml` 的來源**完整**下載 MONDO 與 HPO（數十 MB），走的是
+和建置相同的路徑，下載到工作目錄——絕不寫入你的快取或設定的 root，並在結束後檢查這
+一點。改用 `--download` 則是把這個階段加進完整的探測。不需要 GPU。
+
+報告中，`G1`（MONDO）與 `G2`（HPO）各有一個 `outcome`：
+
+| `outcome` | 意義 |
+|---|---|
+| `published` | 已下載、通過 imports 與插槽檢查，並以驗證過的 bytes 發布。`data_version` 與 `source_digest` 說明實際收到的是什麼 |
+| `refused_by_policy` | 每個來源都被協定或目的地規則拒絕——屬於設定決定（`ontology.sources`／`ontology.allowed_hosts`） |
+| `transfer_failed` | 沒有任何來源成功。`attempts` 說明每個來源如何失敗：`host_unresolved`（本機無 DNS 答案、也沒有可交付的 proxy）、`truncated` 或 `transfer_failed` |
+| `wrong_ontology`／`imports_declared` | 檔案已送達，但被插槽或 imports 檢查拒絕 |
+| `no_source`／`configuration_invalid` | 沒有設定可下載的來源，或設定無法讀取 |
+
+`network_at_probe_time` 逐一記錄每個來源：名稱能否在本機解析、請求是否經由 proxy、
+主機是否在 allow list 中——針對設定的 URL 本身，不含它導向的轉址（`http://` 的 PURL
+轉址到 `https://` 時，每一跳都會重新判斷、也各自決定是否經由 proxy）。來源以其在清單中的位置表示；報告不含任何主機、proxy 或目錄
+名稱。
+
 ---
 
 ## 總結：部署檢查清單 ✅

@@ -23,6 +23,7 @@ import io
 import logging
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
 import pronto
@@ -36,13 +37,61 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Ontology Loader using Pronto
 # =============================================================================
+def default_cache_dir() -> Path:
+    """Where an `OntologyLoader` given no `cache_dir` keeps its files.
+
+    A function rather than a constant so it follows the home directory at call
+    time, and so a caller can name the place without constructing a loader —
+    which creates it.
+    """
+    return Path.home() / '.shepherd' / 'ontologies'
+
+
+@dataclass(frozen=True)
+class FetchAttempt:
+    """One configured source tried by a fetch, in words a report may carry.
+
+    `index` is the source's 1-based position in the configured list and
+    `format` the file type it was to deliver; the URL itself is deliberately
+    not here, so a record of what happened names no host. `outcome` is one of
+    `FETCH_ATTEMPT_OUTCOMES`.
+    """
+
+    index: int
+    format: str
+    outcome: str
+
+
+#: What one attempt came to, decided by the downloader's exception type and
+#: never by its message.
+FETCH_ATTEMPT_OUTCOMES = (
+    "delivered", "refused_by_policy", "host_unresolved", "truncated", "transfer_failed",
+)
+
+#: Why a fetch produced nothing: `OntologyFetchError.reason`.
+FETCH_FAILURE_REASONS = (
+    "no_source", "target_occupied", "refused_by_policy", "transfer_failed", "unspecified",
+)
+
+
 class OntologyFetchError(RuntimeError):
     """No acceptable copy of an ontology could be obtained.
 
     A `RuntimeError` so existing callers that caught the old untyped failure
     still do; its own type so the build's entry point can turn it into an exit
     status without swallowing unrelated runtime errors.
+
+    **`reason` and `attempts` say what happened without the message.** The
+    message is written for an operator and names paths and URLs; a report that
+    must carry neither (the deployment probe, a future settings page) reads
+    these instead of parsing prose.
     """
+
+    def __init__(self, message: str, reason: str = "unspecified",
+                 attempts: Tuple["FetchAttempt", ...] = ()):
+        super().__init__(message)
+        self.reason = reason
+        self.attempts = tuple(attempts)
 
 
 class OntologyImportError(ValueError):
@@ -74,11 +123,15 @@ class OntologyLoader:
         Args:
             cache_dir: 快取目錄，用於存放下載的本體檔案
         """
-        self.cache_dir = cache_dir or Path.home() / '.shepherd' / 'ontologies'
+        self.cache_dir = cache_dir or default_cache_dir()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self._loaded_ontologies: Dict[str, 'Ontology'] = {}
         self._ontology_settings = None
+        #: What the most recent download tried, source by source, as
+        #: `FetchAttempt`s — set on success as well as failure, so a report
+        #: can say which configured source delivered without reading a URL.
+        self.last_fetch_attempts: Tuple[FetchAttempt, ...] = ()
 
     #: The only value `version` can honour. Anything else names a release this
     #: loader has no way to fetch or select, and saying so is the whole point of
@@ -402,6 +455,7 @@ class OntologyLoader:
         searched = ", ".join(str(root) for root in roots) or "(no roots)"
         manual_hint = self.ONTOLOGY_MANUAL_INSTRUCTIONS.get(ontology_name, "")
 
+        self.last_fetch_attempts = ()
         if not urls:
             raise OntologyFetchError(
                 f"no {ontology_name} ontology file was found under {searched}, "
@@ -409,7 +463,8 @@ class OntologyLoader:
                 "nothing was attempted.\n"
                 + (f"  Download it manually from {manual_hint}\n" if manual_hint else "")
                 + "  and place it under one of the roots above, or name it "
-                "explicitly."
+                "explicitly.",
+                reason="no_source",
             )
 
         def target_for(url: str) -> Path:
@@ -429,14 +484,19 @@ class OntologyLoader:
                     f"{ontology_name} would overwrite it, and it may be another "
                     "slot's input. It has been left untouched and nothing was "
                     "fetched: move or rename it, or name the file for each "
-                    "ontology explicitly."
+                    "ontology explicitly.",
+                    reason="target_occupied",
                 )
+
+        from src.ontology.download import OntologyHostUnresolved, OntologyTruncatedError
 
         policy = DestinationPolicy(allowed_hosts=settings.allowed_hosts)
         refused: list = []
         failed: list = []
-        for url in urls:
+        attempts: list = []
+        for index, url in enumerate(urls, start=1):
             target = target_for(url)
+            kind = target.suffix.lstrip(".")
             target.parent.mkdir(parents=True, exist_ok=True)
             handle, name = tempfile.mkstemp(
                 dir=target.parent, prefix=f".{target.name}.", suffix=self._STAGED
@@ -445,19 +505,30 @@ class OntologyLoader:
             staged = Path(name)
             logger.info(f"Downloading {ontology_name} ontology from {url}")
             try:
-                return Path(download_ontology(url, staged, policy=policy)), target
+                delivered = Path(download_ontology(url, staged, policy=policy))
+                attempts.append(FetchAttempt(index, kind, "delivered"))
+                self.last_fetch_attempts = tuple(attempts)
+                return delivered, target
             except OntologyDestinationRefused as exc:
                 staged.unlink(missing_ok=True)
+                attempts.append(FetchAttempt(index, kind, "refused_by_policy"))
                 refused.append(f"  {url}\n    {exc}")
                 logger.error("policy refused %s (%s)", url, exc)
             except OntologyDownloadError as exc:
                 staged.unlink(missing_ok=True)
+                outcome = (
+                    "host_unresolved" if isinstance(exc, OntologyHostUnresolved)
+                    else "truncated" if isinstance(exc, OntologyTruncatedError)
+                    else "transfer_failed"
+                )
+                attempts.append(FetchAttempt(index, kind, outcome))
                 failed.append(f"  {url}: {exc}")
                 logger.warning("could not fetch %s (%s)", url, exc)
             except BaseException:
                 staged.unlink(missing_ok=True)
                 raise
 
+        self.last_fetch_attempts = tuple(attempts)
         if refused and not failed:
             raise OntologyFetchError(
                 f"every configured source for {ontology_name} was refused by "
@@ -465,7 +536,9 @@ class OntologyLoader:
                 + "\n".join(refused)
                 + "\n\nThis is a configuration decision, not a transient "
                 "failure: fix the sources or add the host to "
-                "`ontology.allowed_hosts` in configs/deployment.yaml."
+                "`ontology.allowed_hosts` in configs/deployment.yaml.",
+                reason="refused_by_policy",
+                attempts=tuple(attempts),
             )
 
         what = (
@@ -480,7 +553,9 @@ class OntologyLoader:
             "of date. Download the file manually"
             + (f" from {manual_hint}" if manual_hint else "")
             + f",\n  place it under one of the roots ({searched}), or name it "
-            "explicitly. Nothing already on disk has been used in its place."
+            "explicitly. Nothing already on disk has been used in its place.",
+            reason="transfer_failed",
+            attempts=tuple(attempts),
         )
 
     def _fetch_ontology(
@@ -529,7 +604,7 @@ from src.ontology.hierarchy import Ontology
 # =============================================================================
 # Legacy OBO Parser (kept for compatibility with test fixtures)
 # =============================================================================
-from dataclasses import dataclass, field
+from dataclasses import field
 from typing import Any, List
 import re
 

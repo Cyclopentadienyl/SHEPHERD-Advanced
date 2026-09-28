@@ -41,6 +41,11 @@ Usage:
     # add the real-data build (needs data/external; minutes, not seconds)
     python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
         --report probe_report.json --external-dir data/external
+
+    # only the environment and a real download of MONDO and HPO, in full,
+    # from the configured sources into the work directory (no GPU needed)
+    python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
+        --report probe_report.json --download-only
 """
 from __future__ import annotations
 
@@ -110,6 +115,9 @@ class Report:
             probe.status = "failed"
             # Assertion text is written in this file, so it carries no paths.
             probe.detail = str(failure)
+            # A `ProbeFailure` says *how* it failed in the same bounded
+            # vocabulary a pass uses; the category is the evidence.
+            probe.facts = dict(getattr(failure, "facts", {}) or {})
         except Exception:  # noqa: BLE001 — a probe crash is a result, not a stop
             probe.status = "error"
             probe.detail = "the probe itself raised; see the console traceback"
@@ -132,6 +140,14 @@ class Report:
 
 class SkipProbe(Exception):
     """This probe cannot run here, and that is not a failure."""
+
+
+class ProbeFailure(AssertionError):
+    """A failure that carries facts: which category, not which message."""
+
+    def __init__(self, detail: str, facts: Dict[str, Any]):
+        super().__init__(detail)
+        self.facts = facts
 
 
 # =============================================================================
@@ -1203,6 +1219,177 @@ def phase_real_build(
 
 
 # =============================================================================
+# Phase G — the download path, for real (opt-in; downloads whole ontologies)
+# =============================================================================
+#: The two ontologies a build consumes, and so the two this phase fetches.
+DOWNLOAD_ONTOLOGIES = ("mondo", "hpo")
+
+
+def _route_facts(urls, settings) -> List[Dict[str, Any]]:
+    """What this machine's network looks like to each configured source.
+
+    **Observed by the probe, beside the downloader, not instead of it.** These
+    ask the production `DestinationPolicy` the same questions the downloader
+    asks — does the name resolve here, will the request go to a proxy, is the
+    host allow-listed — at the moment the probe runs. What the downloader
+    actually decided is in the attempts; these say why that is plausible. Each
+    source is named by its position in the configured list, never by its host.
+    """
+    from urllib.parse import urlsplit
+
+    from src.ontology.download import DestinationPolicy, OntologyDownloadError
+
+    policy = DestinationPolicy(allowed_hosts=settings.allowed_hosts)
+    facts = []
+    for index, url in enumerate(urls, start=1):
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        try:
+            policy.resolve(host)
+            resolves = True
+        except OntologyDownloadError:
+            resolves = False
+        facts.append({
+            "index": index,
+            "scheme": (parts.scheme or "").lower(),
+            "host_resolves_here": resolves,
+            "goes_through_proxy": bool(policy.routes_through_proxy(url)),
+            "host_allow_listed": bool(policy.permits_host(host)),
+        })
+    return facts
+
+
+def _outside_work_dir(settings) -> List[Path]:
+    """Every place the download must leave alone: the configured roots and the
+    default cache. The download goes into `--work-dir`, and nowhere else."""
+    from src.ontology.loader import default_cache_dir
+
+    return [Path(root) for root in settings.roots] + [default_cache_dir()]
+
+
+def phase_download(report: Report, work: Path) -> None:
+    """The production fetch path, end to end, on this machine's network.
+
+    **The same call the build makes**, `_select_and_load(..., force_download=
+    True)`, so the configured sources, the scheme and destination rules on every
+    redirect, per-fetch staging, the imports policy, the role check and the
+    publish all run as they do in a build. Nothing here decides a rule; this
+    only reports what the rules decided. A successful HTTP transfer is not a
+    pass: the file has to load, pass both checks and be published as the bytes
+    that were verified.
+
+    The cache is a fresh directory inside `--work-dir`, so the download really
+    happens and nothing an operator keeps is written. Timeouts are the
+    downloader's own, deliberately: if they are wrong for this network, that is
+    a finding about production, not something for the probe to paper over.
+    """
+    print("\nG. The download path, for real")
+    print("   Downloads MONDO and HPO in full from the configured sources into "
+          "the work directory. Minutes on a slow link.")
+    cache = work / "download_cache"
+    state: Dict[str, Any] = {}
+
+    def _before() -> Tuple[str, Dict[str, Any]]:
+        from src.ontology.settings import load_ontology_settings
+
+        try:
+            settings = load_ontology_settings()
+        except Exception as exc:  # noqa: BLE001 — classified, never copied
+            raise ProbeFailure(
+                "the ontology configuration could not be read",
+                {"outcome": "configuration_invalid", "error_type": type(exc).__name__},
+            ) from None
+        state["settings"] = settings
+        state["outside"] = {str(i): snapshot(p) for i, p in enumerate(_outside_work_dir(settings))}
+        return "configuration read; locations outside the work directory recorded", {
+            "locations_recorded": len(state["outside"]),
+            "files_recorded": sum(len(v) for v in state["outside"].values()),
+        }
+
+    report.run("G0", "download", "the ontology configuration is readable", _before)
+
+    def _download(name: str) -> Tuple[str, Dict[str, Any]]:
+        from scripts.build_knowledge_graph import _select_and_load
+        from src.ontology.loader import OntologyFetchError, OntologyImportError, OntologyLoader
+        from src.ontology.roles import OntologyRoleError
+        from src.ontology.settings import DEFAULT_ONTOLOGY_SOURCES
+        from src.utils.fingerprint import file_sha256
+
+        settings = state.get("settings")
+        if settings is None:
+            raise SkipProbe("the ontology configuration could not be read (G0)")
+        urls = settings.urls_for(name)
+        facts: Dict[str, Any] = {
+            "ontology": name,
+            "sources_configured": len(urls),
+            "sources_are_project_defaults": tuple(urls) == tuple(DEFAULT_ONTOLOGY_SOURCES.get(name, ())),
+            "network_at_probe_time": _route_facts(urls, settings),
+        }
+        loader = OntologyLoader(cache_dir=cache)
+
+        def attempts(record) -> List[Dict[str, Any]]:
+            return [{"index": a.index, "format": a.format, "outcome": a.outcome} for a in record]
+
+        def failed(outcome: str, detail: str, **more: Any) -> ProbeFailure:
+            facts.update(outcome=outcome, attempts=attempts(loader.last_fetch_attempts), **more)
+            return ProbeFailure(f"{name}: {detail}", facts)
+
+        try:
+            ontology = _select_and_load(loader, name, None, cache, True)
+        except OntologyFetchError as exc:
+            facts["attempts"] = attempts(exc.attempts)
+            facts["outcome"] = exc.reason
+            raise ProbeFailure(f"{name}: no source delivered a usable file ({exc.reason})", facts) from None
+        except OntologyImportError:
+            raise failed("imports_declared", "the delivered file declares imports") from None
+        except OntologyRoleError:
+            raise failed("wrong_ontology", "the delivered file is not this ontology") from None
+        except OSError as exc:
+            raise failed("local_filesystem_error", "the work directory could not be written",
+                         error_type=type(exc).__name__) from None
+        except Exception as exc:  # noqa: BLE001 — a parse failure, most likely; type only
+            raise failed("failed_otherwise", "the delivered file could not be loaded",
+                         error_type=type(exc).__name__) from None
+
+        published = ontology.source_path
+        facts.update(
+            outcome="published",
+            attempts=attempts(loader.last_fetch_attempts),
+            format=published.suffix.lstrip("."),
+            data_version=ontology.declared_version,
+            source_digest=ontology.source_digest,
+            size_bytes=published.stat().st_size,
+            term_count=ontology.num_terms,
+        )
+        assert published.parent == cache, f"{name}: published outside the work directory"
+        assert file_sha256(published) == ontology.source_digest, (
+            f"{name}: the published file is not the bytes that were verified"
+        )
+        leftovers = [p for p in cache.iterdir() if p.name.endswith(".staged")]
+        assert not leftovers, f"{name}: {len(leftovers)} staging file(s) left behind"
+        return f"{name} downloaded, verified and published", facts
+
+    for index, name in enumerate(DOWNLOAD_ONTOLOGIES, start=1):
+        report.run(f"G{index}", "download",
+                   f"{name} downloads, verifies and publishes through the build's own path",
+                   lambda name=name: _download(name))
+
+    def _untouched() -> Tuple[str, Dict[str, Any]]:
+        settings = state.get("settings")
+        if settings is None:
+            raise SkipProbe("the ontology configuration could not be read (G0)")
+        for key, location in enumerate(_outside_work_dir(settings)):
+            assert_untouched(state["outside"][str(key)], location,
+                             "the download phase (outside the work directory)")
+        return "nothing outside the work directory was touched", {
+            "locations_checked": len(state["outside"]),
+        }
+
+    report.run("G9", "download", "nothing outside the work directory was written",
+               _untouched)
+
+
+# =============================================================================
 # Entry point
 # =============================================================================
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -1242,13 +1429,27 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--hpo-path", type=Path, default=None,
         help="HPO file for the real-data build, with the same rule as --mondo-path.",
     )
+    parser.add_argument(
+        "--download", action="store_true",
+        help="Adds the download phase: MONDO and HPO fetched in full from the "
+             "configured sources, through the build's own path, into the work "
+             "directory. Needs network access, not a GPU.",
+    )
+    parser.add_argument(
+        "--download-only", action="store_true",
+        help="Runs only the environment description and the download phase.",
+    )
     parser.add_argument("--num-train", type=int, default=200000)
     parser.add_argument("--num-val", type=int, default=40000)
     parser.add_argument(
         "--keep", action="store_true",
         help="Keep the work directory instead of removing it at the end",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.download_only and args.external_dir is not None:
+        parser.error("--download-only runs only the environment and download "
+                     "phases; drop --external-dir or --download-only")
+    return args
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1279,15 +1480,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     environment = phase_environment(report, args.device)
     device = environment.get("resolved_device", "cpu")
 
-    sound = phase_writer(report, work)
-    if sound is not None:
-        phase_workspace(report, work, sound)
-        checkpoint = phase_training(report, work, sound, device, args.epochs)
-        if checkpoint is not None:
-            phase_serving(report, work, sound, checkpoint, device)
-    if args.external_dir is not None:
-        phase_real_build(report, work, args.external_dir, args.num_train, args.num_val,
-                         mondo_path=args.mondo_path, hpo_path=args.hpo_path)
+    if not args.download_only:
+        sound = phase_writer(report, work)
+        if sound is not None:
+            phase_workspace(report, work, sound)
+            checkpoint = phase_training(report, work, sound, device, args.epochs)
+            if checkpoint is not None:
+                phase_serving(report, work, sound, checkpoint, device)
+        if args.external_dir is not None:
+            phase_real_build(report, work, args.external_dir, args.num_train, args.num_val,
+                             mondo_path=args.mondo_path, hpo_path=args.hpo_path)
+    if args.download or args.download_only:
+        phase_download(report, work)
 
     summary = report.summary()
     payload = {
@@ -1300,6 +1504,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "feature_dim": FEATURE_DIM,
             "seed": SEED,
             "real_build_requested": args.external_dir is not None,
+            "download_requested": bool(args.download or args.download_only),
+            "download_only": bool(args.download_only),
         },
         "summary": summary,
         "probes": [

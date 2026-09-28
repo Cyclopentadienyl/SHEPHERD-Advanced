@@ -770,6 +770,40 @@ downloading a file and building a workspace are three separate things, and only
 a new build produces a new workspace; putting one into service is the existing
 load-and-publish step, unchanged.
 
+### Checking the download on this machine
+
+The tests cover the download rules with controlled responses; only the machine
+itself can show that its network, proxy and certificates let a real download
+through. The deployment probe has an opt-in phase for that:
+
+```bash
+python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
+    --report probe_report.json --download-only
+```
+
+It downloads MONDO and HPO **in full** (tens of megabytes) from the sources in
+`configs/deployment.yaml`, through the same path a build uses, into the work
+directory — never into your cache or configured roots, and it checks that
+afterwards. `--download` adds the phase to a full probe run instead. No GPU is
+needed.
+
+In the report, probes `G1` (MONDO) and `G2` (HPO) each carry an `outcome`:
+
+| `outcome` | Meaning |
+|---|---|
+| `published` | Downloaded, passed the import and slot checks, and published as the verified bytes. `data_version` and `source_digest` say what arrived |
+| `refused_by_policy` | Every source was refused by the scheme or destination rule — a configuration decision (`ontology.sources` / `ontology.allowed_hosts`) |
+| `transfer_failed` | No source delivered. `attempts` says how each one failed: `host_unresolved` (no DNS answer and no proxy to hand it to), `truncated`, or `transfer_failed` |
+| `wrong_ontology` / `imports_declared` | A file arrived and was refused by the slot or imports check |
+| `no_source` / `configuration_invalid` | Nothing is configured to fetch, or the configuration could not be read |
+
+`network_at_probe_time` records, per source, whether its name resolves on this
+machine, whether the request goes through a proxy, and whether its host is
+allow-listed — for the configured URL itself, not for the redirects it leads to
+(an `http://` PURL that redirects to `https://` is judged, and proxied, again at
+each hop). Sources are identified by their position in the list; the report
+names no host, no proxy and no directory.
+
 ---
 
 ## Summary: deployment checklist ✅
