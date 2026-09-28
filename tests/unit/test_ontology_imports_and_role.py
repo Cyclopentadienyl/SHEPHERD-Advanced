@@ -19,6 +19,7 @@ Module: tests/unit/test_ontology_imports_and_role.py
 """
 from __future__ import annotations
 
+import os
 import socket
 import sys
 from pathlib import Path
@@ -375,6 +376,13 @@ class TestTheLoaderAndTheListingAgreeOnImports:
         assert resolver.declared_imports(path) == ("http://x.invalid/a.obo",)
 
 
+#: Windows refuses to replace a file another handle holds open (Python opens
+#: without `FILE_SHARE_DELETE`); POSIX replaces the name and leaves the open
+#: handle on the old file. Measured by the reviewer on CPython 3.13.9: the
+#: replacement below raised `PermissionError: [WinError 5]`.
+_REPLACING_AN_OPEN_FILE_IS_REFUSED = os.name == "nt"
+
+
 class TestTheDigestIsOfWhatWasParsed:
 
     def test_a_replacement_during_the_load_changes_none_of_the_three_readings(
@@ -383,9 +391,17 @@ class TestTheDigestIsOfWhatWasParsed:
         """Digest, parse and import scan are taken through one open handle. The
         path is replaced — by a file of another release that also declares an
         import — after the file is opened and before pronto parses it: what
-        comes back is still entirely the original."""
+        comes back is still entirely the original.
+
+        **Two platforms, one guarantee, reached two ways.** On POSIX the
+        replacement happens and the open handle keeps reading the old file; on
+        Windows the operating system refuses the replacement while the file is
+        open. Either way the three readings are of one file. Only that one
+        refusal, on that one platform, is accepted — anywhere else a
+        `PermissionError` fails the test — and each branch asserts what its
+        platform actually did, so neither can pass by skipping the other's
+        checks."""
         import hashlib
-        import os
         import types
 
         import pronto
@@ -396,9 +412,16 @@ class TestTheDigestIsOfWhatWasParsed:
         original = path.read_bytes()
         replacement = obo(tmp_path / "next.obo", ontology="mondo", terms=("MONDO:0000002",),
                           imports=("http://x.invalid/late.obo",))
+        attempt = {}
 
         def parse_after_the_path_moved(handle, **kwargs):
-            os.replace(replacement, path)
+            try:
+                os.replace(replacement, path)
+                attempt["replaced"] = True
+            except PermissionError:
+                if not _REPLACING_AN_OPEN_FILE_IS_REFUSED:
+                    raise
+                attempt["replaced"] = False
             return pronto.Ontology(handle, **kwargs)
 
         monkeypatch.setattr(loader_module, "pronto",
@@ -406,7 +429,13 @@ class TestTheDigestIsOfWhatWasParsed:
 
         loaded = loader(tmp_path).load(path, expect="mondo")
 
-        assert path.read_bytes() != original, "the replacement did not happen"
+        if attempt["replaced"]:
+            assert path.read_bytes() != original, "the replacement did not reach the path"
+        else:
+            assert path.read_bytes() == original, "the refused replacement changed the file"
+            assert replacement.exists(), "the refused replacement consumed its source"
+        if not _REPLACING_AN_OPEN_FILE_IS_REFUSED:
+            assert attempt["replaced"], "POSIX must exercise the replacement, not skip it"
         assert loaded.source_digest == hashlib.sha256(original).hexdigest()
         assert loaded.has_term("MONDO:0000001") and not loaded.has_term("MONDO:0000002")
 
