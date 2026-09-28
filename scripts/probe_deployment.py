@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import shutil
 import sys
 import time
@@ -205,8 +206,18 @@ def refuses(fn: Callable[[], Any], expected: type, fragment: str) -> None:
 # =============================================================================
 # Phase A — what this machine is
 # =============================================================================
-def phase_environment(report: Report, device: str) -> Dict[str, Any]:
-    print("\nA. Environment")
+def phase_environment(
+    report: Report, device: str, *, describe_only: bool = False
+) -> Dict[str, Any]:
+    """What this machine is, and — unless `describe_only` — whether its device
+    serves: A2 resolves it, A3 records its architectures, A4 launches kernels.
+
+    `describe_only` is for runs whose verdict is about something else. A
+    download check that launched kernels was failed by a GPU that could not run
+    this build, with both ontologies published; A1 alone describes the stack
+    and never raises.
+    """
+    print("\nA. Environment" + (" (description only)" if describe_only else ""))
     facts: Dict[str, Any] = {}
 
     def _runtime() -> Tuple[str, Dict[str, Any]]:
@@ -232,6 +243,8 @@ def phase_environment(report: Report, device: str) -> Dict[str, Any]:
         return "runtime described", collected
 
     report.run("A1", "environment", "the runtime describes itself", _runtime)
+    if describe_only:
+        return facts
 
     def _device() -> Tuple[str, Dict[str, Any]]:
         import torch
@@ -1259,6 +1272,37 @@ def _route_facts(urls, settings) -> List[Dict[str, Any]]:
     return facts
 
 
+#: The forms a declared release may take and still be written into a report:
+#: the OBO Foundry release path every measured header uses
+#: (`releases/2026-09-01`, `hp/releases/2026-09-01`,
+#: `mondo/releases/2026-09-01/mondo-simple.owl`), or a bare date.
+_RELEASE_LABEL = re.compile(
+    r"(?:[a-z][a-z0-9_-]{0,31}/)?releases/\d{4}-\d{2}-\d{2}"
+    r"(?:/[a-z][a-z0-9_.-]{0,63}\.(?:obo|owl))?"
+    r"|\d{4}-\d{2}-\d{2}"
+)
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _reportable_version(declared: Optional[str]) -> Dict[str, Any]:
+    """The declared release, in a form a shared report may carry.
+
+    **`data-version` is text the file chooses**, and a file can choose a URL
+    with credentials in it, a host or a directory. So only the release forms
+    above pass through as they are; anything else is withheld and reduced to
+    the date it contains, if any. Nothing is lost that identifies the file:
+    `source_digest` is the exact identity, and this is a label.
+    """
+    if declared is None:
+        return {"data_version": None, "data_version_withheld": False, "data_version_date": None}
+    date = _DATE.search(declared)
+    if _RELEASE_LABEL.fullmatch(declared):
+        return {"data_version": declared, "data_version_withheld": False,
+                "data_version_date": date.group(0) if date else None}
+    return {"data_version": None, "data_version_withheld": True,
+            "data_version_date": date.group(0) if date else None}
+
+
 def _outside_work_dir(settings) -> List[Path]:
     """Every place the download must leave alone: the configured roots and the
     default cache. The download goes into `--work-dir`, and nowhere else."""
@@ -1356,8 +1400,8 @@ def phase_download(report: Report, work: Path) -> None:
             outcome="published",
             attempts=attempts(loader.last_fetch_attempts),
             format=published.suffix.lstrip("."),
-            data_version=ontology.declared_version,
             source_digest=ontology.source_digest,
+            **_reportable_version(ontology.declared_version),
             size_bytes=published.stat().st_size,
             term_count=ontology.num_terms,
         )
@@ -1375,14 +1419,34 @@ def phase_download(report: Report, work: Path) -> None:
                    lambda name=name: _download(name))
 
     def _untouched() -> Tuple[str, Dict[str, Any]]:
+        """By position, kind and count — **never by name**. The shared
+        `assert_untouched` lists the files it found, which is right for the
+        work directory and wrong here: these are the operator's directories,
+        and a failure is exactly when their contents would reach the report."""
         settings = state.get("settings")
         if settings is None:
             raise SkipProbe("the ontology configuration could not be read (G0)")
-        for key, location in enumerate(_outside_work_dir(settings)):
-            assert_untouched(state["outside"][str(key)], location,
-                             "the download phase (outside the work directory)")
+        locations = _outside_work_dir(settings)
+        changes = []
+        for key, location in enumerate(locations):
+            before, after = state["outside"][str(key)], snapshot(location)
+            changes.append({
+                "location": key,
+                "kind": "default cache" if key == len(locations) - 1 else "configured root",
+                "created": len(set(after) - set(before)),
+                "removed": len(set(before) - set(after)),
+                "rewritten": sum(1 for k in set(before) & set(after) if before[k] != after[k]),
+            })
+        touched = [c for c in changes if c["created"] or c["removed"] or c["rewritten"]]
+        if touched:
+            raise ProbeFailure(
+                "the download phase changed files outside the work directory: " + "; ".join(
+                    f"location {c['location']} ({c['kind']}): {c['created']} created, "
+                    f"{c['removed']} removed, {c['rewritten']} rewritten" for c in touched),
+                {"changes": changes},
+            )
         return "nothing outside the work directory was touched", {
-            "locations_checked": len(state["outside"]),
+            "locations_checked": len(changes), "changes": changes,
         }
 
     report.run("G9", "download", "nothing outside the work directory was written",
@@ -1477,8 +1541,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("=" * 66)
 
     report = Report()
-    environment = phase_environment(report, args.device)
-    device = environment.get("resolved_device", "cpu")
+    environment = phase_environment(report, args.device, describe_only=args.download_only)
+    # No serving device is resolved in a download-only run, and the report
+    # says so rather than naming one that was never checked.
+    device = environment.get("resolved_device", None if args.download_only else "cpu")
 
     if not args.download_only:
         sound = phase_writer(report, work)

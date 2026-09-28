@@ -316,7 +316,7 @@ class TestTheCommandLine:
         def explode(*args, **kwargs):
             raise AssertionError("a phase ran that the flags excluded")
 
-        def environment(report, device):
+        def environment(report, device, **kwargs):
             return {"resolved_device": "cpu"}
 
         monkeypatch.setattr(probe, "phase_environment", environment)
@@ -358,7 +358,7 @@ def test_the_report_names_no_path_no_host_and_no_credential(world, tmp_path, mon
     log in to it, and it may name no source host and no directory."""
     probe = _probe()
     monkeypatch.setattr(probe, "phase_environment",
-                        lambda report, device: {"resolved_device": "cpu"})
+                        lambda report, device, **kwargs: {"resolved_device": "cpu"})
     monkeypatch.setenv("https_proxy", "http://probe-user:s3cret@proxy.hospital.internal:3128")
     report_path = tmp_path / "report.json"
 
@@ -373,3 +373,129 @@ def test_the_report_names_no_path_no_host_and_no_credential(world, tmp_path, mon
         assert forbidden not in text, f"the report carries {forbidden!r}"
     g1 = next(p for p in payload["probes"] if p["id"] == "G1")
     assert g1["facts"]["network_at_probe_time"][0]["goes_through_proxy"] is True
+
+
+# ---------------------------------------------------------------------------
+# Review of cc91a89..f25d25a: the two P2s, through the real `main`
+# ---------------------------------------------------------------------------
+
+class TestDownloadOnlyIsNotAGpuVerdict:
+    """`--download-only` ran the whole environment phase, whose A4 launches
+    kernels: a GPU that is detected but cannot run this build's kernels failed
+    the run although both downloads were published."""
+
+    def test_a_broken_gpu_does_not_fail_a_download_only_run(self, world, tmp_path, monkeypatch):
+        import torch
+
+        probe = _probe()
+
+        def no_kernels(*args, **kwargs):
+            raise RuntimeError("no kernel image is available for execution on the device")
+
+        # Detected, with plausible properties — and unable to run anything.
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a: (12, 1))
+        monkeypatch.setattr(torch.cuda, "get_arch_list", lambda: ["sm_90"])
+        monkeypatch.setattr(torch.cuda, "get_device_properties",
+                            lambda *a: type("P", (), {"total_memory": 128e9})())
+        monkeypatch.setattr(torch.Tensor, "cuda", no_kernels)
+        report_path = tmp_path / "report.json"
+
+        status = probe.main(["--work-dir", str(tmp_path / "w"), "--report", str(report_path),
+                             "--download-only"])
+
+        payload = json.loads(report_path.read_text())
+        ran = {p["id"]: p["status"] for p in payload["probes"]}
+        assert status == 0, ran
+        assert ran["G1"] == ran["G2"] == ran["G9"] == "passed"
+        assert "A1" in ran and not {"A2", "A3", "A4"} & set(ran), (
+            "a download-only run executed device checks"
+        )
+        assert payload["settings"]["device"] is None
+
+
+class TestTheReportCarriesNoFileDeclaredSecrets:
+    """`data-version` is text the file chooses, and G9's failure listed the
+    names it found. Both went into the report verbatim."""
+
+    @pytest.mark.parametrize("declared", [
+        "https://probe-user:s3cret@mirror.hospital.internal/private/releases/2026-09-01/mondo.obo",
+        "sensitive-directory/private-copy/2026-09-01",
+        "C:\\\\Users\\\\clinician\\\\mondo 2026-09-01",
+    ], ids=["url-with-credentials", "relative-path", "windows-path"])
+    def test_a_version_that_is_not_a_release_label_is_withheld(self, world, tmp_path, declared):
+        probe = _probe()
+        world["plan"]["mondo.obo"] = MONDO.replace(b"releases/2026-09-01", declared.encode())
+        report_path = tmp_path / "report.json"
+
+        status = probe.main(["--work-dir", str(tmp_path / "w"), "--report", str(report_path),
+                             "--download-only"])
+
+        text = report_path.read_text()
+        assert status == 0
+        for fragment in ("s3cret", "probe-user", "hospital", "private", "sensitive", "clinician",
+                         "Users"):
+            assert fragment not in text, f"the report carries {fragment!r}"
+        g1 = next(p for p in json.loads(text)["probes"] if p["id"] == "G1")["facts"]
+        assert g1["data_version"] is None and g1["data_version_withheld"] is True
+        assert g1["data_version_date"] == "2026-09-01"
+        assert g1["source_digest"], "the exact identity must survive the withholding"
+
+    @pytest.mark.parametrize("declared", [
+        "releases/2026-09-01", "hp/releases/2026-09-01",
+        "mondo/releases/2026-09-01/mondo-simple.owl", "releases/2026-08-25/mp.obo", "2026-09-01",
+    ])
+    def test_a_release_label_is_reported_as_it_is(self, declared):
+        assert _probe()._reportable_version(declared) == {
+            "data_version": declared, "data_version_withheld": False,
+            "data_version_date": declared.split("/")[-2] if declared.endswith((".obo", ".owl"))
+            else declared.rsplit("/", 1)[-1],
+        }
+
+    def test_a_g9_failure_names_no_file(self, world, tmp_path, monkeypatch):
+        import src.ontology.download as download_module
+
+        probe = _probe()
+        stubbed = download_module.download_ontology
+
+        def leaky(url, destination, **kwargs):
+            stray = world["root"] / "sensitive-directory" / "private-copy.obo"
+            stray.parent.mkdir(exist_ok=True)
+            stray.write_bytes(HPO)
+            return stubbed(url, destination, **kwargs)
+
+        monkeypatch.setattr(download_module, "download_ontology", leaky)
+        report_path = tmp_path / "report.json"
+
+        status = probe.main(["--work-dir", str(tmp_path / "w"), "--report", str(report_path),
+                             "--download-only"])
+
+        text = report_path.read_text()
+        assert status == 1
+        assert "sensitive-directory" not in text and "private-copy" not in text
+        g9 = next(p for p in json.loads(text)["probes"] if p["id"] == "G9")
+        assert g9["status"] == "failed"
+        assert g9["facts"]["changes"] == [
+            {"location": 0, "kind": "configured root", "created": 1, "removed": 0, "rewritten": 0},
+            {"location": 1, "kind": "default cache", "created": 0, "removed": 0, "rewritten": 0},
+        ]
+
+
+def test_g9_counts_a_rewritten_file_as_rewritten(world, monkeypatch):
+    """An existing file changed in place is neither created nor removed."""
+    import src.ontology.download as download_module
+
+    stubbed = download_module.download_ontology
+
+    def rewrites(url, destination, **kwargs):
+        (world["root"] / "mondo.obo").write_bytes(MONDO + b"\n")
+        return stubbed(url, destination, **kwargs)
+
+    monkeypatch.setattr(download_module, "download_ontology", rewrites)
+
+    g9 = _run_phase(world)["G9"]
+
+    assert g9.status == "failed"
+    assert g9.facts["changes"][0] == {"location": 0, "kind": "configured root",
+                                      "created": 0, "removed": 0, "rewritten": 1}

@@ -1245,13 +1245,15 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
 
 它會從 `configs/deployment.yaml` 的來源**完整**下載 MONDO 與 HPO（數十 MB），走的是
 和建置相同的路徑，下載到工作目錄——絕不寫入你的快取或設定的 root，並在結束後檢查這
-一點。改用 `--download` 則是把這個階段加進完整的探測。不需要 GPU。
+一點。改用 `--download` 則是把這個階段加進完整的探測。不需要 GPU；`--download-only`
+也完全不在 GPU 上執行任何東西：它只描述軟體環境、不檢查裝置，所以 GPU 的問題不會讓
+下載檢查失敗。
 
 報告中，`G1`（MONDO）與 `G2`（HPO）各有一個 `outcome`：
 
 | `outcome` | 意義 |
 |---|---|
-| `published` | 已下載、通過 imports 與插槽檢查，並以驗證過的 bytes 發布。`data_version` 與 `source_digest` 說明實際收到的是什麼 |
+| `published` | 已下載、通過 imports 與插槽檢查，並以驗證過的 bytes 發布。`source_digest` 是收到檔案的精確身分；`data_version` 在符合標準格式（`releases/2026-09-01`、`hp/releases/…`）時才列出宣告的版本，其他任何宣告內容都會被保留不列（`data_version_withheld: true`），只留下其中的日期 |
 | `refused_by_policy` | 每個來源都被協定或目的地規則拒絕——屬於設定決定（`ontology.sources`／`ontology.allowed_hosts`） |
 | `transfer_failed` | 沒有任何來源成功。`attempts` 說明每個來源如何失敗：`host_unresolved`（本機無 DNS 答案、也沒有可交付的 proxy）、`truncated` 或 `transfer_failed` |
 | `wrong_ontology`／`imports_declared` | 檔案已送達，但被插槽或 imports 檢查拒絕 |
@@ -1260,7 +1262,7 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
 `network_at_probe_time` 逐一記錄每個來源：名稱能否在本機解析、請求是否經由 proxy、
 主機是否在 allow list 中——針對設定的 URL 本身，不含它導向的轉址（`http://` 的 PURL
 轉址到 `https://` 時，每一跳都會重新判斷、也各自決定是否經由 proxy）。來源以其在清單中的位置表示；報告不含任何主機、proxy 或目錄
-名稱。
+名稱。`G9` 若發現你的快取或 root 有變動，只回報是哪個位置、幾個檔案，不列出檔名。
 
 ---
 
