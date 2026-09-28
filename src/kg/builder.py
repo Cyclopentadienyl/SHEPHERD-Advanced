@@ -43,6 +43,7 @@ from src.core.types import (
 )
 from src.core.schema import KnowledgeGraphSchema, get_kg_schema
 from src.kg.graph import KnowledgeGraph
+from src.ontology.roles import term_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -143,11 +144,16 @@ class KnowledgeGraphBuilder:
         # Determine which term ID prefix belongs to this ontology.
         # OBO files can import terms from other ontologies (e.g. MONDO
         # imports HP: terms). We skip those to avoid misclassifying them.
+        # **One home for the prefixes** (`src/ontology/roles.py`), because the
+        # role check that refuses a wrong-ontology file measures against the
+        # same association. Two copies is how two tables come to disagree about
+        # what `HP:` means, and the disagreement would be invisible: this one
+        # silently skips terms, and that one silently accepts a file.
         EXPECTED_PREFIXES = {
-            NodeType.DISEASE: "MONDO:",
-            NodeType.PHENOTYPE: "HP:",
-            NodeType.PATHWAY: "GO:",
-            NodeType.MOUSE_PHENOTYPE: "MP:",
+            NodeType.DISEASE: term_prefix("mondo"),
+            NodeType.PHENOTYPE: term_prefix("hpo"),
+            NodeType.PATHWAY: term_prefix("go"),
+            NodeType.MOUSE_PHENOTYPE: term_prefix("mp"),
         }
         expected_prefix = EXPECTED_PREFIXES.get(node_type)
 

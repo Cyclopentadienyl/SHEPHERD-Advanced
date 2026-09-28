@@ -1078,7 +1078,8 @@ def phase_serving(
 # Phase F — the real-data build (opt-in; minutes, not seconds)
 # =============================================================================
 def phase_real_build(
-    report: Report, work: Path, external: Path, num_train: int, num_val: int
+    report: Report, work: Path, external: Path, num_train: int, num_val: int,
+    mondo_path: Optional[Path] = None, hpo_path: Optional[Path] = None,
 ) -> None:
     print("\nF. The real-data build")
 
@@ -1100,6 +1101,7 @@ def phase_real_build(
             external_dir=external, workspace=workspace,
             generate_samples=True, num_train=num_train, num_val=num_val,
             val_disease_fraction=0.15, sample_seed=SEED,
+            mondo_path=mondo_path, hpo_path=hpo_path,
         )
         elapsed = round(time.time() - started, 1)
 
@@ -1146,6 +1148,7 @@ def phase_real_build(
             external_dir=external, workspace=second,
             generate_samples=True, num_train=num_train, num_val=num_val,
             val_disease_fraction=0.15, sample_seed=SEED,
+            mondo_path=mondo_path, hpo_path=hpo_path,
         )
         # What a generated workspace is: the four graph artifacts, both cohorts,
         # the manifest, and the provenance record. Named rather than globbed, so
@@ -1229,6 +1232,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Adds the real-data build. Directory holding phenotype.hpoa and "
              "genes_to_phenotype.txt. Takes minutes.",
     )
+    parser.add_argument(
+        "--mondo-path", type=Path, default=None,
+        help="MONDO file for the real-data build, passed to it unchanged. "
+             "Needed when the ontology roots hold more than one candidate, "
+             "which the build refuses to choose between.",
+    )
+    parser.add_argument(
+        "--hpo-path", type=Path, default=None,
+        help="HPO file for the real-data build, with the same rule as --mondo-path.",
+    )
     parser.add_argument("--num-train", type=int, default=200000)
     parser.add_argument("--num-val", type=int, default=40000)
     parser.add_argument(
@@ -1273,7 +1286,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if checkpoint is not None:
             phase_serving(report, work, sound, checkpoint, device)
     if args.external_dir is not None:
-        phase_real_build(report, work, args.external_dir, args.num_train, args.num_val)
+        phase_real_build(report, work, args.external_dir, args.num_train, args.num_val,
+                         mondo_path=args.mondo_path, hpo_path=args.hpo_path)
 
     summary = report.summary()
     payload = {

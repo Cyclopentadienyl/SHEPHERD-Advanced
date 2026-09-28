@@ -62,9 +62,23 @@ def _sha256(path):
 
 
 @pytest.fixture
-def built(tmp_path):
+def built(tmp_path, monkeypatch):
     """One real build, and the files it consumed."""
     from scripts.build_knowledge_graph import build_knowledge_graph
+    import src.ontology.settings as settings_module
+
+    # **Not the operator's configuration.** The build reads
+    # `configs/deployment.yaml` for its ontology roots and sources; a
+    # deployment that configured `paths.ontology_roots` would add candidates
+    # beside this fixture's cache and make it refuse as ambiguous, and one
+    # with a reachable source could fetch. Pinned to "no roots, nothing to
+    # fetch".
+    monkeypatch.setattr(
+        settings_module, "load_ontology_settings",
+        lambda config_path=None: settings_module.OntologySettings(
+            sources={"mondo": (), "hpo": (), "go": (), "mp": ()}
+        ),
+    )
 
     cache, external, workspace = (tmp_path / n for n in ("cache", "external", "ws"))
     cache.mkdir()
@@ -151,3 +165,135 @@ def test_a_graph_only_build_still_produced_one(built):
 
     assert not (workspace / MANIFEST_FILENAME).exists()
     assert (workspace / PROVENANCE_FILENAME).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: the same record when the operator chose the files
+# ---------------------------------------------------------------------------
+
+RIVAL_MONDO = MONDO_OBO.replace("releases/2026-06-11", "releases/2026-09-01")
+CHOSEN_HPO = HPO_OBO.replace(
+    "format-version: 1.2\n", "format-version: 1.2\ndata-version: hp/releases/2026-03-09\n"
+)
+
+
+def test_named_files_are_what_the_record_and_the_rebuild_command_name(
+    tmp_path, monkeypatch, capsys
+):
+    """**Acceptance 2 and 30 through the entry point, with rivals on disk.**
+
+    The configured root and the cache each hold a MONDO and an HPO that are
+    not the named ones — so without the two paths this build refuses as
+    ambiguous, and with them it has to take exactly the named bytes. A
+    source is configured and every socket entry point detonates, so a build
+    that fetched instead of opening the named file cannot pass by accident.
+
+    The printed rebuild command is checked too: without the two paths it
+    rebuilt from whatever the roots held next time, which with these rivals
+    is a refusal, and after a new release lands is a different ontology."""
+    import socket
+
+    import src.ontology.download as download_module
+    import src.ontology.settings as settings_module
+    from scripts.build_knowledge_graph import build_knowledge_graph
+    from src.kg.provenance import read_provenance
+
+    root, cache, chosen, external, workspace = (
+        tmp_path / n for n in ("root", "cache", "chosen", "external", "ws")
+    )
+    for directory in (root, cache, chosen, external):
+        directory.mkdir()
+    (root / "mondo.obo").write_text(RIVAL_MONDO)
+    (root / "hp.obo").write_text(HPO_OBO)
+    (cache / "mondo.obo").write_text(MONDO_OBO)
+    (cache / "hpo.obo").write_text(HPO_OBO + "\n[Term]\nid: HP:0000003\nname: three\n")
+    named = {"mondo": chosen / "mondo-picked.obo", "hpo": chosen / "hpo-picked.obo"}
+    named["mondo"].write_text(MONDO_OBO.replace("disease two", "disease 2"))
+    named["hpo"].write_text(CHOSEN_HPO)
+    (external / "phenotype.hpoa").write_text(HPOA)
+    (external / "genes_to_phenotype.txt").write_text(G2P)
+
+    monkeypatch.setattr(
+        settings_module, "load_ontology_settings",
+        lambda config_path=None: settings_module.OntologySettings(
+            roots=(root,),
+            sources={name: ("https://purl.example.org/x.obo",)
+                     for name in ("mondo", "hpo", "go", "mp")},
+        ),
+    )
+    fetched = []
+    monkeypatch.setattr(
+        download_module, "download_ontology",
+        lambda url, *a, **k: fetched.append(url) or (_ for _ in ()).throw(
+            AssertionError(f"fetched {url}")
+        ),
+    )
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("a build given explicit paths touched the network")
+
+    for name in ("socket", "create_connection", "getaddrinfo", "gethostbyname"):
+        monkeypatch.setattr(socket, name, explode, raising=False)
+
+    build_knowledge_graph(
+        external_dir=external, workspace=workspace, ontology_cache_dir=cache,
+        mondo_path=named["mondo"], hpo_path=named["hpo"], generate_samples=False,
+    )
+
+    assert fetched == []
+    by_role = {e["role"]: e for e in read_provenance(workspace)["sources"]}
+    for role, path in named.items():
+        assert by_role[role]["digest"] == _sha256(path), f"{role} is not the named file"
+        assert by_role[role]["filename"] == path.name
+    assert by_role["mondo"]["declared_version"] == "releases/2026-06-11"
+    assert by_role["hpo"]["declared_version"] == "hp/releases/2026-03-09"
+
+    printed = capsys.readouterr().out
+    assert f"--mondo-path {named['mondo']}" in printed
+    assert f"--hpo-path {named['hpo']}" in printed
+
+
+def test_each_slot_is_hashed_when_it_loads_not_after_both(tmp_path, monkeypatch):
+    """A file replaced after its slot loaded must not have the replacement's
+    digest recorded against that slot — the graph was built from what was
+    parsed. The overwrite that used to do this (a misfiled `hpo.obo` replaced
+    by the HPO download) is now refused before it happens, so the replacement
+    is simulated: the HPO load rewrites the MONDO file."""
+    import src.ontology.settings as settings_module
+    from scripts.build_knowledge_graph import build_knowledge_graph
+    from src.kg.provenance import read_provenance
+    from src.ontology.loader import OntologyLoader
+
+    monkeypatch.setattr(
+        settings_module, "load_ontology_settings",
+        lambda config_path=None: settings_module.OntologySettings(
+            sources={"mondo": (), "hpo": (), "go": (), "mp": ()}
+        ),
+    )
+    chosen, external = tmp_path / "chosen", tmp_path / "external"
+    chosen.mkdir()
+    external.mkdir()
+    mondo, hpo = chosen / "mondo.obo", chosen / "hpo.obo"
+    mondo.write_text(MONDO_OBO)
+    hpo.write_text(HPO_OBO)
+    (external / "phenotype.hpoa").write_text(HPOA)
+    (external / "genes_to_phenotype.txt").write_text(G2P)
+    parsed = _sha256(mondo)
+
+    genuine = OntologyLoader.load
+
+    def load(self, path, expect=None):
+        if expect == "hpo":
+            mondo.write_text(MONDO_OBO + "\n[Term]\nid: MONDO:0000003\nname: late\n")
+        return genuine(self, path, expect=expect)
+
+    monkeypatch.setattr(OntologyLoader, "load", load)
+
+    build_knowledge_graph(
+        external_dir=external, workspace=tmp_path / "ws", ontology_cache_dir=tmp_path / "cache",
+        mondo_path=mondo, hpo_path=hpo, generate_samples=False,
+    )
+
+    by_role = {e["role"]: e for e in read_provenance(tmp_path / "ws")["sources"]}
+    assert _sha256(mondo) != parsed, "the simulated replacement did not happen"
+    assert by_role["mondo"]["digest"] == parsed

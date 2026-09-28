@@ -661,9 +661,114 @@ it.
 
 `latest` is a **cache default, not a freshness guarantee** — it means "use the
 cached file; download only if absent", and does not check the remote for a newer
-release on each call. To change an ontology version, replace the file in the
-cache directory; the next build's provenance records the new digest and
-`data-version`.
+release on each call.
+
+## 4.5 Choosing which ontology a build uses
+
+**Name the file.** `--mondo-path` and `--hpo-path` take a path and win over
+everything else. A path that does not exist **refuses** rather than quietly
+opening something in the cache, so a build cannot succeed with a file you did
+not ask for.
+
+With no path, the build searches `paths.ontology_roots` in
+`configs/deployment.yaml` and then `--ontology-cache-dir`:
+
+| What is found | What happens |
+|---|---|
+| Exactly one candidate | It is used, and logged with its `data-version` and digest |
+| **More than one** | **Refused**, listing each one's path, `data-version`, digest and any declared imports |
+| None, a source configured | Downloaded, checked, then placed in the cache (below) |
+| None, no source | Refused, naming the roots searched and saying nothing was attempted |
+
+A **release product** is the ontology it is a product of: `mondo-simple.obo`,
+`mondo-base.obo`, `hp-base.obo`, `hp-international.obo` and
+`hp-simple-non-classified.obo` are MONDO and HPO candidates like `mondo.obo` and
+`hp.obo`. So a root holding `mondo.obo` and `mondo-simple.obo` holds two MONDO
+candidates and refuses until one is named.
+
+Files whose names start with `.` are never candidates. A file named like one
+ontology that declares another is passed over **with a warning** naming both.
+
+**Nothing is ranked.** Not the order of the roots, not the file's modification
+time, and not "the newest `data-version`". Keeping several releases side by side
+is supported — that is what naming a path is for — but a build will not pick one
+for you.
+
+**This changes an existing behaviour.** A cache directory holding both
+`mondo.obo` and `mondo.owl` used to take the `.obo` silently; it now refuses and
+asks for `--mondo-path`. A cache ends up holding both when a download fell back
+from OBO to OWL, so this is not a rare state. The fix is to add the path
+argument; nothing has to be deleted.
+
+**`--force-download` and a path together are refused** — naming a file and
+demanding a fresh copy are two different instructions.
+
+### How a download lands
+
+- **Nothing on disk is overwritten that is not this ontology.** If the cache
+  path the download would write to (`<cache>/hpo.obo`, say) already holds a file
+  that is not an HPO candidate, the build refuses before fetching anything and
+  names the file. Move it, or name it with the path argument of the slot it
+  belongs to.
+- **Checked before it is kept.** The download lands in a hidden file of its
+  own next to its destination (`.hpo.obo.<random>.staged`) and is opened with
+  the same import and slot checks as any other input. Only a file that passes replaces
+  the cached one; one that fails is deleted and the previous file is untouched.
+  This holds for `--force-download` too, and for two builds fetching into
+  the same cache at once: each checks and publishes only its own download,
+  and each records the digest of exactly the file it read.
+- **A failed download is reported, never substituted.** If no source delivers,
+  the build stops with the manual download route; it does not fall back to
+  whatever file happens to be on disk.
+
+Every refusal in this section is printed as a message, not a traceback, and
+the build exits with status **2**.
+
+### Two refusals a build can now hit
+
+| Refusal | What it means |
+|---|---|
+| "declares N import(s) and this project requires a self-contained ontology file" | The file names other ontologies to pull in. They are **not** fetched: resolving them would add content this file's digest does not cover, and ignoring them would build a graph missing what they carry while looking complete. Supply a file that declares no imports |
+| "declares itself to be X, and it is being used as the Y input" / "carries no `HP:` terms" | The file is not the ontology that slot asked for. Left alone it builds **zero** nodes of that type, with a provenance record that looks complete |
+
+### Where the download URLs live
+
+`configs/deployment.yaml`, under `ontology.sources`. They used to be a constant
+in `src/ontology/loader.py`, so a PURL that stopped resolving meant editing
+code; now it is a configuration change. Leave the key unset to use the project's
+defaults: the OBO Foundry PURL of each of the four ontologies, with the OWL PURL
+as a second attempt. A source listed as `hp` is the HPO source.
+
+Two rules apply to **every request**, including each redirect — and every source
+here is a PURL, which *is* a redirect:
+
+- **Scheme:** `http` and `https` only.
+- **Destination:** every address the host resolves to must be globally
+  routable. A host inside your own network is refused unless it is listed under
+  `ontology.allowed_hosts` — which is how you enable an in-house mirror, on
+  purpose rather than by accident. List the **bare host name**
+  (`mirror.hospital.example`); an entry with a scheme, path, port or `@` can
+  never match and is refused when the file is read.
+- **Behind a proxy:** if this machine cannot resolve a name itself and the
+  request goes to the proxy set in `http_proxy` / `https_proxy` (and the host
+  is not in `no_proxy` — an entry may carry a port, `mirror.example:8080`, and
+  is matched exactly as Python's own `urllib` matches it), the name is left to
+  the proxy, because on a
+  proxy-only network external names have no local answer. What the proxy then
+  reaches is the proxy's policy. A name that *does* resolve here to an internal
+  address is still refused, proxy or not. Without a proxy, an unresolvable name
+  is reported as a failed download, not as a policy refusal.
+
+**Not yet delivered:** editing these URLs from the interface. The requirement is
+recorded and the backend is built for it — one configuration model, one
+download-and-verify entry point that a UI and the CLI would share — but the
+interface itself is outside this programme's scope. Until it exists, editing the
+file is the way.
+
+**Changing a source does not change what is being served.** Editing a URL,
+downloading a file and building a workspace are three separate things, and only
+a new build produces a new workspace; putting one into service is the existing
+load-and-publish step, unchanged.
 
 ---
 

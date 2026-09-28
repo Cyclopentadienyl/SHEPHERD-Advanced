@@ -151,6 +151,40 @@ paths:
   pretrained_root: models/pretrained/
   logs_root: logs/
   cache_root: .cache/
+  # Directories the ontology resolver searches when no --mondo-path /
+  # --hpo-path is given. Relative paths resolve against the repository root.
+  # Order carries NO precedence: if two roots each hold a candidate, the build
+  # refuses and asks for an explicit path rather than picking one.
+  # ontology_roots:
+  #   - data/ontologies/
+
+# =============================================================================
+# Ontology sources (docs/working/PLAN_ONTOLOGY_PHASE2.md section 3.5, 3.6)
+# =============================================================================
+# These were a constant in src/ontology/loader.py, so a PURL that stopped
+# resolving was a code change. Editing them here is enough.
+#
+# Two rules are enforced on every request, not only when this file is read,
+# because a PURL is a redirect and a check performed here has already passed
+# by the time a 302 arrives:
+#   - scheme: http and https only;
+#   - destination: every address the host resolves to must be globally
+#     routable, unless the host is listed under allowed_hosts below.
+#
+# Leave `sources` unset to use the four OBO Foundry PURLs the project ships
+# with. Listing an ontology here replaces its entry entirely.
+ontology:
+  # sources:
+  #   mondo:
+  #     - http://purl.obolibrary.org/obo/mondo.obo
+  #     - http://purl.obolibrary.org/obo/mondo.owl
+  #   hpo:
+  #     - http://purl.obolibrary.org/obo/hp.obo
+  #
+  # Hosts this server may fetch from even though they are inside the network.
+  # An in-house mirror belongs here; the entry is what makes it deliberate.
+  # allowed_hosts:
+  #   - ontology-mirror.hospital.internal
 
 # =============================================================================
 # Feature Flags
