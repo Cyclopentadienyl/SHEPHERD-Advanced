@@ -440,6 +440,56 @@ class TestTheDigestIsOfWhatWasParsed:
         assert loaded.has_term("MONDO:0000001") and not loaded.has_term("MONDO:0000002")
 
 
+class TestAFileChardetMisreadsStillLoads:
+    """Found by the deployment probe's first real download, not by review.
+
+    pronto guesses a file's encoding with chardet, and the real `hp.obo`
+    (2026-09-01) — valid UTF-8 with 22 non-ASCII bytes in 10 MB — is guessed
+    ISO-8859-1. On that path pronto wraps the handle it is given in an
+    `EncodedFile` whose collection closes it, and the loader, which hashes,
+    parses and scans imports through one handle, then read a closed file:
+    every real HPO failed with "seek of closed file". The fixtures were ASCII
+    and MONDO is guessed UTF-8, so nothing else saw it."""
+
+    @staticmethod
+    def _hpo_chardet_misreads(path: Path, *, imports=()) -> Path:
+        lines = ["format-version: 1.2", "data-version: hp/releases/2026-09-01", "ontology: hp"]
+        lines += [f"import: {item}" for item in imports]
+        lines += ["", "[Term]", "id: HP:0000001", "name: All",
+                  "", "[Term]", "id: HP:5200418", "name: Folie à deux"]
+        for i in range(2, 200):
+            lines += ["", "[Term]", f"id: HP:{i:07d}", f"name: phenotype number {i}",
+                      "is_a: HP:0000001"]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def test_the_premise_chardet_does_not_call_it_utf8(self, tmp_path):
+        """Without this the tests below could pass by no longer exercising
+        pronto's re-encoding path."""
+        chardet = pytest.importorskip("chardet")
+
+        head = self._hpo_chardet_misreads(tmp_path / "hp.obo").read_bytes()[:8192]
+
+        assert (chardet.detect(head)["encoding"] or "").lower() not in ("utf-8", "ascii")
+
+    def test_it_loads_with_its_text_and_its_digest_intact(self, tmp_path):
+        import hashlib
+
+        path = self._hpo_chardet_misreads(tmp_path / "hp.obo")
+
+        loaded = loader(tmp_path).load(path, expect="hpo")
+
+        assert loaded.get_term_name("HP:5200418") == "Folie à deux"
+        assert loaded.source_digest == hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_the_import_scan_still_runs_after_pronto(self, tmp_path):
+        """The scan is what read the closed handle; it must still refuse."""
+        path = self._hpo_chardet_misreads(tmp_path / "hp.obo", imports=("http://x.invalid/a.obo",))
+
+        with pytest.raises(OntologyImportError, match="x.invalid"):
+            loader(tmp_path).load(path, expect="hpo")
+
+
 class TestAReleaseProductIsItsOntology:
 
     @pytest.mark.parametrize("declared", ["mondo/mondo-base", "mondo-simple"])

@@ -717,6 +717,32 @@ Each is a confirmed finding of the whole-branch review (§3.2, §3.3, §3.4,
 | 46 | digest, parse and import scan are one reading of one file | `test_ontology_imports_and_role.py::TestTheDigestIsOfWhatWasParsed` |
 | 47 | the proxy exemption holds only where the opener really goes to the proxy | `test_ontology_download_policy.py::TestTheRequestGoesWhereTheRuleLooked::test_the_rule_and_the_opener_agree` (18), `…::test_a_bypass_written_with_a_port_is_honoured` |
 | 48 | a targetless import is refused wherever it is written | `test_ontology_imports_and_role.py::…::test_a_targetless_import_is_refused_wherever_it_is_written` (6), `…::test_an_obo_import_with_no_value_is_listed_as_one` |
+| 49 | a real file whose encoding chardet misreads still loads, text and digest intact | `test_ontology_imports_and_role.py::TestAFileChardetMisreadsStillLoads` (3) |
+
+### 4.3 What the first real download found
+
+**Every condition above held and the merged code still could not load a real
+HPO.** The deployment probe's download phase (added after this plan's PR)
+fetched the 2026-09-01 releases through the production path: MONDO was
+published; `hp.obo` failed to load with `seek of closed file`.
+
+The cause was row 46's own fix. pronto guesses an encoding with chardet, and the
+real `hp.obo` — valid UTF-8, 22 non-ASCII bytes in 10.9 MB, the first at byte
+946 — is guessed ISO-8859-1. On that path pronto wraps the handle it is given in
+an `EncodedFile` whose collection **closes it**, and `load`, which hashes,
+parses and scans imports through one handle, then scanned a closed file. The
+fixtures were ASCII and MONDO is guessed UTF-8, so no test, no mutant and no
+review saw it. pronto now gets its own descriptor for the same open file
+(`os.dup`): the same bytes, the same refusal to be replaced on Windows, and
+pronto closing it closes only the duplicate. Measured on the real file after the
+fix: 19,894 terms, `Folie à deux` intact, digest equal to the file's.
+
+**Measured, so not assumed:** pronto's guessed decoding and a forced UTF-8
+decoding give identical term names and synonyms for this release (zero
+differences), so the misguess did not garble text; it only closed the handle.
+
+This is the case the plan's §6 names in general — a named test is not a proof —
+arriving in particular. It is why the download phase exists.
 
 ---
 
