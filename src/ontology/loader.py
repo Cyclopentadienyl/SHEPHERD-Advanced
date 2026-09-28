@@ -19,6 +19,7 @@ pronto 是專為生物醫學本體設計的 Python 庫，支援:
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import os
 import tempfile
@@ -191,8 +192,23 @@ class OntologyLoader:
             for block in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(block)
             handle.seek(0)
-            # pronto 自動偵測格式 (OBO, OWL, JSON)
-            pronto_ont = pronto.Ontology(handle, import_depth=self.IMPORT_DEPTH)
+            # **pronto gets a descriptor of its own for the same open file.**
+            # When chardet does not call a file UTF-8 — the real 2026-09-01
+            # `hp.obo` has 22 non-ASCII bytes in 10.9 MB and is guessed
+            # ISO-8859-1 — pronto wraps the handle in an `EncodedFile` whose
+            # collection closes it, and the import scan below then read a
+            # closed file: that release failed to load with "seek of closed
+            # file", while ASCII fixtures and MONDO passed. A duplicate
+            # descriptor is the same open file (so the same bytes, and on
+            # Windows the same refusal to be replaced), and pronto closing it
+            # closes only the duplicate.
+            # It carries the path as its name because pronto reads `.name` as
+            # the file's location, and a descriptor's own name is an integer.
+            duplicate = io.FileIO(os.dup(handle.fileno()), "rb")
+            duplicate.name = str(path)
+            with io.BufferedReader(duplicate) as for_pronto:
+                # pronto 自動偵測格式 (OBO, OWL, JSON)
+                pronto_ont = pronto.Ontology(for_pronto, import_depth=self.IMPORT_DEPTH)
             handle.seek(0)
             listed = _listed_imports(handle)
 
