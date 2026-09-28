@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AmbiguousOntologyError",
+    "IMPORT_WITHOUT_TARGET",
     "NoOntologyCandidateError",
     "OntologyCandidate",
     "OntologyResolutionError",
@@ -235,6 +236,14 @@ _RDF_ABOUT = f"{{{_RDF_NS}}}about"
 _RDF_RESOURCE = f"{{{_RDF_NS}}}resource"
 
 
+#: What an import declaration with no readable target is recorded as.
+#: `<owl:imports/>`, `rdf:resource=""`, a blank-node `rdf:nodeID`, or an OBO
+#: `import:` with no value all **declare** a dependency; not being able to say
+#: which one is no reason to treat the file as self-contained. pronto records
+#: the same case as `None`, and the loader reports it under this label too.
+IMPORT_WITHOUT_TARGET = "(an import with no target)"
+
+
 class _OwlIdentity:
     """An ElementTree parser *target* that keeps counts and nothing else.
 
@@ -263,23 +272,30 @@ class _OwlIdentity:
         self.declared: Optional[str] = None
         self._depth = 0
         self._inside_imports = 0
+        self._import_has_target = False
 
     def start(self, tag: str, attrib: Dict[str, str]) -> None:
         self._depth += 1
         if self._inside_imports:
-            target = attrib.get(_RDF_ABOUT) or attrib.get(_RDF_RESOURCE)
+            target = (attrib.get(_RDF_ABOUT) or attrib.get(_RDF_RESOURCE) or "").strip()
             if target:
                 self.imports.append(target)
+                self._import_has_target = True
             return
         if tag == _OWL_CLASS_TAG:
             if attrib.get(_RDF_ABOUT):
                 self.terms += 1
         elif tag == _OWL_IMPORTS_TAG:
-            target = attrib.get(_RDF_RESOURCE)
+            # **A declaration is recorded whether or not it names a target.**
+            # The first version recorded only a readable URL, so `<owl:imports/>`
+            # inside an `rdf:Description` — which pronto does not see either —
+            # left no trace anywhere and the file loaded as self-contained.
+            target = (attrib.get(_RDF_RESOURCE) or "").strip()
             if target:
                 self.imports.append(target)
             else:
                 self._inside_imports = self._depth
+                self._import_has_target = False
         elif tag == _OWL_VERSION_TAG and self.data_version is None:
             self.data_version = attrib.get(_RDF_RESOURCE) or None
         elif tag == _OWL_ONTOLOGY and self.declared is None:
@@ -287,6 +303,8 @@ class _OwlIdentity:
 
     def end(self, tag: str) -> None:
         if self._inside_imports and self._depth == self._inside_imports:
+            if not self._import_has_target:
+                self.imports.append(IMPORT_WITHOUT_TARGET)
             self._inside_imports = 0
         self._depth -= 1
 
@@ -313,7 +331,10 @@ def _sniff_is_xml(path: Path) -> bool:
     space is XML; everything else is read as OBO.
     """
     with open(path, "rb") as handle:
-        head = handle.read(_SNIFF_BYTES)
+        return _head_is_xml(handle.read(_SNIFF_BYTES))
+
+
+def _head_is_xml(head: bytes) -> bool:
     return head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<")
 
 
@@ -423,8 +444,8 @@ def scan_identity(path: Any) -> Dict[str, Any]:
                         data_version = value or None
                     elif key == "ontology" and declared is None:
                         declared = value or None
-                    elif key == "import" and value:
-                        imports.append(value)
+                    elif key == "import":
+                        imports.append(value or IMPORT_WITHOUT_TARGET)
             else:
                 while True:
                     block = handle.read(_XML_BLOCK)
@@ -652,7 +673,7 @@ def _how_to_name(wanted: str) -> str:
     return "Name one with explicit_path= when calling select_ontology_file."
 
 
-def declared_imports(path: Any) -> Tuple[str, ...]:
+def declared_imports(source: Any) -> Tuple[str, ...]:
     """Every import a file declares, read the way the listing reads it.
 
     **One rule for the loader and the listing.** pronto records only
@@ -662,24 +683,46 @@ def declared_imports(path: Any) -> Tuple[str, ...]:
     "will be refused" and then load with its import silently dropped. The
     loader refuses on the union of the two.
 
+    **A path or an open binary handle.** The loader passes the handle it
+    hashed and parsed, so the imports it refuses on are read from the same
+    bytes — not from whatever the path names by the time a second open
+    happens. A handle is read from its current position.
+
     For OBO only the header is read, since that is the only place an `import:`
     tag may appear — so this costs a few kilobytes on a large MONDO, not a pass
     over it.
     """
-    path = Path(path)
-    if _sniff_is_xml(path):
-        return scan_identity(path)["declared_imports"]
+    if not hasattr(source, "read"):
+        with open(Path(source), "rb") as handle:
+            return declared_imports(handle)
+    handle = source
+    start = handle.tell()
+    head = handle.read(_SNIFF_BYTES)
+    handle.seek(start)
+    if _head_is_xml(head):
+        owl = _OwlIdentity()
+        xml = ElementTree.XMLParser(target=owl)
+        try:
+            while True:
+                block = handle.read(_XML_BLOCK)
+                if not block:
+                    break
+                xml.feed(block)
+            xml.close()
+        except ElementTree.ParseError as exc:
+            raise OntologyResolutionError(
+                f"{getattr(handle, 'name', 'the file')} is not well-formed XML ({exc})"
+            ) from exc
+        return tuple(owl.imports)
     found: List[str] = []
-    with open(path, "rb") as handle:
-        first = True
-        for raw in handle:
-            line = raw.lstrip(b"\xef\xbb\xbf") if first else raw
-            first = False
-            if _OBO_STANZA.match(line):
-                break
-            tag = _OBO_TAG.match(line)
-            if tag and tag.group(1).decode("utf-8", "replace").lower() == "import":
-                value = _clean_obo_value(tag.group(2).decode("utf-8", "replace"))
-                if value:
-                    found.append(value)
+    first = True
+    for raw in handle:
+        line = raw.lstrip(b"\xef\xbb\xbf") if first else raw
+        first = False
+        if _OBO_STANZA.match(line):
+            break
+        tag = _OBO_TAG.match(line)
+        if tag and tag.group(1).decode("utf-8", "replace").lower() == "import":
+            value = _clean_obo_value(tag.group(2).decode("utf-8", "replace"))
+            found.append(value or IMPORT_WITHOUT_TARGET)
     return tuple(found)

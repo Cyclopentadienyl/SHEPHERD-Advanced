@@ -269,7 +269,17 @@ plan's §4.2 rules out and §2.1 measured.
 > loads with the import dropped — the §2.1 defect by another route. So the
 > refusal is on the **union** of what pronto records and what the §3.2 scanner
 > finds, and an import element with no target is refused as one. The listing and
-> the loader now agree on what a file imports. The wider option — support imports and
+> the loader now agree on what a file imports.
+>
+> **A declaration with no readable target is still a declaration**, found in the
+> review of that fix. pronto records `None` only for one directly under the first
+> `owl:Ontology`, and the scanner recorded an import only when it could read a
+> URL, so `<owl:imports/>`, `rdf:resource=""` or a blank-node `rdf:nodeID` inside
+> an `rdf:Description` left no trace in either and the file loaded as
+> self-contained. The scanner now records every declaration, as
+> `(an import with no target)` when it names nothing, wherever it is written;
+> an OBO `import:` with no value is listed the same way (fastobo refuses to
+> parse it, so it never loads). The wider option — support imports and
 record each resolved dependency beside the root — stays available and is not
 proposed now.
 
@@ -425,6 +435,16 @@ than as what it was.
 environment settings, with `no_proxy` honoured: a host the proxy is bypassed for
 gets no exemption, because that request would be resolved and connected here.
 
+**"Goes to the proxy" is decided the way `urllib` decides it**, found in the
+review of the amendment. `ProxyHandler` asks `proxy_bypass(req.host)` — the
+request's host **with its port**, against `no_proxy` from the environment or the
+operating system's settings — whatever proxy table it was built with. The first
+implementation judged the bare host name, and for an explicit mapping read a
+`"no"` entry the opener never consults, so with `no_proxy=host:8080` the rule
+said "proxied" and the request to `http://host:8080/` went direct. The rule now
+calls the same function on the same `Request`, and a test checks its answer
+against the route the opener `download_ontology` builds actually takes.
+
 **What this gives up, stated as a residual beside check-then-connect:** for a
 proxied name with no local answer, the application does not judge the
 destination; the proxy does. If the proxy resolves that name to an address inside
@@ -516,8 +536,9 @@ they make the rules hold on the download path.
 
 | Before | After |
 |---|---|
-| A download wrote straight to `<cache_dir>/<name>.<ext>`. **An `hpo.obo` that held MONDO was overwritten** by the HPO download, after the MONDO slot had already loaded it — and provenance then hashed the path, recording the new HPO bytes as the MONDO input | **The download is refused before anything is fetched** when the target path holds a file that is not a candidate for that ontology, naming it. The file is left alone. Provenance hashes each slot's file **immediately after that slot loads**, not after both have, so a later replacement cannot be recorded against an earlier slot. (A file changed between its own parse and its hash is not covered; nothing in the build writes there in between.) |
-| `force_download` replaced the cached file, then parsed it; a fresh copy failing the role or imports check left the cache holding a file that would be refused next time | **Verify, then publish.** The fetch lands in a hidden `.<name>.<ext>.staged` beside the target, is loaded with the slot's role and imports checks, and only then replaces the target (`os.replace`). A failure unlinks the staged file and the old one is untouched |
+| A download wrote straight to `<cache_dir>/<name>.<ext>`. **An `hpo.obo` that held MONDO was overwritten** by the HPO download, after the MONDO slot had already loaded it — and provenance then hashed the path, recording the new HPO bytes as the MONDO input | **The download is refused before anything is fetched** when the target path holds a file that is not a candidate for that ontology, naming it. The file is left alone. **The digest is of the bytes parsed:** `load` hashes, parses and scans imports through one open handle, and the `Ontology` carries that digest (`source_digest`) through publishing to provenance, which no longer re-reads the path. (The first version of this fix hashed the path right after each slot loaded and said nothing writes there in between; under two builds sharing a cache, one did.) An in-place write into the same file by another program while it is read is not covered; the loader itself only ever replaces files |
+| `force_download` replaced the cached file, then parsed it; a fresh copy failing the role or imports check left the cache holding a file that would be refused next time | **Verify, then publish.** The fetch lands in a hidden staging file beside the target, is loaded with the slot's role and imports checks, and only then replaces the target (`os.replace`). A failure unlinks the staged file and the old one is untouched |
+| The staging name was fixed per ontology, so two fetches into one cache at once shared it: one verified MONDO, the other's HPO landed under that name, and the first published it — found in the review of the row above | **Each fetch stages under a name of its own** (`mkstemp`, `.<name>.<ext>.<random>.staged`) and passes the final path explicitly; a failed attempt removes only its own file |
 | A failed transfer fell back to whatever file sat at the cache path, with a log warning. A download is only attempted when selection found no candidate, so that file was one the resolver had **already passed over** | **No fallback.** A failed transfer is reported with the manual route, as a policy refusal already was. With nothing configured to fetch, the refusal names the roots searched and says nothing was attempted |
 | The target's suffix was decided by `url.endswith(".owl")`, so an OWL source with a query string was written to `<name>.obo` | From the URL's path |
 | A chunked response was judged against a `Content-Length` it does not carry; an interrupt mid-transfer left a `.part`; the published file was `0600` | `Transfer-Encoding` overrides `Content-Length` (RFC 9112 §6.1); any exit unlinks the partial file; the file is published with the process umask's mode |
@@ -692,6 +713,10 @@ Each is a confirmed finding of the whole-branch review (§3.2, §3.3, §3.4,
 | 42 | the OWL fallback reaches the one downloader, behaviourally | `…::TestTheOwlFallbackGoesThroughTheSameGate` |
 | 43 | `sources.hp`, malformed URLs and unmatchable allow-list entries in settings | `…::TestTheSettingsFindings` |
 | 44 | each slot is hashed when it loads, not after both | `tests/integration/test_build_provenance.py::test_each_slot_is_hashed_when_it_loads_not_after_both` |
+| 45 | two fetches at once: neither publishes the other's bytes, each carries its own digest | `test_ontology_selection_cli.py::TestTwoFetchesAtOnce` (2) |
+| 46 | digest, parse and import scan are one reading of one file | `test_ontology_imports_and_role.py::TestTheDigestIsOfWhatWasParsed` |
+| 47 | the proxy exemption holds only where the opener really goes to the proxy | `test_ontology_download_policy.py::TestTheRequestGoesWhereTheRuleLooked::test_the_rule_and_the_opener_agree` (18), `…::test_a_bypass_written_with_a_port_is_honoured` |
+| 48 | a targetless import is refused wherever it is written | `test_ontology_imports_and_role.py::…::test_a_targetless_import_is_refused_wherever_it_is_written` (6), `…::test_an_obo_import_with_no_value_is_listed_as_one` |
 
 ---
 
@@ -740,9 +765,12 @@ whatever a reviewer decides about it.
   proof.** The tests were additionally run against deliberately broken copies of
   the code (mutation testing) to check that they fail when the rule they name is
   removed; that shows they detect those particular breakages, not that no other
-  breakage exists. The final sweep was 63 mutants, one per contract in §4.1 and
-  §4.2; five survived its first run, each for want of a test, and those tests
-  were added. The harness is a working script and is not committed.
+  breakage exists. The last sweep was 73 mutants, one per contract in §4.1 and
+  §4.2 including each of the three defects rows 45–48 were written against;
+  every one was killed by the test of the rule it breaks. (In the sweep before
+  it, five of 63 survived, each for want of a test, and those tests were
+  added.) The harness is a working script and is not committed, so this is a
+  report of what was run, not something a reviewer can re-run from the tree.
 - **The UI slot of §3.6.1 is owed and not delivered.**
 - Nothing here touches `DISEASE_SCORER_POLICY.md`, the shortest-path artifacts,
   or any checkpoint.

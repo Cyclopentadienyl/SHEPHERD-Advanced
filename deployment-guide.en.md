@@ -710,11 +710,13 @@ demanding a fresh copy are two different instructions.
   that is not an HPO candidate, the build refuses before fetching anything and
   names the file. Move it, or name it with the path argument of the slot it
   belongs to.
-- **Checked before it is kept.** The download lands in a hidden file next to
-  its destination (`.hpo.obo.staged`) and is opened with the same import and
-  slot checks as any other input. Only a file that passes replaces
+- **Checked before it is kept.** The download lands in a hidden file of its
+  own next to its destination (`.hpo.obo.<random>.staged`) and is opened with
+  the same import and slot checks as any other input. Only a file that passes replaces
   the cached one; one that fails is deleted and the previous file is untouched.
-  This holds for `--force-download` too.
+  This holds for `--force-download` too, and for two builds fetching into
+  the same cache at once: each checks and publishes only its own download,
+  and each records the digest of exactly the file it read.
 - **A failed download is reported, never substituted.** If no source delivers,
   the build stops with the manual download route; it does not fall back to
   whatever file happens to be on disk.
@@ -749,7 +751,9 @@ here is a PURL, which *is* a redirect:
   never match and is refused when the file is read.
 - **Behind a proxy:** if this machine cannot resolve a name itself and the
   request goes to the proxy set in `http_proxy` / `https_proxy` (and the host
-  is not in `no_proxy`), the name is left to the proxy, because on a
+  is not in `no_proxy` — an entry may carry a port, `mirror.example:8080`, and
+  is matched exactly as Python's own `urllib` matches it), the name is left to
+  the proxy, because on a
   proxy-only network external names have no local answer. What the proxy then
   reaches is the proxy's policy. A name that *does* resolve here to an internal
   address is still refused, proxy or not. Without a proxy, an unresolvable name

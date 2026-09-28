@@ -46,14 +46,17 @@ class Ontology:
         backend: Union['pronto.Ontology', 'OBOHeader'],
         terms: Optional[Dict[str, 'OBOTerm']] = None,
         source_path: Optional[Path] = None,
+        source_digest: Optional[str] = None,
     ):
         """
         Args:
             backend: pronto.Ontology 實例或 OBOHeader (legacy 模式)
             terms: legacy 模式的術語字典
             source_path: 來源檔案路徑
+            source_digest: SHA-256 of the bytes that were parsed, when known
         """
         self._source_path = source_path
+        self._source_digest = source_digest
         self._source: Optional[DataSource] = None
         self._ontology_name: Optional[str] = None
 
@@ -149,6 +152,17 @@ class Ontology:
     def source_path(self) -> Optional[Path]:
         """The file this ontology was parsed from, when one is known."""
         return self._source_path
+
+    @property
+    def source_digest(self) -> Optional[str]:
+        """SHA-256 of the bytes this ontology was parsed from, when known.
+
+        Taken by `OntologyLoader.load` from the same open file it parsed, so it
+        describes the bytes behind these terms — not whatever `source_path`
+        names by the time someone hashes it. None when the ontology was not
+        produced by that loader.
+        """
+        return self._source_digest
 
     @property
     def num_terms(self) -> int:

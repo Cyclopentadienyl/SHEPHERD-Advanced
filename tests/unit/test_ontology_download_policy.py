@@ -589,6 +589,54 @@ class TestTheRedirectGuardIsInThePath:
 
 
 class TestTheRequestGoesWhereTheRuleLooked:
+    """The exemption for "no local answer" rests on one claim: the request goes
+    to the proxy. So the rule's answer and the opener's route must agree, and
+    that is checked against the opener `download_ontology` really builds —
+    `ProxyHandler` included — rather than against a restatement of it."""
+
+    @pytest.mark.parametrize("variables,url", [
+        ({"http_proxy": "http://proxy.example:3128", "no_proxy": "unresolved.example:8080"},
+         "http://unresolved.example:8080/m.obo"),
+        ({"http_proxy": "http://proxy.example:3128", "no_proxy": "unresolved.example:8080"},
+         "http://unresolved.example/m.obo"),
+        ({"http_proxy": "http://proxy.example:3128", "no_proxy": "unresolved.example"},
+         "http://unresolved.example:8080/m.obo"),
+        ({"https_proxy": "http://proxy.example:3128", "no_proxy": ".example"},
+         "https://purl.example/m.obo"),
+        ({"https_proxy": "http://proxy.example:3128", "no_proxy": "*"},
+         "https://purl.example/m.obo"),
+        ({"https_proxy": "http://proxy.example:3128", "no_proxy": "PURL.EXAMPLE"},
+         "https://purl.example/m.obo"),
+        ({"https_proxy": "http://proxy.example:3128", "no_proxy": "other.test"},
+         "https://purl.example/m.obo"),
+        ({"https_proxy": "http://proxy.example:3128"}, "https://purl.example/m.obo"),
+        ({"http_proxy": "http://proxy.example:3128"}, "https://purl.example/m.obo"),
+    ], ids=["port-bypassed", "port-entry-other-port", "host-entry-any-port", "suffix",
+            "wildcard", "case", "unrelated", "no-bypass", "other-scheme-only"])
+    @pytest.mark.parametrize("mapping", [False, True], ids=["environment", "mapping"])
+    def test_the_rule_and_the_opener_agree(self, tmp_path, monkeypatch, variables, url, mapping):
+        _proxy_environment(monkeypatch, **variables)
+        proxies = ({key.split("_")[0]: value for key, value in variables.items()
+                    if key != "no_proxy"} if mapping else None)
+        # A public answer, so the check passes either way and the request is
+        # made: what is compared is only where it goes.
+        policy = DestinationPolicy(resolver=lambda host: [PUBLIC], proxies=proxies)
+        body = b"format-version: 1.2\n"
+        hosts = []
+
+        class Recording(_CannedTransport):
+            def _serve(self, req):
+                hosts.append(req.host)
+                return _http(b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode()
+                             + b"\r\n\r\n" + body, req.full_url)
+
+            http_open = _serve
+            https_open = _serve
+
+        download_ontology(url, tmp_path / "m.obo", policy=policy,
+                          opener_factory=_opener_with(Recording({})))
+
+        assert (hosts == ["proxy.example:3128"]) == policy.routes_through_proxy(url), hosts
 
     def test_the_opener_uses_the_proxies_the_rule_decided_on(self, tmp_path, monkeypatch):
         """The check deferred an unresolvable name to *this* proxy. A request
@@ -624,11 +672,30 @@ class TestTheRequestGoesWhereTheRuleLooked:
         assert hosts == ["proxy.example:3128"]
 
 
+_PROXY_VARIABLES = ("http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy")
+
+
+def _proxy_environment(monkeypatch, **values):
+    """Exactly these proxy settings, and none of the machine's own.
+
+    This sandbox sets `HTTPS_PROXY` itself; a test of routing that inherited it
+    would be a test of the sandbox."""
+    for name in _PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.upper(), raising=False)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+
 class TestNoLocalAnswerIsNotAPolicyVerdict:
     """The review's second P2. On a network whose only egress is a proxy,
     external names have no local answer; the lookup was typed as a refusal, so
     every source was refused and the operator told it was "a configuration
     decision". `urlretrieve` fetched through the same proxy without looking."""
+
+    @pytest.fixture(autouse=True)
+    def _no_inherited_proxies(self, monkeypatch):
+        _proxy_environment(monkeypatch)
 
     @staticmethod
     def _unresolvable(host):
@@ -650,16 +717,36 @@ class TestNoLocalAnswerIsNotAPolicyVerdict:
 
         assert not isinstance(caught.value, OntologyDestinationRefused)
 
-    def test_a_host_the_proxy_is_bypassed_for_gets_no_exemption(self):
+    def test_a_host_the_proxy_is_bypassed_for_gets_no_exemption(self, monkeypatch):
+        """Bypassed by `no_proxy`, which is where `ProxyHandler` reads it. (This
+        test used to put `"no"` in the mapping — a list the opener never
+        consults, so it asserted agreement with something that was not there.)"""
         from src.ontology.download import OntologyHostUnresolved
 
+        _proxy_environment(monkeypatch, no_proxy="mirror.internal")
         with pytest.raises(OntologyHostUnresolved):
             check_destination(
                 "https://mirror.internal/mondo.obo",
                 DestinationPolicy(resolver=self._unresolvable,
-                                  proxies={"https": "http://proxy:3128",
-                                           "no": "mirror.internal"}),
+                                  proxies={"https": "http://proxy:3128"}),
             )
+
+    def test_a_bypass_written_with_a_port_is_honoured(self, tmp_path, monkeypatch):
+        """The reviewer's reproduction, through the real opener. `no_proxy`
+        naming `host:8080` sends `http://host:8080/` direct; the check used to
+        judge the bare host name, call it proxied, and exempt it."""
+        from src.ontology.download import OntologyHostUnresolved
+
+        _proxy_environment(monkeypatch, http_proxy="http://proxy.example:3128",
+                           no_proxy="unresolved.example:8080")
+        transport = _CannedTransport({})
+
+        with pytest.raises(OntologyHostUnresolved):
+            download_ontology("http://unresolved.example:8080/mondo.obo", tmp_path / "m.obo",
+                              policy=DestinationPolicy(resolver=self._unresolvable),
+                              opener_factory=_opener_with(transport))
+
+        assert transport.opened == [], "a request left although the rule refused it"
 
     def test_a_name_that_resolves_inside_is_refused_even_through_a_proxy(self):
         """The exemption is for no local answer, not for having a proxy."""
@@ -810,11 +897,17 @@ class TestTheOwlFallbackGoesThroughTheSameGate:
 
         monkeypatch.setattr(download_module, "download_ontology", recorder)
 
-        staged = OntologyLoader(cache_dir=tmp_path / "cache")._download_ontology("mondo", False)
+        cache = tmp_path / "cache"
+        staged, final = OntologyLoader(cache_dir=cache)._download_ontology("mondo", False)
 
-        assert seen == [("https://purl.example/mondo.obo", ".mondo.obo.staged"),
-                        ("https://purl.example/mondo.owl", ".mondo.owl.staged")]
-        assert staged.name == ".mondo.owl.staged"
+        assert [url for url, _ in seen] == ["https://purl.example/mondo.obo",
+                                            "https://purl.example/mondo.owl"]
+        for (_, name), prefix in zip(seen, (".mondo.obo.", ".mondo.owl.")):
+            assert name.startswith(prefix) and name.endswith(".staged"), name
+        assert staged.name == seen[1][1] and final == cache / "mondo.owl"
+        assert [p.name for p in cache.iterdir()] == [staged.name], (
+            "the failed OBO attempt left its staging file behind"
+        )
 
 
 class TestTheSettingsFindings:

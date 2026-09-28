@@ -128,7 +128,10 @@ class DestinationPolicy:
     #: The proxies the request will go through, `urllib`'s own mapping of
     #: scheme to proxy URL. None means "whatever the environment configures",
     #: which is what the opener uses too; a test passes a mapping so both the
-    #: rule and the opener see the same one.
+    #: rule and the opener see the same one. **Which hosts bypass the proxy is
+    #: not in this mapping**: `ProxyHandler` reads that from the environment's
+    #: `no_proxy` (or the operating system's settings) whatever mapping it was
+    #: given, so a `"no"` entry here would be a list the opener never reads.
     proxies: Optional[Dict[str, str]] = field(default=None, compare=False)
 
     def permits_host(self, host: str) -> bool:
@@ -145,14 +148,25 @@ class DestinationPolicy:
             ) from exc
         return [info[4][0] for info in infos]
 
-    def routes_through_proxy(self, scheme: str, host: str) -> bool:
-        """Will a request for this host go to a configured proxy?"""
+    def routes_through_proxy(self, url: str) -> bool:
+        """Will `urllib` hand this request to a proxy? **Decided as it decides.**
+
+        `ProxyHandler.proxy_open` asks `proxy_bypass(req.host)` — the request's
+        host **with its port**, against the environment's (or the operating
+        system's) bypass list — and it asks that whatever proxy table it was
+        built with. This used to decide on the bare host name, and on the
+        mapping's own `"no"` entry when one was passed: with
+        `no_proxy=unresolved.example:8080`, `http://unresolved.example:8080/`
+        was exempted from the address check as "proxied" and then connected
+        straight to the host. The exemption holds only if the request really
+        goes to the proxy, so it is decided by the same function, on the same
+        `Request` the opener will see.
+        """
+        request = urllib.request.Request(url)
         proxies = self.proxies if self.proxies is not None else urllib.request.getproxies()
-        if scheme not in proxies:
+        if request.type not in {str(key).lower() for key in proxies}:
             return False
-        if self.proxies is not None:
-            return not urllib.request.proxy_bypass_environment(host, proxies)
-        return not urllib.request.proxy_bypass(host)
+        return not (request.host and urllib.request.proxy_bypass(request.host))
 
 
 def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source") -> None:
@@ -207,7 +221,7 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
     try:
         addresses = policy.resolve(host)
     except OntologyHostUnresolved:
-        if policy.routes_through_proxy(scheme, host):
+        if policy.routes_through_proxy(url):
             # **The proxy resolves it, not this host.** On a network whose only
             # egress is a proxy, external names have no local answer at all, so
             # there is no address here to judge and nothing on this host's own

@@ -247,7 +247,7 @@ class TestForceDownload:
         class Loader(OntologyLoader):
             def _download_ontology(self, name, force, roots=()):
                 calls.append((name, force))
-                return fetched
+                return fetched, fetched
 
         loaded = select(cache_dir=cache, force_download=True,
                         loader=Loader(cache_dir=cache))
@@ -666,8 +666,105 @@ class TestVerifyThenPublish:
 
         loaded = select(cache_dir=cache, loader=OntologyLoader(cache_dir=cache))
 
-        assert calls[0][1].name == ".mondo.owl.staged"
+        assert calls[0][1].name.startswith(".mondo.owl.") and calls[0][1].name.endswith(".staged")
         assert loaded.source_path == cache / "mondo.owl"
+
+
+class TestTwoFetchesAtOnce:
+    """The reviewer's P2 on the staging name, with the interleaving pinned.
+
+    Every fetch of one ontology into one cache used the same staging file. A
+    verified MONDO, another fetch's HPO landed under that name, and the first
+    renamed it into `mondo.obo` — publishing bytes nobody had checked, and
+    recording (by hashing the path afterwards) a digest that did not describe
+    what it had parsed. The synchronisation point is fixed: B runs to
+    completion after A has verified and before A publishes."""
+
+    @pytest.fixture
+    def fetches(self, tmp_path, monkeypatch, select):
+        from src.ontology import download as download_module
+
+        path, settings_module = _config(
+            tmp_path,
+            "ontology:\n  sources:\n    mondo:\n      - https://mirror.test/mondo.obo\n"
+            "  allowed_hosts:\n    - mirror.test\n",
+        )
+        monkeypatch.setattr(settings_module, "load_ontology_settings",
+                            lambda config_path=None: _genuine_settings(path))
+        bodies: list = []
+        staged: list = []
+
+        def deliver(url, target, **kwargs):
+            staged.append(Path(target))
+            Path(target).write_bytes(bodies.pop(0))
+            return Path(target)
+
+        monkeypatch.setattr(download_module, "download_ontology", deliver)
+        cache = tmp_path / "cache"
+        cache.mkdir()
+
+        def between_verify_and_publish(run_b):
+            """Run `run_b` right after A's staged file has passed `load`."""
+            genuine = OntologyLoader.load
+            state = {"fired": False}
+
+            def load(self, path, expect=None):
+                result = genuine(self, path, expect=expect)
+                if not state["fired"] and Path(path).name.endswith(".staged"):
+                    state["fired"] = True
+                    run_b()
+                return result
+
+            monkeypatch.setattr(OntologyLoader, "load", load)
+
+        return cache, bodies, staged, between_verify_and_publish
+
+    def test_a_rejected_fetch_cannot_become_the_published_file(self, fetches):
+        import hashlib
+
+        cache, bodies, staged, between = fetches
+        bodies[:] = [MONDO_NEW, HPO_BODY]  # A gets MONDO, B gets HPO
+        outcome = {}
+
+        def b_fetches_hpo_bytes_into_the_mondo_slot():
+            with pytest.raises(OntologyRoleError):
+                OntologyLoader(cache_dir=cache)._fetch_ontology("mondo", True, roots=[cache])
+            outcome["b_refused"] = True
+
+        between(b_fetches_hpo_bytes_into_the_mondo_slot)
+        a = OntologyLoader(cache_dir=cache)._fetch_ontology("mondo", True, roots=[cache])
+
+        assert outcome == {"b_refused": True}
+        assert len({p.name for p in staged}) == 2, "the two fetches shared a staging file"
+        assert (cache / "mondo.obo").read_bytes() == MONDO_NEW, "unverified bytes were published"
+        assert a.declared_version == "releases/2026-09-01"
+        assert a.source_digest == hashlib.sha256(MONDO_NEW).hexdigest()
+        assert sorted(p.name for p in cache.iterdir()) == ["mondo.obo"], (
+            "a staging file was left behind, or B removed A's"
+        )
+
+    def test_each_fetch_carries_the_digest_of_what_it_verified(self, fetches):
+        """Both succeed, with different releases, and B publishes in between.
+        The cache ends up holding whichever was published last — both were
+        verified — and each build's ontology names the bytes *it* parsed,
+        not whatever the cache name held when someone hashed it."""
+        import hashlib
+
+        cache, bodies, staged, between = fetches
+        mondo_b = MONDO_NEW.replace(b"releases/2026-09-01", b"releases/2026-10-01")
+        bodies[:] = [MONDO_NEW, mondo_b]
+        seen = {}
+
+        def b_publishes_another_release():
+            seen["b"] = OntologyLoader(cache_dir=cache)._fetch_ontology("mondo", True, roots=[cache])
+
+        between(b_publishes_another_release)
+        a = OntologyLoader(cache_dir=cache)._fetch_ontology("mondo", True, roots=[cache])
+
+        assert a.source_digest == hashlib.sha256(MONDO_NEW).hexdigest()
+        assert seen["b"].source_digest == hashlib.sha256(mondo_b).hexdigest()
+        assert (cache / "mondo.obo").read_bytes() == MONDO_NEW  # A published last
+        assert sorted(p.name for p in cache.iterdir()) == ["mondo.obo"]
 
 
 class TestNothingToFetchIsSaidPlainly:

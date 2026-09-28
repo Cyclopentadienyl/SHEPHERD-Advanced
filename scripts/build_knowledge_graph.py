@@ -152,7 +152,7 @@ def _select_and_load(
 
     if force_download:
         logger.info("--force-download: fetching %s rather than using what is present", ontology)
-        return _with_digest(loader._fetch_ontology(ontology, True, roots=roots))
+        return loader._fetch_ontology(ontology, True, roots=roots)
 
     try:
         candidate = select_ontology_file(
@@ -163,28 +163,9 @@ def _select_and_load(
             "no %s file under %s; falling back to the configured sources",
             ontology, ", ".join(str(root) for root in roots) or "(no roots)",
         )
-        return _with_digest(loader._fetch_ontology(ontology, False, roots=roots))
+        return loader._fetch_ontology(ontology, False, roots=roots)
 
-    return _with_digest(loader.load(candidate.path, expect=ontology))
-
-
-def _with_digest(ontology):
-    """Hash the file this slot loaded, **immediately after loading it**.
-
-    Provenance used to hash each `source_path` after both slots had loaded, so
-    anything that replaced a file in between — the misfiled-cache overwrite,
-    for one — had the replacement's digest recorded against the first slot. A
-    digest taken at load describes what was actually built from.
-    """
-    from src.utils.fingerprint import file_sha256
-
-    path = getattr(ontology, "source_path", None)
-    if path is not None:
-        try:
-            ontology._loaded_digest = file_sha256(path)
-        except (OSError, AttributeError):
-            pass
-    return ontology
+    return loader.load(candidate.path, expect=ontology)
 
 
 def build_knowledge_graph(
@@ -347,7 +328,12 @@ def build_knowledge_graph(
             continue
         sources.append(source_entry(
             role=role, path=path,
-            digest=getattr(ontology, "_loaded_digest", None) or file_sha256(path),
+            # **The digest of what was parsed**, taken by the loader from the
+            # handle it parsed. Hashing `path` here, after both slots had
+            # loaded, recorded whatever the path named by then — a replacement
+            # published in between was recorded against this slot. The
+            # fallback is only for an ontology the loader did not produce.
+            digest=getattr(ontology, "source_digest", None) or file_sha256(path),
             # The raw `data-version`, never `version` — that property falls back
             # to the OBO format version, which would record a file format as
             # though it were a release.

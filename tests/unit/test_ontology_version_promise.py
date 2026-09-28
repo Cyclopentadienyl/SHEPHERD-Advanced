@@ -43,7 +43,8 @@ def loader(tmp_path, monkeypatch):
 
     def _fake_download(name, force, roots=()):
         calls["download"] += 1
-        return tmp_path / f"{name}.obo"
+        # (staged, final) the same: already in place, nothing to publish.
+        return tmp_path / f"{name}.obo", tmp_path / f"{name}.obo"
 
     class _Parsed:
         """Accepts the attributes the loader sets after parsing; a bare

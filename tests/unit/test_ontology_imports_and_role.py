@@ -319,6 +319,46 @@ class TestTheLoaderAndTheListingAgreeOnImports:
         with pytest.raises(OntologyImportError, match="no target"):
             loader(tmp_path).load(path)
 
+    @pytest.mark.parametrize("declaration", [
+        "<owl:imports/>",
+        '<owl:imports rdf:resource=""/>',
+        '<owl:imports rdf:nodeID="dependency"/>',
+    ], ids=["empty", "empty-resource", "blank-node"])
+    @pytest.mark.parametrize("where", ["description", "ontology"])
+    def test_a_targetless_import_is_refused_wherever_it_is_written(self, tmp_path, declaration, where):
+        """The reviewer's three reproductions, and the combination the first
+        no-target test missed: pronto records `None` only for a declaration
+        directly under the first `owl:Ontology`, so one inside an
+        `rdf:Description` left no trace in pronto *or* the listing, and the
+        file loaded as self-contained. A declaration is a declaration whether
+        or not a target can be read from it."""
+        from src.ontology.resolver import IMPORT_WITHOUT_TARGET, declared_imports
+
+        iri = "http://purl.obolibrary.org/obo/mondo.owl"
+        if where == "description":
+            body = (f'<owl:Ontology rdf:about="{iri}"/>\n'
+                    f'<rdf:Description rdf:about="{iri}">{declaration}</rdf:Description>')
+        else:
+            body = f'<owl:Ontology rdf:about="{iri}">{declaration}</owl:Ontology>'
+        path = self._owl(tmp_path / "mondo.owl",
+                         body + '\n<owl:Class rdf:about="http://purl.obolibrary.org/obo/MONDO_0000001"/>')
+
+        assert declared_imports(path) == (IMPORT_WITHOUT_TARGET,)
+        with pytest.raises(OntologyImportError, match="no target"):
+            loader(tmp_path).load(path, expect="mondo")
+
+    def test_an_obo_import_with_no_value_is_listed_as_one(self, tmp_path):
+        """fastobo refuses to parse it, so it never loads; the listing still
+        has to show it rather than call the file self-contained."""
+        from src.ontology.resolver import IMPORT_WITHOUT_TARGET, declared_imports, scan_identity
+
+        path = tmp_path / "mondo.obo"
+        path.write_text("format-version: 1.2\nontology: mondo\nimport: \n\n"
+                        "[Term]\nid: MONDO:0000001\nname: d\n")
+
+        assert declared_imports(path) == (IMPORT_WITHOUT_TARGET,)
+        assert scan_identity(path)["declared_imports"] == (IMPORT_WITHOUT_TARGET,)
+
     def test_the_obo_import_check_reads_only_the_header(self, tmp_path, monkeypatch):
         """So agreement costs a few kilobytes on a large MONDO, not a pass —
         and an `import:` line after the first stanza, which OBO does not treat
@@ -333,6 +373,42 @@ class TestTheLoaderAndTheListingAgreeOnImports:
                             lambda *a, **k: (_ for _ in ()).throw(AssertionError("full scan")))
 
         assert resolver.declared_imports(path) == ("http://x.invalid/a.obo",)
+
+
+class TestTheDigestIsOfWhatWasParsed:
+
+    def test_a_replacement_during_the_load_changes_none_of_the_three_readings(
+        self, tmp_path, monkeypatch
+    ):
+        """Digest, parse and import scan are taken through one open handle. The
+        path is replaced — by a file of another release that also declares an
+        import — after the file is opened and before pronto parses it: what
+        comes back is still entirely the original."""
+        import hashlib
+        import os
+        import types
+
+        import pronto
+
+        import src.ontology.loader as loader_module
+
+        path = obo(tmp_path / "mondo.obo", ontology="mondo", terms=("MONDO:0000001",))
+        original = path.read_bytes()
+        replacement = obo(tmp_path / "next.obo", ontology="mondo", terms=("MONDO:0000002",),
+                          imports=("http://x.invalid/late.obo",))
+
+        def parse_after_the_path_moved(handle, **kwargs):
+            os.replace(replacement, path)
+            return pronto.Ontology(handle, **kwargs)
+
+        monkeypatch.setattr(loader_module, "pronto",
+                            types.SimpleNamespace(Ontology=parse_after_the_path_moved))
+
+        loaded = loader(tmp_path).load(path, expect="mondo")
+
+        assert path.read_bytes() != original, "the replacement did not happen"
+        assert loaded.source_digest == hashlib.sha256(original).hexdigest()
+        assert loaded.has_term("MONDO:0000001") and not loaded.has_term("MONDO:0000002")
 
 
 class TestAReleaseProductIsItsOntology:
