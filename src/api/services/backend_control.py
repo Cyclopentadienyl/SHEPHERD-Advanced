@@ -13,8 +13,9 @@ Purpose:
     process startup, so applying a new value requires relaunching that process.
     This service provides an in-process restart by re-exec'ing the interpreter
     with the same arguments (``os.execve``), which keeps the same PID and parent
-    (the launcher's ``subprocess.run`` keeps waiting on it) while giving CUDA a
-    fresh start under the newly chosen allocator.
+    -- the launcher's ``subprocess.run`` waiting on it, or, where the launcher
+    exec'd into the server (``--no-browser`` on POSIX), the service manager --
+    while giving CUDA a fresh start under the newly chosen allocator.
 
 Safety:
     A restart is REFUSED while training is in progress — the UI also greys the
@@ -45,15 +46,17 @@ import time
 from typing import Callable, Dict, List
 
 from src.api.services.training_manager import training_manager
-from src.config.runtime_presets import load_runtime_settings, resolve_allocator
+from src.config.runtime_presets import (
+    ALLOC_SOURCE_ENV,
+    allocator_env,
+    load_runtime_settings,
+)
 
 logger = logging.getLogger(__name__)
 
-# Env marker the launcher sets to record where PYTORCH_ALLOC_CONF came from:
-#   "preset" -> launcher applied it from the saved allocator preset; safe to
-#               re-resolve on restart so a newly chosen preset takes effect.
-#   "env"    -> an explicit override was present before launch; preserve it.
-ALLOC_SOURCE_ENV = "SHEPHERD_ALLOC_SOURCE"
+# ALLOC_SOURCE_ENV, the marker recording where PYTORCH_ALLOC_CONF came from, is
+# defined beside the rule that reads it (`src.config.runtime_presets`) and
+# re-exported here for the callers that already import it from this module.
 
 # Statuses during which a restart must be blocked (a subprocess is alive).
 _BUSY_STATUSES = ("running", "stopping")
@@ -90,17 +93,9 @@ def resolve_restart_env(env: Dict[str, str]) -> Dict[str, str]:
       - a ``PYTORCH_ALLOC_CONF`` / ``PYTORCH_CUDA_ALLOC_CONF`` present without a
         marker (set directly by whoever started the process).
     """
-    new_env = dict(env)
-    marker = new_env.get(ALLOC_SOURCE_ENV)
-    has_env_alloc = (
-        "PYTORCH_ALLOC_CONF" in new_env or "PYTORCH_CUDA_ALLOC_CONF" in new_env
-    )
-    preset_derived = marker == "preset" or (marker is None and not has_env_alloc)
-    if preset_derived:
-        _preset, conf = resolve_allocator(load_runtime_settings().get("allocator_preset"))
-        new_env["PYTORCH_ALLOC_CONF"] = conf
-        new_env[ALLOC_SOURCE_ENV] = "preset"
-    return new_env
+    # The rule itself is `allocator_env`, shared with the service entry point, so
+    # a restart and a start cannot come to disagree.
+    return allocator_env(env, load_runtime_settings())
 
 
 def build_restart_argv(executable: str, argv: List[str]) -> List[str]:

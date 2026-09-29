@@ -104,6 +104,22 @@ def test_resolve_restart_env_direct_launch_resolves(monkeypatch):
     assert out[bc.ALLOC_SOURCE_ENV] == "preset"
 
 
+def test_restart_applies_the_start_rule(monkeypatch):
+    # Restart Backend and the service entry point share one rule, so for any
+    # environment a restart resolves what a start would.
+    from src.config.runtime_presets import allocator_env
+
+    settings = {"allocator_preset": "native"}
+    monkeypatch.setattr(bc, "load_runtime_settings", lambda: settings)
+    for env in (
+        {},
+        {bc.ALLOC_SOURCE_ENV: "preset", "PYTORCH_ALLOC_CONF": "stale-value"},
+        {bc.ALLOC_SOURCE_ENV: "env", "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync"},
+        {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
+    ):
+        assert bc.resolve_restart_env(env) == allocator_env(env, settings), env
+
+
 def test_resolve_restart_env_returns_copy():
     src = {bc.ALLOC_SOURCE_ENV: "env"}
     out = bc.resolve_restart_env(src)

@@ -93,7 +93,7 @@ its own posture rather than have one imposed.
 | **P0** | Fix the unbounded eager export accumulation | 2 §9 |
 | **P0** | Document the actual deployment contract; withdraw the concurrency-safety claim | 4 §4, §5 |
 | **P0** | Bind defaults to loopback, with the risk-acceptance opt-in — *needs value 13* | 4 §3.1 |
-| **P0** | Fix the systemd unit's **invalid module path** — broken under every mode, does not wait for the bind decision | 4 §4 |
+| **P0** | Fix the systemd unit's **invalid module path** — broken under every mode, does not wait for the bind decision. **Done** (4 §4, A4); the host value is the row below | 4 §4 |
 | **P0** | Correct the **host values** in launch instructions and the service unit — *needs value 13* | 4 §4 |
 | **P0 — M3 only** | **Unmount or protect** admin and training routes (hiding from OpenAPI is not protection) | 4 §2, §4 |
 | **P1** | Payload schema (discriminated union), load sequence, protected directory, permissions, bounds | 2 §4, §5, §8 |

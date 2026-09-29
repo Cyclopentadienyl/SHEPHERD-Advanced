@@ -32,7 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.config.model_types import SUPPORTED_CONV_TYPES
+# Imported here, not inside `_conv_type_of`: that function's caller reports any
+# exception as an unreadable checkpoint and moves on, so an import that breaks
+# when a helper moves would skip every file with exit status 0 instead of
+# failing once, at start.
+from src.config.model_types import SUPPORTED_CONV_TYPES, _infer_conv_type_from_keys
 
 
 def _conv_type_of(ckpt_path: Path) -> Optional[str]:
@@ -42,8 +46,6 @@ def _conv_type_of(ckpt_path: Path) -> Optional[str]:
     rather than mislabelling it under the default architecture.
     """
     import torch
-
-    from src.inference.pipeline import _infer_conv_type_from_keys
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     config = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}

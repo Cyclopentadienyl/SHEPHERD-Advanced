@@ -16,6 +16,7 @@ regardless of current working directory.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 # Repo root: src/config/runtime_presets.py -> parents[2] == repo root.
@@ -32,6 +33,11 @@ ALLOCATOR_PRESETS: dict[str, str] = {
     "native": "backend:native",
 }
 DEFAULT_ALLOCATOR = "cuda_async"
+
+# Env marker recording where PYTORCH_ALLOC_CONF came from:
+#   "preset" -> resolved from the saved preset; re-resolve it on every start.
+#   "env"    -> an explicit override the launcher saw; preserve it.
+ALLOC_SOURCE_ENV = "SHEPHERD_ALLOC_SOURCE"
 
 
 def load_runtime_settings(path: Path | None = None) -> dict:
@@ -70,16 +76,32 @@ def resolve_allocator(preset: str | None) -> tuple[str, str]:
     return preset, ALLOCATOR_PRESETS[preset]
 
 
-def effective_allocator(env: dict, settings: dict) -> tuple[str | None, str | None]:
-    """Decide the allocator to apply, honouring explicit env overrides.
+def allocator_env(env: Mapping[str, str], settings: dict) -> dict[str, str]:
+    """The environment a backend process should start CUDA under.
 
-    If ``PYTORCH_ALLOC_CONF`` / ``PYTORCH_CUDA_ALLOC_CONF`` is already set in
-    ``env``, returns ``(None, None)`` — the explicit override wins and nothing
-    should be changed. Otherwise resolves the persisted preset (with fallback).
+    **One rule for starting and restarting.** The launcher applies it when it
+    starts the backend -- and the service unit starts the backend through the
+    launcher -- and Restart Backend (``backend_control.resolve_restart_env``)
+    applies it again, so a start, a crash restart, a reboot and a UI restart
+    resolve the same saved preset.
+
+    An explicit override is an allocator variable that is present and not
+    marked ``"preset"``; it is returned untouched, marked ``"env"`` or not.
+    Anything else gets the saved preset: no allocator variable at all -- a
+    marker without a value overrides nothing -- or a value this rule set
+    earlier, marked ``"preset"``, which is re-resolved so a newly saved preset
+    takes effect.
     """
-    if "PYTORCH_ALLOC_CONF" in env or "PYTORCH_CUDA_ALLOC_CONF" in env:
-        return None, None
-    return resolve_allocator(settings.get("allocator_preset"))
+    new_env = dict(env)
+    marker = new_env.get(ALLOC_SOURCE_ENV)
+    has_env_alloc = (
+        "PYTORCH_ALLOC_CONF" in new_env or "PYTORCH_CUDA_ALLOC_CONF" in new_env
+    )
+    if not has_env_alloc or marker == "preset":
+        _preset, conf = resolve_allocator(settings.get("allocator_preset"))
+        new_env["PYTORCH_ALLOC_CONF"] = conf
+        new_env[ALLOC_SOURCE_ENV] = "preset"
+    return new_env
 
 
 __all__ = [
@@ -90,5 +112,6 @@ __all__ = [
     "load_runtime_settings",
     "save_runtime_settings",
     "resolve_allocator",
-    "effective_allocator",
+    "ALLOC_SOURCE_ENV",
+    "allocator_env",
 ]

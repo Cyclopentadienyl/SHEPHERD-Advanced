@@ -1,3 +1,11 @@
+# A user unit: %h below is the home of the user whose service manager runs it.
+# Install to ~/.config/systemd/user/shepherd.service, then
+#   systemctl --user daemon-reload && systemctl --user enable --now shepherd
+# and `loginctl enable-linger <user>` if it should start at boot rather than at
+# first login.
+#
+# The bind address is the launcher's default and waits on the bind decision
+# (SPEC_4 §4, item C1); it is deliberately left as it was.
 [Unit]
 Description=SHEPHERD-Advanced API Service
 After=network.target
@@ -6,9 +14,17 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/SHEPHERD-Advanced
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8264
+# Started through the launcher, the same path launch_shepherd.sh takes, so the
+# service gets what a manual start gets: the allocator preset saved in Runtime
+# Settings (the rule Restart Backend applies) and the attention settings.
+# --no-auto-install: a service never pip-installs. --no-browser: nobody to show
+# it to, and the launcher then execs into uvicorn, so the main PID is the
+# server and nothing waits beside it. Arguments after -- go to uvicorn; the
+# launcher's own --host default applies (SPEC_4 C1). To pin an allocator, set PYTORCH_ALLOC_CONF here; an
+# explicit value is kept on every start and restart.
+ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --port 8264
 Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
