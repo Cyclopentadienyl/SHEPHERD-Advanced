@@ -209,7 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--skip-launch", action="store_true", help="Do not start main app after setup")
     m = p.add_argument_group("Main app")
     m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: uvicorn)")
-    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready (a service has no one to show it to)")
+    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready. On Linux/macOS the launcher then\nreplaces itself with the server (exec) instead of waiting beside it.")
     return p
 
 def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
@@ -224,15 +224,50 @@ def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
         return argv[:split], argv[split + 1:]
     return argv, []
     
-def collect_args_from_env_and_cli() -> List[str]:
+def can_hand_over() -> bool:
+    """Whether this process may become the server by ``exec``.
+
+    POSIX only. There ``execve`` replaces the process image and keeps the PID,
+    so a service manager's main PID becomes the server and its signals reach
+    it. On Windows ``os.exec*`` starts a new process and ends this one: the PID
+    changes and a supervisor loses track, so the launcher waits instead.
+    """
+    return os.name == "posix"
+
+def exec_server(cmd: List[str]) -> int:
+    """Replace this process with ``cmd``; return a non-zero status only on failure.
+
+    Output is flushed first, because ``exec`` discards whatever is still buffered.
+    """
+    log("$ " + " ".join(cmd))
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        os.execve(cmd[0], cmd, os.environ)
+    except OSError as exc:
+        log(f"ERROR: could not start the server ({cmd[0]}): {exc}")
+    return 1
+
+def collect_args_from_env_and_cli() -> Tuple[List[str], List[str]]:
+    """The launcher's arguments and the app's, from the environment and the CLI.
+
+    **Each source is split at its own ``--`` before the two are joined.**
+    Joining first let a ``--`` in the environment turn every launcher flag on
+    the command line -- ``--no-auto-install``, ``--no-browser`` -- into app
+    arguments: the launcher then installed and opened a browser it had been told
+    not to, and uvicorn refused flags it does not know. Within each half the
+    environment comes first, so for the app, whose repeated options take the
+    last value, the command line wins. ``SHEP_COMMANDLINE_ARGS`` still takes
+    precedence over ``COMMANDLINE_ARGS``; only one of them is read.
+    """
     env = os.getenv("SHEP_COMMANDLINE_ARGS") or os.getenv("COMMANDLINE_ARGS") or ""
-    env_args = shlex.split(env)
-    cli_args = sys.argv[1:]
-    return env_args + cli_args
+    env_own, env_app = split_passthrough(shlex.split(env))
+    cli_own, cli_app = split_passthrough(sys.argv[1:])
+    return env_own + cli_own, env_app + cli_app
 
 def main() -> int:
     parser = build_parser()
-    own_args, passthrough_args = split_passthrough(collect_args_from_env_and_cli())
+    own_args, passthrough_args = collect_args_from_env_and_cli()
     args = parser.parse_args(own_args)
     args.passthrough = passthrough_args
     os_name = "windows" if is_windows() else ("linux" if sys.platform.startswith("linux") else sys.platform)
@@ -381,6 +416,14 @@ def main() -> int:
         cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + ["--no-access-log"] + passthrough
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
+    # **Headless: become the server.** The only reason to keep this process
+    # alive is the browser thread below, and --no-browser has none. Everything
+    # above -- allocator, attention, plugin, retrieval -- is already in
+    # os.environ, so exec hands it over whole. No launcher is left resident,
+    # the service's main PID is the server, and Restart Backend re-execs it in
+    # place as it would a bare uvicorn start.
+    if args.no_browser and can_hand_over():
+        return exec_server(cmd)
     # Auto-open browser once server is ready (polls /health endpoint)
     if not args.no_browser:
         opener = threading.Thread(

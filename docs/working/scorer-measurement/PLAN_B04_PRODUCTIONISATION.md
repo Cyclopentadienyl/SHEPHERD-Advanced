@@ -805,12 +805,13 @@ of it. The other three clauses stand as written.
 launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
 --no-browser -- --host 127.0.0.1 --port <p>` (loopback, overriding the
 launcher's bind default), with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`,
-`SHEPHERD_CHECKPOINT_PATH` and `SHEPHERD_DEVICE=cuda`. The service is then two
-processes: the launcher, which waits, and the uvicorn process it starts, which
-holds the pipeline. The process counters, the reset and the pause below apply
-to the uvicorn process. The launcher's own resident memory is recorded beside
-them as a separate term, because a deployment started this way carries it too.
-It is not a harness around the pipeline's internals.
+`SHEPHERD_CHECKPOINT_PATH` and `SHEPHERD_DEVICE=cuda`. Headless on Linux, the
+launcher prepares everything and then replaces itself with the server (`exec`),
+so the service is one process under the PID the script launched, and that PID
+is the one measured. `VmHWM` belongs to the address space `exec` creates, so the
+launcher's preparation before it is outside the process counters; the system
+counter, sampled from the launch, covers it. It is not a harness around the
+pipeline's internals.
 §13 exists because an isolated measurement leaves out part of what the running
 service holds. A harness that built the pipeline itself would leave out uvicorn,
 FastAPI and the mounted Gradio dashboard.
@@ -818,7 +819,10 @@ FastAPI and the mounted Gradio dashboard.
 **With the allocator the deployment runs, stated and recorded.**
 The launcher applies the preset saved in Runtime Settings by the rule Restart
 Backend applies (`allocator_env`), `backend:cudaMallocAsync` unless another is
-saved, together with the attention settings. The value goes into the evidence. A bare uvicorn start
+saved, together with the attention settings. The evidence records what the
+server process actually carries, read from its `/proc/<pid>/environ`:
+`PYTORCH_ALLOC_CONF` and its marker, `ATTENTION_ORDER` and
+`FLASHATTN_FORCE_DISABLE`. The value goes into the evidence. A bare uvicorn start
 applies no preset at all, and on this project the choice changes memory by a
 multiple. The Runtime Settings tab records a measurement of HGT training at
 batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native
@@ -876,15 +880,20 @@ written to `/proc/<pid>/clear_refs` (proc(5)).
 process can allocate and free between the write and the next read. When it
 does, a later `VmHWM` above `VmRSS` is a new high-water mark, not a failed
 reset; review reproduced exactly that on a live child. So at each phase
-boundary the script stops the uvicorn process it started (`SIGSTOP`), writes
-`5`, and reads `VmHWM` and `VmRSS`. It resumes that process (`SIGCONT`) in a
-`finally`, and only then starts the phase's clock. A stopped process allocates nothing, so equality
-confirms the reset. Reclaim can still lower RSS in a stopped process, so an
-inequality is retried, at most three times. After that the phase is recorded as
-**inconclusive**: not failed, and not measured.
+boundary the script sends the server process `SIGSTOP` and does not assume it
+has stopped: it waits, at most 5 s, until `/proc/<pid>/stat` reports the process
+stopped (`T`). Only then does it write `5` and read `VmHWM` and `VmRSS`. A
+stopped process allocates nothing, so equality confirms the reset. Reclaim can
+still lower RSS in a stopped process, so an inequality is retried, at most three
+times. `SIGCONT` is sent in a `finally` that covers every way out of that
+window: a confirmed reset, retries exhausted, a stop that never came, or an
+error. Only after it does the phase's clock start. A stop not confirmed in time,
+or a reset not confirmed in three tries, makes the phase **inconclusive**: not
+failed, and not measured. If the process exits inside the window, the phase has
+failed.
 
-The script pauses only the service processes it started. It never pauses
-another deployment process, and never pauses while a request is in flight. The kernel describes its
+The script pauses only the server process it launched. It never pauses another
+deployment process, and never pauses while a request is in flight. The kernel describes its
 RSS accounting as approximate, and the figures are reported as such. The sampled
 system counter has no high-water trap but has a sampling resolution, so both
 counters are reported.
@@ -894,7 +903,7 @@ counters are reported.
 | Phase | Reading | What is taken |
 |---|---|---|
 | R0 | baseline | system in use and swap in use, sampled before launch on a quiet machine: no other GPU, training or build job. If swap grows during R0, the run is recorded as *measurement precondition not met* |
-| R1 | 1 — cold start | launch to ready: wall time; `VmHWM` at ready, the process's peak since it began; `VmRSS` at ready; system in use, its peak during startup and its value at ready, each less R0 |
+| R1 | 1 — cold start | launch to ready: wall time; `VmHWM` at ready, the server's peak since the exec; `VmRSS` at ready; system in use, sampled from the launch so the launcher's preparation is included, its peak during startup and its value at ready, each less R0 |
 | R2 | 2 — steady and peak once serving | reset, then a fixed `/diagnose` workload: `VmRSS` after it (steady), `VmHWM` (serving peak), system-in-use peak |
 | R3 | 3b — one real reload | reset, then `POST /api/v1/pipeline/reload` with the same workspace and checkpoint: success, wall time, readiness re-asserted, and `VmRSS` after — the resident footprint after the reload. That does **not** show whether the old state was released: an allocator can keep memory no live tensor uses, and a similar RSS does not prove every old object is gone. Lifetime is a question for a reference-lifetime test of publish and reload, not for this counter, and no `empty_cache` is added that the service does not itself make |
 | R4 | 4 — old and new coexisting | the same reload: `VmHWM` over it and the system-in-use peak over it, each less its value just before |
@@ -928,8 +937,8 @@ process.** The median and the maximum are reported, not a mean.
 pattern BACKLOG §5.2 requires of every evidence file. It records bytes, seconds,
 counts, the three digests (graph, checkpoint, SP table), the kernel and torch
 versions, and the readiness fields. It records no paths, no host or operator
-names, and no phenotype ids. The script launches the service as a process
-tree, reads those processes' `/proc`, and talks HTTP to loopback. It sits beside
+names, and no phenotype ids. The script launches the service through the
+launcher, reads the server process's `/proc`, and talks HTTP to loopback. It sits beside
 `benchmark_sp_lookup.py`, it is not a framework, and **it will not be written
 until this procedure is agreed.**
 

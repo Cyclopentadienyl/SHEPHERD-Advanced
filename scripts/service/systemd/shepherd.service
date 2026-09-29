@@ -18,8 +18,9 @@ Environment=PYTHONUNBUFFERED=1
 # service gets what a manual start gets: the allocator preset saved in Runtime
 # Settings (the rule Restart Backend applies) and the attention settings.
 # --no-auto-install: a service never pip-installs. --no-browser: nobody to show
-# it to. Arguments after -- go to uvicorn; the launcher's own --host default
-# applies (SPEC_4 C1). To pin an allocator, set PYTORCH_ALLOC_CONF here; an
+# it to, and the launcher then execs into uvicorn, so the main PID is the
+# server and nothing waits beside it. Arguments after -- go to uvicorn; the
+# launcher's own --host default applies (SPEC_4 C1). To pin an allocator, set PYTORCH_ALLOC_CONF here; an
 # explicit value is kept on every start and restart.
 ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --port 8264
 Restart=on-failure

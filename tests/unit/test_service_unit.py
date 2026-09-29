@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UNIT = REPO_ROOT / "scripts" / "service" / "systemd" / "shepherd.service"
 LAUNCHER = REPO_ROOT / "scripts" / "launch" / "shep_launch.py"
@@ -80,42 +82,132 @@ def test_the_unit_starts_through_the_launcher_with_service_flags():
     assert attr in assigned, f"{module} assigns no top-level {attr!r}"
 
 
-def _run_launcher(monkeypatch, launcher_args):
-    """Run the launcher's own main with the server and the browser stubbed."""
+class _ExecReachedError(Exception):
+    """Raised by the execve stub: a real exec does not return either."""
+
+
+def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
+    """Run the launcher's own main with the server, installs and browser stubbed.
+
+    Returns what it did: the server command, whether it exec'd or waited,
+    browser threads started, pip installs attempted, and main's status.
+    """
     launcher = _launcher()
-    commands, browsers = [], []
+    record = {"exec": [], "run": [], "browsers": 0, "installs": []}
 
     class _Thread:
         def __init__(self, *args, **kwargs):
             pass
 
         def start(self):
-            browsers.append(True)
+            record["browsers"] += 1
+
+    def _execve(program, argv, environ):
+        record["exec"].append(list(argv))
+        raise _ExecReachedError
 
     monkeypatch.setattr(launcher, "run", lambda cmd, check=False: (
-        commands.append(cmd) or subprocess.CompletedProcess(cmd, 0)))
+        record["run"].append(list(cmd)) or subprocess.CompletedProcess(cmd, 0)))
+    monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
+        record["installs"].append(name) or False))
+    # Every accelerator absent, so a requested one reaches the install decision.
+    monkeypatch.setattr(launcher, "have_module", lambda module: False)
     monkeypatch.setattr(launcher.threading, "Thread", _Thread)
+    monkeypatch.setattr(launcher.os, "execve", _execve)
     monkeypatch.setattr(launcher, "load_runtime_settings", lambda: {})
-    monkeypatch.setattr(launcher.os, "environ", {})
+    if not hand_over:
+        monkeypatch.setattr(launcher, "can_hand_over", lambda: False)
+    monkeypatch.setattr(launcher.os, "environ", dict(env or {}))
     monkeypatch.setattr(sys, "argv", ["shep_launch.py", *launcher_args])
-    assert launcher.main() == 0
-    return commands, browsers
+    try:
+        record["status"] = launcher.main()
+    except _ExecReachedError:
+        record["status"] = None
+    record["server"] = (record["exec"] or record["run"])[-1]
+    record["app_args"] = record["server"][4:]  # after python -m uvicorn APP
+    return record
 
 
-def test_the_launcher_runs_the_units_command_and_opens_no_browser(monkeypatch):
-    unit_args = shlex.split(_directive("ExecStart"))[2:]
-    commands, browsers = _run_launcher(monkeypatch, unit_args)
-    assert browsers == []
+LAUNCHER_FLAGS = ("--no-auto-install", "--no-browser", "--xformers", "--flash-attn")
+
+
+def test_the_launcher_runs_the_units_command_by_becoming_the_server(monkeypatch):
+    done = _run_launcher(monkeypatch, shlex.split(_directive("ExecStart"))[2:])
+    # Headless on POSIX: exec, so nothing is left waiting beside the server.
+    assert done["exec"] and not done["run"]
+    assert done["browsers"] == 0
+    assert done["server"][1:4] == ["-m", "uvicorn", _constant(LAUNCHER, "UVICORN_APP")]
     # uvicorn takes the last of a repeated option, so the unit's port is the
     # one served, after the launcher's defaults.
-    assert commands[-1][-2:] == ["--port", "8264"]
-    assert commands[-1][1:4] == ["-m", "uvicorn", _constant(LAUNCHER, "UVICORN_APP")]
+    assert done["app_args"][-2:] == ["--port", "8264"]
 
 
-def test_without_no_browser_the_launcher_still_opens_one(monkeypatch):
-    # The control for the test above: the stub does see the browser thread.
-    _commands, browsers = _run_launcher(monkeypatch, ["--no-auto-install"])
-    assert browsers == [True]
+def test_without_no_browser_the_launcher_waits_and_opens_one(monkeypatch):
+    # The control for the test above: the stubs do see the other path.
+    done = _run_launcher(monkeypatch, ["--no-auto-install"])
+    assert done["run"] and not done["exec"]
+    assert done["browsers"] == 1
+    assert done["status"] == 0
+
+
+def test_where_exec_would_change_the_pid_the_launcher_waits(monkeypatch):
+    # Windows: os.exec* would end this process and start another, so a
+    # supervisor would lose the PID. Headless there still waits.
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"], hand_over=False)
+    assert done["run"] and not done["exec"]
+    assert done["browsers"] == 0
+
+
+def test_a_failed_exec_is_a_non_zero_exit(monkeypatch):
+    launcher = _launcher()
+
+    def _fails(*args):
+        raise OSError("no such file")
+
+    monkeypatch.setattr(launcher.os, "execve", _fails)
+    assert launcher.exec_server(["/nonexistent/python", "-m", "uvicorn"]) == 1
+
+
+@pytest.mark.parametrize("name", ["SHEP_COMMANDLINE_ARGS", "COMMANDLINE_ARGS"])
+def test_app_arguments_in_the_environment_do_not_swallow_the_command_line(monkeypatch, name):
+    # Both sources carry app arguments. Each is split at its own "--", so the
+    # command line's launcher flags stay launcher flags.
+    done = _run_launcher(
+        monkeypatch,
+        ["--no-auto-install", "--no-browser", "--", "--port", "8264"],
+        env={name: "--xformers -- --port 9000"},
+    )
+    assert done["installs"] == []          # --no-auto-install honoured
+    assert done["browsers"] == 0           # --no-browser honoured
+    assert not set(LAUNCHER_FLAGS) & set(done["app_args"])
+    # Environment first, command line last: the command line's port wins.
+    assert done["app_args"][-4:] == ["--port", "9000", "--port", "8264"]
+
+
+def test_launcher_flags_in_the_environment_still_apply(monkeypatch):
+    done = _run_launcher(
+        monkeypatch, ["--", "--port", "8264"],
+        env={"SHEP_COMMANDLINE_ARGS": "--no-auto-install --no-browser --xformers"},
+    )
+    assert done["installs"] == []
+    assert done["browsers"] == 0
+    assert done["app_args"][-2:] == ["--port", "8264"]
+
+
+def test_without_no_auto_install_a_missing_accelerator_is_installed(monkeypatch):
+    # The control for the two tests above: the install spy does fire.
+    done = _run_launcher(monkeypatch, ["--no-browser"], env={"SHEP_COMMANDLINE_ARGS": "--xformers"})
+    assert done["installs"] == ["xFormers"]
+
+
+def test_only_one_environment_source_is_read(monkeypatch):
+    both = {"SHEP_COMMANDLINE_ARGS": "-- --port 9000", "COMMANDLINE_ARGS": "-- --port 7000"}
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"], env=both)
+    assert "9000" in done["app_args"] and "7000" not in done["app_args"]
+
+    fallback = {"COMMANDLINE_ARGS": "-- --port 7000"}
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"], env=fallback)
+    assert done["app_args"][-2:] == ["--port", "7000"]
 
 
 def test_the_unit_runs_the_project_interpreter_in_the_user_manager():

@@ -13,8 +13,9 @@ Purpose:
     process startup, so applying a new value requires relaunching that process.
     This service provides an in-process restart by re-exec'ing the interpreter
     with the same arguments (``os.execve``), which keeps the same PID and parent
-    (the launcher's ``subprocess.run`` keeps waiting on it) while giving CUDA a
-    fresh start under the newly chosen allocator.
+    -- the launcher's ``subprocess.run`` waiting on it, or, where the launcher
+    exec'd into the server (``--no-browser`` on POSIX), the service manager --
+    while giving CUDA a fresh start under the newly chosen allocator.
 
 Safety:
     A restart is REFUSED while training is in progress — the UI also greys the
