@@ -578,9 +578,11 @@ build and 25.05 GB after it. Because it rose, the process's maximum during the
 build was 25.05 GB, and the build began at 11.30 GB current:
 25,053,757,440 − 11,297,255,424 = 13,756,502,016 B. Of that, the 3.87 GB index
 stays and 9.88 GB (≈23.0 bytes/row) was gone again by the end of the build.
-Counting the arrays `build_sp_index` holds at once — the key, then the sort's
-output and its permutation — gives 24 bytes/row at the widest point; the
-measured ≈32 is 8 bytes/row more, and this run does not say what that is.
+The three int64 arrays the sort adds — the key, its sorted copy and the
+permutation — sum to 24 bytes/row. That is a count of those three arrays, not
+the builder's live peak: the distances, the columns the caller keeps, the sort's
+internal scratch and the allocator's behaviour are all outside it. The measured
+≈32 is 8 bytes/row more, and this run does not say what that is.
 
 **What it settles.** The resident figure extrapolates as §6.2 said it would:
 9.00 bytes/row at 5M rows was a claim about the shape, and at 86 times the rows
@@ -738,32 +740,45 @@ that is then **checked, not assumed**.
 | | Value | Source |
 |---|---|---|
 | Graph export | `kg.json` SHA-256 `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`, 57,239 nodes, 617,773 edges; built by the Phase 2 pipeline with both ontologies downloaded and verified | build output, reported |
-| Checkpoint | HGT: hidden 256, 4 layers, 8 heads (the trainer's defaults; `--conv-type hgt` is the only architecture override), 3 epochs, seed 42. SHA-256 ⟨pending⟩ | ⟨pending: the load check without SP⟩ |
+| Checkpoint | HGT: hidden 256, 4 layers, 8 heads (the trainer's defaults; `--conv-type hgt` is the only architecture override), 3 epochs, seed 42; the rest of its training configuration as the checkpoint records it, batch size included. SHA-256 ⟨pending⟩ | ⟨pending: the load check without SP⟩ |
 | SP artifact | computed from that `kg.json`; SHA-256 ⟨pending⟩, ⟨pending⟩ rows | ⟨pending: the SP build⟩ |
 | Loads against the set | `gnn_ready`, `has_model` and `sp_ready` true, `sp_kg_binding == "verified"` | ⟨pending: the load check with SP⟩ |
-| Parameters, resident size | ⟨pending⟩, counted from the checkpoint's state dict. **Parameter bytes are one term of the pipeline's memory, not its RSS** | ⟨pending⟩ |
+| State-dict elements, bytes and dtypes | ⟨pending⟩, counted from the checkpoint's state dict. **Parameter bytes are one term of the pipeline's memory, not its RSS** | ⟨pending⟩ |
+| Input feature shapes | per node type, as the rebuilt model reads them ⟨pending⟩ | ⟨pending: the load check⟩ |
 
 **Why three epochs, and what that does not claim.** Memory and reload cost are
 set by the architecture, the graph and the SP table. They do not depend on how
 good the weights are, and a three-epoch checkpoint has the same tensor shapes as
-a longer run of the same configuration. Nothing measured on it says anything
-about accuracy, and nobody should score a patient with it. This is "designated,
-not authoritative" taken literally.
+a longer run of the same configuration. That holds only if the model is
+rebuilt from the checkpoint, the full-graph embeddings are computed, the SP
+table loads and the reload succeeds, all through the service's own paths; the
+readings check each of these rather than assume them. Nothing measured on it
+says anything about accuracy, nobody should score a patient with it, and equal
+shapes do not promise equal request latency. This is "designated, not
+authoritative" taken literally.
 
 **Requirement 3, the deployment shape it stands for, is that table**: an HGT of
 those dimensions, over a graph of that size, with an SP table of that row count,
-on a GB10. **A re-run is owed** when the model finally deployed differs in any
-of:
+on a GB10.
+
+**The readings describe this subject and nothing else.** A different
+deployment combination is covered only by an explicit compatibility and capacity
+assessment, never by falling inside a tolerance. There is no headroom figure
+yet, so even 9% growth could use up the margin. The readings are **re-taken**
+when any of these differs from the subject:
 
 1. `conv_type`, `hidden_dim`, `num_layers` or `num_heads`;
-2. its parameter count, by more than 10%;
-3. the graph's node or edge count, or the SP table's row count, by more than
-   10%.
+2. a tensor or feature dtype, or a feature dimension;
+3. the allocator preset;
+4. the torch, CUDA or driver version;
+5. an inference-path change to what is resident: model construction, the
+   embeddings, SP loading, or reload.
 
-Each of these can be checked from files without re-running the gate, which is
-why they are written down. **The 10% is proposed, not derived.** Nothing
-measured so far shows where materiality starts, and the reviewer may set a
-different figure.
+A difference of more than 10% in parameter count, graph node or edge count, or
+SP row count is **a prompt to make that assessment**, not a band inside which
+the readings carry over. The 10% is proposed, not derived. A checkpoint of the
+same shape with retrained weights is on neither list, and does not by itself
+re-open the readings.
 
 ### 7.2 What this plan completes unaided
 
@@ -787,7 +802,7 @@ of it. The other three clauses stand as written.
 ### 7.3 How readings 1-4 are taken — proposed, for review
 
 **The service itself, started the way the unit starts it:**
-`.venv/bin/python -m uvicorn src.api.main:app` on loopback, with
+`.venv/bin/python scripts/launch/serve_backend.py` on loopback, with
 `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`, `SHEPHERD_CHECKPOINT_PATH` and
 `SHEPHERD_DEVICE=cuda`. It is not a harness around the pipeline's internals.
 §13 exists because an isolated measurement leaves out part of what the running
@@ -795,8 +810,9 @@ service holds. A harness that built the pipeline itself would leave out uvicorn,
 FastAPI and the mounted Gradio dashboard.
 
 **With the allocator the deployment runs, stated and recorded.**
-`PYTORCH_ALLOC_CONF` is the launcher's preset, `backend:cudaMallocAsync` unless
-another is saved, and the value goes into the evidence. A bare uvicorn start
+`serve_backend.py` applies the preset saved in Runtime Settings by the rule
+Restart Backend applies (`allocator_env`), `backend:cudaMallocAsync` unless
+another is saved. The value goes into the evidence. A bare uvicorn start
 applies no preset at all, and on this project the choice changes memory by a
 multiple. The Runtime Settings tab records a measurement of HGT training at
 batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native
@@ -826,8 +842,8 @@ it.
 | Counter | Read from | Why |
 |---|---|---|
 | process resident, and its high-water mark | `VmRSS`, `VmHWM` in the service's `/proc/<pid>/status` | what the service process holds |
-| system in use | `MemTotal − MemAvailable` in `/proc/meminfo`, sampled every 0.2 s by the measuring process | covers what the driver takes from the shared pool for CUDA, whether or not it is charged to the process. **Whether it is charged, on GB10, is not established.** The difference between the two counters is recorded, not assumed |
-| swap in use | `SwapTotal − SwapFree`, from the same samples | a phase that completes by swapping has not fitted |
+| system in use | `MemTotal − MemAvailable` in `/proc/meminfo`, sampled every 0.2 s by the measuring process | a **whole-machine pressure indicator**, not the service's usage. `MemAvailable` is the kernel's estimate, and the figure includes every other process. It does cover what the driver takes from the shared pool for CUDA, whether or not that is charged to the process; whether it is, on GB10, is not established. Recorded raw and as a delta from R0. The gap between it and the process counters is recorded and **not named CUDA usage**. Its maximum is a *sampled peak*: an excursion shorter than 0.2 s can be missed |
+| swap in use | `SwapTotal − SwapFree`, from the same samples | its baseline, sampled peak and increase. Swap already in use at R0 is not attributed to the service |
 
 Not used:
 
@@ -847,28 +863,57 @@ does not measure the model's allocation alone.
 **The high-water trap, and the reset.** `VmHWM` never decreases, and neither
 does `ru_maxrss`. A reading taken after the cold start therefore reports the
 cold start's peak, however little the later phase used; §6.2.1's 21.97 GB is
-that trap in miniature. Linux resets `VmHWM` to the current RSS when `5` is
-written to `/proc/<pid>/clear_refs` (proc(5)). Each phase below resets it when
-it starts and reads it when it ends. **The reset is checked**: `VmHWM` must
-equal `VmRSS` immediately afterwards, and a failed reset is reported as a failed
-reset, not read past. The sampled system counter has no such trap but has a
-sampling resolution, so both counters are reported.
+that trap in miniature. Linux resets `VmHWM` to the RSS at the moment `5` is
+written to `/proc/<pid>/clear_refs` (proc(5)).
+
+**The reset is confirmed with the child paused.** A running uvicorn and Gradio
+process can allocate and free between the write and the next read. When it
+does, a later `VmHWM` above `VmRSS` is a new high-water mark, not a failed
+reset; review reproduced exactly that on a live child. So at each phase
+boundary the script stops its own child (`SIGSTOP`), writes `5`, and reads
+`VmHWM` and `VmRSS`. It resumes the child (`SIGCONT`) in a `finally`, and only
+then starts the phase's clock. A stopped process allocates nothing, so equality
+confirms the reset. Reclaim can still lower RSS in a stopped process, so an
+inequality is retried, at most three times. After that the phase is recorded as
+**inconclusive**: not failed, and not measured.
+
+The script pauses only its own child. It never pauses another deployment
+process, and never pauses while a request is in flight. The kernel describes its
+RSS accounting as approximate, and the figures are reported as such. The sampled
+system counter has no high-water trap but has a sampling resolution, so both
+counters are reported.
 
 **Phases.** Each cold start runs in its own service process.
 
 | Phase | Reading | What is taken |
 |---|---|---|
-| R0 | baseline | system in use, before launch |
+| R0 | baseline | system in use and swap in use, sampled before launch on a quiet machine: no other GPU, training or build job. If swap grows during R0, the run is recorded as *measurement precondition not met* |
 | R1 | 1 — cold start | launch to ready: wall time; `VmHWM` at ready, the process's peak since it began; `VmRSS` at ready; system in use, its peak during startup and its value at ready, each less R0 |
 | R2 | 2 — steady and peak once serving | reset, then a fixed `/diagnose` workload: `VmRSS` after it (steady), `VmHWM` (serving peak), system-in-use peak |
-| R3 | 3b — one real reload | reset, then `POST /api/v1/pipeline/reload` with the same workspace and checkpoint: success, wall time, readiness re-asserted, and `VmRSS` after, which shows whether the old state was released |
+| R3 | 3b — one real reload | reset, then `POST /api/v1/pipeline/reload` with the same workspace and checkpoint: success, wall time, readiness re-asserted, and `VmRSS` after — the resident footprint after the reload. That does **not** show whether the old state was released: an allocator can keep memory no live tensor uses, and a similar RSS does not prove every old object is gone. Lifetime is a question for a reference-lifetime test of publish and reload, not for this counter, and no `empty_cache` is added that the service does not itself make |
 | R4 | 4 — old and new coexisting | the same reload: `VmHWM` over it and the system-in-use peak over it, each less its value just before |
 
-**The workload is fixed and seeded.** It uses phenotype sets drawn from the
-workspace's validation samples, plus sets at the API's maximum of 100
-phenotypes (`src/api/routes/diagnose.py:71-76`), so the SP lookup also runs at
-the largest phenotype count the API permits. **Proposed: 200 requests.** The evidence records
-counts and sizes, never phenotype ids.
+**The workload is fixed, seeded, and written down well enough to rebuild.**
+Proposed:
+
+- **200 requests, sent serially**, one at a time. It is a fixed engineering
+  workload. It does not stand for maximum load, concurrency or a long-run
+  steady state.
+- **150 from the validation samples**: a seeded draw from `val_samples.json`,
+  each request sending that sample's phenotypes.
+- **50 at the API's maximum of 100 phenotypes**
+  (`src/api/routes/diagnose.py:71-76`). Each is a seeded draw of 100 unique HPO
+  ids that exist as phenotype nodes in this graph, so the SP lookup also runs at
+  the largest phenotype count the API permits.
+- `top_k = 10`, `include_explanations = true`, `include_paths = true`: the API's
+  defaults, which are what the WebUI sends by default.
+- A request counts only if it returns HTTP 200 with a result the response
+  schema accepts. The failures are counted, and a phase with any failure is
+  incomplete.
+
+The evidence records the seed, the SHA-256 of `val_samples.json`, the generation
+rule, the commit of the script that ran it, and the request counts and
+phenotype-count distribution by kind. It records **no phenotype ids**.
 
 **Repeats: three cold starts, each in its own process, and one reload per
 process.** The median and the maximum are reported, not a mean.
@@ -882,12 +927,16 @@ process, reads that child's `/proc`, and talks HTTP to loopback. It sits beside
 `benchmark_sp_lookup.py`, it is not a framework, and **it will not be written
 until this procedure is agreed.**
 
-**What completes the check, and what it does not decide.** §13 asks for
-readings, not a budget, and no budget is invented here. On this platform the
-check is complete when all four phases finish with readiness asserted, no
-allocation failure, no OOM kill and no swap in use. The numbers are recorded,
-not judged. Whether they leave enough headroom is a question for the smallest
-supported target, which is reading 5, and that reading is still blocked.
+**Completing the readings is not passing a capacity gate.** §13 asks for
+readings, not a budget, and no budget is invented here. The readings for this
+platform are complete when all four phases finish with readiness asserted. For
+each phase the evidence records whether it completed, any allocation failure or
+OOM kill, and swap's baseline, sampled peak and increase. Swap that was already
+in use is recorded as baseline, not reported as a failure caused by the
+service. The numbers are recorded, not judged. Whether they leave enough
+headroom is a separate capacity decision that this plan does not define. It
+matters most on the smallest supported target, reading 5, which is still
+blocked.
 
 ---
 
