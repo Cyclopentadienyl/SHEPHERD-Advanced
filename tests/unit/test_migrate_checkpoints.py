@@ -7,6 +7,7 @@ the script kept exiting 0 while skipping every file with an ImportError. These
 tests run the script as a subprocess, so a broken import fails them rather
 than hiding inside the handler.
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -44,9 +45,13 @@ def _flat_workspace(root: Path) -> Path:
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
+    # The script prints non-ASCII ("DRY RUN — ..."). Pin both ends to UTF-8
+    # rather than the locale's encoding, which is cp950 on a Traditional
+    # Chinese Windows.
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, cwd=REPO_ROOT, timeout=300,
+        capture_output=True, encoding="utf-8", cwd=REPO_ROOT, timeout=300,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
 
 

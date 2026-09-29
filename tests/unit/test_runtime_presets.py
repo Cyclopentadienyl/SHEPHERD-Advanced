@@ -8,8 +8,10 @@ import importlib.util
 from pathlib import Path
 
 from src.config.runtime_presets import (
+    ALLOC_SOURCE_ENV,
     ALLOCATOR_PRESETS,
     DEFAULT_ALLOCATOR,
+    allocator_env,
     effective_allocator,
     load_runtime_settings,
     resolve_allocator,
@@ -93,6 +95,42 @@ def test_no_env_no_setting_uses_default():
 def test_no_env_unknown_setting_falls_back():
     preset, _ = effective_allocator({}, {"allocator_preset": "bogus"})
     assert preset == DEFAULT_ALLOCATOR
+
+
+# --------------------------------------------------------------------------- start environment
+def test_start_env_applies_a_saved_non_default_preset():
+    env = allocator_env({}, {"allocator_preset": "native"})
+    assert env["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS["native"]
+    assert env[ALLOC_SOURCE_ENV] == "preset"
+
+
+def test_start_env_without_settings_uses_the_default():
+    env = allocator_env({}, {})
+    assert env["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS[DEFAULT_ALLOCATOR]
+    assert env[ALLOC_SOURCE_ENV] == "preset"
+
+
+def test_start_env_keeps_an_explicit_override_unmarked():
+    for name in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF"):
+        env = allocator_env({name: "backend:native"}, {"allocator_preset": "expandable"})
+        assert env == {name: "backend:native"}, name
+
+
+def test_start_env_keeps_what_the_launcher_marked_as_an_override():
+    marked = {ALLOC_SOURCE_ENV: "env", "PYTORCH_ALLOC_CONF": "backend:native"}
+    assert allocator_env(marked, {"allocator_preset": "expandable"}) == marked
+
+
+def test_start_env_re_resolves_a_preset_derived_value():
+    stale = {ALLOC_SOURCE_ENV: "preset", "PYTORCH_ALLOC_CONF": ALLOCATOR_PRESETS["native"]}
+    env = allocator_env(stale, {"allocator_preset": "expandable"})
+    assert env["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS["expandable"]
+
+
+def test_start_env_returns_a_copy():
+    source = {}
+    assert allocator_env(source, {}) is not source
+    assert source == {}
 
 
 # --------------------------------------------------------------------------- single source of truth
