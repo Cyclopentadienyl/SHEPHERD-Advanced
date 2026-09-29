@@ -1,0 +1,171 @@
+{
+  "environment": {
+    "cuda_available": false,
+    "device_name": null,
+    "platform": "Linux x86_64",
+    "pyg_native_present": [],
+    "python": "3.12.3",
+    "runtime_status": "notice",
+    "torch_cuda_build": "13.0",
+    "torch_geometric": "2.8.0.post1",
+    "torch_version": "2.10.0+cu130"
+  },
+  "generated_utc": "2026-09-28T10:53:16Z",
+  "probes": [
+    {
+      "claim": "the runtime describes itself",
+      "detail": "runtime described",
+      "facts": {
+        "cuda_available": false,
+        "device_name": null,
+        "platform": "Linux x86_64",
+        "pyg_native_present": [],
+        "python": "3.12.3",
+        "runtime_status": "notice",
+        "torch_cuda_build": "13.0",
+        "torch_geometric": "2.8.0.post1",
+        "torch_version": "2.10.0+cu130"
+      },
+      "id": "A1",
+      "phase": "environment",
+      "seconds": 3.622,
+      "status": "passed"
+    },
+    {
+      "claim": "the ontology configuration is readable",
+      "detail": "configuration read; locations outside the work directory recorded",
+      "facts": {
+        "files_recorded": 0,
+        "locations_recorded": 1
+      },
+      "id": "G0",
+      "phase": "download",
+      "seconds": 0.286,
+      "status": "passed"
+    },
+    {
+      "claim": "mondo downloads, verifies and publishes through the build's own path",
+      "detail": "mondo downloaded, verified and published",
+      "facts": {
+        "attempts": [
+          {
+            "format": "obo",
+            "index": 1,
+            "outcome": "delivered"
+          }
+        ],
+        "data_version": "releases/2026-09-01",
+        "data_version_date": "2026-09-01",
+        "data_version_withheld": false,
+        "format": "obo",
+        "network_at_probe_time": [
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 1,
+            "scheme": "http"
+          },
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 2,
+            "scheme": "http"
+          }
+        ],
+        "ontology": "mondo",
+        "outcome": "published",
+        "size_bytes": 53134854,
+        "source_digest": "50c8367f9bd9978321eedf84d4e2e79cb757efbed514c81effb00b9ad2e49994",
+        "sources_are_project_defaults": true,
+        "sources_configured": 2,
+        "term_count": 58660
+      },
+      "id": "G1",
+      "phase": "download",
+      "seconds": 12.846,
+      "status": "passed"
+    },
+    {
+      "claim": "hpo downloads, verifies and publishes through the build's own path",
+      "detail": "hpo downloaded, verified and published",
+      "facts": {
+        "attempts": [
+          {
+            "format": "obo",
+            "index": 1,
+            "outcome": "delivered"
+          }
+        ],
+        "data_version": "hp/releases/2026-09-01",
+        "data_version_date": "2026-09-01",
+        "data_version_withheld": false,
+        "format": "obo",
+        "network_at_probe_time": [
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 1,
+            "scheme": "http"
+          },
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 2,
+            "scheme": "http"
+          }
+        ],
+        "ontology": "hpo",
+        "outcome": "published",
+        "size_bytes": 10863613,
+        "source_digest": "93dace952fcb3ec4728818857f6ba76bc2d5312f4d83266519b8694b8e798f22",
+        "sources_are_project_defaults": true,
+        "sources_configured": 2,
+        "term_count": 19894
+      },
+      "id": "G2",
+      "phase": "download",
+      "seconds": 3.828,
+      "status": "passed"
+    },
+    {
+      "claim": "nothing outside the work directory was written",
+      "detail": "nothing outside the work directory was touched",
+      "facts": {
+        "changes": [
+          {
+            "created": 0,
+            "kind": "default cache",
+            "location": 0,
+            "removed": 0,
+            "rewritten": 0
+          }
+        ],
+        "locations_checked": 1
+      },
+      "id": "G9",
+      "phase": "download",
+      "seconds": 0.0,
+      "status": "passed"
+    }
+  ],
+  "schema_version": 1,
+  "settings": {
+    "device": null,
+    "download_only": true,
+    "download_requested": true,
+    "epochs": 3,
+    "feature_dim": 32,
+    "real_build_requested": false,
+    "seed": 20260909
+  },
+  "summary": {
+    "error": 0,
+    "failed": 0,
+    "passed": 5,
+    "skipped": 0
+  }
+}

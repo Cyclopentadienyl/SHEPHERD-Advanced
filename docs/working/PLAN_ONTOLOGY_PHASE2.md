@@ -744,6 +744,44 @@ differences), so the misguess did not garble text; it only closed the handle.
 This is the case the plan's §6 names in general — a named test is not a proof —
 arriving in particular. It is why the download phase exists.
 
+### 4.4 The full probe on a GB10 machine
+
+Evidence: [`EVIDENCE_probe_phase2_homelab.json`](EVIDENCE_probe_phase2_homelab.json)
+`d01621f3…` — the report `scripts/probe_deployment.py` wrote, committed byte for
+byte. Run on the homelab (Linux aarch64, NVIDIA GB10, capability 12.1, torch
+2.10.0+cu130) on 2026-09-29, with `--device cuda --external-dir data/external
+--download`, at `43d47c5` as the operator reported it. **The report itself does
+not record the commit**, so that attribution rests on the operator's word.
+
+Comparison baseline:
+[`EVIDENCE_probe_download_sandbox.json`](EVIDENCE_probe_download_sandbox.json)
+`3b1a9beb…` — the same probe run with `--download-only` in the development
+sandbox (Linux x86_64, no GPU) on 2026-09-28, by the development session, on the
+working tree committed immediately afterwards as `f4f6220`. Committed byte for
+byte; it too records no commit.
+
+**48 probes, 48 passed.** What they settle for this plan — each row says where
+its figures come from, because not all of them are in the report:
+
+| | Measured | Source |
+|---|---|---|
+| Selection on an existing cache | The default cache held one MONDO (`releases/2026-06-02`) and one HPO (`hp/releases/2026-06-06`), downloaded by the old pipeline in June, and no ontology root is configured. The real build passed without a path, so it took them as the single candidates — **inferred**: the report records that it built, not which files it read | the operator's listing before the run (`enumerate_candidates`); F1 in the report |
+| The §4.3 regression, on this machine | The June `hp.obo` is guessed ISO-8859-1 by chardet too, so before #107 this build would have failed with `seek of closed file`. It built | the console's `UnicodeWarning`; F1 |
+| Reproducibility | Two builds from the same inputs, all eight canonical artifacts byte-identical (`kg_digest` `5ad83ab2…`); 54,912 nodes and 615,031 edges each | F2 in the report; the counts from the console |
+| A real download | The 2026-09-01 releases downloaded, verified and published through the production path over a home connection. At probe time both configured initial URLs (HTTP PURLs) were judged not proxied and their names resolved locally. **The redirect hops — `github.com`, `release-assets.githubusercontent.com` — are not recorded, so whether any hop went through a proxy is not measured.** The field cannot say: in the sandbox run (the comparison baseline), `HTTPS_PROXY` was set, so by urllib's rules the HTTPS hops went to the proxy, and the same field still reads `false` for both HTTP initial URLs | G1, G2 |
+| The same bytes on two networks | MONDO `50c8367f…` and HPO `93dace95…` (full digests in both files), with identical sizes and term counts, on the homelab and in the development sandbox a day apart | G1, G2 in both reports |
+| Nothing outside the work directory, during the download | No change detected in the monitored default cache between G0 and G9. **G0's snapshot is taken after the real build (F) has already run**, so this says nothing about F: a change made there would have become G9's baseline | G0, G9 |
+| The device | No native kernels for sm_121 (the build stops at sm_120 plus `compute_120` PTX); matmul and `scatter_add` run on the device and agree with the host (max error 4.6e-5) | A3, A4 |
+
+**Still not measured.** A hospital network: whether `github.com` and
+`release-assets.githubusercontent.com` — where the PURLs redirect for the file
+itself — are allowed, whether port 80 is open for the first hop, whether HTTPS
+is intercepted. The hand-off of an unresolvable name to a proxy (§3.5.2) was
+not exercised, since every configured source name resolved locally (the redirect
+hosts were not recorded). Whether the whole probe, real build included, left
+the default cache untouched is not shown by G9. And whether these results stand
+for the hospital's deployment machine depends on it being of the same class.
+
 ---
 
 ## 5. Sequence
