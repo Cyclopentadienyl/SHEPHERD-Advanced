@@ -820,9 +820,21 @@ FastAPI and the mounted Gradio dashboard.
 The launcher applies the preset saved in Runtime Settings by the rule Restart
 Backend applies (`allocator_env`), `backend:cudaMallocAsync` unless another is
 saved, together with the attention settings. The evidence records what the
-server process actually carries, read from its `/proc/<pid>/environ`:
-`PYTORCH_ALLOC_CONF` and its marker, `ATTENTION_ORDER` and
-`FLASHATTN_FORCE_DISABLE`. The value goes into the evidence. A bare uvicorn start
+server process actually carries, read from its `/proc/<pid>/environ`, each
+value raw and recorded as absent when it is absent:
+
+- `PYTORCH_ALLOC_CONF`;
+- the legacy `PYTORCH_CUDA_ALLOC_CONF`. An explicit override may use this
+  name, and the launcher keeps it without adding the new one, so a deployment
+  set to `PYTORCH_CUDA_ALLOC_CONF=backend:native` carries no
+  `PYTORCH_ALLOC_CONF` at all;
+- the marker, `ATTENTION_ORDER` and `FLASHATTN_FORCE_DISABLE`.
+
+Beside those raw values, the evidence records the reading: which allocator
+variable is in effect, and where it came from (the saved preset or an explicit
+override). When both variables are present, both raw values are kept, and which
+one governs is taken from the measured torch version's own rule rather than
+assumed. A missing `PYTORCH_ALLOC_CONF` is never read as the project default. The value goes into the evidence. A bare uvicorn start
 applies no preset at all, and on this project the choice changes memory by a
 multiple. The Runtime Settings tab records a measurement of HGT training at
 batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native

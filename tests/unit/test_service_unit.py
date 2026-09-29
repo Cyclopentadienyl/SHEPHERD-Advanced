@@ -115,8 +115,9 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
     monkeypatch.setattr(launcher.threading, "Thread", _Thread)
     monkeypatch.setattr(launcher.os, "execve", _execve)
     monkeypatch.setattr(launcher, "load_runtime_settings", lambda: {})
-    if not hand_over:
-        monkeypatch.setattr(launcher, "can_hand_over", lambda: False)
+    # Set either way, so every host tests both hand-overs; which one the host
+    # really gets is test_can_hand_over_follows_the_platform's subject.
+    monkeypatch.setattr(launcher, "can_hand_over", lambda: hand_over)
     monkeypatch.setattr(launcher.os, "environ", dict(env or {}))
     monkeypatch.setattr(sys, "argv", ["shep_launch.py", *launcher_args])
     try:
@@ -156,6 +157,13 @@ def test_where_exec_would_change_the_pid_the_launcher_waits(monkeypatch):
     done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"], hand_over=False)
     assert done["run"] and not done["exec"]
     assert done["browsers"] == 0
+
+
+@pytest.mark.parametrize("os_name, expected", [("posix", True), ("nt", False)])
+def test_can_hand_over_follows_the_platform(monkeypatch, os_name, expected):
+    launcher = _launcher()
+    monkeypatch.setattr(launcher.os, "name", os_name)
+    assert launcher.can_hand_over() is expected
 
 
 def test_a_failed_exec_is_a_non_zero_exit(monkeypatch):
