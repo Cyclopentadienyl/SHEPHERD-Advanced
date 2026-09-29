@@ -55,12 +55,47 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import torch
-import yaml
-
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.config.runtime_presets import (
+    ALLOC_SOURCE_ENV,
+    allocator_env,
+    load_runtime_settings,
+)
+
+
+def _apply_allocator() -> str:
+    """Put the CUDA allocator into the environment; say where it came from.
+
+    **Before torch is imported, because torch fixes its allocator backend when
+    its CUDA library loads**, so this cannot wait for ``main()``. A run started
+    from a shell used to get the native allocator, which fragments under HGT
+    training, while the same run started from the WebUI inherited the backend's
+    preset. The shared rule, with ``inherit=True``, keeps whatever allocator is
+    already in the environment -- the backend's, or an explicit override -- and
+    applies the saved preset only where there is none.
+    """
+    inherited = "PYTORCH_ALLOC_CONF" in os.environ or "PYTORCH_CUDA_ALLOC_CONF" in os.environ
+    resolved = allocator_env(os.environ, load_runtime_settings(), inherit=True)
+    for key in ("PYTORCH_ALLOC_CONF", ALLOC_SOURCE_ENV):
+        if key in resolved:
+            os.environ[key] = resolved[key]
+    if not inherited:
+        return "saved preset"
+    if os.environ.get(ALLOC_SOURCE_ENV) == "preset":
+        return "inherited from the backend (preset)"
+    return "environment (explicit)"
+
+
+# Only when this file is the program. Imported as a module -- by a test, say --
+# torch may already be loaded, which makes it too late to matter, and the
+# importing process's environment is not this module's to rewrite.
+ALLOCATOR_SOURCE = _apply_allocator() if __name__ == "__main__" else None
+
+import torch
+import yaml
 
 from src.training.trainer import Trainer, TrainerConfig
 from src.training.loss_functions import LossConfig
@@ -702,6 +737,12 @@ def train(config: TrainConfig) -> Dict[str, float]:
         yaml.dump(asdict(config), f)
     logger.info(f"Configuration saved to {config_path}")
 
+    # The allocator is not a training parameter, so it is not in config.yaml,
+    # but it changes memory by a multiple on this project; runs are compared
+    # with it beside them.
+    with open(output_dir / "runtime.json", "w") as f:
+        json.dump(_allocator_record(), f, indent=2)
+
     # Load data — verified above, before anything was written.
     graph_data = load_graph_data(data_dir)
     train_loader, val_loader = create_dataloaders(config, graph_data)
@@ -842,9 +883,24 @@ def train(config: TrainConfig) -> Dict[str, float]:
 # =============================================================================
 # Entry Point
 # =============================================================================
+def _allocator_record() -> Dict[str, Optional[str]]:
+    return {
+        "PYTORCH_ALLOC_CONF": os.environ.get("PYTORCH_ALLOC_CONF"),
+        "PYTORCH_CUDA_ALLOC_CONF": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
+        ALLOC_SOURCE_ENV: os.environ.get(ALLOC_SOURCE_ENV),
+        "allocator_source": ALLOCATOR_SOURCE or "not applied (imported as a module)",
+    }
+
+
 def main():
     """Main entry point"""
     args = parse_args()
+    record = _allocator_record()
+    logger.info(
+        "CUDA allocator: %s (%s)",
+        record["PYTORCH_ALLOC_CONF"] or record["PYTORCH_CUDA_ALLOC_CONF"],
+        record["allocator_source"],
+    )
 
     # Set debug logging
     if args.debug:

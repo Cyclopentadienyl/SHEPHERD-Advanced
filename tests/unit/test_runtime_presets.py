@@ -108,6 +108,19 @@ def test_a_marker_without_a_value_overrides_nothing():
     assert env[ALLOC_SOURCE_ENV] == "preset"
 
 
+def test_an_inheriting_process_keeps_a_preset_value():
+    # A process the backend starts runs under the backend's allocator.
+    env = {"PYTORCH_ALLOC_CONF": ALLOCATOR_PRESETS["native"], ALLOC_SOURCE_ENV: "preset"}
+    kept = allocator_env(env, {"allocator_preset": "expandable"}, inherit=True)
+    assert kept["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS["native"]
+
+
+def test_an_inheriting_process_with_nothing_inherited_gets_the_saved_preset():
+    env = allocator_env({}, {"allocator_preset": "expandable"}, inherit=True)
+    assert env["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS["expandable"]
+    assert env[ALLOC_SOURCE_ENV] == "preset"
+
+
 def test_start_env_returns_a_copy():
     source = {}
     assert allocator_env(source, {}) is not source
