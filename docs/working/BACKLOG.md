@@ -721,6 +721,16 @@ review:** a name this machine cannot resolve is left to a configured proxy
 instead of being refused (§3.5.2), because proxy-only hospital networks could
 otherwise never download.
 
+**Measured on the homelab GB10 since**
+([`EVIDENCE_probe_phase2_homelab.json`](EVIDENCE_probe_phase2_homelab.json)
+`d01621f3…`, plan §4.4): the full deployment probe passed 48 of 48 — selection on
+the June cache, two byte-identical real builds, and a real download of the
+2026-09-01 releases whose digests match the development sandbox's. That run's
+first predecessor, in the sandbox, is what found the HPO regression fixed in
+#107. **A hospital network has not been tried**: the files come from
+`release-assets.githubusercontent.com`, not from a biomedical host, and only a
+run there shows whether it is allowed.
+
 Phase 3 (packaging) is unstarted and converges with the export/import idea
 below.
 

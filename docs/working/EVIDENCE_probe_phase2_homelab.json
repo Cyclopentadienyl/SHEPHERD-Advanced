@@ -1,0 +1,712 @@
+{
+  "environment": {
+    "capability": "12.1",
+    "cuda_arch_support": {
+      "arch_list": [
+        "sm_80",
+        "sm_90",
+        "sm_100",
+        "sm_110",
+        "sm_120",
+        "compute_120"
+      ],
+      "device_capability": "12.1",
+      "native_kernels_expected": false,
+      "natively_compiled_for_this_device": false,
+      "ptx_available": [
+        "compute_120"
+      ]
+    },
+    "cuda_available": true,
+    "device_count": 1,
+    "device_name": "NVIDIA GB10",
+    "platform": "Linux aarch64",
+    "pyg_native_present": [
+      "pyg_lib",
+      "torch_cluster",
+      "torch_scatter",
+      "torch_sparse"
+    ],
+    "python": "3.12.3",
+    "resolved_device": "cuda",
+    "runtime_status": "notice",
+    "torch_cuda_build": "13.0",
+    "torch_geometric": "2.8.0.post1",
+    "torch_version": "2.10.0+cu130",
+    "total_memory_gb": 130.7
+  },
+  "generated_utc": "2026-09-29T08:46:51Z",
+  "probes": [
+    {
+      "claim": "the runtime describes itself",
+      "detail": "runtime described",
+      "facts": {
+        "cuda_available": true,
+        "device_name": "NVIDIA GB10",
+        "platform": "Linux aarch64",
+        "pyg_native_present": [
+          "pyg_lib",
+          "torch_cluster",
+          "torch_scatter",
+          "torch_sparse"
+        ],
+        "python": "3.12.3",
+        "runtime_status": "notice",
+        "torch_cuda_build": "13.0",
+        "torch_geometric": "2.8.0.post1",
+        "torch_version": "2.10.0+cu130"
+      },
+      "id": "A1",
+      "phase": "environment",
+      "seconds": 1.792,
+      "status": "passed"
+    },
+    {
+      "claim": "the serving device resolves",
+      "detail": "serving device is cuda",
+      "facts": {
+        "capability": "12.1",
+        "device_count": 1,
+        "resolved_device": "cuda",
+        "total_memory_gb": 130.7
+      },
+      "id": "A2",
+      "phase": "environment",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "the build's architectures are recorded (informational)",
+      "detail": "no native kernels for this device \u2014 the expected, permanent state for a capability the vendor ships none for; A4 is what decides whether that matters here",
+      "facts": {
+        "arch_list": [
+          "sm_80",
+          "sm_90",
+          "sm_100",
+          "sm_110",
+          "sm_120",
+          "compute_120"
+        ],
+        "device_capability": "12.1",
+        "native_kernels_expected": false,
+        "natively_compiled_for_this_device": false,
+        "ptx_available": [
+          "compute_120"
+        ]
+      },
+      "id": "A3",
+      "phase": "environment",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "kernels actually execute on this device and give the right answer",
+      "detail": "kernels execute on the device and agree with the host",
+      "facts": {
+        "matmul_max_abs_error": 4.6e-05
+      },
+      "id": "A4",
+      "phase": "environment",
+      "seconds": 0.559,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a sound workspace is written",
+      "detail": "a sound workspace was written",
+      "facts": {
+        "disjoint": true,
+        "train_diseases": 3,
+        "train_samples": 60,
+        "val_diseases": 1,
+        "val_samples": 20
+      },
+      "id": "B1",
+      "phase": "writer",
+      "seconds": 0.018,
+      "status": "passed"
+    },
+    {
+      "claim": "a zero feature width is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B2",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a fractional feature width is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B3",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a zero phenotype floor is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B4",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a boolean phenotype floor is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B5",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a bytes seed is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B6",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "an object seed is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B7",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a boolean seed is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B8",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a boolean budget is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B9",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a budget too small to cover its partition is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B10",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a validation fraction outside (0, 1) is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B11",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a universe too small to split is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B12",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a refusal creates no directory at all",
+      "detail": "no directory was created",
+      "facts": {},
+      "id": "B13",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call with an empty recipe is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B15",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call with an incomplete recipe is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B16",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call with a malformed recipe field is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B17",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call missing a graph digest is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B18",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a digest that is a 64-digit integer is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B19",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a refused persisted call creates no directory at all",
+      "detail": "no directory was created",
+      "facts": {},
+      "id": "B20",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a sound persisted call writes, and its digests match the files",
+      "detail": "it wrote, and its digests are of the bytes on disk",
+      "facts": {
+        "cohort_digests_verified": 2
+      },
+      "id": "B21",
+      "phase": "writer",
+      "seconds": 0.008,
+      "status": "passed"
+    },
+    {
+      "claim": "rebuilding under trained checkpoints is refused and writes nothing",
+      "detail": "the rebuild was refused and changed nothing",
+      "facts": {},
+      "id": "B14",
+      "phase": "writer",
+      "seconds": 0.016,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: the sound workspace verifies",
+      "detail": "every verifier accepted it",
+      "facts": {
+        "disease_overlap": 0,
+        "kg_digest": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+        "train_diseases": 3,
+        "val_diseases": 1,
+        "workspace_digests": {
+          "edge_indices.pt": "b7bdc2555b82e6d4bcf902190e6a27e25d3e6e7484bf74425307418848073934",
+          "kg.json": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+          "kg.provenance.json": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+          "node_features.pt": "55619f65688cbc29d04f659566f772ec26df1623d78aa5a48bf1ec397dc4b833",
+          "num_nodes.json": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+          "split_manifest.json": "d7d5fd2b3cdc98f966b6bb83b87ec7d81f9b4aacc8eee2ea4a5b9caa38076063",
+          "train_samples.json": "bf9675b667c6bdf9cfa63271b1df3418fc47205d82f9a980b4309c7243edc45e",
+          "val_samples.json": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40"
+        }
+      },
+      "id": "C1",
+      "phase": "workspace",
+      "seconds": 0.007,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced edge_indices artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.edge_indices",
+      "phase": "workspace",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced kg artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.kg",
+      "phase": "workspace",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced node_features artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.node_features",
+      "phase": "workspace",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced num_nodes artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.num_nodes",
+      "phase": "workspace",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a workspace with no manifest is refused",
+      "detail": "an unbound workspace was refused",
+      "facts": {},
+      "id": "C3",
+      "phase": "workspace",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "another workspace's kg.json is refused",
+      "detail": "another workspace's graph was refused",
+      "facts": {},
+      "id": "C4",
+      "phase": "workspace",
+      "seconds": 0.016,
+      "status": "passed"
+    },
+    {
+      "claim": "the production trainer runs here",
+      "detail": "the production trainer produced a checkpoint",
+      "facts": {
+        "checkpoint_name": "last.pt",
+        "epochs": 3,
+        "metric_names": [
+          "val_hits@1",
+          "val_hits@10",
+          "val_hits@20",
+          "val_hits@3",
+          "val_hits@5",
+          "val_loss",
+          "val_mrr",
+          "val_ndcg@1",
+          "val_ndcg@10",
+          "val_ndcg@20",
+          "val_ndcg@3",
+          "val_ndcg@5"
+        ]
+      },
+      "id": "D1",
+      "phase": "training",
+      "seconds": 1.889,
+      "status": "passed"
+    },
+    {
+      "claim": "the checkpoint carries the digests of the workspace it read",
+      "detail": "the checkpoint names the workspace it was trained on",
+      "facts": {
+        "recorded_roles": [
+          "edge_indices",
+          "node_features",
+          "num_nodes",
+          "split_manifest",
+          "train_samples",
+          "val_samples"
+        ]
+      },
+      "id": "D2",
+      "phase": "training",
+      "seconds": 0.014,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a sound workspace serves",
+      "detail": "the pipeline built and the GNN is ready",
+      "facts": {
+        "kg_nodes": 24,
+        "scoring_mode": "gnn_only",
+        "sp_ready": false
+      },
+      "id": "E1",
+      "phase": "serving",
+      "seconds": 2.219,
+      "status": "passed"
+    },
+    {
+      "claim": "checkpoint metadata survives the encoder that serves it",
+      "detail": "metadata is JSON-primitive and the status encodes",
+      "facts": {
+        "metadata_types": {
+          "device": "str",
+          "epoch": "int",
+          "params": "int",
+          "train_loss": "float",
+          "val_loss": "float"
+        },
+        "recorded_device": "cuda"
+      },
+      "id": "E2",
+      "phase": "serving",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a metric logged as a device tensor normalises rather than crashing",
+      "detail": "metrics recorded as cuda tensors normalise",
+      "facts": {
+        "tensor_device": "cuda"
+      },
+      "id": "E3",
+      "phase": "serving",
+      "seconds": 0.003,
+      "status": "passed"
+    },
+    {
+      "claim": "reloading builds the candidate beside the live pipeline",
+      "detail": "the reload succeeded and its response encodes",
+      "facts": {
+        "allocated_after_mb": 18.51,
+        "allocated_before_mb": 18.3,
+        "double_residency_conclusive": false,
+        "model_parameters": 43553,
+        "peak_during_reload_mb": 18.54,
+        "scoring_mode": "gnn_only"
+      },
+      "id": "E4",
+      "phase": "serving",
+      "seconds": 0.109,
+      "status": "passed"
+    },
+    {
+      "claim": "a refused reload leaves the running pipeline serving",
+      "detail": "the refusal left every served field untouched",
+      "facts": {},
+      "id": "E5",
+      "phase": "serving",
+      "seconds": 0.068,
+      "status": "passed"
+    },
+    {
+      "claim": "a workspace with no manifest is named, not merely rejected",
+      "detail": "the missing manifest was named in the file report",
+      "facts": {},
+      "id": "E6",
+      "phase": "serving",
+      "seconds": 0.003,
+      "status": "passed"
+    },
+    {
+      "claim": "a diagnosis runs on this machine",
+      "detail": "a diagnosis ran end to end",
+      "facts": {
+        "candidates": 5,
+        "score_range": [
+          0.4351,
+          0.6218
+        ]
+      },
+      "id": "E7",
+      "phase": "serving",
+      "seconds": 0.004,
+      "status": "passed"
+    },
+    {
+      "claim": "the served model's parameters are on the requested device",
+      "detail": "every parameter is on cuda",
+      "facts": {
+        "embedding_devices": [
+          "cpu"
+        ],
+        "parameter_devices": [
+          "cuda"
+        ]
+      },
+      "id": "E8",
+      "phase": "serving",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a real workspace builds and verifies here",
+      "detail": "a real workspace was built and verified",
+      "facts": {
+        "build_seconds": 50.5,
+        "disease_overlap": 0,
+        "kg_digest": "5ad83ab2e3bb0767b642a4da392ac7dde1cff3ab92dd149a508bc31195d677d0",
+        "train_diseases": 8990,
+        "val_diseases": 1587
+      },
+      "id": "F1",
+      "phase": "real_build",
+      "seconds": 52.568,
+      "status": "passed"
+    },
+    {
+      "claim": "the same annotation files produce the same workspace",
+      "detail": "the same inputs produced the same workspace",
+      "facts": {
+        "canonical_artifacts_compared": 8,
+        "digests": {
+          "edge_indices.pt": "004b32ef6dcc13e770fbebabecfaf03709663a375ce5b4fed4ddb45eb21da1b1",
+          "kg.json": "5ad83ab2e3bb0767b642a4da392ac7dde1cff3ab92dd149a508bc31195d677d0",
+          "kg.provenance.json": "d07d356402a2b4243bc1dfd43b7e77f2a70896ca0ad8b6e6f608690de71af1b2",
+          "node_features.pt": "bf86c9ba0d937ca45e3321b135548e95ddb821dc057ede6d987a7c40b013e5d5",
+          "num_nodes.json": "b14e9ca91bbd5b044c42b707eb3e84225e71cd9acccbd03a86ab43b2174eacf3",
+          "split_manifest.json": "7d2dde1492c43071bad9ba9eeb7ef8a77cbce4ec53596ad006c6f5d03542bae8",
+          "train_samples.json": "7de4180a6b743d904ce483ee75c01f2db38dc57e25a0f956cf4a8caa420a534d",
+          "val_samples.json": "076eb470d00f3f9e9eef90432f676f32f712425f6b1ff7f6ef6f6fcba119ebe7"
+        }
+      },
+      "id": "F2",
+      "phase": "real_build",
+      "seconds": 47.121,
+      "status": "passed"
+    },
+    {
+      "claim": "the ontology configuration is readable",
+      "detail": "configuration read; locations outside the work directory recorded",
+      "facts": {
+        "files_recorded": 2,
+        "locations_recorded": 1
+      },
+      "id": "G0",
+      "phase": "download",
+      "seconds": 0.083,
+      "status": "passed"
+    },
+    {
+      "claim": "mondo downloads, verifies and publishes through the build's own path",
+      "detail": "mondo downloaded, verified and published",
+      "facts": {
+        "attempts": [
+          {
+            "format": "obo",
+            "index": 1,
+            "outcome": "delivered"
+          }
+        ],
+        "data_version": "releases/2026-09-01",
+        "data_version_date": "2026-09-01",
+        "data_version_withheld": false,
+        "format": "obo",
+        "network_at_probe_time": [
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 1,
+            "scheme": "http"
+          },
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 2,
+            "scheme": "http"
+          }
+        ],
+        "ontology": "mondo",
+        "outcome": "published",
+        "size_bytes": 53134854,
+        "source_digest": "50c8367f9bd9978321eedf84d4e2e79cb757efbed514c81effb00b9ad2e49994",
+        "sources_are_project_defaults": true,
+        "sources_configured": 2,
+        "term_count": 58660
+      },
+      "id": "G1",
+      "phase": "download",
+      "seconds": 13.15,
+      "status": "passed"
+    },
+    {
+      "claim": "hpo downloads, verifies and publishes through the build's own path",
+      "detail": "hpo downloaded, verified and published",
+      "facts": {
+        "attempts": [
+          {
+            "format": "obo",
+            "index": 1,
+            "outcome": "delivered"
+          }
+        ],
+        "data_version": "hp/releases/2026-09-01",
+        "data_version_date": "2026-09-01",
+        "data_version_withheld": false,
+        "format": "obo",
+        "network_at_probe_time": [
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 1,
+            "scheme": "http"
+          },
+          {
+            "goes_through_proxy": false,
+            "host_allow_listed": false,
+            "host_resolves_here": true,
+            "index": 2,
+            "scheme": "http"
+          }
+        ],
+        "ontology": "hpo",
+        "outcome": "published",
+        "size_bytes": 10863613,
+        "source_digest": "93dace952fcb3ec4728818857f6ba76bc2d5312f4d83266519b8694b8e798f22",
+        "sources_are_project_defaults": true,
+        "sources_configured": 2,
+        "term_count": 19894
+      },
+      "id": "G2",
+      "phase": "download",
+      "seconds": 4.772,
+      "status": "passed"
+    },
+    {
+      "claim": "nothing outside the work directory was written",
+      "detail": "nothing outside the work directory was touched",
+      "facts": {
+        "changes": [
+          {
+            "created": 0,
+            "kind": "default cache",
+            "location": 0,
+            "removed": 0,
+            "rewritten": 0
+          }
+        ],
+        "locations_checked": 1
+      },
+      "id": "G9",
+      "phase": "download",
+      "seconds": 0.077,
+      "status": "passed"
+    }
+  ],
+  "schema_version": 1,
+  "settings": {
+    "device": "cuda",
+    "download_only": false,
+    "download_requested": true,
+    "epochs": 3,
+    "feature_dim": 32,
+    "real_build_requested": true,
+    "seed": 20260909
+  },
+  "summary": {
+    "error": 0,
+    "failed": 0,
+    "passed": 48,
+    "skipped": 0
+  }
+}

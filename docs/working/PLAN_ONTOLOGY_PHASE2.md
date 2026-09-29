@@ -744,6 +744,34 @@ differences), so the misguess did not garble text; it only closed the handle.
 This is the case the plan's §6 names in general — a named test is not a proof —
 arriving in particular. It is why the download phase exists.
 
+### 4.4 The full probe on a GB10 machine
+
+Evidence: [`EVIDENCE_probe_phase2_homelab.json`](EVIDENCE_probe_phase2_homelab.json)
+`d01621f3…` — the report `scripts/probe_deployment.py` wrote, committed byte for
+byte. Run on the homelab (Linux aarch64, NVIDIA GB10, capability 12.1, torch
+2.10.0+cu130) on 2026-09-29, with `--device cuda --external-dir data/external
+--download`, at `43d47c5` as the operator reported it. **The report itself does
+not record the commit**, so that attribution rests on the operator's word.
+
+**48 probes, 48 passed.** What they settle for this plan — each row says where
+its figures come from, because not all of them are in the report:
+
+| | Measured | Source |
+|---|---|---|
+| Selection on an existing cache | The default cache held one MONDO (`releases/2026-06-02`) and one HPO (`hp/releases/2026-06-06`), downloaded by the old pipeline in June, and no ontology root is configured. The real build passed without a path, so it took them as the single candidates — **inferred**: the report records that it built, not which files it read | the operator's listing before the run (`enumerate_candidates`); F1 in the report |
+| The §4.3 regression, on this machine | The June `hp.obo` is guessed ISO-8859-1 by chardet too, so before #107 this build would have failed with `seek of closed file`. It built | the console's `UnicodeWarning`; F1 |
+| Reproducibility | Two builds from the same inputs, all eight canonical artifacts byte-identical (`kg_digest` `5ad83ab2…`); 54,912 nodes and 615,031 edges each | F2 in the report; the counts from the console |
+| A real download, direct | 2026-09-01 releases over a home connection: both published, no proxy involved, every source name resolved locally. **MONDO `50c8367f…` and HPO `93dace95…` are the digests the development sandbox got for the same releases** — two networks, the same bytes | G1, G2 |
+| Nothing outside the work directory | The two June files in the default cache untouched | G9 |
+| The device | No native kernels for sm_121 (the build stops at sm_120 plus `compute_120` PTX); matmul and `scatter_add` run on the device and agree with the host (max error 4.6e-5) | A3, A4 |
+
+**Still not measured.** A hospital network: whether `github.com` and
+`release-assets.githubusercontent.com` — where the PURLs redirect for the file
+itself — are allowed, whether port 80 is open for the first hop, whether HTTPS
+is intercepted. The hand-off of an unresolvable name to a proxy (§3.5.2) was
+not exercised, since every name resolved. And whether these results stand for
+the hospital's deployment machine depends on it being of the same class.
+
 ---
 
 ## 5. Sequence
