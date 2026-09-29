@@ -41,6 +41,12 @@ Re-stating these so the review is about the wiring and not about the choice:
 | Duplicate-freedom of real tables | §5.3.2, §10.1 | two artifacts, two HPO vintages, zero duplicates |
 | That the caller keeps its per-candidate shape | §4.1 | deferred to B-1, not this plan |
 
+The latency and memory rows are the **prototype's**, as `PLAN_B04.md` measured
+it. The shipped shape has since been measured on the real artifact (§6.2.1):
+9.00 bytes/row resident, and slower than the prototype in the same cells while
+still 0 of 60 over the provisional budget — the criterion the selection rested
+on. They are left as written because they are what the choice was made from.
+
 **No second prototype, no runtime selector, no flag.** §13 is explicit: B is not
 kept alive behind a switch. This plan ships one implementation.
 
@@ -541,9 +547,79 @@ their own scaling. The `ru_maxrss` reading taken alongside this is not quoted:
 it is a process high-water mark already polluted by the columns the test itself
 allocated.
 
-So: resident is measured and extrapolable; peak at deployment scale is
-**pending a run on the real artifact**, and `PLAN_B04.md`'s figures remain
-evidence about the design that kept the id columns, not about this one.
+So: resident is measured and extrapolable, and `PLAN_B04.md`'s figures remain
+evidence about the design that kept the id columns, not about this one. This
+paragraph used to end "peak at deployment scale is pending a run on the real
+artifact". That run has happened, and §6.2.1 is what it can and cannot say — it
+confirms the resident figure and it does **not** supply a serving peak.
+
+### 6.2.1 At deployment scale, on the real artifact
+
+`scripts/benchmark_sp_lookup.py` in artifact mode, on the homelab GB10, over the
+same `shortest_paths.pt` `PLAN_B04.md` §9 measured. The index is built once,
+through `build_sp_index`, in a process that builds nothing else
+(`memory_attribution_isolated: true`).
+
+| Provenance | |
+|---|---|
+| Evidence | [`EVIDENCE_B04_served_primitive_spark.json`](EVIDENCE_B04_served_primitive_spark.json), SHA-256 `01afef455ccc9fac4c13fa6d867247c0dba03121780f73d6159e655620b7dfa6` — committed byte for byte as received from the host |
+| Artifact | SHA-256 `9ada0c1aa16510f7c55c71d5e3eab01b48fd9ce165a63ad07f352bd29994d4df`, 429,971,678 rows; `max_hops` from its sidecar; `kg_binding: unrecorded` — the table predates the pairing protocol, and this tool reads only integer ids and loads no graph |
+| Host | aarch64, `Linux-7.0.0-1019-nvidia`, torch `2.10.0+cu130`, 20 CPU threads. The kernel is not the one §9 of `PLAN_B04.md` records (`6.17.0-1029`) |
+
+| Quantity | Value | Kind |
+|---|---|---|
+| Index resident (`SPLookup.resident_bytes()`) | 3,869,745,102 B, 3.87 GB — **9.00 bytes/row exactly** (9 × 429,971,678) | measured |
+| Current RSS across the build (`VmRSS`, after − before) | +3,872,034,816 B: 2.3 MB (0.06%) more than the index's own tensors | measured |
+| Build | 36.4 s | measured, one build |
+| Build high-water above the RSS the build started from | 13.76 GB, ≈32.0 bytes/row | **derived**, below |
+
+The last row is derived, not sampled. `ru_maxrss` read 21.97 GB before the
+build and 25.05 GB after it. Because it rose, the process's maximum during the
+build was 25.05 GB, and the build began at 11.30 GB current:
+25,053,757,440 − 11,297,255,424 = 13,756,502,016 B. Of that, the 3.87 GB index
+stays and 9.88 GB (≈23.0 bytes/row) was gone again by the end of the build.
+Counting the arrays `build_sp_index` holds at once — the key, then the sort's
+output and its permutation — gives 24 bytes/row at the widest point; the
+measured ≈32 is 8 bytes/row more, and this run does not say what that is.
+
+**What it settles.** The resident figure extrapolates as §6.2 said it would:
+9.00 bytes/row at 5M rows was a claim about the shape, and at 86 times the rows
+it is 9.00 exactly. Against the four-column layout it replaces, 10.00 bytes/row,
+that is 0.43 GB less at this row count. In the service this is the whole of the
+table's steady footprint by construction — `_load_shortest_paths` keeps no
+column once the index exists — but what was measured is the lookup's own
+tensors, not a service's RSS.
+
+**What it does not settle.**
+
+- **It is not the service's load peak.** The benchmark
+  keeps all four columns alive through the build — a local for each
+  (`benchmark_sp_lookup.py:315-318`), the tuple it passes on (`:334`, `:504`) —
+  so its build starts on top of the whole table. The served loader passes them
+  by `pop` (`pipeline.py:832-836`) so the builder can release each as it folds
+  it into the key; that saving is designed and **not measured here**. And the
+  21.97 GB mark before the build belongs to no served step: before building, the
+  benchmark argsorts the phenotype column and takes `torch.unique` over the
+  disease targets and the phenotypes for its slice statistics and its workload
+  (`:325`, `:337`, `:720`), which the service never does. So neither 21.97 nor
+  25.05 GB is a serving figure, and the load's own transient — `torch.load`
+  plus validation — is not isolated by this run.
+- **It is still supplementary** (§7.2). The SP table alone, with no model,
+  graph, embeddings or API resident. Reading 2 is not advanced by it.
+
+**The same run timed the shipped primitive**, for the first time over the real
+table; `PLAN_B04.md` §12 timed the prototype. No row of the 60 has a median or a
+maximum over the provisional 250 ms (worst median 90.5 ms, worst maximum
+171.0 ms). At the budget point, 200 candidates × 20 phenotypes, singleton medians
+are 10.2 ms (`sampled`) and 13.1 ms (`longest`). **That is slower than the
+prototype measured, not faster**: across the 60 cells the median ratio to
+`EVIDENCE_B04_proto_global.json` is 2.6, and at the budget point the prototype
+read 7.09 ms for both. The comparison crosses an artifact (that run's was
+`7268900c…`, 430,585,772 rows), a kernel and a day, so it is not attributed to
+the change of shape; it is recorded so that the prototype's "8-33×" is not quoted for the
+primitive that shipped. The file's `deployment_equivalent_cpu: false` is the
+script's constant — it cannot self-attest that condition, by design — not a
+statement about this host.
 
 ---
 
@@ -652,6 +728,10 @@ The plan ends at: *implemented; a supplementary SP-only memory figure recorded;
 readings 1, 2, 3b and 4 pending a designated measurement subject; reading 5
 deferred for want of the smallest supported target*. Not a clearance to ship, and
 the gate is not claimed complete.
+
+**The supplementary figure is now recorded at deployment scale** (§6.2.1): the
+resident figure is confirmed on the real artifact, and no serving peak comes out
+of it. The other three clauses stand as written.
 
 ---
 
@@ -804,6 +884,9 @@ end of any of them.
    evidence about it. Report: implemented; the supplementary figure recorded as
    supplementary; readings 1, 2, 3b and 4 awaiting a designated measurement
    subject (§7.1); reading 5 deferred for want of the smallest supported target.
+   *Status:* the supplementary figure is recorded at deployment scale (§6.2.1).
+   It re-takes the resident figure and does not yield a serving peak, which is
+   reading 2's to supply. The rest of the report stands.
 
 Steps 0-8 need no calibration and **no institutional decision** — §7.1's
 designation is engineering, and item 6's clinical choice is not a prerequisite
