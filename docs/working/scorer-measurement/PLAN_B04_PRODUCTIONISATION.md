@@ -633,6 +633,10 @@ statement about this host.
 | 4 | peak while old and new pipeline state coexist | **pending a designated measurement subject** — probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
 | 5 | the same on the **smallest supported deployment target** | **blocked** — that machine is not available. The reading is deferred, not waived, and the gate is not claimed complete without it |
 
+**For readings 1-4, a subject is proposed in §7.1.1 and a procedure in §7.3**,
+both awaiting review. The statuses above stay as they are until the readings
+exist.
+
 ### 7.1 The measurement subject — designated, not authoritative
 
 **Two revisions in a row got this wrong in opposite directions.** The first
@@ -714,6 +718,53 @@ reading this plan can produce**, and §6.2 has it. That is not a reason to delay
 the producer work, which needs no checkpoint at all — which is why the two run
 in parallel rather than in sequence.
 
+#### 7.1.1 Designation, amended: the subject is trained for the purpose
+
+**The evidenced list could not supply a subject.** The operator ran a digest
+scan on the measuring machine, the homelab GB10: 17 checkpoint files, none of
+them among the fifteen digests `EVIDENCE_M1_M3_*.json` records. That result is
+reported, not re-run here. A matching file would still have needed a fresh
+workspace to load against. The current reader requires a schema-3 `split_manifest.json`
+(`src/kg/artifacts.py:93-99`, `:333-356`), reload lists the manifest among
+`REQUIRED_DATA_FILES` (`src/api/routes/pipeline.py:116-122`), and schema 3
+arrived on 2026-09-09 (`138f260`). Going by that date, the June workspaces
+those files sit beside predate it.
+
+**So the subject is made on the measuring machine, from the artifact set the
+readings run over.** No decision is needed for that. BACKLOG §3.5 asks for *a*
+checkpoint that loads against the set. One trained on the set should load, and
+that is then **checked, not assumed**.
+
+| | Value | Source |
+|---|---|---|
+| Graph export | `kg.json` SHA-256 `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`, 57,239 nodes, 617,773 edges; built by the Phase 2 pipeline with both ontologies downloaded and verified | build output, reported |
+| Checkpoint | HGT: hidden 256, 4 layers, 8 heads (the trainer's defaults; `--conv-type hgt` is the only architecture override), 3 epochs, seed 42. SHA-256 ⟨pending⟩ | ⟨pending: the load check without SP⟩ |
+| SP artifact | computed from that `kg.json`; SHA-256 ⟨pending⟩, ⟨pending⟩ rows | ⟨pending: the SP build⟩ |
+| Loads against the set | `gnn_ready`, `has_model` and `sp_ready` true, `sp_kg_binding == "verified"` | ⟨pending: the load check with SP⟩ |
+| Parameters, resident size | ⟨pending⟩, counted from the checkpoint's state dict. **Parameter bytes are one term of the pipeline's memory, not its RSS** | ⟨pending⟩ |
+
+**Why three epochs, and what that does not claim.** Memory and reload cost are
+set by the architecture, the graph and the SP table. They do not depend on how
+good the weights are, and a three-epoch checkpoint has the same tensor shapes as
+a longer run of the same configuration. Nothing measured on it says anything
+about accuracy, and nobody should score a patient with it. This is "designated,
+not authoritative" taken literally.
+
+**Requirement 3, the deployment shape it stands for, is that table**: an HGT of
+those dimensions, over a graph of that size, with an SP table of that row count,
+on a GB10. **A re-run is owed** when the model finally deployed differs in any
+of:
+
+1. `conv_type`, `hidden_dim`, `num_layers` or `num_heads`;
+2. its parameter count, by more than 10%;
+3. the graph's node or edge count, or the SP table's row count, by more than
+   10%.
+
+Each of these can be checked from files without re-running the gate, which is
+why they are written down. **The 10% is proposed, not derived.** Nothing
+measured so far shows where materiality starts, and the reviewer may set a
+different figure.
+
 ### 7.2 What this plan completes unaided
 
 The implementation and its tests. **No integrated reading.**
@@ -732,6 +783,98 @@ the gate is not claimed complete.
 **The supplementary figure is now recorded at deployment scale** (§6.2.1): the
 resident figure is confirmed on the real artifact, and no serving peak comes out
 of it. The other three clauses stand as written.
+
+### 7.3 How readings 1-4 are taken — proposed, for review
+
+**The service itself, started the way the unit starts it:**
+`.venv/bin/python -m uvicorn src.api.main:app` on loopback, with
+`SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`, `SHEPHERD_CHECKPOINT_PATH` and
+`SHEPHERD_DEVICE=cuda`. It is not a harness around the pipeline's internals.
+§13 exists because an isolated measurement leaves out part of what the running
+service holds. A harness that built the pipeline itself would leave out uvicorn,
+FastAPI and the mounted Gradio dashboard.
+
+**The checkpoint is named, at startup and at reload.** Startup uses
+`SHEPHERD_CHECKPOINT_PATH` as given. A reload without `checkpoint_path`
+auto-selects instead, and it scores the candidates by `torch.load`-ing each one
+in full (`src/api/routes/pipeline.py:325-331`, `:355`). That is selection
+cost, and it would be measured as reload cost. So the reload request passes the
+same path.
+
+**Readiness is asserted before anything counts.** `GET /api/v1/pipeline/status`
+must show `initialized`, `gnn_ready`, `has_model` and `sp_ready`, and
+`sp_kg_binding == "verified"`. A reload whose model fails to load still reports
+success and serves the fallback, the gap `DISEASE_SCORER_POLICY.md` §2 records
+as B-2. Without this check, a reading can come from a pipeline with no model in
+it.
+
+**The counters are defined here, because GB10 has one memory pool.**
+
+| Counter | Read from | Why |
+|---|---|---|
+| process resident, and its high-water mark | `VmRSS`, `VmHWM` in the service's `/proc/<pid>/status` | what the service process holds |
+| system in use | `MemTotal − MemAvailable` in `/proc/meminfo`, sampled every 0.2 s by the measuring process | covers what the driver takes from the shared pool for CUDA, whether or not it is charged to the process. **Whether it is charged, on GB10, is not established.** The difference between the two counters is recorded, not assumed |
+| swap in use | `SwapTotal − SwapFree`, from the same samples | a phase that completes by swapping has not fitted |
+
+Not used:
+
+- `nvidia-smi`'s memory columns. This codebase already treats them as
+  unavailable on GB10 (`src/api/services/training_manager.py:500-506`); that is
+  to be confirmed on the machine, and nothing here relies on it.
+- `torch.cuda`'s allocator counters. They live inside the service and no
+  endpoint exposes them, and adding one is a code change this procedure does not
+  need.
+
+Probe E4's `double_residency_conclusive` rule (more than 10M parameters) does
+not govern reading 4. That rule exists because a second copy of the demo model
+is inside allocator noise. R4 measures the whole second
+pipeline, graph and SP index included, through process and system counters. It
+does not measure the model's allocation alone.
+
+**The high-water trap, and the reset.** `VmHWM` never decreases, and neither
+does `ru_maxrss`. A reading taken after the cold start therefore reports the
+cold start's peak, however little the later phase used; §6.2.1's 21.97 GB is
+that trap in miniature. Linux resets `VmHWM` to the current RSS when `5` is
+written to `/proc/<pid>/clear_refs` (proc(5)). Each phase below resets it when
+it starts and reads it when it ends. **The reset is checked**: `VmHWM` must
+equal `VmRSS` immediately afterwards, and a failed reset is reported as a failed
+reset, not read past. The sampled system counter has no such trap but has a
+sampling resolution, so both counters are reported.
+
+**Phases.** Each cold start runs in its own service process.
+
+| Phase | Reading | What is taken |
+|---|---|---|
+| R0 | baseline | system in use, before launch |
+| R1 | 1 — cold start | launch to ready: wall time; `VmHWM` at ready, the process's peak since it began; `VmRSS` at ready; system in use, its peak during startup and its value at ready, each less R0 |
+| R2 | 2 — steady and peak once serving | reset, then a fixed `/diagnose` workload: `VmRSS` after it (steady), `VmHWM` (serving peak), system-in-use peak |
+| R3 | 3b — one real reload | reset, then `POST /api/v1/pipeline/reload` with the same workspace and checkpoint: success, wall time, readiness re-asserted, and `VmRSS` after, which shows whether the old state was released |
+| R4 | 4 — old and new coexisting | the same reload: `VmHWM` over it and the system-in-use peak over it, each less its value just before |
+
+**The workload is fixed and seeded.** It uses phenotype sets drawn from the
+workspace's validation samples, plus sets at the API's maximum of 100
+phenotypes (`src/api/routes/diagnose.py:71-76`), so the SP lookup also runs at
+the largest phenotype count the API permits. **Proposed: 200 requests.** The evidence records
+counts and sizes, never phenotype ids.
+
+**Repeats: three cold starts, each in its own process, and one reload per
+process.** The median and the maximum are reported, not a mean.
+
+**Output: one aggregate JSON, emitted by one committed script**, which is the
+pattern BACKLOG §5.2 requires of every evidence file. It records bytes, seconds,
+counts, the three digests (graph, checkpoint, SP table), the kernel and torch
+versions, and the readiness fields. It records no paths, no host or operator
+names, and no phenotype ids. The script launches the service as a child
+process, reads that child's `/proc`, and talks HTTP to loopback. It sits beside
+`benchmark_sp_lookup.py`, it is not a framework, and **it will not be written
+until this procedure is agreed.**
+
+**What completes the check, and what it does not decide.** §13 asks for
+readings, not a budget, and no budget is invented here. On this platform the
+check is complete when all four phases finish with readiness asserted, no
+allocation failure, no OOM kill and no swap in use. The numbers are recorded,
+not judged. Whether they leave enough headroom is a question for the smallest
+supported target, which is reading 5, and that reading is still blocked.
 
 ---
 
