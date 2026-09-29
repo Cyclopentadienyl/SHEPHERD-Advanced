@@ -168,7 +168,7 @@ deployment*, not merely a loopback bind.
 | A1 | Audit and convert every client-reachable `torch.load` (§2.1) |
 | A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below |
 | A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496`) |
-| A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, and `default.target`, since `%h` makes it a user unit; `tests/unit/test_service_unit.py`. Its `--host` stays with C1 |
+| A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target`, since `%h` makes it a user unit, and the launcher's default allocator preset, which a bare uvicorn start otherwise never applies; `tests/unit/test_service_unit.py`. Its `--host` stays with C1 |
 
 **A2 in detail.** The launcher currently prints `127.0.0.1` while binding `0.0.0.0`. The fix is not
 to print `0.0.0.0` as a URL — that is not a browser destination either. Report the bind and the

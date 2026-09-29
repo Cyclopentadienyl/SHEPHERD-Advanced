@@ -794,6 +794,19 @@ of it. The other three clauses stand as written.
 service holds. A harness that built the pipeline itself would leave out uvicorn,
 FastAPI and the mounted Gradio dashboard.
 
+**With the allocator the deployment runs, stated and recorded.**
+`PYTORCH_ALLOC_CONF` is the launcher's preset, `backend:cudaMallocAsync` unless
+another is saved, and the value goes into the evidence. A bare uvicorn start
+applies no preset at all, and on this project the choice changes memory by a
+multiple. The Runtime Settings tab records a measurement of HGT training at
+batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native
+allocator. The first attempt at the 3-epoch run that produces the subject was
+started from a shell with no preset. The operator stopped it after system
+memory climbed steadily from ~75 GB to 110 GB. That is the native pattern, and
+it is attributed to the native allocator on that pattern alone until the re-run
+under `cudaMallocAsync` shows whether the attribution holds. A reading taken
+under the wrong allocator describes a different deployment.
+
 **The checkpoint is named, at startup and at reload.** Startup uses
 `SHEPHERD_CHECKPOINT_PATH` as given. A reload without `checkpoint_path`
 auto-selects instead, and it scores the candidates by `torch.load`-ing each one

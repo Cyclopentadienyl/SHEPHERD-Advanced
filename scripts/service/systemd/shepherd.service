@@ -14,6 +14,13 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/SHEPHERD-Advanced
 Environment=PYTHONUNBUFFERED=1
+# The allocator. A bare uvicorn start applies no preset -- the launcher does
+# (scripts/launch/shep_launch.py) -- and under the native allocator HGT training
+# fragments (Runtime Settings records ~26 GB against 60->120 GB). This is the
+# launcher's default preset; the marker lets the WebUI's Restart Backend apply
+# a different preset saved there.
+Environment=PYTORCH_ALLOC_CONF=backend:cudaMallocAsync
+Environment=SHEPHERD_ALLOC_SOURCE=preset
 ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8264
 Restart=on-failure
 RestartSec=5
