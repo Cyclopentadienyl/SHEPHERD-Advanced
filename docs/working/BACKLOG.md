@@ -725,7 +725,11 @@ otherwise never download.
 ([`EVIDENCE_probe_phase2_homelab.json`](EVIDENCE_probe_phase2_homelab.json)
 `d01621f3…`, plan §4.4): the full deployment probe passed 48 of 48 — selection on
 the June cache, two byte-identical real builds, and a real download of the
-2026-09-01 releases whose digests match the development sandbox's. That run's
+2026-09-01 releases through the production path, byte-identical to the
+development sandbox's download-only run
+([`EVIDENCE_probe_download_sandbox.json`](EVIDENCE_probe_download_sandbox.json)
+`3b1a9beb…`). What routes the redirect hops took, and whether the real build
+touched the cache, are not recorded (plan §4.4). That run's
 first predecessor, in the sandbox, is what found the HPO regression fixed in
 #107. **A hospital network has not been tried**: the files come from
 `release-assets.githubusercontent.com`, not from a biomedical host, and only a
