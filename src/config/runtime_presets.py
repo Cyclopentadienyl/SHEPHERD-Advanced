@@ -76,39 +76,28 @@ def resolve_allocator(preset: str | None) -> tuple[str, str]:
     return preset, ALLOCATOR_PRESETS[preset]
 
 
-def effective_allocator(env: dict, settings: dict) -> tuple[str | None, str | None]:
-    """Decide the allocator to apply, honouring explicit env overrides.
-
-    If ``PYTORCH_ALLOC_CONF`` / ``PYTORCH_CUDA_ALLOC_CONF`` is already set in
-    ``env``, returns ``(None, None)`` — the explicit override wins and nothing
-    should be changed. Otherwise resolves the persisted preset (with fallback).
-    """
-    if "PYTORCH_ALLOC_CONF" in env or "PYTORCH_CUDA_ALLOC_CONF" in env:
-        return None, None
-    return resolve_allocator(settings.get("allocator_preset"))
-
-
 def allocator_env(env: Mapping[str, str], settings: dict) -> dict[str, str]:
     """The environment a backend process should start CUDA under.
 
-    **One rule for every way the backend starts** -- the service entry point
-    (``scripts/launch/serve_backend.py``) and Restart Backend
-    (``backend_control.resolve_restart_env``) both call this, so a systemd
-    start, a crash restart, a reboot and a UI restart resolve the same saved
-    preset. Before it existed only the launcher and the UI restart applied one,
-    and a bare uvicorn start ran the native allocator until the first restart.
+    **One rule for starting and restarting.** The launcher applies it when it
+    starts the backend -- and the service unit starts the backend through the
+    launcher -- and Restart Backend (``backend_control.resolve_restart_env``)
+    applies it again, so a start, a crash restart, a reboot and a UI restart
+    resolve the same saved preset.
 
-    The saved preset is applied when the current allocator is preset-derived:
-    the marker says ``"preset"``, or there is no marker and no allocator
-    variable at all. An explicit override -- the marker says ``"env"``, or
-    either allocator variable is set with no marker -- is returned untouched.
+    An explicit override is an allocator variable that is present and not
+    marked ``"preset"``; it is returned untouched, marked ``"env"`` or not.
+    Anything else gets the saved preset: no allocator variable at all -- a
+    marker without a value overrides nothing -- or a value this rule set
+    earlier, marked ``"preset"``, which is re-resolved so a newly saved preset
+    takes effect.
     """
     new_env = dict(env)
     marker = new_env.get(ALLOC_SOURCE_ENV)
     has_env_alloc = (
         "PYTORCH_ALLOC_CONF" in new_env or "PYTORCH_CUDA_ALLOC_CONF" in new_env
     )
-    if marker == "preset" or (marker is None and not has_env_alloc):
+    if not has_env_alloc or marker == "preset":
         _preset, conf = resolve_allocator(settings.get("allocator_preset"))
         new_env["PYTORCH_ALLOC_CONF"] = conf
         new_env[ALLOC_SOURCE_ENV] = "preset"
@@ -123,7 +112,6 @@ __all__ = [
     "load_runtime_settings",
     "save_runtime_settings",
     "resolve_allocator",
-    "effective_allocator",
     "ALLOC_SOURCE_ENV",
     "allocator_env",
 ]

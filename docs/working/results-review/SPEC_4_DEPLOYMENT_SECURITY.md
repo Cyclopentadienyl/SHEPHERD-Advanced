@@ -168,7 +168,7 @@ deployment*, not merely a loopback bind.
 | A1 | Audit and convert every client-reachable `torch.load` (§2.1) |
 | A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below |
 | A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496`) |
-| A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through `scripts/launch/serve_backend.py`, which applies the allocator preset saved in Runtime Settings by the same rule Restart Backend uses (a bare uvicorn start applies none); `tests/unit/test_service_unit.py`, `test_serve_backend.py`. Its `--host` stays with C1 |
+| A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through the launcher (`shep_launch.py --no-auto-install --no-browser -- --port 8264`), the path `launch_shepherd.sh` takes, so the service gets the saved allocator preset and the attention settings a manual start gets. A bare uvicorn start gets neither; `tests/unit/test_service_unit.py`. The bind address is the launcher's default and stays with C1 |
 
 **A2 in detail.** The launcher currently prints `127.0.0.1` while binding `0.0.0.0`. The fix is not
 to print `0.0.0.0` as a URL — that is not a browser destination either. Report the bind and the

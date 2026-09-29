@@ -801,18 +801,24 @@ of it. The other three clauses stand as written.
 
 ### 7.3 How readings 1-4 are taken — proposed, for review
 
-**The service itself, started the way the unit starts it:**
-`.venv/bin/python scripts/launch/serve_backend.py` on loopback, with
-`SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`, `SHEPHERD_CHECKPOINT_PATH` and
-`SHEPHERD_DEVICE=cuda`. It is not a harness around the pipeline's internals.
+**The service itself, started the way the unit starts it:** through the
+launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
+--no-browser -- --host 127.0.0.1 --port <p>` (loopback, overriding the
+launcher's bind default), with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`,
+`SHEPHERD_CHECKPOINT_PATH` and `SHEPHERD_DEVICE=cuda`. The service is then two
+processes: the launcher, which waits, and the uvicorn process it starts, which
+holds the pipeline. The process counters, the reset and the pause below apply
+to the uvicorn process. The launcher's own resident memory is recorded beside
+them as a separate term, because a deployment started this way carries it too.
+It is not a harness around the pipeline's internals.
 §13 exists because an isolated measurement leaves out part of what the running
 service holds. A harness that built the pipeline itself would leave out uvicorn,
 FastAPI and the mounted Gradio dashboard.
 
 **With the allocator the deployment runs, stated and recorded.**
-`serve_backend.py` applies the preset saved in Runtime Settings by the rule
-Restart Backend applies (`allocator_env`), `backend:cudaMallocAsync` unless
-another is saved. The value goes into the evidence. A bare uvicorn start
+The launcher applies the preset saved in Runtime Settings by the rule Restart
+Backend applies (`allocator_env`), `backend:cudaMallocAsync` unless another is
+saved, together with the attention settings. The value goes into the evidence. A bare uvicorn start
 applies no preset at all, and on this project the choice changes memory by a
 multiple. The Runtime Settings tab records a measurement of HGT training at
 batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native
@@ -870,15 +876,15 @@ written to `/proc/<pid>/clear_refs` (proc(5)).
 process can allocate and free between the write and the next read. When it
 does, a later `VmHWM` above `VmRSS` is a new high-water mark, not a failed
 reset; review reproduced exactly that on a live child. So at each phase
-boundary the script stops its own child (`SIGSTOP`), writes `5`, and reads
-`VmHWM` and `VmRSS`. It resumes the child (`SIGCONT`) in a `finally`, and only
-then starts the phase's clock. A stopped process allocates nothing, so equality
+boundary the script stops the uvicorn process it started (`SIGSTOP`), writes
+`5`, and reads `VmHWM` and `VmRSS`. It resumes that process (`SIGCONT`) in a
+`finally`, and only then starts the phase's clock. A stopped process allocates nothing, so equality
 confirms the reset. Reclaim can still lower RSS in a stopped process, so an
 inequality is retried, at most three times. After that the phase is recorded as
 **inconclusive**: not failed, and not measured.
 
-The script pauses only its own child. It never pauses another deployment
-process, and never pauses while a request is in flight. The kernel describes its
+The script pauses only the service processes it started. It never pauses
+another deployment process, and never pauses while a request is in flight. The kernel describes its
 RSS accounting as approximate, and the figures are reported as such. The sampled
 system counter has no high-water trap but has a sampling resolution, so both
 counters are reported.
@@ -922,8 +928,8 @@ process.** The median and the maximum are reported, not a mean.
 pattern BACKLOG §5.2 requires of every evidence file. It records bytes, seconds,
 counts, the three digests (graph, checkpoint, SP table), the kernel and torch
 versions, and the readiness fields. It records no paths, no host or operator
-names, and no phenotype ids. The script launches the service as a child
-process, reads that child's `/proc`, and talks HTTP to loopback. It sits beside
+names, and no phenotype ids. The script launches the service as a process
+tree, reads those processes' `/proc`, and talks HTTP to loopback. It sits beside
 `benchmark_sp_lookup.py`, it is not a framework, and **it will not be written
 until this procedure is agreed.**
 

@@ -20,7 +20,12 @@ UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
 # module loads regardless of how the launcher is invoked.
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from src.config.runtime_presets import effective_allocator, load_runtime_settings  # noqa: E402
+from src.config.runtime_presets import (  # noqa: E402
+    ALLOC_SOURCE_ENV,
+    allocator_env,
+    load_runtime_settings,
+    resolve_allocator,
+)
 
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
@@ -43,6 +48,33 @@ def _open_browser_when_ready(url: str, health_url: str, timeout: float = 60.0) -
             pass
         time.sleep(1.0)
     log("WARNING: Server did not become ready within timeout; skipping browser open")
+
+def apply_allocator(env, settings: Dict[str, Any]) -> List[str]:
+    """Put the CUDA allocator into ``env`` and return what to log.
+
+    The rule is ``allocator_env``, the one Restart Backend applies, so the
+    launcher and a restart cannot disagree about a saved preset. What is added
+    here is only the launcher's reporting, and marking an explicit override
+    ``"env"`` so the choice is visible; the rule keeps an unmarked one too.
+    """
+    resolved = allocator_env(env, settings)
+    if resolved.get(ALLOC_SOURCE_ENV) == "preset":
+        requested = settings.get("allocator_preset")
+        preset, _conf = resolve_allocator(requested)
+        messages = []
+        if requested is not None and requested != preset:
+            messages.append(
+                f"WARNING: unknown allocator preset '{requested}'; falling back to '{preset}'"
+            )
+        env["PYTORCH_ALLOC_CONF"] = resolved["PYTORCH_ALLOC_CONF"]
+        env[ALLOC_SOURCE_ENV] = "preset"
+        messages.append(
+            f"Runtime: PYTORCH_ALLOC_CONF={resolved['PYTORCH_ALLOC_CONF']} "
+            f"(allocator preset={preset})"
+        )
+        return messages
+    env.setdefault(ALLOC_SOURCE_ENV, "env")
+    return ["Runtime: PYTORCH_ALLOC_CONF set in environment — respecting explicit override"]
 
 def read_json(path: Path) -> Dict[str, Any]:
     if path.exists():
@@ -154,7 +186,8 @@ def choose_spec(table: Dict[str, Any], key: str, *, torch_v: Optional[str], cuda
         return entry.get("default")
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="shep_launch", description="SHEPHERD launcher for optional accelerators", formatter_class=argparse.RawTextHelpFormatter)
+    p = argparse.ArgumentParser(prog="shep_launch", description="SHEPHERD launcher for optional accelerators", formatter_class=argparse.RawTextHelpFormatter,
+                                epilog="Arguments after -- go to the main app unchanged, e.g.  shep_launch.py --no-browser -- --port 8264")
     g = p.add_argument_group("Accelerator flags (opt-in like SD WebUI)")
     g.add_argument("--flash-attn", action="store_true", help="Enable FlashAttention (Windows/x86; skipped on ARM)")
     g.add_argument("--xformers", action="store_true", help="Enable xFormers memory-efficient attention")
@@ -176,8 +209,20 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--skip-launch", action="store_true", help="Do not start main app after setup")
     m = p.add_argument_group("Main app")
     m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: uvicorn)")
-    m.add_argument("--", dest="passthrough", nargs=argparse.REMAINDER, help="Arguments passed to the main app after --")
+    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready (a service has no one to show it to)")
     return p
+
+def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
+    """Split at the first ``--``: the launcher's arguments, then the app's.
+
+    argparse cannot do this itself. It reads ``--`` as the end of options, so
+    an option *named* ``--`` is never matched, and with no positional to take
+    the remainder it refused ``-- --port 8264`` as unrecognized arguments.
+    """
+    if "--" in argv:
+        split = argv.index("--")
+        return argv[:split], argv[split + 1:]
+    return argv, []
     
 def collect_args_from_env_and_cli() -> List[str]:
     env = os.getenv("SHEP_COMMANDLINE_ARGS") or os.getenv("COMMANDLINE_ARGS") or ""
@@ -187,8 +232,9 @@ def collect_args_from_env_and_cli() -> List[str]:
 
 def main() -> int:
     parser = build_parser()
-    merged_args = collect_args_from_env_and_cli()
-    args = parser.parse_args(merged_args)
+    own_args, passthrough_args = split_passthrough(collect_args_from_env_and_cli())
+    args = parser.parse_args(own_args)
+    args.passthrough = passthrough_args
     os_name = "windows" if is_windows() else ("linux" if sys.platform.startswith("linux") else sys.platform)
     arch = platform.machine().lower()
     py_v = pep440_python()
@@ -277,23 +323,11 @@ def main() -> int:
     # here so both this server's in-process CUDA and the training subprocesses it
     # spawns inherit the same allocator. An explicit PYTORCH_ALLOC_CONF /
     # PYTORCH_CUDA_ALLOC_CONF in the environment always wins (e.g. A/B tests).
-    # Presets + resolution live in src/config/runtime_presets.py (single source of truth);
-    # a malformed settings file falls back to {} and an unknown preset to the default.
-    raw_preset = load_runtime_settings().get("allocator_preset")
-    preset, conf = effective_allocator(os.environ, {"allocator_preset": raw_preset})
-    if preset is None:
-        # An explicit override was already present — record that so the WebUI
-        # "Restart Backend" action preserves it instead of re-resolving a preset.
-        os.environ["SHEPHERD_ALLOC_SOURCE"] = "env"
-        log("Runtime: PYTORCH_ALLOC_CONF set in environment — respecting explicit override")
-    else:
-        if raw_preset is not None and raw_preset != preset:
-            log(f"WARNING: unknown allocator preset '{raw_preset}'; falling back to '{preset}'")
-        os.environ["PYTORCH_ALLOC_CONF"] = conf
-        # Mark the value as preset-derived so a WebUI restart can re-resolve it
-        # from the freshly saved settings (picking up a newly chosen allocator).
-        os.environ["SHEPHERD_ALLOC_SOURCE"] = "preset"
-        log(f"Runtime: PYTORCH_ALLOC_CONF={conf} (allocator preset={preset})")
+    # The rule lives in src/config/runtime_presets.py and is the one Restart
+    # Backend applies; a malformed settings file falls back to {} and an unknown
+    # preset to the default.
+    for message in apply_allocator(os.environ, load_runtime_settings()):
+        log(message)
 
     # Collect passthrough args
     passthrough: List[str] = []
@@ -348,12 +382,13 @@ def main() -> int:
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
     # Auto-open browser once server is ready (polls /health endpoint)
-    opener = threading.Thread(
-        target=_open_browser_when_ready,
-        args=(f"{base_url}/ui", f"{base_url}/health"),
-        daemon=True,
-    )
-    opener.start()
+    if not args.no_browser:
+        opener = threading.Thread(
+            target=_open_browser_when_ready,
+            args=(f"{base_url}/ui", f"{base_url}/health"),
+            daemon=True,
+        )
+        opener.start()
 
     res = run(cmd)
     return res.returncode
