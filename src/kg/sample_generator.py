@@ -22,7 +22,6 @@ import logging
 import math
 import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -40,6 +39,7 @@ from src.kg.disease_allocation import (
     validate_allocation,
 )
 from src.kg.graph import KnowledgeGraph
+from src.utils.file_modes import create_staging_file
 from src.utils.fingerprint import file_sha256
 
 logger = logging.getLogger(__name__)
@@ -340,18 +340,15 @@ def generate_training_samples(
         # real — the manifest is never a half-written file that parses as nothing
         # and reads as a workspace that has one.
         target = output_dir / "split_manifest.json"
-        handle = tempfile.NamedTemporaryFile(
-            "w", dir=str(output_dir), prefix=target.name, suffix=".tmp",
-            delete=False, encoding="utf-8",
-        )
+        handle, staged = create_staging_file(target, binary=False, encoding="utf-8")
         try:
             with handle:
                 handle.write(manifest_text)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(handle.name, target)
+            os.replace(staged, target)
         except BaseException:
-            Path(handle.name).unlink(missing_ok=True)
+            Path(staged).unlink(missing_ok=True)
             raise
         logger.info("Samples and split manifest saved to %s", output_dir)
 

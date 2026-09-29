@@ -848,6 +848,30 @@ class TestTheTransferEdges:
 
         assert stat.S_IMODE(target.stat().st_mode) == 0o666 & ~mask
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+    def test_a_rewritten_destination_keeps_its_mode(self, tmp_path):
+        """A plain open() rewriting a file keeps its mode, and so does this: an
+        operator's 0640 on a shared root is not widened or narrowed by a refresh."""
+        import os
+        import stat
+
+        payload = b"format-version: 1.2\n"
+
+        class Opener:
+            def open(self, url, timeout=None):
+                return _http(b"HTTP/1.1 200 OK\r\nContent-Length: "
+                             + str(len(payload)).encode() + b"\r\n\r\n" + payload, url)
+
+        destination = tmp_path / "m.obo"
+        destination.write_bytes(b"old")
+        os.chmod(destination, 0o640)
+        target = download_ontology("https://purl.example/m.obo", destination,
+                                   policy=policy({"purl.example": [PUBLIC]}),
+                                   opener_factory=lambda *h: Opener())
+
+        assert target.read_bytes() == payload
+        assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
     @pytest.mark.parametrize("url", ["http://[::1/mondo.obo", "http://host:notaport/mondo.obo"])
     def test_a_malformed_url_is_refused_not_leaked(self, url):
         with pytest.raises(OntologyDownloadError, match="well-formed"):

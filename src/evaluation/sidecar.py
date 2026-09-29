@@ -39,9 +39,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from src.utils.file_modes import create_staging_file
 
 #: Bumped when a record's shape changes in a way that makes an old file
 #: unreadable under the new rules. A reader that finds a version it does not know
@@ -438,17 +439,15 @@ def write_ledger(
             "ledger is single-writer: re-read it and append again."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(
-        "w", dir=str(path.parent), prefix=path.name, suffix=".tmp", delete=False
-    )
+    handle, staged = create_staging_file(path, binary=False)
     try:
         with handle:
             json.dump(ledger, handle, indent=2, sort_keys=True, allow_nan=False)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(handle.name, path)
+        os.replace(staged, path)
     except BaseException:
-        Path(handle.name).unlink(missing_ok=True)
+        Path(staged).unlink(missing_ok=True)
         raise
 
 

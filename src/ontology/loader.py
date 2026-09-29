@@ -22,7 +22,6 @@ import hashlib
 import io
 import logging
 import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
@@ -30,6 +29,7 @@ import pronto
 
 from src.core.types import DataSource
 from src.ontology.roles import check_ontology_role
+from src.utils.file_modes import create_staging_file
 
 logger = logging.getLogger(__name__)
 
@@ -498,10 +498,14 @@ class OntologyLoader:
             target = target_for(url)
             kind = target.suffix.lstrip(".")
             target.parent.mkdir(parents=True, exist_ok=True)
-            handle, name = tempfile.mkstemp(
-                dir=target.parent, prefix=f".{target.name}.", suffix=self._STAGED
+            # Reserved with the mode a plain open() would give `target`, not
+            # mkstemp's 0600: the download replaces this name keeping its
+            # mode, and the verified file is renamed over `target`, so the
+            # mode set here is the one the cache publishes.
+            handle, name = create_staging_file(
+                target, prefix=f".{target.name}.", suffix=self._STAGED
             )
-            os.close(handle)
+            handle.close()
             staged = Path(name)
             logger.info(f"Downloading {ontology_name} ontology from {url}")
             try:

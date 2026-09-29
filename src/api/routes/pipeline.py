@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +26,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from src.config.model_types import SUPPORTED_CONV_TYPES
+from src.utils.file_modes import create_staging_file
 
 logger = logging.getLogger(__name__)
 
@@ -496,18 +496,15 @@ async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
     """
     try:
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        handle = tempfile.NamedTemporaryFile(
-            "w", dir=str(CONFIG_FILE.parent), prefix=CONFIG_FILE.name,
-            suffix=".tmp", delete=False,
-        )
+        handle, staged = create_staging_file(CONFIG_FILE, binary=False)
         try:
             with handle:
                 json.dump(config.model_dump(), handle, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(handle.name, CONFIG_FILE)
+            os.replace(staged, CONFIG_FILE)
         except BaseException:
-            Path(handle.name).unlink(missing_ok=True)
+            Path(staged).unlink(missing_ok=True)
             raise
         logger.info(f"UI config saved to {CONFIG_FILE}")
         return config

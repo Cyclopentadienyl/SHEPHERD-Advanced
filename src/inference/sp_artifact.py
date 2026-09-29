@@ -49,12 +49,12 @@ import json
 import os
 import re
 import secrets
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, NamedTuple, Optional
 
 from src.inference.sp_index import SPArtifactError
+from src.utils.file_modes import create_staging_file
 
 __all__ = [
     "ACCEPTED_SCHEMA_VERSIONS",
@@ -407,15 +407,15 @@ def publish_sp_artifact(
 
 def _stage(target: Path, write) -> str:
     """One file, written whole to a temporary name beside its destination."""
-    handle = tempfile.NamedTemporaryFile(
-        "wb", dir=str(target.parent), prefix=target.name, suffix=".tmp", delete=False
-    )
+    # Staged with the mode a plain open() would give the target, so the pair
+    # does not publish as tempfile's 0600.
+    handle, name = create_staging_file(target, binary=True)
     try:
         with handle:
             write(handle)
             handle.flush()
             os.fsync(handle.fileno())
     except BaseException:
-        Path(handle.name).unlink(missing_ok=True)
+        Path(name).unlink(missing_ok=True)
         raise
-    return handle.name
+    return name

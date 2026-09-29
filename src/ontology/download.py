@@ -46,12 +46,13 @@ import ipaddress
 import logging
 import os
 import socket
-import tempfile
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
+
+from src.utils.file_modes import create_staging_file
 
 logger = logging.getLogger(__name__)
 
@@ -257,13 +258,6 @@ def check_destination(url: str, policy: DestinationPolicy, *, why: str = "source
         _require_global(address, host, url, why)
 
 
-def _current_umask() -> int:
-    """The process umask. Set and restored, because there is no getter."""
-    mask = os.umask(0)
-    os.umask(mask)
-    return mask
-
-
 def _declared_length(response: Any) -> Optional[int]:
     """`Content-Length`, when the response declares one that can be checked.
 
@@ -372,11 +366,12 @@ def download_ontology(
     opener = factory(*handlers)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(
-        "wb", dir=str(destination.parent), prefix=destination.name,
-        suffix=".part", delete=False,
-    )
-    staged = Path(handle.name)
+    # `NamedTemporaryFile` created this 0600, and `urlretrieve` before it wrote
+    # with a plain open(), so the published file used to carry the umask's mode
+    # and a second account reading a shared ontology root found it unreadable
+    # and treated the root as empty. Staged the way open() would write it.
+    handle, name = create_staging_file(destination, binary=True, suffix=".part")
+    staged = Path(name)
     try:
         with handle:
             with opener.open(url, timeout=timeout) as response:
@@ -407,11 +402,6 @@ def download_ontology(
                 )
             handle.flush()
             os.fsync(handle.fileno())
-        # `NamedTemporaryFile` creates 0600. `urlretrieve` wrote with a plain
-        # open(), so the published file used to carry the umask's mode, and a
-        # second account reading a shared ontology root found it unreadable and
-        # treated the root as empty.
-        os.chmod(staged, 0o666 & ~_current_umask())
         os.replace(staged, destination)
     except OntologyDownloadError:
         staged.unlink(missing_ok=True)
