@@ -76,7 +76,9 @@ def resolve_allocator(preset: str | None) -> tuple[str, str]:
     return preset, ALLOCATOR_PRESETS[preset]
 
 
-def allocator_env(env: Mapping[str, str], settings: dict) -> dict[str, str]:
+def allocator_env(
+    env: Mapping[str, str], settings: dict, *, inherit: bool = False
+) -> dict[str, str]:
     """The environment a backend process should start CUDA under.
 
     **One rule for starting and restarting.** The launcher applies it when it
@@ -91,13 +93,20 @@ def allocator_env(env: Mapping[str, str], settings: dict) -> dict[str, str]:
     marker without a value overrides nothing -- or a value this rule set
     earlier, marked ``"preset"``, which is re-resolved so a newly saved preset
     takes effect.
+
+    ``inherit=True`` is for a process the backend starts, such as a training
+    run. It keeps any allocator already in its environment, a ``"preset"`` one
+    included: the contract is that such a process runs under the backend's
+    allocator, which changes when the backend restarts (Runtime Settings). It
+    applies the saved preset only when nothing was inherited -- a training run
+    started from a shell.
     """
     new_env = dict(env)
     marker = new_env.get(ALLOC_SOURCE_ENV)
     has_env_alloc = (
         "PYTORCH_ALLOC_CONF" in new_env or "PYTORCH_CUDA_ALLOC_CONF" in new_env
     )
-    if not has_env_alloc or marker == "preset":
+    if not has_env_alloc or (marker == "preset" and not inherit):
         _preset, conf = resolve_allocator(settings.get("allocator_preset"))
         new_env["PYTORCH_ALLOC_CONF"] = conf
         new_env[ALLOC_SOURCE_ENV] = "preset"
