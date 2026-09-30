@@ -8,6 +8,16 @@ starts and the evidence it writes. The service is replaced by a small HTTP
 server so that a whole repeat -- R0 to R4, reset and all -- runs here in a
 second or two; the real run happens on the deployment host.
 """
+import sys
+
+import pytest
+
+# Before anything Unix-only is imported or evaluated -- fcntl, termios, the
+# signals the decorators below name. A skip mark would come too late: the
+# module has to import before any mark is read.
+if not sys.platform.startswith("linux"):
+    pytest.skip("the script reads /proc", allow_module_level=True)
+
 import contextlib
 import fcntl
 import json
@@ -15,19 +25,12 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import termios
 import textwrap
 import time
 from pathlib import Path
 
-import pytest
-
 from scripts import measure_served_pipeline as msp
-
-pytestmark = pytest.mark.skipif(
-    not sys.platform.startswith("linux"), reason="the script reads /proc"
-)
 
 
 # ------------------------------------------------------------------- helpers
