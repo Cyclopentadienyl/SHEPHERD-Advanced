@@ -642,6 +642,11 @@ exist.
 
 ### 7.1 The measurement subject — designated, not authoritative
 
+**Current state: designated** (§7.1.1, checked 2026-09-29). The principle
+and the three requirements below still govern. The search that came before the
+designation is kept under its own heading, marked historical, and blocks
+nothing.
+
 **Two revisions in a row got this wrong in opposite directions.** The first
 draft claimed readings 1 and 4 were available here because this machine builds a
 deployment-sized workspace in 39.9 s (probe F1) — which measures the graph half
@@ -672,6 +677,14 @@ dependency and skips the task.
 3. a statement of **which deployment shape it stands for**, so a materially
    different final model is recognised as needing a re-run rather than silently
    covered.
+
+#### Before the subject existed — historical, superseded by §7.1.1
+
+*Everything under this heading is the state before 2026-09-29, kept as the
+record of why §7.1.1 was needed: the evidenced candidates could not supply a
+subject, so one was trained. The "blocking condition", the table of what was
+missing, and "until the file arrives" are no longer current, and none of them is
+a blocker.*
 
 **Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` records **ten**
 checkpoints by digest and `EVIDENCE_M1_M3_gat.json` records **five** — this
@@ -837,24 +850,30 @@ re-open the readings.
 The implementation and its tests. **No integrated reading.**
 
 Readings 1, 2 and 4 are all integrated — they measure what is resident while the
-service runs — so all three wait on the subject above. An SP-only memory figure
-is worth recording and this plan will record it, but as a **supplementary
-measurement**, named as such, never as reading 2. Treating it as the reading
-would leave unverified serving memory shelved as done.
+service runs — so none of them can come from an isolated figure. An SP-only
+memory figure is worth recording and this plan records it, but as a
+**supplementary measurement**, named as such, never as reading 2. Treating it as
+the reading would leave unverified serving memory shelved as done.
 
-The plan ends at: *implemented; a supplementary SP-only memory figure recorded;
-readings 1, 2, 3b and 4 pending a designated measurement subject; reading 5
-deferred for want of the smallest supported target*. Not a clearance to ship, and
-the gate is not claimed complete.
+**Where the plan stands** (2026-09-30): *implemented; the supplementary SP-only
+figure recorded at deployment scale (§6.2.1), which confirms the resident figure
+on the real artifact and yields no serving peak; the measurement subject
+designated (§7.1.1); readings 1, 2, 3b and 4 pending the §7.3 measurement script
+and its run; reading 5 deferred for want of the smallest supported target*.
 
-**The supplementary figure is now recorded at deployment scale** (§6.2.1): the
-resident figure is confirmed on the real artifact, and no serving peak comes out
-of it. The other three clauses stand as written.
+**Where it ends:** readings 1, 2, 3b and 4 taken by §7.3 on that subject, and
+complete by §7.3's own rule, when all four phases finish with readiness
+asserted; reading 5 still deferred. Not a clearance to ship, and the gate is
+not claimed complete.
 
-**The measurement subject is now designated** (§7.1.1). Readings 1, 2, 3b and 4
-no longer wait on a subject; they wait on the §7.3 script and its run.
+*Historical, superseded by §7.1.1:* the end state first written here had
+readings 1, 2, 3b and 4 pending a designated measurement subject, because this
+plan could not then produce one.
 
-### 7.3 How readings 1-4 are taken — proposed, for review
+### 7.3 How readings 1-4 are taken — reviewed
+
+*Proposed and reviewed in PR #110, merged 2026-09-29. What remains is the script
+that follows it, which is reviewed on its own before it runs.*
 
 **The service itself, started the way the unit starts it:** through the
 launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
@@ -898,9 +917,17 @@ started from a shell with no preset. The operator stopped it after system
 memory climbed steadily from ~75 GB to 110 GB. The re-run under
 `cudaMallocAsync`, with the same command, held at about 26 GB for its whole 130
 minutes and returned to the 8.8 GB idle level afterwards (operator
-observation, system-wide). That confirms the attribution to the native
-allocator. A reading taken under the wrong allocator describes a different
-deployment.
+observation, system-wide). **That supports the allocator as the main cause; it
+does not establish it.** The allocator is the one difference the commands
+record, and the pattern matches the Runtime Settings measurement. But the first
+run's allocator was never read back: nothing applied a preset and the commands
+exported none, which is not the same as checked. And both figures are the
+operator's view of whole-machine memory, which other processes also draw on.
+A controlled attribution would need the first run's allocator read back and
+the training process's own memory counted; neither is attempted here. The
+readings do not depend on it, because §7.3 records the allocator the server
+actually carries rather than infer it. A reading taken under the wrong
+allocator describes a different deployment.
 
 **The checkpoint is named, at startup and at reload.** Startup uses
 `SHEPHERD_CHECKPOINT_PATH` as given. A reload without `checkpoint_path`
@@ -978,7 +1005,6 @@ counters are reported.
 | R4 | 4 — old and new coexisting | the same reload: `VmHWM` over it and the system-in-use peak over it, each less its value just before |
 
 **The workload is fixed, seeded, and written down well enough to rebuild.**
-Proposed:
 
 - **200 requests, sent serially**, one at a time. It is a fixed engineering
   workload. It does not stand for maximum load, concurrency or a long-run
@@ -1004,12 +1030,14 @@ process.** The median and the maximum are reported, not a mean.
 
 **Output: one aggregate JSON, emitted by one committed script**, which is the
 pattern BACKLOG §5.2 requires of every evidence file. It records bytes, seconds,
-counts, the three digests (graph, checkpoint, SP table), the kernel and torch
-versions, and the readiness fields. It records no paths, no host or operator
-names, and no phenotype ids. The script launches the service through the
-launcher, reads the server process's `/proc`, and talks HTTP to loopback. It sits beside
-`benchmark_sp_lookup.py`, it is not a framework, and **it will not be written
-until this procedure is agreed.**
+counts, the three digests (graph, checkpoint, SP table), the code version it
+ran at, the kernel and torch versions, and the readiness fields. It records no
+paths, no host or operator names, and no phenotype ids. The script launches the
+service through the launcher, reads the server process's `/proc`, and talks HTTP
+to loopback. It sits beside
+`benchmark_sp_lookup.py`, and it is not a framework. It is written against
+this procedure now that it is agreed. If the script needs the procedure changed,
+the change is made here first and reviewed.
 
 **Completing the readings is not passing a capacity gate.** §13 asks for
 readings, not a budget, and no budget is invented here. The readings for this
@@ -1171,12 +1199,14 @@ end of any of them.
    are re-taken against the shipped shape — `PLAN_B04.md`'s numbers describe a
    design that kept the id columns and this one does not, so they are not
    evidence about it. Report: implemented; the supplementary figure recorded as
-   supplementary; readings 1, 2, 3b and 4 awaiting a designated measurement
-   subject (§7.1); reading 5 deferred for want of the smallest supported target.
-   *Status:* the supplementary figure is recorded at deployment scale (§6.2.1).
-   It re-takes the resident figure and does not yield a serving peak, which is
-   reading 2's to supply. The subject is designated (§7.1.1), so readings 1, 2,
-   3b and 4 now wait on the §7.3 run. The rest of the report stands.
+   supplementary; readings 1, 2, 3b and 4 taken by §7.3 on the designated
+   subject; reading 5 deferred for want of the smallest supported target.
+   *Status* (2026-09-30): the supplementary figure is recorded at deployment
+   scale (§6.2.1). It re-takes the resident figure and does not yield a serving
+   peak, which is reading 2's to supply. The subject is designated (§7.1.1).
+   Readings 1, 2, 3b and 4 wait on the §7.3 measurement script and its run.
+   *Historical, superseded by §7.1.1:* this step first reported those readings
+   as awaiting a designated subject.
 
 Steps 0-8 need no calibration and **no institutional decision** — §7.1's
 designation is engineering, and item 6's clinical choice is not a prerequisite
