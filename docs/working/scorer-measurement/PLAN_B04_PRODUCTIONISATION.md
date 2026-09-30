@@ -636,8 +636,9 @@ statement about this host.
 | 5 | the same on the **smallest supported deployment target** | **blocked** — that machine is not available. The reading is deferred, not waived, and the gate is not claimed complete without it |
 
 **For readings 1-4, the subject is designated (§7.1.1, checked 2026-09-29) and
-the procedure has been reviewed (§7.3).** What remains is the §7.3 measurement
-script and its run. The statuses above stay as they are until the readings
+the procedure has been reviewed (§7.3).** The script that takes them is
+`scripts/measure_served_pipeline.py` (§7.3); what remains is its run on the
+measuring machine. The statuses above stay as they are until the readings
 exist.
 
 ### 7.1 The measurement subject — designated, not authoritative
@@ -858,8 +859,8 @@ the reading would leave unverified serving memory shelved as done.
 **Where the plan stands** (2026-09-30): *implemented; the supplementary SP-only
 figure recorded at deployment scale (§6.2.1), which confirms the resident figure
 on the real artifact and yields no serving peak; the measurement subject
-designated (§7.1.1); readings 1, 2, 3b and 4 pending the §7.3 measurement script
-and its run; reading 5 deferred for want of the smallest supported target*.
+designated (§7.1.1); the §7.3 script written; readings 1, 2, 3b and 4 pending
+its run; reading 5 deferred for want of the smallest supported target*.
 
 **Where it ends:** readings 1, 2, 3b and 4 taken by §7.3 on that subject, and
 complete by §7.3's own rule, when all four phases finish with readiness
@@ -872,8 +873,9 @@ plan could not then produce one.
 
 ### 7.3 How readings 1-4 are taken — reviewed
 
-*Proposed and reviewed in PR #110, merged 2026-09-29. What remains is the script
-that follows it, which is reviewed on its own before it runs.*
+*Proposed and reviewed in PR #110, merged 2026-09-29. The script that follows it,
+and the choices it makes where this section left one open, are at the end of
+this section.*
 
 **The service itself, started the way the unit starts it:** through the
 launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
@@ -1034,10 +1036,100 @@ counts, the three digests (graph, checkpoint, SP table), the code version it
 ran at, the kernel and torch versions, and the readiness fields. It records no
 paths, no host or operator names, and no phenotype ids. The script launches the
 service through the launcher, reads the server process's `/proc`, and talks HTTP
-to loopback. It sits beside
-`benchmark_sp_lookup.py`, and it is not a framework. It is written against
-this procedure now that it is agreed. If the script needs the procedure changed,
-the change is made here first and reviewed.
+to loopback. It sits beside `benchmark_sp_lookup.py`, and it is not a
+framework. If the script needs the procedure changed, the change is made here
+first and reviewed.
+
+**The script: `scripts/measure_served_pipeline.py`.** It follows the procedure
+above. Where the procedure left a choice open, the script makes the one below,
+written here so that it is reviewed with the procedure rather than found in the
+code:
+
+- **The operator's shell does not reach the server.** The allocator variables,
+  the attention variables, the launcher's `COMMANDLINE_ARGS` and every
+  `SHEPHERD_*` name are removed from the environment passed to the launcher.
+  Then the four settings above are set, with `PYTHONUNBUFFERED=1` as the unit
+  sets it. The unit starts the service with none of them, so this is the start
+  it gives. Without this, an allocator exported in the shell, as it was for the
+  training run behind the subject, would reach the server as an explicit
+  override. The evidence still records what the server carries, read from its
+  own environment. **This narrows what the readings describe**: a service
+  started with the saved preset, which is how the unit ships. A unit that pins
+  an allocator, or sets anything in a drop-in or the user manager's
+  environment, is not what they measure, and the script reads none of those.
+  Measuring such a deployment would mean changing this same script's start
+  contract here first, not writing a second one.
+- **What readiness asserts.** The five fields above, the scoring mode
+  `gnn_plus_shortest_path` (§7.1.1), that the status names the checkpoint that
+  was passed, and that the model was moved to CUDA (`checkpoint_meta.device`,
+  written after the model is moved), at startup and again after the reload.
+  `cuda` is torch's device type, not a vendor: ROCm builds of torch use it too.
+  What identifies the platform is recorded beside it: torch's CUDA and HIP
+  versions and the device name, from the probe. A repeat ends at R1 if
+  any of these fails, or if the launcher did not become the server: the measured
+  PID's command line must be uvicorn serving the app.
+- **The workload's phenotypes.** `val_samples.json` holds node indices. Each is
+  mapped to its HPO id through the graph's own index, the one the samples were
+  generated against. A drawn sample the API could not take as generated is
+  refused, never trimmed. The graph is loaded for this in a separate process
+  before the first R0, so its memory is in no reading. The 200 requests are
+  shuffled together by the seeded generator and sent in the same order in every
+  repeat.
+- **R0 in every repeat**, before that repeat's launch: 10 s of samples by
+  default, with their median as the baseline. "Swap grows during R0" is judged
+  over every sample: swap that rose and fell back again still fails the
+  precondition. The net change is recorded beside it, and is not the
+  criterion. Between repeats the script waits 15 s by default after the server
+  exits. The evidence records both. Keeping the machine quiet is the
+  operator's job; the script checks only swap.
+- **A request with no whole response ends the repeat**: timed out, reset, or
+  cut off mid-body. The client stopped waiting, but the server may still be
+  working on that request, and §7.3 never pauses the server while a request is
+  in flight. So the script records R2 as incomplete and stops the server
+  without another reset or the reload. An HTTP error status is different:
+  that request is finished, it counts as a failure, and the workload goes on.
+- **A start that fails keeps what was sampled.** When the server exits, times
+  out or answers with an error before it is ready, R1 still records its window:
+  elapsed time, system and swap peaks, and the `oom_kill` change. The process
+  counters are recorded as unavailable once the process has gone. No other PID
+  stands in for it.
+- **A stop signal takes the cleanup path.** SIGTERM, SIGHUP or Ctrl+C
+  (SIGINT) is raised where the script is. That way a server paused for a reset
+  is resumed, and every server the run started is stopped and reaped. The
+  server runs in its own session, so the terminal's Ctrl+C never reaches it
+  directly; the script stops it. A signal already ignored (nohup), or a handler
+  someone else installed, is left alone. No evidence is written for a stopped
+  run. A stop that arrives while a server is already being stopped, after an
+  error, a refusal or the run's normal end alike, waits for that to finish,
+  then is acted on. That wait is bounded: 120 s for a graceful exit, then
+  SIGKILL. Only one stop is acted on. SIGKILL cannot be caught, and nothing
+  claims to survive it.
+- **Allocation failures and OOM kills.** Non-200 responses are counted by
+  status, with a count of those whose body mentions running out of memory. The
+  change in the machine's `oom_kill` counter (`/proc/vmstat`) is recorded over
+  each phase. A server that dies is recorded by its exit status. The script does
+  not claim the kernel's OOM killer did it, because that counter counts every
+  process on the machine.
+- **Which allocator governs.** After the readings, a separate process is given
+  the server's allocator values and asked `torch.cuda.get_allocator_backend()`.
+  With both variables present, each is also tried alone. That is this torch's
+  own answer, not an assumption, and the evidence labels it as coming from a
+  separate process. If the probe fails, times out or cannot initialise CUDA,
+  that is recorded, by type only, as the probe's status and as the backend
+  being unavailable. With both variables present, the governing one is then
+  "unavailable", never inferred from two missing answers. The note that torch
+  reported the backend appears only when it did. None of this costs the
+  readings, which are written whatever the probe does.
+- **A reset not confirmed** makes its phase inconclusive. That includes R3,
+  which shares R4's reset, although R3's success and wall time do not depend on
+  it. The figures that do depend on the reset, VmHWM in R2 and R4, are withheld,
+  not reported.
+- **Fewer than three repeats** (`--repeats`) is a trial. Its evidence says so,
+  and it never counts as complete readings.
+- The reload request names the device, `cuda`, as the startup does.
+- Also recorded, for §7.1's re-take list: the torch CUDA and HIP versions and
+  the driver version. The driver version comes from `nvidia-smi`, whose memory
+  columns are still not used.
 
 **Completing the readings is not passing a capacity gate.** §13 asks for
 readings, not a budget, and no budget is invented here. The readings for this
@@ -1204,7 +1296,7 @@ end of any of them.
    *Status* (2026-09-30): the supplementary figure is recorded at deployment
    scale (§6.2.1). It re-takes the resident figure and does not yield a serving
    peak, which is reading 2's to supply. The subject is designated (§7.1.1).
-   Readings 1, 2, 3b and 4 wait on the §7.3 measurement script and its run.
+   The §7.3 script is written; readings 1, 2, 3b and 4 wait on its run.
    *Historical, superseded by §7.1.1:* this step first reported those readings
    as awaiting a designated subject.
 
