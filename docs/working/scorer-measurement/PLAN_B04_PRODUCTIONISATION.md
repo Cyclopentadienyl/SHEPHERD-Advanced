@@ -788,6 +788,15 @@ predates `runtime.json`, so the checkpoint's directory does not record this;
 June artifact (`9ada0c1a…`, 429,971,678 rows). This subject's table is
 `dd506e73…`, 431,902,937 rows. That figure is not carried over to it.
 
+**The readings run at a later code version than the subject.** §7.3 starts
+the service through the launcher with the headless hand-over, which arrived
+after `43d47c5` (#110). The code changed between the two touches no model
+construction, checkpoint loading or SP reading; the one SP change is how the
+writer stages its files (#112). So the subject is expected to load unchanged,
+but that is not taken from this pre-check. Each reading records the code
+version it ran at, and asserts readiness, the scoring mode and the SP binding
+on the running service before it is taken.
+
 **Why three epochs, and what that does not claim.** Memory and reload cost are
 set by the architecture, the graph and the SP table. They do not depend on how
 good the weights are, and a three-epoch checkpoint has the same tensor shapes as
