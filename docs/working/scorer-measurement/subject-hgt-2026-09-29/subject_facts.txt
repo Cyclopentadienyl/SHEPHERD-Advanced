@@ -1,0 +1,69 @@
+== repo HEAD
+43d47c51d7eade33390aed9f9d33185d1bc55a12
+== loadcheck.py sha256 (expected 3680f58df40652054c8bb4b81ecc8341b4a6fa7072fd6ce0752dec896e0cb17a)
+3680f58df40652054c8bb4b81ecc8341b4a6fa7072fd6ce0752dec896e0cb17a
+== stderr of the two load checks: line counts, then the last lines
+  6 ~/5a_logs/04_nosp.err
+  6 ~/5a_logs/06_sp.err
+ 12 total
+==> ~/5a_logs/04_nosp.err <==
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+
+  queued_call()
+
+==> ~/5a_logs/06_sp.err <==
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+
+  queued_call()
+== node feature shapes
+{'disease': ([32109, 128], 'torch.float32'), 'gene': ([5236, 128], 'torch.float32'), 'phenotype': ([19894, 128], 'torch.float32')}
+== graph_export recipe
+{'feature_dim': 128, 'feature_seed': 20260909, 'initialisation': 'standard-normal', 'initialisation_version': 1}
+== training config
+amp_dtype: float16
+batch_size: 32
+checkpoint_dir: ''
+compile: false
+config_file: null
+contrastive_weight: 0.3
+conv_type: hgt
+data_dir: data/workspaces/hpo_2026_0929_5a
+device: cuda
+diagnosis_weight: 1.0
+dropout: 0.1
+early_stopping_patience: 10
+eval_every_n_epochs: 1
+gradient_accumulation_steps: 1
+hidden_dim: 256
+label_smoothing: 0.1
+learning_rate: 0.0001
+link_prediction_weight: 0.5
+log_dir: logs
+margin: 1.0
+max_grad_norm: 1.0
+max_subgraph_nodes: 5000
+min_lr_ratio: 0.01
+num_epochs: 3
+num_heads: 8
+num_layers: 4
+num_negative_samples: 5
+num_neighbors:
+- 15
+- 10
+- 5
+num_workers: 4
+ortholog_weight: 0.2
+output_dir: data/workspaces/hpo_2026_0929_5a/train_outputs
+resume_from: null
+save_top_k: 3
+scheduler_type: cosine
+seed: 42
+temperature: 0.07
+use_amp: true
+use_ortholog_gate: true
+warmup_steps: 500
+weight_decay: 0.01

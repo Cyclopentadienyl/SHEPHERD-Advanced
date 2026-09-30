@@ -1,0 +1,41 @@
+Commands the operator ran on the homelab GB10 to produce the measurement
+subject and the files beside this one. Repository at
+43d47c51d7eade33390aed9f9d33185d1bc55a12 throughout; run from its root.
+
+-- environment, same shell for every step
+export WS=data/workspaces/hpo_2026_0929_5a
+export PYTORCH_ALLOC_CONF=backend:cudaMallocAsync
+.venv/bin/python -c "import torch; torch.zeros(1, device='cuda'); print(torch.cuda.get_allocator_backend())"
+    # printed: cudaMallocAsync
+
+-- step 3: train the subject
+time .venv/bin/python scripts/train_model.py --data-dir "$WS" --device cuda --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42 --output-dir "$WS/train_outputs" 2>&1 | tee ~/5a_logs/03_train.log; ls -l "$WS/checkpoints/hgt/" | tee -a ~/5a_logs/03_train.log
+    # 130 min wall; checkpoints model-00/01/02 and last.pt under $WS/checkpoints/hgt/
+
+-- step 4: load check without the SP table -> loadcheck_nosp.json
+export CK=$(ls -1 "$WS"/checkpoints/hgt/model-02-*.pt | head -1)
+.venv/bin/python ~/5a_logs/loadcheck.py "$WS" "$CK" nosp > ~/5a_logs/04_nosp.json 2> ~/5a_logs/04_nosp.err; echo "exit=$?"
+    # the exit status was not retained
+
+-- state-dict statistics -> state_dict_stats.json
+.venv/bin/python -c "import json,sys,torch; ck=torch.load(sys.argv[1],map_location='cpu',weights_only=False); sd=ck.get('model_state_dict') or ck.get('state_dict'); t=[v for v in sd.values() if torch.is_tensor(v)]; print(json.dumps({'state_dict_tensors':len(t),'elements':sum(v.numel() for v in t),'bytes':sum(v.numel()*v.element_size() for v in t),'dtypes':sorted({str(v.dtype) for v in t})}))" "$CK"
+
+-- step 5: the SP table -> sp_artifact.txt
+time .venv/bin/python scripts/compute_shortest_paths.py --kg-path "$WS/kg.json" --output-dir "$WS" 2>&1 | tee ~/5a_logs/05_sp.log
+ls -l "$WS"/shortest_paths.* | tee -a ~/5a_logs/05_sp.log
+(cd "$WS" && sha256sum kg.json shortest_paths.pt shortest_paths.meta.json) | tee -a ~/5a_logs/05_sp.log
+cat "$WS/shortest_paths.meta.json" | tee -a ~/5a_logs/05_sp.log
+    # sp_artifact.txt keeps the sha256 lines and the sidecar; the ls lines are
+    # reduced to sizes because they carry the account name (BACKLOG §5.2)
+
+-- step 6: load check with the SP table -> loadcheck_sp.json
+.venv/bin/python ~/5a_logs/loadcheck.py "$WS" "$CK" sp > ~/5a_logs/06_sp.json 2> ~/5a_logs/06_sp.err; echo "exit=$?"
+    # printed: exit=0
+
+-- facts -> subject_facts.txt
+git rev-parse HEAD
+sha256sum ~/5a_logs/loadcheck.py | cut -d' ' -f1
+wc -l ~/5a_logs/04_nosp.err ~/5a_logs/06_sp.err; tail -n 5 ~/5a_logs/04_nosp.err ~/5a_logs/06_sp.err
+.venv/bin/python -c "import torch,sys; x=torch.load(sys.argv[1],map_location='cpu',weights_only=False); x=x.get('x_dict',x) if isinstance(x,dict) else x; print({k:(list(v.shape),str(v.dtype)) for k,v in sorted(x.items()) if hasattr(v,'shape')} if isinstance(x,dict) else type(x))" "$WS/node_features.pt"
+.venv/bin/python -c "import json,sys; print(json.load(open(sys.argv[1])).get('graph_export'))" "$WS/split_manifest.json"
+cat "$WS/train_outputs/config.yaml"

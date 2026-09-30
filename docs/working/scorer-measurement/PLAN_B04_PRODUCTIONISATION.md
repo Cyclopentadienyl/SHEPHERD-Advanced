@@ -629,14 +629,15 @@ statement about this host.
 
 | # | Reading | Status |
 |---|---|---|
-| 1 | complete pipeline cold start with A wired in | **pending a designated measurement subject** — see below |
-| 2 | steady and peak RSS/UMA once serving | **pending a designated measurement subject.** This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — so an SP-only figure cannot complete it, however useful it is |
+| 1 | complete pipeline cold start with A wired in | **pending the §7.3 run**; the subject is designated (§7.1.1) |
+| 2 | steady and peak RSS/UMA once serving | **pending the §7.3 run**; the subject is designated (§7.1.1). This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — so an SP-only figure cannot complete it, however useful it is |
 | 3 | one real reload, *if live reload is supported* — establish that first | **half answered.** Live reload *is* supported: probe E4 builds a candidate beside the live pipeline and E5 shows a refused one leaves it serving. A reload **with the index wired in** has not been measured, and that is the half §13 asks for |
-| 4 | peak while old and new pipeline state coexist | **pending a designated measurement subject** — probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
+| 4 | peak while old and new pipeline state coexist | **pending the §7.3 run**; the subject is designated (§7.1.1). Probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
 | 5 | the same on the **smallest supported deployment target** | **blocked** — that machine is not available. The reading is deferred, not waived, and the gate is not claimed complete without it |
 
-**For readings 1-4, a subject is proposed in §7.1.1 and a procedure in §7.3**,
-both awaiting review. The statuses above stay as they are until the readings
+**For readings 1-4, the subject is designated (§7.1.1, checked 2026-09-29) and
+the procedure has been reviewed (§7.3).** What remains is the §7.3 measurement
+script and its run. The statuses above stay as they are until the readings
 exist.
 
 ### 7.1 The measurement subject — designated, not authoritative
@@ -739,12 +740,53 @@ that is then **checked, not assumed**.
 
 | | Value | Source |
 |---|---|---|
-| Graph export | `kg.json` SHA-256 `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`, 57,239 nodes, 617,773 edges; built by the Phase 2 pipeline with both ontologies downloaded and verified | build output, reported |
-| Checkpoint | HGT: hidden 256, 4 layers, 8 heads (the trainer's defaults; `--conv-type hgt` is the only architecture override), 3 epochs, seed 42; the rest of its training configuration as the checkpoint records it, batch size included. SHA-256 ⟨pending⟩ | ⟨pending: the load check without SP⟩ |
-| SP artifact | computed from that `kg.json`; SHA-256 ⟨pending⟩, ⟨pending⟩ rows | ⟨pending: the SP build⟩ |
-| Loads against the set | `gnn_ready`, `has_model` and `sp_ready` true, `sp_kg_binding == "verified"` | ⟨pending: the load check with SP⟩ |
-| State-dict elements, bytes and dtypes | ⟨pending⟩, counted from the checkpoint's state dict. **Parameter bytes are one term of the pipeline's memory, not its RSS** | ⟨pending⟩ |
-| Input feature shapes | per node type, as the rebuilt model reads them ⟨pending⟩ | ⟨pending: the load check⟩ |
+| Code version | `43d47c51d7eade33390aed9f9d33185d1bc55a12`, the homelab checkout for every step below | `subject_facts.txt` |
+| Graph export | `kg.json` SHA-256 `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`, 57,239 nodes, 617,773 edges; built by the Phase 2 pipeline with both ontologies downloaded and verified | build output, reported; nodes and edges also in `loadcheck_sp.json` |
+| Input feature shapes | disease 32,109 × 128, gene 5,236 × 128, phenotype 19,894 × 128, all float32; export recipe `feature_dim` 128, `feature_seed` 20260909, `standard-normal` v1 | `subject_facts.txt` |
+| Checkpoint | `model-02-0.1813.pt`, the third epoch (epoch index 2), SHA-256 `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`, 47,931,987 bytes. HGT, hidden 256, 4 layers, 8 heads, dropout 0.1; trained 3 epochs, seed 42, batch 32, learning rate 1e-4, cosine schedule, AMP configured (float16) | `loadcheck_nosp.json`; training configuration in `subject_facts.txt` |
+| State-dict elements, bytes and dtypes | 162 tensors, 4,228,429 elements (the checkpoint's own `params` agrees), 16,913,716 bytes, float32 only. **Parameter bytes are one term of the pipeline's memory, not its RSS**, and not the checkpoint file's size | `state_dict_stats.json` |
+| SP artifact | computed from that `kg.json`: SHA-256 `dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027`, sidecar `1019922cd3aa91f340ab8d75eb3025716d6d8f01ce433f80a5ad9b7eb8565097`, 431,902,937 rows, `max_hops` 5, `build_id` `fe1a7d148ae7c015dde0f3907347ee7b`, `kg_digest` equal to the graph's | `sp_artifact.txt` |
+| Loads against the set | without SP: `gnn_ready`, `has_model` true, `gnn_only`. With SP: `gnn_ready`, `has_model`, `sp_ready` true, `sp_kg_binding` `verified`, `gnn_plus_shortest_path`, 0 fingerprint warnings | `loadcheck_nosp.json`, `loadcheck_sp.json` |
+
+**The files** are in [`subject-hgt-2026-09-29/`](subject-hgt-2026-09-29/):
+
+| File | SHA-256 | What it is |
+|---|---|---|
+| `loadcheck.py` | `3680f58d…` | the pre-check script, byte-identical to the copy the operator ran (its hash is in `subject_facts.txt`) |
+| `loadcheck_nosp.json` | `c860ea96…` | its output without the SP table, as received |
+| `loadcheck_sp.json` | `ec6a45bb…` | its output with the SP table, as received |
+| `state_dict_stats.json` | `565c77f4…` | the state-dict count, as received |
+| `subject_facts.txt` | `f6c1d4c1…` | code version, script hash, both runs' stderr, feature shapes, export recipe and training configuration. Transcribed from the operator's terminal, with the two absolute paths shortened to `~/` (BACKLOG §5.2) and the spaces on two otherwise blank lines removed |
+| `sp_artifact.txt` | `a2edbdf4…` | the SP pair's digests, sizes, sidecar and timing. Transcribed from the operator's terminal; the `ls -l` lines are reduced to sizes because they carry the account name |
+| `commands.txt` | `e87e62bf…` | the commands behind every file above, as given to the operator, with the outputs they printed noted where no file keeps them |
+
+**What the load check is, and what it is not.** `loadcheck.py` calls
+`create_diagnosis_pipeline`, the loader the service itself uses, so the model is
+rebuilt from the checkpoint and the SP table is loaded with its binding verified
+against the graph. It builds nothing of its own and skips no check. It is a
+**pre-check of the subject's compatibility**, run directly in Python. It is
+not a §7.3 reading: no launcher, no HTTP, no workload, no memory counter.
+
+**Exit statuses.** With SP: `exit=0`, observed. Without SP: **not retained.**
+The script exits 0 only when `gnn_ready` and `has_model` are both true, and
+its JSON shows both true, so 0 is inferred from its logic rather than observed.
+A later run captures the status from the process that started it.
+
+**Standard error, both runs:** one warning and nothing else. The GB10 reports
+CUDA capability 12.1, and this torch build lists 8.0-12.0. The training run and
+both load checks worked through it.
+
+**The allocator during training.** The operator exported
+`PYTORCH_ALLOC_CONF=backend:cudaMallocAsync` and checked it with
+`torch.cuda.get_allocator_backend()`, which printed `cudaMallocAsync`. System
+memory held at about 26 GB for the whole 130-minute run and fell back to the
+8.8 GB idle level afterwards (operator observation). The code version used
+predates `runtime.json`, so the checkpoint's directory does not record this;
+`commands.txt` does.
+
+**Not this subject's evidence.** §6.2.1's SP-only figure was measured on the
+June artifact (`9ada0c1a…`, 429,971,678 rows). This subject's table is
+`dd506e73…`, 431,902,937 rows. That figure is not carried over to it.
 
 **Why three epochs, and what that does not claim.** Memory and reload cost are
 set by the architecture, the graph and the SP table. They do not depend on how
@@ -758,8 +800,9 @@ shapes do not promise equal request latency. This is "designated, not
 authoritative" taken literally.
 
 **Requirement 3, the deployment shape it stands for, is that table**: an HGT of
-those dimensions, over a graph of that size, with an SP table of that row count,
-on a GB10.
+hidden 256, 4 layers and 8 heads with 128-dimensional float32 inputs on three
+node types, 4,228,429 float32 parameters, over a graph of 57,239 nodes and
+617,773 edges, with a 5-hop SP table of 431,902,937 rows, on a GB10.
 
 **The readings describe this subject and nothing else.** A different
 deployment combination is covered only by an explicit compatibility and capacity
@@ -798,6 +841,9 @@ the gate is not claimed complete.
 **The supplementary figure is now recorded at deployment scale** (§6.2.1): the
 resident figure is confirmed on the real artifact, and no serving peak comes out
 of it. The other three clauses stand as written.
+
+**The measurement subject is now designated** (§7.1.1). Readings 1, 2, 3b and 4
+no longer wait on a subject; they wait on the §7.3 script and its run.
 
 ### 7.3 How readings 1-4 are taken — proposed, for review
 
@@ -840,10 +886,12 @@ multiple. The Runtime Settings tab records a measurement of HGT training at
 batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native
 allocator. The first attempt at the 3-epoch run that produces the subject was
 started from a shell with no preset. The operator stopped it after system
-memory climbed steadily from ~75 GB to 110 GB. That is the native pattern, and
-it is attributed to the native allocator on that pattern alone until the re-run
-under `cudaMallocAsync` shows whether the attribution holds. A reading taken
-under the wrong allocator describes a different deployment.
+memory climbed steadily from ~75 GB to 110 GB. The re-run under
+`cudaMallocAsync`, with the same command, held at about 26 GB for its whole 130
+minutes and returned to the 8.8 GB idle level afterwards (operator
+observation, system-wide). That confirms the attribution to the native
+allocator. A reading taken under the wrong allocator describes a different
+deployment.
 
 **The checkpoint is named, at startup and at reload.** Startup uses
 `SHEPHERD_CHECKPOINT_PATH` as given. A reload without `checkpoint_path`
@@ -1118,7 +1166,8 @@ end of any of them.
    subject (§7.1); reading 5 deferred for want of the smallest supported target.
    *Status:* the supplementary figure is recorded at deployment scale (§6.2.1).
    It re-takes the resident figure and does not yield a serving peak, which is
-   reading 2's to supply. The rest of the report stands.
+   reading 2's to supply. The subject is designated (§7.1.1), so readings 1, 2,
+   3b and 4 now wait on the §7.3 run. The rest of the report stands.
 
 Steps 0-8 need no calibration and **no institutional decision** — §7.1's
 designation is engineering, and item 6's clinical choice is not a prerequisite
