@@ -25,6 +25,12 @@ directory's group where the directory is setgid), and extended ACL entries on
 the old file are not copied. Whether another account can read the published
 file also depends on the directories above it being searchable by that account.
 
+What this does not defend against: an account that can rename files in the
+directory can still substitute the staged file between the write and the
+caller's rename, as it could with ``tempfile``. The mode is set through the
+open descriptor, so such an account cannot redirect that; the directories
+themselves must not be writable by accounts that are not trusted.
+
 Module: src/utils/file_modes.py
 """
 from __future__ import annotations
@@ -86,10 +92,16 @@ def create_staging_file(
         )
 
     try:
-        if existing is not None:
+        if existing is not None and hasattr(os, "fchmod"):
             # The umask applies to os.open's mode too, so a 0664 target staged
-            # under umask 022 would come out 0644; set the old mode exactly.
-            os.chmod(path, existing)
+            # under umask 022 comes out 0644 until this sets the old mode
+            # exactly. **Through the descriptor, not the path:** between the
+            # O_EXCL create and a chmod by name, an account that can rename
+            # files in this directory could swap the name for a symlink, and
+            # chmod would follow it to another file. Without fchmod (Windows
+            # before Python 3.13) os.open's mode has already set the one bit
+            # Windows keeps, the read-only flag.
+            os.fchmod(fd, existing)
     except BaseException:
         os.close(fd)
         path.unlink(missing_ok=True)

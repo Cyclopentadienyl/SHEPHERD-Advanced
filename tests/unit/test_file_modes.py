@@ -123,6 +123,33 @@ def test_windows_flags_are_requested_where_they_exist(tmp_path, monkeypatch):
     assert seen[0] & 0x8000
 
 
+def test_the_mode_is_set_on_the_file_that_was_opened_not_on_its_name(umask022, tmp_path, monkeypatch):
+    # Between the O_EXCL create and the mode change, another account that can
+    # rename files here swaps the staging name for a symlink to a victim. A
+    # chmod by name would follow it; the mode must land on the opened file.
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"not yours")
+    os.chmod(victim, 0o600)
+    target = tmp_path / "old.bin"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o664)
+    real_open = os.open
+
+    def _open_then_swap(path, flags, mode=0o777):
+        fd = real_open(path, flags, mode)
+        os.rename(path, f"{path}.moved")
+        os.symlink(victim, path)
+        return fd
+
+    monkeypatch.setattr(file_modes.os, "open", _open_then_swap)
+    handle, _name = create_staging_file(target)
+    try:
+        assert _mode(victim) == 0o600
+        assert stat.S_IMODE(os.fstat(handle.fileno()).st_mode) == 0o664
+    finally:
+        handle.close()
+
+
 def test_a_failed_chmod_leaves_nothing_behind(umask022, tmp_path, monkeypatch):
     target = tmp_path / "old.bin"
     target.write_bytes(b"old")
@@ -130,7 +157,7 @@ def test_a_failed_chmod_leaves_nothing_behind(umask022, tmp_path, monkeypatch):
     def _refuse(*args):
         raise PermissionError("chmod refused")
 
-    monkeypatch.setattr(file_modes.os, "chmod", _refuse)
+    monkeypatch.setattr(file_modes.os, "fchmod", _refuse)
     with pytest.raises(PermissionError):
         create_staging_file(target)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["old.bin"]

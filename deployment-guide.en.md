@@ -814,8 +814,8 @@ the evaluation ledger, the UI config and the ontology cache are all written to a
 temporary file and renamed into place, so a reader never sees a half-written one.
 They are published with the mode a plain `open()` would give them:
 
-- **a new file** gets the directory's policy — the umask (usually `0644`), or the
-  directory's default ACL where it has one;
+- **a new file** gets the directory's policy — the umask (commonly `022`, which
+  gives `0644`), or the directory's default ACL where it has one;
 - **a rewritten file keeps its mode** — an operator's `chmod 600` stays `600`,
   and a group-shared `640` stays `640`.
 
@@ -831,6 +831,12 @@ old file are not copied. For a service that runs as a different account from
 the one that builds, give both a shared group and make the workspace directory
 setgid, or set a default ACL on it. The reading account also needs search
 (`x`) permission on every directory above the file.
+
+**While it is being written**, the temporary file already has the mode the
+published file will have, so anyone who may read the file may read the partial
+copy too. And **the directories must not be writable by accounts you do not
+trust**: an account that can rename files in them can substitute a file
+between its write and its rename, as it could before this change.
 
 ---
 
