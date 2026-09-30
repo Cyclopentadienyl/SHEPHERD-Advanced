@@ -1,0 +1,22 @@
+{
+ "checkpoint_sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79",
+ "checkpoint_bytes": 47931987,
+ "epoch": 2,
+ "gnn_ready": true,
+ "has_model": true,
+ "scoring_mode": "gnn_only",
+ "sp_ready": false,
+ "sp_kg_binding": null,
+ "sp_max_hops": null,
+ "checkpoint_meta": {
+  "epoch": 2,
+  "params": 4228429,
+  "device": "cuda",
+  "val_loss": 8.141819180201875,
+  "train_loss": 8.16017628250122
+ },
+ "kg_nodes": 57239,
+ "kg_edges": 617773,
+ "fingerprint_warning_count": 0,
+ "records_training_input_digests": true
+}

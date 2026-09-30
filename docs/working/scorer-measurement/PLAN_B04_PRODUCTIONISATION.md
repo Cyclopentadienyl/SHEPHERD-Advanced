@@ -629,17 +629,23 @@ statement about this host.
 
 | # | Reading | Status |
 |---|---|---|
-| 1 | complete pipeline cold start with A wired in | **pending a designated measurement subject** — see below |
-| 2 | steady and peak RSS/UMA once serving | **pending a designated measurement subject.** This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — so an SP-only figure cannot complete it, however useful it is |
+| 1 | complete pipeline cold start with A wired in | **pending the §7.3 run**; the subject is designated (§7.1.1) |
+| 2 | steady and peak RSS/UMA once serving | **pending the §7.3 run**; the subject is designated (§7.1.1). This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — so an SP-only figure cannot complete it, however useful it is |
 | 3 | one real reload, *if live reload is supported* — establish that first | **half answered.** Live reload *is* supported: probe E4 builds a candidate beside the live pipeline and E5 shows a refused one leaves it serving. A reload **with the index wired in** has not been measured, and that is the half §13 asks for |
-| 4 | peak while old and new pipeline state coexist | **pending a designated measurement subject** — probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
+| 4 | peak while old and new pipeline state coexist | **pending the §7.3 run**; the subject is designated (§7.1.1). Probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
 | 5 | the same on the **smallest supported deployment target** | **blocked** — that machine is not available. The reading is deferred, not waived, and the gate is not claimed complete without it |
 
-**For readings 1-4, a subject is proposed in §7.1.1 and a procedure in §7.3**,
-both awaiting review. The statuses above stay as they are until the readings
+**For readings 1-4, the subject is designated (§7.1.1, checked 2026-09-29) and
+the procedure has been reviewed (§7.3).** What remains is the §7.3 measurement
+script and its run. The statuses above stay as they are until the readings
 exist.
 
 ### 7.1 The measurement subject — designated, not authoritative
+
+**Current state: designated** (§7.1.1, checked 2026-09-29). The principle
+and the three requirements below still govern. The search that came before the
+designation is kept under its own heading, marked historical, and blocks
+nothing.
 
 **Two revisions in a row got this wrong in opposite directions.** The first
 draft claimed readings 1 and 4 were available here because this machine builds a
@@ -671,6 +677,14 @@ dependency and skips the task.
 3. a statement of **which deployment shape it stands for**, so a materially
    different final model is recognised as needing a re-run rather than silently
    covered.
+
+#### Before the subject existed — historical, superseded by §7.1.1
+
+*Everything under this heading is the state before 2026-09-29, kept as the
+record of why §7.1.1 was needed: the evidenced candidates could not supply a
+subject, so one was trained. The "blocking condition", the table of what was
+missing, and "until the file arrives" are no longer current, and none of them is
+a blocker.*
 
 **Candidates already evidenced.** `EVIDENCE_M1_M3_hgt.json` records **ten**
 checkpoints by digest and `EVIDENCE_M1_M3_gat.json` records **five** — this
@@ -739,12 +753,62 @@ that is then **checked, not assumed**.
 
 | | Value | Source |
 |---|---|---|
-| Graph export | `kg.json` SHA-256 `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`, 57,239 nodes, 617,773 edges; built by the Phase 2 pipeline with both ontologies downloaded and verified | build output, reported |
-| Checkpoint | HGT: hidden 256, 4 layers, 8 heads (the trainer's defaults; `--conv-type hgt` is the only architecture override), 3 epochs, seed 42; the rest of its training configuration as the checkpoint records it, batch size included. SHA-256 ⟨pending⟩ | ⟨pending: the load check without SP⟩ |
-| SP artifact | computed from that `kg.json`; SHA-256 ⟨pending⟩, ⟨pending⟩ rows | ⟨pending: the SP build⟩ |
-| Loads against the set | `gnn_ready`, `has_model` and `sp_ready` true, `sp_kg_binding == "verified"` | ⟨pending: the load check with SP⟩ |
-| State-dict elements, bytes and dtypes | ⟨pending⟩, counted from the checkpoint's state dict. **Parameter bytes are one term of the pipeline's memory, not its RSS** | ⟨pending⟩ |
-| Input feature shapes | per node type, as the rebuilt model reads them ⟨pending⟩ | ⟨pending: the load check⟩ |
+| Code version | `43d47c51d7eade33390aed9f9d33185d1bc55a12`, the homelab checkout for every step below | `subject_facts.txt` |
+| Graph export | `kg.json` SHA-256 `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`, 57,239 nodes, 617,773 edges; built by the Phase 2 pipeline with both ontologies downloaded and verified | build output, reported; nodes and edges also in `loadcheck_sp.json` |
+| Input feature shapes | disease 32,109 × 128, gene 5,236 × 128, phenotype 19,894 × 128, all float32; export recipe `feature_dim` 128, `feature_seed` 20260909, `standard-normal` v1 | `subject_facts.txt` |
+| Checkpoint | `model-02-0.1813.pt`, the third epoch (epoch index 2), SHA-256 `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`, 47,931,987 bytes. HGT, hidden 256, 4 layers, 8 heads, dropout 0.1; trained 3 epochs, seed 42, batch 32, learning rate 1e-4, cosine schedule, AMP configured (float16) | `loadcheck_nosp.json`; training configuration in `subject_facts.txt` |
+| State-dict elements, bytes and dtypes | 162 tensors, 4,228,429 elements (the checkpoint's own `params` agrees), 16,913,716 bytes, float32 only. **Parameter bytes are one term of the pipeline's memory, not its RSS**, and not the checkpoint file's size | `state_dict_stats.json` |
+| SP artifact | computed from that `kg.json`: SHA-256 `dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027`, sidecar `1019922cd3aa91f340ab8d75eb3025716d6d8f01ce433f80a5ad9b7eb8565097`, 431,902,937 rows, `max_hops` 5, `build_id` `fe1a7d148ae7c015dde0f3907347ee7b`, `kg_digest` equal to the graph's | `sp_artifact.txt` |
+| Loads against the set | without SP: `gnn_ready`, `has_model` true, `gnn_only`. With SP: `gnn_ready`, `has_model`, `sp_ready` true, `sp_kg_binding` `verified`, `gnn_plus_shortest_path`, 0 fingerprint warnings | `loadcheck_nosp.json`, `loadcheck_sp.json` |
+
+**The files** are in [`subject-hgt-2026-09-29/`](subject-hgt-2026-09-29/):
+
+| File | SHA-256 | What it is |
+|---|---|---|
+| `loadcheck.py` | `3680f58d…` | the pre-check script, byte-identical to the copy the operator ran (its hash is in `subject_facts.txt`) |
+| `loadcheck_nosp.json` | `c860ea96…` | its output without the SP table, as received |
+| `loadcheck_sp.json` | `ec6a45bb…` | its output with the SP table, as received |
+| `state_dict_stats.json` | `565c77f4…` | the state-dict count, as received |
+| `subject_facts.txt` | `f6c1d4c1…` | code version, script hash, both runs' stderr, feature shapes, export recipe and training configuration. Transcribed from the operator's terminal, with the two absolute paths shortened to `~/` (BACKLOG §5.2) and the spaces on two otherwise blank lines removed |
+| `sp_artifact.txt` | `a2edbdf4…` | the SP pair's digests, sizes, sidecar and timing. Transcribed from the operator's terminal; the `ls -l` lines are reduced to sizes because they carry the account name |
+| `commands.txt` | `e87e62bf…` | the commands behind every file above, as given to the operator, with the outputs they printed noted where no file keeps them |
+
+**What the load check is, and what it is not.** `loadcheck.py` calls
+`create_diagnosis_pipeline`, the loader the service itself uses, so the model is
+rebuilt from the checkpoint and the SP table is loaded with its binding verified
+against the graph. It builds nothing of its own and skips no check. It is a
+**pre-check of the subject's compatibility**, run directly in Python. It is
+not a §7.3 reading: no launcher, no HTTP, no workload, no memory counter.
+
+**Exit statuses.** With SP: `exit=0`, observed. Without SP: **not retained.**
+The script exits 0 only when `gnn_ready` and `has_model` are both true, and
+its JSON shows both true, so 0 is inferred from its logic rather than observed.
+A later run captures the status from the process that started it.
+
+**Standard error, both runs:** one warning and nothing else. The GB10 reports
+CUDA capability 12.1, and this torch build lists 8.0-12.0. The training run and
+both load checks worked through it.
+
+**The allocator during training.** The operator exported
+`PYTORCH_ALLOC_CONF=backend:cudaMallocAsync` and checked it with
+`torch.cuda.get_allocator_backend()`, which printed `cudaMallocAsync`. System
+memory held at about 26 GB for the whole 130-minute run and fell back to the
+8.8 GB idle level afterwards (operator observation). The code version used
+predates `runtime.json`, so the checkpoint's directory does not record this;
+`commands.txt` does.
+
+**Not this subject's evidence.** §6.2.1's SP-only figure was measured on the
+June artifact (`9ada0c1a…`, 429,971,678 rows). This subject's table is
+`dd506e73…`, 431,902,937 rows. That figure is not carried over to it.
+
+**The readings run at a later code version than the subject.** §7.3 starts
+the service through the launcher with the headless hand-over, which arrived
+after `43d47c5` (#110). The code changed between the two touches no model
+construction, checkpoint loading or SP reading; the one SP change is how the
+writer stages its files (#112). So the subject is expected to load unchanged,
+but that is not taken from this pre-check. Each reading records the code
+version it ran at, and asserts readiness, the scoring mode and the SP binding
+on the running service before it is taken.
 
 **Why three epochs, and what that does not claim.** Memory and reload cost are
 set by the architecture, the graph and the SP table. They do not depend on how
@@ -758,8 +822,9 @@ shapes do not promise equal request latency. This is "designated, not
 authoritative" taken literally.
 
 **Requirement 3, the deployment shape it stands for, is that table**: an HGT of
-those dimensions, over a graph of that size, with an SP table of that row count,
-on a GB10.
+hidden 256, 4 layers and 8 heads with 128-dimensional float32 inputs on three
+node types, 4,228,429 float32 parameters, over a graph of 57,239 nodes and
+617,773 edges, with a 5-hop SP table of 431,902,937 rows, on a GB10.
 
 **The readings describe this subject and nothing else.** A different
 deployment combination is covered only by an explicit compatibility and capacity
@@ -785,21 +850,30 @@ re-open the readings.
 The implementation and its tests. **No integrated reading.**
 
 Readings 1, 2 and 4 are all integrated — they measure what is resident while the
-service runs — so all three wait on the subject above. An SP-only memory figure
-is worth recording and this plan will record it, but as a **supplementary
-measurement**, named as such, never as reading 2. Treating it as the reading
-would leave unverified serving memory shelved as done.
+service runs — so none of them can come from an isolated figure. An SP-only
+memory figure is worth recording and this plan records it, but as a
+**supplementary measurement**, named as such, never as reading 2. Treating it as
+the reading would leave unverified serving memory shelved as done.
 
-The plan ends at: *implemented; a supplementary SP-only memory figure recorded;
-readings 1, 2, 3b and 4 pending a designated measurement subject; reading 5
-deferred for want of the smallest supported target*. Not a clearance to ship, and
-the gate is not claimed complete.
+**Where the plan stands** (2026-09-30): *implemented; the supplementary SP-only
+figure recorded at deployment scale (§6.2.1), which confirms the resident figure
+on the real artifact and yields no serving peak; the measurement subject
+designated (§7.1.1); readings 1, 2, 3b and 4 pending the §7.3 measurement script
+and its run; reading 5 deferred for want of the smallest supported target*.
 
-**The supplementary figure is now recorded at deployment scale** (§6.2.1): the
-resident figure is confirmed on the real artifact, and no serving peak comes out
-of it. The other three clauses stand as written.
+**Where it ends:** readings 1, 2, 3b and 4 taken by §7.3 on that subject, and
+complete by §7.3's own rule, when all four phases finish with readiness
+asserted; reading 5 still deferred. Not a clearance to ship, and the gate is
+not claimed complete.
 
-### 7.3 How readings 1-4 are taken — proposed, for review
+*Historical, superseded by §7.1.1:* the end state first written here had
+readings 1, 2, 3b and 4 pending a designated measurement subject, because this
+plan could not then produce one.
+
+### 7.3 How readings 1-4 are taken — reviewed
+
+*Proposed and reviewed in PR #110, merged 2026-09-29. What remains is the script
+that follows it, which is reviewed on its own before it runs.*
 
 **The service itself, started the way the unit starts it:** through the
 launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
@@ -840,10 +914,20 @@ multiple. The Runtime Settings tab records a measurement of HGT training at
 batch 256: ~26 GB under `cudaMallocAsync`, against 60→120 GB under the native
 allocator. The first attempt at the 3-epoch run that produces the subject was
 started from a shell with no preset. The operator stopped it after system
-memory climbed steadily from ~75 GB to 110 GB. That is the native pattern, and
-it is attributed to the native allocator on that pattern alone until the re-run
-under `cudaMallocAsync` shows whether the attribution holds. A reading taken
-under the wrong allocator describes a different deployment.
+memory climbed steadily from ~75 GB to 110 GB. The re-run under
+`cudaMallocAsync`, with the same command, held at about 26 GB for its whole 130
+minutes and returned to the 8.8 GB idle level afterwards (operator
+observation, system-wide). **That supports the allocator as the main cause; it
+does not establish it.** The allocator is the one difference the commands
+record, and the pattern matches the Runtime Settings measurement. But the first
+run's allocator was never read back: nothing applied a preset and the commands
+exported none, which is not the same as checked. And both figures are the
+operator's view of whole-machine memory, which other processes also draw on.
+A controlled attribution would need the first run's allocator read back and
+the training process's own memory counted; neither is attempted here. The
+readings do not depend on it, because §7.3 records the allocator the server
+actually carries rather than infer it. A reading taken under the wrong
+allocator describes a different deployment.
 
 **The checkpoint is named, at startup and at reload.** Startup uses
 `SHEPHERD_CHECKPOINT_PATH` as given. A reload without `checkpoint_path`
@@ -921,7 +1005,6 @@ counters are reported.
 | R4 | 4 — old and new coexisting | the same reload: `VmHWM` over it and the system-in-use peak over it, each less its value just before |
 
 **The workload is fixed, seeded, and written down well enough to rebuild.**
-Proposed:
 
 - **200 requests, sent serially**, one at a time. It is a fixed engineering
   workload. It does not stand for maximum load, concurrency or a long-run
@@ -947,12 +1030,14 @@ process.** The median and the maximum are reported, not a mean.
 
 **Output: one aggregate JSON, emitted by one committed script**, which is the
 pattern BACKLOG §5.2 requires of every evidence file. It records bytes, seconds,
-counts, the three digests (graph, checkpoint, SP table), the kernel and torch
-versions, and the readiness fields. It records no paths, no host or operator
-names, and no phenotype ids. The script launches the service through the
-launcher, reads the server process's `/proc`, and talks HTTP to loopback. It sits beside
-`benchmark_sp_lookup.py`, it is not a framework, and **it will not be written
-until this procedure is agreed.**
+counts, the three digests (graph, checkpoint, SP table), the code version it
+ran at, the kernel and torch versions, and the readiness fields. It records no
+paths, no host or operator names, and no phenotype ids. The script launches the
+service through the launcher, reads the server process's `/proc`, and talks HTTP
+to loopback. It sits beside
+`benchmark_sp_lookup.py`, and it is not a framework. It is written against
+this procedure now that it is agreed. If the script needs the procedure changed,
+the change is made here first and reviewed.
 
 **Completing the readings is not passing a capacity gate.** §13 asks for
 readings, not a budget, and no budget is invented here. The readings for this
@@ -1114,11 +1199,14 @@ end of any of them.
    are re-taken against the shipped shape — `PLAN_B04.md`'s numbers describe a
    design that kept the id columns and this one does not, so they are not
    evidence about it. Report: implemented; the supplementary figure recorded as
-   supplementary; readings 1, 2, 3b and 4 awaiting a designated measurement
-   subject (§7.1); reading 5 deferred for want of the smallest supported target.
-   *Status:* the supplementary figure is recorded at deployment scale (§6.2.1).
-   It re-takes the resident figure and does not yield a serving peak, which is
-   reading 2's to supply. The rest of the report stands.
+   supplementary; readings 1, 2, 3b and 4 taken by §7.3 on the designated
+   subject; reading 5 deferred for want of the smallest supported target.
+   *Status* (2026-09-30): the supplementary figure is recorded at deployment
+   scale (§6.2.1). It re-takes the resident figure and does not yield a serving
+   peak, which is reading 2's to supply. The subject is designated (§7.1.1).
+   Readings 1, 2, 3b and 4 wait on the §7.3 measurement script and its run.
+   *Historical, superseded by §7.1.1:* this step first reported those readings
+   as awaiting a designated subject.
 
 Steps 0-8 need no calibration and **no institutional decision** — §7.1's
 designation is engineering, and item 6's clinical choice is not a prerequisite

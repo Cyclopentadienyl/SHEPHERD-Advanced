@@ -1,0 +1,22 @@
+== sha256 (run inside the workspace directory)
+6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43  kg.json
+dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027  shortest_paths.pt
+1019922cd3aa91f340ab8d75eb3025716d6d8f01ce433f80a5ad9b7eb8565097  shortest_paths.meta.json
+== sizes (bytes)
+shortest_paths.pt 10797575893
+shortest_paths.meta.json 329
+== shortest_paths.meta.json
+{
+  "build_id": "fe1a7d148ae7c015dde0f3907347ee7b",
+  "kg_digest": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+  "kg_total_edges": 617773,
+  "kg_total_nodes": 57239,
+  "max_hops": 5,
+  "num_diseases": 32109,
+  "num_genes": 5236,
+  "num_pairs": 431902937,
+  "num_phenotypes": 19894,
+  "schema_version": 1
+}
+== compute_shortest_paths.py timing (from its log)
+BFS 653.3 s on 15 worker processes; tensor assembly and publication 210 s; wall 14 m 39 s
