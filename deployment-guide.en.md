@@ -807,6 +807,37 @@ each hop). Sources are identified by their position in the list; the report
 names no host, no proxy and no directory. If `G9` finds a change in your cache
 or roots it reports which location and how many files, not their names.
 
+## 4.6 File permissions of the files a build and the service write
+
+The shortest-path table and its sidecar, the split manifest, `kg.provenance.json`,
+the evaluation ledger, the UI config and the ontology cache are all written to a
+temporary file and renamed into place, so a reader never sees a half-written one.
+They are published with the mode a plain `open()` would give them:
+
+- **a new file** gets the directory's policy — the umask (commonly `022`, which
+  gives `0644`), or the directory's default ACL where it has one;
+- **a rewritten file keeps its mode** — an operator's `chmod 600` stays `600`,
+  and a group-shared `640` stays `640`.
+
+From September 2026 until this was fixed, these files were published `0600`,
+readable only by the account that wrote them. Files written in that window keep
+that mode; if the service reads them as another account, `chmod 644` (or `640`
+with a shared group) them once.
+
+**What renaming cannot reproduce.** The rewritten file is a new file: it is
+owned by the account that wrote it, in that account's group — or the
+directory's group, if the directory is setgid — and extended ACL entries on the
+old file are not copied. For a service that runs as a different account from
+the one that builds, give both a shared group and make the workspace directory
+setgid, or set a default ACL on it. The reading account also needs search
+(`x`) permission on every directory above the file.
+
+**While it is being written**, the temporary file already has the mode the
+published file will have, so anyone who may read the file may read the partial
+copy too. And **the directories must not be writable by accounts you do not
+trust**: an account that can rename files in them can substitute a file
+between its write and its rename, as it could before this change.
+
 ---
 
 ## Summary: deployment checklist ✅

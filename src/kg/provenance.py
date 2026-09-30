@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
+
+from src.utils.file_modes import create_staging_file
 
 #: The file, beside `kg.json`, that records what the graph was built from.
 PROVENANCE_FILENAME = "kg.provenance.json"
@@ -219,18 +220,15 @@ def write_provenance(workspace: Path, record: Dict[str, Any]) -> str:
 
     payload = encode_provenance(record)
     target = Path(workspace) / PROVENANCE_FILENAME
-    handle = tempfile.NamedTemporaryFile(
-        "w", dir=str(workspace), prefix=target.name, suffix=".tmp",
-        delete=False, encoding="utf-8",
-    )
+    handle, staged = create_staging_file(target, binary=False, encoding="utf-8")
     try:
         with handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(handle.name, target)
+        os.replace(staged, target)
     except BaseException:
-        Path(handle.name).unlink(missing_ok=True)
+        Path(staged).unlink(missing_ok=True)
         raise
     return file_sha256(target)
 

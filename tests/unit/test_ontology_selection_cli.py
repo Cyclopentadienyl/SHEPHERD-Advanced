@@ -15,6 +15,8 @@ Module: tests/unit/test_ontology_selection_cli.py
 from __future__ import annotations
 
 import importlib.util
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -619,6 +621,37 @@ class TestVerifyThenPublish:
         assert (cache / "mondo.obo").read_bytes() == MONDO_NEW
         assert loaded.declared_version == "releases/2026-09-01"
         assert not [p.name for p in cache.iterdir() if p.name.endswith(".staged")]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+    @pytest.mark.parametrize("existing", [0o600, 0o640])
+    def test_a_fresh_copy_keeps_the_cached_files_mode(self, tmp_path, select, fresh, existing):
+        """The staging name is reserved with the cached file's mode, the download
+        replaces it keeping that mode, and the verified file is renamed over the
+        cache -- so an operator's 0600, or a group-shared 0640, survives a refresh.
+        A reservation made with mkstemp published 0600 whatever was there."""
+        cache = tmp_path / "cache"
+        old = obo(cache / "mondo.obo", version="releases/2025-01-01")
+        os.chmod(old, existing)
+        fresh(MONDO_NEW)
+
+        loaded = select(cache_dir=cache, force_download=True, loader=OntologyLoader(cache_dir=cache))
+
+        assert loaded.source_path.read_bytes() == MONDO_NEW
+        assert stat.S_IMODE(loaded.source_path.stat().st_mode) == existing
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+    def test_a_first_download_gets_what_open_would_give_it(self, tmp_path, select, fresh):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        reference = cache / "reference"
+        reference.write_text("")
+        expected = stat.S_IMODE(reference.stat().st_mode)
+        reference.unlink()
+        fresh(MONDO_NEW)
+
+        loaded = select(cache_dir=cache, force_download=True, loader=OntologyLoader(cache_dir=cache))
+
+        assert stat.S_IMODE(loaded.source_path.stat().st_mode) == expected
 
     def test_a_fresh_copy_that_never_arrives_is_not_replaced_by_the_old_one(
         self, tmp_path, select, fresh, monkeypatch
