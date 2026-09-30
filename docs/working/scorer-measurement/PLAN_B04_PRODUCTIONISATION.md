@@ -18,9 +18,11 @@ review thread, because this document is what a later reader will have.
 
 **Cleared to implement is not accepted for deployment**, and the two are kept
 apart deliberately. Nothing here asserts that `PLAN_B04.md` §13's gate has been
-passed, that `DISEASE_SCORER_POLICY.md` has changed, that B-1 has started, or
-that any figure in §7 has been measured on a designated subject. A reading this
-hardware cannot produce is marked pending and stays pending.
+passed, that `DISEASE_SCORER_POLICY.md` has changed, or that B-1 has started.
+Readings 1, 2, 3b and 4 have since been taken on the designated subject (§7.4),
+and that is not the gate passed: reading 5 is blocked, and a reading is not a
+capacity decision. A reading this hardware cannot produce is marked pending and
+stays pending.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.
 `PLAN_B04.md` governs what was measured and what was selected; this plan governs
@@ -629,17 +631,15 @@ statement about this host.
 
 | # | Reading | Status |
 |---|---|---|
-| 1 | complete pipeline cold start with A wired in | **pending the §7.3 run**; the subject is designated (§7.1.1) |
-| 2 | steady and peak RSS/UMA once serving | **pending the §7.3 run**; the subject is designated (§7.1.1). This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — so an SP-only figure cannot complete it, however useful it is |
-| 3 | one real reload, *if live reload is supported* — establish that first | **half answered.** Live reload *is* supported: probe E4 builds a candidate beside the live pipeline and E5 shows a refused one leaves it serving. A reload **with the index wired in** has not been measured, and that is the half §13 asks for |
-| 4 | peak while old and new pipeline state coexist | **pending the §7.3 run**; the subject is designated (§7.1.1). Probe E4 reports `double_residency_conclusive: false` because the demo model is 43,553 parameters / 18.5 MB. A deployment-sized *graph* does not fix this; the resident model is the other half |
+| 1 | complete pipeline cold start with A wired in | **taken** (§7.4): 84.7 s from launch to ready, median of three; VmHWM at ready 23.77 GB, VmRSS at ready 6.50 GB |
+| 2 | steady and peak RSS/UMA once serving | **taken** (§7.4): VmHWM over the workload 6.50 GB, VmRSS after it 6.45 GB. This is an *integrated* reading — §13 exists precisely because an isolated benchmark does not cover model, graph, embeddings and API resident together — and it was taken with all of them resident; the SP-only figure of §6.2.1 stays supplementary |
+| 3 | one real reload, *if live reload is supported* — establish that first | **answered.** Live reload *is* supported: probe E4 builds a candidate beside the live pipeline and E5 shows a refused one leaves it serving. A reload **with the index wired in** is taken (§7.4, R3): success with readiness re-asserted in each repeat, 84.5 s |
+| 4 | peak while old and new pipeline state coexist | **taken** (§7.4): VmHWM rises 22.00 GB over the reload, to 28.45 GB. Probe E4's `double_residency_conclusive: false` came from a 43,553-parameter / 18.5 MB demo model; this is the designated subject |
 | 5 | the same on the **smallest supported deployment target** | **blocked** — that machine is not available. The reading is deferred, not waived, and the gate is not claimed complete without it |
 
-**For readings 1-4, the subject is designated (§7.1.1, checked 2026-09-29) and
-the procedure has been reviewed (§7.3).** The script that takes them is
-`scripts/measure_served_pipeline.py` (§7.3); what remains is its run on the
-measuring machine. The statuses above stay as they are until the readings
-exist.
+**Readings 1-4 are taken** (§7.4, 2026-09-30): on the subject designated in
+§7.1.1, by the procedure reviewed in §7.3, and complete by §7.3's own rule.
+Taking them is not passing a capacity gate, and reading 5 is still blocked.
 
 ### 7.1 The measurement subject — designated, not authoritative
 
@@ -859,13 +859,13 @@ the reading would leave unverified serving memory shelved as done.
 **Where the plan stands** (2026-09-30): *implemented; the supplementary SP-only
 figure recorded at deployment scale (§6.2.1), which confirms the resident figure
 on the real artifact and yields no serving peak; the measurement subject
-designated (§7.1.1); the §7.3 script written; readings 1, 2, 3b and 4 pending
-its run; reading 5 deferred for want of the smallest supported target*.
+designated (§7.1.1); readings 1, 2, 3b and 4 taken and complete (§7.4);
+reading 5 deferred for want of the smallest supported target*.
 
 **Where it ends:** readings 1, 2, 3b and 4 taken by §7.3 on that subject, and
 complete by §7.3's own rule, when all four phases finish with readiness
 asserted; reading 5 still deferred. Not a clearance to ship, and the gate is
-not claimed complete.
+not claimed complete. **Reached for readings 1-4** (§7.4).
 
 *Historical, superseded by §7.1.1:* the end state first written here had
 readings 1, 2, 3b and 4 pending a designated measurement subject, because this
@@ -1124,6 +1124,23 @@ code:
   which shares R4's reset, although R3's success and wall time do not depend on
   it. The figures that do depend on the reset, VmHWM in R2 and R4, are withheld,
   not reported.
+- **A real reset can still go unconfirmed**, and the rule stays equality. The
+  kernel stores the reset from its approximate per-CPU RSS counter
+  (`reset_mm_hiwater_rss` → `get_mm_rss`, `percpu_counter_read_positive`),
+  while `/proc/<pid>/status` reports VmRSS as the exact sum
+  (`get_mm_counter_sum`) and VmHWM as the larger of the two (mainline
+  `include/linux/mm.h`, `fs/proc/task_mmu.c`). When the approximate value is
+  the higher, VmHWM stays above VmRSS after a reset that worked, and a stopped
+  process folds nothing, so retrying repeats the gap. On the measuring machine
+  (kernel 7.0.0-1019-nvidia) this was seen: before the readings, the unit
+  test's reset of a small idle process failed there, and a 20-run diagnostic
+  the operator ran afterwards left 9 resets inconclusive, each with VmHWM one
+  page above VmRSS in all three tries, while the mark itself had come down
+  from about 76 MB to about 9 MB. That diagnostic is reported, not committed.
+  An unconfirmed reset costs completeness, never a wrong figure. The service's
+  six resets in the readings were each confirmed at the first try (§7.4). The
+  high-water mark is kept from the same approximate counter, which is what the
+  evidence's note that RSS accounting is approximate covers.
 - **Fewer than three repeats** (`--repeats`) is a trial. Its evidence says so,
   and it never counts as complete readings.
 - **Progress goes to stderr, never to the evidence**: each phase's start and
@@ -1154,6 +1171,71 @@ service. The numbers are recorded, not judged. Whether they leave enough
 headroom is a separate capacity decision that this plan does not define. It
 matters most on the smallest supported target, reading 5, which is still
 blocked.
+
+### 7.4 Readings 1, 2, 3b and 4 — taken
+
+**Taken 2026-09-30** on the measuring machine: NVIDIA GB10, aarch64, kernel
+7.0.0-1019-nvidia, driver 580.178.04, Python 3.12.3, torch 2.10.0+cu130 (CUDA
+13.0). The script `scripts/measure_served_pipeline.py` ran at `ecf17cd` with no
+tracked file modified, and its SHA-256 is `d097cf97…`. The subject was the one
+designated in §7.1.1: checkpoint `33a7b39a…`, graph `6cae2d1a…`, SP table
+`dd506e73…`. There were three repeats, each in its own service process. Every
+phase of every repeat completed with readiness asserted, so the readings are
+**complete by §7.3's rule**. The service started with the saved preset
+allocator, `backend:cudaMallocAsync`. Torch, given the server's allocator
+values in a separate process, reports `cudaMallocAsync` as its backend.
+
+**The file** is in [`readings-hgt-2026-09-30/`](readings-hgt-2026-09-30/):
+
+| File | SHA-256 | What it is |
+|---|---|---|
+| `served_readings.json` | `5d509ba4…` | the script's output, as received, committed byte for byte. It holds bytes, seconds, counts, digests and versions, and no paths, host names or ids |
+
+**The readings.** GB is 10⁹ bytes. Each figure is the median of the three
+repeats, with the maximum in brackets.
+
+| Reading | Phase | Figures |
+|---|---|---|
+| 1 — cold start | R1 | launch to ready 84.7 s (109.8 s); VmHWM at ready 23.77 GB (23.77); VmRSS at ready 6.50 GB (6.50); system in use less R0, sampled peak 30.68 GB (30.79), at ready 14.14 GB (14.21) |
+| 2 — steady and peak once serving | R2 | 200 of 200 requests accepted in each repeat; VmHWM 6.50 GB (6.50); VmRSS after 6.45 GB (6.45); system in use less R0, sampled peak 14.14 GB (14.21) |
+| 3b — one real reload | R3 | HTTP 200 and success in each repeat, readiness re-asserted on the named checkpoint; 84.5 s (84.8 s); VmRSS after 6.79 GB (6.79) |
+| 4 — old and new coexisting | R4 | VmHWM over the reload less its value before, 22.00 GB (22.01), reaching 28.45 GB in each repeat; system-in-use sampled peak less its value before, 22.22 GB (22.72) |
+
+In every repeat, each phase that records them (R1, R2 and R4) shows swap
+risen by 0 and the machine's OOM-kill count by 0. Every reset was confirmed at
+the first try.
+
+**What the figures show, and what they do not.**
+
+- **The largest figures are transients.** VmHWM at ready is 3.65 times VmRSS
+  at ready, and the reload raises VmHWM by 22.00 GB over the resident state.
+- **Serving raised the high-water mark by nothing the counter resolves.** In
+  each repeat, R2's VmHWM is about 1 MB (0.86-1.08 MB) *below* the VmRSS its
+  reset was confirmed at. Exact counters could not give that. It is the
+  approximation §7.3 describes: the stored mark comes from the approximate
+  counter. At this scale it is under 0.02 %. On the system counter, R2's
+  sampled peak is 0.52 GB above the value at ready in repeat 1, and within
+  1 MB of it in repeats 2 and 3.
+- **R3's VmRSS after the reload is 0.34 GB above R2's.** As §7.3 says, this
+  does not show whether the old state was released.
+- **The gap between system in use and VmRSS** at ready, 7.63 GB (7.71), is
+  recorded and not named CUDA usage.
+- **Repeat 1 was the slowest** in R1 (109.8 s against 84.7 s and 82.7 s) and in
+  R2 (1,906 s against 1,718 s and 1,728 s). The cause is not established. R2's
+  wall time covers 200 serial requests with explanations and paths. Latency is
+  not a §13 reading, and none is claimed.
+- **Scope.** These readings describe this platform, this subject and a start
+  with the saved preset allocator (§7.3). A materially different final model
+  means a re-run (§7.1.1). They are readings, not a capacity decision, and
+  reading 5 is still blocked.
+
+**Before the run.** A one-repeat trial at `ba0cc1c` checked the procedure on
+this machine. It is not evidence and is not committed. It led to the progress
+output (`3ad7825`, `ecf17cd`), which adds nothing to the evidence. The script's
+unit tests, run on the measuring machine just before the readings, passed 84 of
+85. The failure was the kernel-dependent reset test described in §7.3. Since
+then the test, not the script, has been corrected: it now accepts a reset that
+lowered the mark but could not be confirmed.
 
 ---
 
@@ -1309,7 +1391,7 @@ end of any of them.
    *Status* (2026-09-30): the supplementary figure is recorded at deployment
    scale (§6.2.1). It re-takes the resident figure and does not yield a serving
    peak, which is reading 2's to supply. The subject is designated (§7.1.1).
-   The §7.3 script is written; readings 1, 2, 3b and 4 wait on its run.
+   Readings 1, 2, 3b and 4 are taken by the §7.3 script and complete (§7.4).
    *Historical, superseded by §7.1.1:* this step first reported those readings
    as awaiting a designated subject.
 

@@ -138,11 +138,35 @@ def test_the_server_environment_is_read_raw(tmp_path):
 
 
 # ------------------------------------------------------------------ the reset
-def test_the_reset_is_confirmed_with_the_server_paused_and_it_is_resumed(sleeper):
+def test_the_reset_lowers_the_high_water_mark_with_the_server_paused_and_resumes_it(sleeper):
     before = msp.read_status(sleeper.pid)   # the 64 MB the child touched and freed
     outcome = _reset_or_skip(sleeper.pid)
-    assert outcome["status"] == "confirmed"
-    assert outcome["vm_hwm_bytes"] == outcome["vm_rss_bytes"] < before["vm_hwm_bytes"]
+    # The high-water mark comes down by the 64 MB whether or not the kernel lets
+    # the reset be confirmed. The reset stores the approximate per-CPU RSS
+    # counter, while status reports VmRSS as the exact sum and VmHWM as the
+    # larger of the two, so a real reset can leave VmHWM a page above VmRSS in
+    # every try (seen on the measuring machine's kernel, §7.3). That outcome is
+    # inconclusive by the equality rule; a stop never seen is not accepted here.
+    assert outcome["status"] in ("confirmed", "inconclusive")
+    if outcome["status"] == "confirmed":
+        assert outcome["vm_hwm_bytes"] == outcome["vm_rss_bytes"]
+    else:
+        assert outcome["reason"] == "VmHWM != VmRSS after 3 resets"
+    assert outcome["vm_rss_bytes"] <= outcome["vm_hwm_bytes"]
+    assert outcome["vm_hwm_bytes"] < before["vm_hwm_bytes"] - 32 * 2**20
+    time.sleep(0.05)
+    assert msp.process_state(sleeper.pid) != "T"
+
+
+def test_a_reset_is_confirmed_by_the_first_equal_reading_and_not_before(sleeper,
+                                                                         monkeypatch):
+    readings = iter([{"vm_hwm_bytes": 2, "vm_rss_bytes": 1},
+                     {"vm_hwm_bytes": 1, "vm_rss_bytes": 1}])
+    monkeypatch.setattr(msp, "read_status", lambda pid, proc=msp.PROC: next(readings))
+    outcome = _reset_or_skip(sleeper.pid)
+    assert (outcome["status"], outcome["tries"]) == ("confirmed", 2)
+    assert outcome["vm_hwm_bytes"] == outcome["vm_rss_bytes"] == 1
+    monkeypatch.undo()
     time.sleep(0.05)
     assert msp.process_state(sleeper.pid) != "T"
 

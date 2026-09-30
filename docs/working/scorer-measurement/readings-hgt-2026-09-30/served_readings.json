@@ -1,0 +1,614 @@
+{
+  "allocator": {
+    "backend_note": "reported by torch in a separate process given the server's allocator values, after the readings",
+    "backend_reported_by_torch": "cudaMallocAsync",
+    "governing_variable": "PYTORCH_ALLOC_CONF",
+    "present": [
+      "PYTORCH_ALLOC_CONF"
+    ],
+    "same_in_every_repeat": true,
+    "server_environment_raw": {
+      "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+      "FLASHATTN_FORCE_DISABLE": null,
+      "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+      "PYTORCH_CUDA_ALLOC_CONF": null,
+      "SHEPHERD_ALLOC_SOURCE": "preset"
+    },
+    "source": "preset"
+  },
+  "code": {
+    "commit": "ecf17cde192c46476826a848006393b0b327e478",
+    "tracked_files_modified": false
+  },
+  "constants": {
+    "r0_seconds": 10.0,
+    "readiness": {
+      "scoring_mode": "gnn_plus_shortest_path",
+      "serving_device_prefix": "cuda",
+      "sp_kg_binding": "verified",
+      "true": [
+        "initialized",
+        "gnn_ready",
+        "has_model",
+        "sp_ready"
+      ]
+    },
+    "repeats_required": 3,
+    "repeats_run": 3,
+    "reset_tries": 3,
+    "sample_interval_seconds": 0.2,
+    "settle_seconds": 15.0,
+    "stop_wait_seconds": 5.0
+  },
+  "environment": {
+    "device": "NVIDIA GB10",
+    "driver": "580.178.04",
+    "kernel": "7.0.0-1019-nvidia",
+    "machine": "aarch64",
+    "python": "3.12.3",
+    "torch": "2.10.0+cu130",
+    "torch_cuda": "13.0",
+    "torch_hip": null,
+    "torch_probe": "ok"
+  },
+  "not_a_capacity_gate": true,
+  "notes": {
+    "gap": "system in use less R0 minus VmRSS is recorded and not named CUDA usage",
+    "quiet_machine": "no other GPU, training or build job during the run is the operator's to ensure; the script checks only swap during R0",
+    "rss": "the kernel describes its RSS accounting as approximate",
+    "sampled_peak": "sampled every 0.2 s; a shorter excursion can be missed",
+    "system_in_use": "MemTotal - MemAvailable: a whole-machine pressure indicator, not the service's usage; it includes every other process"
+  },
+  "procedure": "PLAN_B04_PRODUCTIONISATION.md \u00a77.3",
+  "readings_complete": true,
+  "repeats": [
+    {
+      "phases": {
+        "R0": {
+          "measurement_precondition_met": true,
+          "samples": 53,
+          "seconds": 10.0,
+          "swap_in_use_first_bytes": 0,
+          "swap_in_use_median_bytes": 0,
+          "swap_in_use_peak_bytes": 0,
+          "swap_largest_rise_bytes": 0,
+          "swap_net_change_bytes": 0,
+          "system_in_use_max_bytes": 10353696768,
+          "system_in_use_median_bytes": 10302603264,
+          "system_in_use_min_bytes": 10254917632
+        },
+        "R1": {
+          "oom_kills_on_machine": 0,
+          "readiness": {
+            "asserted": true,
+            "fingerprint_warning_count": 0,
+            "gnn_ready": true,
+            "has_model": true,
+            "initialized": true,
+            "kg_edges": 617773,
+            "kg_nodes": 57239,
+            "scoring_mode": "gnn_plus_shortest_path",
+            "serving_device": "cuda",
+            "sp_kg_binding": "verified",
+            "sp_max_hops": 5,
+            "sp_ready": true
+          },
+          "server_is_measured_pid": true,
+          "serves_named_checkpoint": true,
+          "status": "completed",
+          "swap_baseline_bytes": 0,
+          "swap_increase_bytes": 0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_at_end_bytes": 23325540352,
+          "system_in_use_at_end_less_r0_bytes": 13022937088,
+          "system_in_use_at_end_less_r0_minus_vm_rss_bytes": 6518980608,
+          "system_in_use_sampled_peak_bytes": 40309149696,
+          "system_in_use_sampled_peak_less_r0_bytes": 30006546432,
+          "vm_hwm_bytes": 23770370048,
+          "vm_rss_bytes": 6503956480,
+          "wall_seconds": 109.78952040000149
+        },
+        "R2": {
+          "oom_kills_on_machine": 0,
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6503956480,
+            "vm_rss_bytes": 6503956480
+          },
+          "status": "completed",
+          "swap_baseline_bytes": 0,
+          "swap_increase_bytes": 0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_at_end_bytes": 23275601920,
+          "system_in_use_at_end_less_r0_bytes": 12972998656,
+          "system_in_use_sampled_peak_bytes": 23843737600,
+          "system_in_use_sampled_peak_less_r0_bytes": 13541134336,
+          "vm_hwm_bytes": 6502875136,
+          "vm_rss_after_bytes": 6445453312,
+          "wall_seconds": 1906.0408016770016,
+          "workload": {
+            "accepted": 200,
+            "ended_without_response": false,
+            "failures": {},
+            "planned": 200,
+            "sent": 200
+          }
+        },
+        "R3": {
+          "http_status": 200,
+          "readiness": {
+            "asserted": true,
+            "fingerprint_warning_count": 0,
+            "gnn_ready": true,
+            "has_model": true,
+            "initialized": true,
+            "kg_edges": 617773,
+            "kg_nodes": 57239,
+            "scoring_mode": "gnn_plus_shortest_path",
+            "serving_device": "cuda",
+            "sp_kg_binding": "verified",
+            "sp_max_hops": 5,
+            "sp_ready": true
+          },
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6445453312,
+            "vm_rss_bytes": 6445453312
+          },
+          "serves_named_checkpoint": true,
+          "status": "completed",
+          "success": true,
+          "vm_rss_after_bytes": 6785024000,
+          "wall_seconds": 84.7855224039995
+        },
+        "R4": {
+          "oom_kills_on_machine": 0,
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6445453312,
+            "vm_rss_bytes": 6445453312
+          },
+          "status": "completed",
+          "swap_baseline_bytes": 0,
+          "swap_increase_bytes": 0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_before_bytes": 23275601920,
+          "system_in_use_sampled_peak_bytes": 45991534592,
+          "system_in_use_sampled_peak_increase_bytes": 22715932672,
+          "vm_hwm_before_bytes": 6445453312,
+          "vm_hwm_increase_bytes": 22002020352,
+          "vm_hwm_over_reload_bytes": 28447473664
+        }
+      },
+      "repeat": 1,
+      "server_environment": {
+        "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+        "FLASHATTN_FORCE_DISABLE": null,
+        "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+        "PYTORCH_CUDA_ALLOC_CONF": null,
+        "SHEPHERD_ALLOC_SOURCE": "preset"
+      },
+      "server_exit_status": -15
+    },
+    {
+      "phases": {
+        "R0": {
+          "measurement_precondition_met": true,
+          "samples": 52,
+          "seconds": 10.0,
+          "swap_in_use_first_bytes": 0,
+          "swap_in_use_median_bytes": 0.0,
+          "swap_in_use_peak_bytes": 0,
+          "swap_largest_rise_bytes": 0,
+          "swap_net_change_bytes": 0,
+          "system_in_use_max_bytes": 10656575488,
+          "system_in_use_median_bytes": 10609238016.0,
+          "system_in_use_min_bytes": 10568921088
+        },
+        "R1": {
+          "oom_kills_on_machine": 0,
+          "readiness": {
+            "asserted": true,
+            "fingerprint_warning_count": 0,
+            "gnn_ready": true,
+            "has_model": true,
+            "initialized": true,
+            "kg_edges": 617773,
+            "kg_nodes": 57239,
+            "scoring_mode": "gnn_plus_shortest_path",
+            "serving_device": "cuda",
+            "sp_kg_binding": "verified",
+            "sp_max_hops": 5,
+            "sp_ready": true
+          },
+          "server_is_measured_pid": true,
+          "serves_named_checkpoint": true,
+          "status": "completed",
+          "swap_baseline_bytes": 0.0,
+          "swap_increase_bytes": 0.0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_at_end_bytes": 24747704320,
+          "system_in_use_at_end_less_r0_bytes": 14138466304.0,
+          "system_in_use_at_end_less_r0_minus_vm_rss_bytes": 7634317312.0,
+          "system_in_use_sampled_peak_bytes": 41396359168,
+          "system_in_use_sampled_peak_less_r0_bytes": 30787121152.0,
+          "vm_hwm_bytes": 23771353088,
+          "vm_rss_bytes": 6504148992,
+          "wall_seconds": 84.67354558399893
+        },
+        "R2": {
+          "oom_kills_on_machine": 0,
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6504148992,
+            "vm_rss_bytes": 6504148992
+          },
+          "status": "completed",
+          "swap_baseline_bytes": 0.0,
+          "swap_increase_bytes": 0.0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_at_end_bytes": 24176103424,
+          "system_in_use_at_end_less_r0_bytes": 13566865408.0,
+          "system_in_use_sampled_peak_bytes": 24747761664,
+          "system_in_use_sampled_peak_less_r0_bytes": 14138523648.0,
+          "vm_hwm_bytes": 6503292928,
+          "vm_rss_after_bytes": 6445678592,
+          "wall_seconds": 1718.230014646997,
+          "workload": {
+            "accepted": 200,
+            "ended_without_response": false,
+            "failures": {},
+            "planned": 200,
+            "sent": 200
+          }
+        },
+        "R3": {
+          "http_status": 200,
+          "readiness": {
+            "asserted": true,
+            "fingerprint_warning_count": 0,
+            "gnn_ready": true,
+            "has_model": true,
+            "initialized": true,
+            "kg_edges": 617773,
+            "kg_nodes": 57239,
+            "scoring_mode": "gnn_plus_shortest_path",
+            "serving_device": "cuda",
+            "sp_kg_binding": "verified",
+            "sp_max_hops": 5,
+            "sp_ready": true
+          },
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6445678592,
+            "vm_rss_bytes": 6445678592
+          },
+          "serves_named_checkpoint": true,
+          "status": "completed",
+          "success": true,
+          "vm_rss_after_bytes": 6791593984,
+          "wall_seconds": 84.45283259400094
+        },
+        "R4": {
+          "oom_kills_on_machine": 0,
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6445678592,
+            "vm_rss_bytes": 6445678592
+          },
+          "status": "completed",
+          "swap_baseline_bytes": 0.0,
+          "swap_increase_bytes": 0.0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_before_bytes": 24176103424,
+          "system_in_use_sampled_peak_bytes": 46398574592,
+          "system_in_use_sampled_peak_increase_bytes": 22222471168,
+          "vm_hwm_before_bytes": 6445678592,
+          "vm_hwm_increase_bytes": 22005972992,
+          "vm_hwm_over_reload_bytes": 28451651584
+        }
+      },
+      "repeat": 2,
+      "server_environment": {
+        "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+        "FLASHATTN_FORCE_DISABLE": null,
+        "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+        "PYTORCH_CUDA_ALLOC_CONF": null,
+        "SHEPHERD_ALLOC_SOURCE": "preset"
+      },
+      "server_exit_status": -15
+    },
+    {
+      "phases": {
+        "R0": {
+          "measurement_precondition_met": true,
+          "samples": 52,
+          "seconds": 10.0,
+          "swap_in_use_first_bytes": 0,
+          "swap_in_use_median_bytes": 0.0,
+          "swap_in_use_peak_bytes": 0,
+          "swap_largest_rise_bytes": 0,
+          "swap_net_change_bytes": 0,
+          "system_in_use_max_bytes": 10650533888,
+          "system_in_use_median_bytes": 10632585216.0,
+          "system_in_use_min_bytes": 10609328128
+        },
+        "R1": {
+          "oom_kills_on_machine": 0,
+          "readiness": {
+            "asserted": true,
+            "fingerprint_warning_count": 0,
+            "gnn_ready": true,
+            "has_model": true,
+            "initialized": true,
+            "kg_edges": 617773,
+            "kg_nodes": 57239,
+            "scoring_mode": "gnn_plus_shortest_path",
+            "serving_device": "cuda",
+            "sp_kg_binding": "verified",
+            "sp_max_hops": 5,
+            "sp_ready": true
+          },
+          "server_is_measured_pid": true,
+          "serves_named_checkpoint": true,
+          "status": "completed",
+          "swap_baseline_bytes": 0.0,
+          "swap_increase_bytes": 0.0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_at_end_bytes": 24843231232,
+          "system_in_use_at_end_less_r0_bytes": 14210646016.0,
+          "system_in_use_at_end_less_r0_minus_vm_rss_bytes": 7706353664.0,
+          "system_in_use_sampled_peak_bytes": 41309806592,
+          "system_in_use_sampled_peak_less_r0_bytes": 30677221376.0,
+          "vm_hwm_bytes": 23771652096,
+          "vm_rss_bytes": 6504292352,
+          "wall_seconds": 82.65987976799806
+        },
+        "R2": {
+          "oom_kills_on_machine": 0,
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6504292352,
+            "vm_rss_bytes": 6504292352
+          },
+          "status": "completed",
+          "swap_baseline_bytes": 0.0,
+          "swap_increase_bytes": 0.0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_at_end_bytes": 24209969152,
+          "system_in_use_at_end_less_r0_bytes": 13577383936.0,
+          "system_in_use_sampled_peak_bytes": 24843005952,
+          "system_in_use_sampled_peak_less_r0_bytes": 14210420736.0,
+          "vm_hwm_bytes": 6503223296,
+          "vm_rss_after_bytes": 6445989888,
+          "wall_seconds": 1728.3122383840018,
+          "workload": {
+            "accepted": 200,
+            "ended_without_response": false,
+            "failures": {},
+            "planned": 200,
+            "sent": 200
+          }
+        },
+        "R3": {
+          "http_status": 200,
+          "readiness": {
+            "asserted": true,
+            "fingerprint_warning_count": 0,
+            "gnn_ready": true,
+            "has_model": true,
+            "initialized": true,
+            "kg_edges": 617773,
+            "kg_nodes": 57239,
+            "scoring_mode": "gnn_plus_shortest_path",
+            "serving_device": "cuda",
+            "sp_kg_binding": "verified",
+            "sp_max_hops": 5,
+            "sp_ready": true
+          },
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6445989888,
+            "vm_rss_bytes": 6445989888
+          },
+          "serves_named_checkpoint": true,
+          "status": "completed",
+          "success": true,
+          "vm_rss_after_bytes": 6787518464,
+          "wall_seconds": 83.17207961499662
+        },
+        "R4": {
+          "oom_kills_on_machine": 0,
+          "reset": {
+            "status": "confirmed",
+            "tries": 1,
+            "vm_hwm_bytes": 6445989888,
+            "vm_rss_bytes": 6445989888
+          },
+          "status": "completed",
+          "swap_baseline_bytes": 0.0,
+          "swap_increase_bytes": 0.0,
+          "swap_sampled_peak_bytes": 0,
+          "system_in_use_before_bytes": 24209969152,
+          "system_in_use_sampled_peak_bytes": 46122348544,
+          "system_in_use_sampled_peak_increase_bytes": 21912379392,
+          "vm_hwm_before_bytes": 6445989888,
+          "vm_hwm_increase_bytes": 22002765824,
+          "vm_hwm_over_reload_bytes": 28448755712
+        }
+      },
+      "repeat": 3,
+      "server_environment": {
+        "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+        "FLASHATTN_FORCE_DISABLE": null,
+        "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+        "PYTORCH_CUDA_ALLOC_CONF": null,
+        "SHEPHERD_ALLOC_SOURCE": "preset"
+      },
+      "server_exit_status": -15
+    }
+  ],
+  "schema": "shepherd.served_readings/1",
+  "script": {
+    "file": "scripts/measure_served_pipeline.py",
+    "sha256": "d097cf974e0ba05d552af06395f2e72baec3206edc8d9c3a0b5d30b79ea3d322"
+  },
+  "start": {
+    "environment_removed_if_present": [
+      "ATTENTION_ORDER",
+      "ATTENTION_PLUGIN",
+      "COMMANDLINE_ARGS",
+      "FLASHATTN_FORCE_DISABLE",
+      "PYTORCH_ALLOC_CONF",
+      "PYTORCH_CUDA_ALLOC_CONF",
+      "SHEP_COMMANDLINE_ARGS",
+      "SHEPHERD_*"
+    ],
+    "environment_set": [
+      "PYTHONUNBUFFERED",
+      "SHEPHERD_KG_PATH",
+      "SHEPHERD_DATA_DIR",
+      "SHEPHERD_CHECKPOINT_PATH",
+      "SHEPHERD_DEVICE"
+    ],
+    "reload_request": "the same workspace and checkpoint, device cuda",
+    "through": "scripts/launch/shep_launch.py --no-auto-install --no-browser -- --host 127.0.0.1 --port <free port>"
+  },
+  "subject": {
+    "checkpoint_sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79",
+    "graph_sha256": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+    "sp_table_sha256": "dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027"
+  },
+  "summary": {
+    "R1": {
+      "swap_increase_bytes": {
+        "max": 0,
+        "median": 0.0,
+        "n": 3
+      },
+      "system_in_use_at_end_less_r0_bytes": {
+        "max": 14210646016.0,
+        "median": 14138466304.0,
+        "n": 3
+      },
+      "system_in_use_at_end_less_r0_minus_vm_rss_bytes": {
+        "max": 7706353664.0,
+        "median": 7634317312.0,
+        "n": 3
+      },
+      "system_in_use_sampled_peak_less_r0_bytes": {
+        "max": 30787121152.0,
+        "median": 30677221376.0,
+        "n": 3
+      },
+      "vm_hwm_bytes": {
+        "max": 23771652096,
+        "median": 23771353088,
+        "n": 3
+      },
+      "vm_rss_bytes": {
+        "max": 6504292352,
+        "median": 6504148992,
+        "n": 3
+      },
+      "wall_seconds": {
+        "max": 109.78952040000149,
+        "median": 84.67354558399893,
+        "n": 3
+      }
+    },
+    "R2": {
+      "swap_increase_bytes": {
+        "max": 0,
+        "median": 0.0,
+        "n": 3
+      },
+      "system_in_use_sampled_peak_less_r0_bytes": {
+        "max": 14210420736.0,
+        "median": 14138523648.0,
+        "n": 3
+      },
+      "vm_hwm_bytes": {
+        "max": 6503292928,
+        "median": 6503223296,
+        "n": 3
+      },
+      "vm_rss_after_bytes": {
+        "max": 6445989888,
+        "median": 6445678592,
+        "n": 3
+      },
+      "wall_seconds": {
+        "max": 1906.0408016770016,
+        "median": 1728.3122383840018,
+        "n": 3
+      }
+    },
+    "R3": {
+      "vm_rss_after_bytes": {
+        "max": 6791593984,
+        "median": 6787518464,
+        "n": 3
+      },
+      "wall_seconds": {
+        "max": 84.7855224039995,
+        "median": 84.45283259400094,
+        "n": 3
+      }
+    },
+    "R4": {
+      "swap_increase_bytes": {
+        "max": 0,
+        "median": 0.0,
+        "n": 3
+      },
+      "system_in_use_sampled_peak_increase_bytes": {
+        "max": 22715932672,
+        "median": 22222471168,
+        "n": 3
+      },
+      "vm_hwm_increase_bytes": {
+        "max": 22005972992,
+        "median": 22002765824,
+        "n": 3
+      }
+    }
+  },
+  "workload": {
+    "api_phenotype_limit": 100,
+    "hpo_phenotype_nodes": 19894,
+    "phenotype_counts_by_kind": {
+      "maximum": {
+        "max": 100,
+        "median": 100.0,
+        "min": 100,
+        "requests": 50
+      },
+      "validation": {
+        "max": 15,
+        "median": 15.0,
+        "min": 2,
+        "requests": 150
+      }
+    },
+    "request_fields": {
+      "include_explanations": true,
+      "include_paths": true,
+      "top_k": 10
+    },
+    "requests": 200,
+    "rule": "validation: a seeded draw without replacement from val_samples.json, each request sending that sample's phenotypes, mapped from node index to HPO id by the graph's own index. maximum: for each request, a seeded draw of the API's maximum number of unique HPO ids among the graph's phenotype nodes. The two kinds are then shuffled together by the same generator, and the same list is sent in every repeat.",
+    "seed": 20260930,
+    "sent": "serially, one request at a time",
+    "val_samples_count": 15000,
+    "val_samples_sha256": "27a28f3a0ea67985ea056bbcc0f50d00635f4e2c06f83f42a8268a9c958ad48d"
+  }
+}
