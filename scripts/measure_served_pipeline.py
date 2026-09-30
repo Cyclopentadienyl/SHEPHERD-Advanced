@@ -25,6 +25,11 @@ wait at most 5 s for state T, write 5 to clear_refs, accept only VmHWM ==
 VmRSS, at most three tries, SIGCONT in a `finally`. Anything else makes the
 phase inconclusive, not measured.
 
+**A stop signal takes the cleanup path** (`install_stop_handlers`): SIGTERM or
+SIGHUP resumes a paused server and stops every server the run started, and no
+evidence is written. A request with no whole response ends its repeat before
+any further pause, because the server may still be working on it.
+
 **Output: one aggregate JSON**, BACKLOG §5.2's pattern. Bytes, seconds, counts,
 digests, versions and readiness fields -- no paths, no host or operator names,
 no phenotype ids. The server's own log goes to a directory named on stderr and
@@ -46,6 +51,7 @@ Module: scripts/measure_served_pipeline.py
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import os
@@ -81,10 +87,13 @@ VALIDATION_REQUESTS = 150
 MAXIMUM_REQUESTS = 50
 
 #: Readiness, asserted before anything counts (§7.3), plus the scoring mode
-#: §7.1.1 says each reading asserts on the running service.
+#: §7.1.1 says each reading asserts on the running service, and the device the
+#: model was moved to, which must be CUDA: a reading from a model served on the
+#: CPU would describe a deployment this project does not run.
 READY_TRUE_FIELDS = ("initialized", "gnn_ready", "has_model", "sp_ready")
 READY_BINDING = "verified"
 READY_SCORING_MODE = "gnn_plus_shortest_path"
+READY_DEVICE_PREFIX = "cuda"
 
 #: Read raw from the server's /proc/<pid>/environ, each recorded as absent when
 #: absent (§7.3 "With the allocator the deployment runs").
@@ -122,6 +131,39 @@ def require_linux() -> None:
             f"measure_served_pipeline reads /proc and cannot run on {sys.platform}. "
             "The readings are taken on the deployment host, which is Linux."
         )
+
+
+class Stopped(BaseException):
+    """A stop signal, raised where the script is, so every `finally` runs.
+
+    A `BaseException`, like `KeyboardInterrupt`, so that a repeat's
+    `except Exception` records it as nothing and lets it through to the cleanup.
+    """
+
+
+def install_stop_handlers() -> dict:
+    """End the run on SIGTERM or SIGHUP through the same cleanup as an error.
+
+    Their default action ends this process without running any `finally`. A
+    server paused for a reset would then stay stopped, holding its memory, and a
+    running server would be left behind in its own session. Raised as
+    `Stopped` instead, they resume and stop the server on the way out. A signal
+    already ignored, as under nohup, stays ignored. A second signal during that
+    cleanup is ignored, so it cannot cut the cleanup short. SIGKILL cannot be
+    caught, and nothing here claims to survive it.
+    """
+    raised = []
+
+    def handler(signum, frame):
+        if not raised:
+            raised.append(signum)
+            raise Stopped(signum)
+
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        if signal.getsignal(sig) is signal.SIG_DFL:
+            previous[sig] = signal.signal(sig, handler)
+    return previous
 
 
 # =============================================================================
@@ -454,11 +496,16 @@ def describe_workload(prepared: dict[str, Any], seed: int,
 #: through it.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+#: Nothing, or not a whole response, came back: refused, timed out, reset, or
+#: cut off mid-body (`http.client.IncompleteRead` is not an `OSError`). Unlike an
+#: HTTP error status, this does not say the server has finished the request.
+NO_RESPONSE = (OSError, http.client.HTTPException)
+
 
 def http_json(method: str, url: str, body: Any = None,
               timeout: float = REQUEST_TIMEOUT_S) -> tuple:
-    """Return (status, parsed JSON or None, response text). Raises OSError
-    when nothing answered -- connection refused while the service starts."""
+    """Return (status, parsed JSON or None, response text). Raises one of
+    `NO_RESPONSE` when no whole response came back."""
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, method=method,
                                      headers={"Content-Type": "application/json"})
@@ -485,20 +532,31 @@ def readiness(status: dict[str, Any]) -> dict[str, Any]:
     fields["kg_nodes"] = status.get("kg_nodes")
     fields["kg_edges"] = status.get("kg_edges")
     fields["fingerprint_warning_count"] = len(status.get("fingerprint_warnings") or [])
+    meta = status.get("checkpoint_meta")
+    fields["serving_device"] = meta.get("device") if isinstance(meta, dict) else None
     fields["asserted"] = (
         all(fields[name] for name in READY_TRUE_FIELDS)
         and fields["sp_kg_binding"] == READY_BINDING
         and fields["scoring_mode"] == READY_SCORING_MODE
+        and str(fields["serving_device"]).startswith(READY_DEVICE_PREFIX)
     )
     return fields
 
 
 def run_workload(base: str, requests: Sequence[dict[str, Any]],
                  defaults: dict[str, Any], schema, alive: Callable[[], bool]) -> dict[str, Any]:
-    """Send every request serially. A request counts only if it returns 200 with
-    a body the response model accepts; everything else is a failure, by class."""
-    accepted = 0
+    """Send the requests serially. A request counts only if it returns 200 with
+    a body the response model accepts; everything else is a failure, by class.
+
+    **A request with no whole response ends the workload.** The client stopped
+    waiting; the server may still be working on it. §7.3 never pauses the
+    server while a request is in flight, and nothing here can tell when this
+    one ends, so the caller ends the repeat rather than reset. An HTTP error
+    status is different: that request is finished, and the workload goes on.
+    """
+    accepted, sent = 0, 0
     failures: dict[str, int] = {}
+    unknown = False
 
     def fail(kind: str) -> None:
         failures[kind] = failures.get(kind, 0) + 1
@@ -506,13 +564,16 @@ def run_workload(base: str, requests: Sequence[dict[str, Any]],
     for request in requests:
         if not alive():
             fail("server_exited")
-            continue
+            break
         payload = {"phenotypes": request["phenotypes"], **defaults}
+        sent += 1
         try:
-            status, body, text = http_json("POST", f"{base}/api/v1/diagnose", payload)
-        except OSError:
+            status, body, text = http_json("POST", f"{base}/api/v1/diagnose", payload,
+                                           timeout=REQUEST_TIMEOUT_S)
+        except NO_RESPONSE:
             fail("no_response")
-            continue
+            unknown = True
+            break
         if status != 200:
             fail(f"http_{status}")
             if "out of memory" in text.lower():
@@ -524,7 +585,8 @@ def run_workload(base: str, requests: Sequence[dict[str, Any]],
             fail("schema_rejected")
             continue
         accepted += 1
-    return {"sent": len(requests), "accepted": accepted, "failures": failures}
+    return {"planned": len(requests), "sent": sent, "accepted": accepted,
+            "failures": failures, "ended_without_response": unknown}
 
 
 # =============================================================================
@@ -609,25 +671,49 @@ def _status(reset: dict[str, Any], alive: bool, *, complete: bool) -> str:
     return "completed" if complete else "incomplete"
 
 
+def largest_rise(series: Sequence[int]) -> int:
+    """The largest amount any value exceeds the lowest value before it; 0 if the
+    series never rises. A rise that falls back again still counts."""
+    lowest, rise = series[0], 0
+    for value in series[1:]:
+        rise = max(rise, value - lowest)
+        lowest = min(lowest, value)
+    return rise
+
+
+def r0_fields(samples: Sequence[dict[str, int]], seconds: float) -> tuple:
+    """R0's baseline, and whether swap grew at any point while it was sampled.
+
+    §7.3: if swap grows during R0, the run is recorded as *measurement
+    precondition not met*. Judged over every sample, not first against last, so
+    swap that rose and came back down still fails it. The net change is
+    recorded beside it, and is not the criterion.
+    """
+    system = [r["system_in_use_bytes"] for r in samples]
+    swap = [r["swap_in_use_bytes"] for r in samples]
+    base = {"system": statistics.median(system), "swap": statistics.median(swap)}
+    rise = largest_rise(swap)
+    return base, {
+        "samples": len(samples),
+        "seconds": seconds,
+        "system_in_use_median_bytes": base["system"],
+        "system_in_use_min_bytes": min(system),
+        "system_in_use_max_bytes": max(system),
+        "swap_in_use_median_bytes": base["swap"],
+        "swap_in_use_first_bytes": swap[0],
+        "swap_in_use_peak_bytes": max(swap),
+        "swap_net_change_bytes": swap[-1] - swap[0],
+        "swap_largest_rise_bytes": rise,
+        "measurement_precondition_met": rise == 0,
+    }
+
+
 def _measure_r0(sampler: SystemSampler, seconds: float) -> tuple:
     t0 = time.monotonic()
     sampler.sample()
     time.sleep(seconds)
     sampler.sample()
-    r0 = sampler.window(t0, time.monotonic())
-    base = {"system": statistics.median(r["system_in_use_bytes"] for r in r0),
-            "swap": statistics.median(r["swap_in_use_bytes"] for r in r0)}
-    growth = r0[-1]["swap_in_use_bytes"] - r0[0]["swap_in_use_bytes"]
-    return base, {
-        "samples": len(r0),
-        "seconds": seconds,
-        "system_in_use_median_bytes": base["system"],
-        "system_in_use_min_bytes": min(r["system_in_use_bytes"] for r in r0),
-        "system_in_use_max_bytes": max(r["system_in_use_bytes"] for r in r0),
-        "swap_in_use_median_bytes": base["swap"],
-        "swap_growth_bytes": growth,
-        "measurement_precondition_met": growth <= 0,
-    }
+    return r0_fields(sampler.window(t0, time.monotonic()), seconds)
 
 
 def _wait_ready(process: subprocess.Popen, base_url: str,
@@ -646,7 +732,7 @@ def _wait_ready(process: subprocess.Popen, base_url: str,
             return None, {"status": "failed", "reason": f"no answer within {timeout_s:g} s"}
         try:
             code, body, _ = http_json("GET", f"{base_url}/api/v1/pipeline/status", timeout=10)
-        except OSError:
+        except NO_RESPONSE:
             time.sleep(READY_POLL_S)
             continue
         if code == 200 and isinstance(body, dict):
@@ -701,7 +787,16 @@ def run_repeat(
 
         status, refused = _wait_ready(process, base_url, ready_timeout_s, t_launch)
         if refused:
-            phases["R1"] = refused
+            # What the machine went through up to here is kept: a start that
+            # ran out of memory is the case these counters exist for.
+            r1 = {**_window(sampler, t_launch, time.monotonic(), base, oom), **refused}
+            try:
+                r1.update(read_status(pid))
+                r1["server_is_measured_pid"] = server_check(pid)
+            except (ProcessLookupError, FileNotFoundError):
+                r1.update(vm_hwm_bytes=None, vm_rss_bytes=None,
+                          process_counters="unavailable: the process had exited")
+            phases["R1"] = r1
             return result
         t_ready = time.monotonic()
         counters = read_status(pid)
@@ -741,9 +836,15 @@ def run_repeat(
             r2["vm_hwm_bytes"] = after["vm_hwm_bytes"] if confirmed else None
         else:
             r2["exit_status"] = process.returncode
-        r2["status"] = _status(reset, alive(), complete=outcome["accepted"] == outcome["sent"])
+        r2["status"] = _status(reset, alive(),
+                               complete=outcome["accepted"] == outcome["planned"])
         phases["R2"] = r2
         if not alive():
+            return result
+        if outcome["ended_without_response"]:
+            r2["status"] = "incomplete"
+            r2["reason"] = ("a request ended without a response and may still be running; "
+                            "the repeat stops rather than pause the server")
             return result
 
         # ------------------------------------------------------------- R3/R4
@@ -759,7 +860,7 @@ def run_repeat(
                 {"data_dir": str(workspace), "checkpoint_path": str(checkpoint),
                  "device": "cuda"},
                 timeout=ready_timeout_s)
-        except OSError:
+        except NO_RESPONSE:
             code, body = None, None
         t1 = time.monotonic()
         success = code == 200 and isinstance(body, dict) and body.get("success") is True
@@ -787,7 +888,7 @@ def run_repeat(
             try:
                 _code, status, _ = http_json("GET", f"{base_url}/api/v1/pipeline/status",
                                              timeout=10)
-            except OSError:
+            except NO_RESPONSE:
                 status = None
             status = status if isinstance(status, dict) else {}
             r3["readiness"] = readiness(status)
@@ -836,8 +937,11 @@ def torch_probe(allocator: dict[str, str | None]) -> dict[str, Any]:
     """
     env = {k: v for k, v in os.environ.items() if k not in ALLOCATOR_VARS}
     env.update({k: v for k, v in allocator.items() if v is not None})
-    done = subprocess.run([sys.executable, "-c", _PROBE], env=env, cwd=str(REPO_ROOT),
-                          capture_output=True, text=True, timeout=300)
+    try:
+        done = subprocess.run([sys.executable, "-c", _PROBE], env=env, cwd=str(REPO_ROOT),
+                              capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"probe_error": type(exc).__name__}
     try:
         return json.loads(done.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -962,7 +1066,21 @@ def main(argv: list[str] | None = None) -> int:
                         help="where the server logs go; never part of the evidence")
     args = parser.parse_args(argv)
     require_linux()
+    previous = install_stop_handlers()
+    try:
+        return _run(args)
+    except Stopped as stop:
+        signum = stop.args[0]
+        print(f"stopped by signal {signum}: any server this run started was resumed "
+              "and stopped; no evidence written", file=sys.stderr)
+        return 128 + signum
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
+
+def _run(args: argparse.Namespace) -> int:
+    """Everything after argument parsing; `main` owns the stop signals."""
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists; pass --overwrite to replace it")
     workspace, checkpoint = args.workspace.resolve(), args.checkpoint.resolve()
@@ -1006,14 +1124,21 @@ def main(argv: list[str] | None = None) -> int:
         "same_in_every_repeat": (all(e == environments[0] for e in environments)
                                  if environments else None),
     }
-    if environments:
-        reading, probe = allocator_reading({n: environments[0].get(n) for n in ALLOCATOR_VARS})
-        allocator.update(reading)
-        allocator["source"] = environments[0].get("SHEPHERD_ALLOC_SOURCE")
-        allocator["backend_note"] = ("reported by torch in a separate process given the "
-                                     "server's allocator values, after the readings")
-    else:
-        probe = torch_probe({})
+    # Metadata about the readings, never a reason to lose them: whatever fails
+    # here is recorded by type, and the readings are written regardless.
+    probe: dict[str, Any] = {}
+    try:
+        if environments:
+            allocator["source"] = environments[0].get("SHEPHERD_ALLOC_SOURCE")
+            reading, probe = allocator_reading(
+                {n: environments[0].get(n) for n in ALLOCATOR_VARS})
+            allocator.update(reading)
+            allocator["backend_note"] = ("reported by torch in a separate process given "
+                                         "the server's allocator values, after the readings")
+        else:
+            probe = torch_probe({})
+    except Exception as exc:  # noqa: BLE001 -- recorded by type; see above
+        allocator["reading_error"] = type(exc).__name__
 
     evidence = {
         "schema": "shepherd.served_readings/1",
@@ -1048,7 +1173,8 @@ def main(argv: list[str] | None = None) -> int:
             "reset_tries": RESET_TRIES, "r0_seconds": args.r0_seconds,
             "settle_seconds": args.settle_seconds,
             "readiness": {"true": list(READY_TRUE_FIELDS), "sp_kg_binding": READY_BINDING,
-                          "scoring_mode": READY_SCORING_MODE},
+                          "scoring_mode": READY_SCORING_MODE,
+                          "serving_device_prefix": READY_DEVICE_PREFIX},
         },
         "notes": {
             "system_in_use": "MemTotal - MemAvailable: a whole-machine pressure indicator, "

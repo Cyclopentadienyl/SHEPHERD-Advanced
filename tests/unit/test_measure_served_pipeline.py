@@ -9,6 +9,7 @@ server so that a whole repeat -- R0 to R4, reset and all -- runs here in a
 second or two; the real run happens on the deployment host.
 """
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -207,6 +208,22 @@ def test_the_sampler_keeps_timed_readings_in_order():
     assert sampler.window(t1 + 10, t1 + 20) == []
 
 
+@pytest.mark.parametrize("swap, rise, met", [
+    ([0, 8192, 0], 8192, False),          # rose and came back: still grew during R0
+    ([0, 4096, 8192], 8192, False),       # kept growing
+    ([4096, 4096, 4096], 0, True),        # a steady non-zero baseline
+    ([8192, 4096, 0], 0, True),           # only falling
+    ([4096, 0, 4096], 4096, False),       # fell, then grew back
+])
+def test_r0_fails_its_precondition_if_swap_grew_at_any_point(swap, rise, met):
+    samples = [{"system_in_use_bytes": 1, "swap_in_use_bytes": v} for v in swap]
+    base, r0 = msp.r0_fields(samples, 10.0)
+    assert r0["swap_largest_rise_bytes"] == rise
+    assert r0["measurement_precondition_met"] is met
+    assert r0["swap_net_change_bytes"] == swap[-1] - swap[0]
+    assert r0["swap_in_use_peak_bytes"] == max(swap) and base["swap"] == sorted(swap)[1]
+
+
 def test_a_phase_peak_includes_the_direct_reading_at_its_end():
     readings = iter([{"system_in_use_bytes": 5, "swap_in_use_bytes": 1},
                      {"system_in_use_bytes": 9, "swap_in_use_bytes": 3}])
@@ -367,12 +384,16 @@ def test_the_shell_cannot_turn_the_preset_into_an_override(tmp_path):
 def test_readiness_needs_every_field_the_procedure_names():
     ready = {"initialized": True, "gnn_ready": True, "has_model": True, "sp_ready": True,
              "sp_kg_binding": "verified", "scoring_mode": "gnn_plus_shortest_path",
-             "fingerprint_warnings": ["w"], "current_data_dir": "/secret/path"}
+             "fingerprint_warnings": ["w"], "current_data_dir": "/secret/path",
+             "checkpoint_meta": {"device": "cuda:0", "params": 1}}
     reading = msp.readiness(ready)
     assert reading["asserted"] and reading["fingerprint_warning_count"] == 1
+    assert reading["serving_device"] == "cuda:0"
     assert "/secret/path" not in json.dumps(reading)
     for change in ({"sp_ready": False}, {"has_model": False}, {"initialized": False},
-                   {"sp_kg_binding": "unrecorded"}, {"scoring_mode": "gnn_only"}):
+                   {"sp_kg_binding": "unrecorded"}, {"scoring_mode": "gnn_only"},
+                   {"checkpoint_meta": {"device": "cpu"}}, {"checkpoint_meta": {}},
+                   {"checkpoint_meta": None}):
         assert not msp.readiness({**ready, **change})["asserted"], change
 
 
@@ -430,6 +451,9 @@ FAKE_SERVER = textwrap.dedent('''\
     MODE = os.environ.get("FAKE_MODE", "ready")
     if MODE == "exit":
         sys.exit(3)
+    if os.environ.get("FAKE_PIDFILE"):
+        with open(os.environ["FAKE_PIDFILE"], "w") as f:
+            f.write(str(os.getpid()))
 
     def status():
         return {"initialized": True, "gnn_ready": True, "has_model": True,
@@ -437,7 +461,8 @@ FAKE_SERVER = textwrap.dedent('''\
                 "scoring_mode": "gnn_plus_shortest_path", "fingerprint_warnings": [],
                 "current_data_dir": os.environ["SHEPHERD_DATA_DIR"],
                 "current_checkpoint_path": ("/elsewhere.pt" if MODE == "other_checkpoint"
-                                            else os.environ["SHEPHERD_CHECKPOINT_PATH"])}
+                                            else os.environ["SHEPHERD_CHECKPOINT_PATH"]),
+                "checkpoint_meta": {"device": "cpu" if MODE == "cpu" else "cuda"}}
 
     class Handler(BaseHTTPRequestHandler):
         def send(self, code, obj):
@@ -454,6 +479,18 @@ FAKE_SERVER = textwrap.dedent('''\
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/api/v1/diagnose":
+                if MODE == "slow":
+                    if os.environ.get("FAKE_INFLIGHT"):
+                        open(os.environ["FAKE_INFLIGHT"], "w").close()
+                    import time
+                    time.sleep(float(os.environ.get("FAKE_SLOW_SECONDS", "3")))
+                if MODE == "truncated":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "1000")
+                    self.end_headers()
+                    self.wfile.write(b'{"session_id"')
+                    self.close_connection = True
+                    return
                 if MODE == "oom" and len(body["phenotypes"]) > 2:
                     self.send(500, {"error": "CUDA out of memory"})
                     return
@@ -502,7 +539,9 @@ def test_a_whole_repeat_runs_r0_to_r4_and_records_no_paths(fake_repeat, tmp_path
     assert phases["R1"]["status"] == "completed"
     assert phases["R1"]["readiness"]["asserted"] and phases["R1"]["serves_named_checkpoint"]
     assert [phases[p]["status"] for p in ("R2", "R3", "R4")] == [expected] * 3
-    assert phases["R2"]["workload"] == {"sent": 2, "accepted": 2, "failures": {}}
+    assert phases["R2"]["workload"] == {"planned": 2, "sent": 2, "accepted": 2,
+                                        "failures": {}, "ended_without_response": False}
+    assert phases["R1"]["readiness"]["serving_device"] == "cuda"
     assert phases["R3"]["success"] and phases["R3"]["readiness"]["asserted"]
     assert result["server_environment"]["PYTORCH_ALLOC_CONF"] is None
     assert result["server_exit_status"] is not None
@@ -517,6 +556,8 @@ def test_a_failed_request_makes_the_workload_phase_incomplete(fake_repeat):
     r2 = result["phases"]["R2"]
     assert r2["workload"]["failures"] == {"http_500": 1, "out_of_memory_in_body": 1}
     assert r2["status"] in ("incomplete", "inconclusive")
+    # A complete error response finishes that request: the workload goes on.
+    assert r2["workload"]["sent"] == 2 and "R3" in result["phases"]
 
 
 def test_readiness_not_asserted_stops_the_repeat_at_r1(fake_repeat):
@@ -527,11 +568,16 @@ def test_readiness_not_asserted_stops_the_repeat_at_r1(fake_repeat):
     assert result["server_exit_status"] is not None
 
 
-def test_a_server_that_exits_fails_r1_with_its_status(fake_repeat):
-    result = fake_repeat(mode="exit")
-    assert result["phases"]["R1"] == {"status": "failed",
-                                      "reason": "server exited before answering",
-                                      "exit_status": 3}
+def test_a_server_that_exits_keeps_what_the_machine_went_through(fake_repeat):
+    r1 = fake_repeat(mode="exit")["phases"]["R1"]
+    assert (r1["status"], r1["reason"], r1["exit_status"]) == (
+        "failed", "server exited before answering", 3)
+    for field in ("wall_seconds", "system_in_use_sampled_peak_bytes",
+                  "system_in_use_sampled_peak_less_r0_bytes", "swap_baseline_bytes",
+                  "swap_sampled_peak_bytes", "swap_increase_bytes", "oom_kills_on_machine"):
+        assert field in r1, field
+    assert r1["vm_hwm_bytes"] is None and r1["vm_rss_bytes"] is None
+    assert r1["process_counters"].startswith("unavailable")
 
 
 def test_the_whole_script_writes_evidence_without_paths(workspace, tmp_path, monkeypatch):
@@ -603,3 +649,192 @@ def test_an_unexpected_error_is_recorded_by_type_and_the_server_stopped(fake_rep
     assert result["error"] == "RuntimeError"
     assert "/a/secret/path" not in json.dumps(result)
     assert result["server_exit_status"] is not None
+
+
+def test_a_model_served_on_the_cpu_is_not_a_reading(fake_repeat):
+    r1 = fake_repeat(mode="cpu")["phases"]["R1"]
+    assert r1["status"] == "failed" and r1["reason"] == "readiness not asserted"
+    assert r1["readiness"]["serving_device"] == "cpu"
+
+
+# ------------------------------------------- requests whose outcome is unknown
+def test_a_request_with_no_response_ends_the_repeat_before_any_reset(fake_repeat, monkeypatch):
+    # The client stops waiting after 0.3 s; the server is still working for 3 s.
+    # Resetting now would pause it with that request in flight (§7.3).
+    monkeypatch.setattr(msp, "REQUEST_TIMEOUT_S", 0.3)
+    resets = []
+    real_reset = msp.reset_high_water
+    monkeypatch.setattr(msp, "reset_high_water",
+                        lambda pid: resets.append(pid) or real_reset(pid))
+    result = fake_repeat(mode="slow")
+    r2 = result["phases"]["R2"]
+    assert r2["status"] == "incomplete" and "without a response" in r2["reason"]
+    assert r2["workload"] == {"planned": 2, "sent": 1, "accepted": 0,
+                              "failures": {"no_response": 1}, "ended_without_response": True}
+    assert "R3" not in result["phases"] and "R4" not in result["phases"]
+    assert len(resets) == 1   # R2's, taken before the request was sent
+    assert result["server_exit_status"] is not None
+    assert msp.summarise([result])["R2"]["wall_seconds"] == {"n": 0}
+
+
+# ------------------------------------------------------------- stop signals
+def _worker(code, tmp_path):
+    """A measuring process of its own, so a real SIGTERM can be sent to it."""
+    script = tmp_path / "worker.py"
+    script.write_text(textwrap.dedent(f"""\
+        import sys, time
+        from pathlib import Path
+        sys.path.insert(0, {str(msp.REPO_ROOT)!r})
+        from scripts import measure_served_pipeline as m
+        m.install_stop_handlers()
+    """) + textwrap.dedent(code))
+    return subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True,
+                            cwd=msp.REPO_ROOT)
+
+
+def test_sigterm_inside_the_reset_window_resumes_the_server(sleeper, tmp_path):
+    worker = _worker(f"""\
+        real = m.read_status
+        def slow(pid, proc=m.PROC):
+            print("in-window", flush=True)
+            time.sleep(30)
+            return real(pid, proc)
+        m.read_status = slow
+        m.reset_high_water({sleeper.pid})
+    """, tmp_path)
+    assert worker.stdout.readline().strip() == "in-window"
+    assert msp.process_state(sleeper.pid) == "T"
+    worker.send_signal(signal.SIGTERM)
+    worker.wait(timeout=30)
+    time.sleep(0.05)
+    assert msp.process_state(sleeper.pid) != "T"
+
+
+def test_sigterm_mid_workload_stops_and_reaps_the_server(tmp_path):
+    server = tmp_path / "fake_server.py"
+    server.write_text(FAKE_SERVER)
+    pidfile, inflight = tmp_path / "server.pid", tmp_path / "inflight"
+    (tmp_path / "logs").mkdir()
+    worker = _worker(f"""\
+        import os
+        os.environ.update(FAKE_MODE="slow", FAKE_SLOW_SECONDS="60",
+                          FAKE_PIDFILE={str(pidfile)!r}, FAKE_INFLIGHT={str(inflight)!r})
+        m.run_repeat(index=1, workspace=Path("ws"), checkpoint=Path("ck.pt"),
+                     workload=[{{"kind": "validation", "phenotypes": ["HP:1"]}}], defaults={{}},
+                     schema=m.load_diagnose_schema(), r0_seconds=0.1, ready_timeout_s=30,
+                     log_dir=Path({str(tmp_path / "logs")!r}),
+                     command=lambda port: [sys.executable, {str(server)!r}, str(port)],
+                     server_check=lambda pid: True)
+    """, tmp_path)
+    deadline = time.monotonic() + 30
+    while not inflight.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert inflight.exists(), "the request never reached the server"
+    server_pid = int(pidfile.read_text())
+    try:
+        worker.send_signal(signal.SIGTERM)
+        worker.wait(timeout=60)
+        # Reaped by the worker's cleanup. Left behind, it would still exist:
+        # it runs in its own session and would outlive the worker.
+        with pytest.raises(ProcessLookupError):
+            os.kill(server_pid, 0)
+    finally:
+        try:
+            os.kill(server_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_a_second_signal_cannot_cut_the_cleanup_short():
+    # The first SIGTERM raises; one arriving while the cleanup it started is
+    # still stopping the server must not raise again inside that `finally`.
+    previous = msp.install_stop_handlers()
+    try:
+        with pytest.raises(msp.Stopped):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(0.05)   # the handler has run by now, and raised nothing
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def test_a_signal_already_ignored_stays_ignored():
+    # Under nohup SIGHUP is ignored; installing a handler would undo that.
+    before = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        previous = msp.install_stop_handlers()
+        assert signal.SIGHUP not in previous
+        assert signal.getsignal(signal.SIGHUP) is signal.SIG_IGN
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    finally:
+        signal.signal(signal.SIGHUP, before)
+
+
+def test_a_stop_signal_writes_no_evidence_and_restores_the_handlers(workspace, tmp_path,
+                                                                   monkeypatch):
+    (workspace / "shortest_paths.pt").write_bytes(b"sp")
+    (workspace / "ck.pt").write_bytes(b"ck")
+    monkeypatch.setattr(msp, "build_workload", lambda *a: {
+        "requests": [], "val_samples_sha256": "x", "val_samples_count": 0,
+        "hpo_phenotype_nodes": 0})
+
+    def _stopped(**kw):
+        raise msp.Stopped(signal.SIGTERM)
+
+    monkeypatch.setattr(msp, "run_repeat", _stopped)
+    output = tmp_path / "readings.json"
+    code = msp.main(["--workspace", str(workspace), "--checkpoint", str(workspace / "ck.pt"),
+                     "--output", str(output), "--log-dir", str(tmp_path / "logs")])
+    assert code == 128 + signal.SIGTERM
+    assert not output.exists()
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+
+
+# ------------------------------------------------ metadata never costs the readings
+def test_a_probe_that_times_out_is_recorded_not_raised(monkeypatch):
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("python", 300)
+
+    monkeypatch.setattr(msp.subprocess, "run", _timeout)
+    assert msp.torch_probe({}) == {"probe_error": "TimeoutExpired"}
+
+
+def test_an_allocator_reading_that_fails_after_the_repeats_keeps_them(workspace, tmp_path,
+                                                                     monkeypatch):
+    (workspace / "shortest_paths.pt").write_bytes(b"sp")
+    (workspace / "ck.pt").write_bytes(b"ck")
+    monkeypatch.setattr(msp, "build_workload", lambda *a: {
+        "requests": [], "val_samples_sha256": "x", "val_samples_count": 0,
+        "hpo_phenotype_nodes": 0})
+    monkeypatch.setattr(msp, "run_repeat", lambda **kw: {
+        **_repeat(), "repeat": kw["index"],
+        "server_environment": {"PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+                               "SHEPHERD_ALLOC_SOURCE": "preset"}})
+    monkeypatch.setattr(msp.time, "sleep", lambda s: None)
+
+    def _timeout(values, probe=None):
+        raise subprocess.TimeoutExpired("python", 300)
+
+    monkeypatch.setattr(msp, "allocator_reading", _timeout)
+    monkeypatch.setattr(msp, "driver_version", lambda: None)
+    output = tmp_path / "readings.json"
+    code = msp.main(["--workspace", str(workspace), "--checkpoint", str(workspace / "ck.pt"),
+                     "--output", str(output), "--log-dir", str(tmp_path / "logs")])
+    evidence = json.loads(output.read_text())
+    assert evidence["allocator"]["reading_error"] == "TimeoutExpired"
+    assert evidence["allocator"]["source"] == "preset"
+    assert len(evidence["repeats"]) == 3 and evidence["readings_complete"] is True
+    assert code == 0
+
+
+def test_a_response_cut_off_mid_body_is_an_unknown_outcome_too(fake_repeat):
+    # http.client.IncompleteRead is not an OSError; it must not end the repeat
+    # as an unexpected error, nor count as a finished request.
+    result = fake_repeat(mode="truncated")
+    r2 = result["phases"]["R2"]
+    assert r2["workload"]["failures"] == {"no_response": 1}
+    assert r2["workload"]["ended_without_response"] is True
+    assert "R3" not in result["phases"] and "error" not in result

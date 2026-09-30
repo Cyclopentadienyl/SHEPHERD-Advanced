@@ -1053,10 +1053,16 @@ code:
   it gives. Without this, an allocator exported in the shell, as it was for the
   training run behind the subject, would reach the server as an explicit
   override. The evidence still records what the server carries, read from its
-  own environment.
+  own environment. **This narrows what the readings describe**: a service
+  started with the saved preset, which is how the unit ships. A unit that pins
+  an allocator, or sets anything in a drop-in or the user manager's
+  environment, is not what they measure, and the script reads none of those.
+  Measuring such a deployment would mean changing this same script's start
+  contract here first, not writing a second one.
 - **What readiness asserts.** The five fields above, the scoring mode
-  `gnn_plus_shortest_path` (§7.1.1), and that the status names the checkpoint
-  that was passed, at startup and again after the reload. A repeat ends at R1 if
+  `gnn_plus_shortest_path` (§7.1.1), that the status names the checkpoint that
+  was passed, and that the model was moved to CUDA (`checkpoint_meta.device`,
+  written after the model is moved), at startup and again after the reload. A repeat ends at R1 if
   any of these fails, or if the launcher did not become the server: the measured
   PID's command line must be uvicorn serving the app.
 - **The workload's phenotypes.** `val_samples.json` holds node indices. Each is
@@ -1067,8 +1073,28 @@ code:
   shuffled together by the seeded generator and sent in the same order in every
   repeat.
 - **R0 in every repeat**, before that repeat's launch: 10 s of samples by
-  default, with their median as the baseline. Between repeats the script waits
-  15 s by default after the server exits. The evidence records both. Keeping the machine quiet is the operator's job; the script
+  default, with their median as the baseline. "Swap grows during R0" is judged
+  over every sample: swap that rose and fell back again still fails the
+  precondition. The net change is recorded beside it, and is not the
+  criterion. Between repeats the script waits 15 s by default after the server
+  exits. The evidence records both.
+- **A request with no whole response ends the repeat**: timed out, reset, or
+  cut off mid-body. The client stopped waiting, but the server may still be
+  working on that request, and §7.3 never pauses the server while a request is
+  in flight. So the script records R2 as incomplete and stops the server
+  without another reset or the reload. An HTTP error status is different:
+  that request is finished, it counts as a failure, and the workload goes on.
+- **A start that fails keeps what was sampled.** When the server exits, times
+  out or answers with an error before it is ready, R1 still records its window:
+  elapsed time, system and swap peaks, and the `oom_kill` change. The process
+  counters are recorded as unavailable once the process has gone. No other PID
+  stands in for it.
+- **A stop signal takes the cleanup path.** SIGTERM or SIGHUP, unless it is
+  already ignored (nohup), is raised where the script is. That way a server
+  paused for a reset is resumed, and every server the run started is stopped
+  and reaped. No evidence is written for a stopped run. A second signal during
+  that cleanup is ignored. SIGKILL cannot be caught, and nothing claims to
+  survive it. Keeping the machine quiet is the operator's job; the script
   checks only swap.
 - **Allocation failures and OOM kills.** Non-200 responses are counted by
   status, with a count of those whose body mentions running out of memory. The
@@ -1080,7 +1106,8 @@ code:
   the server's allocator values and asked `torch.cuda.get_allocator_backend()`.
   With both variables present, each is also tried alone. That is this torch's
   own answer, not an assumption, and the evidence labels it as coming from a
-  separate process.
+  separate process. If the probe fails or times out, that is recorded by type.
+  It never costs the readings, which are written whatever the probe does.
 - **A reset not confirmed** makes its phase inconclusive. That includes R3,
   which shares R4's reset, although R3's success and wall time do not depend on
   it. The figures that do depend on the reset, VmHWM in R2 and R4, are withheld,
