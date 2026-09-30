@@ -1129,9 +1129,15 @@ code:
 - **Progress goes to stderr, never to the evidence**: each phase's start and
   outcome, every 20th request, and the reload's answer, stamped with the time
   since the script started. R2 sends its 200 requests one at a time and can run
-  for a long time; without these, a working run looks like a hung one. Writing
-  a line never raises, because a terminal that went away must not keep the
-  cleanup from stopping a server.
+  for a long time; without these, a working run looks like a hung one. **A
+  line is never waited for, and never raises.** Lines are written inside R2's
+  timed window and inside the cleanup, before the server is stopped. So a
+  reader that stopped reading (a pipe nobody drains, a terminal stopped with
+  Ctrl+S) or went away costs the line, not a wait, a reading or the cleanup.
+  Each line goes through a non-blocking descriptor of stderr's own, and the
+  operator's descriptor is left as it was. A file is written directly: it has
+  no reader to wait for. A dropped line is recorded nowhere, and nothing in the
+  evidence depends on one.
 - The reload request names the device, `cuda`, as the startup does.
 - Also recorded, for §7.1's re-take list: the torch CUDA and HIP versions and
   the driver version. The driver version comes from `nvidia-smi`, whose memory

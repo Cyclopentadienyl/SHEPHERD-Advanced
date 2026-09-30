@@ -61,6 +61,7 @@ import platform
 import random
 import signal
 import socket
+import stat
 import statistics
 import subprocess
 import sys
@@ -131,16 +132,31 @@ _STARTED = time.monotonic()
 
 def progress(message: str) -> None:
     """One line on stderr for the operator, stamped with the time since the
-    script started. Never part of the evidence.
+    script started. Never part of the evidence, and never waited for.
 
-    It never raises: it runs inside the cleanup too, and a terminal that went
-    away (the SIGHUP case) must not keep a server from being stopped.
+    It runs inside R2's timed window and inside the cleanup, before the server
+    is stopped, so it must neither wait nor raise. The line goes through a
+    descriptor of stderr's own, opened non-blocking: a pipe nobody reads or a
+    terminal stopped with Ctrl+S costs the line, not a wait. The operator's
+    descriptor is left blocking, as the shell and every child share it. A file
+    has no reader to wait for and is written as it is. A terminal that went
+    away (the SIGHUP case), or a stderr with no descriptor, costs the line too.
     """
     elapsed = int(time.monotonic() - _STARTED)
+    line = f"[{elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}] {message}\n"
+    data = line.encode(errors="replace")
     try:
-        print(f"[{elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}] {message}",
-              file=sys.stderr, flush=True)
-    except (OSError, ValueError):  # EIO/EPIPE from a gone terminal; a closed stream
+        fd = sys.stderr.fileno()
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            os.write(fd, data)
+            return
+        own = os.open(f"/proc/self/fd/{fd}",
+                      os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
+        try:
+            os.write(own, data)   # EAGAIN, or part of the line, when there is no room
+        finally:
+            os.close(own)
+    except (AttributeError, OSError, ValueError):
         pass
 
 
