@@ -1126,6 +1126,12 @@ code:
   not reported.
 - **Fewer than three repeats** (`--repeats`) is a trial. Its evidence says so,
   and it never counts as complete readings.
+- **Progress goes to stderr, never to the evidence**: each phase's start and
+  outcome, every 20th request, and the reload's answer, stamped with the time
+  since the script started. R2 sends its 200 requests one at a time and can run
+  for a long time; without these, a working run looks like a hung one. Writing
+  a line never raises, because a terminal that went away must not keep the
+  cleanup from stopping a server.
 - The reload request names the device, `cuda`, as the startup does.
 - Also recorded, for §7.1's re-take list: the torch CUDA and HIP versions and
   the driver version. The driver version comes from `nvidia-smi`, whose memory

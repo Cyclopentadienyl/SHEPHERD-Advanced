@@ -33,7 +33,8 @@ any further pause, because the server may still be working on it.
 **Output: one aggregate JSON**, BACKLOG §5.2's pattern. Bytes, seconds, counts,
 digests, versions and readiness fields -- no paths, no host or operator names,
 no phenotype ids. The server's own log goes to a directory named on stderr and
-is never part of the evidence.
+is never part of the evidence; neither is the progress on stderr (`progress`):
+each phase's start and outcome, and every 20th request.
 
 **Completing the readings is not passing a capacity gate** (§7.3). The numbers
 are recorded, not judged.
@@ -119,10 +120,28 @@ CHILD_ENV_REMOVED_PREFIX = "SHEPHERD_"
 READY_POLL_S = 0.5
 REQUEST_TIMEOUT_S = 600.0
 STOP_TIMEOUT_S = 120.0
+PROGRESS_EVERY = 20  # requests between progress lines
 
 PROC = Path("/proc")
 DIAGNOSE_SCHEMA_FILE = REPO_ROOT / "src" / "api" / "routes" / "diagnose.py"
 LAUNCHER = REPO_ROOT / "scripts" / "launch" / "shep_launch.py"
+
+_STARTED = time.monotonic()
+
+
+def progress(message: str) -> None:
+    """One line on stderr for the operator, stamped with the time since the
+    script started. Never part of the evidence.
+
+    It never raises: it runs inside the cleanup too, and a terminal that went
+    away (the SIGHUP case) must not keep a server from being stopped.
+    """
+    elapsed = int(time.monotonic() - _STARTED)
+    try:
+        print(f"[{elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}] {message}",
+              file=sys.stderr, flush=True)
+    except (OSError, ValueError):  # EIO/EPIPE from a gone terminal; a closed stream
+        pass
 
 
 def require_linux() -> None:
@@ -620,13 +639,15 @@ def run_workload(base: str, requests: Sequence[dict[str, Any]],
             fail(f"http_{status}")
             if "out of memory" in text.lower():
                 fail("out_of_memory_in_body")
-            continue
-        try:
-            schema.DiagnoseResponse.model_validate(body)
-        except Exception:  # noqa: BLE001 -- any refusal by the model is a failure
-            fail("schema_rejected")
-            continue
-        accepted += 1
+        else:
+            try:
+                schema.DiagnoseResponse.model_validate(body)
+            except Exception:  # noqa: BLE001 -- any refusal by the model is a failure
+                fail("schema_rejected")
+            else:
+                accepted += 1
+        if sent % PROGRESS_EVERY == 0 or sent == len(requests):
+            progress(f"R2: {sent}/{len(requests)} sent, {accepted} accepted")
     return {"planned": len(requests), "sent": sent, "accepted": accepted,
             "failures": failures, "ended_without_response": unknown}
 
@@ -808,9 +829,12 @@ def run_repeat(
     process: subprocess.Popen | None = None
     try:
         # ---------------------------------------------------------------- R0
+        progress(f"R0: sampling the machine for {r0_seconds:g} s")
         base, phases["R0"] = _measure_r0(sampler, r0_seconds)
+        progress(f"R0: precondition met: {phases['R0']['measurement_precondition_met']}")
 
         # ---------------------------------------------------------------- R1
+        progress("R1: launching the service")
         port = free_port()
         base_url = f"http://127.0.0.1:{port}"
         oom = read_oom_kills()
@@ -839,6 +863,7 @@ def run_repeat(
                 r1.update(vm_hwm_bytes=None, vm_rss_bytes=None,
                           process_counters="unavailable: the process had exited")
             phases["R1"] = r1
+            progress(f"R1: failed after {r1['wall_seconds']:.0f} s: {r1['reason']}")
             return result
         t_ready = time.monotonic()
         counters = read_status(pid)
@@ -860,11 +885,14 @@ def run_repeat(
             r1.update(status="failed", reason="the service does not serve the named checkpoint")
         else:
             r1["status"] = "completed"
+        progress(f"R1: {r1['status']} after {r1['wall_seconds']:.0f} s"
+                 + (f": {r1['reason']}" if "reason" in r1 else ""))
         if r1["status"] != "completed":
             return result
 
         # ---------------------------------------------------------------- R2
         reset = reset_high_water(pid)
+        progress(f"R2: reset {reset['status']}; sending {len(workload)} requests")
         oom = read_oom_kills()
         t0 = time.monotonic()
         outcome = run_workload(base_url, workload, defaults, schema, alive)
@@ -881,16 +909,18 @@ def run_repeat(
         r2["status"] = _status(reset, alive(),
                                complete=outcome["accepted"] == outcome["planned"])
         phases["R2"] = r2
-        if not alive():
-            return result
-        if outcome["ended_without_response"]:
+        if outcome["ended_without_response"] and alive():
             r2["status"] = "incomplete"
             r2["reason"] = ("a request ended without a response and may still be running; "
                             "the repeat stops rather than pause the server")
+        progress(f"R2: {r2['status']} after {t1 - t0:.0f} s"
+                 + (f": {r2['reason']}" if "reason" in r2 else ""))
+        if not alive() or outcome["ended_without_response"]:
             return result
 
         # ------------------------------------------------------------- R3/R4
         reset = reset_high_water(pid)
+        progress(f"R3/R4: reset {reset['status']}; reloading")
         confirmed = reset["status"] == "confirmed"
         before_hwm = read_status(pid)["vm_hwm_bytes"] if alive() else None
         before_system = sampler.sample()["system_in_use_bytes"]
@@ -943,14 +973,18 @@ def run_repeat(
         r3["status"] = _status(reset, alive(), complete=success and ready_again)
         r4["status"] = _status(reset, alive(), complete=success)
         phases["R3"], phases["R4"] = r3, r4
+        progress(f"R3: {r3['status']}, reload answered {code} after {t1 - t0:.0f} s; "
+                 f"R4: {r4['status']}")
         return result
     except Exception as exc:  # noqa: BLE001 -- recorded by type; see docstring
         result["error"] = type(exc).__name__
+        progress(f"the repeat ended on {result['error']}")
         return result
     finally:
         with shielded():
             try:
                 if process is not None:
+                    progress("stopping the service")
                     result["server_exit_status"] = stop_server(process)
             finally:
                 sampler.stop()
@@ -1141,8 +1175,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     except Stopped as stop:
         signum = stop.args[0]
-        print(f"stopped by signal {signum}: any server this run started was resumed "
-              "and stopped; no evidence written", file=sys.stderr)
+        progress(f"stopped by signal {signum}: any server this run started was resumed "
+                 "and stopped; no evidence written")
         return 128 + signum
     finally:
         for sig, handler in previous.items():
@@ -1160,12 +1194,12 @@ def _run(args: argparse.Namespace) -> int:
             raise SystemExit(f"missing: {required}")
     log_dir = args.log_dir or Path(tempfile.mkdtemp(prefix="shepherd-readings-"))
     log_dir.mkdir(parents=True, exist_ok=True)
-    print(f"server logs: {log_dir}", file=sys.stderr)
+    progress(f"server logs: {log_dir}")
 
     schema = load_diagnose_schema()
     defaults, limit = request_defaults(schema), max_phenotypes(schema)
     code, driver = code_version(), driver_version()
-    print("digests and workload...", file=sys.stderr)
+    progress("digests and workload...")
     subject = {
         "graph_sha256": file_sha256(workspace / "kg.json"),
         "checkpoint_sha256": file_sha256(checkpoint),
@@ -1176,15 +1210,16 @@ def _run(args: argparse.Namespace) -> int:
     repeats: list[dict[str, Any]] = []
     for index in range(1, args.repeats + 1):
         if index > 1:
+            progress(f"settling {args.settle_seconds:g} s")
             time.sleep(args.settle_seconds)
-        print(f"repeat {index}/{args.repeats}...", file=sys.stderr)
+        progress(f"repeat {index}/{args.repeats}")
         repeats.append(run_repeat(
             index=index, workspace=workspace, checkpoint=checkpoint,
             workload=prepared["requests"], defaults=defaults, schema=schema,
             r0_seconds=args.r0_seconds, ready_timeout_s=args.ready_timeout,
             log_dir=log_dir))
-        print(json.dumps({p: v.get("status", "-") for p, v in repeats[-1]["phases"].items()}),
-              file=sys.stderr)
+        progress(json.dumps({p: v.get("status", "-")
+                             for p, v in repeats[-1]["phases"].items()}))
 
     # The allocator the server carried, and what this torch makes of it -- after
     # the readings, so the probe's CUDA context perturbs none of them.
@@ -1197,6 +1232,7 @@ def _run(args: argparse.Namespace) -> int:
     # Metadata about the readings, never a reason to lose them: whatever fails
     # here is recorded by type, and the readings are written regardless.
     probe: dict[str, Any] = {}
+    progress("torch probe...")
     try:
         if environments:
             allocator["source"] = environments[0].get("SHEPHERD_ALLOC_SOURCE")
@@ -1268,7 +1304,7 @@ def _run(args: argparse.Namespace) -> int:
     }
     args.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n",
                            encoding="utf-8")
-    print(f"readings complete: {evidence['readings_complete']}", file=sys.stderr)
+    progress(f"readings complete: {evidence['readings_complete']}")
     return 0 if evidence["readings_complete"] else 1
 
 

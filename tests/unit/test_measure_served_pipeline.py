@@ -10,6 +10,7 @@ second or two; the real run happens on the deployment host.
 """
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -1046,3 +1047,83 @@ def test_the_sampler_stops_even_if_stopping_the_server_fails(fake_repeat, monkey
     with pytest.raises(RuntimeError):
         fake_repeat()
     assert threading.active_count() == before
+
+
+# ------------------------------------------------------------------ progress
+def test_progress_goes_to_stderr_stamped_with_the_time_since_start(capsys):
+    msp.progress("R1: launching the service")
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert re.fullmatch(r"\[\d+:\d\d:\d\d\] R1: launching the service\n", err)
+
+
+class _GoneTerminal:
+    def write(self, text):
+        raise OSError(5, "Input/output error")
+
+    def flush(self):
+        raise OSError(5, "Input/output error")
+
+
+def test_progress_never_raises_when_the_terminal_is_gone(monkeypatch):
+    monkeypatch.setattr(sys, "stderr", _GoneTerminal())
+    msp.progress("x")
+    closed = open(os.devnull, "w")
+    closed.close()
+    monkeypatch.setattr(sys, "stderr", closed)
+    msp.progress("x")
+
+
+def test_the_workload_reports_every_twentieth_request_and_the_last(monkeypatch, capsys):
+    answers = iter([(500, {}, "error")] + [(200, {"ok": True}, "")] * 44)
+    monkeypatch.setattr(msp, "http_json", lambda *a, **k: next(answers))
+
+    class Schema:
+        class DiagnoseResponse:
+            @staticmethod
+            def model_validate(body):
+                return body
+
+    outcome = msp.run_workload("http://x", [{"phenotypes": ["HP:1"]}] * 45, {}, Schema,
+                               alive=lambda: True)
+    assert outcome["accepted"] == 44
+    lines = [line.split("] ", 1)[1] for line in capsys.readouterr().err.splitlines()]
+    assert lines == ["R2: 20/45 sent, 19 accepted", "R2: 40/45 sent, 39 accepted",
+                     "R2: 45/45 sent, 44 accepted"]
+
+
+def test_a_repeat_reports_each_phase_on_stderr_and_none_of_it_in_its_result(
+        fake_repeat, capsys):
+    result = fake_repeat()
+    lines = [line.split("] ", 1)[1] for line in capsys.readouterr().err.splitlines()]
+    starts = ["R0: sampling", "R0: precondition met", "R1: launching", "R1: completed",
+              "R2: reset", "R2: 2/2 sent, 2 accepted", "R2: ", "R3/R4: reset", "R3: ",
+              "stopping the service"]
+    assert len(lines) == len(starts)
+    for line, start in zip(lines, starts, strict=True):
+        assert line.startswith(start), (line, start)
+    assert "R2: " + result["phases"]["R2"]["status"] in lines[6]
+    assert "reload answered 200" in lines[8]
+    assert "R1: launching" not in json.dumps(result)
+
+
+def test_a_terminal_gone_by_the_cleanup_still_lets_it_stop_the_server(fake_repeat,
+                                                                      monkeypatch):
+    # The SIGHUP case: the terminal goes away and the cleanup's first line fails.
+    class GoneAtCleanup:
+        gone = False
+
+        def write(self, text):
+            self.gone = self.gone or "stopping the service" in text
+            if self.gone:
+                raise OSError(5, "Input/output error")
+
+        def flush(self):
+            if self.gone:
+                raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(sys, "stderr", GoneAtCleanup())
+    result = fake_repeat()
+    assert sys.stderr.gone
+    assert "error" not in result and result["phases"]["R3"]["success"]
+    assert result["server_exit_status"] is not None
