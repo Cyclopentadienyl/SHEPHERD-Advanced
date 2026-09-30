@@ -1080,7 +1080,8 @@ code:
   over every sample: swap that rose and fell back again still fails the
   precondition. The net change is recorded beside it, and is not the
   criterion. Between repeats the script waits 15 s by default after the server
-  exits. The evidence records both.
+  exits. The evidence records both. Keeping the machine quiet is the
+  operator's job; the script checks only swap.
 - **A request with no whole response ends the repeat**: timed out, reset, or
   cut off mid-body. The client stopped waiting, but the server may still be
   working on that request, and §7.3 never pauses the server while a request is
@@ -1092,15 +1093,17 @@ code:
   elapsed time, system and swap peaks, and the `oom_kill` change. The process
   counters are recorded as unavailable once the process has gone. No other PID
   stands in for it.
-- **A stop signal takes the cleanup path.** SIGTERM or SIGHUP, unless it is
-  already ignored (nohup), is raised where the script is. That way a server
-  paused for a reset is resumed, and every server the run started is stopped
-  and reaped. No evidence is written for a stopped run. A stop that arrives
-  while a server is already being stopped, after an error, a refusal or the
-  run's normal end alike, waits for that to finish, then is acted on. That wait
-  is bounded: 120 s for a graceful exit, then SIGKILL. Only one stop is acted
-  on. SIGKILL cannot be caught, and nothing claims to survive it. Keeping the machine quiet is the operator's job; the script
-  checks only swap.
+- **A stop signal takes the cleanup path.** SIGTERM, SIGHUP or Ctrl+C
+  (SIGINT) is raised where the script is. That way a server paused for a reset
+  is resumed, and every server the run started is stopped and reaped. The
+  server runs in its own session, so the terminal's Ctrl+C never reaches it
+  directly; the script stops it. A signal already ignored (nohup), or a handler
+  someone else installed, is left alone. No evidence is written for a stopped
+  run. A stop that arrives while a server is already being stopped, after an
+  error, a refusal or the run's normal end alike, waits for that to finish,
+  then is acted on. That wait is bounded: 120 s for a graceful exit, then
+  SIGKILL. Only one stop is acted on. SIGKILL cannot be caught, and nothing
+  claims to survive it.
 - **Allocation failures and OOM kills.** Non-200 responses are counted by
   status, with a count of those whose body mentions running out of memory. The
   change in the machine's `oom_kill` counter (`/proc/vmstat`) is recorded over
@@ -1125,8 +1128,8 @@ code:
   and it never counts as complete readings.
 - The reload request names the device, `cuda`, as the startup does.
 - Also recorded, for §7.1's re-take list: the torch CUDA and HIP versions and
-  the driver version. The driver version comes from `nvidia-smi`, whose memory columns are
-  still not used.
+  the driver version. The driver version comes from `nvidia-smi`, whose memory
+  columns are still not used.
 
 **Completing the readings is not passing a capacity gate.** §13 asks for
 readings, not a budget, and no budget is invented here. The readings for this

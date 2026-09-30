@@ -25,9 +25,9 @@ wait at most 5 s for state T, write 5 to clear_refs, accept only VmHWM ==
 VmRSS, at most three tries, SIGCONT in a `finally`. Anything else makes the
 phase inconclusive, not measured.
 
-**A stop signal takes the cleanup path** (`install_stop_handlers`): SIGTERM or
-SIGHUP resumes a paused server and stops every server the run started, and no
-evidence is written. A request with no whole response ends its repeat before
+**A stop signal takes the cleanup path** (`install_stop_handlers`): SIGTERM,
+SIGHUP or Ctrl+C resumes a paused server and stops every server the run
+started, and no evidence is written. A request with no whole response ends its repeat before
 any further pause, because the server may still be working on it.
 
 **Output: one aggregate JSON**, BACKLOG §5.2's pattern. Bytes, seconds, counts,
@@ -148,7 +148,7 @@ _stop: dict[str, Any] = {"raised": False, "pending": None, "depth": 0}
 
 
 def install_stop_handlers() -> dict:
-    """End the run on SIGTERM or SIGHUP through the same cleanup as an error.
+    """End the run on SIGTERM, SIGHUP or Ctrl+C through the same cleanup as an error.
 
     Their default action ends this process without running any `finally`. A
     server paused for a reset would then stay stopped, holding its memory, and a
@@ -158,9 +158,16 @@ def install_stop_handlers() -> dict:
     **Not raised inside the cleanup itself** (`shielded`). A stop that arrives
     while a server is being stopped -- after an error, a refusal, or the run's
     normal end alike -- waits for that to finish, then is raised. Otherwise it
-    would cut the wait short and leave the server orphaned. Only one stop is acted on; later ones are ignored. A
-    signal already ignored, as under nohup, stays ignored. SIGKILL cannot be
-    caught, and nothing here claims to survive it.
+    would cut the wait short and leave the server orphaned. Only one stop is
+    acted on; later ones are ignored. A signal already ignored, as under nohup,
+    stays ignored, and so does a handler someone else installed. SIGKILL cannot
+    be caught, and nothing here claims to survive it.
+
+    **Ctrl+C is matched by Python's own handler, not `SIG_DFL`.** Python installs
+    `default_int_handler` for SIGINT, which raises `KeyboardInterrupt` whatever
+    cleanup is under way. The server runs in its own session, so the terminal's
+    Ctrl+C never reaches it: left alone, Ctrl+C during a cleanup would abandon
+    the server.
     """
     _stop.update(raised=False, pending=None, depth=0)
 
@@ -174,8 +181,9 @@ def install_stop_handlers() -> dict:
         raise Stopped(signum)
 
     previous = {}
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        if signal.getsignal(sig) is signal.SIG_DFL:
+    for sig, default in ((signal.SIGTERM, signal.SIG_DFL), (signal.SIGHUP, signal.SIG_DFL),
+                         (signal.SIGINT, signal.default_int_handler)):
+        if signal.getsignal(sig) is default:
             previous[sig] = signal.signal(sig, handler)
     return previous
 

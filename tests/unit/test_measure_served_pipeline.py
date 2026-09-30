@@ -691,10 +691,12 @@ def _worker(code, tmp_path):
     """A measuring process of its own, so a real SIGTERM can be sent to it."""
     script = tmp_path / "worker.py"
     script.write_text(textwrap.dedent(f"""\
-        import sys, time
+        import signal, sys, time
         from pathlib import Path
         sys.path.insert(0, {str(msp.REPO_ROOT)!r})
         from scripts import measure_served_pipeline as m
+        # As in an interactive terminal, whatever the test runner inherited.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
         m.install_stop_handlers()
     """) + textwrap.dedent(code))
     return subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True,
@@ -769,10 +771,13 @@ def test_a_shielded_block_finishes_before_the_stop_is_raised():
             signal.signal(sig, handler)
 
 
-def test_the_first_signal_during_a_normal_cleanup_waits_for_the_server(tmp_path):
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT],
+                         ids=["SIGTERM", "SIGHUP", "SIGINT"])
+def test_the_first_signal_during_a_normal_cleanup_waits_for_the_server(sig, tmp_path):
     # No stop has been raised yet: the repeat ended on its own (readiness was
     # refused) and is waiting for the server's graceful shutdown when the first
-    # SIGTERM arrives. It must not cut that wait short.
+    # signal arrives. It must not cut that wait short -- Ctrl+C included, whose
+    # Python default would otherwise raise KeyboardInterrupt out of the wait.
     server = tmp_path / "fake_server.py"
     server.write_text(FAKE_SERVER)
     pidfile, terminating = tmp_path / "server.pid", tmp_path / "terminating"
@@ -797,9 +802,9 @@ def test_the_first_signal_during_a_normal_cleanup_waits_for_the_server(tmp_path)
     assert terminating.exists(), "the cleanup never began stopping the server"
     server_pid = int(pidfile.read_text())
     try:
-        worker.send_signal(signal.SIGTERM)
+        worker.send_signal(sig)
         worker.wait(timeout=60)
-        assert worker.returncode == 128 + signal.SIGTERM
+        assert worker.returncode == 128 + sig
         assert worker.stdout.read().strip() == "threads 1"   # the sampler stopped too
         with pytest.raises(ProcessLookupError):
             os.kill(server_pid, 0)                           # reaped, not orphaned
@@ -808,6 +813,70 @@ def test_the_first_signal_during_a_normal_cleanup_waits_for_the_server(tmp_path)
             os.kill(server_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def test_ctrl_c_starts_the_cleanup_and_a_later_signal_cannot_break_out_of_it(tmp_path):
+    # Ctrl+C mid-workload raises the stop; the cleanup it starts then waits for
+    # a slow graceful exit, and a SIGTERM arriving during that wait is ignored.
+    server = tmp_path / "fake_server.py"
+    server.write_text(FAKE_SERVER)
+    pidfile, inflight = tmp_path / "server.pid", tmp_path / "inflight"
+    terminating = tmp_path / "terminating"
+    (tmp_path / "logs").mkdir()
+    worker = _worker(f"""\
+        import os, threading
+        os.environ.update(FAKE_MODE="slow", FAKE_SLOW_SECONDS="60", FAKE_EXIT_DELAY="2",
+                          FAKE_PIDFILE={str(pidfile)!r}, FAKE_INFLIGHT={str(inflight)!r},
+                          FAKE_TERMINATING={str(terminating)!r})
+        try:
+            m.run_repeat(index=1, workspace=Path("ws"), checkpoint=Path("ck.pt"),
+                         workload=[{{"kind": "validation", "phenotypes": ["HP:1"]}}],
+                         defaults={{}}, schema=m.load_diagnose_schema(), r0_seconds=0.1,
+                         ready_timeout_s=30, log_dir=Path({str(tmp_path / "logs")!r}),
+                         command=lambda port: [sys.executable, {str(server)!r}, str(port)],
+                         server_check=lambda pid: True)
+        except m.Stopped as stop:
+            print("threads", threading.active_count(), flush=True)
+            sys.exit(128 + stop.args[0])
+    """, tmp_path)
+
+    def wait_for(path):
+        deadline = time.monotonic() + 30
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert path.exists(), path.name
+
+    wait_for(inflight)
+    server_pid = int(pidfile.read_text())
+    try:
+        worker.send_signal(signal.SIGINT)
+        wait_for(terminating)                 # the cleanup is now stopping the server
+        worker.send_signal(signal.SIGTERM)
+        worker.wait(timeout=60)
+        assert worker.returncode == 128 + signal.SIGINT
+        assert worker.stdout.read().strip() == "threads 1"
+        with pytest.raises(ProcessLookupError):
+            os.kill(server_pid, 0)
+    finally:
+        try:
+            os.kill(server_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_a_ctrl_c_handler_someone_else_installed_is_left_alone():
+    def custom(signum, frame):
+        pass
+
+    before = signal.signal(signal.SIGINT, custom)
+    try:
+        previous = msp.install_stop_handlers()
+        assert signal.SIGINT not in previous
+        assert signal.getsignal(signal.SIGINT) is custom
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    finally:
+        signal.signal(signal.SIGINT, before)
 
 
 def test_a_second_signal_cannot_cut_the_cleanup_short():
@@ -851,11 +920,13 @@ def test_a_stop_signal_writes_no_evidence_and_restores_the_handlers(workspace, t
 
     monkeypatch.setattr(msp, "run_repeat", _stopped)
     output = tmp_path / "readings.json"
+    interrupt_before = signal.getsignal(signal.SIGINT)
     code = msp.main(["--workspace", str(workspace), "--checkpoint", str(workspace / "ck.pt"),
                      "--output", str(output), "--log-dir", str(tmp_path / "logs")])
     assert code == 128 + signal.SIGTERM
     assert not output.exists()
     assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+    assert signal.getsignal(signal.SIGINT) is interrupt_before
 
 
 # ------------------------------------------------ metadata never costs the readings
