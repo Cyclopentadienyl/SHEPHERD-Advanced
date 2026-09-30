@@ -1062,7 +1062,10 @@ code:
 - **What readiness asserts.** The five fields above, the scoring mode
   `gnn_plus_shortest_path` (§7.1.1), that the status names the checkpoint that
   was passed, and that the model was moved to CUDA (`checkpoint_meta.device`,
-  written after the model is moved), at startup and again after the reload. A repeat ends at R1 if
+  written after the model is moved), at startup and again after the reload.
+  `cuda` is torch's device type, not a vendor: ROCm builds of torch use it too.
+  What identifies the platform is recorded beside it: torch's CUDA and HIP
+  versions and the device name, from the probe. A repeat ends at R1 if
   any of these fails, or if the launcher did not become the server: the measured
   PID's command line must be uvicorn serving the app.
 - **The workload's phenotypes.** `val_samples.json` holds node indices. Each is
@@ -1092,9 +1095,11 @@ code:
 - **A stop signal takes the cleanup path.** SIGTERM or SIGHUP, unless it is
   already ignored (nohup), is raised where the script is. That way a server
   paused for a reset is resumed, and every server the run started is stopped
-  and reaped. No evidence is written for a stopped run. A second signal during
-  that cleanup is ignored. SIGKILL cannot be caught, and nothing claims to
-  survive it. Keeping the machine quiet is the operator's job; the script
+  and reaped. No evidence is written for a stopped run. A stop that arrives
+  while a server is already being stopped, after an error, a refusal or the
+  run's normal end alike, waits for that to finish, then is acted on. That wait
+  is bounded: 120 s for a graceful exit, then SIGKILL. Only one stop is acted
+  on. SIGKILL cannot be caught, and nothing claims to survive it. Keeping the machine quiet is the operator's job; the script
   checks only swap.
 - **Allocation failures and OOM kills.** Non-200 responses are counted by
   status, with a count of those whose body mentions running out of memory. The
@@ -1106,8 +1111,12 @@ code:
   the server's allocator values and asked `torch.cuda.get_allocator_backend()`.
   With both variables present, each is also tried alone. That is this torch's
   own answer, not an assumption, and the evidence labels it as coming from a
-  separate process. If the probe fails or times out, that is recorded by type.
-  It never costs the readings, which are written whatever the probe does.
+  separate process. If the probe fails, times out or cannot initialise CUDA,
+  that is recorded, by type only, as the probe's status and as the backend
+  being unavailable. With both variables present, the governing one is then
+  "unavailable", never inferred from two missing answers. The note that torch
+  reported the backend appears only when it did. None of this costs the
+  readings, which are written whatever the probe does.
 - **A reset not confirmed** makes its phase inconclusive. That includes R3,
   which shares R4's reset, although R3's success and wall time do not depend on
   it. The figures that do depend on the reset, VmHWM in R2 and R4, are withheld,
@@ -1115,8 +1124,8 @@ code:
 - **Fewer than three repeats** (`--repeats`) is a trial. Its evidence says so,
   and it never counts as complete readings.
 - The reload request names the device, `cuda`, as the startup does.
-- Also recorded, for §7.1's re-take list: the torch CUDA version and the driver
-  version. The driver version comes from `nvidia-smi`, whose memory columns are
+- Also recorded, for §7.1's re-take list: the torch CUDA and HIP versions and
+  the driver version. The driver version comes from `nvidia-smi`, whose memory columns are
   still not used.
 
 **Completing the readings is not passing a capacity gate.** §13 asks for

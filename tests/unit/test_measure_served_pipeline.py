@@ -454,6 +454,15 @@ FAKE_SERVER = textwrap.dedent('''\
     if os.environ.get("FAKE_PIDFILE"):
         with open(os.environ["FAKE_PIDFILE"], "w") as f:
             f.write(str(os.getpid()))
+    if os.environ.get("FAKE_EXIT_DELAY"):
+        import signal, time
+
+        def _graceful(*args):
+            open(os.environ["FAKE_TERMINATING"], "w").close()
+            time.sleep(float(os.environ["FAKE_EXIT_DELAY"]))
+            os._exit(0)
+
+        signal.signal(signal.SIGTERM, _graceful)
 
     def status():
         return {"initialized": True, "gnn_ready": True, "has_model": True,
@@ -705,7 +714,7 @@ def test_sigterm_inside_the_reset_window_resumes_the_server(sleeper, tmp_path):
     assert worker.stdout.readline().strip() == "in-window"
     assert msp.process_state(sleeper.pid) == "T"
     worker.send_signal(signal.SIGTERM)
-    worker.wait(timeout=30)
+    worker.wait(timeout=10)   # raised at once, not after the 30 s read
     time.sleep(0.05)
     assert msp.process_state(sleeper.pid) != "T"
 
@@ -738,6 +747,62 @@ def test_sigterm_mid_workload_stops_and_reaps_the_server(tmp_path):
         # it runs in its own session and would outlive the worker.
         with pytest.raises(ProcessLookupError):
             os.kill(server_pid, 0)
+    finally:
+        try:
+            os.kill(server_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_a_shielded_block_finishes_before_the_stop_is_raised():
+    previous = msp.install_stop_handlers()
+    finished = []
+    try:
+        with pytest.raises(msp.Stopped):
+            with msp.shielded():
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.1)          # the handler has run, and held the stop
+                finished.append(True)
+        assert finished == [True]
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def test_the_first_signal_during_a_normal_cleanup_waits_for_the_server(tmp_path):
+    # No stop has been raised yet: the repeat ended on its own (readiness was
+    # refused) and is waiting for the server's graceful shutdown when the first
+    # SIGTERM arrives. It must not cut that wait short.
+    server = tmp_path / "fake_server.py"
+    server.write_text(FAKE_SERVER)
+    pidfile, terminating = tmp_path / "server.pid", tmp_path / "terminating"
+    (tmp_path / "logs").mkdir()
+    worker = _worker(f"""\
+        import os, threading
+        os.environ.update(FAKE_MODE="not_ready", FAKE_EXIT_DELAY="2",
+                          FAKE_PIDFILE={str(pidfile)!r}, FAKE_TERMINATING={str(terminating)!r})
+        try:
+            m.run_repeat(index=1, workspace=Path("ws"), checkpoint=Path("ck.pt"), workload=[],
+                         defaults={{}}, schema=m.load_diagnose_schema(), r0_seconds=0.1,
+                         ready_timeout_s=30, log_dir=Path({str(tmp_path / "logs")!r}),
+                         command=lambda port: [sys.executable, {str(server)!r}, str(port)],
+                         server_check=lambda pid: True)
+        except m.Stopped as stop:
+            print("threads", threading.active_count(), flush=True)
+            sys.exit(128 + stop.args[0])
+    """, tmp_path)
+    deadline = time.monotonic() + 30
+    while not terminating.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert terminating.exists(), "the cleanup never began stopping the server"
+    server_pid = int(pidfile.read_text())
+    try:
+        worker.send_signal(signal.SIGTERM)
+        worker.wait(timeout=60)
+        assert worker.returncode == 128 + signal.SIGTERM
+        assert worker.stdout.read().strip() == "threads 1"   # the sampler stopped too
+        with pytest.raises(ProcessLookupError):
+            os.kill(server_pid, 0)                           # reaped, not orphaned
     finally:
         try:
             os.kill(server_pid, signal.SIGKILL)
@@ -838,3 +903,75 @@ def test_a_response_cut_off_mid_body_is_an_unknown_outcome_too(fake_repeat):
     assert r2["workload"]["failures"] == {"no_response": 1}
     assert r2["workload"]["ended_without_response"] is True
     assert "R3" not in result["phases"] and "error" not in result
+
+
+def test_a_probe_that_times_out_is_in_the_evidence_all_the_way_through(workspace, tmp_path,
+                                                                      monkeypatch):
+    # The real torch_probe and allocator_reading, with only the subprocess
+    # failing: the failure must reach the JSON, not become silent nulls.
+    (workspace / "shortest_paths.pt").write_bytes(b"sp")
+    (workspace / "ck.pt").write_bytes(b"ck")
+    monkeypatch.setattr(msp, "build_workload", lambda *a: {
+        "requests": [], "val_samples_sha256": "x", "val_samples_count": 0,
+        "hpo_phenotype_nodes": 0})
+    monkeypatch.setattr(msp, "run_repeat", lambda **kw: {
+        **_repeat(), "repeat": kw["index"],
+        "server_environment": {"PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+                               "SHEPHERD_ALLOC_SOURCE": "preset"}})
+    monkeypatch.setattr(msp.time, "sleep", lambda s: None)
+    monkeypatch.setattr(msp, "driver_version", lambda: None)
+    real_run = subprocess.run
+
+    def run(cmd, *args, **kwargs):
+        if cmd[:2] == [sys.executable, "-c"]:
+            raise subprocess.TimeoutExpired(cmd, 300)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(msp.subprocess, "run", run)
+    output = tmp_path / "readings.json"
+    code = msp.main(["--workspace", str(workspace), "--checkpoint", str(workspace / "ck.pt"),
+                     "--output", str(output), "--log-dir", str(tmp_path / "logs")])
+    evidence = json.loads(output.read_text())
+    assert evidence["environment"]["torch_probe"] == "unavailable: probe TimeoutExpired"
+    assert evidence["allocator"]["backend_unavailable"] == "probe TimeoutExpired"
+    assert evidence["allocator"]["backend_reported_by_torch"] is None
+    assert "backend_note" not in evidence["allocator"]
+    assert evidence["allocator"]["governing_variable"] == "PYTORCH_ALLOC_CONF"  # by presence
+    assert evidence["readings_complete"] is True and code == 0
+
+
+@pytest.mark.parametrize("failing", ["together", "alone"])
+def test_missing_answers_are_not_a_match(failing):
+    values = {"PYTORCH_ALLOC_CONF": "backend:native", "PYTORCH_CUDA_ALLOC_CONF": "backend:native"}
+
+    def probe(given):
+        both = all(v is not None for v in given.values()) and len(given) == 2
+        if (failing == "together") == both:
+            return {"probe_error": "TimeoutExpired"}
+        return {"allocator_backend": "native"}
+
+    reading, _ = msp.allocator_reading(values, probe)
+    assert reading["governing_variable"] == "unavailable"
+
+
+def test_cuda_that_does_not_initialise_in_the_probe_is_named_as_such():
+    assert msp.probe_failure({"torch": "t", "cuda_error": "RuntimeError"}) == \
+        "cuda init RuntimeError"
+    assert msp.probe_failure({"probe_error": "exit 1"}) == "probe exit 1"
+    assert msp.probe_failure({"allocator_backend": "native"}) is None
+
+
+def test_the_sampler_stops_even_if_stopping_the_server_fails(fake_repeat, monkeypatch):
+    import threading
+
+    before = threading.active_count()
+
+    def _fails(process):
+        process.kill()
+        process.wait()
+        raise RuntimeError("stop failed")
+
+    monkeypatch.setattr(msp, "stop_server", _fails)
+    with pytest.raises(RuntimeError):
+        fake_repeat()
+    assert threading.active_count() == before

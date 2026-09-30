@@ -51,6 +51,7 @@ Module: scripts/measure_served_pipeline.py
 from __future__ import annotations
 
 import argparse
+import contextlib
 import http.client
 import importlib.util
 import json
@@ -141,29 +142,59 @@ class Stopped(BaseException):
     """
 
 
+#: The stop handlers' state: whether a stop has been raised, a stop that came
+#: inside a shielded block and waits for its end, and how deep the shielding is.
+_stop: dict[str, Any] = {"raised": False, "pending": None, "depth": 0}
+
+
 def install_stop_handlers() -> dict:
     """End the run on SIGTERM or SIGHUP through the same cleanup as an error.
 
     Their default action ends this process without running any `finally`. A
     server paused for a reset would then stay stopped, holding its memory, and a
     running server would be left behind in its own session. Raised as
-    `Stopped` instead, they resume and stop the server on the way out. A signal
-    already ignored, as under nohup, stays ignored. A second signal during that
-    cleanup is ignored, so it cannot cut the cleanup short. SIGKILL cannot be
+    `Stopped` instead, they resume and stop the server on the way out.
+
+    **Not raised inside the cleanup itself** (`shielded`). A stop that arrives
+    while a server is being stopped -- after an error, a refusal, or the run's
+    normal end alike -- waits for that to finish, then is raised. Otherwise it
+    would cut the wait short and leave the server orphaned. Only one stop is acted on; later ones are ignored. A
+    signal already ignored, as under nohup, stays ignored. SIGKILL cannot be
     caught, and nothing here claims to survive it.
     """
-    raised = []
+    _stop.update(raised=False, pending=None, depth=0)
 
     def handler(signum, frame):
-        if not raised:
-            raised.append(signum)
-            raise Stopped(signum)
+        if _stop["raised"] or _stop["pending"] is not None:
+            return
+        if _stop["depth"]:
+            _stop["pending"] = signum
+            return
+        _stop["raised"] = True
+        raise Stopped(signum)
 
     previous = {}
     for sig in (signal.SIGTERM, signal.SIGHUP):
         if signal.getsignal(sig) is signal.SIG_DFL:
             previous[sig] = signal.signal(sig, handler)
     return previous
+
+
+@contextlib.contextmanager
+def shielded():
+    """Hold stop signals until the block ends, then act on one that came.
+
+    Used for stopping the server, which is bounded by `STOP_TIMEOUT_S` and then
+    SIGKILL, so a held stop waits at most that long.
+    """
+    _stop["depth"] += 1
+    try:
+        yield
+    finally:
+        _stop["depth"] -= 1
+        if not _stop["depth"] and _stop["pending"] is not None and not _stop["raised"]:
+            _stop["raised"] = True
+            raise Stopped(_stop["pending"])
 
 
 # =============================================================================
@@ -257,7 +288,10 @@ def reset_high_water(
     confirms the reset. Reclaim can still lower RSS while stopped, so an
     inequality is retried. SIGCONT is sent on every way out: confirmed, retries
     exhausted, a stop that never came, an error. The caller starts the phase's
-    clock after this returns, which is after SIGCONT.
+    clock after this returns, which is after SIGCONT. A stop signal in this
+    window is raised at once, and this `finally` resumes the server; one landing
+    between SIGSTOP and the `try` is covered by `stop_server`, which sends
+    SIGCONT before it terminates.
     """
     try:
         os.kill(pid, signal.SIGSTOP)
@@ -906,9 +940,12 @@ def run_repeat(
         result["error"] = type(exc).__name__
         return result
     finally:
-        if process is not None:
-            result["server_exit_status"] = stop_server(process)
-        sampler.stop()
+        with shielded():
+            try:
+                if process is not None:
+                    result["server_exit_status"] = stop_server(process)
+            finally:
+                sampler.stop()
 
 
 # =============================================================================
@@ -916,7 +953,8 @@ def run_repeat(
 # =============================================================================
 _PROBE = r"""
 import json, torch
-out = {"torch": torch.__version__, "torch_cuda": torch.version.cuda}
+out = {"torch": torch.__version__, "torch_cuda": torch.version.cuda,
+       "torch_hip": getattr(torch.version, "hip", None)}
 try:
     torch.zeros(1, device="cuda")
     out["device"] = torch.cuda.get_device_name(0)
@@ -948,6 +986,18 @@ def torch_probe(allocator: dict[str, str | None]) -> dict[str, Any]:
         return {"probe_error": f"exit {done.returncode}"}
 
 
+def probe_failure(probe: dict[str, Any]) -> str | None:
+    """Why a probe gave no backend, as a type name or an exit status; None if
+    it gave one. Never the exception's text, which may carry a path."""
+    if probe.get("allocator_backend") is not None:
+        return None
+    if probe.get("probe_error"):
+        return f"probe {probe['probe_error']}"
+    if probe.get("cuda_error"):
+        return f"cuda init {probe['cuda_error']}"
+    return "no backend reported"
+
+
 def allocator_reading(allocator: dict[str, str | None],
                       probe: Callable[[dict[str, str | None]], dict[str, Any]] = torch_probe
                       ) -> tuple:
@@ -958,22 +1008,34 @@ def allocator_reading(allocator: dict[str, str | None],
     well as together, and the one whose backend matches governs; if both give
     the same backend, which one torch read cannot be told apart and is not
     claimed. With neither, torch's default applies -- never read as the
-    project's preset.
+    project's preset. **A probe that gave no backend is recorded as such**,
+    and with both variables present the governing one is then "unavailable":
+    two missing answers are not a match.
     """
     present = [name for name in ALLOCATOR_VARS if allocator.get(name) is not None]
     together = probe(allocator)
     reading: dict[str, Any] = {"present": present,
                                "backend_reported_by_torch": together.get("allocator_backend")}
+    failure = probe_failure(together)
+    if failure:
+        reading["backend_unavailable"] = failure
     if len(present) == 1:
         reading["governing_variable"] = present[0]
     elif not present:
         reading["governing_variable"] = None
     else:
-        alone = {name: probe({name: allocator[name]}).get("allocator_backend")
-                 for name in present}
-        matches = [n for n in present if alone[n] == together.get("allocator_backend")]
-        reading["backend_each_alone"] = alone
-        reading["governing_variable"] = matches[0] if len(matches) == 1 else "indistinguishable"
+        alone = {name: probe({name: allocator[name]}) for name in present}
+        reading["backend_each_alone"] = {n: r.get("allocator_backend") for n, r in alone.items()}
+        failed_alone = {n: probe_failure(r) for n, r in alone.items() if probe_failure(r)}
+        if failure or failed_alone:
+            reading["governing_variable"] = "unavailable"
+            if failed_alone:
+                reading["backend_each_alone_unavailable"] = failed_alone
+        else:
+            backend = together["allocator_backend"]
+            matches = [n for n in present if reading["backend_each_alone"][n] == backend]
+            reading["governing_variable"] = (matches[0] if len(matches) == 1
+                                             else "indistinguishable")
     return reading, together
 
 
@@ -1133,12 +1195,14 @@ def _run(args: argparse.Namespace) -> int:
             reading, probe = allocator_reading(
                 {n: environments[0].get(n) for n in ALLOCATOR_VARS})
             allocator.update(reading)
-            allocator["backend_note"] = ("reported by torch in a separate process given "
-                                         "the server's allocator values, after the readings")
+            if reading["backend_reported_by_torch"] is not None:
+                allocator["backend_note"] = ("reported by torch in a separate process given "
+                                             "the server's allocator values, after the readings")
         else:
             probe = torch_probe({})
     except Exception as exc:  # noqa: BLE001 -- recorded by type; see above
         allocator["reading_error"] = type(exc).__name__
+        probe = {"probe_error": type(exc).__name__}
 
     evidence = {
         "schema": "shepherd.served_readings/1",
@@ -1152,7 +1216,10 @@ def _run(args: argparse.Namespace) -> int:
             "python": platform.python_version(),
             "torch": probe.get("torch"),
             "torch_cuda": probe.get("torch_cuda"),
+            "torch_hip": probe.get("torch_hip"),
             "device": probe.get("device"),
+            "torch_probe": (f"unavailable: {probe_failure(probe)}"
+                            if probe_failure(probe) else "ok"),
             "driver": driver,
         },
         "subject": subject,
