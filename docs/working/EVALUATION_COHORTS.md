@@ -16,7 +16,8 @@ fixed; §6.8's audit built and run, its evidence committed (revision 28).
   proposal to have the pipeline write and show them is BACKLOG item 14, not designed here. Its
   stated reason is corrected to what §6.0 has said since revision 9: the paper reports no synthetic
   test result, and there is no "published deployed model". §5's items 3, 4 and 6 described states
-  the code has left: selection now runs on a disease-disjoint validation set, the evaluation record
+  the code has left: training now validates on a disease-disjoint set — though selection still
+  reads each checkpoint's stored score without checking where it came from — the evaluation record
   is built, and the split came before the generator comparison. §5.1(i) and (ii) record
   engineering's working default and its evidence, as inputs rather than answers. §0, the status
   line, §6.6 and §6.8 stop describing finished work as pending. `src/kg/disease_allocation.py`
@@ -783,9 +784,17 @@ disease universe is cut, not whether.
    batch representative — so the two are a pipeline rather than competing rules. *Historical:*
    those fifteen were trained on a split with 100% disease overlap, where the metric, per §1.2,
    measures within-disease recognition rather than unseen-disease generalisation. Since revisions 18
-   and 21 every workspace the code accepts is disease-disjoint, so selection now runs on diseases the
-   model was not supervised on. What stays open is whether that metric separates candidates well
-   enough to choose between them — **not measured**, here or anywhere in this document.
+   and 21 the generated-cohort training entry point verifies that the train and validation sets it
+   consumes are disease-disjoint, so a model trained there from scratch is validated on diseases it
+   was not supervised on. **That is a contract on training input, not on the checkpoints selection
+   reads.** Auto-selection still takes the ranking metric from whatever `logs` a candidate carries
+   and checks nothing about where that score came from, so a legacy checkpoint in the same
+   directory, scored on an overlapping split, can still be chosen; the fingerprint check compares
+   structure only, never `training_input_digests` (`src/utils/fingerprint.py`). Whether one
+   checkpoint's score means unseen-disease performance depends on its own training and validation
+   sources, including any training it resumed from, and cannot be read off the current workspace.
+   What also stays open is whether a disjoint-split metric separates candidates well enough to
+   choose between them — **not measured**, here or anywhere in this document.
 4. **Where a test result is recorded, and how it binds to a checkpoint.** A result cannot be
    written into the `.pt` without changing its SHA-256, and the M1–M5 evidence chain cites
    checkpoints by digest. A sidecar beside the checkpoint keeps the digest stable and lets a
