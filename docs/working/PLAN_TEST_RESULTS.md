@@ -1,25 +1,26 @@
 # PLAN — backlog item 14: test results recorded by the pipeline, shown where a model is chosen
 
-**Status: draft for discussion, revision 2.** Nothing here is implemented. §4 lists decisions
-that the owner, and where marked the institution, make before any code is written. §6's order
-applies only once they are made.
+**Status: draft for discussion, revision 3.** Nothing in item 14 is implemented. §4 lists
+decisions that the owner, and where marked the institution, make before any code is written.
+§6's order applies only once they are made.
 
-Facts about the code are cited from `main` at `1cab39f`.
+Facts about the code are cited from `main` at `1cab39f`, except where §3 notes the F1–F3 fix on
+this branch.
 
-**Revision 2 (2026-10-02)** follows the first review of revision 1 (`a412fc2`) and the owner's
-correction on what a test measures. The main changes:
-- **D3 is no longer open.** A test result is the model's own disease ranking under the approved
-  scorer policy (Mode C), and it is the primary score, not a fallback.
-- **D5 now follows the owner's checkbox as stated.** Every run keeps its report, and the checkbox
-  only decides whether that report is registered automatically. Non-deterministic repeats are
-  handled without losing evidence.
-- **D4, D6 and D8 are reworked:**
-  - D4: ordering by test score, within comparable results, with the usage history kept;
-  - D6: an import preview with exclusion categories;
-  - D8: the real access limits, since a Gradio callback can be triggered over the network.
-- **F2 and F3 are corrected.** The ledger's v1 compatibility, the job runner's scope and its
-  GPU-busy rule are now stated.
-- **The owner's questions are narrowed to three** (§4.9).
+**Revision 3 (2026-10-02)** follows the review of revision 2 (`6854265`), and the owner's caution
+that between two pipelines a compatibility layer easily becomes a parallel one:
+- **One path per concern** is now a stated rule (§4.0), and the plan is checked against it. As a
+  result, ledger v2 no longer reads v1 files (§5).
+- **D8:** a recorded M3 risk acceptance does not unlock the controls. The refusal happens where
+  the event is handled, and a direct call to the endpoint is part of acceptance.
+- **D6:** Mode C's metrics keep their own denominator, the ranked cases. Coverage and the
+  all-source figure are shown separately.
+- **D5:** a key whose runs disagree stays blocked. The way forward is a deterministic re-run,
+  which is a different key.
+- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`).
+
+Revision 2 (`6854265`) settled D3 by the scorer policy, made D5 follow the owner's checkbox, and
+reworked D4, D6 and D8.
 
 ---
 
@@ -129,8 +130,8 @@ are `train`/`val`/`test`.
   metrics comparison" (`src/webui/app.py:191-206`).
 - **How the tabs reach the backend.** It is mixed:
   - the Training Console imports `training_manager` directly;
-  - the Diagnosis tab calls the API over HTTP at a hard-coded `http://127.0.0.1:8000`
-    (`diagnosis_panel.py:44`).
+  - the Diagnosis tab calls the API over HTTP, at a hard-coded `http://127.0.0.1:8000` on
+    `main` (`diagnosis_panel.py:44`; F1, fixed on this branch).
 - **One job runner.** `training_manager` tracks one subprocess, with `train_model.py` hard-coded.
   It is not a general job runner.
 - **Checkpoint listing.** The only listing route is `GET /api/v1/training/checkpoints`. It reads
@@ -171,20 +172,38 @@ From `docs/working/EVALUATION_COHORTS.md`:
 ## 3. Found while planning — outside item 14
 
 These were not looked for, and each is from reading the code. They touch what item 14 builds
-on. **Recording them here does not authorise fixing them.** If the owner wants them fixed, the
-fix is one small change of its own, separate from this item.
+on. The owner authorised F1–F3 as one small change separate from this item, and it is on this
+branch. F4 is a documentation fix, left to §6 step 5.
 
 | | Finding | Evidence |
 |---|---|---|
-| F1 | **Under the systemd unit, the Diagnosis tab probably cannot reach the API.** The unit passes `--port 8264` after the launcher's default `--port 8000`, and uvicorn takes the last value. The tab calls port 8000. **The fix takes the address from one shared source**, the address the server actually bound. It adds no second hard-coded port and does not probe several | `scripts/service/systemd/shepherd.service:25`; `scripts/launch/shep_launch.py:17, 416`; `diagnosis_panel.py:44`. **Not yet verified by running** |
-| F2 | **For checkpoints written by the current trainer, the loaded model's ranking metrics are never shown.** The pipeline looks for `mrr`, `hits_at_1` and `hits_at_10` in the checkpoint's `logs`. The current trainer stores its `val_`-prefixed validation dict there (`val_mrr`, `val_hits@k`), so only the losses appear. Checkpoints from older trainers were not examined and may carry other names, so a fix reads the current names and keeps the old ones | `src/inference/pipeline.py:934`; `src/training/trainer.py:723`; `src/training/callbacks.py:303` |
-| F3 | **The Diagnosis tab's model status is not refreshed when the page loads.** Its initial value is computed once, when the app is built, before the server is serving. A page opened later shows that build-time status until Reload is pressed; Reload does update it. `_on_load_status` is defined and never wired | `diagnosis_panel.py:719-722, 754-756, 909-913` |
+| F1 | **Under the systemd unit, the Diagnosis tab probably cannot reach the API.** The unit passes `--port 8264` after the launcher's default `--port 8000`, and uvicorn takes the last value. The tab calls port 8000. **The fix takes the address from one shared source**, the address the server actually bound. It adds no second hard-coded port and does not probe several | `scripts/service/systemd/shepherd.service:25`; `scripts/launch/shep_launch.py:17, 416`; `diagnosis_panel.py:44`. **Verified by running**: the launcher with the unit's arguments served 8264 and refused 8000. **Fixed in `d95965e`**: the address is recorded from each request's ASGI `server` field |
+| F2 | **For checkpoints written by the current trainer, the loaded model's ranking metrics are never shown.** The pipeline looks for `mrr`, `hits_at_1` and `hits_at_10` in the checkpoint's `logs`. The current trainer stores its `val_`-prefixed validation dict there (`val_mrr`, `val_hits@k`), so only the losses appear. No trainer in this repository has written the names looked for | `src/inference/pipeline.py:934`; `src/training/trainer.py:723`; `src/training/callbacks.py:303`. **Fixed in `d95965e`, `88569e4`**: the ranking keys copied are `RANKING_SCORE_KEYS`, the list auto-selection uses, and the old names are not kept as a fallback |
+| F3 | **The Diagnosis tab's model status is not refreshed when the page loads.** Its initial value is computed once, when the app is built, before the server is serving. A page opened later shows that build-time status until Reload is pressed; Reload does update it. `_on_load_status` is defined and never wired | `diagnosis_panel.py:719-722, 754-756, 909-913`. **Fixed in `d95965e`**: read on every page load |
 | F4 | **§6.5 says the ledger key includes mode and tie policy.** The code keys on the semantics digest, which hashes both. A documentation fix | `EVALUATION_COHORTS.md` §6.5; `sidecar.py:157-162` |
 
 ## 4. Decisions
 
 Each lists the options and a recommendation. **D3 is settled by the scorer policy**; the rest
 are recommendations until the owner confirms them. §4.9 gathers what is actually asked.
+
+### 4.0 One path per concern
+
+The project is moving from older paths to newer, verifiable ones. In that transition, a
+compatibility layer easily becomes a second path that has to be kept working and kept agreeing
+with the first, although only the newer one will be used. This item adds none:
+
+| Concern | The one path | Not used for it here, and not added alongside |
+|---|---|---|
+| Producing a test number | `measure_scorer.py`, Mode C | `evaluate_model.py`, the frozen oracle; Mode D, which measures the legacy behaviour and is a separate item |
+| Scoring | the `src/inference/scoring.py` primitives, shared with B-1 (D3) | a test-only scorer |
+| Resolving a test cohort | the cohort registry (D6) | the loose `<split>_samples.json` supplied path, removed when the registry lands |
+| Recording | ledger v2 | a v1 reader inside v2 code (§5) |
+| Running a job | the runner extracted from `training_manager` | a second process manager |
+| A checkpoint's validation ranking score | `RANKING_SCORE_KEYS` and `ranking_score_detail` | a second key list (F2 removed one) |
+
+A compatibility reader is added only where a file that must stay readable actually exists. It
+then states the condition for removing it.
 
 ### D1 — Where a test result lives
 
@@ -319,11 +338,20 @@ differ (§2.1).
   key "runs disagree — investigate" and shows which fields differ.
 - **Picking the best run is prevented.** While a disagreeing report exists under a key,
   registering any report under it is refused, checked or unchecked.
-- **An existing record is flagged too.** If a key already has a record and a later report
-  disagrees, the record stays. It is shown flagged everywhere it appears.
-- **Resolution adds a note and deletes nothing.** A person investigates, for example by
-  re-running with deterministic algorithms, and records the finding: who, when and what was
-  found. Both reports stay.
+- **A disagreeing key stays blocked, by design.** Two numbers were obtained under one
+  identity, and registering either would be choosing between results. An investigation adds a
+  recorded note: who, when and what was found. It deletes no report, and it does not lift the
+  block.
+- **The way forward is a deterministic re-run.** `deterministic_algorithms`,
+  `cudnn_deterministic` and `cudnn_benchmark` are in the semantics digest (`sidecar.py:72-115`).
+  A run under deterministic settings is therefore a different key, registrable once its runs
+  agree. Under that regime a disagreement is a defect, not variation. `measure_scorer` records
+  these settings but has no switch to request them; §6 step 2 adds one.
+- **If deterministic execution is not possible** for an operation the run needs, the key stays
+  contested. The Test tab shows every report's values for it, and no single number is
+  registered.
+- **A record registered before the disagreement appeared** stays, marked contested wherever it
+  is shown, with the note.
 
 **The duplicate rule, a ledger change.** Today, re-registering an identical measurement from a
 report whose bytes differ is refused (§2.1). The proposed rule:
@@ -342,6 +370,8 @@ report whose bytes differ is refused (§2.1). The proposed rule:
   record's fields, and fails if a new one is in neither the compared set nor the excluded set.
   v2's new fields (§5) are classified the same way when they are added. The list of
   corroborating reports is excluded by its nature.
+- **v1 and v2 records never meet.** A v2 ledger holds only v2 records (§5). The rule always
+  compares two records of one schema, so no field is ever missing on one side.
 
 This changes the ledger's semantics and gets its own review.
 
@@ -371,19 +401,27 @@ case count and every case that will not map, in categories:
 | **Ground truth absent from the graph** | The case's disease is not a disease node in this graph | The case cannot be ranked |
 
 - **A case is never dropped silently.** Every excluded case is in the manifest with its
-  category. The denominator shown beside every result is the source case count, with the
-  ranked count and each exclusion count next to it.
-- **A fixed-denominator figure is proposed alongside.** It counts an unrankable case as a miss:
-  reciprocal rank 0, no hit. That keeps a cohort from looking better by losing its hard cases.
-  Mean rank has no value for a miss, so this figure omits it.
+  category.
+- **Each figure keeps its own denominator, and they are shown apart:**
+
+  | Figure | Denominator | Shown |
+  |---|---|---|
+  | Mode C's metrics: MRR, hits@k, mean rank | the ranked cases, `n_ranked`, as Mode C computes them | always, with `n` |
+  | Coverage | ranked over source cases, for example `80/100`, with each exclusion count | always, beside the metrics |
+  | All-source figure: MRR and hits@k, each unrankable case counted as a miss | the source cases | only if the owner wants it (§4.9), labelled with its own denominator. Mean rank has no value for a miss and is omitted |
+
+  For example: 100 source cases, 20 excluded, and the other 80 all ranked first. Mode C's MRR
+  is 1.0 over 80, coverage is 80/100, and the all-source MRR is 0.8 over 100. "MRR 1.0" is never
+  shown beside a denominator of 100. The all-source figure exists so that a cohort cannot look
+  better by losing its hard cases.
 - **Binding.** A run against a workspace whose graph artifact digests differ from the mapped
   version's is refused. This closes §2.3's undetected-index hazard.
 - **No URL download** in this item (§5 item 5). If wanted later, it goes through the existing
   guarded downloader (`src/ontology/download.py`) and its own review.
 
 **Left to the owner** (§4.9 question 2): the real file formats; whether a case that loses some
-phenotype terms is kept with the rest or excluded; whether the fixed-denominator figure is
-reported; and MyGene2's terms of use, which is not an engineering question.
+phenotype terms is kept with the rest or excluded; whether the all-source figure is reported;
+and MyGene2's terms of use, which is not an engineering question.
 
 ### D7 — Patient data in the institutional cohort
 
@@ -415,19 +453,27 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
 
 **Proposed rules:**
 
-- **Who can reach the controls:**
-  - **The controls that change state** (import, run and register) are enabled only under a
-    deployment that limits who reaches the UI:
-    - SPEC_4's **M1**: a loopback bind on a verified single-workspace deployment, reached
-      through controlled SSH forwarding;
-    - **M3**, with the institution's recorded acceptance naming these controls;
-    - **M2**, once SPEC_4's protection exists.
-  - **Elsewhere the Test tab is read-only.** Results stay visible; the controls are disabled,
-    with the reason shown.
-- **How the server knows.** It reads the address it actually bound (the same shared source as
-  F1) and an explicit deployment setting. A non-loopback bind without the recorded acceptance
-  disables the controls.
+- **The controls that change state** (import, run and register) work only where an actual
+  protection limits who can trigger them:
+  - SPEC_4's **M1**: the request arrived on a loopback socket of a verified single-workspace
+    deployment, reached locally or through controlled SSH forwarding;
+  - **M2**: an authenticated, authorised actor, once SPEC_4's protection exists.
+- **A recorded M3 risk acceptance does not unlock them.** These are C3/C4 operations, which
+  SPEC_4 §2 marks "disable or protect" and "not covered by clinical-exposure risk acceptance".
+  Under M3 without an actual protection, the Test tab is read-only.
+- **The refusal is where the event is handled, not in the button.** Each state-changing
+  handler checks the condition itself before doing anything. Disabled buttons only show the
+  reason; they are not the control. A direct call to the event endpoint, through Gradio's HTTP
+  API as `gradio_client` makes one, meets the same refusal.
+- **The check reads the triggering request's own arrival address**: its ASGI `server` field,
+  never a client-supplied header.
+  - F1's recorded address cannot serve here. It is the latest across all requests, not this
+    request's.
+  - How Gradio exposes the triggering request is verified in §6 step 4. If it cannot be read
+    reliably, the controls stay refused: the check fails closed.
 - **Checkpoints and cohorts are chosen from server-side lists**, never from a path in a request.
+- **Acceptance includes direct calls.** Each state-changing endpoint, called directly from a
+  non-loopback address, is refused; called from loopback under M1, it works.
 - **The Training Console** has the same exposure today. It is outside this item, and named here
   so the gap is not read as closed.
 
@@ -437,7 +483,7 @@ machine where the controls are enabled.
 ### 4.9 What is asked of the owner
 
 D1, D2 and D7 stand as recommended unless the owner objects. D3 follows from the scorer policy.
-Three questions remain:
+Four questions remain:
 
 1. **The test's use.**
    - Confirm D3: a test result is the model's disease ranking under the approved policy.
@@ -446,12 +492,14 @@ Three questions remain:
    - Is ordering by its score offered (D4)?
 2. **The data.**
    - The actual file formats.
-   - D6's exclusion rules: a case with some lost phenotype terms, and whether the
-     fixed-denominator figure is reported.
+   - D6's exclusion rules: a case with some lost phenotype terms, and whether the all-source
+     figure is reported.
    - MyGene2's terms of use.
 3. **Operators and access.**
    - Who may import, run and register, above all on the institutional cohort?
    - Which deployment mode (D8) does the machine with enabled controls run under?
+4. **Existing ledgers.** Does any machine hold a v1 `evaluations.json` whose records must stay
+   visible after v2 lands? If none does, v2 starts clean (§5).
 
 ## 5. Proposed shape, if §4 is taken
 
@@ -463,23 +511,30 @@ This is one pipeline extended, not a second one.
   - **verification:** the source and samples digests, the graph binding and the manifest schema;
   - **listing:** versions by role;
   - **usage history:** append-only, per mapped version.
-- **Measurement.** `measure_scorer`'s Mode C path resolves a registered mapped version. This
-  replaces today's loose `<split>_samples.json` for supplied cohorts, so there is one resolution
-  path, not two. The report carries the cohort's label, role and denominator counts.
+- **Measurement.** `measure_scorer`'s Mode C path resolves a registered mapped version.
+  - The loose `<split>_samples.json` path for supplied cohorts is removed when the registry
+    lands, not kept beside it, so there is one resolution path.
+  - Generated cohorts, the workspace's own splits, are unchanged.
+  - The report carries the cohort's label and role, the source case count and the exclusion
+    counts.
 - **Report store.** Every run's report is kept with its cohort version; disagreements are found
   by key.
 - **Ledger v2:**
   - **New fields:** the cohort's version label and role, the source case count with the
     exclusion counts, and corroborating report digests;
   - **Rules:** D5's duplicate rule, and its refusal while reports disagree.
-- **Ledger compatibility, decided before the format changes:**
-  - v2 code reads a v1 file. A field a v1 record lacks is shown as "not recorded".
-  - Nothing is backfilled or inferred. A version label is never guessed from a path.
-  - Appending to a v1 file raises its header to v2 and leaves the v1 records unchanged.
-  - This keeps the current loader's intent (§2.1): a v1 field keeps its v1 meaning, and nothing
-    is reinterpreted. A v2 record that duplicates a v1 record under D5's rule corroborates it.
-    It does not fill the v1 record's missing fields.
-  - v1 code keeps refusing a v2 file, its existing behaviour (§2.1).
+- **Ledger compatibility, decided before the format changes: v2 does not read v1.**
+  - v2 code refuses a v1 file, as today's code refuses any other version: "read it with the
+    revision that wrote it" (§2.1). There is no dual reader, and so no question of how a v1
+    record compares with a v2 one.
+  - Registering into a directory that holds a v1 ledger is refused, naming the file. The
+    operator archives it deliberately, for example as `evaluations.v1.json`.
+  - The archived file stays readable with the revision that wrote it. Its results are
+    re-measured through the new path if they are wanted.
+  - Nothing is backfilled, converted or inferred.
+  - **Condition:** the owner confirms that no v1 ledger holds records that must stay visible
+    (§4.9 question 4). If one does, a read-only display of it is added, with the condition for
+    removing it stated, and it still never mixes with v2 records.
 - **Job runner.** The smallest extraction from `training_manager` that works: subprocess
   launch, output capture and status. Training-specific code stays where it is.
   - **The test job** runs `measure_scorer.py` as a subprocess, so the CLI remains the single
@@ -496,7 +551,9 @@ This is one pipeline extended, not a second one.
       cohort version; the checkbox "record the result automatically"; start; follow progress;
     - reports: read them, see disagreement flags, register one.
   - **Model Management** (replacing the placeholder): checkpoints by workspace and
-    architecture, with the validation score and each recorded test result, labelled as D3 says.
+    architecture, with the validation ranking score and each recorded test result, labelled as
+    D3 says. The validation score comes from `ranking_score_detail`, the number auto-selection
+    used, and is labelled as the trainer's validation metric.
     Ordering follows D4.
   - **Diagnosis:** the loaded checkpoint's recorded results, read-only, with D3's label.
   - **Gating and components:** D8 gates the controls; Gradio's own components are used
@@ -507,13 +564,17 @@ This is one pipeline extended, not a second one.
 
 Each step is one reviewable change.
 
-0. **F1–F3**, as a separate small fix, only if the owner authorises it.
+0. **F1–F3**: done on this branch (`d95965e`, `88569e4`).
 1. **The cohort registry**: source sets, preview, mapping, mapped versions, graph binding and
    usage history. Tests use fixtures only; no real patient data enters the repository.
-2. **Measurement integration**, the report store, **ledger v2** with the compatibility rules
-   and D5's duplicate and disagreement rules, and the `record_evaluation` CLI on reports.
+2. **Measurement integration**, which includes:
+   - the report store;
+   - **ledger v2**, with §5's compatibility rule and D5's duplicate and disagreement rules;
+   - a `measure_scorer` switch that requests deterministic execution (D5);
+   - the `record_evaluation` CLI on reports.
 3. **The shared job runner**, and test runs through it, with the GPU-busy rule.
-4. **The UI**: the Test tab, Model Management, the Diagnosis display, and D8's gating.
+4. **The UI**: the Test tab, Model Management and the Diagnosis display. It also carries D8:
+   the refusal in each state-changing handler, and the direct-call acceptance test.
 5. **Documentation and acceptance on the homelab**:
    - the deployment guide;
    - `EVALUATION_COHORTS.md` §6.5, F4 included;
