@@ -1,6 +1,7 @@
 # torch.compile 實驗 — 結論記錄(已封存)
 
-> **狀態**:**已封存(SHELVED)**。選項保留(預設關閉的開關),未合入 `main`。
+> **狀態**:**已封存(SHELVED)**。開關保留在 `main`,預設關閉。
+> **更正(2026-10-02)**:本文件原寫「未合入 `main`」,與事實不符。這個開關在 2026-06-17 經 PR #83(`c67ad87`)合入 `main`;2026-06-26 起 WebUI 的開關移到 Runtime Settings 分頁(`e4284c1`,PR #84)。以下兩處已依此更正,實驗結論不變。
 > **目的**:記錄這次評估的事實結論,**避免未來重複調查同一條死路**。
 > **日期**:2026-06-17
 > **硬體**:NVIDIA DGX Spark,GB10(Grace-Blackwell,**sm_121**),128 GB 統一記憶體
@@ -11,7 +12,7 @@
 
 ## 這是什麼
 
-一個**可選的 `torch.compile` 開關**(CLI `--compile` / WebUI 的「🧪 Experimental Features」勾選框),**預設關閉**。實作前做過聚焦調查;設計細節見 commit `85f9a1a` / `90f70eb` / `19cd97f` 的訊息(重點:用就地 `nn.Module.compile()` 保 checkpoint 相容、`dynamic=None`、`mode=default`、`suppress_errors=True` 規避 sm_121 Triton 崩潰)。
+一個**可選的 `torch.compile` 開關**(CLI `--compile` / WebUI 的勾選框:最初在訓練分頁的「🧪 Experimental Features」,現在是 Runtime Settings 分頁的「Enable torch.compile」),**預設關閉**。實作前做過聚焦調查;設計細節見 commit `85f9a1a` / `90f70eb` / `19cd97f` 的訊息(重點:用就地 `nn.Module.compile()` 保 checkpoint 相容、`dynamic=None`、`mode=default`、`suppress_errors=True` 規避 sm_121 Triton 崩潰)。
 
 ---
 
@@ -54,7 +55,7 @@
 ## 決策
 
 - **封存**。開關保留(預設關),以便日後 PyTorch / PyG / Triton 對「sm_121 + 異質 + 動態形狀」的支援成熟後可再測。
-- **不合入 `main`**(主線不含此功能,零風險)。
+- **開關在 `main`,預設關閉**(PR #83)。只有開啟時才會編譯模型(`scripts/train_model.py` 的 `if config.compile:`);本文件實測開啟後反而慢約 2.6 倍。
 
 ## 未來若要重測,照三步
 
