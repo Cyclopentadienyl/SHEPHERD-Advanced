@@ -3,12 +3,26 @@
 **Type:** findings report plus institutional decisions · **Date:** 2026-08
 
 **Status:** §1–§2 established, including the published article (§1.6); §3 decided; §5's two gating
-questions **answered**, its partition questions still open; §6.0 fixed; §6.8 cleared to proceed
-with one item under re-review.
+questions **answered and confirmed** by the institution, its partition questions still open; §6.0
+fixed; §6.8's audit built and run, its evidence committed (revision 28).
 
 <details>
 <summary><b>Revision history</b></summary>
 
+- **29** — the institution confirmed §5's two gating answers, as reported by the project owner on
+  2026-10-02, and the document catches up with what has been built. Question one is confirmed *in
+  principle*, with an addition recorded beside it: a selected checkpoint's real-cohort test results
+  are expected to be recorded with it — §6.0's steps 4–5 and §6.5's ledger — and the owner's
+  proposal to have the pipeline write and show them is BACKLOG item 14, not designed here. Its
+  stated reason is corrected to what §6.0 has said since revision 9: the paper reports no synthetic
+  test result, and there is no "published deployed model". §5's items 3, 4 and 6 described states
+  the code has left: training now validates on a disease-disjoint set — though selection still
+  reads each checkpoint's stored score without checking where it came from — the evaluation record
+  is built, and the split came before the generator comparison. §5.1(i) and (ii) record
+  engineering's working default and its evidence, as inputs rather than answers. §0, the status
+  line, §6.6 and §6.8 stop describing finished work as pending. `src/kg/disease_allocation.py`
+  stated the worst band's risk at f = 0.15 as one run in a thousand; the committed evidence gives
+  1.3e-5, about one in 77,000.
 - **28** — §6.8's audit has a committed artifact, and §6.2's uniform draw stops being provisional.
   `EVIDENCE_split_feasibility_homelab.json` (schema 2, `identical-sibling`, KG `6889ed11…` — a digest from before the build was made deterministic, and no longer reproducible; see `src/kg/disease_allocation.py`) puts the
   worst validation-representation risk at a 69-disease `gene_count 11+` band: 2.9% at f = 0.05 and
@@ -208,7 +222,8 @@ candidate evaluation cohorts divide the work.
 
 **Is not:** an implementation plan. §6 records a protocol shape under discussion and §6.8 bounds
 the scope of one audit script, but nothing here specifies file formats, interfaces or a schedule.
-No code has been written on the strength of this document.
+Code has since been written on its strength — the allocation step, the audits and the evaluation
+ledger (§6.6) — and its interfaces are specified in that code, not here.
 
 **Why it exists:** the deploying institution asked how a test set should be built when its own
 patient data cannot leave and arrives ten or twenty records at a time. Answering that needed the
@@ -717,12 +732,13 @@ institutional judgement; where a question or sub-question belongs to engineering
 says so.
 
 **Two questions have been answered**, on the institution's standing policy of staying aligned with
-the published method (§1.6), and are to be confirmed at the next review meeting:
+the published method (§1.6), and **confirmed** by the institution (reported by the project owner,
+2026-10-02):
 
 | Question | Answer |
 |---|---|
-| Must the deployed weights carry a **direct synthetic unseen-disease result**? | **No.** The paper's deployed model has none either. `synthetic_test_unseen` is not built |
-| Is a permanent loss of patient supervision for the withheld diseases acceptable in the shipped model — option **B** — or is refitting on all diseases required? | **B is accepted**, matching the reference implementation, which has no refit path |
+| Must the deployed weights carry a **direct synthetic unseen-disease result**? | **No**, confirmed in principle. The paper reports no synthetic test result (§1.6), and `synthetic_test_unseen` is not built. The institution expects the selected checkpoint's real-cohort results — MyGene2 and the institutional cohort, §6.0's steps 4–5 — to be recorded with it; §6.5's ledger is where they go, and a proposal to have the pipeline write and show them is BACKLOG item 14 |
+| Is a permanent loss of patient supervision for the withheld diseases acceptable in the shipped model — option **B** — or is refitting on all diseases required? | **B is accepted**, matching the reference implementation, which has no refit path. Confirmed |
 
 Together these fix §6.0's path and remove §6.4's subject. What remains open below is how the
 disease universe is cut, not whether.
@@ -742,8 +758,8 @@ disease universe is cut, not whether.
 
    | | Question | Whose |
    |---|---|---|
-   | i | **How many** diseases are withheld from patient supervision | Institution |
-   | ii | **Which strata** they are drawn from — phenotype count, gene count, profile support size, generator capacity — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit |
+   | i | **How many** diseases are withheld from patient supervision | Institution. Engineering's working default is f = 0.15, the upstream value (§1.6, §6.8): 1,587 of 10,577 eligible diseases on the audited graph. A default, not an answer |
+   | ii | **Which strata** they are drawn from — phenotype count, gene count, profile support size, generator capacity — since a uniform draw and a stratified draw hold out different clinical content | Institution, informed by §6.8's audit. Engineering draws uniformly and builds no stratification on that audit's evidence: at f = 0.15 the worst band goes unrepresented in validation with probability 1.3e-5 (revision 28). The institution's acceptance is not recorded |
    | iii | ~~Whether a **permanent** loss of supervision for the withheld diseases is acceptable, or whether refitting on all diseases is required~~ — **answered: option B**, matching §1.6 | Institution — done |
    | iv | Whether the generator is faithful enough (§1.5) for a disjoint split to mean what it appears to mean — item 6 below asks the sequencing question, this one asks the sufficiency question | Engineering, then institution |
    | v | What happens when a test cohort is **burned** — inspected during selection — and how the protocol regenerates from that point | Engineering, and it must be decided *before* the first cohort exists |
@@ -761,15 +777,24 @@ disease universe is cut, not whether.
    split, so whether to apply turns on a different question — whether ranking *on this hospital's
    own population* is held to be non-delegable. A value judgement for the institution.
 3. **Which criterion of record selects a model.** The built-in auto-selection reads the ranking
-   metric from a checkpoint's own logs (`src/api/routes/pipeline.py:225`, priority
-   `("val_mrr", "val_hits@10", "val_hits@1")` at `src/utils/checkpoint_paths.py:45`), which the
-   M1–M3 audit found to be `val_mrr` in all fifteen checkpoints. That matches the institution's
-   stated first stage — best validation model as the batch representative — so the two are a
-   pipeline rather than competing rules. What is open is that the representative is chosen by a
-   metric measured on a split with 100% disease overlap — a metric that, per §1.2, measures
-   within-disease recognition rather than unseen-disease generalisation. Whether that costs it
-   discriminating power between candidates is **not measured**, here or anywhere in this
-   document.
+   metric from a checkpoint's own logs (`select_auto_checkpoint`, called at
+   `src/api/routes/pipeline.py:355`; priority `("val_mrr", "val_hits@10", "val_hits@1")` at
+   `src/utils/checkpoint_paths.py:45`), which the M1–M3 audit found to be `val_mrr` in all fifteen
+   checkpoints. That matches the institution's stated first stage — best validation model as the
+   batch representative — so the two are a pipeline rather than competing rules. *Historical:*
+   those fifteen were trained on a split with 100% disease overlap, where the metric, per §1.2,
+   measures within-disease recognition rather than unseen-disease generalisation. Since revisions 18
+   and 21 the generated-cohort training entry point verifies that the train and validation sets it
+   consumes are disease-disjoint, so a model trained there from scratch is validated on diseases it
+   was not supervised on. **That is a contract on training input, not on the checkpoints selection
+   reads.** Auto-selection still takes the ranking metric from whatever `logs` a candidate carries
+   and checks nothing about where that score came from, so a legacy checkpoint in the same
+   directory, scored on an overlapping split, can still be chosen; the fingerprint check compares
+   structure only, never `training_input_digests` (`src/utils/fingerprint.py`). Whether one
+   checkpoint's score means unseen-disease performance depends on its own training and validation
+   sources, including any training it resumed from, and cannot be read off the current workspace.
+   What also stays open is whether a disjoint-split metric separates candidates well enough to
+   choose between them — **not measured**, here or anywhere in this document.
 4. **Where a test result is recorded, and how it binds to a checkpoint.** A result cannot be
    written into the `.pt` without changing its SHA-256, and the M1–M5 evidence chain cites
    checkpoints by digest. A sidecar beside the checkpoint keeps the digest stable and lets a
@@ -778,6 +803,10 @@ disease universe is cut, not whether.
    `<artifact>.meta.json`. Any such record
    must carry the checkpoint's digest, for the reason the shortest-path sidecar carries
    `num_pairs`: a digest identifies the sidecar, not what it describes.
+   **Answered by implementation** (§6.5 "As built", revision 20): one `evaluations.json` ledger
+   beside the checkpoints, a record per checkpoint digest, cohort role and digest, mode and tie
+   policy, keyed by a semantics digest — not the per-artifact `.meta.json` this item first
+   suggested.
 5. **Whether more public academic patient cohorts should be importable.** Raised and
    **explicitly placed outside the current scope**; recorded because it constrains one near-term
    choice. If cohorts may later arrive from elsewhere — a settings field taking a URL, an import
@@ -793,6 +822,10 @@ disease universe is cut, not whether.
    every synthetic metric, train, validation and test alike. A disease-disjoint test built on the
    current generator would be honest about *which diseases* it holds out and still optimistic
    about *how hard* they are.
+   *Sequence overtaken:* the split came first (revision 18), and of the generator's
+   characterisation only the half needing no external tool is delivered; the upstream comparison
+   is deferred (§6.6). What remains is §5.1(iv)'s sufficiency question, and on the default path it
+   concerns the validation set, since no test partition is built.
 
 ---
 
@@ -1112,6 +1145,10 @@ built from artifacts that already exist.
 5. Record the deployed checkpoint's evaluations beside it (§6.5).
 6. UI last (§6.7).
 
+**Status:** steps 1–3 and 5 are done, step 4 is half delivered and half deferred (below), and step
+6 is outside this project's scope as BACKLOG 11i stands; BACKLOG item 14 would reopen it for one
+surface.
+
 **Not built:** `synthetic_test_unseen`, refit siblings, allocation generations for burned synthetic
 cohorts, and any surface that attributes one checkpoint's numbers to another. §5 closed the
 questions those depended on.
@@ -1187,7 +1224,10 @@ two is a simplification, not a relocation of the same machinery.
 
 ### 6.8 The approved next step: an aggregate-only split feasibility audit
 
-This is the one concrete engineering step cleared to proceed, and it is deliberately narrow: it
+**Status: built (revision 13) and run, its evidence committed (revision 28).** What follows is the
+specification it was built to.
+
+It was the one concrete engineering step cleared to proceed, and it is deliberately narrow: it
 tells the institution what partitioning the disease universe would actually cost, without choosing
 a partition.
 
