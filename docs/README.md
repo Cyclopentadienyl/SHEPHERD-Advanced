@@ -48,6 +48,7 @@ Still referenced, and useful — but each describes the tree as it was on its da
 | [`TORCH_COMPILE_EXPERIMENT_FINDINGS.md`](TORCH_COMPILE_EXPERIMENT_FINDINGS.md) | closed | Why `torch.compile` was evaluated and what was concluded. Self-marked 已封存 |
 | [`Repair/REPAIR_CHECKLIST.md`](Repair/REPAIR_CHECKLIST.md) | rolling | Repair checklist; unchecked boxes are proposals, not commitments |
 | [`Repair/SCAN_REPORT.md`](Repair/SCAN_REPORT.md) | 2026-07-22 | Repository scan that cross-checks the other snapshots against the tree |
+| [`BRANCH_AUDIT_2026-10-02.md`](BRANCH_AUDIT_2026-10-02.md) | 2026-10-02 | Fifteen remote branches checked against `main` by at least two independent methods. Twelve were fully merged and only looked unmerged in a shallow clone; three hold commits outside `main`, each superseded or already present. All fifteen are marked pending deletion, and nothing is deleted |
 
 ## Working documents
 
