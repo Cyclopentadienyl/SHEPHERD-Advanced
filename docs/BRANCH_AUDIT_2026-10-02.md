@@ -10,7 +10,7 @@ the evidence, and a mark. **It deletes nothing.** Deleting a remote branch is th
 
 ---
 
-## 1. A correction first: thirteen of the fifteen were never unmerged
+## 1. A correction first: twelve of the fifteen were never unmerged
 
 The session that started this audit worked in a **shallow clone**. `git rev-parse
 --is-shallow-repository` printed `true`, and `.git/shallow` held five graft points. One of them was
@@ -21,8 +21,11 @@ history: 7 to 170 commits "ahead" of `main`. The earlier count in that session, 
 with commits `main` lacks, was an artefact of that cut.
 
 After `git fetch --unshallow origin`, `main`'s roots are `ee5ffc4` and `043092a`, the same as
-those branches'. **Of all 58 remote branches, three have commits not reachable from `main`**, and
-three of the fifteen are those three. The other twelve of the fifteen are fully merged.
+those branches'. The remote has 58 branch heads (`git ls-remote --heads origin`), one of them
+`main`. **Of the 57 besides `main`, three have commits not reachable from `main`**, and they are
+three of the fifteen. The other twelve of the fifteen are fully merged. These counts were taken
+before this audit's own commit was pushed to `claude/dev-context-review-3wuh05`; that branch
+holds one commit outside `657f108` from then on.
 
 **For any later audit of this kind:** check `git rev-parse --is-shallow-repository` before making
 any reachability claim.
@@ -38,8 +41,8 @@ Each verdict rests on at least two independent checks.
 | 3 | GitHub pull-request records (`head.sha`, `merged_at`) | A source independent of the local clone: which tips were merged through a PR |
 | 4 | For an unmerged branch: its diff, `git merge-tree --write-tree origin/main B`, and the files and plans that cover the same ground on `main` | Whether the content is already in `main`, superseded, or still unique |
 
-Checks 1 and 2 were also run over all 58 remote branches. Both find the same three branches
-outside `main`, and no others. A separate agent re-derived all fifteen verdicts independently,
+Checks 1 and 2 were also run over all 57 branches besides `main`. Both find the same three
+branches outside `main`, and no others. A separate agent re-derived all fifteen verdicts independently,
 without seeing this document's results; its agreement is recorded in §5.
 
 ## 3. The fifteen branches
@@ -60,10 +63,11 @@ without seeing this document's results; its agreement is recorded in §5.
 | `claude/step-b-shortest-path-Y8K2N` | `57debd0` | 0 | yes | `715058a`, PR #53 (head `57debd0`) | fully merged | pending deletion |
 | `claude/fix-core-architecture-CElHS` | `841810c` | 1, patch-equivalent in `main` | no | its one commit's patch is `b9d5178`, merged by PR #65 (`claude/fix-kg-json-attributes`) | unmerged, equivalent content in `main` (§4.1) | pending deletion (owner, 2026-10-02) |
 | `claude/great-euler-329450` | `8b41aeb` | 1 | no | never: no PR was opened | unmerged, the only copy of its file; approach superseded (§4.2). The independent pass classes it as still holding unique work (§5) | pending deletion (owner, 2026-10-02) |
-| `claude/analyze-repo-structure-8JzqE` | `a669005` | 1 | no | PR #1 merged the earlier head `fc273ec`; `a669005` came 11 minutes later and was never merged | unmerged, superseded (§4.3) | pending deletion |
+| `claude/analyze-repo-structure-8JzqE` | `a669005` | 1 | no | PR #1 merged the earlier head `fc273ec`; `a669005` was committed 11 minutes later and never merged | unmerged, superseded (§4.3) | pending deletion |
 
 **Deleting a fully merged branch loses no commit**: every commit on it stays in `main`'s
-history. Deleting the three unmerged ones discards `841810c`, `8b41aeb` and `a669005`. Their
+history. "Fully merged" here means every commit is reachable from `main`. It does not mean every
+line those commits wrote still stands unchanged. Deleting the three unmerged ones discards `841810c`, `8b41aeb` and `a669005`. Their
 contents are described below, so the record survives the branches.
 
 ## 4. The three branches with commits not in `main`
@@ -107,10 +111,12 @@ plus every `TrainerConfig`, `LossConfig` and `Trainer` member it uses. It would 
    at the branch's base `c67ad87` and on `main`), which forces a GPU sync. The copy drops that
    call while saying it preserves production's syncs, and syncs are what it was written to
    attribute.
-2. **It would not get the allocator production training uses.** `train_model.py` applies the
-   allocator preset only when run directly (`ALLOCATOR_SOURCE = _apply_allocator() if __name__ ==
-   "__main__"`, line 95). The profiler imports it as a module, so it would run without the
-   `cudaMallocAsync` preset that training has used since 2026-09-29 (`444c710`).
+2. **It does not apply training's allocator rule.** `train_model.py` applies that rule only
+   when run directly (`ALLOCATOR_SOURCE = _apply_allocator() if __name__ == "__main__"`, line 95).
+   The profiler imports it as a module, so its allocator is whatever the shell provides. With
+   nothing set there, that is torch's native allocator rather than the saved preset, which is
+   `cudaMallocAsync` unless overridden and has applied to training since 2026-09-29 (`444c710`).
+   A shell that exports the same setting would give the same allocator.
 3. **It would bypass workspace verification.** `verify_generated_cohorts` is called in
    `train()` (line 717), not in the builders the profiler calls. Since 2026-09-08 every entry
    point refuses an unverified workspace (EVALUATION_COHORTS revisions 21–22); this would be one
@@ -125,7 +131,7 @@ is now `:247`, and `_train_epoch` now spans `:506-634`. The independent pass (§
 against a scratch copy of `main`: `--help` worked, and `--phase-timing --profiler --trace-out`
 completed on a synthetic workspace. To get that far it had to replace the fixture's
 `train_samples.json`, because the fixture's samples point at node ids outside its tiny graph. No
-GPU path has ever been run.
+GPU run of it is on record, and its commit reports it untested on GPU.
 
 The question it was written to answer, why training is launch-bound and whether precision
 changes throughput, **remains unanswered and is not on the backlog**. If it becomes a priority,
@@ -136,8 +142,8 @@ around the real `Trainer`), not in a copy of the step.
 
 `a669005` (2026-01-13 13:57 UTC) "feat: implement ontology module with loader and constraints"
 adds `src/ontology/{__init__,base,loader,constraints}.py` (1,651 lines). PR #1 had merged this
-branch's earlier head `fc273ec` at 13:46 UTC. `a669005` was pushed eleven minutes later and never
-merged.
+branch's earlier head `fc273ec` at 13:46 UTC. `a669005` was committed eleven minutes later (commit
+timestamps; when it was pushed is not recorded) and never merged.
 
 - **Superseded 45 minutes later.** `9885a67` (14:42 UTC) "feat(ontology): implement complete
   ontology module with OBO parser, hierarchy operations, and semantic similarity" covers the same
@@ -156,23 +162,26 @@ merged.
   - every fetch goes through one downloader at the request boundary (line 358).
 
   Its parser is a separate matter, and Phase 2 makes no rule about it. When `pronto` is
-  missing, the branch silently switches to a limited built-in parser (`:114`). `main` imports
+  missing, the branch switches to a limited built-in parser automatically, after logging a warning
+(`:111-115`). `main` imports
   `pronto` unconditionally (`src/ontology/loader.py:28`) and keeps its own `OBOParser`
   (`:648`), which describes itself as legacy and for test fixtures; no production path calls
   it.
 - **Merging would conflict.** `git merge-tree --write-tree origin/main` exits 1, with conflicts in
   `src/ontology/__init__.py`, `constraints.py` and `loader.py`.
-- **Merging would also break `main`'s imports.** The branch's versions of those files do not
+- **Taking the branch's versions of those files would break `main`'s imports.** They do not
   define `OBOParser`, `OntologyConstraintChecker`, `OntologyFetchError`, `OntologyImportError`
   or `default_cache_dir`, which `main`'s scripts and tests import (found by the independent
-  pass, §5).
+  pass, §5). That is the risk of resolving the conflicts in the branch's favour, not of every
+  possible resolution.
 - **Seven helpers exist only here:** `get_specificity_score`, `rank_by_specificity`,
   `compute_phenotype_coverage`, `normalize_phenotypes`, `get_path_to_root`,
   `OntologyTerm.to_node` and `ConstraintConfig`. `git grep -w` finds none of them in `main`'s
-  `src/`, `scripts/` or `tests/`. No plan or backlog item asks for them, and two have defects,
+  `src/`, `scripts/` or `tests/`. No plan or backlog item asks for them, and two have problems,
   confirmed by reading the code:
-  - **`get_specificity_score`** computes a `max_ic` it never uses and divides by a hard-coded
-    `12.0` (`constraints.py:365-374`).
+  - **`get_specificity_score`** computes a `max_ic` it never uses and normalises by a fixed
+    `12.0`, which its own comment calls an approximation (`constraints.py:365-374`). That is a
+    stated shortcut, not normalisation by the ontology's actual maximum.
   - **`compute_phenotype_coverage`** has its direction backwards. Its first loop takes a
     patient term whose *ancestors* include a disease term, so the patient's term is the more
     specific one, but files it as the patient being *more general*. Its third loop applies the
@@ -194,8 +203,8 @@ scratch copy of `main`.
 | The twelve fully merged branches | fully merged | fully merged; all four methods agree on each | agree |
 | How `shepherd-development-continue` reached `main` | `8cdaced` (PR #23) | `e841bf0`, by first-parent line | both hold: `8cdaced` has the tip as a parent, and `main`'s first-parent line reaches `8cdaced` through `e841bf0`. §3 now gives both |
 | `fix-core-architecture` | equivalent content in `main` | same, with the same patch-id match and PR #65 | agree |
-| `analyze-repo-structure` | superseded | superseded; also found that merging would break `main`'s imports, and seven branch-only helpers, two of them defective | agree. The import breakage and the helpers were verified and added to §4.3. The pass also showed that this document had attributed the built-in-parser fallback to Phase 2's rules; §4.3 now separates the parser from acquisition |
-| `great-euler` | unique file, approach superseded | unique file, still worth keeping if a training profiler is needed, after a GPU smoke run and an allocator fix | **differ in judgement, not in fact.** Both find it the only copy of a profiler that has never run on a GPU, with the allocator and `loss.item()` drift. The owner marked it pending deletion on 2026-10-02. If its text should outlive the branch, a tag would keep the commit retrievable; that is the owner's call |
+| `analyze-repo-structure` | superseded | superseded; also found that taking the branch's files would break `main`'s imports, and seven branch-only helpers, two of them with problems | agree. The import breakage and the helpers were verified and added to §4.3. The pass also showed that this document had attributed the built-in-parser fallback to Phase 2's rules; §4.3 now separates the parser from acquisition |
+| `great-euler` | unique file, approach superseded | unique file, still worth keeping if a training profiler is needed, after a GPU smoke run and an allocator fix | **differ in judgement, not in fact.** Both find it the only copy of a profiler with no GPU run on record, with the allocator and `loss.item()` drift. The owner marked it pending deletion on 2026-10-02. If its text should outlive the branch, a tag would keep the commit retrievable; that is the owner's call |
 
 Every fact the independent pass reported that this audit had not checked was verified before it
 was added, with one exception: its CPU run of the profiler (§4.2) was not repeated, and is
@@ -203,8 +212,8 @@ reported as its observation.
 
 ## 6. Outside the fifteen
 
-- **The other 43 remote branches** are all ancestors of `main` (check 2), and `git rev-list`
-  finds no commit on any of them outside `main` (check 1). They are not marked here. The
+- **The other 42 branches besides `main`** are all ancestors of `main` (check 2), and
+  `git rev-list` finds no commit on any of them outside `main` (check 1). They are not marked here. The
   `archive/*` and `backup/*` branches among them look deliberately kept.
 - **A finding in a document this audit read:** `docs/TORCH_COMPILE_EXPERIMENT_FINDINGS.md` says
   the `torch.compile` toggle was *not* merged into `main` ("未合入 `main`", "不合入 `main`").
