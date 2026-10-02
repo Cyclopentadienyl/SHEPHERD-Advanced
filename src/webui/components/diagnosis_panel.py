@@ -218,9 +218,8 @@ STATUS_CHECKING = "⏳ Checking pipeline status…"
 
 
 def _checkpoint_metric_label(key: str) -> str:
-    """``val_hits@1`` -> ``Val Hits@1``; ``mrr`` -> ``MRR``; ``hits_at_10`` -> ``Hits@10``."""
-    words = key.replace("hits_at_", "hits@").split("_")
-    return " ".join("MRR" if w == "mrr" else w[:1].upper() + w[1:] for w in words)
+    """``val_mrr`` -> ``Val MRR``; ``val_hits@10`` -> ``Val Hits@10``."""
+    return " ".join("MRR" if w == "mrr" else w[:1].upper() + w[1:] for w in key.split("_"))
 
 
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:

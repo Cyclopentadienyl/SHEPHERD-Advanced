@@ -2,12 +2,15 @@
 The loaded checkpoint's training metrics reach the Diagnosis tab.
 =================================================================
 The pipeline copied `mrr`, `hits_at_1` and `hits_at_10` from a checkpoint's
-`logs`, while the current trainer writes `val_mrr` and `val_hits@k` there. For a
-checkpoint from the current trainer, the status line therefore showed the losses
-and none of the ranking metrics.
+`logs` -- names no trainer in this repository has written -- while the trainer
+writes `val_mrr` and `val_hits@k` there. The status line therefore showed the
+losses and none of the ranking metrics.
 
-The keys are taken from the trainer itself rather than typed here, so a rename on
-either side fails this file instead of silently emptying the display again.
+The ranking keys now come from `RANKING_SCORE_KEYS`, the list auto-selection ranks
+checkpoints by, so there is one definition of "a checkpoint's ranking metrics".
+The keys the trainer writes are taken from the trainer itself rather than typed
+here, so a rename on either side fails this file instead of silently emptying the
+display again.
 """
 import json
 from types import SimpleNamespace
@@ -47,22 +50,23 @@ def _current_trainer_logs():
     return {**train_metrics, **val_metrics}
 
 
-def test_the_pipeline_copies_the_ranking_metrics_the_current_trainer_writes():
+def test_every_metric_the_pipeline_copies_is_one_the_trainer_writes():
+    """No guessed names: a key the trainer never writes is a lookup that can only
+    come back empty, which is how the display lost its ranking metrics."""
     from src.inference.pipeline import CHECKPOINT_LOG_METRICS
 
     written = _current_trainer_logs()
 
-    for key in ("val_mrr", "val_hits@1", "val_hits@10", "val_loss", "train_loss"):
-        assert key in written, f"the trainer no longer writes {key}"
-        assert key in CHECKPOINT_LOG_METRICS, f"the pipeline does not copy {key}"
+    missing = [key for key in CHECKPOINT_LOG_METRICS if key not in written]
+    assert not missing, f"the pipeline copies keys the trainer does not write: {missing}"
 
 
-def test_the_names_this_lookup_was_written_against_are_still_read():
-    """Checkpoints from earlier trainers were not examined; a name some of them
-    may carry is kept rather than dropped."""
+def test_the_ranking_metrics_shown_are_the_ones_selection_ranks_by():
     from src.inference.pipeline import CHECKPOINT_LOG_METRICS
+    from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
 
-    assert {"mrr", "hits_at_1", "hits_at_10"} <= set(CHECKPOINT_LOG_METRICS)
+    assert set(RANKING_SCORE_KEYS) <= set(CHECKPOINT_LOG_METRICS)
+    assert {"val_mrr", "val_hits@1", "val_hits@10"} <= set(RANKING_SCORE_KEYS)
 
 
 def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
@@ -112,7 +116,7 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     assert f"Train Loss: {logs['train_loss']:.4f}" in rendered
 
 
-def test_the_status_line_labels_old_and_new_names_and_skips_the_descriptive_ones():
+def test_the_status_line_labels_the_metrics_and_skips_the_descriptive_ones():
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
@@ -124,9 +128,10 @@ def test_the_status_line_labels_old_and_new_names_and_skips_the_descriptive_ones
             "params": 1000,
             "device": "cpu",
             "val_loss": 0.25,
-            "mrr": 0.5,
-            "hits_at_1": 0.25,
-            "hits_at_10": 0.75,
+            "train_loss": 0.5,
+            "val_mrr": 0.5,
+            "val_hits@10": 0.75,
+            "val_hits@1": 0.25,
             "flag": True,
             "note": "not a number",
         },
@@ -137,5 +142,6 @@ def test_the_status_line_labels_old_and_new_names_and_skips_the_descriptive_ones
     )
     assert checkpoint_line == (
         "- Checkpoint: Epoch 3 | 1,000 params | device=cpu | Val Loss: 0.2500 | "
-        "MRR: 0.5000 | Hits@1: 0.2500 | Hits@10: 0.7500"
+        "Train Loss: 0.5000 | Val MRR: 0.5000 | Val Hits@10: 0.7500 | "
+        "Val Hits@1: 0.2500"
     )

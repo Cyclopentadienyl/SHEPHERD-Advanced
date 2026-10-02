@@ -600,7 +600,7 @@ def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path)
     data_dir, checkpoint_path = build_workspace(tmp_path)
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     checkpoint["epoch"] = torch.tensor(3)
-    checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "mrr": torch.tensor(0.5)}
+    checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "val_mrr": torch.tensor(0.5)}
     torch.save(checkpoint, checkpoint_path)
 
     graph_data = {
@@ -619,6 +619,7 @@ def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path)
     assert meta["epoch"] == 3 and isinstance(meta["epoch"], int)
     assert meta["val_loss"] == pytest.approx(0.25)
     assert isinstance(meta["val_loss"], float)
+    assert meta["val_mrr"] == pytest.approx(0.5) and isinstance(meta["val_mrr"], float)
     assert isinstance(meta["params"], int)
     from fastapi.encoders import jsonable_encoder
 
