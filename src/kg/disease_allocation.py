@@ -26,10 +26,11 @@ eligible diseases of 29,866 disease nodes, the worst case is a 69-disease
 2e-7 at every larger fraction. The worst *training*-side risk anywhere in the
 report is 2e-92 at f = 0.05.
 
-At the value this project uses, f = 0.15, one band in a thousand runs would go
-unrepresented in validation. Stratifying to remove that would cost a fixed quota
-per band and buy a difference of that size, so it is **not built** — and this
-module is where it would go if a later artifact overturns the reading.
+At the value this project uses, f = 0.15, the worst band would go unrepresented
+in validation in about one run in 77,000 (1.3e-5; summed over every band of all
+four stratifications, still 1.3e-5). Stratifying to remove that would cost a
+fixed quota per band and buy a difference of that size, so it is **not built** —
+and this module is where it would go if a later artifact overturns the reading.
 
 **What the artifact does and does not settle.** It measures one knowledge graph:
 the eligible universe, the band populations and the probabilities all belong to
