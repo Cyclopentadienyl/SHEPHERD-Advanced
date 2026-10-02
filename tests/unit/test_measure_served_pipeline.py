@@ -8,22 +8,29 @@ starts and the evidence it writes. The service is replaced by a small HTTP
 server so that a whole repeat -- R0 to R4, reset and all -- runs here in a
 second or two; the real run happens on the deployment host.
 """
+import sys
+
+import pytest
+
+# Before anything Unix-only is imported or evaluated -- fcntl, termios, the
+# signals the decorators below name. A skip mark would come too late: the
+# module has to import before any mark is read.
+if not sys.platform.startswith("linux"):
+    pytest.skip("the script reads /proc", allow_module_level=True)
+
+import contextlib
+import fcntl
 import json
 import os
+import re
 import signal
 import subprocess
-import sys
+import termios
 import textwrap
 import time
 from pathlib import Path
 
-import pytest
-
 from scripts import measure_served_pipeline as msp
-
-pytestmark = pytest.mark.skipif(
-    not sys.platform.startswith("linux"), reason="the script reads /proc"
-)
 
 
 # ------------------------------------------------------------------- helpers
@@ -131,11 +138,35 @@ def test_the_server_environment_is_read_raw(tmp_path):
 
 
 # ------------------------------------------------------------------ the reset
-def test_the_reset_is_confirmed_with_the_server_paused_and_it_is_resumed(sleeper):
+def test_the_reset_lowers_the_high_water_mark_with_the_server_paused_and_resumes_it(sleeper):
     before = msp.read_status(sleeper.pid)   # the 64 MB the child touched and freed
     outcome = _reset_or_skip(sleeper.pid)
-    assert outcome["status"] == "confirmed"
-    assert outcome["vm_hwm_bytes"] == outcome["vm_rss_bytes"] < before["vm_hwm_bytes"]
+    # The high-water mark comes down by the 64 MB whether or not the kernel lets
+    # the reset be confirmed. The reset stores the approximate per-CPU RSS
+    # counter, while status reports VmRSS as the exact sum and VmHWM as the
+    # larger of the two, so a real reset can leave VmHWM a page above VmRSS in
+    # every try (seen on the measuring machine's kernel, §7.3). That outcome is
+    # inconclusive by the equality rule; a stop never seen is not accepted here.
+    assert outcome["status"] in ("confirmed", "inconclusive")
+    if outcome["status"] == "confirmed":
+        assert outcome["vm_hwm_bytes"] == outcome["vm_rss_bytes"]
+    else:
+        assert outcome["reason"] == "VmHWM != VmRSS after 3 resets"
+    assert outcome["vm_rss_bytes"] <= outcome["vm_hwm_bytes"]
+    assert outcome["vm_hwm_bytes"] < before["vm_hwm_bytes"] - 32 * 2**20
+    time.sleep(0.05)
+    assert msp.process_state(sleeper.pid) != "T"
+
+
+def test_a_reset_is_confirmed_by_the_first_equal_reading_and_not_before(sleeper,
+                                                                         monkeypatch):
+    readings = iter([{"vm_hwm_bytes": 2, "vm_rss_bytes": 1},
+                     {"vm_hwm_bytes": 1, "vm_rss_bytes": 1}])
+    monkeypatch.setattr(msp, "read_status", lambda pid, proc=msp.PROC: next(readings))
+    outcome = _reset_or_skip(sleeper.pid)
+    assert (outcome["status"], outcome["tries"]) == ("confirmed", 2)
+    assert outcome["vm_hwm_bytes"] == outcome["vm_rss_bytes"] == 1
+    monkeypatch.undo()
     time.sleep(0.05)
     assert msp.process_state(sleeper.pid) != "T"
 
@@ -687,7 +718,7 @@ def test_a_request_with_no_response_ends_the_repeat_before_any_reset(fake_repeat
 
 
 # ------------------------------------------------------------- stop signals
-def _worker(code, tmp_path):
+def _worker(code, tmp_path, stderr=None):
     """A measuring process of its own, so a real SIGTERM can be sent to it."""
     script = tmp_path / "worker.py"
     script.write_text(textwrap.dedent(f"""\
@@ -700,7 +731,19 @@ def _worker(code, tmp_path):
         m.install_stop_handlers()
     """) + textwrap.dedent(code))
     return subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True,
-                            cwd=msp.REPO_ROOT)
+                            stderr=stderr, cwd=msp.REPO_ROOT)
+
+
+def _reap(worker, pidfile, descriptors=()):
+    """Whatever a failed test left running, and the descriptors it held open."""
+    if worker.poll() is None:
+        worker.kill()
+        worker.wait()
+    if pidfile.exists():
+        with contextlib.suppress(ProcessLookupError, ValueError):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+    for fd in descriptors:
+        os.close(fd)
 
 
 def test_sigterm_inside_the_reset_window_resumes_the_server(sleeper, tmp_path):
@@ -815,9 +858,14 @@ def test_the_first_signal_during_a_normal_cleanup_waits_for_the_server(sig, tmp_
             pass
 
 
-def test_ctrl_c_starts_the_cleanup_and_a_later_signal_cannot_break_out_of_it(tmp_path):
+@pytest.mark.parametrize("output", [None, "full pipe", "stopped terminal"],
+                         ids=["stderr read", "full pipe", "stopped terminal"])
+def test_ctrl_c_starts_the_cleanup_and_a_later_signal_cannot_break_out_of_it(output,
+                                                                           tmp_path):
     # Ctrl+C mid-workload raises the stop; the cleanup it starts then waits for
     # a slow graceful exit, and a SIGTERM arriving during that wait is ignored.
+    # Also with a stderr nobody reads: the cleanup's progress must not hold it.
+    stderr, keep = _stopped_reader(output) if output else (None, ())
     server = tmp_path / "fake_server.py"
     server.write_text(FAKE_SERVER)
     pidfile, inflight = tmp_path / "server.pid", tmp_path / "inflight"
@@ -838,7 +886,7 @@ def test_ctrl_c_starts_the_cleanup_and_a_later_signal_cannot_break_out_of_it(tmp
         except m.Stopped as stop:
             print("threads", threading.active_count(), flush=True)
             sys.exit(128 + stop.args[0])
-    """, tmp_path)
+    """, tmp_path, stderr=stderr)
 
     def wait_for(path):
         deadline = time.monotonic() + 30
@@ -846,9 +894,9 @@ def test_ctrl_c_starts_the_cleanup_and_a_later_signal_cannot_break_out_of_it(tmp
             time.sleep(0.02)
         assert path.exists(), path.name
 
-    wait_for(inflight)
-    server_pid = int(pidfile.read_text())
     try:
+        wait_for(inflight)
+        server_pid = int(pidfile.read_text())
         worker.send_signal(signal.SIGINT)
         wait_for(terminating)                 # the cleanup is now stopping the server
         worker.send_signal(signal.SIGTERM)
@@ -858,10 +906,7 @@ def test_ctrl_c_starts_the_cleanup_and_a_later_signal_cannot_break_out_of_it(tmp
         with pytest.raises(ProcessLookupError):
             os.kill(server_pid, 0)
     finally:
-        try:
-            os.kill(server_pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        _reap(worker, pidfile, keep)
 
 
 def test_a_ctrl_c_handler_someone_else_installed_is_left_alone():
@@ -1046,3 +1091,156 @@ def test_the_sampler_stops_even_if_stopping_the_server_fails(fake_repeat, monkey
     with pytest.raises(RuntimeError):
         fake_repeat()
     assert threading.active_count() == before
+
+
+# ------------------------------------------------------------------ progress
+def _lines(err):
+    return [line.split("] ", 1)[1] for line in err.splitlines()]
+
+
+def _gone_terminal():
+    """A terminal that went away: its other side is closed, so a write is EIO."""
+    master, slave = os.openpty()
+    os.close(master)
+    return slave
+
+
+def _stopped_reader(kind):
+    """A stderr whose reader stopped reading, and the descriptors to close after.
+
+    Both leave the descriptor handed on blocking, as the operator's is: a pipe
+    nobody drains, filled to the brim, or a terminal stopped with Ctrl+S.
+    """
+    if kind == "full pipe":
+        r, w = os.pipe()
+        flags = fcntl.fcntl(w, fcntl.F_GETFL)
+        fcntl.fcntl(w, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        with contextlib.suppress(BlockingIOError):
+            while True:
+                os.write(w, b"x" * 4096)
+        fcntl.fcntl(w, fcntl.F_SETFL, flags)
+        return w, (r, w)
+    master, slave = os.openpty()
+    termios.tcflow(slave, termios.TCOOFF)
+    return slave, (master, slave)
+
+
+def test_progress_goes_to_stderr_stamped_with_the_time_since_start(capfd):
+    msp.progress("R1: launching the service")
+    out, err = capfd.readouterr()
+    assert out == ""
+    assert re.fullmatch(r"\[\d+:\d\d:\d\d\] R1: launching the service\n", err)
+
+
+def test_progress_reaches_a_pipe_that_is_read_and_leaves_it_blocking(monkeypatch):
+    r, w = os.pipe()
+    monkeypatch.setattr(sys, "stderr", os.fdopen(w, "w"))
+    msp.progress("R2: 20/200 sent, 20 accepted")
+    assert os.read(r, 4096).decode().endswith("] R2: 20/200 sent, 20 accepted\n")
+    assert not fcntl.fcntl(w, fcntl.F_GETFL) & os.O_NONBLOCK   # shared: left as it was
+    os.close(r)
+
+
+def test_progress_to_a_file_keeps_every_line(tmp_path):
+    # `2> console.txt`: a file has no reader to wait for, and is written through
+    # the operator's own descriptor, so each line lands after the last.
+    console = tmp_path / "console.txt"
+    with open(console, "w") as stream:
+        subprocess.run([sys.executable, "-c", textwrap.dedent("""\
+            from scripts import measure_served_pipeline as m
+            m.progress("first line, the longer one")
+            m.progress("second")
+        """)], stderr=stream, cwd=msp.REPO_ROOT, check=True)
+    assert _lines(console.read_text()) == ["first line, the longer one", "second"]
+
+
+@pytest.mark.parametrize("kind", ["terminal gone", "pipe without reader", "closed stream",
+                                  "no stderr"])
+def test_progress_never_raises(kind, monkeypatch):
+    if kind == "terminal gone":
+        stream = os.fdopen(_gone_terminal(), "w")
+    elif kind == "pipe without reader":
+        r, w = os.pipe()
+        os.close(r)
+        stream = os.fdopen(w, "w")
+    elif kind == "closed stream":
+        stream = open(os.devnull, "w")  # noqa: SIM115 -- closed on purpose
+        stream.close()
+    else:
+        stream = None
+    monkeypatch.setattr(sys, "stderr", stream)
+    msp.progress("x")
+
+
+def test_the_workload_reports_every_twentieth_request_and_the_last(monkeypatch, capfd):
+    answers = iter([(500, {}, "error")] + [(200, {"ok": True}, "")] * 44)
+    monkeypatch.setattr(msp, "http_json", lambda *a, **k: next(answers))
+
+    class Schema:
+        class DiagnoseResponse:
+            @staticmethod
+            def model_validate(body):
+                return body
+
+    outcome = msp.run_workload("http://x", [{"phenotypes": ["HP:1"]}] * 45, {}, Schema,
+                               alive=lambda: True)
+    assert outcome["accepted"] == 44
+    assert _lines(capfd.readouterr().err) == [
+        "R2: 20/45 sent, 19 accepted", "R2: 40/45 sent, 39 accepted",
+        "R2: 45/45 sent, 44 accepted"]
+
+
+def test_a_repeat_reports_each_phase_on_stderr_and_none_of_it_in_its_result(
+        fake_repeat, capfd):
+    result = fake_repeat()
+    lines = _lines(capfd.readouterr().err)
+    starts = ["R0: sampling", "R0: precondition met", "R1: launching", "R1: completed",
+              "R2: reset", "R2: 2/2 sent, 2 accepted", "R2: ", "R3/R4: reset", "R3: ",
+              "stopping the service"]
+    assert len(lines) == len(starts)
+    for line, start in zip(lines, starts, strict=True):
+        assert line.startswith(start), (line, start)
+    assert "R2: " + result["phases"]["R2"]["status"] in lines[6]
+    assert "reload answered 200" in lines[8]
+    assert "R1: launching" not in json.dumps(result)
+
+
+def test_a_terminal_gone_during_the_run_still_lets_the_cleanup_stop_the_server(
+        fake_repeat, monkeypatch):
+    # The SIGHUP case: every line fails, the cleanup's too, and it still runs.
+    monkeypatch.setattr(sys, "stderr", os.fdopen(_gone_terminal(), "w"))
+    result = fake_repeat()
+    assert "error" not in result and result["phases"]["R3"]["success"]
+    assert result["server_exit_status"] is not None
+
+
+@pytest.mark.parametrize("kind", ["full pipe", "stopped terminal"])
+def test_a_reader_that_stopped_reading_costs_the_progress_not_the_readings(kind, tmp_path):
+    # In a worker of its own: a progress line that waited would hang it, not the suite.
+    server = tmp_path / "fake_server.py"
+    server.write_text(FAKE_SERVER)
+    pidfile = tmp_path / "server.pid"
+    (tmp_path / "logs").mkdir()
+    stderr, keep = _stopped_reader(kind)
+    worker = _worker(f"""\
+        import json, os
+        os.environ.update(FAKE_MODE="ready", FAKE_PIDFILE={str(pidfile)!r})
+        r = m.run_repeat(index=1, workspace=Path("ws"), checkpoint=Path("ck.pt"),
+                         workload=[{{"kind": "validation", "phenotypes": ["HP:1"]}}] * 45,
+                         defaults={{}}, schema=m.load_diagnose_schema(), r0_seconds=0.1,
+                         ready_timeout_s=30, log_dir=Path({str(tmp_path / "logs")!r}),
+                         command=lambda port: [sys.executable, {str(server)!r}, str(port)],
+                         server_check=lambda pid: True)
+        print(json.dumps(r), flush=True)
+    """, tmp_path, stderr=stderr)
+    try:
+        out, _ = worker.communicate(timeout=30)
+    finally:
+        _reap(worker, pidfile, keep)
+    result = json.loads(out)
+    phases = result["phases"]
+    assert phases["R2"]["workload"] == {"planned": 45, "sent": 45, "accepted": 45,
+                                        "failures": {}, "ended_without_response": False}
+    assert phases["R3"]["success"] and result["server_exit_status"] is not None
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
