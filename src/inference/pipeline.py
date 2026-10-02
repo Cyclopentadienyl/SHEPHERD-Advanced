@@ -89,6 +89,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Training-log metrics copied from a checkpoint into `checkpoint_meta`, in the
+#: order the Diagnosis tab shows them.
+#:
+#: The current trainer saves its epoch metrics as the checkpoint's `logs`
+#: (`src/training/callbacks.py:_save_checkpoint`), with the validation metrics
+#: prefixed `val_` (`Trainer._validate`): `val_mrr`, `val_hits@1`, `val_hits@10`.
+#: This lookup used to ask only for `mrr`, `hits_at_1` and `hits_at_10`, so a
+#: checkpoint from the current trainer showed its losses and none of its ranking
+#: metrics. The older names stay: checkpoints from earlier trainers were not
+#: examined, and dropping a name some of them may carry would hide a metric that
+#: is there.
+#:
+#: They are the trainer's own validation numbers, computed as
+#: `Trainer._run_evaluation_pass` computes them, and not test results.
+CHECKPOINT_LOG_METRICS: Tuple[str, ...] = (
+    "val_loss",
+    "train_loss",
+    "val_mrr",
+    "val_hits@1",
+    "val_hits@10",
+    "mrr",
+    "hits_at_1",
+    "hits_at_10",
+)
+
 
 # ==============================================================================
 # Type Aliases for Callbacks
@@ -931,7 +956,7 @@ class DiagnosisPipeline:
         # Extract best metrics from logs if available
         logs = checkpoint.get("logs", {})
         if isinstance(logs, dict):
-            for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
+            for key in CHECKPOINT_LOG_METRICS:
                 if key in logs:
                     metric = _as_metric(logs[key])
                     if metric is not None:

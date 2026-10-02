@@ -383,13 +383,10 @@ def main() -> int:
     Passthrough args      : {passthrough}
     """)
     print(plan)
-    log("Access points (bookmark these):")
-    log("  Swagger UI (API docs) : http://127.0.0.1:8000/docs")
-    log("  Gradio Dashboard      : http://127.0.0.1:8000/ui")
-    if args.print_plan or args.dry_run or args.skip_launch:
-        return 0
 
-    # Determine host/port for URL display
+    # Determine host/port for URL display. Computed before the access points are
+    # logged: those lines used to say port 8000 whatever --port was passed, so the
+    # unit's journal told an operator to bookmark a port nothing listened on.
     host = "127.0.0.1"
     port = "8000"
     uvi_args = UVICORN_DEFAULT_ARGS + passthrough
@@ -402,6 +399,12 @@ def main() -> int:
                 host = h
 
     base_url = f"http://{host}:{port}"
+
+    log("Access points (bookmark these):")
+    log(f"  Swagger UI (API docs) : {base_url}/docs")
+    log(f"  Gradio Dashboard      : {base_url}/ui")
+    if args.print_plan or args.dry_run or args.skip_launch:
+        return 0
 
     # Print web interface endpoints
     print(textwrap.dedent(f"""\

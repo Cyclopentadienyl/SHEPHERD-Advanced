@@ -58,6 +58,8 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.api.middleware.server_address import RecordServerAddress
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -179,6 +181,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# The in-process WebUI calls this API at the address the server actually bound,
+# recorded from each request (`src/utils/server_address.py`).
+app.add_middleware(RecordServerAddress)
 
 
 # =============================================================================

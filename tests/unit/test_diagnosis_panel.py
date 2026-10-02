@@ -211,3 +211,52 @@ def test_on_diagnose_export_failure_still_shows_results(monkeypatch):
     assert out[4] is not None and out[4].get("candidates")
     # downloads stay disabled (recoverable by re-running once disk is free)
     assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+
+
+# ------------------------------------------------------------ status on page load
+def _build_tab(monkeypatch):
+    """Build the tab with any HTTP call during the build turned into a failure."""
+
+    def no_http_while_building(*args, **kwargs):
+        raise AssertionError("the tab made an HTTP call while the app was being built")
+
+    monkeypatch.setattr(dp.requests, "get", no_http_while_building)
+    monkeypatch.setattr(dp.requests, "post", no_http_while_building)
+    with gr.Blocks() as demo:
+        dp.create_diagnosis_tab(demo)
+    return demo
+
+
+def test_the_model_status_is_not_read_while_the_app_is_built(monkeypatch):
+    """The app is built before the server serves, so a status read then was stale
+    on arrival -- and under the systemd unit it was also aimed at the wrong port.
+    The placeholder stands until the first page load reads the real status."""
+    demo = _build_tab(monkeypatch)
+
+    placeholders = [
+        block for block in demo.blocks.values()
+        if isinstance(block, gr.Markdown) and block.value == dp.STATUS_CHECKING
+    ]
+    assert len(placeholders) == 1
+
+
+def test_the_model_status_is_read_on_every_page_load(monkeypatch):
+    demo = _build_tab(monkeypatch)
+
+    on_load = [
+        fn for fn in demo.fns.values()
+        if fn.fn is dp._on_load_status and (demo._id, "load") in fn.targets
+    ]
+    assert len(on_load) == 1
+    (status_md,) = on_load[0].outputs
+    assert isinstance(status_md, gr.Markdown) and status_md.value == dp.STATUS_CHECKING
+
+
+def test_the_reload_button_still_writes_the_same_status(monkeypatch):
+    """Reload already refreshed the status; the load event targets the same
+    component rather than a second copy of it."""
+    demo = _build_tab(monkeypatch)
+
+    (on_load,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_load_status]
+    (on_reload,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_reload_pipeline]
+    assert on_reload.outputs[0] is on_load.outputs[0]

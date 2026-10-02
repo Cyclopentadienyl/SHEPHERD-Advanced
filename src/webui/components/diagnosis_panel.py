@@ -39,10 +39,21 @@ from typing import Any, Dict, List, Optional, Tuple
 import gradio as gr
 import requests
 
+from src.utils.server_address import ServerAddressUnknownError, api_base_url
+
 logger = logging.getLogger(__name__)
 
-API_BASE = "http://127.0.0.1:8000"
-PIPELINE_API = f"{API_BASE}/api/v1"
+
+def _api_url(path: str) -> str:
+    """An API URL on this server, at the address it actually bound.
+
+    The tab runs inside the API's own process, so the API is at an address this
+    server has accepted requests on -- port 8264 under the systemd unit, 8000
+    under a bare start. `src/utils/server_address.py` explains why that is the one
+    source; it replaces a hard-coded ``http://127.0.0.1:8000``.
+    """
+    return f"{api_base_url()}{path}"
+
 
 # Shown when the pipeline loads but the GNN did not. This is not cosmetic: the
 # ranking then comes from path reasoning over the knowledge graph alone, so a
@@ -114,12 +125,14 @@ def _call_diagnose(
     }
     try:
         resp = requests.post(
-            f"{API_BASE}/api/v1/diagnose",
+            _api_url("/api/v1/diagnose"),
             json=payload,
             timeout=30,
         )
         resp.raise_for_status()
         return resp.json()
+    except ServerAddressUnknownError as e:
+        return {"error": str(e)}
     except requests.ConnectionError:
         return {"error": "API server not reachable. Is uvicorn running?"}
     except requests.HTTPError as e:
@@ -133,9 +146,11 @@ def _call_diagnose(
 def _get_pipeline_status() -> Dict[str, Any]:
     """Get pipeline status from API."""
     try:
-        resp = requests.get(f"{PIPELINE_API}/pipeline/status", timeout=5)
+        resp = requests.get(_api_url("/api/v1/pipeline/status"), timeout=5)
         resp.raise_for_status()
         return resp.json()
+    except ServerAddressUnknownError as e:
+        return {"initialized": False, "error": str(e)}
     except Exception:
         return {"initialized": False, "error": "API not reachable"}
 
@@ -151,12 +166,14 @@ def _reload_pipeline(
         payload["conv_type"] = conv_type
     try:
         resp = requests.post(
-            f"{PIPELINE_API}/pipeline/reload",
+            _api_url("/api/v1/pipeline/reload"),
             json=payload,
             timeout=180,
         )
         resp.raise_for_status()
         return resp.json()
+    except ServerAddressUnknownError as e:
+        return {"success": False, "message": str(e)}
     except requests.ConnectionError:
         return {"success": False, "message": "API server not reachable."}
     except Exception as e:
@@ -188,9 +205,33 @@ def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
         return f"Failed to save: {e}"
 
 
+#: `checkpoint_meta` entries that describe the run rather than measure the model.
+#: Everything else in it is a training-log metric the pipeline chose to copy
+#: (`src/inference/pipeline.py:CHECKPOINT_LOG_METRICS`), shown in the order it
+#: arrives, so the choice of metrics lives in one place.
+_CHECKPOINT_DESCRIPTIVE_KEYS = ("epoch", "params", "device")
+
+#: Shown until the first status read after the page loads. The status is not read
+#: while the app is being built: that happens before the server is serving, so
+#: what it found was stale by the time anyone looked.
+STATUS_CHECKING = "⏳ Checking pipeline status…"
+
+
+def _checkpoint_metric_label(key: str) -> str:
+    """``val_hits@1`` -> ``Val Hits@1``; ``mrr`` -> ``MRR``; ``hits_at_10`` -> ``Hits@10``."""
+    words = key.replace("hits_at_", "hits@").split("_")
+    return " ".join("MRR" if w == "mrr" else w[:1].upper() + w[1:] for w in words)
+
+
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     """Format pipeline status as Markdown."""
     if not status_data.get("initialized", False):
+        error = status_data.get("error")
+        if error:
+            # The status could not be read at all. "Not loaded" here would be a
+            # guess shown as a fact -- it is how a tab calling the wrong port
+            # reported a serving pipeline as unloaded.
+            return f"⚠️ **Pipeline status unavailable:** {error}"
         return "⚪ **Pipeline not loaded.** Configure paths below and click Load / Reload Pipeline."
 
     gnn_ready = bool(status_data.get("gnn_ready"))
@@ -225,12 +266,12 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
         if params is not None:
             meta_parts.append(f"{params:,} params")
         meta_parts.append(f"device={device}")
-        # Training metrics if available
-        for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
-            val = ckpt_meta.get(key)
-            if val is not None:
-                label = key.replace("_", " ").title()
-                meta_parts.append(f"{label}: {val:.4f}")
+        # Training-log metrics, as the pipeline copied them
+        for key, val in ckpt_meta.items():
+            if key in _CHECKPOINT_DESCRIPTIVE_KEYS:
+                continue
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                meta_parts.append(f"{_checkpoint_metric_label(key)}: {val:.4f}")
         lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
 
     # Fingerprint warnings
@@ -717,7 +758,11 @@ def _on_reset_defaults() -> Tuple[str, str, str]:
 
 
 def _on_load_status() -> str:
-    """Refresh pipeline status display."""
+    """Read the pipeline status for a page that has just loaded.
+
+    Wired to the Blocks' load event, so every page opened shows the server's
+    status at that moment rather than what it was while the app was being built.
+    """
     status_data = _get_pipeline_status()
     return _format_pipeline_status(status_data)
 
@@ -725,9 +770,12 @@ def _on_load_status() -> str:
 # =============================================================================
 # Tab builder (called from app.py)
 # =============================================================================
-def create_diagnosis_tab() -> None:
+def create_diagnosis_tab(blocks: gr.Blocks) -> None:
     """
     Build the Diagnosis Panel tab inside a gr.Blocks context.
+
+    ``blocks`` is the enclosing app, which the model status refreshes from on
+    every page load (`_on_load_status`).
 
     Layout:
         Left column (input):
@@ -751,9 +799,7 @@ def create_diagnosis_tab() -> None:
     saved_cfg = _load_saved_config()
 
     with gr.Accordion("Model Configuration", open=False):
-        config_status_md = gr.Markdown(
-            value=_format_pipeline_status(_get_pipeline_status()),
-        )
+        config_status_md = gr.Markdown(value=STATUS_CHECKING)
 
         with gr.Row():
             data_dir_input = gr.Textbox(
@@ -906,6 +952,10 @@ def create_diagnosis_tab() -> None:
     # DownloadButton's value, so a single click downloads them — no click handler.
 
     # === Model config event wiring ===
+    # Read on each page load, not once at build time: the app is built before
+    # the server is serving, so a status computed then is stale on arrival.
+    blocks.load(fn=_on_load_status, inputs=[], outputs=[config_status_md])
+
     reload_btn.click(
         fn=_on_reload_pipeline,
         inputs=[data_dir_input, checkpoint_input, arch_input],
