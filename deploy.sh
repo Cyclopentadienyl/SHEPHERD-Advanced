@@ -48,11 +48,18 @@ PYG_WHEEL_URL="https://data.pyg.org/whl/torch-2.10.0+cu130.html"
 # for exactly this torch+CUDA combo. deploy compares the host's actual torch
 # against these to decide whether the prebuilt wheels are usable (Case A) or a
 # source build is required (Case B). When the prebuilt target changes, update
-# all three together with the Release (see medical-kg-todo.md Phase 3 note).
+# all of these together with the Release, each asset's SHA-256 included (see
+# medical-kg-todo.md Phase 3 note).
 PYG_PREBUILT_TORCH="2.10.0"
 PYG_PREBUILT_CUDA="130"
 PYG_RELEASE_REPO="cyclopentadienyl/shepherd-advanced"
 PYG_RELEASE_TAG="pyg-arm-cu130-torch2.10.0"
+# SHA-256 of each Release asset, by CPython tag. The tarball holds native
+# wheels that are installed as downloaded, so an asset with no entry here is
+# not downloaded at all, and one that does not match is not installed. The
+# Release holds cp312 only; the value is GitHub's asset digest, confirmed
+# against a fresh download.
+PYG_PREBUILT_SHA256_cp312="7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967"
 
 # Detect Architecture
 ARCH=$(uname -m)
@@ -217,17 +224,36 @@ run_source_build() {  # self-compile via the standalone builder
     ASSUME_YES=1 INSTALL_AFTER_BUILD=1 bash scripts/build_pyg_arm.sh
 }
 
-fetch_prebuilt_wheels() {  # downloads + extracts Release tarball; sets WHEELDIR
-    local pyver asset url tmp
+fetch_prebuilt_wheels() {  # downloads, verifies + extracts Release tarball; sets WHEELDIR
+    local pyver asset url tmp expected_var expected actual
     pyver="$("$PY" -c 'import sys;print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
     asset="pyg-ext-torch${PYG_PREBUILT_TORCH}-cu${PYG_PREBUILT_CUDA}-${pyver}-linux_aarch64.tar.gz"
+    expected_var="PYG_PREBUILT_SHA256_${pyver}"
+    expected="${!expected_var:-}"
+    if [ -z "$expected" ]; then
+        echo -e "${YELLOW}[WARN] No pinned SHA-256 for $asset; not downloading it.${NC}"
+        return 1
+    fi
+    if ! command -v sha256sum > /dev/null 2>&1; then
+        echo -e "${YELLOW}[WARN] sha256sum not found; $asset cannot be verified, so it is not downloaded.${NC}"
+        return 1
+    fi
     url="https://github.com/${PYG_RELEASE_REPO}/releases/download/${PYG_RELEASE_TAG}/${asset}"
     tmp="$(mktemp -d)"
     echo -e "[INFO] Downloading prebuilt wheels: $url"
-    if curl -fSL "$url" -o "$tmp/$asset" && tar xzf "$tmp/$asset" -C "$tmp"; then
+    if ! curl -fSL "$url" -o "$tmp/$asset"; then
+        rm -rf "$tmp"; return 1
+    fi
+    actual="$(sha256sum "$tmp/$asset" | cut -d' ' -f1)"
+    if [ "$actual" != "$expected" ]; then
+        echo -e "${RED}[ERROR] SHA-256 mismatch for $asset: expected $expected, got $actual. Not installing it.${NC}"
+        rm -rf "$tmp"; return 1
+    fi
+    echo -e "${GREEN}[OK] SHA-256 verified: $asset${NC}"
+    if tar xzf "$tmp/$asset" -C "$tmp"; then
         WHEELDIR="$tmp"; return 0
     fi
-    return 1
+    rm -rf "$tmp"; return 1
 }
 
 # Set when the user asked for native ext (pull/compile) but we ended up on the
@@ -279,7 +305,7 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
             if fetch_prebuilt_wheels && uv pip install --no-deps --find-links "$WHEELDIR" $NATIVE_PKGS; then
                 echo -e "${GREEN}[OK] Prebuilt PyG wheels installed.${NC}"
             else
-                echo -e "${YELLOW}[WARN] Prebuilt download/install failed (Release asset missing?). Falling back to source build...${NC}"
+                echo -e "${YELLOW}[WARN] Prebuilt wheels not installed (download, checksum or install failed; see above). Falling back to source build...${NC}"
                 if ! run_source_build; then
                     echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
                     PYG_FALLBACK_REASON="build-failed"
