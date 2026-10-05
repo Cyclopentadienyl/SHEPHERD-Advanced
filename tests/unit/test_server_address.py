@@ -1,6 +1,6 @@
 """
-The in-process WebUI calls the API at the address the server actually bound.
-============================================================================
+The in-process WebUI calls the API at an address the server accepted a request on.
+====================================================================================
 The Diagnosis tab used to call a hard-coded `http://127.0.0.1:8000`. The systemd
 unit starts the server on port 8264 (uvicorn takes the last `--port`), so under
 the unit the tab called a port nothing listened on, and reported a serving
@@ -153,7 +153,11 @@ def test_under_a_real_server_the_recorded_port_is_the_bound_port():
         bound_port = server.servers[0].sockets[0].getsockname()[1]
         assert bound_port != 8000
 
-        requests.get(f"http://127.0.0.1:{bound_port}/ok", timeout=5).raise_for_status()
+        # Proxy-free, as the tab's own calls are: a proxy variable in the test
+        # environment must not route a loopback request away from the server.
+        with requests.Session() as session:
+            session.trust_env = False
+            session.get(f"http://127.0.0.1:{bound_port}/ok", timeout=5).raise_for_status()
 
         assert api_base_url() == f"http://127.0.0.1:{bound_port}"
     finally:
@@ -215,22 +219,49 @@ def test_the_diagnosis_tab_calls_the_recorded_address(monkeypatch):
 
 def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
     """The target can be a LAN address an institutional NO_PROXY list omits, and
-    the diagnose payload carries patient phenotypes. With trust_env off, the
-    proxy environment variables are not consulted at all."""
+    the diagnose payload carries patient phenotypes.
+
+    Checked where requests hands a prepared request to the transport, so the real
+    session code decides the proxies -- an attribute check alone would pass for a
+    caller that turned trust_env off and then passed the environment's proxies in
+    by hand. The control call shows the proxy variable is live in this test."""
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
-    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
-    monkeypatch.setenv("http_proxy", "http://proxy.invalid:3128")
-    calls = _record_self_calls(monkeypatch, panel)
+    proxy = "http://proxy.invalid:3128"
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, proxy)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    sent = []
+
+    def fake_send(adapter, request, **kwargs):
+        sent.append((request.url, dict(kwargs.get("proxies") or {})))
+        response = panel.requests.models.Response()
+        response.status_code = 200
+        response._content = b'{"initialized": true}'
+        response.request = request
+        response.url = request.url
+        return response
+
+    monkeypatch.setattr(panel.requests.adapters.HTTPAdapter, "send", fake_send)
     record_server_address(("192.0.2.10", 8264))
 
+    with panel.requests.Session() as control:
+        control.get("http://192.0.2.10:8264/control")
+    assert sent[-1][1].get("http") == proxy, "control: the proxy variable is not live"
+
+    sent.clear()
     panel._get_pipeline_status()
     panel._reload_pipeline("data/workspaces/default", "")
     panel._call_diagnose(["HP:0001250"])
 
-    assert len(calls) == 3
-    assert all(trust_env is False for _, _, trust_env in calls)
+    assert [url for url, _ in sent] == [
+        "http://192.0.2.10:8264/api/v1/pipeline/status",
+        "http://192.0.2.10:8264/api/v1/pipeline/reload",
+        "http://192.0.2.10:8264/api/v1/diagnose",
+    ]
+    assert all(not proxies.get("http") and not proxies.get("all") for _, proxies in sent)
 
 
 def test_an_unknown_address_is_reported_not_disguised_as_not_loaded(monkeypatch):
@@ -263,6 +294,24 @@ def test_an_unreachable_api_is_reported_too(monkeypatch):
 
     assert "Pipeline status unavailable:** API not reachable" in rendered
     assert "not loaded" not in rendered
+
+
+@pytest.mark.parametrize(
+    "error_name, reason",
+    [("ConnectTimeout", "API not reachable"), ("ReadTimeout", "API did not answer within 5 s")],
+)
+def test_a_timeout_says_whether_the_connection_was_made(monkeypatch, error_name, reason):
+    """A connect timeout never reached the server; a read timeout did, and is
+    what a status read sees while a reload holds the server."""
+    pytest.importorskip("gradio")
+    from src.webui.components import diagnosis_panel as panel
+
+    _record_self_calls(monkeypatch, panel, error=getattr(panel.requests, error_name)("slow"))
+    record_server_address(("127.0.0.1", 8264))
+
+    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+
+    assert f"Pipeline status unavailable:** {reason}" in rendered
 
 
 def test_an_api_that_answered_with_an_error_is_not_called_unreachable(monkeypatch):

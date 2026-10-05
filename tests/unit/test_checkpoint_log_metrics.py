@@ -114,6 +114,11 @@ def test_the_ranking_keys_are_not_listed_a_second_time():
     assert not literals & set(RANKING_SCORE_KEYS), (
         f"ranking keys typed a second time: {sorted(literals & set(RANKING_SCORE_KEYS))}"
     )
+    # And the name spliced in is the imported object, not a local copy that shadows it.
+    from src.inference import pipeline
+    from src.utils import checkpoint_paths
+
+    assert pipeline.RANKING_SCORE_KEYS is checkpoint_paths.RANKING_SCORE_KEYS
 
 
 def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):

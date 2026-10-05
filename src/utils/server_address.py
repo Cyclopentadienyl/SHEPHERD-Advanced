@@ -10,8 +10,9 @@ tab then called a port nothing was listening on.
 **The address comes from the server, not from configuration.** Every HTTP request
 carries the ASGI ``server`` field — the local (host, port) of the socket that
 accepted it — and `src/api/middleware/server_address.py` records it here. A
-Diagnosis callback only ever runs because a request reached this server, so by
-the time one asks, the address is known. There is no second copy of the port to
+Diagnosis callback only ever runs because a request reached this server, so for a
+server listening on TCP the address is known by the time one asks (a Unix-domain
+socket has none; see below). There is no second copy of the port to
 keep in step with the launcher, the unit, `python -m src.api.main` or a bare
 `uvicorn` command line, and no list of ports to try.
 

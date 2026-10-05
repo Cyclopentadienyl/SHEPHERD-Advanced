@@ -230,7 +230,8 @@ def display_base_url(uvicorn_args: List[str]) -> str:
     uvicorn takes the last of a repeated option, in either spelling --
     ``--port 8264`` or ``--port=8264`` -- so this does too. A wildcard host is
     shown as the matching loopback address, which a browser on this machine can
-    open; an IPv6 literal is bracketed, as a URL requires.
+    open -- an empty ``--host=`` binds all interfaces too, so it counts as one. An
+    IPv6 literal is bracketed, as a URL requires, unless it already is.
     """
     host, port = "127.0.0.1", "8000"
     for i, arg in enumerate(uvicorn_args):
@@ -247,8 +248,8 @@ def display_base_url(uvicorn_args: List[str]) -> str:
             port = value
         else:
             host = value
-    host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
-    if ":" in host:
+    host = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
+    if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return f"http://{host}:{port}"
 

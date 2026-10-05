@@ -3,8 +3,9 @@ Record the address each request arrived on, for the in-process WebUI.
 =====================================================================
 `src/utils/server_address.py` holds the address and says why the Diagnosis tab
 needs it. This is the only writer: every HTTP and WebSocket request passes through
-here on its way into the app, Gradio's mount at `/ui` included, so the address is
-recorded before any WebUI callback can run.
+here on its way into the app, Gradio's mount at `/ui` included, so for a server
+listening on TCP the address is recorded before any WebUI callback can run. On a
+Unix-domain socket there is no TCP address to record.
 
 **Pure ASGI, not ``@app.middleware("http")``.** That decorator wraps the app in
 Starlette's ``BaseHTTPMiddleware``, which sees HTTP only and stands between the

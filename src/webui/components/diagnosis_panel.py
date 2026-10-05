@@ -167,12 +167,17 @@ def _get_pipeline_status() -> Dict[str, Any]:
         return resp.json()
     except ServerAddressUnknownError as e:
         return {"initialized": False, "error": str(e)}
-    except (requests.ConnectionError, requests.Timeout):
+    except requests.ConnectionError:
+        # ConnectTimeout is a ConnectionError too: the connection was never made.
         return {"initialized": False, "error": "API not reachable"}
+    except requests.Timeout:
+        # Connected, but no answer in time -- a reload holds the server meanwhile.
+        return {"initialized": False, "error": "API did not answer within 5 s"}
     except requests.HTTPError as e:
         return {"initialized": False, "error": f"API error {e.response.status_code}"}
-    except ValueError:
-        # requests' JSONDecodeError is a ValueError.
+    except requests.exceptions.InvalidJSONError:
+        # Narrower than ValueError, which requests also uses for a malformed URL
+        # or header -- a request that was never sent is not a reply.
         return {"initialized": False, "error": "the API's reply was not JSON"}
     except Exception as e:
         return {"initialized": False, "error": f"unexpected error: {e}"}

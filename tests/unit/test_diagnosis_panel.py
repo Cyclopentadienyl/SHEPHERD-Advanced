@@ -218,10 +218,10 @@ def _build_tab(monkeypatch):
     """Build the tab and fail if the build made any call to the API.
 
     Calls are recorded, not refused: the status helpers catch every exception, so
-    a fake that raised would be swallowed and the build would look clean. Both
-    layers are watched -- the status read itself, and the HTTP helper under every
-    call -- so a status read during the build is caught whether or not an address
-    is recorded.
+    a fake that raised would be swallowed and the build would look clean. Three
+    layers are watched -- the status read itself, the HTTP helper under every call,
+    and requests' own Session.request beneath both -- so a status read or any other
+    HTTP call during the build is caught whether or not an address is recorded.
     """
     calls = []
     real_status = dp._get_pipeline_status
@@ -234,8 +234,14 @@ def _build_tab(monkeypatch):
         calls.append(f"{method} {path}")
         raise AssertionError("no API call is expected while the app is built")
 
+    def watched_session_request(session, method, url, **kwargs):
+        calls.append(f"requests {method} {url}")
+        raise AssertionError("no HTTP request is expected while the app is built")
+
     monkeypatch.setattr(dp, "_get_pipeline_status", watched_status)
     monkeypatch.setattr(dp, "_self_request", watched_request)
+    # Underneath both: any requests call, including a direct requests.get.
+    monkeypatch.setattr(dp.requests.Session, "request", watched_session_request)
     with gr.Blocks() as demo:
         dp.create_diagnosis_tab(demo)
     assert calls == [], f"the tab called the API while the app was being built: {calls}"

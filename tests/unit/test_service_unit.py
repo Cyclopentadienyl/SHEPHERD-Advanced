@@ -163,9 +163,12 @@ def test_the_launcher_logs_the_port_the_unit_serves_on(monkeypatch, capsys):
         (["--host", "10.0.0.5", "--host", "0.0.0.0", "--port", "8000"], "http://127.0.0.1:8000"),
         (["--host", "0.0.0.0", "--port", "8000", "--host", "::"], "http://[::1]:8000"),
         (["--host", "0.0.0.0", "--port", "8000", "--host", "fd00::5"], "http://[fd00::5]:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--host="], "http://127.0.0.1:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--host", "[::1]"], "http://[::1]:8000"),
     ],
     ids=["defaults", "last-port-wins", "port-equals-form", "host-equals-form",
-         "last-host-wins-wildcard", "ipv6-wildcard", "ipv6-literal"],
+         "last-host-wins-wildcard", "ipv6-wildcard", "ipv6-literal", "empty-host-is-wildcard",
+         "already-bracketed"],
 )
 def test_the_displayed_address_follows_uvicorns_own_rules(uvicorn_args, expected):
     # uvicorn takes the last of a repeated option in either spelling. A display
