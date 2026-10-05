@@ -23,7 +23,7 @@ parallel one:
   2026-10-05, `cf23970`). The job runner is made by reshaping `training_manager`, with the
   Training Console moved onto it. The existing checkpoint listing route is upgraded instead of
   adding a second one.
-- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`).
+- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`).
 - **Corrected after an independent verification (2026-10-05).** Five reviewers checked every
   claim in revision 3. The corrections:
   - **the pool is not shared** (§2.2, D3, §4.0). Only the cosine is, so unifying the pool is
@@ -49,13 +49,19 @@ parallel one:
   - **the checkpoint list is C3 checkpoint inspection,** so it follows D8 rather than being
     display. The Training Console's resume dropdown is a second listing, and it moves onto
     the one listing function;
-  - **D4 names its nine fields.** Contested means not ordered, and only a deterministic record
-    can supersede. Ledger v2 carries what D4 needs;
+  - **D4 names its fields** (seven, after a third check moved two Mode-A-only constants out).
+    Contested means not ordered, and only a deterministic record can supersede. Ledger v2
+    carries what D4 needs from it, and contested status comes from the report store;
   - **D5:** batch size and code changes do move Mode C's numbers at floating-point level, so
     the job runner fixes a test run's inputs;
   - **D8:** M1 is an explicit setting, checked together with the request's arrival socket and
     the absence of forwarding headers. Stop is per job type;
   - **D3:** B-1 must also settle the served disease clamp and the silent phenotype drop.
+- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging, which now
+  stages a directory the oracle reads as its `--data-dir`. It also corrected the reader list,
+  now limited to measurement and audit readers with the generated-split readers named; the
+  Training Console's resume listing, now a named C3 exception; D4's field count; and the D3
+  citations, now at `1cab39f`.
 
 Revision 2 (`6854265`) settled D3 by the scorer policy, made D5 follow the owner's checkbox, and
 reworked D4, D6 and D8.
@@ -340,10 +346,11 @@ pool, the cosine, the candidate universe and the tie rule. Today only the cosine
   validation: the clamp is the defect, and Mode C's rule is the one to keep;
 - **the universe and the tie rule** live in `measurement.py`;
 - **two more served-path behaviours** that Mode C does not share must also be settled:
-  - the disease-index clamp (`src/inference/pipeline.py:1560`), which an all-disease universe
-    removes;
-  - the silent drop of phenotypes the graph does not map (`pipeline.py:1533-1537`). The
-    clinician should be told about it, rather than having the ranking scored around it.
+  - the disease-index clamp (`src/inference/pipeline.py:1536` at `1cab39f`), which an
+    all-disease universe removes;
+  - the silent drop of phenotypes the graph does not map (`pipeline.py:1509-1513` at
+    `1cab39f`). The clinician should be told about it, rather than having the ranking scored
+    around it.
 
 This is recorded as a **constraint on B-1**. It is not built here.
 
@@ -371,15 +378,17 @@ so the aim is to make that use visible and comparable, not to forbid it.
     covers the seeds, the batch formation and the numerical regime, `software_revision`
     included (`sidecar.py:87-92`, `:104-114`). Grouping by it would split the list at every
     commit, so checkpoints tested at different commits could never be compared.
-  - **Scoring semantics is a named list of nine fields,** the ones that say *what* a Mode C
+  - **Scoring semantics is a named list of seven fields,** the ones that say *what* a Mode C
     test computed: `mode`, `cohort_kind`, `candidate_construction`, `score_semantics`,
-    `model_construction`, `legacy_truncation_k`, `legacy_tie_policy`,
-    `canonical_tie_policy_version` and `metric_schema_version`.
-  - **Three groups are left out:**
+    `model_construction`, `canonical_tie_policy_version` and `metric_schema_version`.
+  - **Four groups are left out:**
     - the seeds and batch formation (`sidecar.py:87-92`);
     - the numerical regime (`:104-114`);
     - the sampler and loader fields. Mode C records these from loader defaults but does not
-      use them (`measure_scorer.py:352-358`), so a changed default must not split the group.
+      use them (`measure_scorer.py:352-358`), so a changed default must not split the group;
+    - `legacy_truncation_k` and `legacy_tie_policy`. They are constants on every manifest
+      (`measure_scorer.py:364-365`) that only Mode A's legacy ranking reads, so for the same
+      reason: they would split every group when the oracle's surface retires.
 
     The graph needs no field of its own, because a cohort version is bound to one graph
     (D6). The regime is shown on each row, and a row whose regime differs from the rest is
@@ -402,8 +411,9 @@ so the aim is to make that use visible and comparable, not to forbid it.
     precedence over an earlier non-deterministic one, because it is a stronger measurement
     and cannot be re-rolled for luck. Otherwise a later re-run cannot replace an earlier
     score.
-  - **The same limit as D5.** Contested status comes from the report store, so it carries D5's
-    limit: it rests on plain files.
+  - **The same limit as D5.** Contested status comes from the report store, so ordering reads
+    the ledger and the report store's contested status, and carries D5's limit: it rests on
+    plain files.
 - **Auto-selection never reads test results.** `select_auto_checkpoint`
   (`src/utils/checkpoint_paths.py:151`) stays on validation under every option.
 - **The cohort's usage history is kept.** It holds:
@@ -615,11 +625,14 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   - The read-only view shows recorded results from the ledger, which opens no checkpoint.
   - Taking a safe metadata read out of C3 would be an amendment to SPEC_4. This plan does not
     propose one.
-- **Known exceptions, outside this item.** Training start and stop stay ungated, through the
-  Training Console and `POST /api/v1/training/start` and `/stop` alike. Until SPEC_4's C4 is
-  addressed, the one job runner has two entry policies: test start gated, training start
-  not. Stop is per job type, so a training stop cannot stop a test job. Named here so the gap
-  is not read as closed.
+- **Known exceptions, outside this item,** named so the gap is not read as closed:
+  - **training start and stop stay ungated,** through the Training Console and
+    `POST /api/v1/training/start` and `/stop` alike. Until SPEC_4's C4 is addressed, the one
+    job runner has two entry policies: test start gated, training start not. Stop is per job
+    type, so a training stop cannot stop a test job;
+  - **the Training Console's resume dropdown** calls the same listing function (§6 step 3) and
+    stays ungated with the rest of the Console. It is a C3 listing outside D8 until SPEC_4's
+    C3 and C4 are addressed.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
 machine where the controls are enabled.
@@ -669,20 +682,40 @@ This is one pipeline extended, not a second one.
     supplied cohort, that is a registered mapped version. `read_samples` reads the file the
     resolver returns, and digests are taken from that same file, so the digest recorded is the
     digest of the samples scored.
-  - **Every reader moves onto it:** `measure_scorer` in all its modes;
-    `scripts/audit_split_overlap.py`; `scripts/audit_generator_fidelity.py`;
-    `src/evaluation/cohort.py`'s own overlap reader; and `scripts/calibrate_mode_a.py`, which
-    passes `--cohort-kind` through. A supplied cohort's argument changes from a split name to
-    a registered cohort version.
+  - **Every measurement and audit reader moves onto it:**
+    - `measure_scorer` in all its modes;
+    - `scripts/audit_split_overlap.py`, including its direct hash;
+    - `scripts/audit_generator_fidelity.py`, including its direct hashes
+      (`audit_generator_fidelity.py:538-539`);
+    - `src/evaluation/cohort.py`'s own overlap reader;
+    - `scripts/calibrate_mode_a.py`, which passes `--cohort-kind` through.
+
+    A supplied cohort's argument changes from a split name to a registered cohort version.
+    The tests that pass `--split test --cohort-kind supplied`, or test `read_samples`'
+    split-name contract, change with it: `tests/integration/test_legacy_equivalence.py`
+    (`:53`, `:290-466`) and `tests/unit/test_measurement_mode_a.py` (its supplied-cohort
+    cases, from `:54`).
+  - **Readers of generated splits only stay as they are,** and are listed so the claim is not
+    read as wider. `scripts/train_model.py` locates `train`/`val` twice, as `measure_scorer`
+    does today (`:449`, `:551-557`, and the check at `:717`).
+    `scripts/measure_served_pipeline.py` and `scripts/probe_deployment.py` read `val` by name.
+    None of them reads a test cohort. Moving them onto the resolver is a follow-up outside
+    this item.
   - **The frozen oracle is the one named exception.** `scripts/evaluate_model.py` is
-    byte-pinned (`tests/unit/test_frozen_evaluator.py`) and reads `<split>_samples.json`
-    itself (`evaluate_model.py:203`). `calibrate_mode_a.py` and
-    `tests/integration/test_legacy_equivalence.py` drive it on supplied cohorts.
-    - For them, the registry writes a registered version out as that file in the run's own
-      working directory, checked against the version's digest. Nothing else reads it.
-    - Condition for removing this: the frozen oracle's retirement.
-  - Generated cohorts, the workspace's own splits, stay where they are, located by the same
-    resolver.
+    byte-pinned (`tests/unit/test_frozen_evaluator.py`). It reads `<split>_samples.json` and
+    the graph tensors from its `--data-dir` (`evaluate_model.py:203, 224-234`), and its
+    `--split` accepts only train, val or test (`:443`). `calibrate_mode_a.py` and
+    `tests/integration/test_legacy_equivalence.py` drive it on supplied cohorts. For them:
+    - **a staging directory per run** holds the registered version written as
+      `test_samples.json`, checked against the version's digest;
+    - **beside it** are links to the workspace's `node_features.pt`, `edge_indices.pt` and
+      `num_nodes.json`, checked against the workspace's graph digests;
+    - **the driver** passes that directory as the oracle's `--data-dir`, with `--split test`.
+
+    Nothing else reads the staging directory, and no loose file stays in the workspace. This
+    exception goes when the frozen oracle retires.
+  - Generated cohorts, the workspace's own splits, stay where they are. The measurement and
+    audit readers locate them through the same resolver.
   - The report carries the cohort's label and role, the source case count and the exclusion
     counts.
 - **Report store.** Every run's report is kept with its cohort version, and disagreements are
@@ -694,9 +727,9 @@ This is one pipeline extended, not a second one.
     - the cohort's version label and role;
     - the source case count, with the exclusion counts;
     - corroborating report digests;
-    - and what D4 needs to order from the ledger alone: a digest over D4's nine
-      scoring-semantics fields, the numerical-regime fields, and a registration sequence
-      number;
+    - and what D4 needs from the ledger: a digest over D4's seven scoring-semantics fields,
+      the numerical-regime fields, and a registration sequence number. D4 also reads
+      contested status, which comes from the report store (D5);
   - **Rules:** D5's duplicate rule, and its refusal while reports disagree.
 - **Ledger compatibility, decided before the format changes: v2 does not read v1.**
   - v2 code refuses a v1 file, as today's code refuses any other version: "read it with the
@@ -749,7 +782,7 @@ This is one pipeline extended, not a second one.
 
 Each step is one reviewable change.
 
-0. **F1–F3**: done on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`).
+0. **F1–F3**: done on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`).
 1. **The cohort registry**: source sets, preview, mapping, mapped versions, graph binding and
    usage history. Tests use fixtures only; no real patient data enters the repository.
 2. **Measurement integration**, which includes:
@@ -764,6 +797,10 @@ Each step is one reviewable change.
    - it lists by a workspace and architecture chosen among those the server lists, and the
      server resolves the directory. The two Training Console handlers stop setting
      `checkpoint_dir` from request values;
+   - training start's explicit `checkpoint_dir`, honoured verbatim today
+     (`training_manager.py:134-146`), is restricted to directories the server resolves the
+     same way. The write path and the listing then agree, and resume can always find what
+     training wrote;
    - its load becomes `weights_only=True` (SPEC_4 A1), and a checkpoint whose format that
      refuses is listed without metadata.
 4. **The UI**: the Test tab, Model Management and the Diagnosis display. It also carries D8:
