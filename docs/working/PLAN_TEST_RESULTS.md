@@ -5,10 +5,12 @@ decisions that the owner, and where marked the institution, make before any code
 §6's order applies only once they are made.
 
 Facts about the code are cited from `main` at `1cab39f`, except where §3 notes the F1–F3 fix on
-this branch.
+this branch. **A bare § number refers to this plan.** Sections of `EVALUATION_COHORTS.md` are
+written "EC §x", and other documents are named.
 
-**Revision 3 (2026-10-02)** follows the review of revision 2 (`6854265`), and the owner's caution
-that between two pipelines a compatibility layer easily becomes a parallel one:
+**Revision 3 (2026-10-02; amended 2026-10-05)** follows the review of revision 2 (`6854265`),
+and the owner's caution that between two pipelines a compatibility layer easily becomes a
+parallel one:
 - **One path per concern** is now a stated rule (§4.0), and the plan is checked against it. As a
   result, ledger v2 no longer reads v1 files (§5).
 - **D8:** a recorded M3 risk acceptance does not unlock the controls. The refusal happens where
@@ -17,10 +19,28 @@ that between two pipelines a compatibility layer easily becomes a parallel one:
   all-source figure are shown separately.
 - **D5:** a key whose runs disagree stays blocked. The way forward is a deterministic re-run,
   which is a different key.
-- **Existing paths are upgraded to fit, not worked around** (§4.0, the owner's rule). The job
-  runner is made by reshaping `training_manager`, with the Training Console moved onto it. The
-  existing checkpoint listing route is upgraded instead of adding a second one.
-- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`).
+- **Existing paths are upgraded to fit, not worked around** (§4.0, the owner's rule; amended
+  2026-10-05, `cf23970`). The job runner is made by reshaping `training_manager`, with the
+  Training Console moved onto it. The existing checkpoint listing route is upgraded instead of
+  adding a second one.
+- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`, `fe44b8f`).
+- **Corrected after an independent verification (2026-10-05).** Five reviewers checked every
+  claim in revision 3. The corrections:
+  - **the pool is not shared** (§2.2, D3, §4.0). Only the cosine is, so unifying the pool is
+    part of the constraint on B-1;
+  - **D4 groups by scoring semantics**, not the whole semantics digest, which splits at every
+    commit; and it orders by the first registered record;
+  - **D5's block holds within one key.** Across keys the choice is made visible: test runs fix
+    the seed and batch formation, and D4 uses the first registered record. The block rests on
+    plain files;
+  - **the supplied-cohort path changes at `resolve_cohort`**, so its other consumers move with
+    it (§5);
+  - **the listing route's `weights_only=False` load is converted** when the route is upgraded
+    (§5, §6 step 3);
+  - **D8** excludes a same-host reverse proxy from M1 and names training start as a known
+    ungated exception.
+
+  The pool claim and D4's grouping were carried over from revision 2.
 
 Revision 2 (`6854265`) settled D3 by the scorer policy, made D5 follow the owner's checkbox, and
 reworked D4, D6 and D8.
@@ -103,8 +123,15 @@ are `train`/`val`/`test`.
     `measurement.py:105`).
 
   That is `DISEASE_SCORER_POLICY.md` statements 1–3, which the institution accepted (§3.4
-  there). It uses the same pooling and cosine primitives as the served pipeline
-  (`src/inference/scoring.py`).
+  there).
+- **Mode C and the served pipeline share the cosine, not the pool** (`src/inference/scoring.py`).
+  - The cosine is one primitive: the served `cosine_scores` delegates to
+    `cosine_score_matrix` (`scoring.py:212-243`).
+  - The pool is two implementations, bound by an equivalence test on valid input
+    (`scoring.py:158-166`). The served `pool_patient_embeddings` clamps an out-of-range
+    phenotype index into range (`scoring.py:133-153`). Mode C validates every id and refuses
+    an out-of-range one, because a clamp scores a different patient with a plausible rank
+    (`measurement.py:1255-1262`).
 - **What the Diagnosis tab shows today is the legacy behaviour.** It is
   `0.7 × ((cos+1)/2) + 0.3 × SP` behind a BFS discovery gate. The policy replaces it in work
   item B-1, which is gated and not implemented (`DISEASE_SCORER_POLICY.md` §2, §6).
@@ -137,9 +164,15 @@ are `train`/`val`/`test`.
     `main` (`diagnosis_panel.py:44`; F1, fixed on this branch).
 - **One job runner.** `training_manager` tracks one subprocess, with `train_model.py` hard-coded.
   It is not a general job runner.
-- **Checkpoint listing.** The only listing route is `GET /api/v1/training/checkpoints`. It reads
-  whatever directory the training singleton last used. No route lists checkpoints by workspace
-  and architecture.
+- **Checkpoint listing.** The only listing route is `GET /api/v1/training/checkpoints`. No route
+  lists checkpoints by workspace and architecture.
+  - **Which directory.** It reads the training singleton's `checkpoint_dir`: the relative
+    `checkpoints` until a training start in the same process sets it. It looks at the top level
+    only (`*.pt`), so under the per-architecture layout it finds nothing
+    (`src/api/services/training_manager.py:88, 102, 448`).
+  - **How it reads.** It loads every file with `torch.load(weights_only=False)` (`:464`). That is
+    one of SPEC_4 §2.1's client-reachable deserialisation sites, reached through a
+    client-influenced directory.
 - **Diagnosis tab.** It has no checkpoint picker, only a free-text path and an architecture
   dropdown.
 - **Network exposure.** The launcher's default bind is `0.0.0.0`
@@ -156,17 +189,17 @@ are `train`/`val`/`test`.
 
 From `docs/working/EVALUATION_COHORTS.md`:
 
-- **§4.1.** A valid test cohort:
+- **EC §4.1.** A valid test cohort:
   - is frozen, versioned and digested;
   - declares its metrics and acceptance rules before the result;
   - is separated from training and from selection;
   - is access-controlled, *so that repeated inspection does not silently convert it into a
     selection set*. Condition 6 is "an operating rule for the institution, not a piece of
     software".
-- **§4.2.** MyGene2 and the institutional cohort are **reported separately, never pooled**.
-- **§5 item 5.** A cohort is identified by **digest and version label, never by filename or
+- **EC §4.2.** MyGene2 and the institutional cohort are **reported separately, never pooled**.
+- **EC §5 item 5.** A cohort is identified by **digest and version label, never by filename or
   path**. Fetching a dataset by URL into a clinical system "would need its own review".
-- **§6.7.**
+- **EC §6.7.**
   - "A control that changes a cohort's role is a protocol change, not a display setting."
   - A burned cohort "cannot be returned to untouched by a checkbox, a rename, or a new run
     label".
@@ -180,10 +213,10 @@ branch. F4 is a documentation fix, left to §6 step 5.
 
 | | Finding | Evidence |
 |---|---|---|
-| F1 | **Under the systemd unit, the Diagnosis tab probably cannot reach the API.** The unit passes `--port 8264` after the launcher's default `--port 8000`, and uvicorn takes the last value. The tab calls port 8000. **The fix takes the address from one shared source**, the address the server actually bound. It adds no second hard-coded port and does not probe several | `scripts/service/systemd/shepherd.service:25`; `scripts/launch/shep_launch.py:17, 416`; `diagnosis_panel.py:44`. **Verified by running**: the launcher with the unit's arguments served 8264 and refused 8000. **Fixed in `d95965e`**: the address is recorded from each request's ASGI `server` field |
+| F1 | **Under the systemd unit, the Diagnosis tab could not reach the API** (verified). The unit passes `--port 8264` after the launcher's default `--port 8000`, and uvicorn takes the last value. The tab calls port 8000. **The fix takes the address from one shared source**: an address the server accepted a request on. It adds no second hard-coded port and does not probe several | `scripts/service/systemd/shepherd.service:25`; `scripts/launch/shep_launch.py:17, 416`; `diagnosis_panel.py:44`. **Verified by running**: the launcher with the unit's arguments served 8264 and refused 8000. **Fixed in `d95965e`**: the address is recorded from each request's ASGI `server` field. Follow-up `fe44b8f`: self-calls bypass proxy settings, and a failed status read gives its real reason |
 | F2 | **For checkpoints written by the current trainer, the loaded model's ranking metrics are never shown.** The pipeline looks for `mrr`, `hits_at_1` and `hits_at_10` in the checkpoint's `logs`. The current trainer stores its `val_`-prefixed validation dict there (`val_mrr`, `val_hits@k`), so only the losses appear. No trainer in this repository has written the names looked for | `src/inference/pipeline.py:934`; `src/training/trainer.py:723`; `src/training/callbacks.py:303`. **Fixed in `d95965e`, `88569e4`**: the ranking keys copied are `RANKING_SCORE_KEYS`, the list auto-selection uses, and the old names are not kept as a fallback |
 | F3 | **The Diagnosis tab's model status is not refreshed when the page loads.** Its initial value is computed once, when the app is built, before the server is serving. A page opened later shows that build-time status until Reload is pressed; Reload does update it. `_on_load_status` is defined and never wired | `diagnosis_panel.py:719-722, 754-756, 909-913`. **Fixed in `d95965e`**: read on every page load |
-| F4 | **§6.5 says the ledger key includes mode and tie policy.** The code keys on the semantics digest, which hashes both. A documentation fix | `EVALUATION_COHORTS.md` §6.5; `sidecar.py:157-162` |
+| F4 | **EC §6.5 says the ledger key includes mode and tie policy.** The code keys on the semantics digest, which hashes both. A documentation fix | `EVALUATION_COHORTS.md` §6.5; `sidecar.py:157-162` |
 
 ## 4. Decisions
 
@@ -199,11 +232,11 @@ with the first, although only the newer one will be used. This item adds none:
 | Concern | The one path | Not used for it here, and not added alongside |
 |---|---|---|
 | Producing a test number | `measure_scorer.py`, Mode C | `evaluate_model.py`, the frozen oracle; Mode D, which measures the legacy behaviour and is a separate item |
-| Scoring | the `src/inference/scoring.py` primitives, shared with B-1 (D3) | a test-only scorer |
-| Resolving a test cohort | the cohort registry (D6) | the loose `<split>_samples.json` supplied path, removed when the registry lands |
+| Scoring | one implementation of the pool, the cosine, the candidate universe and the tie rule, shared by Mode C and B-1 (D3). Only the cosine is shared today | a test-only scorer; two pools |
+| Resolving a test cohort | the cohort registry (D6), reached through `resolve_cohort`'s supplied branch, so every consumer moves with it (§5) | the loose `<split>_samples.json` supplied path |
 | Recording | ledger v2 | a v1 reader inside v2 code (§5) |
 | Running a job | one job runner, made by reshaping `training_manager`; the Training Console moves onto it | a second process manager, or a runner extracted around the old one |
-| Listing checkpoints | the existing listing route, upgraded to list by workspace and architecture | a second listing route |
+| Listing checkpoints | the existing listing route, upgraded: by workspace and architecture, from server configuration, with a safe metadata read (§5) | a second listing route |
 | A checkpoint's validation ranking score | `RANKING_SCORE_KEYS` and `ranking_score_detail` | a second key list (F2 removed one) |
 
 **Existing paths are changed to fit, not worked around.** Where an existing path has a defect or
@@ -217,7 +250,7 @@ then states the condition for removing it.
 
 | Option | Consequence |
 |---|---|
-| Inside the `.pt` | Changes the checkpoint's SHA-256. Every record, evidence file and citation of that model then points at bytes that no longer exist (§5 item 4) |
+| Inside the `.pt` | Changes the checkpoint's SHA-256. Every record, evidence file and citation of that model then points at bytes that no longer exist (EC §5 item 4) |
 | In the file name | The current practice, and what the owner wants to replace |
 | **Beside it, in the existing ledger** | Bound by checkpoint and cohort digest; survives a rename; contradictions refused; already built |
 
@@ -236,7 +269,7 @@ without becoming the record.
 | Option | Cost |
 |---|---|
 | **(a) State the limit, and claim only binding** | None |
-| (b) A server-held key signs each record (HMAC), so an edit by anyone without the key is detected | Key generation, storage, rotation and backup; a lost key leaves every record unverifiable |
+| (b) A server-held key signs each record (HMAC), so an edit by anyone without the key is detected | Key generation, storage, rotation and backup; a lost key leaves every record unverifiable. Under the single-account deployment, the key is readable by the account that writes the ledger, so (b) detects only edits by someone who can write the directory but can neither read the key nor act as that account |
 | (c) Records also go to an append-only log outside the workspace | A second store to keep consistent |
 
 **Recommendation:** (a) now. (b) only if the institution requires detection of deliberate
@@ -260,7 +293,7 @@ institution has already said what the network's disease ranking is.
   absence as fatal.
 - **Metrics:** the authoritative family that `measurement.py:_authoritative` computes —
   `untruncated_mrr`, mean rank and hits@1/5/10/20/50/100. Which of them, if any, carries an
-  acceptance rule is declared before the first result (§4.1, and §4.9 question 1).
+  acceptance rule is declared before the first result (EC §4.1, and §4.9 question 1).
 
 **This is Mode C**, and it is the primary score this item records, not a substitute for
 something else.
@@ -280,10 +313,12 @@ B-1 ships.
 
 **One scorer, not two.** The number is meant to describe what the Diagnosis tab shows once B-1
 ships. That holds only if B-1's production scorer and Mode C share one implementation of the
-pool, the cosine, the candidate universe and the tie rule:
-- the pool and the cosine are shared already (`src/inference/scoring.py`, used by `run_mode_c`
-  and by the pipeline);
-- the universe and the tie rule live in `measurement.py`.
+pool, the cosine, the candidate universe and the tie rule. Today only the cosine is shared
+(§2.2):
+- **the pool is two implementations.** The served one clamps an out-of-range index, and Mode C
+  refuses one. Under §4.0's rule the served path adopts the refusing pool: the clamp is the
+  defect, and Mode C's rule is the one to keep;
+- **the universe and the tie rule** live in `measurement.py`.
 
 This is recorded as a **constraint on B-1**. It is not built here.
 
@@ -300,15 +335,29 @@ item and **not a prerequisite** for this one.
 ### D4 — Ordering by test score
 
 A list ordered by test score invites choosing by it. A cohort used to choose stops being an
-independent test (§4.1 condition 6, §6.7). The owner asked for ordering as an advanced option,
+independent test (EC §4.1 condition 6, EC §6.7). The owner asked for ordering as an advanced option,
 so the aim is to make that use visible and comparable, not to forbid it.
 
 **Proposed rules:**
 
 - **Only comparable numbers are ordered together.** Ordering is by one metric over records of
-  one cohort version and one `measurement_semantics_digest`. Checkpoints without such a record
-  are listed after the rest, marked "not tested on this cohort version". They are never
-  interleaved by a number from another version or semantics.
+  one cohort version and one **scoring semantics**.
+  - **Scoring semantics is narrower than `measurement_semantics_digest`.** That digest also
+    covers the seeds, the batch formation and the numerical regime, `software_revision`
+    included (`sidecar.py:87-92`, `:104-114`). Grouping by it would split the list at every
+    commit, so checkpoints tested at different commits could never be compared.
+  - **Scoring semantics is every semantic field except those** (`sidecar.py:74-99` without
+    `:87-92`): the mode, the candidate construction, `score_semantics`, `model_construction`,
+    and the tie and metric versions. These are the fields that say *what* was computed. The
+    regime is shown on each row, and a row whose regime differs from the rest is marked.
+  - **Labels say why a checkpoint is not ordered.** One with no record on this cohort version
+    is listed after the rest as "not tested on this cohort version". One whose records are
+    all under other scoring semantics is listed as "tested under different scoring
+    semantics". Neither is interleaved by a number that is not comparable.
+- **One number per checkpoint: the first registered.** A checkpoint can have several records in
+  one group, from re-runs after commits or under a deterministic regime. Ordering uses the
+  first registered record that is not contested (D5). The others are shown beside it, with any
+  difference marked, so a later re-run cannot replace an earlier score.
 - **Auto-selection never reads test results.** `select_auto_checkpoint`
   (`src/utils/checkpoint_paths.py:151`) stays on validation under every option.
 - **The cohort's usage history is kept.** It holds:
@@ -344,22 +393,35 @@ differ (§2.1).
 - **Evidence is never lost.** Every report is kept, so refusing a registration loses nothing.
 - **A disagreement is flagged.** When reports under one key disagree, the Test tab marks the
   key "runs disagree — investigate" and shows which fields differ.
-- **Picking the best run is prevented.** While a disagreeing report exists under a key,
-  registering any report under it is refused, checked or unchecked.
+- **Within one key, picking the best run is prevented.** While a disagreeing report exists
+  under a key, registering any report under it is refused, checked or unchecked.
 - **A disagreeing key stays blocked, by design.** Two numbers were obtained under one
   identity, and registering either would be choosing between results. An investigation adds a
-  recorded note: who, when and what was found. It deletes no report, and it does not lift the
-  block.
+  recorded note: who, when and what was found. The note is kept in the report store with that
+  key's reports, not in the ledger. It deletes no report, and it does not lift the block.
+- **Across keys, the choice is made visible rather than prevented.** Mode C consumes no
+  randomness, so its seeds, its batch formation and the software revision do not change what
+  it computes. They are key fields all the same (`sidecar.py:87-92`, `:104`), so a re-run under
+  another seed, or after any commit, is a new key. Two rules keep that from becoming a way
+  round the block:
+  - the job runner and the Test tab fix the seed, batch size and worker count for test runs,
+    so they cannot be varied from the UI;
+  - D4 orders by the first registered record, and later records in the same group are shown
+    beside it with any difference marked.
 - **The way forward is a deterministic re-run.** `deterministic_algorithms`,
   `cudnn_deterministic` and `cudnn_benchmark` are in the semantics digest (`sidecar.py:72-115`).
-  A run under deterministic settings is therefore a different key, registrable once its runs
-  agree. Under that regime a disagreement is a defect, not variation. `measure_scorer` records
-  these settings but has no switch to request them; §6 step 2 adds one.
+  A run under deterministic settings is therefore a different key. A single deterministic run
+  is registrable, and a second one that disagrees with it is a defect to investigate, not
+  variation. `measure_scorer` records these settings but has no switch to request them; §6
+  step 2 adds one.
 - **If deterministic execution is not possible** for an operation the run needs, the key stays
   contested. The Test tab shows every report's values for it, and no single number is
   registered.
 - **A record registered before the disagreement appeared** stays, marked contested wherever it
   is shown, with the note.
+- **The block rests on plain files.** Reports, notes and the usage history are files in the
+  workspace, and deleting a disagreeing report lifts the block. The tools refuse; they do not
+  make the refusal tamper-proof (D2).
 
 **The duplicate rule, a ledger change.** Today, re-registering an identical measurement from a
 report whose bytes differ is refused (§2.1). The proposed rule:
@@ -393,7 +455,7 @@ This changes the ledger's semantics and gets its own review.
   - a version label, for example `mygene2-2026-10`;
   - a role: `mygene2`, `institutional_acceptance`, or another named research role;
   - a manifest recording the source digest, the graph's artifact digests (`kg.json` and the
-    PyG export whose indices the samples use, `src/kg/artifacts.py:31-36`), the HPO version
+    PyG export whose indices the samples use, `src/kg/artifacts.py:32-37`), the HPO version
     mapped against, the mapping rule's version and the counts below.
 
   It is immutable. A new graph needs a re-map, which is a new mapped version from the same
@@ -424,7 +486,7 @@ case count and every case that will not map, in categories:
   better by losing its hard cases.
 - **Binding.** A run against a workspace whose graph artifact digests differ from the mapped
   version's is refused. This closes §2.3's undetected-index hazard.
-- **No URL download** in this item (§5 item 5). If wanted later, it goes through the existing
+- **No URL download** in this item (EC §5 item 5). If wanted later, it goes through the existing
   guarded downloader (`src/ontology/download.py`) and its own review.
 
 **Left to the owner** (§4.9 question 2): the real file formats; whether a case that loses some
@@ -464,11 +526,18 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
 - **The controls that change state** (import, run and register) work only where an actual
   protection limits who can trigger them:
   - SPEC_4's **M1**: the request arrived on a loopback socket of a verified single-workspace
-    deployment, reached locally or through controlled SSH forwarding;
+    deployment, reached locally or through controlled SSH forwarding. M1 excludes a reverse
+    proxy on the same host: behind one, every request arrives on loopback, and the check
+    would pass for any remote user. SPEC_4 §3: loopback is not authorisation;
   - **M2**: an authenticated, authorised actor, once SPEC_4's protection exists.
-- **A recorded M3 risk acceptance does not unlock them.** These are C3/C4 operations, which
-  SPEC_4 §2 marks "disable or protect" and "not covered by clinical-exposure risk acceptance".
-  Under M3 without an actual protection, the Test tab is read-only.
+- **A recorded M3 risk acceptance does not unlock them.**
+  - Treating these as C3/C4-class operations is this plan's classification; SPEC_4 does not
+    list the Test tab.
+  - SPEC_4 §2 marks both classes "Disable or protect". C3 adds "Not covered by
+    clinical-exposure risk acceptance" (SPEC_4:61). For both, the acceptance flag "does not
+    unlock them" (SPEC_4:64-68), and M3 itself requires C3/C4 "disabled or protected"
+    (SPEC_4:130).
+  - Under M3 without an actual protection, the Test tab is read-only.
 - **The refusal is where the event is handled, not in the button.** Each state-changing
   handler checks the condition itself before doing anything. Disabled buttons only show the
   reason; they are not the control. A direct call to the event endpoint, through Gradio's HTTP
@@ -482,21 +551,25 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
 - **Checkpoints and cohorts are chosen from server-side lists**, never from a path in a request.
 - **Acceptance includes direct calls.** Each state-changing endpoint, called directly from a
   non-loopback address, is refused; called from loopback under M1, it works.
-- **The Training Console** has the same exposure today. It is outside this item, and named here
-  so the gap is not read as closed.
+- **Listing is display, not control.** After §5's upgrade, the checkpoint list reads metadata
+  safely from a server-configured directory. It is shown in the read-only Test tab too.
+- **A known exception, outside this item.** Training start stays ungated, through the Training
+  Console and `POST /api/v1/training/start` alike. Until SPEC_4's C4 is addressed, the one job
+  runner therefore has two entry policies: test start gated, training start not. Named here so
+  the gap is not read as closed.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
 machine where the controls are enabled.
 
 ### 4.9 What is asked of the owner
 
-D1, D2 and D7 stand as recommended unless the owner objects. D3 follows from the scorer policy.
-Four questions remain:
+D1, D2, D5 and D7 stand as recommended unless the owner objects; D5's ledger rule also gets its
+own review. D3 follows from the scorer policy. Four questions remain:
 
 1. **The test's use.**
    - Confirm D3: a test result is the model's disease ranking under the approved policy.
    - For the institutional cohort: which metrics, and which acceptance rule, are declared
-     before the first result (§4.1)?
+     before the first result (EC §4.1)?
    - Is ordering by its score offered (D4)?
 2. **The data.**
    - The actual file formats.
@@ -505,7 +578,8 @@ Four questions remain:
    - MyGene2's terms of use.
 3. **Operators and access.**
    - Who may import, run and register, above all on the institutional cohort?
-   - Which deployment mode (D8) does the machine with enabled controls run under?
+   - Which deployment mode (D8) does the machine with enabled controls run under? Under this
+     revision only M1 enables them today: M3 does not unlock them, and M2 does not exist yet.
 4. **Existing ledgers.** Does any machine hold a v1 `evaluations.json` whose records must stay
    visible after v2 lands? If none does, v2 starts clean (§5).
 
@@ -520,13 +594,20 @@ This is one pipeline extended, not a second one.
   - **listing:** versions by role;
   - **usage history:** append-only, per mapped version.
 - **Measurement.** `measure_scorer`'s Mode C path resolves a registered mapped version.
-  - The loose `<split>_samples.json` path for supplied cohorts is removed when the registry
-    lands, not kept beside it, so there is one resolution path.
+  - **The change is made at the one resolution point.** `resolve_cohort`'s supplied branch
+    (`src/evaluation/cohort.py:161-172`) resolves a registered mapped version instead of a
+    loose `<split>_samples.json`, and nothing keeps the loose file beside it.
+  - **Every consumer moves with it:** `measure_scorer` in all its modes,
+    `scripts/audit_split_overlap.py` (the supplied-cohort overlap audit) and
+    `scripts/calibrate_mode_a.py`, which passes `--cohort-kind` through. Their argument
+    changes from a split name to a registered cohort version, and nothing is dropped.
   - Generated cohorts, the workspace's own splits, are unchanged.
   - The report carries the cohort's label and role, the source case count and the exclusion
     counts.
-- **Report store.** Every run's report is kept with its cohort version; disagreements are found
-  by key.
+- **Report store.** Every run's report is kept with its cohort version, and disagreements are
+  found by key. D5's investigation notes live here, beside the reports they concern. Reports
+  publish through the shared staging helper (`src/utils/file_modes.py`), replacing today's
+  plain `write_text` (`scripts/measure_scorer.py:669-679`), so a report is never half-written.
 - **Ledger v2:**
   - **New fields:** the cohort's version label and role, the source case count with the
     exclusion counts, and corroborating report digests;
@@ -537,8 +618,9 @@ This is one pipeline extended, not a second one.
     record compares with a v2 one.
   - Registering into a directory that holds a v1 ledger is refused, naming the file. The
     operator archives it deliberately, for example as `evaluations.v1.json`.
-  - The archived file stays readable with the revision that wrote it. Its results are
-    re-measured through the new path if they are wanted.
+  - The archived file stays readable with the revision that wrote it, under its original name:
+    v1's `record_evaluation.py` reads `evaluations.json` (`record_evaluation.py:83`). Its
+    results are re-measured through the new path if they are wanted.
   - Nothing is backfilled, converted or inferred.
   - **Condition:** the owner confirms that no v1 ledger holds records that must stay visible
     (§4.9 question 4). If one does, a read-only display of it is added, with the condition for
@@ -557,8 +639,10 @@ This is one pipeline extended, not a second one.
 - **UI:**
   - **Test tab** (new):
     - cohorts: import with preview, source sets and mapped versions, usage history;
-    - runs: choose a checkpoint from the server's list by workspace and architecture, which
-      `GET /api/v1/training/checkpoints` provides once upgraded (§2.4); choose a
+    - runs: choose a checkpoint from the server's list by workspace and architecture. That list
+      is `GET /api/v1/training/checkpoints`, upgraded in §6 step 3 (§2.4): the directory from
+      server configuration, never from a request or the last training configuration, and
+      metadata read with `weights_only=True` (SPEC_4 A1). Choose a
       cohort version; the checkbox "record the result automatically"; start; follow progress;
     - reports: read them, see disagreement flags, register one.
   - **Model Management** (replacing the placeholder): checkpoints by workspace and
@@ -584,8 +668,11 @@ Each step is one reviewable change.
    - a `measure_scorer` switch that requests deterministic execution (D5);
    - the `record_evaluation` CLI on reports.
 3. **The job runner**: `training_manager` reshaped into it, the Training Console moved onto it,
-   and test runs through it, with the GPU-busy rule. The checkpoint listing route is upgraded
-   in the same change.
+   and test runs through it, with the GPU-busy rule. The same change upgrades the checkpoint
+   listing route:
+   - it lists by workspace and architecture, from server configuration;
+   - its load becomes `weights_only=True` (SPEC_4 A1), and a checkpoint whose format that
+     refuses is listed without metadata.
 4. **The UI**: the Test tab, Model Management and the Diagnosis display. It also carries D8:
    the refusal in each state-changing handler, and the direct-call acceptance test.
 5. **Documentation and acceptance on the homelab**:
