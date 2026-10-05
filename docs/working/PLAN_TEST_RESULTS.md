@@ -17,6 +17,9 @@ that between two pipelines a compatibility layer easily becomes a parallel one:
   all-source figure are shown separately.
 - **D5:** a key whose runs disagree stays blocked. The way forward is a deterministic re-run,
   which is a different key.
+- **Existing paths are upgraded to fit, not worked around** (§4.0, the owner's rule). The job
+  runner is made by reshaping `training_manager`, with the Training Console moved onto it. The
+  existing checkpoint listing route is upgraded instead of adding a second one.
 - **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`).
 
 Revision 2 (`6854265`) settled D3 by the scorer policy, made D5 follow the owner's checkbox, and
@@ -199,8 +202,13 @@ with the first, although only the newer one will be used. This item adds none:
 | Scoring | the `src/inference/scoring.py` primitives, shared with B-1 (D3) | a test-only scorer |
 | Resolving a test cohort | the cohort registry (D6) | the loose `<split>_samples.json` supplied path, removed when the registry lands |
 | Recording | ledger v2 | a v1 reader inside v2 code (§5) |
-| Running a job | the runner extracted from `training_manager` | a second process manager |
+| Running a job | one job runner, made by reshaping `training_manager`; the Training Console moves onto it | a second process manager, or a runner extracted around the old one |
+| Listing checkpoints | the existing listing route, upgraded to list by workspace and architecture | a second listing route |
 | A checkpoint's validation ranking score | `RANKING_SCORE_KEYS` and `ranking_score_detail` | a second key list (F2 removed one) |
+
+**Existing paths are changed to fit, not worked around.** Where an existing path has a defect or
+a shape that does not fit, it is upgraded, and the new module is built for the upgraded path. A
+new module is not bent around an old one's limits.
 
 A compatibility reader is added only where a file that must stay readable actually exists. It
 then states the condition for removing it.
@@ -535,8 +543,10 @@ This is one pipeline extended, not a second one.
   - **Condition:** the owner confirms that no v1 ledger holds records that must stay visible
     (§4.9 question 4). If one does, a read-only display of it is added, with the condition for
     removing it stated, and it still never mixes with v2 records.
-- **Job runner.** The smallest extraction from `training_manager` that works: subprocess
-  launch, output capture and status. Training-specific code stays where it is.
+- **Job runner.** `training_manager`'s subprocess core becomes the one job runner, reshaped for
+  both jobs rather than extracted around the old one (§4.0).
+  - Training becomes one job type, and the Training Console moves onto the runner. The runner
+    no longer hard-codes `train_model.py`; each job type names its own script.
   - **The test job** runs `measure_scorer.py` as a subprocess, so the CLI remains the single
     producer.
   - **One GPU job at a time.** A test start while training runs is refused, with the reason.
@@ -547,7 +557,8 @@ This is one pipeline extended, not a second one.
 - **UI:**
   - **Test tab** (new):
     - cohorts: import with preview, source sets and mapped versions, usage history;
-    - runs: choose a checkpoint from the server's list by workspace and architecture; choose a
+    - runs: choose a checkpoint from the server's list by workspace and architecture, which
+      `GET /api/v1/training/checkpoints` provides once upgraded (§2.4); choose a
       cohort version; the checkbox "record the result automatically"; start; follow progress;
     - reports: read them, see disagreement flags, register one.
   - **Model Management** (replacing the placeholder): checkpoints by workspace and
@@ -572,7 +583,9 @@ Each step is one reviewable change.
    - **ledger v2**, with §5's compatibility rule and D5's duplicate and disagreement rules;
    - a `measure_scorer` switch that requests deterministic execution (D5);
    - the `record_evaluation` CLI on reports.
-3. **The shared job runner**, and test runs through it, with the GPU-busy rule.
+3. **The job runner**: `training_manager` reshaped into it, the Training Console moved onto it,
+   and test runs through it, with the GPU-busy rule. The checkpoint listing route is upgraded
+   in the same change.
 4. **The UI**: the Test tab, Model Management and the Diagnosis display. It also carries D8:
    the refusal in each state-changing handler, and the direct-call acceptance test.
 5. **Documentation and acceptance on the homelab**:
