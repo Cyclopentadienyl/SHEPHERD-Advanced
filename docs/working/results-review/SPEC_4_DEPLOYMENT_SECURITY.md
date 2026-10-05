@@ -12,14 +12,14 @@ Every claim here was read from the source, not inferred.
 
 | Fact | Location |
 |---|---|
-| Six routers mounted. **No mounted route or router applies an authentication or authorisation dependency.** An unused `Depends` import exists in `diagnose.py:35` and is not a control | `src/api/main.py:298-303` |
+| Six routers mounted. **No mounted route or router applies an authentication or authorisation dependency.** An unused `Depends` import exists in `diagnose.py:35` and is not a control | `src/api/main.py:277-283` |
 | The deployed launcher binds `0.0.0.0` | `scripts/launch/shep_launch.py:17` |
-| API CLI entry point binds `0.0.0.0` | `src/api/main.py:625` |
+| API CLI entry point binds `0.0.0.0` | `src/api/main.py:466` |
 | Supplied systemd unit binds `0.0.0.0` (and names a module path that does not exist: `app.main:app`) | `scripts/service/systemd/shepherd.service:9` |
 | Generated demo commands and the package usage example bind `0.0.0.0` | `scripts/setup_demo.py:545,552`; `src/api/__init__.py:25` |
 | **One contradictory instruction** omits `--host` and inherits Uvicorn's loopback default | `scripts/setup_demo.py:29` |
-| The launcher **prints `127.0.0.1` while binding `0.0.0.0`** | `scripts/launch/shep_launch.py:display_base_url` |
-| CORS is `allow_origins=["*"]` with `allow_credentials=True` | `src/api/main.py:177-183` |
+| The launcher **prints `127.0.0.1` while binding `0.0.0.0`** | `scripts/launch/shep_launch.py:323-333` |
+| CORS is `allow_origins=["*"]` with `allow_credentials=True` | `src/api/main.py:161-166` |
 
 **Institutional statement, reported and not verified here:** the hospital laboratories sit on a
 protected local network; reaching the service across the internet requires SSH. This bounds the
@@ -166,8 +166,8 @@ deployment*, not merely a loopback bind.
 | # | Item |
 |---|---|
 | A1 | Audit and convert every client-reachable `torch.load` (§2.1) |
-| A2 | Fix the launcher's misleading display (`shep_launch.py:display_base_url`) — see below |
-| A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:537-560`, `_export_dir` and `_write_exports`) |
+| A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below |
+| A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496`) |
 | A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through the launcher (`shep_launch.py --no-auto-install --no-browser -- --port 8264`), the path `launch_shepherd.sh` takes, so the service gets the saved allocator preset and the attention settings a manual start gets, after which the launcher execs into uvicorn (POSIX, `--no-browser`). A bare uvicorn start gets neither; `tests/unit/test_service_unit.py`. The bind address is the launcher's default and stays with C1. **Still owed, on a deployment host:** a real systemd start, stop and crash restart, and a UI Restart Backend in the running service. Function-level tests and the container smoke do not stand in for them |
 
 **A2 in detail.** The launcher currently prints `127.0.0.1` while binding `0.0.0.0`. The fix is not
@@ -216,7 +216,7 @@ Group A proceeds regardless and must not wait for that answer.
 
 ## 5. Concurrency
 
-`initialize_pipeline` reassigns the shared `app_state.pipeline` (`src/api/main.py:557`) with no lock
+`initialize_pipeline` reassigns the shared `app_state.pipeline` (`src/api/main.py:424`) with no lock
 or synchronisation contract in the module. **Concurrency safety is unverified.** A reload concurrent
 with an in-flight diagnosis has no defined behaviour. Any multi-user deployment requires an explicit
 concurrency model — locking or serialised execution — plus load testing.
@@ -228,14 +228,14 @@ concurrency model — locking or serialised execution — plus load testing.
 Recorded so the answer is not re-derived, not to be built.
 
 The front/back boundary is already HTTP: the WebUI calls the API rather than importing the pipeline
-(`src/webui/components/diagnosis_panel.py:17-18, 142`), which makes separate deployment tractable.
+(`src/webui/components/diagnosis_panel.py:18, 116-117`), which makes separate deployment tractable.
 Genuinely small: a configured API address for a WebUI in another process; a standalone Gradio launch
-path; CORS. (The in-process tab no longer has a hard-coded `API_BASE`: since October 2026 it calls
-an address the server accepted a request on, `src/utils/server_address.py`.) Everything else is not —
-authorisation, TLS termination, bounded inference queueing, GPU concurrency limits,
-reload-versus-inference synchronisation, request cancellation, per-actor quotas, storage isolation
-and locking, operational monitoring.
+path; CORS. (The hard-coded `API_BASE` at `:44` was removed in October 2026, after this document's
+evidence base: the in-process tab now calls an address the server accepted a request on,
+`src/utils/server_address.py`.) Everything else is not — authorisation, TLS termination, bounded
+inference queueing, GPU concurrency limits, reload-versus-inference synchronisation, request
+cancellation, per-actor quotas, storage isolation and locking, operational monitoring.
 
-**CORS** (`main.py:177-183`, `["*"]` with `allow_credentials=True`) is reviewed when this area is
+**CORS** (`main.py:161-166`, `["*"]` with `allow_credentials=True`) is reviewed when this area is
 touched. With no authentication present it is not the exposure; the absent authentication is. No
 CORS design is written before then.

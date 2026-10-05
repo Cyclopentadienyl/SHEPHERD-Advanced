@@ -340,3 +340,18 @@ def test_a_reply_that_is_not_json_is_named_as_such(monkeypatch):
 
     assert "the API's reply was not JSON" in rendered
     assert "not reachable" not in rendered
+
+
+def test_a_request_that_was_never_sent_is_not_called_a_bad_reply(monkeypatch):
+    """requests raises ValueError subclasses for a malformed URL or header too.
+    Nothing was sent then, so "the API's reply was not JSON" would be false."""
+    pytest.importorskip("gradio")
+    from src.webui.components import diagnosis_panel as panel
+
+    _record_self_calls(monkeypatch, panel, error=panel.requests.exceptions.InvalidURL("bad"))
+    record_server_address(("127.0.0.1", 8264))
+
+    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+
+    assert "unexpected error" in rendered
+    assert "not JSON" not in rendered
