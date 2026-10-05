@@ -91,7 +91,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Training-log metrics copied from a checkpoint into `checkpoint_meta`, in the
-#: order the Diagnosis tab shows them.
+#: order the Diagnosis tab shows them -- the ranking metrics in auto-selection's
+#: priority order.
 #:
 #: **The ranking metrics are the ones auto-selection ranks checkpoints by**,
 #: `RANKING_SCORE_KEYS`, taken from where that is defined rather than listed
@@ -107,8 +108,9 @@ logger = logging.getLogger(__name__)
 #: appears only in the display code that asked for it. So a checkpoint showed its
 #: losses and none of its ranking metrics. Those names are not kept as a fallback.
 #:
-#: They are the trainer's own validation numbers, computed as
-#: `Trainer._run_evaluation_pass` computes them, and not test results.
+#: `val_loss` and the ranking metrics are the trainer's own validation numbers,
+#: computed as `Trainer._run_evaluation_pass` computes them; `train_loss` is its
+#: training loss. None of them is a test result.
 CHECKPOINT_LOG_METRICS: Tuple[str, ...] = ("val_loss", "train_loss", *RANKING_SCORE_KEYS)
 
 

@@ -182,8 +182,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The in-process WebUI calls this API at the address the server actually bound,
-# recorded from each request (`src/utils/server_address.py`).
+# The in-process WebUI calls this API at the address the server accepted its
+# requests on, recorded from each request (`src/utils/server_address.py`).
 app.add_middleware(RecordServerAddress)
 
 

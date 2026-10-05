@@ -45,14 +45,29 @@ logger = logging.getLogger(__name__)
 
 
 def _api_url(path: str) -> str:
-    """An API URL on this server, at the address it actually bound.
+    """An API URL on this server, at an address it has accepted requests on.
 
-    The tab runs inside the API's own process, so the API is at an address this
-    server has accepted requests on -- port 8264 under the systemd unit, 8000
-    under a bare start. `src/utils/server_address.py` explains why that is the one
-    source; it replaces a hard-coded ``http://127.0.0.1:8000``.
+    The tab runs inside the API's own process, so the API is wherever this server
+    accepts connections -- port 8264 under the systemd unit, 8000 under a bare
+    start. `src/utils/server_address.py` explains why that is the one source; it
+    replaces a hard-coded ``http://127.0.0.1:8000``.
     """
     return f"{api_base_url()}{path}"
+
+
+def _self_request(method: str, path: str, **kwargs: Any) -> requests.Response:
+    """One call from this tab to its own server's API, never through a proxy.
+
+    ``trust_env`` is off, so ``HTTP_PROXY`` and friends are ignored. The target is
+    this server's own socket -- under a wildcard bind, possibly a LAN address that
+    an institutional ``NO_PROXY`` list does not name -- and the diagnose payload
+    carries patient phenotypes, which have no business at a forward proxy. A
+    session per call, because a shared ``requests.Session`` is not documented as
+    safe across Gradio's worker threads, and these calls are few.
+    """
+    with requests.Session() as session:
+        session.trust_env = False
+        return session.request(method, _api_url(path), **kwargs)
 
 
 # Shown when the pipeline loads but the GNN did not. This is not cosmetic: the
@@ -124,11 +139,7 @@ def _call_diagnose(
         "include_explanations": include_explanations,
     }
     try:
-        resp = requests.post(
-            _api_url("/api/v1/diagnose"),
-            json=payload,
-            timeout=30,
-        )
+        resp = _self_request("POST", "/api/v1/diagnose", json=payload, timeout=30)
         resp.raise_for_status()
         return resp.json()
     except ServerAddressUnknownError as e:
@@ -144,15 +155,27 @@ def _call_diagnose(
 # =============================================================================
 # Formatting helpers
 def _get_pipeline_status() -> Dict[str, Any]:
-    """Get pipeline status from API."""
+    """Get pipeline status from API.
+
+    A failure carries its real reason: the status line shows it instead of
+    "Pipeline not loaded", so an answer that did arrive -- an HTTP error, a body
+    that is not JSON -- is not reported as an API that could not be reached.
+    """
     try:
-        resp = requests.get(_api_url("/api/v1/pipeline/status"), timeout=5)
+        resp = _self_request("GET", "/api/v1/pipeline/status", timeout=5)
         resp.raise_for_status()
         return resp.json()
     except ServerAddressUnknownError as e:
         return {"initialized": False, "error": str(e)}
-    except Exception:
+    except (requests.ConnectionError, requests.Timeout):
         return {"initialized": False, "error": "API not reachable"}
+    except requests.HTTPError as e:
+        return {"initialized": False, "error": f"API error {e.response.status_code}"}
+    except ValueError:
+        # requests' JSONDecodeError is a ValueError.
+        return {"initialized": False, "error": "the API's reply was not JSON"}
+    except Exception as e:
+        return {"initialized": False, "error": f"unexpected error: {e}"}
 
 
 def _reload_pipeline(
@@ -165,11 +188,7 @@ def _reload_pipeline(
     if conv_type:
         payload["conv_type"] = conv_type
     try:
-        resp = requests.post(
-            _api_url("/api/v1/pipeline/reload"),
-            json=payload,
-            timeout=180,
-        )
+        resp = _self_request("POST", "/api/v1/pipeline/reload", json=payload, timeout=180)
         resp.raise_for_status()
         return resp.json()
     except ServerAddressUnknownError as e:

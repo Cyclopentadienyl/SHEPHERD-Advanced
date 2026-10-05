@@ -15,6 +15,10 @@ the time one asks, the address is known. There is no second copy of the port to
 keep in step with the launcher, the unit, `python -m src.api.main` or a bare
 `uvicorn` command line, and no list of ports to try.
 
+This is the address a request was **accepted on**, which is the bound address only
+for a specific-host bind. Under a wildcard bind it is the interface address the
+connection arrived on.
+
 **Any recorded address will do.** Under a wildcard bind, connections arrive on
 different local addresses — loopback through an SSH forward, the LAN address
 directly — and each is this server's own socket, reachable from this process. The
@@ -23,9 +27,16 @@ latest one is kept.
 The scheme stays ``http``, as before. The address is the server's own socket,
 reached from inside the same process, not the URL a browser used.
 
-Lives in `src.utils` because both sides need it without importing each other's
-package: `src/api/__init__.py` imports `src.api.main`, which builds the WebUI, so
-the WebUI cannot import anything under `src.api` without building the app.
+**What this does not cover**, neither of them a regression from the hard-coded
+address:
+- a server on a Unix-domain socket (``uvicorn --uds``), which has no host and port
+  to call back on, so nothing is recorded;
+- uvicorn terminating TLS itself (``--ssl-keyfile``), where the self-call would
+  need ``https``. A TLS-terminating proxy in front is fine: the recorded socket is
+  the backend's own.
+
+Lives in `src.utils` so the Diagnosis tab adds no new import from the WebUI into
+`src.api`, and both sides share one module object.
 
 Module: src/utils/server_address.py
 """
@@ -35,16 +46,16 @@ _address: Optional[Tuple[str, int]] = None
 
 
 class ServerAddressUnknownError(RuntimeError):
-    """No request has reached this server yet, so its address is not known."""
+    """No TCP address has been recorded for this server, so it cannot be called back."""
 
 
 def record_server_address(server: Any) -> None:
     """Remember a request's ASGI ``scope["server"]`` value.
 
-    A value without a host and port is ignored rather than recorded: uvicorn
-    reports ``None`` for a Unix-domain socket, and there is no http URL to build
-    from it. Ignoring it keeps a TCP address recorded earlier, which is still this
-    server's.
+    A value without a host and port is ignored rather than recorded: for a
+    Unix-domain socket uvicorn reports ``(path, None)``, and there is no http URL
+    to build from it. Ignoring it keeps a TCP address recorded earlier, which is
+    still this server's.
     """
     global _address
     if not isinstance(server, (tuple, list)) or len(server) != 2:
@@ -59,16 +70,17 @@ def api_base_url() -> str:
     """``http://<host>:<port>`` of this server, from the last request it accepted.
 
     Raises:
-        ServerAddressUnknownError: no request has been recorded. In a running
-            server this cannot happen inside a request handler; it means the
-            caller ran before the server served anything, for example while the
-            app was being built.
+        ServerAddressUnknownError: no TCP address has been recorded. Either the
+            caller ran before the server served any request, for example while
+            the app was being built, or the server listens on a Unix-domain
+            socket, which has no host and port to call back on.
     """
     if _address is None:
         raise ServerAddressUnknownError(
-            "the server's address is not known yet: no request has reached it. "
-            "It is recorded from each incoming request, so this call ran before "
-            "the server served one."
+            "the server's own address is not known: no TCP request has been "
+            "recorded. Either none has reached the server yet, or it serves on a "
+            "Unix-domain socket (uvicorn --uds), which has no host and port to "
+            "call back on."
         )
     host, port = _address
     if ":" in host:  # an IPv6 literal is bracketed in a URL

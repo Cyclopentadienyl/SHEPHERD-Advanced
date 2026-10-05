@@ -4,8 +4,8 @@ API middleware defined by this project.
 Home for middleware this project defines, registered by ``src/api/main.py``.
 
 - ``server_address.RecordServerAddress`` records the socket each request arrived
-  on, so the in-process WebUI calls the API at the address the server actually
-  bound (`src/utils/server_address.py`).
+  on, so the in-process WebUI calls the API at an address the server accepted a
+  request on (`src/utils/server_address.py`).
 
 Still inline, and still to move here: ``src.api.main`` defines the
 request-logging middleware ``log_requests`` via ``@app.middleware("http")``

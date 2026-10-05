@@ -215,22 +215,38 @@ def test_on_diagnose_export_failure_still_shows_results(monkeypatch):
 
 # ------------------------------------------------------------ status on page load
 def _build_tab(monkeypatch):
-    """Build the tab with any HTTP call during the build turned into a failure."""
+    """Build the tab and fail if the build made any call to the API.
 
-    def no_http_while_building(*args, **kwargs):
-        raise AssertionError("the tab made an HTTP call while the app was being built")
+    Calls are recorded, not refused: the status helpers catch every exception, so
+    a fake that raised would be swallowed and the build would look clean. Both
+    layers are watched -- the status read itself, and the HTTP helper under every
+    call -- so a status read during the build is caught whether or not an address
+    is recorded.
+    """
+    calls = []
+    real_status = dp._get_pipeline_status
 
-    monkeypatch.setattr(dp.requests, "get", no_http_while_building)
-    monkeypatch.setattr(dp.requests, "post", no_http_while_building)
+    def watched_status():
+        calls.append("_get_pipeline_status")
+        return real_status()
+
+    def watched_request(method, path, **kwargs):
+        calls.append(f"{method} {path}")
+        raise AssertionError("no API call is expected while the app is built")
+
+    monkeypatch.setattr(dp, "_get_pipeline_status", watched_status)
+    monkeypatch.setattr(dp, "_self_request", watched_request)
     with gr.Blocks() as demo:
         dp.create_diagnosis_tab(demo)
+    assert calls == [], f"the tab called the API while the app was being built: {calls}"
     return demo
 
 
 def test_the_model_status_is_not_read_while_the_app_is_built(monkeypatch):
     """The app is built before the server serves, so a status read then was stale
     on arrival -- and under the systemd unit it was also aimed at the wrong port.
-    The placeholder stands until the first page load reads the real status."""
+    `_build_tab` fails on any API call during the build; the placeholder stands
+    until the first page load reads the real status."""
     demo = _build_tab(monkeypatch)
 
     placeholders = [

@@ -8,9 +8,13 @@ losses and none of the ranking metrics.
 
 The ranking keys now come from `RANKING_SCORE_KEYS`, the list auto-selection ranks
 checkpoints by, so there is one definition of "a checkpoint's ranking metrics".
-The keys the trainer writes are taken from the trainer itself rather than typed
-here, so a rename on either side fails this file instead of silently emptying the
-display again.
+
+The keys the trainer writes are taken from the trainer rather than typed here: the
+training keys from the real `Trainer._train_epoch`, the validation keys from the
+real `Trainer._validate` over the real `RankingMetrics`. A rename on either side
+fails this file instead of silently emptying the display again. One step is
+copied rather than run: `_run_evaluation_pass` needs a model and data, so its
+`RankingMetrics().compute_all(...)` call, with default k values, is repeated here.
 """
 import json
 from types import SimpleNamespace
@@ -22,9 +26,10 @@ def _current_trainer_logs():
     """What `ModelCheckpoint._save_checkpoint` stores as `logs` for one epoch.
 
     `Trainer.train` passes `{**train_metrics, **val_metrics}` to the callbacks,
-    and the checkpoint callback saves it verbatim. `val_metrics` comes from the
-    real `Trainer._validate`, run against a stub that supplies only what it
-    reads, over the real `RankingMetrics`.
+    and the checkpoint callback saves it verbatim. Both halves come from the real
+    methods, run against a stub that supplies only what each reads:
+    `train_metrics` from `Trainer._train_epoch` over an empty training set, and
+    `val_metrics` from `Trainer._validate`.
     """
     pytest.importorskip("torch")
     from src.training.trainer import Trainer
@@ -46,7 +51,15 @@ def _current_trainer_logs():
     )
     stub._is_best_metric = lambda value: Trainer._is_best_metric(stub, value)
     val_metrics = Trainer._validate(stub, 0)
-    train_metrics = {"train_loss": 0.5, "epoch_time": 1.0, "learning_rate": 1e-3}
+
+    train_stub = SimpleNamespace(
+        model=SimpleNamespace(train=lambda: None),
+        callbacks=SimpleNamespace(on_epoch_begin=lambda trainer, epoch: None),
+        train_dataloader=[],
+        state=SimpleNamespace(train_loss_history=[]),
+        optimizer=SimpleNamespace(param_groups=[{"lr": 1e-3}]),
+    )
+    train_metrics = Trainer._train_epoch(train_stub, 0)
     return {**train_metrics, **val_metrics}
 
 
@@ -67,6 +80,40 @@ def test_the_ranking_metrics_shown_are_the_ones_selection_ranks_by():
 
     assert set(RANKING_SCORE_KEYS) <= set(CHECKPOINT_LOG_METRICS)
     assert {"val_mrr", "val_hits@1", "val_hits@10"} <= set(RANKING_SCORE_KEYS)
+
+
+def test_the_ranking_keys_are_not_listed_a_second_time():
+    """One definition. The two tests above catch a list that drifts from what the
+    trainer writes or from what selection ranks by, but an identical hand-typed
+    copy would pass both. So this reads the assignment itself: it must splice
+    `RANKING_SCORE_KEYS` in and must not name a ranking key on its own."""
+    import ast
+    from pathlib import Path
+
+    from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
+
+    source = Path(__file__).resolve().parents[2] / "src" / "inference" / "pipeline.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    (value,) = [
+        node.value
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and any(
+            isinstance(target, ast.Name) and target.id == "CHECKPOINT_LOG_METRICS"
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        )
+    ]
+    assert isinstance(value, ast.Tuple)
+    spliced = [
+        element.value.id
+        for element in value.elts
+        if isinstance(element, ast.Starred) and isinstance(element.value, ast.Name)
+    ]
+    assert spliced == ["RANKING_SCORE_KEYS"]
+    literals = {element.value for element in value.elts if isinstance(element, ast.Constant)}
+    assert not literals & set(RANKING_SCORE_KEYS), (
+        f"ranking keys typed a second time: {sorted(literals & set(RANKING_SCORE_KEYS))}"
+    )
 
 
 def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):

@@ -224,6 +224,35 @@ def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
         return argv[:split], argv[split + 1:]
     return argv, []
     
+def display_base_url(uvicorn_args: List[str]) -> str:
+    """The URL to show for a server started with these uvicorn arguments.
+
+    uvicorn takes the last of a repeated option, in either spelling --
+    ``--port 8264`` or ``--port=8264`` -- so this does too. A wildcard host is
+    shown as the matching loopback address, which a browser on this machine can
+    open; an IPv6 literal is bracketed, as a URL requires.
+    """
+    host, port = "127.0.0.1", "8000"
+    for i, arg in enumerate(uvicorn_args):
+        name, sep, inline = arg.partition("=")
+        if name not in ("--host", "--port"):
+            continue
+        if sep:
+            value = inline
+        elif i + 1 < len(uvicorn_args):
+            value = uvicorn_args[i + 1]
+        else:
+            continue
+        if name == "--port":
+            port = value
+        else:
+            host = value
+    host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}"
+
+
 def can_hand_over() -> bool:
     """Whether this process may become the server by ``exec``.
 
@@ -384,21 +413,10 @@ def main() -> int:
     """)
     print(plan)
 
-    # Determine host/port for URL display. Computed before the access points are
-    # logged: those lines used to say port 8000 whatever --port was passed, so the
-    # unit's journal told an operator to bookmark a port nothing listened on.
-    host = "127.0.0.1"
-    port = "8000"
-    uvi_args = UVICORN_DEFAULT_ARGS + passthrough
-    for i, a in enumerate(uvi_args):
-        if a == "--port" and i + 1 < len(uvi_args):
-            port = uvi_args[i + 1]
-        elif a == "--host" and i + 1 < len(uvi_args):
-            h = uvi_args[i + 1]
-            if h != "0.0.0.0":
-                host = h
-
-    base_url = f"http://{host}:{port}"
+    # Computed before the access points are logged: those lines used to say port
+    # 8000 whatever --port was passed, so the unit's journal told an operator to
+    # bookmark a port nothing listened on.
+    base_url = display_base_url(UVICORN_DEFAULT_ARGS + passthrough)
 
     log("Access points (bookmark these):")
     log(f"  Swagger UI (API docs) : {base_url}/docs")

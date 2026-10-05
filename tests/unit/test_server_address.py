@@ -64,22 +64,30 @@ def test_a_value_with_no_usable_host_and_port_is_ignored(server):
 
 
 def test_before_any_request_the_address_is_unknown_and_says_so():
-    with pytest.raises(ServerAddressUnknownError, match="no request has reached it"):
+    with pytest.raises(ServerAddressUnknownError, match="no TCP request has been recorded"):
         api_base_url()
 
 
 # ------------------------------------------------------------- the middleware
 def _tiny_app():
+    """A Starlette app with the middleware, an HTTP route, a WebSocket route and a
+    mounted sub-application, which is how the WebUI sits under the real app."""
     from starlette.applications import Starlette
     from starlette.responses import PlainTextResponse
-    from starlette.routing import Route
+    from starlette.routing import Mount, Route, WebSocketRoute
 
     from src.api.middleware.server_address import RecordServerAddress
 
     async def ok(request):
         return PlainTextResponse("ok")
 
-    app = Starlette(routes=[Route("/ok", ok)])
+    async def ws(websocket):
+        await websocket.accept()
+        await websocket.send_text("ok")
+        await websocket.close()
+
+    mounted = Starlette(routes=[Route("/config", ok)])
+    app = Starlette(routes=[Route("/ok", ok), WebSocketRoute("/ws", ws), Mount("/ui", app=mounted)])
     app.add_middleware(RecordServerAddress)
     return app
 
@@ -94,9 +102,28 @@ def test_the_middleware_records_each_request_and_passes_it_through():
     assert api_base_url() == "http://testserver:80"
 
 
+def test_a_websocket_connection_is_recorded_too():
+    from starlette.testclient import TestClient
+
+    with TestClient(_tiny_app()).websocket_connect("/ws") as connection:
+        assert connection.receive_text() == "ok"
+
+    assert api_base_url() == "http://testserver:80"
+
+
+def test_a_request_to_a_mounted_application_passes_through_the_middleware():
+    """The WebUI is a mount under the API app (`gr.mount_gradio_app(..., "/ui")`),
+    so its requests reach the middleware as any route's do."""
+    from starlette.testclient import TestClient
+
+    response = TestClient(_tiny_app()).get("/ui/config")
+
+    assert response.status_code == 200
+    assert api_base_url() == "http://testserver:80"
+
+
 def test_the_real_app_records_the_address():
-    """Registered on `src.api.main.app`, outermost enough to see every request --
-    the Gradio mount at /ui included, since it sits under the same app."""
+    """Registered on `src.api.main.app` itself, not only on a test app."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -135,40 +162,75 @@ def test_under_a_real_server_the_recorded_port_is_the_bound_port():
 
 
 # ------------------------------------------------------------- the Diagnosis tab
+class _Response:
+    def __init__(self, status=200, body=None, json_error=None):
+        self.status_code = status
+        self._body = {"initialized": True} if body is None else body
+        self._json_error = json_error
+        self.text = ""
+
+    def raise_for_status(self):
+        import requests
+
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code}", response=self)
+
+    def json(self):
+        if self._json_error is not None:
+            raise self._json_error
+        return self._body
+
+
+def _record_self_calls(monkeypatch, panel, response=None, error=None):
+    """Replace the HTTP layer under the tab; return the list of calls it saw."""
+    calls = []
+
+    def fake_request(session, method, url, **kwargs):
+        calls.append((method, url, session.trust_env))
+        if error is not None:
+            raise error
+        return response or _Response()
+
+    monkeypatch.setattr(panel.requests.Session, "request", fake_request)
+    return calls
+
+
 def test_the_diagnosis_tab_calls_the_recorded_address(monkeypatch):
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
-    called = []
-
-    class _Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"initialized": True}
-
-    def fake_get(url, timeout):
-        called.append(url)
-        return _Response()
-
-    def fake_post(url, json, timeout):
-        called.append(url)
-        return _Response()
-
-    monkeypatch.setattr(panel.requests, "get", fake_get)
-    monkeypatch.setattr(panel.requests, "post", fake_post)
+    calls = _record_self_calls(monkeypatch, panel)
     record_server_address(("127.0.0.1", 8264))
 
     panel._get_pipeline_status()
     panel._reload_pipeline("data/workspaces/default", "")
     panel._call_diagnose(["HP:0001250"])
 
-    assert called == [
-        "http://127.0.0.1:8264/api/v1/pipeline/status",
-        "http://127.0.0.1:8264/api/v1/pipeline/reload",
-        "http://127.0.0.1:8264/api/v1/diagnose",
+    assert [(method, url) for method, url, _ in calls] == [
+        ("GET", "http://127.0.0.1:8264/api/v1/pipeline/status"),
+        ("POST", "http://127.0.0.1:8264/api/v1/pipeline/reload"),
+        ("POST", "http://127.0.0.1:8264/api/v1/diagnose"),
     ]
+
+
+def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
+    """The target can be a LAN address an institutional NO_PROXY list omits, and
+    the diagnose payload carries patient phenotypes. With trust_env off, the
+    proxy environment variables are not consulted at all."""
+    pytest.importorskip("gradio")
+    from src.webui.components import diagnosis_panel as panel
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("http_proxy", "http://proxy.invalid:3128")
+    calls = _record_self_calls(monkeypatch, panel)
+    record_server_address(("192.0.2.10", 8264))
+
+    panel._get_pipeline_status()
+    panel._reload_pipeline("data/workspaces/default", "")
+    panel._call_diagnose(["HP:0001250"])
+
+    assert len(calls) == 3
+    assert all(trust_env is False for _, _, trust_env in calls)
 
 
 def test_an_unknown_address_is_reported_not_disguised_as_not_loaded(monkeypatch):
@@ -177,33 +239,55 @@ def test_an_unknown_address_is_reported_not_disguised_as_not_loaded(monkeypatch)
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
-    def must_not_be_called(*args, **kwargs):
-        raise AssertionError("no request should be attempted without an address")
-
-    monkeypatch.setattr(panel.requests, "get", must_not_be_called)
-    monkeypatch.setattr(panel.requests, "post", must_not_be_called)
+    calls = _record_self_calls(monkeypatch, panel)
 
     status = panel._get_pipeline_status()
     rendered = panel._format_pipeline_status(status)
 
     assert "Pipeline status unavailable" in rendered
-    assert "no request has reached it" in rendered
+    assert "no TCP request has been recorded" in rendered
     assert "not loaded" not in rendered
-    assert "no request has reached it" in panel._reload_pipeline("d", "")["message"]
-    assert "no request has reached it" in panel._call_diagnose(["HP:0001250"])["error"]
+    assert "no TCP request has been recorded" in panel._reload_pipeline("d", "")["message"]
+    assert "no TCP request has been recorded" in panel._call_diagnose(["HP:0001250"])["error"]
+    assert calls == [], "no request should be attempted without an address"
 
 
 def test_an_unreachable_api_is_reported_too(monkeypatch):
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
-    def refused(*args, **kwargs):
-        raise panel.requests.ConnectionError("refused")
-
-    monkeypatch.setattr(panel.requests, "get", refused)
+    _record_self_calls(monkeypatch, panel, error=panel.requests.ConnectionError("refused"))
     record_server_address(("127.0.0.1", 8264))
 
     rendered = panel._format_pipeline_status(panel._get_pipeline_status())
 
-    assert "Pipeline status unavailable" in rendered
+    assert "Pipeline status unavailable:** API not reachable" in rendered
     assert "not loaded" not in rendered
+
+
+def test_an_api_that_answered_with_an_error_is_not_called_unreachable(monkeypatch):
+    """It was reached; the reason shown says what it answered."""
+    pytest.importorskip("gradio")
+    from src.webui.components import diagnosis_panel as panel
+
+    _record_self_calls(monkeypatch, panel, response=_Response(status=503))
+    record_server_address(("127.0.0.1", 8264))
+
+    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+
+    assert "API error 503" in rendered
+    assert "not reachable" not in rendered
+
+
+def test_a_reply_that_is_not_json_is_named_as_such(monkeypatch):
+    pytest.importorskip("gradio")
+    from src.webui.components import diagnosis_panel as panel
+
+    bad = panel.requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0)
+    _record_self_calls(monkeypatch, panel, response=_Response(json_error=bad))
+    record_server_address(("127.0.0.1", 8264))
+
+    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+
+    assert "the API's reply was not JSON" in rendered
+    assert "not reachable" not in rendered
