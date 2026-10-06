@@ -1,8 +1,30 @@
 # PLAN — backlog item 14: test results recorded by the pipeline, shown where a model is chosen
 
-**Status: draft for discussion, revision 3.** Nothing in item 14 is implemented. §4 lists
+**Status: draft for discussion, revision 4.** Nothing in item 14 is implemented. §4 lists
 decisions that the owner, and where marked the institution, make before any code is written.
 §6's order applies only once they are made.
+
+**Revision 4 (2026-10-06)** follows the review of `627ed08` and the provenance contract
+(`docs/working/PLAN_PROVENANCE_CONTRACT.md`, "the contract" below), which now carries the
+relations that a test result depends on.
+- **Item 14 is two phases** (§6).
+  - **Phase 1** is the contract's M4: a complete CLI flow from import to display.
+  - **Phase 2** is M5: the Test tab, job runner, model list, D8, and D4's ordering and D5's
+    arbitration.
+  - Phase 1 depends on the contract's M1–M3, not on phase-2 machinery.
+- **Deterministic runs are no longer described as a cross-environment guarantee** (D4, D5).
+  - The measurement key does not record every hardware condition.
+  - A disagreement calls for investigation under the recorded conditions, not a verdict of
+    defect.
+  - Preferring a deterministic record is a declared protocol choice, not a claim that it is
+    more accurate.
+- **D2 is settled by the owner:** digest binding and its stated limit only, with options (b)
+  and (c) removed.
+- **The owner's decisions of 2026-10-06 apply** (contract §1):
+  - a model whose recorded training graph does not match is refused, so measurement checks the
+    model↔graph relation;
+  - old-pipeline artifacts are not supported, so §4.9 question 4 is answered and ledger v2
+    starts clean.
 
 Facts about the code are cited from `main` at `1cab39f`, except where §3 notes the F1–F3 fix on
 this branch. **A bare § number refers to this plan.** Sections of `EVALUATION_COHORTS.md` are
@@ -36,7 +58,7 @@ parallel one:
   - **the supplied-cohort path has other consumers,** which move with it (§5; the second
     round, below, found where the file is really read);
   - **the listing route's `weights_only=False` load is converted** when the route is upgraded
-    (§5, §6 step 3);
+    (§5, §6 step 5);
   - **D8** excludes a same-host reverse proxy from M1 and names training start as a known
     ungated exception.
 
@@ -235,7 +257,7 @@ From `docs/working/EVALUATION_COHORTS.md`:
 
 These were not looked for, and each is from reading the code. They touch what item 14 builds
 on. The owner authorised F1–F3 as one small change separate from this item, and it is on this
-branch. F4 is a documentation fix, left to §6 step 5.
+branch. F4 is a documentation fix, left to §6 step 4.
 
 | | Finding | Evidence |
 |---|---|---|
@@ -292,14 +314,10 @@ without becoming the record.
 - **What it does not give.** Anyone who can write the directory can edit `evaluations.json`.
   `PLAN_ONTOLOGY_PHASE2.md`'s rule applies: *a digest is not a signature*.
 
-| Option | Cost |
-|---|---|
-| **(a) State the limit, and claim only binding** | None |
-| (b) A server-held key signs each record (HMAC), so an edit by anyone without the key is detected | Key generation, storage, rotation and backup; a lost key leaves every record unverifiable. Under the single-account deployment, the key is readable by the account that writes the ledger, so (b) detects only edits by someone who can write the directory but can neither read the key nor act as that account |
-| (c) Records also go to an append-only log outside the workspace | A second store to keep consistent |
-
-**Recommendation:** (a) now. (b) only if the institution requires detection of deliberate
-edits.
+**Settled (owner, 2026-10-06):** state the limit and claim only binding. The threat this stage
+addresses is misalignment between stages, not a malicious account holder. Keyed signing (HMAC
+or asymmetric), an append-only log and a hash chain are out of scope. The claim boundary is the
+contract's §6.
 
 ### D3 — What a test result measures: settled by the scorer policy
 
@@ -407,10 +425,12 @@ so the aim is to make that use visible and comparable, not to forbid it.
     checkpoint is listed as "contested — not ordered". The next record is not promoted, so
     contesting a score can take a checkpoint out of the order but cannot put a better number
     in.
-  - **Only a deterministic record can supersede.** A later deterministic record takes
-    precedence over an earlier non-deterministic one, because it is a stronger measurement
-    and cannot be re-rolled for luck. Otherwise a later re-run cannot replace an earlier
-    score.
+  - **A deterministic record takes precedence by a declared protocol choice.** A later
+    deterministic record takes precedence over an earlier non-deterministic one. This is a
+    display rule declared in advance, not a claim that the deterministic number is more
+    accurate. Another environment can give another deterministic number: the key does not
+    record every hardware condition (contract §5.3). Otherwise a later re-run cannot replace an
+    earlier score.
   - **The same limit as D5.** Contested status comes from the report store, so ordering reads
     the ledger and the report store's contested status, and carries D5's limit: it rests on
     plain files.
@@ -444,7 +464,9 @@ The owner's semantics, followed as stated:
   shown as a label. Setting it writes no data and clears no usage history.
 
 **Repeat runs that disagree.** Under a non-deterministic CUDA regime, two runs under one key can
-differ (§2.1).
+differ (§2.1). So can two runs under one key on different hardware: the key records the device
+string, torch and CUDA versions and the determinism flags, but not the GPU model, driver or
+cuDNN version. The contract's M4 adds those facts to the report (contract §5.3).
 
 - **Evidence is never lost.** Every report is kept, so refusing a registration loses nothing.
 - **A disagreement is flagged.** When reports under one key disagree, the Test tab marks the
@@ -471,9 +493,19 @@ differ (§2.1).
 - **The way forward is a deterministic re-run.** `deterministic_algorithms`,
   `cudnn_deterministic` and `cudnn_benchmark` are in the semantics digest (`sidecar.py:72-115`).
   A run under deterministic settings is therefore a different key. A single deterministic run
-  is registrable, and a second one that disagrees with it is a defect to investigate, not
-  variation. `measure_scorer` records these settings but has no switch to request them; §6
-  step 2 adds one.
+  is registrable.
+  - **A second one that disagrees with it calls for investigation under the recorded
+    conditions.** Compare the environment facts first. It is not presumed to be a code
+    defect.
+  - **What deterministic mode does, and does not do.** It guards against known
+    non-deterministic operations; it does not certify a number, and PyTorch promises
+    reproducibility only on the same platform, device and versions
+    (https://docs.pytorch.org/docs/stable/notes/randomness.html).
+  - **There is no automatic fallback.** If deterministic execution is unsupported on the
+    device, the run reports that it could not complete as requested. It does not change device
+    or mode to finish.
+  - **The switch.** `measure_scorer` records these settings but has no switch to request them;
+    phase 2 adds one (§6).
 - **If deterministic execution is not possible** for an operation the run needs, the key stays
   contested. The Test tab shows every report's values for it, and no single number is
   registered.
@@ -569,6 +601,10 @@ and MyGene2's terms of use, which is not an engineering question.
 
 ### D8 — Who can trigger a test
 
+**Applies to phase 2.** Phase 1's import, run and record are CLI operations on the machine, and
+it adds no operation that the network can trigger to change state (§6). D8 governs the UI
+controls that phase 2 adds.
+
 Revision 1 said an in-process UI adds "no unauthenticated network surface". That was wrong: a
 Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who reaches the port
 (§2.4).
@@ -614,7 +650,7 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   never a client-supplied header.
   - F1's recorded address cannot serve here. It is the latest across all requests, not this
     request's.
-  - How Gradio exposes the triggering request is verified in §6 step 4. If it cannot be read
+  - How Gradio exposes the triggering request is verified in §6 step 6. If it cannot be read
     reliably, the controls stay refused: the check fails closed.
 - **Checkpoints and cohorts are chosen from server-side lists**, never from a path in a request.
 - **Acceptance includes direct calls.** Each state-changing endpoint, called directly from a
@@ -630,7 +666,7 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
     `POST /api/v1/training/start` and `/stop` alike. Until SPEC_4's C4 is addressed, the one
     job runner has two entry policies: test start gated, training start not. Stop is per job
     type, so a training stop cannot stop a test job;
-  - **the Training Console's resume dropdown** calls the same listing function (§6 step 3) and
+  - **the Training Console's resume dropdown** calls the same listing function (§6 step 5) and
     stays ungated with the rest of the Console. It is a C3 listing outside D8 until SPEC_4's
     C3 and C4 are addressed.
 
@@ -639,8 +675,9 @@ machine where the controls are enabled.
 
 ### 4.9 What is asked of the owner
 
-D1, D2, D5 and D7 stand as recommended unless the owner objects; D5's ledger rule also gets its
-own review. D3 follows from the scorer policy. Four questions remain:
+D1, D5 and D7 stand as recommended unless the owner objects; D5's ledger rule also gets its own
+review. D2 is settled by the owner and D3 by the scorer policy. Questions 1 and 2 gate phase 1;
+question 3 gates phase 2; question 4 is answered:
 
 1. **The test's use.**
    - Confirm D3: a test result is the model's disease ranking under the approved policy.
@@ -656,8 +693,9 @@ own review. D3 follows from the scorer policy. Four questions remain:
    - Who may import, run and register, above all on the institutional cohort?
    - Which deployment mode (D8) does the machine with enabled controls run under? Under this
      revision only M1 enables them today: M3 does not unlock them, and M2 does not exist yet.
-4. **Existing ledgers.** Does any machine hold a v1 `evaluations.json` whose records must stay
-   visible after v2 lands? If none does, v2 starts clean (§5).
+4. **Existing ledgers — answered by the owner's decision (contract §1, decision 2).**
+   Old-pipeline artifacts are not supported. Any v1 `evaluations.json` describes old-pipeline
+   models, and is archived with them. v2 starts clean (§5).
 
 ## 5. Proposed shape, if §4 is taken
 
@@ -762,7 +800,7 @@ This is one pipeline extended, not a second one.
   - **Test tab** (new):
     - cohorts: import with preview, source sets and mapped versions, usage history;
     - runs: choose a checkpoint from the server's list by workspace and architecture. That list
-      is the one listing function, upgraded in §6 step 3 (§2.4). The request names a
+      is the one listing function, upgraded in §6 step 5 (§2.4). The request names a
       workspace and architecture from those the server lists, and the server resolves the
       directory, so a path never comes from a request or the last training configuration.
       Metadata is read with `weights_only=True` (SPEC_4 A1). Choose a
@@ -780,36 +818,75 @@ This is one pipeline extended, not a second one.
 
 ## 6. Order of work
 
-Each step is one reviewable change.
+**What comes first.** Phase 1 depends on the provenance contract's M1–M3:
+- B-2's fail-closed core;
+- the model↔graph relation, enforced;
+- training, serving and dataset records with their checks.
 
-0. **F1–F3**: done on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`).
-1. **The cohort registry**: source sets, preview, mapping, mapped versions, graph binding and
-   usage history. Tests use fixtures only; no real patient data enters the repository.
-2. **Measurement integration**, which includes:
-   - the report store;
-   - **ledger v2**, with §5's compatibility rule and D5's duplicate and disagreement rules;
-   - a `measure_scorer` switch that requests deterministic execution (D5);
-   - the `record_evaluation` CLI on reports.
-3. **The job runner**: `training_manager` reshaped into it, the Training Console moved onto it,
-   and test runs through it, with the GPU-busy rule. Test runs have fixed inputs, and stop is
-   per job type. The same change upgrades the checkpoint listing:
-   - one listing function serves both the route and the Training Console's resume dropdown;
-   - it lists by a workspace and architecture chosen among those the server lists, and the
-     server resolves the directory. The two Training Console handlers stop setting
-     `checkpoint_dir` from request values;
-   - training start's explicit `checkpoint_dir`, honoured verbatim today
-     (`training_manager.py:134-146`), is restricted to directories the server resolves the
-     same way. The write path and the listing then agree, and resume can always find what
-     training wrote;
-   - its load becomes `weights_only=True` (SPEC_4 A1), and a checkpoint whose format that
-     refuses is listed without metadata.
-4. **The UI**: the Test tab, Model Management and the Diagnosis display. It also carries D8:
-   the refusal in each state-changing handler, and the direct-call acceptance test.
-5. **Documentation and acceptance on the homelab**:
-   - the deployment guide;
-   - `EVALUATION_COHORTS.md` §6.5, F4 included;
-   - acceptance with a synthetic supplied cohort, and with MyGene2 once its data and terms
+It does not depend on any phase-2 machinery. Each step below is one reviewable change. F1–F3
+are done on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`).
+
+### Phase 1 — a complete CLI flow (contract M4)
+
+The aim is that an operator can do all of this from the CLI:
+- choose a model and a test cohort that pass the checks;
+- run the test;
+- keep the full report and record it, or not;
+- see the result, correctly bound, when that model is loaded.
+
+1. **The cohort registry, from the CLI.**
+   - Import with a printed preview (D6), producing mapped versions bound to the graph.
+   - One resolver for the measurement and audit readers (§5).
+   - Tests use fixtures only; no real patient data enters the repository.
+2. **Measurement and recording.**
+   - **Checks:** Mode C on a registered version, with the contract's relations checked: R1,
+     R2, R3 (model↔graph), R5, and the cohort↔graph binding.
+   - **Recorded:**
+     - R10 as two labels: overlap with the model's training split, and with its selection
+       split;
+     - the environment facts (contract §5.3);
+     - D6's denominators.
+   - **Reports:** kept in the report store, published through the staging helper.
+   - **Ledger v2:** keeps today's conservative contradiction refusal (`sidecar.py:342`). It
+     refuses rather than arbitrates.
+   - **Recording:** automatic with `--record`, or later by hand with `record_evaluation`, on a
+     whole report. One recording path serves both.
+3. **Display on the existing model status.**
+   - The Diagnosis tab's model status shows the records of the checkpoint that is actually
+     loaded. They are found by its digest (contract M3c) and read through the API, not from the
+     UI process.
+   - Each record carries D3's label, its relation states, its environment class and the
+     contract's §6 line.
+   - **No network-triggered write operation.** Phase 1 adds none, so no new protection
+     mechanism is needed. A UI "register" button would be such an operation, and it belongs to
+     phase 2.
+4. **Documentation and acceptance on the homelab.**
+   - The deployment guide.
+   - `EVALUATION_COHORTS.md` §6.5, F4 included.
+   - Acceptance with a synthetic supplied cohort, and with MyGene2 once its data and terms
      allow.
+
+### Phase 2 — the operating interface (contract M5)
+
+5. **The job runner.** `training_manager` is reshaped into it, with the Training Console moved
+   onto it, and test runs go through it. It enforces the GPU-busy rule, test runs have fixed
+   inputs, and stop is per job type. The same change upgrades the checkpoint listing:
+   - **one listing function** serves both the route and the Training Console's resume
+     dropdown;
+   - **it lists by a workspace and architecture** chosen among those the server lists, and the
+     server resolves the directory. The two Training Console handlers stop setting
+     `checkpoint_dir` from request values. Training start's own `checkpoint_dir` is already
+     restricted (contract M3a);
+   - **its load becomes `weights_only=True`** (SPEC_4 A1). A checkpoint whose format that
+     refuses is listed without metadata.
+6. **The UI.** The Test tab, with progress and cancellation, and Model Management. It also
+   carries D8: the refusal in each state-changing handler, and the direct-call acceptance
+   test.
+7. **Advanced ordering and arbitration.**
+   - D4's ordering;
+   - D5's disagreement block and contested states;
+   - the usage history in the UI;
+   - a `measure_scorer` switch that requests deterministic execution.
 
 D3's shared-scorer constraint goes to B-1's plan. Mode D and B-1 are separate items, and
 neither is a prerequisite here.
@@ -817,7 +894,7 @@ neither is a prerequisite here.
 ## 7. Out of scope
 
 - Downloading cohorts by URL.
-- Signing records, unless D2 (b) is chosen.
+- Signing records, an append-only log or a hash chain (D2).
 - Refit, and a synthetic test partition (`EVALUATION_COHORTS.md` §5).
 - Auto-selection by test score.
 - Pooling MyGene2 with the institutional cohort.
