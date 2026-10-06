@@ -8,9 +8,9 @@ the order of work.
 - **The resume parent is checked in M2**, before any state is restored (§4, M2.3). Left to M3a,
   a parent from the old pipeline, or from a same-shaped other graph, could be resumed; the child
   would record the current workspace and pass M2's check.
-- **The digest recorded is the digest of the bytes parsed** (§2 rule 1; §4, M2.1). Today each
-  input is hashed by path at one moment and loaded by path at another, so an ordinary workspace
-  rebuild in between makes a run that consumed A record B.
+- **The digest recorded is the digest of the bytes parsed** (§2 rule 1; §4, M2.1), with two
+  stated exceptions. Today each input is hashed by path at one moment and loaded by path at
+  another, so an ordinary workspace rebuild in between makes a run that consumed A record B.
 - **R10 is defined** (§5.4): its units, which evidence is used and how it is found, how resume
   history is covered, and an *unverifiable* state that is never shown as zero overlap.
 - **Smaller corrections:**
@@ -87,10 +87,10 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R1 | Workspace graph files (`kg.json`, `node_features.pt`, `edge_indices.pt`, `num_nodes.json`) ↔ `split_manifest.json` | Manifest `artifacts` | `verify_graph_artifacts` (`src/kg/artifacts.py:58`) at `scripts/train_model.py:716` and `scripts/measure_scorer.py:128`; `verify_graph_source` (`artifacts.py:357`) at serving (`src/inference/pipeline.py:501`). **Refuses**, on digests taken by path at another moment than the load (`artifacts.py:82-86`) | Exists; on the bytes read from **M2** |
 | R2 | Generated samples ↔ manifest | Manifest | `verify_generated_cohorts` (`src/evaluation/cohort.py:216`) at `train_model.py:717`, `measure_scorer.py:134`. **Refuses**; it hashes the file (`cohort.py:286`) and reads it again (`:294`) | Exists; on the bytes read from **M2** |
 | R3 | **Model ↔ the graph it consumed**: `kg.json` (node index), `node_features`, `edge_indices`, `num_nodes` | `training_input_digests` (`train_model.py:551-574`; written by `src/training/callbacks.py:325-327`) holds the three tensors and `split_manifest`, **not `kg.json`** | **Structure only, and only a warning** (`src/utils/fingerprint.py:156-176`; `pipeline.py:909-918`). The digest comparison was "deliberately deferred" (`fingerprint.py:168-176`); only the probe performs it (`scripts/probe_deployment.py:812-836`). Measurement fits the weights by shape (`measure_scorer.py:593-594`) | **M2** |
-| R4 | SP table ↔ the graph | Sidecar `kg_digest`, `build_id`, `max_hops` (`scripts/compute_shortest_paths.py:400-405, 481-489`) | At serving (`pipeline.py:724-747`): a `build_id` or `kg_digest` mismatch refuses; an **unrecorded** pair is served with a log warning (`docs/working/PLAN_SP_ARTIFACT_INTEGRITY.md:272`, "Unknown … serves") | **M2** (unrecorded refuses) |
+| R4 | SP table ↔ the graph | Sidecar `kg_digest`, `build_id`, `max_hops` (`scripts/compute_shortest_paths.py:400-405, 481-489`) | At serving (`pipeline.py:724-747`): a `build_id` or `kg_digest` mismatch refuses; an **unrecorded** pair is served with a log warning (`docs/working/PLAN_SP_ARTIFACT_INTEGRITY.md:273`, "Unknown … serves") | **M2** (unrecorded refuses) |
 | R5 | Workspace ↔ its dataset record (`kg.provenance.json`) | Written at build (`src/kg/provenance.py`); bound from the manifest | **Read by nothing in production**: `workspace_provenance_status` (`artifacts.py:208`) has no caller outside the module. Policy so far: "reported, not enforced" (`artifacts.py:123-137`; `docs/working/PLAN_ONTOLOGY_PROVENANCE.md:249-254`) | **M3b** (decision 2 reverses that policy for the formal pipeline) |
 | R6 | Model ↔ the training settings, code and environment in effect | `config` = `TrainerConfig` plus `model_config` (`src/training/trainer.py:937-981`). Not recorded: the loader and sampling settings (`DataLoaderConfig`, `train_model.py:585-592`), compile (`train_model.py:760-777`), the code revision, the environment | — | **M3a** |
-| R7 | Model ↔ its resume parent | The parent's digest (`train_model.py:535-545`), hashed by path after the parent was loaded (`:835`, `:854-860`) | **Nothing compared**: `load_checkpoint` restores state without looking at the parent's inputs or config (`trainer.py:1009-1044`). A missing parent only warns, and the run trains from scratch (`train_model.py:505-507`). The WebUI's default resume target is `last.pt` (`src/webui/components/training_console.py:398-404`), which `ModelCheckpoint` overwrites (`callbacks.py:271-274`) | **M2** (the parent's records, graph and data); M3a (overwrite guard) |
+| R7 | Model ↔ its resume parent | The parent's digest (`train_model.py:558-559`), hashed by path after the parent was loaded (`:835`, `:854-860`) | **Nothing compared**: `load_checkpoint` restores state without looking at the parent's inputs or config (`trainer.py:1009-1044`). A missing parent only warns, and the run trains from scratch (`train_model.py:505-507`). The WebUI's default resume target is `last.pt` (`src/webui/components/training_console.py:398-404`), which `ModelCheckpoint` overwrites (`callbacks.py:271-274`) | **M2** (the parent's records, graph and data); M3a (overwrite guard) |
 | R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** |
 | R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** |
 | R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 |
@@ -111,8 +111,9 @@ invalid, and nothing stops it.
   paths again for its record at `:854-860`.
 - **Serving** verifies at `pipeline.py:501` and loads at `:503`. The graph object was loaded
   earlier still, by the API (`src/api/main.py:493`).
-- **Measurement** verifies and hashes at `measure_scorer.py:128-155`, then loads at `:571-572`
-  and the checkpoint at `:593`.
+- **Measurement** loads at `measure_scorer.py:571-572` and the checkpoint at `:593`. Only
+  afterwards, when it builds each manifest (`:370`, reached from `:619-638`), does it verify and
+  hash the same paths (`artifact_digests`, `:102-155`).
 
 The code states this as an accepted limitation (`fingerprint.py:74-76`, `artifacts.py:82-86`).
 It is reachable without any bad actor: a run reads `node_features` version A; the workspace is
@@ -169,7 +170,11 @@ bytes read says nothing about what was read.
   together with the digest.** These are:
   - `read_graph_artifacts` and `read_samples` (`src/kg/storage/file_storage.py`);
   - the manifest read;
-  - `KnowledgeGraph.load_json` (`src/kg/graph.py:815`);
+  - `KnowledgeGraph.load_json` (`src/kg/graph.py:815`), at serving and in the SP producer.
+    The producer hashes `kg.json` by path (`scripts/compute_shortest_paths.py:458`) and loads
+    it again (`:461`), so a replacement in between computes the table from one graph and
+    records another. Its end-of-run comparison (`:472-479`) stays as a warning: the record
+    then names the bytes that were traversed;
   - every checkpoint load: training's resume parent, serving, measurement.
 - **The verifiers compare those digests and stop hashing paths:** `verify_graph_artifacts`,
   `verify_generated_cohorts` and `verify_graph_source`.
@@ -194,9 +199,12 @@ bytes read says nothing about what was read.
 - **The buffer, not the handle.** Hashing an open handle and then parsing from it survives an
   atomic rename, but not an in-place rewrite, and `torch.save` rewrites in place. The cost is
   one transient in-memory copy of each file while it is parsed.
-- **One stated exception: the SP table.** Its identity is the `build_id` inside the tensor it
-  loads, checked against the sidecar (`pipeline.py:727`). So the identity checked already
-  comes from the bytes loaded, and the table gets no file digest.
+- **Two stated exceptions.**
+  - **The SP table at serving.** Its identity is the `build_id` inside the tensor it loads,
+    checked against the sidecar (`pipeline.py:727`). So the identity checked already comes from
+    the bytes loaded, and the table gets no file digest.
+  - **Training's `kg` role** (M2.2). Training does not parse `kg.json`. The role is the
+    manifest's binding for the tensors it did parse, and that manifest is itself read once.
 
 **Precedent.** The KG build already does this for the ontologies: it records the digest the
 loader took from the handle it parsed, because hashing the path afterwards recorded a
@@ -204,9 +212,16 @@ replacement (`scripts/build_knowledge_graph.py:330-336`).
 
 **Acceptance:**
 - **A test double replaces an input between its read and everything after it** (the check, the
-  record): once by atomic rename and once by in-place rewrite, for a graph tensor, a sample file
-  and a checkpoint. The only outcomes allowed are that the run uses *and* records the bytes it
-  read, or that it refuses. It never reads A and records B.
+  record), once by atomic rename and once by in-place rewrite. It runs at each entry point, on
+  the inputs that entry point reads:
+  - training: a graph tensor, a sample file and the resume parent;
+  - measurement: a graph tensor, the cohort's sample file and the checkpoint;
+  - serving: `kg.json` as the API loads it (`src/api/main.py:493`), a graph tensor and the
+    checkpoint;
+  - the SP producer: `kg.json`.
+
+  The only outcomes allowed are that the run uses *and* records the bytes it read, or that it
+  refuses. It never reads A and records B.
 - **A replacement between the manifest read and a file read is refused**, and the message names
   the file.
 - **The record maps are built only from the readers' results.** A test pins this, so that
@@ -238,13 +253,18 @@ passes M2.4.
 - **The parent is read once (M2.1).** The digest of those bytes is its `resume_checkpoint` role.
 - **The parent must carry `training_input_digests` with every workspace role.** A missing record
   or role refuses. So no checkpoint from before the contract can be resumed (decision 2).
-- **Proposed in this revision: the parent's recorded workspace roles must equal what this run
-  read.**
-  - The roles are `kg`, `node_features`, `edge_indices`, `num_nodes`, `split_manifest`,
-    `train_samples`, and `val_samples`.
-  - The set of roles must be the same too. A parent that ran validation, resumed by a run that
-    does not, refuses.
+- **The parent's graph roles must equal what this run read:** `kg`, `node_features`,
+  `edge_indices` and `num_nodes`. This one is not optional: it is decision 1 applied to the
+  parent.
+- **Proposed in this revision: its data roles must equal too.**
+  - These are `split_manifest`, `train_samples` and `val_samples`.
+  - The set of roles must be the same as well, so a parent that ran validation, resumed by a run
+    that does not, refuses.
   - Resuming continues the same data. It is not fine-tuning on other data (§8, question 3).
+- **Whether this run validates is decided here, from the samples already parsed.** It validates
+  exactly when the parsed `val_samples` are not empty, which is the condition
+  `create_dataloaders` applies (`train_model.py:606-624`). Today that is only known after the
+  loaders are built (`:748`, `:857`), by which time the run has written its directories.
 - **The comparison is M2.4's comparator** over a wider set of roles. It is one function, and the
   set of roles is its argument.
 - **`Trainer.load_checkpoint` restores from the dict already read and checked.** It no longer
@@ -256,6 +276,9 @@ passes M2.4.
   M2.2.
 - So a checkpoint's own record covers its whole history. R10 (§5.4) needs no walk over ancestor
   files, which may since have been overwritten, and no registry.
+- This rests on the data-role rule. If §8 question 3 allows other data, the history set that
+  question describes lands in the same change, so R10 never reads a scope narrower than the
+  training history.
 
 The rest of resume — the overwrite guard — is M3a's.
 
@@ -293,13 +316,14 @@ This follows decision 2.
 **Acceptance for M2**, besides M2.1's:
 - a checkpoint from workspace A is refused against a same-shaped workspace B, at serving and at
   measurement;
-- **resume:**
-  - a parent from before the contract, and a parent from a same-shaped other graph, are
-    refused before any state is restored;
-  - in both cases the run leaves no run directory, `config.yaml` or checkpoint behind;
-  - a parent that read other sample files, or that ran validation where this run does not, is
-    refused;
-  - a requested parent that does not exist is refused, and no run trains from scratch;
+- **resume — each of these is refused before any state is restored, and leaves no run
+  directory, `config.yaml`, `runtime.json` or checkpoint behind:**
+  - a parent from before the contract;
+  - a parent from a same-shaped other graph;
+  - a parent that read other sample files;
+  - a parent that ran validation, where this run's parsed `val_samples` are empty;
+  - a requested parent that does not exist, and no run trains from scratch instead;
+- **resume that succeeds:**
   - a resume from a qualifying parent succeeds, and the child's record names the bytes of that
     parent;
 - a fresh build → train → resume → serve passes;
@@ -335,6 +359,11 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 - **Refused:** training, serving and measurement refuse a workspace whose `kg.provenance.json`
   is missing, unreadable or does not match. The manifest's binding to the record becomes
   required at write and read.
+- **Read through M2.1, like every other input.**
+  - The record is hashed and parsed from one buffer. Today `provenance.py:275` reads it and
+    `:381` hashes it again.
+  - It is compared with the run's single manifest reading and `kg` digest. Today
+    `artifacts.py:278` reads the manifest again and `:291` hashes `kg.json` again.
 - **Two facts about a record, kept apart and shown apart:**
   - **Its binding state:** *verified*, *mismatch*, *unrecorded* or *unverifiable*. Is this
     record's file the one the manifest binds, and does its `kg_digest` name this workspace's
@@ -375,9 +404,9 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
   - The API response copies it from the result it is answering with, not from shared state a
     reload could swap. `app_state.model_version` goes (`src/api/main.py:84, 554-558`).
   - The literal versions go: `pipeline.py:1062, 1129-1130, 1703` and `diagnose.py:201, 351`.
-  - The Diagnosis tab's "Model version" row (`src/webui/components/diagnosis_panel.py:493`)
-    shows the identity's parts instead.
-  - The CSV and report exports carry it.
+  - The Diagnosis tab's downloadable report has a "Model version" line
+    (`src/webui/components/diagnosis_panel.py:484-493`, written at `:559`). It carries the
+    identity's parts instead, and so does the CSV export.
   - The response schema changes, and the milestone's documentation says so.
 - **Device.** Serving's `auto` without CUDA refuses (§5.2). Today it turns into CPU silently
   (`pipeline.py:965-966`).
@@ -496,8 +525,8 @@ evidence.
 - **The second scope is not called "selection data".** A person choosing among checkpoints by
   other means is not recorded, and the label does not claim to know it.
 - **The scopes cover the whole resume history.** M2.3 refuses a resume over other sample files,
-  so every ancestor of a checkpoint read the same files. A checkpoint without these roles does
-  not get past M2.
+  so every ancestor of a checkpoint read the same files. This rests on M2.3's data-role rule,
+  which is proposed rather than decided (§8, question 3).
 
 **Units: two labels per scope, four in all.**
 
@@ -537,8 +566,13 @@ evidence.
 - ***overlap*** — the evidence is verified and the intersection is not empty. Shown with its
   counts.
 - ***none*** — the evidence is verified and the intersection is empty.
-- ***unverifiable*** — the checkpoint names a file, and no candidate holds those bytes, or the
-  one that does cannot be read. Shown as *unverifiable*, never as zero and never as *none*.
+- ***unverifiable*** — one of these:
+  - the checkpoint names a file, and no candidate holds those bytes;
+  - the candidate that holds them cannot be read;
+  - for the training scope, the checkpoint names no `train_samples` at all. Every training run
+    records it, so its absence means the record is not one the pipeline wrote.
+
+  Shown as *unverifiable*, never as zero and never as *none*.
 - ***no validation inputs recorded*** — validation scope only. The checkpoint records no
   `val_samples`, because training ran no validation pass (`train_model.py:525-529`). Shown as
   such, not as *none*.

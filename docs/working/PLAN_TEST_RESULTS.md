@@ -699,7 +699,9 @@ question 3 gates phase 2; question 4 is answered:
 3. **Operators and access.**
    - Who may import, run and register, above all on the institutional cohort?
    - Which deployment mode (D8) does the machine with enabled controls run under? Under this
-     revision only M1 enables them today: M3 does not unlock them, and M2 does not exist yet.
+     revision only deployment mode M1 enables them today: mode M3 does not unlock them, and
+     mode M2 does not exist yet. These are SPEC_4's deployment modes (D8), not the contract's
+     milestones.
 4. **Existing ledgers — answered by the owner's decision (contract §1, decision 2).**
    Old-pipeline artifacts are not supported. Any v1 `evaluations.json` describes old-pipeline
    models, and is archived with them. v2 starts clean (§5).
