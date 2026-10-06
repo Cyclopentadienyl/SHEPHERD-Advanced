@@ -25,6 +25,13 @@ relations that a test result depends on.
     model↔graph relation;
   - old-pipeline artifacts are not supported, so §4.9 question 4 is answered and ledger v2
     starts clean.
+- **Amended 2026-10-06, after the review of `463a0df`**, to match the contract's revision 2:
+  - the read-only display of a v1 ledger, kept as a condition until question 4 was answered,
+    is removed (§5);
+  - R10 is recorded as the contract's §5.4 defines it (§6, step 2);
+  - every digest the measurement records comes from the same read that parses the file (§5,
+    §6 step 2);
+  - training start's `checkpoint_dir` restriction moves back to step 5, with the listing.
 
 Facts about the code are cited from `main` at `1cab39f`, except where §3 notes the F1–F3 fix on
 this branch. **A bare § number refers to this plan.** Sections of `EVALUATION_COHORTS.md` are
@@ -718,8 +725,8 @@ This is one pipeline extended, not a second one.
     file.
   - **The upgrade makes one resolver the only place a cohort's file is located.** For a
     supplied cohort, that is a registered mapped version. `read_samples` reads the file the
-    resolver returns, and digests are taken from that same file, so the digest recorded is the
-    digest of the samples scored.
+    resolver returns, and the digest is taken from the same read that parses it (the
+    contract's M2.1), so the digest recorded is the digest of the samples scored.
   - **Every measurement and audit reader moves onto it:**
     - `measure_scorer` in all its modes;
     - `scripts/audit_split_overlap.py`, including its direct hash;
@@ -733,10 +740,15 @@ This is one pipeline extended, not a second one.
     split-name contract, change with it: `tests/integration/test_legacy_equivalence.py`
     (`:53`, `:290-466`) and `tests/unit/test_measurement_mode_a.py` (its supplied-cohort
     cases, from `:54`).
-  - **Readers of generated splits only stay as they are,** and are listed so the claim is not
-    read as wider. `scripts/train_model.py` locates `train`/`val` twice, as `measure_scorer`
-    does today (`:449`, `:551-557`, and the check at `:717`).
-    `scripts/measure_served_pipeline.py` and `scripts/probe_deployment.py` read `val` by name.
+  - **Readers of generated splits only are not moved onto the resolver,** and are listed so the
+    claim is not read as wider.
+    - `scripts/train_model.py` locates `train`/`val` twice, as `measure_scorer` does today
+      (`:449`, `:551-557`, and the check at `:717`). The contract's M2.1 moves it onto the
+      shared reader, so it reads each file once and records that read's digest. It still needs
+      no cohort resolver.
+    - `scripts/measure_served_pipeline.py` and `scripts/probe_deployment.py` read `val` by
+      name.
+
     None of them reads a test cohort. Moving them onto the resolver is a follow-up outside
     this item.
   - **The frozen oracle is the one named exception.** `scripts/evaluate_model.py` is
@@ -778,10 +790,8 @@ This is one pipeline extended, not a second one.
   - The archived file stays readable with the revision that wrote it, under its original name:
     v1's `record_evaluation.py` reads `evaluations.json` (`record_evaluation.py:83`). Its
     results are re-measured through the new path if they are wanted.
-  - Nothing is backfilled, converted or inferred.
-  - **Condition:** the owner confirms that no v1 ledger holds records that must stay visible
-    (§4.9 question 4). If one does, a read-only display of it is added, with the condition for
-    removing it stated, and it still never mixes with v2 records.
+  - Nothing is backfilled, converted or inferred, and no v1 record is displayed. A v1 ledger
+    describes old-pipeline models, which are archived with it (§4.9 question 4).
 - **Job runner.** `training_manager`'s subprocess core becomes the one job runner, reshaped for
   both jobs rather than extracted around the old one (§4.0).
   - **A test run's inputs are fixed** (D5): the seed, batch size and worker count, and the
@@ -840,10 +850,17 @@ The aim is that an operator can do all of this from the CLI:
    - Tests use fixtures only; no real patient data enters the repository.
 2. **Measurement and recording.**
    - **Checks:** Mode C on a registered version, with the contract's relations checked: R1,
-     R2, R3 (model↔graph), R5, and the cohort↔graph binding.
+     R2, R3 (model↔graph), R5, and the cohort↔graph binding. Each is checked on the bytes the
+     run read (contract M2.1).
    - **Recorded:**
-     - R10 as two labels: overlap with the model's training split, and with its selection
-       split;
+     - R10 as the contract defines it (§5.4):
+       - disease overlap and exact-case overlap with the model's *recorded training inputs*
+         and its *recorded validation inputs*, four labels in all;
+       - each label is *overlap* with counts, *none*, *unverifiable*, or, for validation, *no
+         validation inputs recorded*. *Unverifiable* is never shown as zero;
+       - the evidence is only the sample files whose bytes have the digests the checkpoint
+         records. They are found in the measurement workspace or in directories named with
+         `--training-evidence`, never assumed from the current workspace;
      - the environment facts (contract §5.3);
      - D6's denominators.
    - **Reports:** kept in the report store, published through the staging helper.
@@ -875,8 +892,10 @@ The aim is that an operator can do all of this from the CLI:
      dropdown;
    - **it lists by a workspace and architecture** chosen among those the server lists, and the
      server resolves the directory. The two Training Console handlers stop setting
-     `checkpoint_dir` from request values. Training start's own `checkpoint_dir` is already
-     restricted (contract M3a);
+     `checkpoint_dir` from request values;
+   - **training start's explicit `checkpoint_dir`**, honoured verbatim today, is restricted to
+     directories the server resolves in this same change, since it shares the write path
+     (contract M5). It is a visible behaviour change, documented with it;
    - **its load becomes `weights_only=True`** (SPEC_4 A1). A checkpoint whose format that
      refuses is listed without metadata.
 6. **The UI.** The Test tab, with progress and cancellation, and Model Management. It also
