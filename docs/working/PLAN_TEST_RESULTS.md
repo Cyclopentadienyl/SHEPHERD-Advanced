@@ -28,7 +28,9 @@ relations that a test result depends on.
 - **Amended 2026-10-06, after the review of `463a0df`**, to match the contract's revision 2:
   - the read-only display of a v1 ledger, kept as a condition until question 4 was answered,
     is removed (§5);
-  - R10 is recorded as the contract's §5.4 defines it (§6, step 2);
+  - R10 is recorded as the contract's §5.4 defines it (§6, step 2). Its case label compares
+    phenotype sets and does not claim the same scoring input; repeated terms are a new data
+    question (§4.9, question 2);
   - every digest the measurement records comes from the same read that parses the file (§5,
     §6 step 2);
   - training start's `checkpoint_dir` restriction moves back to step 5, with the listing.
@@ -695,6 +697,11 @@ question 3 gates phase 2; question 4 is answered:
    - The actual file formats.
    - D6's exclusion rules: a case with some lost phenotype terms, and whether the all-source
      figure is reported.
+   - A case that lists a phenotype term twice. Mapping can produce one, when two source terms
+     map to the same node, and a repeat changes Mode C's input (contract §5.4). Is it kept as
+     listed, or does a rule apply? A rule would apply alike at import, in training and in
+     measurement, through the shared reader, not in one place only. Until this is decided,
+     cases are scored as listed.
    - MyGene2's terms of use.
 3. **Operators and access.**
    - Who may import, run and register, above all on the institutional cohort?
@@ -856,8 +863,10 @@ The aim is that an operator can do all of this from the CLI:
      run read (contract M2.1).
    - **Recorded:**
      - R10 as the contract defines it (§5.4):
-       - disease overlap and exact-case overlap with the model's *recorded training inputs*
-         and its *recorded validation inputs*, four labels in all;
+       - disease overlap and phenotype-set overlap (same disease, same set of phenotype
+         terms) with the model's *recorded training inputs* and its *recorded validation
+         inputs*, four labels in all. Phenotype-set overlap does not claim the same scoring
+         input: a repeated term changes Mode C's input, and the set ignores it;
        - each label is *overlap* with counts, *none*, *unverifiable*, or, for validation, *no
          validation inputs recorded*. *Unverifiable* is never shown as zero;
        - the evidence is only the sample files whose bytes have the digests the checkpoint

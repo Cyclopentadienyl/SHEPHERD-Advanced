@@ -1,6 +1,6 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: draft for review, revision 2.** Nothing here is implemented. Facts about the code are
+**Status: draft for review, revision 2, amended after its review.** Nothing here is implemented. Facts about the code are
 cited at `627ed08`; the code is unchanged at `463a0df`. §1 records decisions already made; §4 is
 the order of work.
 
@@ -22,6 +22,15 @@ the order of work.
     serving (§5.2);
   - §5.3's reproducibility wording is narrowed;
   - §8 carries the reviewer's recommendations on the two open questions, and adds one.
+- **Amended after the review of `b58cea3`:**
+  - R10's case label compares phenotype *sets*, and no longer claims the model saw the same
+    scoring input (§5.4). A repeated phenotype id changes Mode C's input, and the set ignores
+    it;
+  - M2.3's data-role rule is written as a product restriction awaiting the owner's decision,
+    with what an operator will meet (§8, question 3);
+  - M2.1's two exceptions state what they establish and how they are displayed, and its buffer
+    cost becomes a capacity measurement;
+  - M3c moves every existing consumer of the old version fields in the same change.
 
 **What this is.** The project's goal for this stage, in the owner's words: the model must always
 match the exact setup that trained it, dataset version and every other stage's settings included,
@@ -197,14 +206,28 @@ bytes read says nothing about what was read.
   - `read_samples` gains the two optional fields training reads, `candidate_disease_ids` and
     `gene_ids`.
 - **The buffer, not the handle.** Hashing an open handle and then parsing from it survives an
-  atomic rename, but not an in-place rewrite, and `torch.save` rewrites in place. The cost is
-  one transient in-memory copy of each file while it is parsed.
+  atomic rename, but not an in-place rewrite, and `torch.save` rewrites in place.
+- **Memory.** Files are parsed one at a time. After each parse only the parsed result and the
+  digest are kept, and the raw buffer is released. Wrappers such as `BytesIO` may add copies of
+  their own, so "one transient copy per file" is an expectation to measure, not a bound (see
+  the acceptance below).
 - **Two stated exceptions.**
   - **The SP table at serving.** Its identity is the `build_id` inside the tensor it loads,
     checked against the sidecar (`pipeline.py:727`). So the identity checked already comes from
-    the bytes loaded, and the table gets no file digest.
+    the bytes loaded, and the table gets no file digest. Copying a multi-gigabyte table into
+    memory to hash it would guard against a threat nobody observed.
+    - **What it establishes:** the tensor and the sidecar are one publication, and the sidecar
+      names this graph. It is not a checksum of the tensor's bytes, it does not detect bit
+      corruption, and it does not show the distances are correct (`sp_artifact.py:18-24`).
+    - **How it is displayed:** as the `build_id` and the binding state, never as "SP bytes
+      verified".
+    - **What the implementation keeps:** the staged publication (`sp_artifact.py:392-402`), the
+      single sidecar read (`pipeline.py:664`), and the comparison with the token inside the
+      loaded data (`pipeline.py:724-729`).
   - **Training's `kg` role** (M2.2). Training does not parse `kg.json`. The role is the
-    manifest's binding for the tensors it did parse, and that manifest is itself read once.
+    manifest's binding for the tensors it did parse, and that manifest is itself read once. It
+    is displayed as the manifest-bound source graph, never as a file training loaded. Serving,
+    which does parse `kg.json`, checks its own read.
 
 **Precedent.** The KG build already does this for the ontologies: it records the digest the
 loader took from the handle it parsed, because hashing the path afterwards recorded a
@@ -226,6 +249,8 @@ replacement (`scripts/build_knowledge_graph.py:330-336`).
   the file.
 - **The record maps are built only from the readers' results.** A test pins this, so that
   bringing back a path-hashing call at a producer fails it.
+- **Capacity.** Peak memory is measured at each entry point on the homelab's largest workspace
+  and checkpoint. A shortfall is fixed in the reader. A CPU fallback is not a remedy.
 
 #### M2.2 — the producer records the graph it consumed
 
@@ -256,11 +281,22 @@ passes M2.4.
 - **The parent's graph roles must equal what this run read:** `kg`, `node_features`,
   `edge_indices` and `num_nodes`. This one is not optional: it is decision 1 applied to the
   parent.
-- **Proposed in this revision: its data roles must equal too.**
+- **Proposed, awaiting the owner's decision (§8, question 3): its data roles must equal too.**
   - These are `split_manifest`, `train_samples` and `val_samples`.
   - The set of roles must be the same as well, so a parent that ran validation, resumed by a run
     that does not, refuses.
-  - Resuming continues the same data. It is not fine-tuning on other data (§8, question 3).
+  - **This is a product restriction, not a validity verdict.** Resume continues training on the
+    same data. Fine-tuning on other data is not supported yet. A model trained on other cases
+    of the same graph is not thereby invalid: that is a different question from a graph
+    mismatch.
+  - **What an operator will meet:**
+    - adding cases to the workspace and resuming: refused;
+    - changing the train/val allocation, or going from validation to none: refused;
+    - re-serialising the JSON, or rewriting the manifest, with the same cases: refused, since
+      identity is bytes. That is the cost of strict identity;
+    - the same bytes at another path: accepted.
+  - **It gates data, not settings.** M3a records the settings in effect; it does not require a
+    resumed run's settings to equal its parent's.
 - **Whether this run validates is decided here, from the samples already parsed.** It validates
   exactly when the parsed `val_samples` are not empty, which is the condition
   `create_dataloaders` applies (`train_model.py:606-624`). Today that is only known after the
@@ -408,6 +444,8 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
     (`src/webui/components/diagnosis_panel.py:484-493`, written at `:559`). It carries the
     identity's parts instead, and so does the CSV export.
   - The response schema changes, and the milestone's documentation says so.
+  - Every existing consumer — the API, the UI, the exports — moves in the same change. No
+    consumer is left choosing between an old field and a new one.
 - **Device.** Serving's `auto` without CUDA refuses (§5.2). Today it turns into CPU silently
   (`pipeline.py:965-966`).
 
@@ -533,15 +571,31 @@ evidence.
 | Label | Counts | Reported as |
 |---|---|---|
 | **Disease overlap** | The test cohort's distinct `disease_id` values that occur as a `disease_id` in the scope's samples | *k* of *n* distinct test diseases, and the number of test cases whose disease is among them |
-| **Exact-case overlap** | Test cases whose disease and set of phenotype ids together equal those of a sample in scope | *k* of *N* test cases |
+| **Phenotype-set overlap** (same disease, same phenotype set) | Test cases whose disease equals that of a sample in scope, and whose set of distinct phenotype ids equals that sample's. Order and repetition are ignored | *k* of *N* test cases |
 
 - **The two labels answer different questions.** Disease overlap says whether the model was
-  trained toward this answer. Exact-case overlap says whether it has seen this very input with
-  its answer. A cohort can be disjoint by case and overlapping by disease, and both labels are
-  shown.
+  trained toward this answer. Phenotype-set overlap says whether it was trained on the same
+  clinical presentation of the same disease. A cohort can be disjoint by phenotype set and
+  overlapping by disease, and both labels are shown.
+- **Phenotype-set overlap does not say the model saw the same scoring input.**
+  - Repetition is not neutral. Mode C averages over every listed position
+    (`src/evaluation/measurement.py:1285-1310`), and nothing removes a repeated id on the way
+    (`src/kg/storage/file_storage.py:94-100`, `src/kg/data_loader.py:646-652`,
+    `measurement.py:1193-1223`).
+  - So two cases with the same set can be scored differently. A training case `[0, 1]` and a
+    test case `[0, 0, 1]` average to different patient vectors, and can rank the true disease
+    differently.
+- **The set is the unit this label's purpose needs.** R10 shows a reader where a test result
+  may rest on what the model was trained on. A comparison that kept repetition would report
+  `[0, 1]` and `[0, 0, 1]` as unrelated, and hide exactly that.
+- **Whether a case may list a term twice is a question about the data, not about this label.**
+  Mapping can produce one, when two source terms map to the same node. A rule would have to
+  apply alike at import, in training and in measurement, through the shared reader. It belongs
+  to D6's import rules (`PLAN_TEST_RESULTS.md` §4.9, question 2). Nothing here removes
+  duplicates.
 - **The patient id is not part of a case.** Generated patient ids are labels, not identities.
-- **Near-duplicates are not counted** — subsets, supersets, a term or two apart — and the label
-  says "exact".
+- **Near-duplicates are not counted** — subsets, supersets, a term or two apart — and the
+  label's name states the rule.
 - **Ids compare within one graph.** The test cohort's ids are the graph's indices under the
   cohort↔graph binding. The samples in scope were verified against the graph the checkpoint
   records, and R3 has verified that this is the measured graph. Equal ids are therefore equal
@@ -586,8 +640,11 @@ evidence.
 - **The evidence file has moved, with its bytes intact.** It is found through
   `--training-evidence`, and the label is computed.
 - **The evidence file is missing, or altered.** *unverifiable*, never zero.
-- **The cases are disjoint, and the diseases overlap.** Exact-case *none*; disease *overlap*,
-  with counts.
+- **The phenotype sets are disjoint, and the diseases overlap.** Phenotype-set *none*; disease
+  *overlap*, with counts.
+- **A training case `[0, 1]` and a test case `[0, 0, 1]` of the same disease** count as
+  phenotype-set *overlap*. The report's definition of the label says the scoring inputs may
+  differ.
 
 ## 6. The claim boundary
 
@@ -646,6 +703,11 @@ evidence.
    - This is a recommendation. The owner has not decided.
 3. **Fine-tuning on other data** (new in revision 2). M2.3 proposes that a resume reads the same
    data as its parent. Is fine-tuning a model on other data needed in the formal pipeline?
-   - If it is, it needs its own design: for example, a history set of sample digests that each
-     child carries forward from its parent, which R10 would then read.
-   - Until then, M2.3's refusal stands.
+   - **This plan recommends the restriction for the first version.** The reviewer agrees, as a
+     product restriction rather than a validity verdict. It is not decided until the owner
+     decides it.
+   - **If fine-tuning is needed later,** it uses the same training entry point and checkpoint
+     schema. The parent's recorded train and validation digests are carried into the child,
+     and R10 takes the union of every set it can verify. If any one of them cannot be
+     verified, R10 says the scope is incomplete. This is neither a separate project nor a
+     second training pipeline, and nothing is built for it now.
