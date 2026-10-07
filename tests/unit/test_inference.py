@@ -642,6 +642,9 @@ class TestPhenotypeListRule:
             and "not shortened" in w
             for w in result.warnings
         )
+        # Nothing was scored, so nothing is reported as used.
+        assert result.phenotype_input.used == ()
+        assert result.phenotype_input.received == 2
 
     def test_the_count_is_taken_after_repeats_are_removed(self, simple_kg):
         pipeline = DiagnosisPipeline(kg=simple_kg, config=PipelineConfig(max_phenotypes=1))

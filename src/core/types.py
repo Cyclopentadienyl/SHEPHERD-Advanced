@@ -445,7 +445,8 @@ class PhenotypeInputAccount:
     unknown: Tuple[str, ...]
     #: Entries that repeated a phenotype already kept.
     repeats_removed: int
-    #: The phenotypes scored, in first-occurrence order.
+    #: The phenotypes scored, in first-occurrence order. Empty when the request
+    #: was refused, because then nothing was scored.
     used: Tuple[str, ...]
 
 

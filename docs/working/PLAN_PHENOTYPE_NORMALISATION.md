@@ -184,6 +184,11 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
 - **Unknown ids keep their current policies** in this work: dropped with a warning at serving,
   refused at measurement, clamped in training. Changing any of them is a separate behaviour
   change. Training's clamp is noted, not addressed here.
+- **The minimum still counts entries as received** (`min_phenotypes`, default 1), as before.
+  With the default it refuses only an empty list, and an input that loses every id in mapping
+  is refused as "No valid phenotypes". Counting the phenotypes used instead would refuse inputs
+  that today pass with an unknown id among them, so it is a change to the unknown-id policy and
+  not part of N1. It matters only for a minimum above 1, which nothing configures.
 
 ## 4. The rule, exactly
 
@@ -323,7 +328,7 @@ express today.
 | `patient_id` required | Not needed. The API supplies one |
 | `ExtensibleInputValidator`, the factory, dict conversion (`:421-575`) | No caller |
 | `ValidationResult` (`:50-60`), exported at `src/inference/__init__.py:43, 55` | **Removed with its export and the test import that uses it** (`tests/unit/test_inference.py:26`). It is **not** repointed to the pipeline's `ValidationResult`: the old one defines `__bool__` as `is_valid` (`input_validator.py:58-60`) and the pipeline's does not (`pipeline.py:208-214`), so a repointed name would behave differently while looking the same |
-| **The module as a whole** | **Removed within N1** (the owner's decision, 2026-10-07): `InputValidator`, `ExtensibleInputValidator`, the factory and dict conversion, their exports, the tests that test only them, the smoke test in `run_local_tests.py`, and the protocol's stale "IMPLEMENTED" note. Every reference is confirmed gone. **Not removed:** `pipeline.validate_input` and the API's validation; their tests go on the entry points that run |
+| **The module as a whole** | **Removed within N1** (the owner's decision, 2026-10-07): `InputValidator`, `ExtensibleInputValidator`, the factory and dict conversion, their exports, the tests that test only them, the smoke test in `run_local_tests.py`, and the protocol's stale "IMPLEMENTED" note. No code reference remains; a working document and a to-do list that named the module say it was removed, and archived and dated reports keep theirs as records. **Not removed:** `pipeline.validate_input` and the API's validation; their tests go on the entry points that run |
 
 **It is not wired in whole.** Wiring the old validator would bring its truncation and its
 string-level semantics with it.

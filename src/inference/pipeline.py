@@ -1253,7 +1253,9 @@ class DiagnosisPipeline:
                 received=len(phenotypes),
                 unknown=tuple(unknown),
                 repeats_removed=normalised.repeats_removed,
-                used=tuple(used),
+                # A refused request scored nothing, so it used nothing — even
+                # when its phenotypes mapped, as with too many of them.
+                used=() if errors else tuple(used),
             ),
         )
 
