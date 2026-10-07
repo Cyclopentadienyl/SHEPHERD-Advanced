@@ -1,7 +1,7 @@
 """
 Unit Tests for Inference Pipeline
 =================================
-Tests for DiagnosisPipeline, InputValidator, and related components
+Tests for DiagnosisPipeline and related components
 """
 import pytest
 from datetime import datetime
@@ -22,10 +22,7 @@ from src.kg import KnowledgeGraph
 from src.inference import (
     DiagnosisPipeline,
     PipelineConfig,
-    InputValidator,
-    ValidationResult,
     create_diagnosis_pipeline,
-    create_input_validator,
 )
 
 
@@ -142,112 +139,6 @@ def patient_phenotypes_with_invalid():
         patient_id="test_patient_002",
         phenotypes=["HP:0001234", "HP:9999999", "HP:0002345"],
     )
-
-
-# =============================================================================
-# Test InputValidator
-# =============================================================================
-class TestInputValidator:
-    """Test InputValidator"""
-
-    def test_create_validator(self):
-        """Test creating validator"""
-        validator = InputValidator()
-        assert validator is not None
-        assert validator.min_phenotypes == 1
-        assert validator.max_phenotypes == 100
-
-    def test_create_validator_custom(self):
-        """Test creating validator with custom settings"""
-        validator = InputValidator(
-            strict_hpo_format=True,
-            min_phenotypes=2,
-            max_phenotypes=50,
-        )
-        assert validator.strict_hpo_format is True
-        assert validator.min_phenotypes == 2
-        assert validator.max_phenotypes == 50
-
-    def test_validate_phenotype_format_valid(self):
-        """Test validating valid HPO format"""
-        validator = InputValidator()
-        result = validator.validate_phenotype_format("HP:0001234")
-        assert result.is_valid
-        assert "HP:0001234" in result.validated_phenotypes
-
-    def test_validate_phenotype_format_invalid(self):
-        """Test validating invalid HPO format"""
-        validator = InputValidator()
-
-        # Too short
-        result = validator.validate_phenotype_format("HP:123")
-        assert not result.is_valid
-
-        # Wrong prefix
-        result = validator.validate_phenotype_format("ORPHA:123456")
-        assert not result.is_valid
-
-        # Empty
-        result = validator.validate_phenotype_format("")
-        assert not result.is_valid
-
-    def test_validate_patient_input_valid(self, patient_phenotypes):
-        """Test validating valid patient input"""
-        validator = InputValidator()
-        result = validator.validate_patient_input(patient_phenotypes)
-
-        assert result.is_valid
-        assert len(result.validated_phenotypes) == 2
-        assert len(result.errors) == 0
-
-    def test_validate_patient_input_no_patient_id(self):
-        """Test validation with missing patient_id"""
-        validator = InputValidator()
-        patient = PatientPhenotypes(
-            patient_id="",
-            phenotypes=["HP:0001234"],
-        )
-        result = validator.validate_patient_input(patient)
-
-        assert not result.is_valid
-        assert any("patient_id" in e for e in result.errors)
-
-    def test_validate_patient_input_no_phenotypes(self):
-        """Test validation with no phenotypes"""
-        validator = InputValidator()
-        patient = PatientPhenotypes(
-            patient_id="test",
-            phenotypes=[],
-        )
-        result = validator.validate_patient_input(patient)
-
-        assert not result.is_valid
-        assert any("empty" in e.lower() for e in result.errors)
-
-    def test_validate_patient_input_duplicates(self):
-        """Test validation with duplicate phenotypes"""
-        validator = InputValidator(allow_duplicates=False)
-        patient = PatientPhenotypes(
-            patient_id="test",
-            phenotypes=["HP:0001234", "HP:0001234", "HP:0002345"],
-        )
-        result = validator.validate_patient_input(patient)
-
-        assert result.is_valid
-        assert len(result.validated_phenotypes) == 2  # Duplicates removed
-        assert any("Duplicate" in w for w in result.warnings)
-
-    def test_validate_patient_input_too_many_phenotypes(self):
-        """Test validation with too many phenotypes"""
-        validator = InputValidator(max_phenotypes=2)
-        patient = PatientPhenotypes(
-            patient_id="test",
-            phenotypes=["HP:0001234", "HP:0002345", "HP:0003456"],
-        )
-        result = validator.validate_patient_input(patient)
-
-        assert result.is_valid
-        assert any("More than" in w for w in result.warnings)
 
 
 # =============================================================================
@@ -406,20 +297,6 @@ class TestFactoryFunctions:
         config = PipelineConfig(max_path_length=5)
         pipeline = create_diagnosis_pipeline(kg=simple_kg, config=config)
         assert pipeline.config.max_path_length == 5
-
-    def test_create_input_validator(self):
-        """Test validator factory"""
-        validator = create_input_validator()
-        assert isinstance(validator, InputValidator)
-
-    def test_create_input_validator_with_options(self):
-        """Test validator factory with options"""
-        validator = create_input_validator(
-            strict_hpo_format=True,
-            min_phenotypes=3,
-        )
-        assert validator.strict_hpo_format is True
-        assert validator.min_phenotypes == 3
 
 
 # =============================================================================
@@ -676,3 +553,153 @@ class TestGNNInference:
         for c in result.candidates:
             assert c.gnn_score == 0.0
             assert c.confidence_score == c.reasoning_score
+
+
+# =============================================================================
+# The phenotype-list rule, through pipeline.run
+# =============================================================================
+# docs/working/PLAN_PHENOTYPE_NORMALISATION.md: repeats are removed by graph node
+# after mapping, first occurrence kept, and nothing is truncated. These tests go
+# through `run` (or `validate_input`, which `run` calls first) rather than
+# restating the rule; the rule alone is tested in test_phenotype_normalisation.py.
+SEIZURE = "HP:0001234"
+ATAXIA = "HP:0002345"
+UNKNOWN = "HP:9999999"
+
+
+def _patient(phenotypes, confidences=None):
+    return PatientPhenotypes(
+        patient_id="norm_patient",
+        phenotypes=list(phenotypes),
+        phenotype_confidences=confidences,
+    )
+
+
+def _ranking(result):
+    return [
+        (c.disease_id, c.rank, c.confidence_score, c.gnn_score, c.reasoning_score)
+        for c in result.candidates
+    ]
+
+
+class TestPhenotypeListRule:
+    """The served path applies the one phenotype-list rule."""
+
+    def test_a_repeat_is_scored_once(self, simple_kg):
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+
+        with_repeat = pipeline.run(_patient([SEIZURE, SEIZURE, ATAXIA]), top_k=5)
+        without = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+
+        assert _ranking(with_repeat) == _ranking(without)
+        assert with_repeat.phenotype_input.used == (SEIZURE, ATAXIA)
+        assert with_repeat.phenotype_input.repeats_removed == 1
+        assert "Removed 1 repeated phenotype entry; each phenotype is scored once." in (
+            with_repeat.warnings
+        )
+
+    def test_a_repeat_is_scored_once_by_the_gnn_too(self, simple_kg):
+        """The GNN mean and the SP mean were where a repeat weighed most.
+
+        **This is the test whose scores move.** On `simple_kg` path reasoning
+        happens to rank `[A, A, B]` and `[A, B]` identically even without the
+        rule — checked by disabling it — so the test above relies on its account
+        and warning assertions. With the rule disabled, this one fails."""
+        model, graph_data = _build_gnn_test_fixtures(simple_kg)
+        pipeline = DiagnosisPipeline(kg=simple_kg, model=model, graph_data=graph_data)
+        assert pipeline._gnn_ready
+
+        with_repeat = pipeline.run(_patient([SEIZURE, SEIZURE, ATAXIA]), top_k=5)
+        without = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+
+        assert _ranking(with_repeat) == _ranking(without)
+        assert any(c.gnn_score != 0.0 for c in with_repeat.candidates)
+
+    def test_one_hundred_repeats_then_another_phenotype_keeps_both(self, simple_kg):
+        """The previous version truncated to the first 100 entries before
+        removing anything, so this input scored the seizure alone."""
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+
+        result = pipeline.run(_patient([SEIZURE] * 100 + [ATAXIA]), top_k=5)
+        both = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+
+        assert _ranking(result) == _ranking(both)
+        assert result.phenotype_input.received == 101
+        assert result.phenotype_input.used == (SEIZURE, ATAXIA)
+        assert "Removed 99 repeated phenotype entries; each phenotype is scored once." in (
+            result.warnings
+        )
+        assert not any("using first" in w for w in result.warnings)
+
+    def test_too_many_distinct_phenotypes_are_refused_not_truncated(self, simple_kg):
+        pipeline = DiagnosisPipeline(kg=simple_kg, config=PipelineConfig(max_phenotypes=1))
+
+        result = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+
+        assert result.candidates == []
+        assert any(
+            "2 distinct phenotypes found in the graph; at most 1 are accepted" in w
+            and "not shortened" in w
+            for w in result.warnings
+        )
+
+    def test_the_count_is_taken_after_repeats_are_removed(self, simple_kg):
+        pipeline = DiagnosisPipeline(kg=simple_kg, config=PipelineConfig(max_phenotypes=1))
+
+        result = pipeline.run(_patient([SEIZURE, SEIZURE, SEIZURE]), top_k=5)
+
+        assert result.candidates
+        assert result.phenotype_input.used == (SEIZURE,)
+
+    def test_unknown_ids_keep_their_policy_and_are_accounted_for(self, simple_kg):
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+
+        result = pipeline.run(_patient([UNKNOWN, SEIZURE, ATAXIA]), top_k=5)
+
+        assert f"Unknown phenotype: {UNKNOWN}" in result.warnings
+        assert result.phenotype_input.unknown == (UNKNOWN,)
+        assert result.phenotype_input.used == (SEIZURE, ATAXIA)
+
+    def test_everything_after_validation_reads_the_list_as_used(
+        self, simple_kg, monkeypatch
+    ):
+        """Scoring receives the normalised input, with each confidence still at
+        the phenotype it was sent with: `[X, A, A, B]` keeps positions 1 and 3."""
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+        seen = {}
+        original = pipeline._score_and_rank_candidates
+
+        def capture(**kwargs):
+            seen["input"] = kwargs["patient_input"]
+            return original(**kwargs)
+
+        monkeypatch.setattr(pipeline, "_score_and_rank_candidates", capture)
+
+        result = pipeline.run(
+            _patient([UNKNOWN, SEIZURE, SEIZURE, ATAXIA], confidences=[0.1, 0.2, 0.3, 0.4]),
+            top_k=5,
+            include_explanations=True,
+        )
+
+        assert seen["input"].phenotypes == [SEIZURE, ATAXIA]
+        assert seen["input"].phenotype_confidences == [0.2, 0.4]
+        assert "Based on 2 input phenotypes" in result.summary_explanation
+
+    @pytest.mark.parametrize("confidences", [[], [0.5], [0.5, 0.5, 0.5]])
+    def test_a_confidence_list_of_the_wrong_length_is_refused(self, simple_kg, confidences):
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+
+        result = pipeline.run(_patient([SEIZURE, ATAXIA], confidences=confidences), top_k=5)
+
+        assert result.candidates == []
+        assert result.phenotype_input is None
+        assert any(
+            f"phenotype_confidences has {len(confidences)} entries for 2 phenotypes" in w
+            for w in result.warnings
+        )
+
+    def test_no_confidences_and_the_right_length_both_pass(self, simple_kg):
+        pipeline = DiagnosisPipeline(kg=simple_kg)
+
+        assert pipeline.validate_input(_patient([SEIZURE, ATAXIA])).is_valid
+        assert pipeline.validate_input(_patient([SEIZURE, ATAXIA], [0.9, 0.8])).is_valid

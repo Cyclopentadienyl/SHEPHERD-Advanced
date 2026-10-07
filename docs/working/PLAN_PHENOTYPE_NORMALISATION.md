@@ -5,6 +5,9 @@ implementation by itself.** The owner has adopted the rule, and the reviewer clo
 revision's corrections at `e9708cf`, so N1's scope is settled (§8). Facts about this repository
 are cited at `15dfcb5`; the code is unchanged at `e9708cf`.
 
+**N1 is implemented on the development branch, awaiting code review** (§8, "What N1 did").
+N2 has not started.
+
 **Revision 2 (2026-10-07)** follows the review of `f7a5c8e`:
 - **the API's own summary moves too** (§4.6, §5, §7). `/diagnose` builds its summary from the
   request, not from the result, so it would still count repeats after the pipeline removed them;
@@ -335,11 +338,14 @@ string-level semantics with it.
     echoes all 101 submitted ids. This was checked with the installed pydantic 2.11.10 and
     fastapi 0.136.1, on a standalone model declaring the same field.
 - **[Recommendation] The same call path, reading the structured error:**
-  - **`_call_diagnose` returns a 422 as its status and `detail` entries**, not as raw text.
+  - **`_call_diagnose` reads a 422's `detail` entries and returns them as words**, not as
+    the raw text.
   - **For `phenotypes` with `too_long`, both numbers come from the server's error**:
     `ctx.actual_length` and `ctx.max_length`. The UI counts nothing and keeps no copy of the
-    limit, so the request model stays the one place the limit is set. `measure_served_pipeline`
-    already reads it from the model in the same way (`scripts/measure_served_pipeline.py:446-451`).
+    limit, so the request model stays the one place the limit is set.
+    `measure_served_pipeline` keeps to the same source by another route: it reads the request
+    model's field metadata (`scripts/measure_served_pipeline.py:446-451`), where the WebUI
+    reads the 422's `ctx`.
   - **The message counts entries, not lines.** The UI accepts several ids to a line, and
     commas and spaces between them. For example: "Recognised 101 HPO phenotype entries
     (repeats included); one submission accepts at most 100. No diagnosis was run, and the list
@@ -536,3 +542,35 @@ compares the two.
 
 **Not a remedy anywhere here:** a compatibility mode for files with repeats, or a CPU fallback.
 A file that fails the check is rebuilt by its producer.
+
+**What N1 did** (on the development branch, awaiting code review):
+- **The rule:** `src/kg/phenotype_normalisation.py`, with `PHENOTYPE_NORMALISATION_VERSION = 1`.
+- **The pipeline** (`DiagnosisPipeline.validate_input` and `run`):
+  - checks the confidence length first;
+  - maps ids, keeping request positions;
+  - removes repeats by node;
+  - refuses more than `max_phenotypes` distinct phenotypes, where it used to truncate;
+  - rebinds the input to the list as used, so scoring, explanations and the summary read
+    it;
+  - returns a `PhenotypeInputAccount` on `InferenceResult` (`src/core/types.py`).
+- **The API:** a request-model check of the confidence length, giving 422; the summary built
+  from the account; the mock path's count labelled as received.
+- **The WebUI:** the parser keeps order and repeats; `_describe_refused_request` turns a 422
+  into words.
+- **`InputValidator`:**
+  - the module, its exports, its tests and the smoke test's functional group are removed;
+  - `InputValidatorProtocol` is kept. Its pointer label is now `PLANNED`, because the
+    label system (`tests/unit/test_protocol_pointers.py`) describes the file tree and the
+    path no longer exists. A note beside it says nothing is planned for that path. Removing
+    the protocol itself was not in the approved scope.
+- **Tests, through the entry points:**
+  - `tests/unit/test_phenotype_normalisation.py`;
+  - `TestPhenotypeListRule` in `tests/unit/test_inference.py`;
+  - `tests/unit/test_diagnose_phenotype_input.py`, including the contract test of the 422's
+    shape;
+  - the WebUI cases in `tests/unit/test_diagnosis_panel.py`, which drive the real handler
+    against the real application.
+- **Noted for later, not changed:** `docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §4.5
+  (draft) plans to record "duplicate multiplicity" in contribution provenance. After N1 a repeat
+  never reaches the scorer, so that multiplicity is what the account and the kept positions
+  record. Reconcile it when SPEC_1 is implemented.

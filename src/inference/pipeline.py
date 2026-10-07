@@ -46,12 +46,13 @@ import json
 import logging
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 from src.kg.artifacts import verify_graph_source
+from src.kg.phenotype_normalisation import normalise_phenotypes
 from src.core.types import (
     DataSource,
     DiagnosisCandidate,
@@ -60,6 +61,7 @@ from src.core.types import (
     NodeID,
     NodeType,
     PatientPhenotypes,
+    PhenotypeInputAccount,
 )
 from src.reasoning import (
     PathReasoner,
@@ -209,9 +211,15 @@ class ValidationResult:
     """Result of input validation."""
 
     is_valid: bool
+    #: The phenotypes to score: known, distinct, in first-occurrence order.
     validated_phenotypes: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    #: Where each validated phenotype sat in the request, so a per-position
+    #: field such as `phenotype_confidences` follows the entries that survived.
+    kept_positions: List[int] = field(default_factory=list)
+    #: None when the request was refused before its phenotypes were mapped.
+    phenotype_input: Optional[PhenotypeInputAccount] = None
 
 
 # ==============================================================================
@@ -1061,8 +1069,17 @@ class DiagnosisPipeline:
                 warnings=validation.errors,
                 model_version=self.VERSION,
                 inference_time_ms=(time.time() - start_time) * 1000,
+                phenotype_input=validation.phenotype_input,
             )
         warnings.extend(validation.warnings)
+
+        # **From here on the list as used is the input, not the list as
+        # received.** Scoring, explanations and the summary all read
+        # `patient_input`, and each of them read the raw request before: the
+        # summary counted repeats and unknown ids as "input phenotypes", and the
+        # explanations listed them. Rebinding once, here, leaves nothing below
+        # able to reach the raw list.
+        patient_input = self._as_used(patient_input, validation)
 
         # Step 2: Convert phenotypes to NodeIDs
         source_ids = self._phenotypes_to_node_ids(validation.validated_phenotypes)
@@ -1072,6 +1089,7 @@ class DiagnosisPipeline:
                 patient_input.patient_id,
                 start_time,
                 warnings + ["No valid phenotypes found in knowledge graph"],
+                validation.phenotype_input,
             )
 
         # Step 3: Find reasoning paths (BFS-based)
@@ -1084,6 +1102,7 @@ class DiagnosisPipeline:
                 patient_input.patient_id,
                 start_time,
                 warnings + ["No paths found from phenotypes to diseases"],
+                validation.phenotype_input,
             )
 
         # Step 4: Score and rank candidates
@@ -1130,6 +1149,7 @@ class DiagnosisPipeline:
             kg_version=getattr(self.kg, "version", "unknown"),
             inference_time_ms=inference_time,
             warnings=warnings,
+            phenotype_input=validation.phenotype_input,
         )
 
     def validate_input(
@@ -1137,60 +1157,121 @@ class DiagnosisPipeline:
         patient_input: PatientPhenotypes,
     ) -> ValidationResult:
         """
-        Validate patient input.
+        Validate patient input, and apply the phenotype-list rule.
+
+        In this order (docs/working/PLAN_PHENOTYPE_NORMALISATION.md §3-§4):
+
+        1. **Per-position fields match the list as received.** A supplied
+           `phenotype_confidences` has one entry per phenotype. This comes first
+           because step 3 reduces it by position, and a mismatch is refused, never
+           padded or truncated.
+        2. **Ids are mapped to graph nodes.** An id with no node is dropped, with a
+           warning when `validate_phenotypes` is on — the policy unchanged.
+        3. **Repeats are removed by node**, keeping the first occurrence
+           (`src/kg/phenotype_normalisation.py`).
+        4. **The count is checked on what remains.** More than `max_phenotypes`
+           is refused. Nothing is truncated: the previous version kept the first
+           100 entries, repeats and unknown ids included, so "100 × A, then B"
+           silently scored A alone.
 
         Args:
             patient_input: Patient phenotype data
 
         Returns:
-            ValidationResult with validated phenotypes and any warnings/errors
+            ValidationResult with the phenotypes to score, their request positions,
+            the account of what was received and used, and any warnings/errors
         """
         errors: List[str] = []
         warnings: List[str] = []
-        validated_phenotypes: List[str] = []
+        phenotypes = list(patient_input.phenotypes)
+        confidences = patient_input.phenotype_confidences
+
+        if confidences is not None and len(confidences) != len(phenotypes):
+            return ValidationResult(
+                is_valid=False,
+                errors=[
+                    f"phenotype_confidences has {len(confidences)} entries for "
+                    f"{len(phenotypes)} phenotypes. It needs one per phenotype, "
+                    "or none at all; nothing was scored."
+                ],
+            )
 
         # Check patient_id
         if not patient_input.patient_id:
             errors.append("patient_id is required")
 
         # Check phenotype count
-        if len(patient_input.phenotypes) < self.config.min_phenotypes:
+        if len(phenotypes) < self.config.min_phenotypes:
             errors.append(
                 f"At least {self.config.min_phenotypes} phenotype(s) required, "
-                f"got {len(patient_input.phenotypes)}"
+                f"got {len(phenotypes)}"
             )
 
-        if len(patient_input.phenotypes) > self.config.max_phenotypes:
-            warnings.append(
-                f"More than {self.config.max_phenotypes} phenotypes provided, "
-                f"using first {self.config.max_phenotypes}"
-            )
-
-        # Validate each phenotype
-        for pheno_id in patient_input.phenotypes[:self.config.max_phenotypes]:
-            if self._validate_phenotype(pheno_id):
-                validated_phenotypes.append(pheno_id)
+        # Map each id to its node, keeping the request position of every one
+        # that has a node.
+        known_nodes: List[str] = []
+        known_positions: List[int] = []
+        unknown: List[str] = []
+        for position, pheno_id in enumerate(phenotypes):
+            node_id = NodeID(source=DataSource.HPO, local_id=pheno_id)
+            if self.kg.has_node(node_id):
+                known_nodes.append(str(node_id))
+                known_positions.append(position)
             else:
-                warnings.append(f"Unknown phenotype: {pheno_id}")
+                unknown.append(pheno_id)
+                if self.config.validate_phenotypes:
+                    warnings.append(f"Unknown phenotype: {pheno_id}")
 
-        if not validated_phenotypes and not errors:
+        normalised = normalise_phenotypes(known_nodes, positions=known_positions)
+        used = [phenotypes[position] for position in normalised.kept_positions]
+        if normalised.repeats_removed:
+            warnings.append(
+                f"Removed {normalised.repeats_removed} repeated phenotype "
+                f"{'entry' if normalised.repeats_removed == 1 else 'entries'}; "
+                "each phenotype is scored once."
+            )
+
+        if len(used) > self.config.max_phenotypes:
+            errors.append(
+                f"{len(used)} distinct phenotypes found in the graph; at most "
+                f"{self.config.max_phenotypes} are accepted. Nothing was scored, "
+                "and the list was not shortened."
+            )
+
+        # With validation off, unknown ids are still dropped, and an input that
+        # loses all of them reaches `run`'s empty result as it always did.
+        if not used and not errors and self.config.validate_phenotypes:
             errors.append("No valid phenotypes after validation")
 
         return ValidationResult(
             is_valid=len(errors) == 0,
-            validated_phenotypes=validated_phenotypes,
+            validated_phenotypes=used,
             warnings=warnings,
             errors=errors,
+            kept_positions=list(normalised.kept_positions),
+            phenotype_input=PhenotypeInputAccount(
+                received=len(phenotypes),
+                unknown=tuple(unknown),
+                repeats_removed=normalised.repeats_removed,
+                used=tuple(used),
+            ),
         )
 
-    def _validate_phenotype(self, pheno_id: str) -> bool:
-        """Check if a phenotype ID is valid in the KG."""
-        if not self.config.validate_phenotypes:
-            return True
-
-        # Check if phenotype exists in KG
-        node_id = NodeID(source=DataSource.HPO, local_id=pheno_id)
-        return self.kg.has_node(node_id)
+    @staticmethod
+    def _as_used(
+        patient_input: PatientPhenotypes, validation: ValidationResult
+    ) -> PatientPhenotypes:
+        """The input as scored: its validated phenotypes, and every per-position
+        field reduced to the same request positions."""
+        confidences = patient_input.phenotype_confidences
+        return replace(
+            patient_input,
+            phenotypes=list(validation.validated_phenotypes),
+            phenotype_confidences=(
+                None if confidences is None
+                else [confidences[position] for position in validation.kept_positions]
+            ),
+        )
 
     def _phenotypes_to_node_ids(self, phenotypes: List[str]) -> List[NodeID]:
         """Convert HPO ID strings to NodeID objects."""
@@ -1693,6 +1774,7 @@ class DiagnosisPipeline:
         patient_id: str,
         start_time: float,
         warnings: List[str],
+        phenotype_input: Optional[PhenotypeInputAccount] = None,
     ) -> InferenceResult:
         """Create an empty result with warnings."""
         return InferenceResult(
@@ -1702,6 +1784,7 @@ class DiagnosisPipeline:
             warnings=warnings,
             model_version=self.VERSION,
             inference_time_ms=(time.time() - start_time) * 1000,
+            phenotype_input=phenotype_input,
         )
 
     def get_pipeline_config(self) -> Dict[str, Any]:

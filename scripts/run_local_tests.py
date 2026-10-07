@@ -152,9 +152,9 @@ def test_reasoning_imports() -> bool:
 
 def test_inference_imports() -> bool:
     """Test inference module imports"""
-    from src.inference import DiagnosisPipeline, InputValidator
+    from src.inference import DiagnosisPipeline
     from src.inference.pipeline import PipelineConfig
-    print("  - DiagnosisPipeline, InputValidator imported")
+    print("  - DiagnosisPipeline imported")
     return True
 
 
@@ -201,29 +201,6 @@ def test_utils_imports() -> bool:
     from src.utils.metrics import DiagnosisMetrics, RankingMetrics
     metrics = RankingMetrics()
     print(f"  - RankingMetrics: {type(metrics)}")
-    return True
-
-
-def test_input_validator() -> bool:
-    """Test input validator"""
-    from src.inference import InputValidator, create_input_validator
-
-    validator = create_input_validator()
-
-    # Valid input
-    result = validator.validate_patient_input_dict({
-        "patient_id": "test",
-        "phenotypes": ["HP:0001250", "HP:0002311"],
-    })
-    assert result.success, f"Valid input rejected: {result.error}"
-
-    # Invalid HPO format
-    result = validator.validate_patient_input_dict({
-        "phenotypes": ["INVALID"],
-    })
-    # Should have warnings but may still be valid in relaxed mode
-
-    print("  - Validation logic working")
     return True
 
 
@@ -402,11 +379,6 @@ def run_training_tests(runner: LocalTestRunner):
     runner.add_result(runner.run_test("Trainer Init", test_trainer_init))
 
 
-def run_functional_tests(runner: LocalTestRunner):
-    """Run functional tests"""
-    runner.add_result(runner.run_test("Input Validator", test_input_validator))
-
-
 def main():
     parser = argparse.ArgumentParser(description="Run local tests")
     parser.add_argument("--quick", action="store_true", help="Quick smoke test")
@@ -440,13 +412,11 @@ def main():
         runner.add_result(runner.run_test("Pytest Suite", test_existing_pytest))
     elif args.all:
         run_import_tests(runner)
-        run_functional_tests(runner)
         run_api_tests(runner)
         run_training_tests(runner)
     else:
-        # Default: imports + functional + api
+        # Default: imports + api
         run_import_tests(runner)
-        run_functional_tests(runner)
         run_api_tests(runner)
 
     success = runner.print_summary()

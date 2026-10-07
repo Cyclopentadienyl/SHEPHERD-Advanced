@@ -101,16 +101,15 @@ def _parse_hpo_ids(text: str) -> List[str]:
     Accepts ids separated by newlines, commas, semicolons, spaces or tabs, with
     or without a trailing name, and mixed with stray punctuation — everything the
     strict one-per-line parser used to reject. Normalises to canonical
-    ``HP:0000000`` form, preserves order, and de-duplicates.
+    ``HP:0000000`` form and preserves order.
+
+    **Repeats are kept.** This used to remove them by string, a second copy of a
+    rule the service owns: the pipeline removes repeats by graph node, after
+    mapping, and reports how many it removed. Removing them here as well hid them
+    from that count and from the request-size limit
+    (docs/working/PLAN_PHENOTYPE_NORMALISATION.md, decision W).
     """
-    seen: set[str] = set()
-    ids: List[str] = []
-    for match in _HPO_ID_RE.finditer(text or ""):
-        hpo_id = f"HP:{match.group(1)}"
-        if hpo_id not in seen:
-            seen.add(hpo_id)
-            ids.append(hpo_id)
-    return ids
+    return [f"HP:{match.group(1)}" for match in _HPO_ID_RE.finditer(text or "")]
 
 # Confidence label → (emoji, CSS color)
 LABEL_STYLES = {
@@ -147,9 +146,85 @@ def _call_diagnose(
     except requests.ConnectionError:
         return {"error": "API server not reachable. Is uvicorn running?"}
     except requests.HTTPError as e:
+        if e.response.status_code == 422:
+            return {"error": _describe_refused_request(e.response)}
         return {"error": f"API error: {e.response.status_code} — {e.response.text}"}
     except Exception as e:
         return {"error": f"Unexpected error: {e}"}
+
+
+#: Shown when a 422 arrives without a reason this panel can read.
+_UNREADABLE_REFUSAL = (
+    "The API refused the request as invalid (HTTP 422), and its reason could not "
+    "be read. Nothing was diagnosed."
+)
+
+
+def _describe_refused_request(response: requests.Response) -> str:
+    """A 422 from `/diagnose`, in words a clinician can act on.
+
+    **Read from the API's structured error, never restated.** FastAPI answers a
+    request its model refuses with a list of entries, each naming a field, an
+    error type and a message. The panel turns each into a line. It does not echo
+    the entry's `input`, which for a list over the limit is the whole list.
+
+    **The phenotype limit is the one case with its own message**, and both of
+    its numbers come from the server: `ctx.actual_length` and `ctx.max_length`.
+    The panel counts nothing and keeps no copy of the limit, so the request model
+    stays the one place it is set. If either number is missing or not a whole
+    number, the entry falls back to its plain line rather than guessing one.
+
+    Never raises: a body that is not JSON, or JSON of another shape, gets the
+    general line.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return _UNREADABLE_REFUSAL
+    entries = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return _UNREADABLE_REFUSAL
+
+    lines = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        line = _too_many_phenotypes(entry) or _refusal_line(entry)
+        if line:
+            lines.append(line)
+    return "\n\n".join(lines) if lines else _UNREADABLE_REFUSAL
+
+
+def _too_many_phenotypes(entry: Dict[str, Any]) -> Optional[str]:
+    """The message for a phenotype list over the limit, or None if `entry` is
+    not one or does not carry both numbers."""
+    if entry.get("loc") != ["body", "phenotypes"] or entry.get("type") != "too_long":
+        return None
+    ctx = entry.get("ctx")
+    if not isinstance(ctx, dict):
+        return None
+    received, limit = ctx.get("actual_length"), ctx.get("max_length")
+    # `bool` is an `int`; neither True nor False is a count.
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in (received, limit)):
+        return None
+    return (
+        f"Recognised {received} HPO phenotype entries (repeats included); one "
+        f"submission accepts at most {limit}. No diagnosis was run, and the list "
+        "was not shortened. Remove repeats or shorten the list, then submit again."
+    )
+
+
+def _refusal_line(entry: Dict[str, Any]) -> Optional[str]:
+    """One refused field as `field: reason`, or None if there is no reason."""
+    message = entry.get("msg")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    # Pydantic prefixes a validator's ValueError with "Value error, ".
+    message = message.removeprefix("Value error, ")
+    loc = entry.get("loc")
+    path = [str(part) for part in loc[1:]] if isinstance(loc, list) else []
+    field = ".".join(path) if path else "request"
+    return f"Request refused — {field}: {message}"
 
 
 # =============================================================================

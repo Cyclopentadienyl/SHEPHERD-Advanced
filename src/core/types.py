@@ -430,6 +430,25 @@ class DiagnosisCandidate:
     explanation: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class PhenotypeInputAccount:
+    """What happened to a request's phenotype list before it was scored.
+
+    **The result says what was used, so nobody has to infer it from the request.**
+    The pipeline drops unknown ids and removes repeats by graph node
+    (`src/kg/phenotype_normalisation.py`); a caller that counted its own request
+    afterwards would report repeats and unknown ids as though they were scored.
+    """
+    #: Entries the request carried, repeats and unknown ids included.
+    received: int
+    #: Ids with no node in the graph, in request order. Dropped, not scored.
+    unknown: Tuple[str, ...]
+    #: Entries that repeated a phenotype already kept.
+    repeats_removed: int
+    #: The phenotypes scored, in first-occurrence order.
+    used: Tuple[str, ...]
+
+
 @dataclass
 class InferenceResult:
     """
@@ -451,6 +470,10 @@ class InferenceResult:
 
     # Warnings
     warnings: List[str] = field(default_factory=list)
+
+    # The phenotype list as received and as used. None when the request was
+    # refused before its phenotypes were mapped.
+    phenotype_input: Optional[PhenotypeInputAccount] = None
 
 
 # =============================================================================
