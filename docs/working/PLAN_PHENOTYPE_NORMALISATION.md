@@ -579,3 +579,43 @@ A file that fails the check is rebuilt by its producer.
   (draft) plans to record "duplicate multiplicity" in contribution provenance. After N1 a repeat
   never reaches the scorer, so that multiplicity is what the account and the kept positions
   record. Reconcile it when SPEC_1 is implemented.
+
+**N1's acceptance on the homelab** (2026-10-07, run by the owner at `af49bd3`, evidence collected
+by the author).
+- **Environment:**
+  - NVIDIA GB10. PyTorch warns that it supports CUDA capability 8.0–12.0 and the GPU is 12.1;
+    the GNN computed its embeddings on CUDA regardless. This is the environment as it already
+    was, not a result of N1.
+  - Started with the usual launcher on port 8000, with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`,
+    `SHEPHERD_CHECKPOINT_PATH` and `SHEPHERD_DEVICE=cuda`, so the pipeline was built at startup
+    and what it loaded is in the log.
+- **What was served:**
+  - workspace `data/workspaces/hpo_2026_0929_5a`, 57,239 nodes and 617,773 edges;
+  - checkpoint `checkpoints/hgt/model-02-0.1813.pt`: epoch 2, 4,228,429 parameters, val MRR
+    0.1813;
+  - SP table: 431,902,937 pairs, `max_hops` 5 from the sidecar, graph binding *verified*;
+  - no fingerprint warnings;
+  - mode `gnn_plus_shortest_path`, eta 0.7.
+
+  The artifacts are identified by path. File digests were not recorded in this run.
+- **Through the API** (a client script that only calls the running API; A = `HP:0001250`,
+  B = `HP:0001263`, `top_k` 100):
+  - **precondition:** GNN and SP scores were non-zero, so the comparison exercised both;
+  - **`[A, B]` and `[A, A, B]`:** all 100 candidates identical in identity, rank, raw total,
+    GNN, SP and reasoning scores, and in their whole records (explanations, paths, evidence);
+  - the repeat warning was present, and the summary read "for 2 phenotypes (3 received)";
+  - "100 × A, then B" was refused with 422 `too_long`, `ctx` 101 of 100.
+- **Through the WebUI:**
+  - **`HP:0001250 HP:0001263`:** the top 10 matched the API's to four decimals, and so did the
+    exported CSV. The model status showed GNN, SP and the checkpoint's metrics on page load
+    (F2, F3);
+  - **101 entries on 11 lines:** the message gave 101 and 100, said no diagnosis was run and
+    the list was not shortened. Results were cleared, both exports disabled, and the input
+    kept;
+  - **`HP:0001250 HP:0001250 HP:0001263`:** the same top 10, the repeat warning, and no stale
+    error. The export buttons were below the screenshot's edge.
+- **Found during the run, not caused by N1** (backlog item 17):
+  - the model-configuration fields show the saved UI preferences, not the loaded pipeline;
+  - `matching_phenotypes` is always empty on the real path;
+  - the launcher stops waiting to open a browser after 60 s, while a startup that loads this
+    SP table takes about 84 s.
