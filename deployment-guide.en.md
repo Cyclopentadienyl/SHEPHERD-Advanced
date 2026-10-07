@@ -509,9 +509,11 @@ does not stop**. It serves pure GNN scoring: `sp_ready=False`,
 run with shortest paths enabled** — a deliberate trade: better one signal fewer
 than scoring against a ceiling nobody chose.
 
-> **Exception**: a deployment that has deliberately set `sp_optional=False` will,
-> with SP unavailable, have **GNN scoring disabled** by the current code. This is
-> not "always falls back to pure GNN". The API build path uses the default
+> **Exception**: a deployment that has deliberately set `sp_optional=False` gets
+> **no pipeline** when SP is unavailable: the build is refused
+> (`PipelineBuildError`), a startup publishes nothing and `/diagnose` answers 503,
+> and a reload is refused with the previous pipeline still serving. This is not
+> "always falls back to pure GNN". The API build path uses the default
 > `sp_optional=True`.
 
 ### A corrupt or invalid sidecar

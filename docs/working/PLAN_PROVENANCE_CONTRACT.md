@@ -176,23 +176,44 @@ explicit opt-in is B-2's policy question (§8).
 
 **A requested model is built, or the build raises `PipelineBuildError`**
 (`src/inference/pipeline.py`). A model is requested when a checkpoint path or a pre-loaded model
-is given. Each condition below used to log and return without the GNN:
+is given. These conditions used to log and return without the GNN, and the pipeline was
+published as a success:
 - PyTorch is not available;
 - there is no graph to compute embeddings from, whether no `data_dir` or `graph_data` was given
   or the directory lacks its tensors;
-- the checkpoint is missing, cannot be read, or does not build a model over this graph
-  (`_load_model_from_checkpoint` raises, and the reader's or builder's error is kept as the
-  cause);
+- the checkpoint is missing, or does not build a model over this graph
+  (`_load_model_from_checkpoint`; the builder's error is kept as the cause);
 - shortest paths are required (`sp_optional=False`) and not available. This used to switch the
   GNN off, so a configuration requiring both signals was served with neither.
 
-One invariant is added: `_gnn_ready` is set only with a model and its embeddings in hand. It
-cannot be reached today, because every loader raises. It stops a loader that one day returns
-`None` again from leaving a pipeline that reports a GNN and scores every GNN term as zero.
+Three more cases now raise it, naming what is wrong:
+- an unreadable checkpoint. It already raised, as torch's own error;
+- a file that is not a training checkpoint;
+- a checkpoint with no weights.
 
-**The API is unchanged.** `build_pipeline` already re-raised, startup already published nothing
-on failure, and the reload route already built the candidate before publishing it. So the
-refusal lands as the acceptance requires, once the pipeline raises.
+One invariant is added: `_gnn_ready` is set only with a model and with phenotype and disease
+embeddings, the two `_calculate_gnn_score` reads. It cannot be reached today, because every
+loader raises. It stops a loader that one day returns `None` again from leaving a pipeline that
+reports a GNN and scores every GNN term as zero.
+
+**The API's build-then-publish order put the refusal in the right place.** `build_pipeline`
+already re-raised, startup already published nothing on failure, and the reload route already
+built the candidate before publishing it. Three gaps beside it are closed (`src/api/main.py`,
+`src/api/routes/diagnose.py`), all found by the independent review:
+- **a checkpoint configured with no knowledge graph is refused.** Before, `build_pipeline`
+  returned `None` before recording the request, and `/diagnose` gave the demo answer: invented
+  candidates over HTTP 200. Startup now also attempts the build when only
+  `SHEPHERD_CHECKPOINT_PATH` is set, so the refusal is seen there;
+- **`/diagnose` no longer rebuilds a failed pipeline on every request.** Before, the lazy
+  initialisation reran the whole build each time: graph load, workspace digests and tensor
+  reads. It ran synchronously in an async route, so `/health` and the WebUI waited, and each
+  request got the same 503. M1 would have sent the commonest misconfigurations there. The
+  environment cannot change in a running process, so recovery is a reload or a restart, and the
+  503 says so;
+- **a blank environment value is unset.** An exported-but-empty `SHEPHERD_CHECKPOINT_PATH` would
+  otherwise be read as a request for a model.
+
+A reload refusal no longer ends in a doubled full stop.
 
 **Unchanged, deliberately:**
 - with no model source at all, the pipeline still serves path reasoning. Whether that needs an
@@ -201,12 +222,15 @@ refusal lands as the acceptance requires, once the pipeline raises.
   (`DISEASE_SCORER_POLICY.md` §2).
 
 **Tests:**
-- `tests/unit/test_pipeline_fails_closed.py` covers:
+- `tests/unit/test_pipeline_fails_closed.py`, 24 tests, covers:
   - each condition above, plus the invariant;
   - controls: a sound checkpoint builds, a GNN with optional SP absent builds, and no model
     source still builds path reasoning;
-  - startup with an unreadable checkpoint: nothing published, `/diagnose` 503, with the same
-    startup and a sound checkpoint as control;
+  - startup with a missing, another graph's, and an unreadable checkpoint: nothing published,
+    `/diagnose` 503, with the same startup and a sound checkpoint as control. The first two were
+    the old fallback;
+  - one build for a failed startup followed by three diagnoses;
+  - a checkpoint with no knowledge graph, and a blank checkpoint setting;
   - reloads to an unreadable checkpoint and to one trained over another graph: refused, with
     every served field the same object as before.
 - The graph-binding tests' stand-in now finishes the model build. Before, it ended in the
@@ -216,15 +240,22 @@ refusal lands as the acceptance requires, once the pipeline raises.
     them.
   - This was already true at `4298aac`; the alphabetical full run hid it.
 
-**Mutation check.** 8 mutants were run in a fresh copy of the tree, each restoring one old
-swallow, the invariant's removal, or both together. All 8 were caught.
+**Mutation check.** 15 mutants were run in a fresh copy of the tree, each restoring one old
+behaviour or removing one new check. All 15 were caught.
 
-**Found, not changed: one for M2.** `_calculate_gnn_score` clamps a disease index past the end
-of the embedding table to the last row (`disease_idx = min(...)`). A graph whose node mapping
-disagrees with its tensors is therefore scored against another disease's embedding, not
-refused. The workspace binding prevents that mismatch for file-backed pipelines. A caller
-supplying `graph_data` in memory has no binding. M2's model↔graph check is where the refusal
-belongs.
+**Found, not changed:**
+- **One for M2.** `_calculate_gnn_score` clamps a disease index past the end of the embedding
+  table to the last row (`disease_idx = min(...)`). A graph whose node mapping disagrees with its
+  tensors is therefore scored against another disease's embedding, not refused.
+  - On the API path, the workspace binding prevents that mismatch.
+  - A direct caller's graph object is not checked against its `kg_path`, and a caller supplying
+    `graph_data` in memory has no binding at all.
+  - M2's model↔graph check is where the refusal belongs.
+- **`/ready` stays 503 after a failed startup,** even once a reload succeeds. Nothing sets
+  `is_ready` back. This predates M1; M1 makes failed startups more common.
+- **A configured knowledge graph file that is missing makes `build_pipeline` return `None`,**
+  rather than raise. Both callers still fail closed: startup leaves `/diagnose` at 503, and a
+  reload is refused.
 
 ### M2 — the model↔graph relation, on the bytes actually read, with the resume parent
 

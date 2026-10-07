@@ -1,21 +1,27 @@
 """A requested model is served, or nothing is.
 
-`_load_model_from_checkpoint` returned None when the checkpoint was missing,
-unreadable or did not build over the graph, and `_init_gnn_inference` returned
-without the GNN when that happened or when there was no graph to compute its
-embeddings from. The pipeline was then published as a success, and every
-diagnosis was answered with path-reasoning scores in the model's place, over
-HTTP 200, with nothing in the response saying so. `sp_optional=False` did the
-same in its own way: it switched the GNN off, so a configuration requiring both
-signals was served with neither.
+`_load_model_from_checkpoint` returned None when the checkpoint was missing or
+did not build over the graph, and `_init_gnn_inference` returned without the GNN
+when that happened or when there was no graph to compute its embeddings from.
+The pipeline was then published as a success, and every diagnosis was answered
+with path-reasoning scores in the model's place, over HTTP 200, with nothing in
+the response saying so. `sp_optional=False` did the same in its own way: it
+switched the GNN off, so a configuration requiring both signals was served with
+neither. (An unreadable checkpoint already raised, as torch's own error; its
+cases here hold it there.)
 
 Each of those now raises `PipelineBuildError`
-(docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). The API needed no change for the
-refusal to land correctly, because it already builds before it publishes:
+(docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). The API's build-then-publish
+order already put a raised build in the right place:
 
 - **at startup**, no pipeline is published and `/diagnose` answers 503;
 - **on a reload**, the candidate is refused and the pipeline already serving
   stays.
+
+Three API changes close what that order did not: a checkpoint configured with
+no knowledge graph is refused rather than treated as nothing configured; a blank
+environment value is unset; and `/diagnose` no longer rebuilds a failed pipeline
+on every request.
 
 **Unchanged here, deliberately:** a pipeline built with no model source at all
 still serves path reasoning. Whether that needs an explicit opt-in is B-2's open
@@ -31,7 +37,6 @@ import json
 import pytest
 
 torch = pytest.importorskip("torch")
-pytest.importorskip("fastapi")
 
 from src.inference import pipeline as pipeline_module  # noqa: E402
 from src.inference.pipeline import (  # noqa: E402
@@ -159,6 +164,54 @@ class TestARequestedModelIsBuiltOrRefused:
                 checkpoint_path=str(checkpoint), device="cpu",
             )
 
+    def test_embeddings_without_a_node_type_scoring_reads_cannot_mark_it_ready(
+        self, monkeypatch, workspace
+    ):
+        """An embedding table with no disease rows scores every GNN term as zero,
+        as surely as no table at all."""
+        data_dir, checkpoint = workspace
+        real = DiagnosisPipeline._precompute_node_embeddings
+
+        def _without_diseases(self, device=None):
+            real(self, device)
+            self._node_embeddings.pop("disease")
+
+        monkeypatch.setattr(
+            DiagnosisPipeline, "_precompute_node_embeddings", _without_diseases
+        )
+
+        with pytest.raises(PipelineBuildError, match="disease"):
+            DiagnosisPipeline(
+                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                checkpoint_path=str(checkpoint), device="cpu",
+            )
+
+    def test_a_file_that_is_not_a_training_checkpoint_is_refused(
+        self, workspace, tmp_path
+    ):
+        data_dir, _ = workspace
+        not_a_checkpoint = tmp_path / "tensor.pt"
+        torch.save(torch.zeros(3), not_a_checkpoint)
+
+        with pytest.raises(PipelineBuildError, match="not a training checkpoint"):
+            DiagnosisPipeline(
+                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                checkpoint_path=str(not_a_checkpoint), device="cpu",
+            )
+
+    def test_a_checkpoint_without_weights_is_named_as_such(self, workspace, tmp_path):
+        """A format problem, not a graph mismatch, and the message says which."""
+        data_dir, checkpoint = workspace
+        stripped = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        del stripped["state_dict"]
+        torch.save(stripped, tmp_path / "stripped.pt")
+
+        with pytest.raises(PipelineBuildError, match="carries no model weights"):
+            DiagnosisPipeline(
+                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                checkpoint_path=str(tmp_path / "stripped.pt"), device="cpu",
+            )
+
     def test_a_checkpoint_with_no_graph_is_refused(self, workspace):
         _, checkpoint = workspace
 
@@ -193,6 +246,20 @@ class TestARequestedModelIsBuiltOrRefused:
                 checkpoint_path=str(checkpoint),
                 data_dir=str(data_dir),
                 kg_path=str(data_dir / "kg.json"),
+                device="cpu",
+            )
+
+    def test_required_shortest_paths_with_no_directory_say_so(self, workspace):
+        """With the graph passed in memory there is no table to load and no load
+        message to point at; the refusal names that instead."""
+        data_dir, checkpoint = workspace
+
+        with pytest.raises(PipelineBuildError, match="no data_dir was given"):
+            DiagnosisPipeline(
+                kg=KnowledgeGraph(),
+                config=PipelineConfig(sp_optional=False),
+                graph_data=_graph_data(data_dir),
+                checkpoint_path=str(checkpoint),
                 device="cpu",
             )
 
@@ -231,6 +298,7 @@ def api(monkeypatch):
     the graph object is stood in for. The digest check reads the file, not the
     object, and still runs.
     """
+    pytest.importorskip("fastapi")
     import src.api.main as api_main
 
     for field in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
@@ -244,6 +312,16 @@ def api(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     return api_main
+
+
+def _bad_checkpoint(kind, data_dir, tmp_path):
+    if kind == "missing":
+        return tmp_path / "absent.pt"
+    if kind == "built for another graph":
+        return _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+    corrupt = tmp_path / "corrupt.pt"
+    corrupt.write_bytes(b"not a checkpoint")
+    return corrupt
 
 
 def _diagnose(client):
@@ -277,20 +355,79 @@ class TestStartupPublishesNothing:
             assert api.app_state.pipeline is not None
             assert api.app_state.pipeline.get_pipeline_config()["gnn_ready"] is True
 
+    @pytest.mark.parametrize("kind", ["missing", "built for another graph", "unreadable"])
     def test_a_checkpoint_that_cannot_load_leaves_diagnose_at_503(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, workspace, tmp_path, kind
     ):
+        """The first two were the old fallback: startup published a pipeline
+        scoring by path reasoning, and `/diagnose` answered 200. An unreadable
+        checkpoint already failed startup; it is here so it stays that way."""
         data_dir, _ = workspace
-        corrupt = tmp_path / "corrupt.pt"
-        corrupt.write_bytes(b"not a checkpoint")
+        checkpoint = _bad_checkpoint(kind, data_dir, tmp_path)
 
-        with self._start(api, monkeypatch, data_dir, corrupt) as client:
+        with self._start(api, monkeypatch, data_dir, checkpoint) as client:
             assert api.app_state.pipeline is None, "startup published a pipeline"
             response = _diagnose(client)
 
         assert response.status_code == 503, response.text
         assert "could not be initialized" in response.text
         assert api.app_state.pipeline is None
+
+    def test_a_failed_build_is_not_repeated_by_every_diagnosis(
+        self, api, monkeypatch, workspace, tmp_path
+    ):
+        """The lazy retry in `/diagnose` rebuilt the whole pipeline on each
+        request -- graph, digests, tensors -- inside an async route, and answered
+        the same 503. The environment cannot change in a running process, so
+        the retry could only repeat the failure."""
+        data_dir, _ = workspace
+        builds = []
+        real_build = api.build_pipeline
+
+        def _counted(*args, **kwargs):
+            builds.append(kwargs)
+            return real_build(*args, **kwargs)
+
+        monkeypatch.setattr(api, "build_pipeline", _counted)
+
+        with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
+            statuses = [_diagnose(client).status_code for _ in range(3)]
+
+        assert statuses == [503, 503, 503]
+        assert len(builds) == 1, f"{len(builds)} builds for one startup and 3 requests"
+
+    def test_a_checkpoint_with_no_knowledge_graph_is_refused_not_mocked(
+        self, api, monkeypatch, workspace
+    ):
+        """`build_pipeline` returned None with no KG path before recording the
+        request, so a deployment that named a checkpoint got the demo answer:
+        invented candidates over HTTP 200."""
+        from fastapi.testclient import TestClient
+
+        data_dir, checkpoint = workspace
+        monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(checkpoint))
+
+        with TestClient(api.app) as client:
+            assert api.app_state.pipeline is None
+            assert api.app_state.is_ready is False, "startup did not try the build"
+            response = _diagnose(client)
+
+        assert response.status_code == 503, response.text
+        assert "mock" not in response.text
+
+    def test_a_blank_checkpoint_setting_is_no_checkpoint(self, api, monkeypatch, workspace):
+        """An exported-but-empty variable is how a shell says nothing. Read as a
+        path, it would refuse a deployment that asked for no model."""
+        data_dir, _ = workspace
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", "")
+
+        bundle = api.build_pipeline(
+            kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir)
+        )
+
+        assert bundle.checkpoint_path is None
+        assert bundle.config["scoring_mode"] == "path_reasoning_fallback"
 
 
 class TestAReloadKeepsWhatIsServing:
@@ -326,6 +463,7 @@ class TestAReloadKeepsWhatIsServing:
         assert result.success is False
         assert "could not be read" in result.message
         assert "still being served" in result.message
+        assert ".." not in result.message
         self._assert_still_serving(api, before)
 
     def test_a_checkpoint_for_another_graph_is_refused(self, api, workspace, tmp_path):

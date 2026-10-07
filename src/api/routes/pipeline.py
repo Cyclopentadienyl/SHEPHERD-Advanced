@@ -414,7 +414,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     except Exception as e:
         logger.error(f"Pipeline reload failed: {e}")
         return _refused(
-            f"Pipeline initialization failed: {e}.{_still_serving()}", files
+            f"Pipeline initialization failed: {str(e).rstrip('.')}."
+            f"{_still_serving()}", files
         )
 
     if candidate is None:
@@ -459,8 +460,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         # is: a candidate this service cannot describe is one it should not serve.
         logger.error(f"Pipeline reload rejected while rendering its response: {e}")
         return _refused(
-            f"Pipeline built but its configuration cannot be reported: {e}."
-            f"{_still_serving()}", files
+            f"Pipeline built but its configuration cannot be reported: "
+            f"{str(e).rstrip('.')}.{_still_serving()}", files
         )
 
     publish_pipeline(candidate)

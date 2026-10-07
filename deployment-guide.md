@@ -1040,9 +1040,10 @@ export SHEPHERD_SP_HOP_BOUND=5
 評分：`sp_ready=False`、`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與
 啟用最短路徑時不同**，這是刻意的取捨——寧可少一個訊號，也不拿沒人選過的天花板評分。
 
-> **例外：** 若部署刻意設定了 `sp_optional=False`，現行程式在 SP 不可用時會**關閉
-> GNN 評分**。這不是「一律退回純 GNN」。目前 API 的建置路徑使用預設值
-> `sp_optional=True`。
+> **例外：** 若部署刻意設定了 `sp_optional=False`，SP 不可用時**不會建出 pipeline**：
+> 建置被拒絕（`PipelineBuildError`），啟動時不發布任何 pipeline、`/diagnose` 回 503；
+> reload 則被拒絕，原本的 pipeline 繼續服務。這不是「一律退回純 GNN」。目前 API 的
+> 建置路徑使用預設值 `sp_optional=True`。
 
 ### 損壞或不合法的 sidecar
 

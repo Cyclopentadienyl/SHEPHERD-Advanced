@@ -138,8 +138,12 @@ async def lifespan(app: FastAPI):
         loop.set_exception_handler(_quiet_connection_reset)
 
     try:
-        # Attempt eager initialization if KG path is configured
-        if os.environ.get("SHEPHERD_KG_PATH"):
+        # Attempt eager initialization if a pipeline is configured. A checkpoint
+        # alone counts: `build_pipeline` refuses it, and startup is where an
+        # operator should see that, not the first diagnosis.
+        if os.environ.get("SHEPHERD_KG_PATH") or os.environ.get(
+            "SHEPHERD_CHECKPOINT_PATH"
+        ):
             initialize_pipeline()
         else:
             logger.info(
@@ -456,13 +460,30 @@ def build_pipeline(
     """
     logger.info("Building diagnosis pipeline...")
 
-    # Resolve paths from args or environment
-    kg_path = kg_path or os.environ.get("SHEPHERD_KG_PATH")
-    checkpoint_path = checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH")
-    data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR")
-    device = device or os.environ.get("SHEPHERD_DEVICE")
+    # Resolve paths from args or environment. **Blank is unset**: an
+    # exported-but-empty variable is how a shell says nothing, and an empty
+    # checkpoint path read as a request for a model would refuse a deployment
+    # that asked for none.
+    kg_path = kg_path or os.environ.get("SHEPHERD_KG_PATH") or None
+    checkpoint_path = (
+        checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH") or None
+    )
+    data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR") or None
+    device = device or os.environ.get("SHEPHERD_DEVICE") or None
 
     if not kg_path:
+        if checkpoint_path:
+            # **A model was asked for, so this is not "nothing configured".**
+            # Returning None here sent the service to its demo answer, invented
+            # candidates over HTTP 200, for a deployment that named a checkpoint.
+            app_state.real_pipeline_requested = True
+            from src.inference.pipeline import PipelineBuildError
+
+            raise PipelineBuildError(
+                f"A checkpoint is configured ({checkpoint_path}) and no "
+                "knowledge graph is; set SHEPHERD_KG_PATH. The model cannot be "
+                "served without the graph it scores over."
+            )
         logger.warning(
             "No KG path configured. Set SHEPHERD_KG_PATH or pass kg_path. "
             "Pipeline will not be available."

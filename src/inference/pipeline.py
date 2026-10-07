@@ -226,12 +226,14 @@ class ValidationResult:
 class PipelineBuildError(RuntimeError):
     """The model this pipeline was asked to serve could not be built.
 
-    **Raised, never logged and stepped past.** Each condition that raises this
-    used to log and return, leaving a pipeline without its GNN. The service then
-    published that pipeline as a success, and every diagnosis was answered with
-    path-reasoning scores in the model's place
-    (docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). A caller that asks for a
-    model gets one, or gets this.
+    **Raised, never logged and stepped past.** A missing checkpoint, one that
+    did not build over the graph, a model with no graph, a missing PyTorch and
+    required shortest paths that were not there each used to log and return,
+    leaving a pipeline without its GNN. The service then published that pipeline
+    as a success, and every diagnosis was answered with path-reasoning scores in
+    the model's place (docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). A caller
+    that asks for a model gets one, or gets this. An unreadable checkpoint
+    already raised, as torch's own error; it raises this now, naming the file.
 
     A pipeline built with no model source at all is a different case and is
     unchanged: it serves path reasoning, which is the state B-2's open policy
@@ -534,7 +536,8 @@ class DiagnosisPipeline:
             where = (
                 f"{data_dir} has no node_features.pt or edge_indices.pt"
                 if data_dir is not None
-                else "neither data_dir nor graph_data was given"
+                else "neither data_dir (SHEPHERD_DATA_DIR, on the service) "
+                "nor graph_data was given"
             )
             raise PipelineBuildError(
                 f"A GNN was requested and there is no graph to compute its "
@@ -568,20 +571,33 @@ class DiagnosisPipeline:
             # **A refusal, which is what `sp_optional=False` documents.** It used
             # to log and switch the GNN off, so a configuration that required both
             # signals was served with neither: path reasoning stood in for both.
+            why = (
+                "see the shortest-path load messages above for which condition "
+                "stopped it"
+                if data_dir is not None
+                else "no data_dir was given, so there was no table to load"
+            )
             raise PipelineBuildError(
                 "Shortest path lookup required (sp_optional=False) but it is "
-                "not available; see the shortest-path load messages above for "
-                "which condition stopped it. No pipeline is built."
+                f"not available; {why}. No pipeline is built."
             )
 
         # **`_gnn_ready` means built, not requested.** Every loader above raises
         # rather than returning empty, so this is unreachable today; it is here so
         # a loader that one day returns None again cannot leave a pipeline that
-        # reports a GNN and scores every candidate's GNN term as zero.
-        if self.model is None or self._node_embeddings is None:
+        # reports a GNN and scores every candidate's GNN term as zero. The two
+        # node types are the two `_calculate_gnn_score` reads; without either,
+        # that is what it returns.
+        embeddings = self._node_embeddings or {}
+        missing = [
+            node_type.value
+            for node_type in (NodeType.PHENOTYPE, NodeType.DISEASE)
+            if embeddings.get(node_type.value) is None
+        ]
+        if self.model is None or missing:
             raise PipelineBuildError(
-                "The GNN was requested and produced no node embeddings. No "
-                "pipeline is built."
+                "The GNN was requested and produced no node embeddings for "
+                f"{missing or 'any node type'}. No pipeline is built."
             )
 
         self._gnn_ready = True
@@ -938,9 +954,10 @@ class DiagnosisPipeline:
         - ModelCheckpoint callback format: key "state_dict"
 
         Raises:
-            PipelineBuildError: if the checkpoint is missing, cannot be read, or
-                does not build a model over this graph. It used to return None
-                in each case, and the pipeline went on without its model.
+            PipelineBuildError: if the checkpoint is missing, cannot be read, is
+                not a training checkpoint, or does not build a model over this
+                graph. A missing checkpoint and one that did not build used to
+                return None, and the pipeline went on without its model.
         """
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
@@ -959,6 +976,12 @@ class DiagnosisPipeline:
                 f"Checkpoint {ckpt_path} could not be read "
                 f"({type(exc).__name__}: {exc})."
             ) from exc
+        if not isinstance(checkpoint, dict):
+            raise PipelineBuildError(
+                f"{ckpt_path} is not a training checkpoint: it holds a "
+                f"{type(checkpoint).__name__}, not the dictionary the trainer "
+                "writes."
+            )
 
         # Verify data fingerprint compatibility (KG version check). Pipeline
         # business, not construction: it decides what an operator is warned
@@ -989,7 +1012,12 @@ class DiagnosisPipeline:
         # pipeline needs.
         try:
             model = build_shepherd_model(checkpoint, self._graph_data)
-        except (KeyError, ValueError, RuntimeError) as exc:
+        except KeyError as exc:
+            # A format question, not a graph one: no weights to build from.
+            raise PipelineBuildError(
+                f"Checkpoint {ckpt_path} carries no model weights: {exc}"
+            ) from exc
+        except (ValueError, RuntimeError) as exc:
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path} does not build a model over this graph: "
                 f"{exc}"
