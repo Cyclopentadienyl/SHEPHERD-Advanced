@@ -1,12 +1,10 @@
 # PLAN — one rule for a case's phenotype list, from import to scoring
 
-**Status: draft for review, revision 2. Nothing here is implemented, and nothing here authorises
-implementation by itself.** The owner has adopted the rule, and the reviewer closed this
-revision's corrections at `e9708cf`, so N1's scope is settled (§8). Facts about this repository
-are cited at `15dfcb5`; the code is unchanged at `e9708cf`.
-
-**N1 is implemented on the development branch, awaiting code review** (§8, "What N1 did").
-N2 has not started.
+**Status: revision 2. N1 is implemented, code-reviewed with no P1 or P2, and passed a GPU smoke
+test on the homelab at `af49bd3`** (2026-10-07; §8, "What N1 did" and "N1's acceptance on the
+homelab"). **N2 has not started**, and lands only with the contract's M2.1 and M3b (§8). The
+owner adopted the rule, and the reviewer closed this revision's corrections at `e9708cf`. Facts
+about this repository are cited at `15dfcb5`, before N1; N1's code is at `af49bd3`.
 
 **Revision 2 (2026-10-07)** follows the review of `f7a5c8e`:
 - **the API's own summary moves too** (§4.6, §5, §7). `/diagnose` builds its summary from the
@@ -548,7 +546,8 @@ compares the two.
 **Not a remedy anywhere here:** a compatibility mode for files with repeats, or a CPU fallback.
 A file that fails the check is rebuilt by its producer.
 
-**What N1 did** (on the development branch, awaiting code review):
+**What N1 did** (at `af49bd3`; code-reviewed with no P1 or P2, and accepted on the homelab
+below):
 - **The rule:** `src/kg/phenotype_normalisation.py`, with `PHENOTYPE_NORMALISATION_VERSION = 1`.
 - **The pipeline** (`DiagnosisPipeline.validate_input` and `run`):
   - checks the confidence length first;
@@ -637,6 +636,16 @@ by the author).
 
   `Starting diagnosis … with 3 phenotypes` counts the request as received, since it is logged
   before validation. The count used is in the response's summary.
+- **What the reviewer checked independently:**
+  - it re-read `status.json`, `server.log`, `ab.json`, `aab.json` and `over_limit.json` from
+    the homelab, and re-hashed the eight files. Everything was consistent with this record;
+  - the WebUI observations above — button states, the kept input, the four-decimal CSV
+    comparison — rest on the owner's screenshots and export, which the reviewer did not see;
+  - the re-hashing checks the files as they are now. It is not proof of the bytes consumed at
+    the time, which is the contract's M2.1;
+  - the result holds for this GB10, model, workspace, SP table and settings. It is not an
+    acceptance for other GPUs or operating systems, for arbitrary cases, or for the
+    provenance contract.
 - **Found during the run, not caused by N1** (backlog item 17):
   - the model-configuration fields show the saved UI preferences, not the loaded pipeline;
   - `matching_phenotypes` is always empty on the real path;
