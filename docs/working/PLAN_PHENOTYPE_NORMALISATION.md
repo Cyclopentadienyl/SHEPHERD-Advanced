@@ -597,7 +597,19 @@ by the author).
   - no fingerprint warnings;
   - mode `gnn_plus_shortest_path`, eta 0.7.
 
-  The artifacts are identified by path. File digests were not recorded in this run.
+  SHA-256 of the files, taken by the owner after the run:
+  - `kg.json` `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`;
+  - `node_features.pt` `15a36a88aaf4f5095aea2213f8f146af434dca5cd79245900cbe1485033c4b6d`;
+  - `edge_indices.pt` `381a5673a152893ea219edb1ba18af9649ce0bb6436f472a742b87b45aa1342c`;
+  - `num_nodes.json` `0069942cf4a6f67fa56bfc16709ea20da51ea49aa6b4a3a97fad372ad98c424a`;
+  - `split_manifest.json` `131cdf81cfa20ab8b44609be78473d6dce3f3a18d4436fafd589c6221ddcf664`;
+  - `kg.provenance.json` `2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef`;
+  - `shortest_paths.meta.json` `1019922cd3aa91f340ab8d75eb3025716d6d8f01ce433f80a5ad9b7eb8565097`;
+  - `checkpoints/hgt/model-02-0.1813.pt`
+    `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`.
+
+  The 10.8 GB `shortest_paths.pt` was not hashed; its pairing with the sidecar is the
+  `build_id` check, which passed.
 - **Through the API** (a client script that only calls the running API; A = `HP:0001250`,
   B = `HP:0001263`, `top_k` 100):
   - **precondition:** GNN and SP scores were non-zero, so the comparison exercised both;
@@ -613,7 +625,18 @@ by the author).
     the list was not shortened. Results were cleared, both exports disabled, and the input
     kept;
   - **`HP:0001250 HP:0001250 HP:0001263`:** the same top 10, the repeat warning, and no stale
-    error. The export buttons were below the screenshot's edge.
+    error. The owner confirmed that the export buttons were enabled again.
+- **The server log agrees with what was shown** (`server.log`, captured with `tee`):
+  - **the repeated list was sent with its repeat:** `Diagnosis request: … phenotypes=3`, so
+    the WebUI no longer removes repeats (decision W);
+  - **the repeat was removed before path search:** `[PathScoring] 1-hop paths: 200 found` for
+    `[A, A, B]`, the same as for `[A, B]`, from the script and from the WebUI alike;
+  - **both 101-entry requests stopped at the API:** a `422` line with no `Diagnosis request`
+    line, so the pipeline was never reached;
+  - **no WARNING or ERROR line** for any of these requests.
+
+  `Starting diagnosis … with 3 phenotypes` counts the request as received, since it is logged
+  before validation. The count used is in the response's summary.
 - **Found during the run, not caused by N1** (backlog item 17):
   - the model-configuration fields show the saved UI preferences, not the loaded pipeline;
   - `matching_phenotypes` is always empty on the real path;
