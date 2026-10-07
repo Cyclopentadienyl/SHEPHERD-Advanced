@@ -1,8 +1,9 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: draft for review, revision 2, amended twice after review.** Nothing here is implemented. Facts about the code are
-cited at `627ed08`; the code is unchanged at `463a0df`. §1 records decisions already made; §4 is
-the order of work.
+**Status: revision 2, amended twice after review. M1 is implemented, awaiting review
+(2026-10-07; §4, "What M1 did"). M2–M5 are not implemented.** Facts about the code are cited at
+`627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
+is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
 - **The resume parent is checked in M2**, before any state is restored (§4, M2.3). Left to M3a,
@@ -170,6 +171,60 @@ explicit opt-in is B-2's policy question (§8).
 - a startup with a checkpoint that cannot load leaves `/diagnose` at 503;
 - a reload to such a checkpoint is refused, and the previous pipeline keeps serving;
 - tests for both, and a mutant that restores `return None` is caught.
+
+#### What M1 did (2026-10-07, awaiting review)
+
+**A requested model is built, or the build raises `PipelineBuildError`**
+(`src/inference/pipeline.py`). A model is requested when a checkpoint path or a pre-loaded model
+is given. Each condition below used to log and return without the GNN:
+- PyTorch is not available;
+- there is no graph to compute embeddings from, whether no `data_dir` or `graph_data` was given
+  or the directory lacks its tensors;
+- the checkpoint is missing, cannot be read, or does not build a model over this graph
+  (`_load_model_from_checkpoint` raises, and the reader's or builder's error is kept as the
+  cause);
+- shortest paths are required (`sp_optional=False`) and not available. This used to switch the
+  GNN off, so a configuration requiring both signals was served with neither.
+
+One invariant is added: `_gnn_ready` is set only with a model and its embeddings in hand. It
+cannot be reached today, because every loader raises. It stops a loader that one day returns
+`None` again from leaving a pipeline that reports a GNN and scores every GNN term as zero.
+
+**The API is unchanged.** `build_pipeline` already re-raised, startup already published nothing
+on failure, and the reload route already built the candidate before publishing it. So the
+refusal lands as the acceptance requires, once the pipeline raises.
+
+**Unchanged, deliberately:**
+- with no model source at all, the pipeline still serves path reasoning. Whether that needs an
+  opt-in is B-2's policy question (§8, question 2);
+- absent shortest paths with `sp_optional=True`, the default, still give a GNN-only pipeline
+  (`DISEASE_SCORER_POLICY.md` §2).
+
+**Tests:**
+- `tests/unit/test_pipeline_fails_closed.py` covers:
+  - each condition above, plus the invariant;
+  - controls: a sound checkpoint builds, a GNN with optional SP absent builds, and no model
+    source still builds path reasoning;
+  - startup with an unreadable checkpoint: nothing published, `/diagnose` 503, with the same
+    startup and a sound checkpoint as control;
+  - reloads to an unreadable checkpoint and to one trained over another graph: refused, with
+    every served field the same object as before.
+- The graph-binding tests' stand-in now finishes the model build. Before, it ended in the
+  fallback this change removes.
+- `tests/unit/conftest.py` puts `app_state.real_pipeline_requested` back after each test.
+  - Three files left it set, so `test_diagnose_reserved_fields.py` failed whenever it ran after
+    them.
+  - This was already true at `4298aac`; the alphabetical full run hid it.
+
+**Mutation check.** 8 mutants were run in a fresh copy of the tree, each restoring one old
+swallow, the invariant's removal, or both together. All 8 were caught.
+
+**Found, not changed: one for M2.** `_calculate_gnn_score` clamps a disease index past the end
+of the embedding table to the last row (`disease_idx = min(...)`). A graph whose node mapping
+disagrees with its tensors is therefore scored against another disease's embedding, not
+refused. The workspace binding prevents that mismatch for file-backed pipelines. A caller
+supplying `graph_data` in memory has no binding. M2's model↔graph check is where the refusal
+belongs.
 
 ### M2 — the model↔graph relation, on the bytes actually read, with the resume parent
 
