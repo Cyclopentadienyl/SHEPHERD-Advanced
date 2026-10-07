@@ -26,13 +26,13 @@ than the sources do, the correction is noted.
 
 Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
 - **[Fact] The relevant paths keep repeats.**
-  - The dataset maps `positive_phenotypes` to node indices as a list and removes nothing
-    (`shepherd/dataset.py:118`).
+  - The dataset maps `positive_phenotypes` to node indices as a list. It drops ids missing
+    from its dictionary, and removes no repeats (`shepherd/dataset.py:118`).
   - Preprocessing maps old HPO ids to the node index of their current id
     (`data_prep/preprocess_patients_and_kg.py:146-147`). A profile listing both ids would carry
     that index twice after mapping.
   - The MyGene2 cohort takes a profile's phenotype rows as a list
-    (`data_prep/create_mygene2_cohort/preprocess_mygene2.py:68`).
+    (`data_prep/create_mygene2_cohort/preprocess_mygene2.py:71`, written out at `:96`).
   - The patient vector is an attention-weighted sum over positions
     (`shepherd/task_heads/patient_nca.py:63-66`).
 - **[Fact] No statement was found that gives repetition a meaning** — frequency, severity or
@@ -85,9 +85,12 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
     measurement script, constructs it.
   - It is exported from `src/inference/__init__.py:40-56`.
   - `InputValidatorProtocol` names it as the implementation (`src/core/protocols.py:1132-1136`).
-- **Tests:** `tests/unit/test_inference.py:148-245` and `:410-420`.
-- **Tools:** `scripts/run_local_tests.py:155-157` imports it, and `:207-215, 407` runs a smoke
+- **Tests:** `tests/unit/test_inference.py:148-250` and `:410-422`.
+- **Tools:** `scripts/run_local_tests.py:155-157` imports it, and `:207-227, 407` runs a smoke
   test of the factory.
+- **Its `ValidationResult` is exported too** (`src/inference/__init__.py:43, 55`), and
+  `tests/unit/test_inference.py:26` imports it from there. The pipeline has its own
+  `ValidationResult` (`src/inference/pipeline.py:208`).
 
 ## 2. What each entry point does today
 
@@ -103,7 +106,7 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
 | **F. API** (`src/api/routes/diagnose.py:71-76, 107-115, 133-141, 290-297`) | Strings as received. Positive only (`PatientPhenotypes`, `src/core/types.py:377-391`). A bad format is logged, not refused | None | Passed on | Kept | As received | **1 to 100 items, enforced by the request model**: a 101-item request is refused with 422 before anything runs | `PatientPhenotypes` to `pipeline.run` |
 | **G. Direct pipeline** (`DiagnosisPipeline.run`, `src/inference/pipeline.py:1016-1135`) | Strings | Exact match only: `NodeID(HPO, id)` must be a KG node (`:1186-1202`). No alias or obsolete-id resolution | Dropped with a warning (`:1170-1174`), and filtered again at conversion (`:1195-1202`) | Kept | As received | Over `max_phenotypes` (default 100, `:186-187`): a warning, then **truncation to the first 100, before unknowns are dropped and with repeats counted** (`:1163-1170`) | Repeats reach path search (`:1204` onwards), the GNN mean (`pool_patient_embeddings`, `src/inference/scoring.py:135-155`, called at `pipeline.py:1531-1547`) and the SP mean distance (`sp_mean_distances`, `pipeline.py:1474-1489`) |
 | **H. Served-pipeline measurement** (`scripts/measure_served_pipeline.py:495-520`) | Maps generated sample indices back to HPO strings | Refuses a non-HPO index | Refused | Inherits A's | Inherits A's | Refuses a count outside the API's limit | Sends to the API (F) |
-| **I. `InputValidator`** (unused; `src/inference/input_validator.py`) | A flexible format regex `HP:\d{4,7}` (`:84-87`) | Optional ontology check: unknown or obsolete gives a warning only (`:316-358`) | Warning | **Removed by string, after truncation** (`:164-171`) | First occurrence | Truncates to `max_phenotypes` first (`:157-164`) | Not called |
+| **I. `InputValidator`** (unused; `src/inference/input_validator.py`) | A flexible format regex `HP:\d{4,7}` (`:84-87`) | Optional ontology check: an obsolete term is kept with a warning (`:344-348`) | Warned and dropped (`:186-189, 335-342`) | **Removed by string, after truncation** (`:164-171`) | First occurrence | Truncates to `max_phenotypes` first (`:157-164`) | Not called |
 
 **What is shared and what is not:**
 - **Shared:** the served GNN mean and Mode C's masked mean are tied by an equivalence test
@@ -170,25 +173,48 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
      obsolete and alternative ids are mapped.
 3. **Output order.** First occurrence, in input order. It is stable, and does not depend on how a
    set iterates.
-   - **[Fact]** The scorers are order-invariant: the GNN mean (`scoring.py:155`), the masked mean
-     and the SP mean distance.
-   - First occurrence keeps the order a clinician entered for display.
+   - **[Fact] The pooled scores do not depend on order, but other output does.**
+     - The SP mean distance is a float64 mean of integer distances, so order cannot change
+       it.
+     - The GNN mean is a float32 mean (`scoring.py:155`), so it is order-independent only up to
+       rounding.
+     - Path search follows input order: direct paths are added once per source, with no repeat
+       removal (`pipeline.py:1228-1232`), and a stable sort keeps the top paths
+       (`:1270-1275`).
+     - Candidate ties keep insertion order (`:1357`), which the code itself calls input order
+       (`:1417-1423`).
+     - The path-reasoning fallback score depends on path order (`:1380-1383`).
+     - Explanations iterate the input list (`src/reasoning/explanation_generator.py:349`).
+   - A fixed first-occurrence order is therefore what makes these parts deterministic, and it
+     keeps the order a clinician entered for display.
 4. **Not merged:**
    - **different patients.** That would change the case count and every denominator;
    - **ancestor and descendant terms.** phenopacket-tools treats them as redundant (§1.2), but
      removing them is another policy, not this rule;
    - **present and excluded of one id, or observations at different times.** The current
      formats cannot express these. An importer whose source can express them defines the
-     observation scope and polarity it accepts, and reports what it cannot express, under D6's
-     explicit rules: an excluded feature is never imported as a positive one, and a contradiction
-     is never merged silently;
+     observation scope and polarity it accepts, and reports what it cannot express.
+     - **These are new rules, proposed here for D6 to adopt.** D6 today has three categories —
+       malformed, unmappable term, truth absent (`PLAN_TEST_RESULTS.md` D6) — and none for
+       polarity.
+     - The rules: an excluded feature is never imported as a positive one, and a present and
+       excluded pair for one id is reported, never merged silently;
    - **frequency, severity or time.** If they ever enter the model, they come as explicit fields
      with model semantics, never as repetition.
 5. **Per-position fields follow.** The rule returns the positions it kept.
+   - **Positions are counted in the request, not in the mapped list.** Today mapping drops
+     unknown ids without recording which positions survived (`pipeline.py:1170-1174,
+     1198-1201`). So the mapping step also returns the request positions it kept, and the rule
+     works on those.
    - Any per-position field is reduced with the same positions. Today the only one is
      `phenotype_confidences`, which the API accepts (`diagnose.py:77-80, 133-141`) and nothing in
      scoring reads.
    - This plan does not decide what confidences mean.
+6. **The normalised list is what goes onward.** After the rule, nothing reads the raw request
+   list. Today the explanations and the summary read `patient_input.phenotypes` directly
+   (`src/reasoning/explanation_generator.py:349`; `pipeline.py:1662`, "Based on N input
+   phenotypes"). Left so, they would still show repeats, unknown ids and entries past the
+   limit.
 
 **No complete clinical event model is built in advance.** The rule covers what the formats
 express today.
@@ -197,9 +223,13 @@ express today.
 
 **[Recommendation]**
 
-**One function and one version constant**, in a new module of `src.kg`. That is the lowest layer
-every caller can import: `src.kg` (generator, shared reader), `src.evaluation` (importer,
-measurement) and `src.inference` (pipeline) (`.import-linter.ini`). It is pure: no torch, no I/O.
+**One function and one version constant**, in a new module of `src.kg`.
+- **Why there.** `src.kg` is the highest layer every caller can import: `src.kg` itself
+  (generator, shared reader), `src.evaluation` (importer, measurement) and `src.inference`
+  (pipeline) (`.import-linter.ini`). It is also the layer that defines the sample format
+  (`DiagnosisSample`, `file_storage`). `src.utils` would be importable too, but it holds nothing
+  about phenotypes.
+- **It is pure:** no torch, no I/O.
 - **Input:** a sequence of node identities. That is graph indices in files, and KG node ids at
   serving.
 - **Output:**
@@ -216,7 +246,8 @@ measurement) and `src.inference` (pipeline) (`.import-linter.ini`). It is pure: 
 | D6 importer (`PLAN_TEST_RESULTS.md` D6) | Producer: applies the rule after mapping, writes the normalised mapped version, and records the counts |
 | Sample generator | Producer: already in normal form. It applies the same function, so the rule has one definition, and records the version |
 | Shared reader `read_samples` (`file_storage.py:60-101`) | Consumer: **checks** that a stored case is in normal form, and refuses a file that is not, naming the entry point that rebuilds it. It never changes the data. Training and measurement reach it through contract M2.1 |
-| `DiagnosisPipeline.run` | Applies the rule to a request after mapping (`pipeline.py:1195-1202`), before the model's count check. The result's warnings state how many repeats were removed. The API and the UI reach it through here |
+| Two readers that do not use it | **Named exceptions.** The frozen oracle, `scripts/evaluate_model.py:203-217`, reads samples itself and is byte-pinned (`tests/unit/test_frozen_evaluator.py`); it retires with the frozen evaluator. `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads`; it reads only generated files, which are in normal form, and it moves onto the shared reader when it is next touched |
+| `DiagnosisPipeline.run` | Applies the rule to a request after mapping (`pipeline.py:1195-1202`), with the request positions mapping kept, before the model's count check. Everything after it — scoring, explanations, the summary — reads the normalised list (§4.6). The result's warnings state how many repeats were removed. The API and the UI reach it through here |
 | WebUI | Keeps its text parsing: extraction and canonical formatting. Its removal of repeated strings stays as tidying of pasted text, documented as not the data rule; the pipeline remains the authority. It keeps a pasted list with repeats under the API's raw limit |
 
 **`InputValidator`, function by function:**
@@ -230,7 +261,7 @@ measurement) and `src.inference` (pipeline) (`.import-linter.ini`). It is pure: 
 | Confidence checks (`:361-398`) | Not adopted. Confidences are not scored |
 | `patient_id` required | Not needed. The API supplies one |
 | `ExtensibleInputValidator`, the factory, dict conversion (`:421-575`) | No caller |
-| **The module as a whole** | **Removed in the same change**, with its export, the protocol's "IMPLEMENTED" note, the smoke test in `run_local_tests.py` and its unit tests. **[Owner]** This deletes code and tests, so it waits for the owner's approval. If the owner prefers, it stays untouched and is listed as unused |
+| **The module as a whole** | **Removed in the same change**, with its exports, the protocol's "IMPLEMENTED" note, the smoke test in `run_local_tests.py` and its unit tests. The exported `ValidationResult` is repointed to the pipeline's own (`pipeline.py:208`) or dropped, with the test import that uses it. **[Owner]** This deletes code and tests, so it waits for the owner's approval. If the owner prefers, it stays untouched and is listed as unused |
 
 **It is not wired in whole.** Wiring the old validator would bring its truncation and its
 string-level semantics with it.
@@ -280,13 +311,13 @@ compares the two.
 
   B is never dropped silently.
 - **101 distinct known terms** through `pipeline.run`: refused, not truncated.
-- **One rule everywhere.** For an input with a repeat, the WebUI, the API and `pipeline.run`
-  produce the same scores as for the input without it. A measurement reading a file with a
+- **One rule everywhere.** Within the API's raw limit, for an input with a repeat, the WebUI, the
+  API and `pipeline.run` produce the same scores as for the input without it. A measurement reading a file with a
   repeat is refused by the shared reader, naming the producer.
 - **Nothing else changes:**
   - normalising never reduces the number of cases, and never merges patients;
   - an ancestor and its descendant both stay;
-  - an input without repeats scores exactly as before.
+  - an input without repeats, of at most 100 entries, scores exactly as before.
 - **Contradictions are not merged.** The importer reports an excluded feature, or a present and
   excluded pair for one id, under D6's rules. It never imports either as a plain positive.
 - **Traceability.**
@@ -312,16 +343,18 @@ compares the two.
 | Where | Today | Proposed | Visible effect |
 |---|---|---|---|
 | `pipeline.run`, a repeated id | Weighted in the GNN mean and the SP mean, and in path search | Removed after mapping, with a warning giving the count | Scores change for inputs with repeats only |
+| `pipeline.run`, explanations and summary | Read the raw request list | Read the normalised list | Repeats, unknown ids and entries past the limit no longer appear there |
 | `pipeline.run`, more than 100 entries | Truncated to the first 100, repeats included, with a warning | Repeats removed, then refused if more than 100 distinct remain | "100 × A, then B" scores A and B; 101 distinct terms are refused rather than truncated |
 | API, more than 100 items | 422 | Unchanged | — |
 | WebUI | Removes repeated strings | Unchanged, documented as text tidying | — |
-| Training and measurement readers | Accept repeats | Refuse a file not in normal form | Only files with repeats; generated files have none |
+| Training and measurement readers | Accept repeats | Refuse a file not in normal form; the two named exceptions (§5) do not check | Only files with repeats; generated files have none |
 | Importer | Does not exist | Normalises after mapping and records the counts | New |
 | `InputValidator` | Unused | Removed, if the owner approves | None at run time |
 
-**Where it lands:**
-- **N1 — the serving part, a change of its own.** The function, its use in `pipeline.run`, the
-  count rule, the WebUI's documentation and, if approved, `InputValidator`'s removal. It depends
+**Where it lands, if the rule is approved:**
+- **N1 — the serving part, a change of its own.** The function, its use in `pipeline.run` (with
+  request positions, and the explanations and summary reading the normalised list), the count
+  rule, the WebUI's documentation and, if approved, `InputValidator`'s removal. It depends
   on no milestone; it changes served scores only for inputs with repeats or more than 100
   entries.
 - **N2 — the stored part, with the contract.**
@@ -329,7 +362,7 @@ compares the two.
     and measurement.
   - The manifest fields ride on M3b's manifest change.
   - The generator applies the function in the same change.
-- **The importer** applies it from its first version (item 14 phase 1, step 1).
+- **The importer** would apply it from its first version (item 14 phase 1, step 1).
 
 **Not a remedy anywhere here:** a compatibility mode for files with repeats, or a CPU fallback.
 A file that fails the check is rebuilt by its producer.

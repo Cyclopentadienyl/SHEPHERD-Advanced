@@ -27,13 +27,14 @@ the order of work.
     scoring input (§5.4). A repeated phenotype id changes Mode C's input, and the set ignores
     it;
   - M2.3's data-role rule is written as a product restriction awaiting the owner's decision,
-    with what an operator will meet (§8, question 3);
+    with what an operator will meet (§8, question 3). Superseded: the owner has since decided it
+    (decision 7);
   - M2.1's two exceptions state what they establish and how they are displayed, and its buffer
     cost becomes a capacity measurement;
   - M3c moves every existing consumer of the old version fields in the same change.
 - **Amended 2026-10-07, after the review of `15dfcb5`:**
   - the owner has decided §8 question 3: in the first version, resume continues the same data.
-    M2.3 and §5.4 now state it as decided;
+    It is decision 7 in §1, and M2.3 and §5.4 state it as decided;
   - whether a case may list a phenotype twice is taken up by its own plan,
     `PLAN_PHENOTYPE_NORMALISATION.md` (§5.4).
 
@@ -61,6 +62,7 @@ platforms and claims no conformance to them.
 | 4 | **B-2's fail-closed core lands first, as its own change, and takes effect together with the first enforced check.** Otherwise a check that finds a mismatch makes the model fail to load, the pipeline falls back to another scorer, and the user still gets a result that looks successful | Reviewer, 2026-10-06 |
 | 5 | **Backlog item 14 is split into two phases.** Phase 1 is a complete CLI flow: run a test, verify the inputs, keep the report, record it automatically or by hand, and show the result on the existing model status. Phase 2 is the Test tab, job management and advanced ordering | Owner and reviewer, 2026-10-06 |
 | 6 | **Milestones follow real dependencies.** A full environment refactor, a full provenance platform and every historical defect are not prerequisites of item 14. Each milestone delivers a complete flow that can be run and accepted | Reviewer, 2026-10-06 |
+| 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings | Owner, 2026-10-06 |
 
 ## 2. The rule
 
@@ -687,7 +689,7 @@ evidence.
 - Reading or migrating old-pipeline artifacts (decision 2).
 - `scripts/build_index.py`, whose output is detached from diagnosis.
 
-## 8. Questions left open
+## 8. Questions, open and decided
 
 1. **Revision source.** Does any deployment run without `.git`? The measurement's revision is
    otherwise `None` (`measure_scorer.py:192-200`).
