@@ -143,6 +143,40 @@ def test_the_launcher_runs_the_units_command_by_becoming_the_server(monkeypatch)
     assert done["app_args"][-2:] == ["--port", "8264"]
 
 
+def test_the_launcher_logs_the_port_the_unit_serves_on(monkeypatch, capsys):
+    # The access points used to be logged as port 8000 whatever --port said, so
+    # the unit's journal told an operator to bookmark a port nothing listened on.
+    _run_launcher(monkeypatch, shlex.split(_directive("ExecStart"))[2:])
+    out = capsys.readouterr().out
+    assert "http://127.0.0.1:8264/docs" in out
+    assert "http://127.0.0.1:8264/ui" in out
+    assert ":8000/" not in out
+
+
+@pytest.mark.parametrize(
+    "uvicorn_args, expected",
+    [
+        (["--host", "0.0.0.0", "--port", "8000"], "http://127.0.0.1:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--port", "8264"], "http://127.0.0.1:8264"),
+        (["--host", "0.0.0.0", "--port", "8000", "--port=8264"], "http://127.0.0.1:8264"),
+        (["--host", "0.0.0.0", "--host=10.0.0.5", "--port", "8000"], "http://10.0.0.5:8000"),
+        (["--host", "10.0.0.5", "--host", "0.0.0.0", "--port", "8000"], "http://127.0.0.1:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--host", "::"], "http://[::1]:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--host", "fd00::5"], "http://[fd00::5]:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--host="], "http://127.0.0.1:8000"),
+        (["--host", "0.0.0.0", "--port", "8000", "--host", "[::1]"], "http://[::1]:8000"),
+    ],
+    ids=["defaults", "last-port-wins", "port-equals-form", "host-equals-form",
+         "last-host-wins-wildcard", "ipv6-wildcard", "ipv6-literal", "empty-host-is-wildcard",
+         "already-bracketed"],
+)
+def test_the_displayed_address_follows_uvicorns_own_rules(uvicorn_args, expected):
+    # uvicorn takes the last of a repeated option in either spelling. A display
+    # that missed --port=N logged 8000 again -- the F1 mismatch -- and an IPv6
+    # host needs brackets to be a URL at all.
+    assert _launcher().display_base_url(uvicorn_args) == expected
+
+
 def test_without_no_browser_the_launcher_waits_and_opens_one(monkeypatch):
     # The control for the test above: the stubs do see the other path.
     done = _run_launcher(monkeypatch, ["--no-auto-install"])

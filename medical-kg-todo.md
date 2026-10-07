@@ -34,7 +34,7 @@
 
 ### 推理管線
 - [x] `src/inference/pipeline.py` - DiagnosisPipeline, PipelineConfig
-- [x] `src/inference/input_validator.py` - InputValidator, ExtensibleInputValidator
+- [x] `src/inference/input_validator.py` - InputValidator, ExtensibleInputValidator — removed 2026-10-07: no production caller (docs/working/PLAN_PHENOTYPE_NORMALISATION.md §5)
 
 ### 模型框架
 - [x] `src/models/gnn/shepherd_gnn.py` - ShepherdGNN框架

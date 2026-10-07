@@ -11,11 +11,11 @@
 # Exports:
 #   - DiagnosisPipeline: Main inference pipeline
 #   - PipelineConfig: Pipeline configuration
-#   - InputValidator: Input validation
-#   - ExtensibleInputValidator: Input validator with custom hooks
-#   - ValidationResult: Validation result
 #   - create_diagnosis_pipeline: Factory function
-#   - create_input_validator: Factory function
+#
+#   Input is validated by `DiagnosisPipeline.validate_input`. The separate
+#   `InputValidator` had no production caller and was removed
+#   (docs/working/PLAN_PHENOTYPE_NORMALISATION.md §5).
 #
 # Usage:
 #   from src.inference import DiagnosisPipeline, create_diagnosis_pipeline
@@ -28,7 +28,7 @@
 #   - P1 Feature: Ortholog evidence (interfaces preserved)
 #   - Two-stage: Path reasoning + optional GNN scoring
 #   - Production-ready: Validation, logging, error handling
-#   - Extensible: Custom scorers, validation hooks
+#   - Extensible: Custom scorers
 # ==============================================================================
 """
 
@@ -37,21 +37,10 @@ from src.inference.pipeline import (
     PipelineConfig,
     create_diagnosis_pipeline,
 )
-from src.inference.input_validator import (
-    InputValidator,
-    ExtensibleInputValidator,
-    ValidationResult,
-    create_input_validator,
-)
 
 __all__ = [
     # Pipeline
     "DiagnosisPipeline",
     "PipelineConfig",
     "create_diagnosis_pipeline",
-    # Validation
-    "InputValidator",
-    "ExtensibleInputValidator",
-    "ValidationResult",
-    "create_input_validator",
 ]

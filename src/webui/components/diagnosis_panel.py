@@ -39,10 +39,36 @@ from typing import Any, Dict, List, Optional, Tuple
 import gradio as gr
 import requests
 
+from src.utils.server_address import ServerAddressUnknownError, api_base_url
+
 logger = logging.getLogger(__name__)
 
-API_BASE = "http://127.0.0.1:8000"
-PIPELINE_API = f"{API_BASE}/api/v1"
+
+def _api_url(path: str) -> str:
+    """An API URL on this server, at an address it has accepted requests on.
+
+    The tab runs inside the API's own process, so the API is wherever this server
+    accepts connections -- port 8264 under the systemd unit, 8000 under a bare
+    start. `src/utils/server_address.py` explains why that is the one source; it
+    replaces a hard-coded ``http://127.0.0.1:8000``.
+    """
+    return f"{api_base_url()}{path}"
+
+
+def _self_request(method: str, path: str, **kwargs: Any) -> requests.Response:
+    """One call from this tab to its own server's API, never through a proxy.
+
+    ``trust_env`` is off, so ``HTTP_PROXY`` and friends are ignored. The target is
+    this server's own socket -- under a wildcard bind, possibly a LAN address that
+    an institutional ``NO_PROXY`` list does not name -- and the diagnose payload
+    carries patient phenotypes, which have no business at a forward proxy. A
+    session per call, because a shared ``requests.Session`` is not documented as
+    safe across Gradio's worker threads, and these calls are few.
+    """
+    with requests.Session() as session:
+        session.trust_env = False
+        return session.request(method, _api_url(path), **kwargs)
+
 
 # Shown when the pipeline loads but the GNN did not. This is not cosmetic: the
 # ranking then comes from path reasoning over the knowledge graph alone, so a
@@ -75,16 +101,15 @@ def _parse_hpo_ids(text: str) -> List[str]:
     Accepts ids separated by newlines, commas, semicolons, spaces or tabs, with
     or without a trailing name, and mixed with stray punctuation — everything the
     strict one-per-line parser used to reject. Normalises to canonical
-    ``HP:0000000`` form, preserves order, and de-duplicates.
+    ``HP:0000000`` form and preserves order.
+
+    **Repeats are kept.** This used to remove them by string, a second copy of a
+    rule the service owns: the pipeline removes repeats by graph node, after
+    mapping, and reports how many it removed. Removing them here as well hid them
+    from that count and from the request-size limit
+    (docs/working/PLAN_PHENOTYPE_NORMALISATION.md, decision W).
     """
-    seen: set[str] = set()
-    ids: List[str] = []
-    for match in _HPO_ID_RE.finditer(text or ""):
-        hpo_id = f"HP:{match.group(1)}"
-        if hpo_id not in seen:
-            seen.add(hpo_id)
-            ids.append(hpo_id)
-    return ids
+    return [f"HP:{match.group(1)}" for match in _HPO_ID_RE.finditer(text or "")]
 
 # Confidence label → (emoji, CSS color)
 LABEL_STYLES = {
@@ -113,31 +138,124 @@ def _call_diagnose(
         "include_explanations": include_explanations,
     }
     try:
-        resp = requests.post(
-            f"{API_BASE}/api/v1/diagnose",
-            json=payload,
-            timeout=30,
-        )
+        resp = _self_request("POST", "/api/v1/diagnose", json=payload, timeout=30)
         resp.raise_for_status()
         return resp.json()
+    except ServerAddressUnknownError as e:
+        return {"error": str(e)}
     except requests.ConnectionError:
         return {"error": "API server not reachable. Is uvicorn running?"}
     except requests.HTTPError as e:
+        if e.response.status_code == 422:
+            return {"error": _describe_refused_request(e.response)}
         return {"error": f"API error: {e.response.status_code} — {e.response.text}"}
     except Exception as e:
         return {"error": f"Unexpected error: {e}"}
 
 
+#: Shown when a 422 arrives without a reason this panel can read.
+_UNREADABLE_REFUSAL = (
+    "The API refused the request as invalid (HTTP 422), and its reason could not "
+    "be read. Nothing was diagnosed."
+)
+
+
+def _describe_refused_request(response: requests.Response) -> str:
+    """A 422 from `/diagnose`, in words a clinician can act on.
+
+    **Read from the API's structured error, never restated.** FastAPI answers a
+    request its model refuses with a list of entries, each naming a field, an
+    error type and a message. The panel turns each into a line. It does not echo
+    the entry's `input`, which for a list over the limit is the whole list.
+
+    **The phenotype limit is the one case with its own message**, and both of
+    its numbers come from the server: `ctx.actual_length` and `ctx.max_length`.
+    The panel counts nothing and keeps no copy of the limit, so the request model
+    stays the one place it is set. If either number is missing or not a whole
+    number, the entry falls back to its plain line rather than guessing one.
+
+    Never raises: a body that is not JSON, or JSON of another shape, gets the
+    general line.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return _UNREADABLE_REFUSAL
+    entries = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return _UNREADABLE_REFUSAL
+
+    lines = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        line = _too_many_phenotypes(entry) or _refusal_line(entry)
+        if line:
+            lines.append(line)
+    return "\n\n".join(lines) if lines else _UNREADABLE_REFUSAL
+
+
+def _too_many_phenotypes(entry: Dict[str, Any]) -> Optional[str]:
+    """The message for a phenotype list over the limit, or None if `entry` is
+    not one or does not carry both numbers."""
+    if entry.get("loc") != ["body", "phenotypes"] or entry.get("type") != "too_long":
+        return None
+    ctx = entry.get("ctx")
+    if not isinstance(ctx, dict):
+        return None
+    received, limit = ctx.get("actual_length"), ctx.get("max_length")
+    # `bool` is an `int`; neither True nor False is a count.
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in (received, limit)):
+        return None
+    return (
+        f"Recognised {received} HPO phenotype entries (repeats included); one "
+        f"submission accepts at most {limit}. No diagnosis was run, and the list "
+        "was not shortened. Remove repeats or shorten the list, then submit again."
+    )
+
+
+def _refusal_line(entry: Dict[str, Any]) -> Optional[str]:
+    """One refused field as `field: reason`, or None if there is no reason."""
+    message = entry.get("msg")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    # Pydantic prefixes a validator's ValueError with "Value error, ".
+    message = message.removeprefix("Value error, ")
+    loc = entry.get("loc")
+    path = [str(part) for part in loc[1:]] if isinstance(loc, list) else []
+    field = ".".join(path) if path else "request"
+    return f"Request refused — {field}: {message}"
+
+
 # =============================================================================
 # Formatting helpers
 def _get_pipeline_status() -> Dict[str, Any]:
-    """Get pipeline status from API."""
+    """Get pipeline status from API.
+
+    A failure carries its real reason: the status line shows it instead of
+    "Pipeline not loaded", so an answer that did arrive -- an HTTP error, a body
+    that is not JSON -- is not reported as an API that could not be reached.
+    """
     try:
-        resp = requests.get(f"{PIPELINE_API}/pipeline/status", timeout=5)
+        resp = _self_request("GET", "/api/v1/pipeline/status", timeout=5)
         resp.raise_for_status()
         return resp.json()
-    except Exception:
+    except ServerAddressUnknownError as e:
+        return {"initialized": False, "error": str(e)}
+    except requests.ConnectionError:
+        # ConnectTimeout is a ConnectionError too: the connection was never made.
         return {"initialized": False, "error": "API not reachable"}
+    except requests.Timeout:
+        # Connected, but no answer in time -- a reload holds the server meanwhile.
+        return {"initialized": False, "error": "API did not answer within 5 s"}
+    except requests.HTTPError as e:
+        return {"initialized": False, "error": f"API error {e.response.status_code}"}
+    except requests.exceptions.InvalidJSONError:
+        # Narrower than ValueError, which requests also uses for a malformed URL
+        # or header -- a request that was never sent is not a reply.
+        return {"initialized": False, "error": "the API's reply was not JSON"}
+    except Exception as e:
+        return {"initialized": False, "error": f"unexpected error: {e}"}
 
 
 def _reload_pipeline(
@@ -150,13 +268,11 @@ def _reload_pipeline(
     if conv_type:
         payload["conv_type"] = conv_type
     try:
-        resp = requests.post(
-            f"{PIPELINE_API}/pipeline/reload",
-            json=payload,
-            timeout=180,
-        )
+        resp = _self_request("POST", "/api/v1/pipeline/reload", json=payload, timeout=180)
         resp.raise_for_status()
         return resp.json()
+    except ServerAddressUnknownError as e:
+        return {"success": False, "message": str(e)}
     except requests.ConnectionError:
         return {"success": False, "message": "API server not reachable."}
     except Exception as e:
@@ -188,9 +304,32 @@ def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
         return f"Failed to save: {e}"
 
 
+#: `checkpoint_meta` entries that describe the run rather than measure the model.
+#: Everything else in it is a training-log metric the pipeline chose to copy
+#: (`src/inference/pipeline.py:CHECKPOINT_LOG_METRICS`), shown in the order it
+#: arrives, so the choice of metrics lives in one place.
+_CHECKPOINT_DESCRIPTIVE_KEYS = ("epoch", "params", "device")
+
+#: Shown until the first status read after the page loads. The status is not read
+#: while the app is being built: that happens before the server is serving, so
+#: what it found was stale by the time anyone looked.
+STATUS_CHECKING = "⏳ Checking pipeline status…"
+
+
+def _checkpoint_metric_label(key: str) -> str:
+    """``val_mrr`` -> ``Val MRR``; ``val_hits@10`` -> ``Val Hits@10``."""
+    return " ".join("MRR" if w == "mrr" else w[:1].upper() + w[1:] for w in key.split("_"))
+
+
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     """Format pipeline status as Markdown."""
     if not status_data.get("initialized", False):
+        error = status_data.get("error")
+        if error:
+            # The status could not be read at all. "Not loaded" here would be a
+            # guess shown as a fact -- it is how a tab calling the wrong port
+            # reported a serving pipeline as unloaded.
+            return f"⚠️ **Pipeline status unavailable:** {error}"
         return "⚪ **Pipeline not loaded.** Configure paths below and click Load / Reload Pipeline."
 
     gnn_ready = bool(status_data.get("gnn_ready"))
@@ -225,12 +364,12 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
         if params is not None:
             meta_parts.append(f"{params:,} params")
         meta_parts.append(f"device={device}")
-        # Training metrics if available
-        for key in ("val_loss", "train_loss", "mrr", "hits_at_1", "hits_at_10"):
-            val = ckpt_meta.get(key)
-            if val is not None:
-                label = key.replace("_", " ").title()
-                meta_parts.append(f"{label}: {val:.4f}")
+        # Training-log metrics, as the pipeline copied them
+        for key, val in ckpt_meta.items():
+            if key in _CHECKPOINT_DESCRIPTIVE_KEYS:
+                continue
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                meta_parts.append(f"{_checkpoint_metric_label(key)}: {val:.4f}")
         lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
 
     # Fingerprint warnings
@@ -717,7 +856,11 @@ def _on_reset_defaults() -> Tuple[str, str, str]:
 
 
 def _on_load_status() -> str:
-    """Refresh pipeline status display."""
+    """Read the pipeline status for a page that has just loaded.
+
+    Wired to the Blocks' load event, so every page opened shows the server's
+    status at that moment rather than what it was while the app was being built.
+    """
     status_data = _get_pipeline_status()
     return _format_pipeline_status(status_data)
 
@@ -725,9 +868,12 @@ def _on_load_status() -> str:
 # =============================================================================
 # Tab builder (called from app.py)
 # =============================================================================
-def create_diagnosis_tab() -> None:
+def create_diagnosis_tab(blocks: gr.Blocks) -> None:
     """
     Build the Diagnosis Panel tab inside a gr.Blocks context.
+
+    ``blocks`` is the enclosing app, which the model status refreshes from on
+    every page load (`_on_load_status`).
 
     Layout:
         Left column (input):
@@ -751,9 +897,7 @@ def create_diagnosis_tab() -> None:
     saved_cfg = _load_saved_config()
 
     with gr.Accordion("Model Configuration", open=False):
-        config_status_md = gr.Markdown(
-            value=_format_pipeline_status(_get_pipeline_status()),
-        )
+        config_status_md = gr.Markdown(value=STATUS_CHECKING)
 
         with gr.Row():
             data_dir_input = gr.Textbox(
@@ -906,6 +1050,10 @@ def create_diagnosis_tab() -> None:
     # DownloadButton's value, so a single click downloads them — no click handler.
 
     # === Model config event wiring ===
+    # Read on each page load, not once at build time: the app is built before
+    # the server is serving, so a status computed then is stale on arrival.
+    blocks.load(fn=_on_load_status, inputs=[], outputs=[config_status_md])
+
     reload_btn.click(
         fn=_on_reload_pipeline,
         inputs=[data_dir_input, checkpoint_input, arch_input],

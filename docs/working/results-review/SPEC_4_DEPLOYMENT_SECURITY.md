@@ -229,10 +229,12 @@ Recorded so the answer is not re-derived, not to be built.
 
 The front/back boundary is already HTTP: the WebUI calls the API rather than importing the pipeline
 (`src/webui/components/diagnosis_panel.py:18, 116-117`), which makes separate deployment tractable.
-Genuinely small: making `API_BASE` configurable (hard-coded at `:44`); a standalone Gradio launch
-path; CORS. Everything else is not — authorisation, TLS termination, bounded inference queueing, GPU
-concurrency limits, reload-versus-inference synchronisation, request cancellation, per-actor quotas,
-storage isolation and locking, operational monitoring.
+Genuinely small: a configured API address for a WebUI in another process; a standalone Gradio launch
+path; CORS. (The hard-coded `API_BASE` at `:44` was removed in October 2026, after this document's
+evidence base: the in-process tab now calls an address the server accepted a request on,
+`src/utils/server_address.py`.) Everything else is not — authorisation, TLS termination, bounded
+inference queueing, GPU concurrency limits, reload-versus-inference synchronisation, request
+cancellation, per-actor quotas, storage isolation and locking, operational monitoring.
 
 **CORS** (`main.py:161-166`, `["*"]` with `allow_credentials=True`) is reviewed when this area is
 touched. With no authentication present it is not the exposure; the absent authentication is. No

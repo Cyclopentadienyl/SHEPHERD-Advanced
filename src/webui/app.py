@@ -193,7 +193,7 @@ def create_gradio_app() -> gr.Blocks:
                 create_training_tab()
 
             with gr.Tab("Diagnosis", id="infer"):
-                create_diagnosis_tab()
+                create_diagnosis_tab(app)
 
             with gr.Tab("Runtime Settings", id="runtime"):
                 create_runtime_settings_tab()

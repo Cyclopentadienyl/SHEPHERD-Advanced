@@ -33,7 +33,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,26 @@ class DiagnoseRequest(BaseModel):
                     raise ValueError(f"Confidence must be 0.0-1.0, got {conf}")
         return v
 
+    @model_validator(mode="after")
+    def confidences_match_phenotypes(self) -> DiagnoseRequest:
+        """One confidence per phenotype, or none at all.
+
+        **Checked here, before anything is dropped.** The pipeline removes
+        unknown ids and repeats, and reduces this list to the positions that
+        survive. A list of another length cannot be reduced: indexing it would
+        fail into a 500, and zipping it would shorten it silently. `None` means
+        not supplied; an empty list for a non-empty request is a mismatch like
+        any other. The pipeline checks the same for a direct caller.
+        """
+        confidences = self.phenotype_confidences
+        if confidences is not None and len(confidences) != len(self.phenotypes):
+            raise ValueError(
+                f"phenotype_confidences has {len(confidences)} entries for "
+                f"{len(self.phenotypes)} phenotypes; it needs one per phenotype, "
+                "or none at all"
+            )
+        return self
+
     model_config = {"json_schema_extra": {
         "example": {
             "patient_id": "patient_001",
@@ -203,6 +223,27 @@ class DiagnoseResponse(BaseModel):
     }}
 
 
+def _summary(n_candidates: int, n_received: int, phenotype_input: Any) -> str:
+    """The response's one-line summary, counting what was scored.
+
+    **The count comes from the result, not the request.** The pipeline drops
+    unknown ids and removes repeats, so the request's length counted entries that
+    were never scored: `[A, A, B]` read "for 3 phenotypes" after the pipeline had
+    scored two. The received count is shown only when it differs, and labelled as
+    received. The mock path has no result, so its count is labelled as received.
+    """
+    if phenotype_input is None:
+        return (
+            f"Found {n_candidates} candidate diagnoses for {n_received} "
+            "phenotypes received"
+        )
+    used = len(phenotype_input.used)
+    summary = f"Found {n_candidates} candidate diagnoses for {used} phenotypes"
+    if phenotype_input.received != used:
+        summary += f" ({phenotype_input.received} received)"
+    return summary
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -224,6 +265,9 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     logger.info(f"Diagnosis request: session={session_id}, phenotypes={len(request.phenotypes)}")
 
     warnings = []
+    # What the pipeline actually scored. Stays None on the mock path, which has
+    # no pipeline to say so.
+    phenotype_input = None
 
     # Reserved, accepted, ignored — and the caller is told so on every path
     # below, because the field is equally inert in the mock fallback.
@@ -325,6 +369,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
 
             if result.warnings:
                 warnings.extend(result.warnings)
+            phenotype_input = result.phenotype_input
 
     except HTTPException:
         # **Deliberate statuses pass through.** `HTTPException` is an
@@ -346,7 +391,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         patient_id=patient_id,
         timestamp=datetime.now().isoformat(),
         candidates=candidates,
-        summary=f"Found {len(candidates)} candidate diagnoses for {len(request.phenotypes)} phenotypes",
+        summary=_summary(len(candidates), len(request.phenotypes), phenotype_input),
         inference_time_ms=inference_time_ms,
         model_version="1.0.0",
         warnings=warnings,

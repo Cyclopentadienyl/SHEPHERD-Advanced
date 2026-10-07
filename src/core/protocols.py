@@ -1133,7 +1133,13 @@ class InputValidatorProtocol(Protocol):
     """
     輸入驗證協議
 
-    實現模組: src/inference/input_validator.py (IMPLEMENTED)
+    實現模組: src/inference/input_validator.py (PLANNED)
+
+    The implementation at that path had no production caller and was removed on
+    2026-10-07 (docs/working/PLAN_PHENOTYPE_NORMALISATION.md §5). Nothing is
+    planned for it: the label records only that the path does not exist. Served
+    input is validated by `DiagnosisPipeline.validate_input`, which does not
+    implement this protocol.
     """
 
     def validate_phenotypes(
