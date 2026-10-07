@@ -1,8 +1,23 @@
 # PLAN — one rule for a case's phenotype list, from import to scoring
 
-**Status: draft for review, revision 1. Nothing here is implemented, and nothing here authorises
-implementation.** The rule in §4 is a recommendation until the owner approves it (§8). Facts about
-this repository are cited at `15dfcb5`.
+**Status: draft for review, revision 2. Nothing here is implemented, and nothing here authorises
+implementation.** The owner has adopted the rule's principle; its implementation scope is
+settled once this revision's corrections pass review (§8). Facts about this repository are cited
+at `15dfcb5`; the code is unchanged at `f7a5c8e`.
+
+**Revision 2 (2026-10-07)** follows the review of `f7a5c8e`:
+- **the API's own summary moves too** (§4.6, §5, §7). `/diagnose` builds its summary from the
+  request, not from the result, so it would still count repeats after the pipeline removed them;
+- **per-position fields get an input contract** (§4.5). A confidence list whose length differs
+  from the phenotype list is refused before anything is dropped, at the API and in the pipeline;
+- **the WebUI's own repeat removal is a choice for the owner**, with its consequences stated
+  (§5, §8), instead of being called tidying;
+- **smaller corrections:** "100 × A, then B" removes 99 repeats, not 100; the raw limit is a
+  list length, not a request-size guard; a normalised version's sample bytes keep their digest
+  when nothing changed; `measure_served_pipeline` is said not to check, without relying on the
+  generator; the old `ValidationResult` is removed, not repointed;
+- **the owner's decisions of 2026-10-07 are recorded** (§8): the rule's principle is adopted,
+  and `InputValidator` is to be removed in the scope the reviewer listed.
 
 **Why this exists.** A case that lists one phenotype twice is scored differently from the same
 case listing it once, and today different entry points treat the repeat differently. The
@@ -142,14 +157,16 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
 | `InputValidator` (if it were wired) | Truncates first, so B is dropped |
 
 **[Recommendation] Two limits, kept apart:**
-- **The raw size limit stays at the network boundary**, and stays a refusal. It guards the size
-  of a request, not the model.
+- **The list-length limit stays at the network boundary**, and stays a refusal: at most 100
+  items in `phenotypes` (`diagnose.py:74`). It bounds the list a request carries, not the model.
+  It is not a limit on the HTTP body or on each string's length, and this plan does not claim
+  request-size protection.
 - **The model's limit is checked after mapping and repeat removal**, and refuses when it is
   exceeded. **Nothing truncates.** A truncated input scores a different patient, and the
   warning that announces it does not reach a reader of the scores.
 - **Afterwards:**
   - WebUI: `[A, B]`, scored;
-  - API: still 422, an explicit refusal at the boundary, never a silent loss;
+  - API: still 422 for 101 items, an explicit refusal at the boundary, never a silent loss;
   - direct pipeline: `[A, B]`, scored;
   - 101 *distinct* known terms: refused by the pipeline, where today they are truncated.
 - **Unknown ids keep their current policies** in this work: dropped with a warning at serving,
@@ -158,7 +175,8 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
 
 ## 4. The rule, exactly
 
-**[Recommendation] Status: proposed (§8).**
+**Status: the principle is adopted by the owner (2026-10-07). The details below are settled with
+the implementation scope, once this revision passes review (§8).**
 
 1. **Unit.** The positive phenotypes of one case, within one observation scope.
    - **[Fact] The current formats can express nothing else.** `PatientPhenotypes` carries ids
@@ -209,12 +227,42 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
    - Any per-position field is reduced with the same positions. Today the only one is
      `phenotype_confidences`, which the API accepts (`diagnose.py:77-80, 133-141`) and nothing in
      scoring reads.
+   - **The input contract comes first, because reducing by position needs it.**
+     - **[Fact] Today nothing checks the length.** The API's validator checks only that each
+       value is in [0, 1] (`diagnose.py:133-141`). `PatientPhenotypes` is a plain dataclass
+       (`types.py:376-385`), so a direct pipeline call gets no check at all.
+     - **[Inference] Without one, the reduction fails one of two ways.** `phenotypes = [A, A, B]`
+       with `confidences = [0.8]` keeps positions `[0, 2]`. Indexing raises, and the API's
+       catch-all turns it into a 500 (`diagnose.py:335-340`). Zipping truncates silently.
+     - **[Recommendation] The contract:**
+       - `None` means not provided;
+       - a list, empty or not, must have exactly as many entries as `phenotypes` as received;
+       - this is checked before unknown ids are dropped and before repeats are removed;
+       - a mismatch is an input error: 422 from the API's request model, and an invalid input
+         in `pipeline.run` through its existing invalid-input result (`pipeline.py:1053-1064`).
+         Nothing is padded or truncated;
+       - repeats are removed by the kept positions. The first occurrence's value is kept, and
+         values are never combined.
    - This plan does not decide what confidences mean.
 6. **The normalised list is what goes onward.** After the rule, nothing reads the raw request
-   list. Today the explanations and the summary read `patient_input.phenotypes` directly
-   (`src/reasoning/explanation_generator.py:349`; `pipeline.py:1662`, "Based on N input
-   phenotypes"). Left so, they would still show repeats, unknown ids and entries past the
-   limit.
+   list. Three places read it today:
+   - the explanations (`src/reasoning/explanation_generator.py:349`);
+   - the pipeline's summary (`pipeline.py:1662`, "Based on N input phenotypes");
+   - **the API's own summary**, which `/diagnose` builds from the request, not from the result:
+     "Found N candidate diagnoses for `len(request.phenotypes)` phenotypes"
+     (`diagnose.py:349`).
+
+   Left so, they would still count repeats, unknown ids and entries past the limit. For
+   `[A, A, B]` the API would answer "for 3 phenotypes" after the pipeline scored `[A, B]`.
+
+   **[Recommendation] The result says what was used.**
+   - `InferenceResult` carries the normalised list it scored, and the counts: received, unknown
+     ids dropped, repeats removed.
+   - The API's summary takes the used count from the result. Where it also shows the received
+     count, it labels it as received.
+   - The API does not normalise the request again or infer anything from it.
+   - The mock path, which runs when no pipeline is configured (`diagnose.py:279-285`), has no
+     result to read. Its summary labels the count as received.
 
 **No complete clinical event model is built in advance.** The rule covers what the formats
 express today.
@@ -246,9 +294,10 @@ express today.
 | D6 importer (`PLAN_TEST_RESULTS.md` D6) | Producer: applies the rule after mapping, writes the normalised mapped version, and records the counts |
 | Sample generator | Producer: already in normal form. It applies the same function, so the rule has one definition, and records the version |
 | Shared reader `read_samples` (`file_storage.py:60-101`) | Consumer: **checks** that a stored case is in normal form, and refuses a file that is not, naming the entry point that rebuilds it. It never changes the data. Training and measurement reach it through contract M2.1 |
-| Two readers that do not use it | **Named exceptions.** The frozen oracle, `scripts/evaluate_model.py:203-217`, reads samples itself and is byte-pinned (`tests/unit/test_frozen_evaluator.py`); it retires with the frozen evaluator. `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads`; it reads only generated files, which are in normal form, and it moves onto the shared reader when it is next touched |
-| `DiagnosisPipeline.run` | Applies the rule to a request after mapping (`pipeline.py:1195-1202`), with the request positions mapping kept, before the model's count check. Everything after it — scoring, explanations, the summary — reads the normalised list (§4.6). The result's warnings state how many repeats were removed. The API and the UI reach it through here |
-| WebUI | Keeps its text parsing: extraction and canonical formatting. Its removal of repeated strings stays as tidying of pasted text, documented as not the data rule; the pipeline remains the authority. It keeps a pasted list with repeats under the API's raw limit |
+| Two readers that do not use it | **Named exceptions, and neither checks.** The frozen oracle, `scripts/evaluate_model.py:203-217`, reads samples itself and is byte-pinned (`tests/unit/test_frozen_evaluator.py`) for historical comparison; it is not changed for uniformity's sake, and it retires with the frozen evaluator. `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads` and does not check the file; that its producer writes no repeats is not a check. Its requests go through the API, so N1 applies to them. When it is next touched it moves onto the shared reader and its one check |
+| `DiagnosisPipeline.run` | Checks the per-position contract (§4.5), then applies the rule to a request after mapping (`pipeline.py:1195-1202`), with the request positions mapping kept, before the model's count check. Everything after it — scoring, explanations, the summary — reads the normalised list, and the result carries that list and its counts (§4.6). The result's warnings state how many repeats were removed. The API and the UI reach it through here |
+| API `/diagnose` | Enforces the list-length limit and, in its request model, the per-position contract. Builds its response from the result: the used count, and the received count only where labelled so (§4.6) |
+| WebUI | Keeps its text parsing: extraction and canonical formatting. **Whether it also removes repeated strings is the owner's choice** (§8, decision W). Either way the pipeline's rule is the one that decides what is scored |
 
 **`InputValidator`, function by function:**
 
@@ -261,7 +310,8 @@ express today.
 | Confidence checks (`:361-398`) | Not adopted. Confidences are not scored |
 | `patient_id` required | Not needed. The API supplies one |
 | `ExtensibleInputValidator`, the factory, dict conversion (`:421-575`) | No caller |
-| **The module as a whole** | **Removed in the same change**, with its exports, the protocol's "IMPLEMENTED" note, the smoke test in `run_local_tests.py` and its unit tests. The exported `ValidationResult` is repointed to the pipeline's own (`pipeline.py:208`) or dropped, with the test import that uses it. **[Owner]** This deletes code and tests, so it waits for the owner's approval. If the owner prefers, it stays untouched and is listed as unused |
+| `ValidationResult` (`:50-60`), exported at `src/inference/__init__.py:43, 55` | **Removed with its export and the test import that uses it** (`tests/unit/test_inference.py:26`). It is **not** repointed to the pipeline's `ValidationResult`: the old one defines `__bool__` as `is_valid` (`input_validator.py:58-60`) and the pipeline's does not (`pipeline.py:208-214`), so a repointed name would behave differently while looking the same |
+| **The module as a whole** | **Removed within N1** (the owner's decision, 2026-10-07): `InputValidator`, `ExtensibleInputValidator`, the factory and dict conversion, their exports, the tests that test only them, the smoke test in `run_local_tests.py`, and the protocol's stale "IMPLEMENTED" note. Every reference is confirmed gone. **Not removed:** `pipeline.validate_input` and the API's validation; their tests go on the entry points that run |
 
 **It is not wired in whole.** Wiring the old validator would bring its truncation and its
 string-level semantics with it.
@@ -289,9 +339,15 @@ string-level semantics with it.
     repeats removed.
   - Its served identity (contract M3c) carries the rule version, as one of the serving settings
     that change scores.
-- **Old results do not carry over.** A mapped version normalised under the rule is a new mapped
-  version, with a new digest. Ledger records key on the cohort's digest
-  (`sidecar.py:156-161`), so a record made on an earlier version does not attach to it.
+- **Two identities, not one.**
+  - **The sample bytes.** If normalisation changes a case, the bytes change, the digest changes,
+    and a ledger record keyed on the earlier digest (`sidecar.py:156-161`) does not attach.
+  - **If normalisation changes no case,** the bytes and their digest stay the same. A record
+    keyed on that digest then describes the same scored input, which is correct for its scores.
+  - **The mapped version.** Its identity is the rule version and the manifest, which can differ
+    while the sample bytes do not. Whether the ledger's cohort key carries that identity is
+    settled with ledger v2 (`PLAN_TEST_RESULTS.md` §5). This plan does not assume that
+    re-running normalisation always changes a digest.
 - **R10 computes set relations only**, and never edits a scoring input (contract §5.4).
 
 ## 7. Acceptance
@@ -307,13 +363,24 @@ compares the two.
 - **"100 × A, then B":**
   - through the WebUI handler with the API: `[A, B]` is scored;
   - through the API: 422, nothing scored;
-  - through `pipeline.run`: `[A, B]` is scored, and the warning states 100 repeats removed.
+  - through `pipeline.run`: 101 entries, `[A, B]` is scored, and the warning states 99 repeats
+    removed.
 
   B is never dropped silently.
 - **101 distinct known terms** through `pipeline.run`: refused, not truncated.
-- **One rule everywhere.** Within the API's raw limit, for an input with a repeat, the WebUI, the
-  API and `pipeline.run` produce the same scores as for the input without it. A measurement reading a file with a
-  repeat is refused by the shared reader, naming the producer.
+- **One rule everywhere.** Within the API's list-length limit, for an input with a repeat, the
+  WebUI, the API and `pipeline.run` produce the same scores as for the input without it. A
+  measurement reading a file with a repeat is refused by the shared reader, naming the producer.
+- **What the response says** (through the real API route, not `pipeline.run` alone):
+  - `[A, A, B]`: the summary counts 2 used, and a warning states 1 repeat removed;
+  - `[A, X, B]` with `X` unknown: the summary counts 2 used, and a warning names `X`;
+  - the API's, the WebUI's and the pipeline's accounts of the input agree.
+- **Per-position contract**, at the API and through `pipeline.run`:
+  - `None` and a list of the right length pass;
+  - an empty, a short and a long list are refused as input errors, and the API never answers
+    500;
+  - `[X, A, A, B]` with four confidences, `X` unknown: the surviving confidences are those at
+    positions 1 and 3.
 - **Nothing else changes:**
   - normalising never reduces the number of cases, and never merges patients;
   - an ancestor and its descendant both stay;
@@ -322,9 +389,10 @@ compares the two.
   excluded pair for one id, under D6's rules. It never imports either as a plain positive.
 - **Traceability.**
   - The source digest is unchanged.
-  - The normalised artifact has its own digest, and its manifest names the rule version and the
-    counts.
-  - A ledger record made on an earlier mapped version does not attach to the new one.
+  - The normalised artifact is digested from its own bytes, and its manifest names the rule
+    version and the counts.
+  - When normalisation changed a case, a ledger record made on the earlier version does not
+    attach to the new one.
 - **No cross-environment claim.** The rule's acceptance is about the inputs it produces, not
   about bit-identical scores across environments.
 
@@ -334,29 +402,54 @@ compares the two.
 - **[Owner, decided 2026-10-06] Resume continues the same data in the first version.**
   Fine-tuning on other data is not supported yet. This is recorded in
   `PLAN_PROVENANCE_CONTRACT.md` M2.3 and §8, question 3.
-- **[Owner, open] The rule in §4.** It is recommended, not approved, and nothing here is
-  implemented on the strength of this plan.
-- **[Owner, open] Removing `InputValidator`** (§5). It deletes code and tests.
+- **[Owner, decided 2026-10-07] The rule's principle is adopted** (§4): repeats are removed by
+  graph node after mapping, in first-occurrence order, and nothing truncates. As the reviewer
+  advised, the implementation scope is settled only after this revision's two corrections
+  (§4.5, §4.6) pass review. Nothing is implemented before that.
+- **[Owner, decided 2026-10-07] `InputValidator` is removed**, in the scope §5 lists:
+  - removed: the classes, the factory and dict conversion, their exports, the tests that test
+    only them, the smoke test and the protocol's stale note;
+  - the old `ValidationResult` is removed, not repointed;
+  - kept: `pipeline.validate_input` and the API's validation.
 
-**Behaviour changes, if the rule is approved:**
+  It is done within N1.
+- **[Owner, open] Decision W: does the WebUI keep removing repeated strings?**
+  - **Keep it.** The list-length limit then applies to the list after the UI's removal, so a
+    pasted list of more than 100 lines with repeats still goes through. The service never sees
+    the UI's repeats, so the repeats-removed count in a warning covers only what the service
+    received. Two places remove repeats, one by string and one by node.
+  - **Stop it** (recommended). One place removes repeats, and the count in the warning covers
+    every repeat. The cost: a pasted list of more than 100 entries that only fits after removing
+    repeats is refused by the API with 422, where today it goes through. That is a visible change
+    for users, listed below.
+
+**Behaviour changes, under the adopted rule:**
 
 | Where | Today | Proposed | Visible effect |
 |---|---|---|---|
 | `pipeline.run`, a repeated id | Weighted in the GNN mean and the SP mean, and in path search | Removed after mapping, with a warning giving the count | Scores change for inputs with repeats only |
 | `pipeline.run`, explanations and summary | Read the raw request list | Read the normalised list | Repeats, unknown ids and entries past the limit no longer appear there |
+| `pipeline.run` and API, `phenotype_confidences` of the wrong length | Accepted | Refused as an input error, before anything is dropped | Only such requests; nothing scores confidences |
+| API summary | Counts the request's items | Counts the phenotypes used, from the result | `[A, A, B]` reads "2 phenotypes" |
 | `pipeline.run`, more than 100 entries | Truncated to the first 100, repeats included, with a warning | Repeats removed, then refused if more than 100 distinct remain | "100 × A, then B" scores A and B; 101 distinct terms are refused rather than truncated |
 | API, more than 100 items | 422 | Unchanged | — |
-| WebUI | Removes repeated strings | Unchanged, documented as text tidying | — |
+| WebUI | Removes repeated strings | Decision W: unchanged, or stops | If it stops: a pasted list of more than 100 entries that fits only after removing repeats is refused (422) |
 | Training and measurement readers | Accept repeats | Refuse a file not in normal form; the two named exceptions (§5) do not check | Only files with repeats; generated files have none |
 | Importer | Does not exist | Normalises after mapping and records the counts | New |
-| `InputValidator` | Unused | Removed, if the owner approves | None at run time |
+| `InputValidator` | Unused | Removed (decided) | None at run time |
 
-**Where it lands, if the rule is approved:**
-- **N1 — the serving part, a change of its own.** The function, its use in `pipeline.run` (with
-  request positions, and the explanations and summary reading the normalised list), the count
-  rule, the WebUI's documentation and, if approved, `InputValidator`'s removal. It depends
-  on no milestone; it changes served scores only for inputs with repeats or more than 100
-  entries.
+**Where it lands, once the implementation scope is settled:**
+- **N1 — the serving part, a change of its own.**
+  - The function, and its use in `pipeline.run`: request positions, the per-position contract,
+    and the explanations and summary reading the normalised list.
+  - The result carrying the list it used and its counts, and the API's response built from it.
+  - The count rule.
+  - Decision W's outcome for the WebUI.
+  - `InputValidator`'s removal.
+
+  It has its own complete acceptance (§7). It depends
+  It depends on no milestone. It changes served scores only for inputs with repeats or more
+  than 100 entries, and refuses confidence lists of the wrong length.
 - **N2 — the stored part, with the contract.**
   - The reader's check rides on M2.1, which makes `read_samples` the one reader for training
     and measurement.
