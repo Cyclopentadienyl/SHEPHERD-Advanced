@@ -1,9 +1,9 @@
 # PLAN — one rule for a case's phenotype list, from import to scoring
 
 **Status: draft for review, revision 2. Nothing here is implemented, and nothing here authorises
-implementation.** The owner has adopted the rule's principle; its implementation scope is
-settled once this revision's corrections pass review (§8). Facts about this repository are cited
-at `15dfcb5`; the code is unchanged at `f7a5c8e`.
+implementation by itself.** The owner has adopted the rule, and the reviewer closed this
+revision's corrections at `e9708cf`, so N1's scope is settled (§8). Facts about this repository
+are cited at `15dfcb5`; the code is unchanged at `e9708cf`.
 
 **Revision 2 (2026-10-07)** follows the review of `f7a5c8e`:
 - **the API's own summary moves too** (§4.6, §5, §7). `/diagnose` builds its summary from the
@@ -18,6 +18,12 @@ at `15dfcb5`; the code is unchanged at `f7a5c8e`.
   generator; the old `ValidationResult` is removed, not repointed;
 - **the owner's decisions of 2026-10-07 are recorded** (§8): the rule's principle is adopted,
   and `InputValidator` is to be removed in the scope the reviewer listed.
+
+**Amended 2026-10-07, after the review of `e9708cf`:**
+- **decision W is made.** The WebUI stops removing repeats, and a list over the limit gets a
+  clear message in the UI (§5, "The WebUI's message");
+- the message's design, and N1's acceptance for it (§7), are added;
+- N1's scope is settled (§8).
 
 **Why this exists.** A case that lists one phenotype twice is scored differently from the same
 case listing it once, and today different entry points treat the repeat differently. The
@@ -164,11 +170,14 @@ Read from `mims-harvard/shepherd` at `e95433a`. The code was read and not run.
 - **The model's limit is checked after mapping and repeat removal**, and refuses when it is
   exceeded. **Nothing truncates.** A truncated input scores a different patient, and the
   warning that announces it does not reach a reader of the scores.
-- **Afterwards:**
-  - WebUI: `[A, B]`, scored;
+- **Afterwards** (with decision W, §8):
+  - WebUI: the 101 entries reach the API, which refuses them with 422. Nothing is scored, and
+    the UI says why, with both numbers (§5);
   - API: still 422 for 101 items, an explicit refusal at the boundary, never a silent loss;
-  - direct pipeline: `[A, B]`, scored;
-  - 101 *distinct* known terms: refused by the pipeline, where today they are truncated.
+  - direct pipeline: `[A, B]` is scored, with 99 repeats removed. A direct call is not behind the
+    network boundary, so its policy is not changed to match it;
+  - 101 *distinct* known terms: refused by the API, and by the pipeline when called directly,
+    where today the pipeline truncates them.
 - **Unknown ids keep their current policies** in this work: dropped with a warning at serving,
   refused at measurement, clamped in training. Changing any of them is a separate behaviour
   change. Training's clamp is noted, not addressed here.
@@ -297,7 +306,7 @@ express today.
 | Two readers that do not use it | **Named exceptions, and neither checks.** The frozen oracle, `scripts/evaluate_model.py:203-217`, reads samples itself and is byte-pinned (`tests/unit/test_frozen_evaluator.py`) for historical comparison; it is not changed for uniformity's sake, and it retires with the frozen evaluator. `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads` and does not check the file; that its producer writes no repeats is not a check. Its requests go through the API, so N1 applies to them. When it is next touched it moves onto the shared reader and its one check |
 | `DiagnosisPipeline.run` | Checks the per-position contract (§4.5), then applies the rule to a request after mapping (`pipeline.py:1195-1202`), with the request positions mapping kept, before the model's count check. Everything after it — scoring, explanations, the summary — reads the normalised list, and the result carries that list and its counts (§4.6). The result's warnings state how many repeats were removed. The API and the UI reach it through here |
 | API `/diagnose` | Enforces the list-length limit and, in its request model, the per-position contract. Builds its response from the result: the used count, and the received count only where labelled so (§4.6) |
-| WebUI | Keeps its text parsing: extraction and canonical formatting. **Whether it also removes repeated strings is the owner's choice** (§8, decision W). Either way the pipeline's rule is the one that decides what is scored |
+| WebUI | **Text parsing only** (decision W): extraction and canonical formatting, keeping order and repeats. It presents the API's answers, including the 422 below. Mapping, repeat removal and the count decision stay in the service |
 
 **`InputValidator`, function by function:**
 
@@ -315,6 +324,50 @@ express today.
 
 **It is not wired in whole.** Wiring the old validator would bring its truncation and its
 string-level semantics with it.
+
+**The WebUI's message when the list is too long** (decision W).
+- **[Fact] What the user sees today.**
+  - `_call_diagnose` turns an HTTP error into "API error: <status> — <raw body>"
+    (`src/webui/components/diagnosis_panel.py:149-150`), and `_on_diagnose` shows it
+    (`:610-619`).
+  - For a 101-item list, the raw body is FastAPI's 422. Its one entry has `type: too_long`,
+    `loc: [body, phenotypes]` and `ctx: {max_length: 100, actual_length: 101}`, and its `input`
+    echoes all 101 submitted ids. This was checked with the installed pydantic 2.11.10 and
+    fastapi 0.136.1, on a standalone model declaring the same field.
+- **[Recommendation] The same call path, reading the structured error:**
+  - **`_call_diagnose` returns a 422 as its status and `detail` entries**, not as raw text.
+  - **For `phenotypes` with `too_long`, both numbers come from the server's error**:
+    `ctx.actual_length` and `ctx.max_length`. The UI counts nothing and keeps no copy of the
+    limit, so the request model stays the one place the limit is set. `measure_served_pipeline`
+    already reads it from the model in the same way (`scripts/measure_served_pipeline.py:446-451`).
+  - **The message counts entries, not lines.** The UI accepts several ids to a line, and
+    commas and spaces between them. For example: "Recognised 101 HPO phenotype entries
+    (repeats included); one submission accepts at most 100. No diagnosis was run, and the list
+    was not shortened. Remove repeats or shorten the list, then submit again."
+  - **Every other 422 entry is shown as one readable line**: the field and the validator's
+    message, never the echoed input. A confidence-length error therefore reads as what it is,
+    and never as "too many phenotypes".
+  - **Other failures stay distinct.** No server address, unreachable, timeout, 500 and 503 keep
+    their current messages. A body that cannot be parsed gets a general failure line. The
+    formatting never raises.
+- **[Fact] What the UI already does on failure, and keeps doing:**
+  - the input box is not among the handler's outputs (`diagnosis_panel.py:950-958`), so the
+    user's text stays for editing;
+  - the message goes to the results area, which persists, not to a passing notice;
+  - the error branch clears the candidates and the results state, and disables both exports
+    (`:610-619`). A previous run's result is never shown as this one's.
+- **A contract test pins the shape the UI reads**, on the real application route: `loc`,
+  `type`, `ctx.max_length` and `ctx.actual_length`. A dependency upgrade that changes the shape
+  then fails a test, instead of quietly degrading the message to the general line.
+- **Not built:** a preview, live repeat removal, a validation endpoint, or a front-end
+  validation system.
+- **Considered and not recommended:** raising the API's list-length limit above the model's,
+  so that repeats alone never cause a refusal and only more than 100 *distinct* terms do.
+  - A list that exceeds 100 only because of repeats is an edge case.
+  - The change would cost more than it saves. The pipeline's invalid-input result reaches the
+    API as a 200 with no candidates (`pipeline.py:1053-1064`, then `diagnose.py:299-327`), and
+    would have to become an HTTP error. `measure_served_pipeline` would have to read the
+    model's limit rather than the request model's.
 
 **Nothing else is added:** no validation framework, no registry, no second scoring path.
 
@@ -361,7 +414,7 @@ compares the two.
 - **Mapping collisions.** Two source ids that map to one node are kept once by the importer, and
   counted in its manifest.
 - **"100 × A, then B":**
-  - through the WebUI handler with the API: `[A, B]` is scored;
+  - through the WebUI handler with the API: 422, nothing scored, and the message of §5;
   - through the API: 422, nothing scored;
   - through `pipeline.run`: 101 entries, `[A, B]` is scored, and the warning states 99 repeats
     removed.
@@ -375,6 +428,27 @@ compares the two.
   - `[A, A, B]`: the summary counts 2 used, and a warning states 1 repeat removed;
   - `[A, X, B]` with `X` unknown: the summary counts 2 used, and a warning names `X`;
   - the API's, the WebUI's and the pipeline's accounts of the input agree.
+- **The WebUI, through its real handler and the API:**
+  - **"100 × A, then B":**
+    - the message shows 101 and 100;
+    - the pipeline is not called;
+    - the input text is kept;
+    - there is no new result and no downloadable report;
+  - **101 distinct valid ids:** the same refusal and message. Entries are counted, not lines:
+    the test puts several ids on a line;
+  - **within 100 entries, with repeats:**
+    - the list sent keeps its repeats, and only the service removes them;
+    - the API's used count and warning are right;
+    - the UI does not remove repeats to make a test pass;
+  - **corrected and submitted again:** the new result shows, with no stale error and no old
+    result;
+  - **other failures:**
+    - a confidence-length 422 (the UI sends no confidences, so this is tested at the API's
+      formatter) is not presented as "too many phenotypes";
+    - a body that cannot be parsed, and a connection failure, raise nothing in the UI;
+  - **the parser:** the test that pins repeat removal (`tests/unit/test_diagnosis_panel.py:42`)
+    changes to pin that order and repeats are kept;
+  - **the contract test** on the 422 shape (§5).
 - **Per-position contract**, at the API and through `pipeline.run`:
   - `None` and a list of the right length pass;
   - an empty, a short and a long list are refused as input errors, and the API never answers
@@ -413,15 +487,17 @@ compares the two.
   - kept: `pipeline.validate_input` and the API's validation.
 
   It is done within N1.
-- **[Owner, open] Decision W: does the WebUI keep removing repeated strings?**
-  - **Keep it.** The list-length limit then applies to the list after the UI's removal, so a
-    pasted list of more than 100 lines with repeats still goes through. The service never sees
-    the UI's repeats, so the repeats-removed count in a warning covers only what the service
-    received. Two places remove repeats, one by string and one by node.
-  - **Stop it** (recommended). One place removes repeats, and the count in the warning covers
-    every repeat. The cost: a pasted list of more than 100 entries that only fits after removing
-    repeats is refused by the API with 422, where today it goes through. That is a visible change
-    for users, listed below.
+- **[Owner, decided 2026-10-07] Decision W: the WebUI stops removing repeats**, and a list over
+  the limit gets a clear message in the UI.
+  - One place removes repeats, and the count in the warning covers every repeat.
+  - The cost, accepted: a pasted list of more than 100 entries that fits only after removing
+    repeats is refused by the API with 422, where today it goes through. The message says so
+    (§5).
+  - The option not taken was to keep the UI's removal. Two places would then remove repeats,
+    one by string and one by node, and the warning would count only what the service received.
+- **N1's scope is settled.** The reviewer closed this revision's corrections at `e9708cf`, and
+  decision W is made. N1 may be implemented and sent to code review, without a further approval
+  for the same decisions. N2 keeps its dependencies.
 
 **Behaviour changes, under the adopted rule:**
 
@@ -433,7 +509,8 @@ compares the two.
 | API summary | Counts the request's items | Counts the phenotypes used, from the result | `[A, A, B]` reads "2 phenotypes" |
 | `pipeline.run`, more than 100 entries | Truncated to the first 100, repeats included, with a warning | Repeats removed, then refused if more than 100 distinct remain | "100 × A, then B" scores A and B; 101 distinct terms are refused rather than truncated |
 | API, more than 100 items | 422 | Unchanged | — |
-| WebUI | Removes repeated strings | Decision W: unchanged, or stops | If it stops: a pasted list of more than 100 entries that fits only after removing repeats is refused (422) |
+| WebUI, parsing | Removes repeated strings | Keeps order and repeats (decision W) | A pasted list of more than 100 entries that fits only after removing repeats is refused (422) |
+| WebUI, an API error | Shows the status and the raw response body | A list over the limit gets the message of §5, with both numbers from the server; any other 422 is one readable line per entry; other failures keep their messages | The echoed input no longer appears |
 | Training and measurement readers | Accept repeats | Refuse a file not in normal form; the two named exceptions (§5) do not check | Only files with repeats; generated files have none |
 | Importer | Does not exist | Normalises after mapping and records the counts | New |
 | `InputValidator` | Unused | Removed (decided) | None at run time |
@@ -444,12 +521,12 @@ compares the two.
     and the explanations and summary reading the normalised list.
   - The result carrying the list it used and its counts, and the API's response built from it.
   - The count rule.
-  - Decision W's outcome for the WebUI.
+  - The WebUI: parsing keeps repeats, the 422 message, and its contract test (§5).
   - `InputValidator`'s removal.
 
-  It has its own complete acceptance (§7). It depends
-  It depends on no milestone. It changes served scores only for inputs with repeats or more
-  than 100 entries, and refuses confidence lists of the wrong length.
+  It has its own complete acceptance (§7). It depends on no milestone. It changes served scores
+  only for inputs with repeats or more than 100 entries, and refuses confidence lists of the
+  wrong length.
 - **N2 — the stored part, with the contract.**
   - The reader's check rides on M2.1, which makes `read_samples` the one reader for training
     and measurement.
