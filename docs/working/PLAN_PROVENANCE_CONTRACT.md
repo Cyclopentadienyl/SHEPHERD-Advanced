@@ -1,6 +1,6 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: draft for review, revision 2, amended after its review.** Nothing here is implemented. Facts about the code are
+**Status: draft for review, revision 2, amended twice after review.** Nothing here is implemented. Facts about the code are
 cited at `627ed08`; the code is unchanged at `463a0df`. §1 records decisions already made; §4 is
 the order of work.
 
@@ -31,6 +31,11 @@ the order of work.
   - M2.1's two exceptions state what they establish and how they are displayed, and its buffer
     cost becomes a capacity measurement;
   - M3c moves every existing consumer of the old version fields in the same change.
+- **Amended 2026-10-07, after the review of `15dfcb5`:**
+  - the owner has decided §8 question 3: in the first version, resume continues the same data.
+    M2.3 and §5.4 now state it as decided;
+  - whether a case may list a phenotype twice is taken up by its own plan,
+    `PLAN_PHENOTYPE_NORMALISATION.md` (§5.4).
 
 **What this is.** The project's goal for this stage, in the owner's words: the model must always
 match the exact setup that trained it, dataset version and every other stage's settings included,
@@ -281,7 +286,7 @@ passes M2.4.
 - **The parent's graph roles must equal what this run read:** `kg`, `node_features`,
   `edge_indices` and `num_nodes`. This one is not optional: it is decision 1 applied to the
   parent.
-- **Proposed, awaiting the owner's decision (§8, question 3): its data roles must equal too.**
+- **Decided by the owner, 2026-10-06 (§8, question 3): its data roles must equal too.**
   - These are `split_manifest`, `train_samples` and `val_samples`.
   - The set of roles must be the same as well, so a parent that ran validation, resumed by a run
     that does not, refuses.
@@ -312,9 +317,9 @@ passes M2.4.
   M2.2.
 - So a checkpoint's own record covers its whole history. R10 (§5.4) needs no walk over ancestor
   files, which may since have been overwritten, and no registry.
-- This rests on the data-role rule. If §8 question 3 allows other data, the history set that
-  question describes lands in the same change, so R10 never reads a scope narrower than the
-  training history.
+- This rests on the data-role rule. If fine-tuning on other data is added later, the history
+  set §8 question 3 describes lands in the same change, so R10 never reads a scope narrower than
+  the training history.
 
 The rest of resume — the overwrite guard — is M3a's.
 
@@ -564,7 +569,7 @@ evidence.
   other means is not recorded, and the label does not claim to know it.
 - **The scopes cover the whole resume history.** M2.3 refuses a resume over other sample files,
   so every ancestor of a checkpoint read the same files. This rests on M2.3's data-role rule,
-  which is proposed rather than decided (§8, question 3).
+  which the owner has decided (§8, question 3).
 
 **Units: two labels per scope, four in all.**
 
@@ -590,9 +595,9 @@ evidence.
   `[0, 1]` and `[0, 0, 1]` as unrelated, and hide exactly that.
 - **Whether a case may list a term twice is a question about the data, not about this label.**
   Mapping can produce one, when two source terms map to the same node. A rule would have to
-  apply alike at import, in training and in measurement, through the shared reader. It belongs
-  to D6's import rules (`PLAN_TEST_RESULTS.md` §4.9, question 2). Nothing here removes
-  duplicates.
+  apply alike at import, in training, in measurement and at serving.
+  `PLAN_PHENOTYPE_NORMALISATION.md` proposes one, for the owner to decide. R10 removes nothing
+  either way.
 - **The patient id is not part of a case.** Generated patient ids are labels, not identities.
 - **Near-duplicates are not counted** — subsets, supersets, a term or two apart — and the
   label's name states the rule.
@@ -701,11 +706,10 @@ evidence.
        semantics that tell them apart;
      - no new formal path is built to keep the old fallback.
    - This is a recommendation. The owner has not decided.
-3. **Fine-tuning on other data** (new in revision 2). M2.3 proposes that a resume reads the same
-   data as its parent. Is fine-tuning a model on other data needed in the formal pipeline?
-   - **This plan recommends the restriction for the first version.** The reviewer agrees, as a
-     product restriction rather than a validity verdict. It is not decided until the owner
-     decides it.
+3. **Fine-tuning on other data — decided by the owner, 2026-10-06.** In the first version,
+   resume continues the same data as its parent (M2.3). Fine-tuning on other data is not
+   supported yet. This is a product restriction, not a validity verdict, and it gates data, not
+   settings.
    - **If fine-tuning is needed later,** it uses the same training entry point and checkpoint
      schema. The parent's recorded train and validation digests are carried into the child,
      and R10 takes the union of every set it can verify. If any one of them cannot be

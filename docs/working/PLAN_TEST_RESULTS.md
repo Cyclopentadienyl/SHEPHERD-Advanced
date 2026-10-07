@@ -698,10 +698,10 @@ question 3 gates phase 2; question 4 is answered:
    - D6's exclusion rules: a case with some lost phenotype terms, and whether the all-source
      figure is reported.
    - A case that lists a phenotype term twice. Mapping can produce one, when two source terms
-     map to the same node, and a repeat changes Mode C's input (contract §5.4). Is it kept as
-     listed, or does a rule apply? A rule would apply alike at import, in training and in
-     measurement, through the shared reader, not in one place only. Until this is decided,
-     cases are scored as listed.
+     map to the same node, and a repeat changes Mode C's input (contract §5.4).
+     `PLAN_PHENOTYPE_NORMALISATION.md` proposes one rule for every entry point: remove repeats
+     by graph node after mapping, keep the source bytes, and record the rule version and
+     counts. Until the owner decides, cases are scored as listed.
    - MyGene2's terms of use.
 3. **Operators and access.**
    - Who may import, run and register, above all on the institutional cohort?
