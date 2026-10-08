@@ -1,8 +1,9 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
 **Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1
-or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459` (2026-10-08; §4, "What M1 did"
-and "M1's acceptance on the homelab"). M2–M5 are not implemented.** Facts about the code are cited at
+or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that
+evidence with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab").
+M2–M5 are not implemented.** Facts about the code are cited at
 `627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
 is the order of work.
 
@@ -331,9 +332,9 @@ from the owner's uploads and pasted output.
   - As with N1, a file hashed afterwards is not proof of the bytes consumed during the run.
     That proof is the contract's M2.1.
 - **A first attempt ran the wrong code and was discarded.** The owner's `git switch` landed on a
-  stale local branch at `60b3c89`, from August, so the service ran old code. Its log shows the
-  pre-M1 behaviour: `Checkpoint not found`, then `Pipeline initialized:
-  scoring_mode=path_reasoning_fallback`.
+  stale local branch at `60b3c89`, from August, so the service ran old code. The log the owner
+  pasted shows the pre-M1 behaviour: `Checkpoint not found`, then `Pipeline initialized:
+  scoring_mode=path_reasoning_fallback`. That attempt's full log is not in the archive.
   - Before the run below, the homelab's 16 local branches other than `main` were archived to a
     bundle outside the repository. `git bundle verify` reported all 17 refs and a complete
     history, and the bundle's SHA-256 is
@@ -406,6 +407,32 @@ a synthetic workspace of 9 nodes and 14 edges. The services were built from two 
   not restore readiness. 1a failed because `/ready`'s 503 had no recovery guidance until
   `ed4872a`;
 - **a service already serving:** the client stopped at its precondition.
+
+**What the reviewer checked independently** (2026-10-08, at document head `57c8684`; no P1 or
+P2). The reviewer read the archive on the homelab directly, not only the record.
+- **Hashes:** every file the record hashes was re-hashed and matched, the client script
+  included. The full `server_m1.log`, which the record did not hash, is
+  `c59567f8a3d27f084f480360585a88db306bf1087db53d52b5d13f133201ebb7`.
+- **Responses:** steps 1–4 were compared as whole JSON documents, beyond the fields the client
+  checks. Before and after the refused reload on the healthy service, the status, the `/ready`
+  body and all 10 candidates were identical. Only the diagnosis's session identifier, timestamp
+  and timing changed. Every total was exactly 0.7 × GNN + 0.3 × SP.
+- **The full log:**
+  - `Building diagnosis pipeline` appears 4 times: once at startup and once per reload;
+  - `Startup failed` once, `Pipeline reload failed` twice, `Pipeline published` once;
+  - `Lazy pipeline init` and `path_reasoning_fallback` never appear;
+  - regenerated with the recorded pattern, the extract is byte-identical to `m1_log_grep.txt`.
+- **Version:**
+  - `ed4872a..57c8684` changes no file under `src`, `scripts` or `tests`, so the code under test
+    is the code reviewed;
+  - the homelab's reflog puts HEAD at `7714459` from 16:09:39 to 16:42:15, which covers the run.
+    This is the operator's checkout, not a version reported by the service process;
+  - the bundle verifies, with 17 refs and a complete history, and the homelab has only `main`,
+    at `4298aac`.
+- **Not re-checked:**
+  - the discarded attempt's behaviour, which rests on the owner's paste;
+  - an audit of every GitHub ref for the two local-only commits.
+- **Read only:** nothing was re-run against the service, and nothing was changed.
 
 **What this holds for, and what it does not.**
 - **Failures exercised:** two — a missing checkpoint at startup, and an unreadable file on
