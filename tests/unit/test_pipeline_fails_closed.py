@@ -378,8 +378,8 @@ class TestStartupPublishesNothing:
     ):
         """The lazy retry in `/diagnose` rebuilt the whole pipeline on each
         request -- graph, digests, tensors -- inside an async route, and answered
-        the same 503. The environment cannot change in a running process, so
-        the retry could only repeat the failure."""
+        the same 503. Trying again is now an explicit act -- a reload, or a
+        restart -- rather than expensive I/O on every diagnosis."""
         data_dir, _ = workspace
         builds = []
         real_build = api.build_pipeline
@@ -476,3 +476,146 @@ class TestAReloadKeepsWhatIsServing:
         assert result.success is False
         assert "does not build a model" in result.message
         self._assert_still_serving(api, before)
+
+
+class TestReadinessFollowsWhatIsServed:
+    """`/ready`, `/pipeline/status` and `/diagnose` give one answer.
+
+    A startup whose build fails clears readiness, and M1 makes that the outcome
+    of the commonest misconfigurations. The 503 tells the operator to reload,
+    so a reload that succeeds has to restore everything a failed startup took
+    away: before this, it restored the pipeline and the status while `/ready`
+    stayed 503 until a restart, and anything routing on the probe kept the
+    service out of rotation while it answered diagnoses.
+
+    Driven through the real lifespan and HTTP routes.
+    """
+
+    @staticmethod
+    def _start(api, monkeypatch, data_dir, checkpoint):
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("SHEPHERD_KG_PATH", str(data_dir / "kg.json"))
+        monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(checkpoint))
+        return TestClient(api.app)
+
+    @staticmethod
+    def _reload(client, data_dir, checkpoint):
+        response = client.post(
+            "/api/v1/pipeline/reload",
+            json={"data_dir": str(data_dir), "checkpoint_path": str(checkpoint)},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    @staticmethod
+    def _answers(client):
+        """What each surface says, side by side."""
+        status = client.get("/api/v1/pipeline/status").json()
+        return {
+            "ready": client.get("/ready").status_code,
+            "diagnose": _diagnose(client).status_code,
+            "initialized": status["initialized"],
+            "gnn_ready": status["gnn_ready"],
+        }
+
+    NOT_SERVING = {"ready": 503, "diagnose": 503, "initialized": False, "gnn_ready": False}
+    SERVING = {"ready": 200, "diagnose": 200, "initialized": True, "gnn_ready": True}
+
+    def test_a_failed_startup_is_not_ready(self, api, monkeypatch, workspace, tmp_path):
+        data_dir, _ = workspace
+
+        with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
+            assert self._answers(client) == self.NOT_SERVING
+
+    def test_a_refused_reload_after_it_stays_not_ready(
+        self, api, monkeypatch, workspace, tmp_path
+    ):
+        data_dir, _ = workspace
+        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+
+        with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
+            result = self._reload(client, data_dir, other)
+
+            assert result["success"] is False
+            assert self._answers(client) == self.NOT_SERVING
+
+    def test_a_successful_reload_after_it_restores_all_of_them(
+        self, api, monkeypatch, workspace, tmp_path
+    ):
+        """And only once the candidate is published: readiness is not set when
+        the reload starts building."""
+        data_dir, checkpoint = workspace
+        ready_while_building = []
+        real_build = api.build_pipeline
+
+        def _observed(*args, **kwargs):
+            ready_while_building.append(api.app_state.is_ready)
+            return real_build(*args, **kwargs)
+
+        with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
+            monkeypatch.setattr(api, "build_pipeline", _observed)
+            result = self._reload(client, data_dir, checkpoint)
+
+            assert result["success"] is True, result["message"]
+            assert ready_while_building == [False]
+            assert self._answers(client) == self.SERVING
+            assert client.get("/ready").json()["pipeline_loaded"] is True
+
+    def test_a_refused_reload_on_a_healthy_service_keeps_all_of_it(
+        self, api, monkeypatch, workspace, tmp_path
+    ):
+        data_dir, checkpoint = workspace
+        corrupt = tmp_path / "corrupt.pt"
+        corrupt.write_bytes(b"not a checkpoint")
+        fields = ("pipeline", "kg", "model_version",
+                  "_current_data_dir", "_current_checkpoint_path", "is_ready")
+
+        with self._start(api, monkeypatch, data_dir, checkpoint) as client:
+            assert self._answers(client) == self.SERVING
+            before = {field: getattr(api.app_state, field) for field in fields}
+
+            result = self._reload(client, data_dir, corrupt)
+
+            assert result["success"] is False
+            assert "still being served" in result["message"]
+            for field, value in before.items():
+                assert getattr(api.app_state, field) is value, (
+                    f"a refused reload changed app_state.{field}"
+                )
+            assert self._answers(client) == self.SERVING
+
+    def test_a_configured_graph_that_is_missing_is_not_ready(
+        self, api, monkeypatch, tmp_path
+    ):
+        """`build_pipeline` records the request and returns None here rather
+        than raising, so startup completes and sets readiness. `/diagnose`
+        refuses; `/ready` reads the same definition and refuses too."""
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("SHEPHERD_KG_PATH", str(tmp_path / "absent_kg.json"))
+
+        with TestClient(api.app) as client:
+            assert self._answers(client) == self.NOT_SERVING
+            assert "reload" in client.get("/ready").json()["error"]
+
+    def test_a_service_with_nothing_configured_is_ready_until_a_workspace_is_refused(
+        self, api, tmp_path
+    ):
+        """Nothing configured is the demo, and it answers. A reload that names a
+        workspace is a request for a real pipeline; refused, every diagnosis is
+        refused, and the probe says so."""
+        from fastapi.testclient import TestClient
+
+        empty = tmp_path / "not_a_workspace"
+        empty.mkdir()
+
+        with TestClient(api.app) as client:
+            demo = {"ready": 200, "diagnose": 200, "initialized": False, "gnn_ready": False}
+            assert self._answers(client) == demo
+
+            refused = client.post("/api/v1/pipeline/reload", json={"data_dir": str(empty)})
+
+            assert refused.json()["success"] is False
+            assert self._answers(client) == self.NOT_SERVING

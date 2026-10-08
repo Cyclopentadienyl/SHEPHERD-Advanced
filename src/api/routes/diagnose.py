@@ -291,9 +291,10 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         # refused reload. Retrying here repeated the graph load, the workspace
         # digests and the tensor reads on every request -- synchronously, in an
         # async route, so `/health` and the WebUI waited behind it -- only to
-        # answer the same 503. The environment cannot change in a running
-        # process, so the retry could only repeat the failure; recovery is a
-        # reload, or a restart.
+        # answer the same 503. **A retry is asked for, not implied:** the files
+        # or the mount behind a failed build can be repaired while the service
+        # runs, and the way to try again is a reload (or a restart), not
+        # expensive I/O on every diagnosis.
         if app_state.pipeline is None and not app_state.real_pipeline_requested:
             try:
                 initialize_pipeline()
@@ -318,8 +319,8 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             # API — a caller could point `/pipeline/reload` at a real workspace,
             # have the candidate refused, and still be handed invented
             # candidates here. `build_pipeline` records the request where both
-            # routes resolve their paths.
-            if app_state.real_pipeline_requested:
+            # routes resolve their paths. `/ready` reads the same definition.
+            if app_state.requested_pipeline_missing:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=(

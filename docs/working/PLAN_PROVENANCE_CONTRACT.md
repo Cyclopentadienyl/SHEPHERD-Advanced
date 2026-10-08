@@ -194,12 +194,14 @@ Three more cases now raise it, naming what is wrong:
 One invariant is added: `_gnn_ready` is set only with a model and with phenotype and disease
 embeddings, the two `_calculate_gnn_score` reads. It cannot be reached today, because every
 loader raises. It stops a loader that one day returns `None` again from leaving a pipeline that
-reports a GNN and scores every GNN term as zero.
+reports a GNN and scores every GNN term as zero. It does not show that the embedding rows agree
+with the graph's node identifiers; that is M2, and M1 passing is no claim about it.
 
 **The API's build-then-publish order put the refusal in the right place.** `build_pipeline`
 already re-raised, startup already published nothing on failure, and the reload route already
-built the candidate before publishing it. Three gaps beside it are closed (`src/api/main.py`,
-`src/api/routes/diagnose.py`), all found by the independent review:
+built the candidate before publishing it. Four gaps beside it are closed (`src/api/main.py`,
+`src/api/routes/diagnose.py`). The first three were found by the independent review, the fourth
+by the reviewer's review of `41dc927`:
 - **a checkpoint configured with no knowledge graph is refused.** Before, `build_pipeline`
   returned `None` before recording the request, and `/diagnose` gave the demo answer: invented
   candidates over HTTP 200. Startup now also attempts the build when only
@@ -207,11 +209,26 @@ built the candidate before publishing it. Three gaps beside it are closed (`src/
 - **`/diagnose` no longer rebuilds a failed pipeline on every request.** Before, the lazy
   initialisation reran the whole build each time: graph load, workspace digests and tensor
   reads. It ran synchronously in an async route, so `/health` and the WebUI waited, and each
-  request got the same 503. M1 would have sent the commonest misconfigurations there. The
-  environment cannot change in a running process, so recovery is a reload or a restart, and the
-  503 says so;
+  request got the same 503. M1 would have sent the commonest misconfigurations there. Trying
+  again is now an explicit act, a reload or a restart, and the 503 says so. It is a choice, not a
+  necessity: the files or mount behind a failed build can be repaired while the service runs,
+  and a reload is how to try again without expensive I/O on every diagnosis;
 - **a blank environment value is unset.** An exported-but-empty `SHEPHERD_CHECKPOINT_PATH` would
-  otherwise be read as a request for a model.
+  otherwise be read as a request for a model;
+- **a reload that succeeds restores readiness.** A startup whose build fails sets `is_ready` to
+  false, and nothing set it back. After the reload the 503 points to, the pipeline served and
+  `/pipeline/status` agreed, while `/ready` stayed 503 until a restart, so anything routing on
+  the probe kept the service out. The cause predates M1; M1 made it the outcome of the commonest
+  misconfigurations and named the reload as the way back.
+  - `publish_pipeline`, the one writer of the served-pipeline fields, now writes readiness with
+    them.
+  - Readiness is therefore set only once a candidate is published, never when a reload starts,
+    and a refused reload leaves it as it was.
+  - `/ready` and `/diagnose` also read one definition of the state `/diagnose` refuses: a real
+    pipeline was asked for and none is being served (`AppState.requested_pipeline_missing`).
+    Two states left the flag set while every diagnosis was refused, and `/ready` answered 200
+    in both: a configured graph file missing at startup (`build_pipeline` returns `None` there
+    rather than raising), and a refused reload on a service that had no pipeline.
 
 A reload refusal no longer ends in a doubled full stop.
 
@@ -222,7 +239,7 @@ A reload refusal no longer ends in a doubled full stop.
   (`DISEASE_SCORER_POLICY.md` §2).
 
 **Tests:**
-- `tests/unit/test_pipeline_fails_closed.py`, 24 tests, covers:
+- `tests/unit/test_pipeline_fails_closed.py`, 30 tests, covers:
   - each condition above, plus the invariant;
   - controls: a sound checkpoint builds, a GNN with optional SP absent builds, and no model
     source still builds path reasoning;
@@ -230,18 +247,32 @@ A reload refusal no longer ends in a doubled full stop.
     `/diagnose` 503, with the same startup and a sound checkpoint as control. The first two were
     the old fallback;
   - one build for a failed startup followed by three diagnoses;
+  - readiness, through the real lifespan and routes, with `/ready`, `/pipeline/status` and
+    `/diagnose` compared each time:
+    - a failed startup: all three say not serving;
+    - a refused reload after it: still not serving;
+    - a successful reload after it: all three say serving, and readiness was false while the
+      candidate was built;
+    - a refused reload on a healthy service: the pipeline, its paths and readiness are the same
+      objects as before, and it still serves;
+    - a configured graph file missing at startup: not serving;
+    - nothing configured: the demo answers and is ready, until a reload naming a workspace is
+      refused;
   - a checkpoint with no knowledge graph, and a blank checkpoint setting;
   - reloads to an unreadable checkpoint and to one trained over another graph: refused, with
     every served field the same object as before.
 - The graph-binding tests' stand-in now finishes the model build. Before, it ended in the
   fallback this change removes.
-- `tests/unit/conftest.py` puts `app_state.real_pipeline_requested` back after each test.
+- `tests/unit/conftest.py` puts `app_state.real_pipeline_requested` and `is_ready` back after
+  each test.
   - Three files left it set, so `test_diagnose_reserved_fields.py` failed whenever it ran after
     them.
   - This was already true at `4298aac`; the alphabetical full run hid it.
 
-**Mutation check.** 15 mutants were run in a fresh copy of the tree, each restoring one old
-behaviour or removing one new check. All 15 were caught.
+**Mutation check.** 19 mutants were run in a fresh copy of the tree, each restoring one old
+behaviour or removing one new check. Four are on readiness: publication not restoring it, a
+reload setting it when it starts, a refused reload clearing it, and `/ready` not reading the
+shared definition. All 19 were caught.
 
 **Found, not changed:**
 - **One for M2.** `_calculate_gnn_score` clamps a disease index past the end of the embedding
@@ -251,11 +282,9 @@ behaviour or removing one new check. All 15 were caught.
   - A direct caller's graph object is not checked against its `kg_path`, and a caller supplying
     `graph_data` in memory has no binding at all.
   - M2's model↔graph check is where the refusal belongs.
-- **`/ready` stays 503 after a failed startup,** even once a reload succeeds. Nothing sets
-  `is_ready` back. This predates M1; M1 makes failed startups more common.
 - **A configured knowledge graph file that is missing makes `build_pipeline` return `None`,**
-  rather than raise. Both callers still fail closed: startup leaves `/diagnose` at 503, and a
-  reload is refused.
+  rather than raise. Both callers still fail closed: startup leaves `/diagnose` and `/ready` at
+  503, and a reload is refused.
 
 ### M2 — the model↔graph relation, on the bytes actually read, with the resume parent
 
