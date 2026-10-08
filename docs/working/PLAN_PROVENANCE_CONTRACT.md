@@ -392,6 +392,12 @@ the diagnoses in steps 1 and 2 did not rebuild the failed pipeline.
 - **Written by the client and not uploaded:** the snapshots of steps 1 and 2, the three reload
   responses, and the full `server_m1.log`. Steps 1 and 2 rest on `summary.json` and the
   terminal output the owner pasted.
+- **Where they are:** after the run, the owner moved all of them to
+  `~/Desktop/SHEPHERD-archive/m1-acceptance-2026-10-08/` on the homelab, by the pasted command.
+  That covers the client's output directory, the full `server_m1.log`, both text files and the
+  client script.
+  - The branch bundle is in `~/Desktop/SHEPHERD-archive/`.
+  - The homelab checkout is back on `main`, level with `origin/main`.
 
 **Before the homelab run,** the author ran the client in the development container, on CPU, with
 a synthetic workspace of 9 nodes and 14 edges. The services were built from two commits:
