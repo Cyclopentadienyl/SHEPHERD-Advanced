@@ -479,7 +479,9 @@ class TestAReloadKeepsWhatIsServing:
 
 
 class TestReadinessFollowsWhatIsServed:
-    """`/ready`, `/pipeline/status` and `/diagnose` give one answer.
+    """`/ready`, `/pipeline/status` and `/diagnose` agree on whether a configured
+    pipeline is being served. (With nothing configured, the demo answers and is
+    ready while the status reports no pipeline; that case is shown last.)
 
     A startup whose build fails clears readiness, and M1 makes that the outcome
     of the commonest misconfigurations. The 503 tells the operator to reload,
@@ -528,6 +530,9 @@ class TestReadinessFollowsWhatIsServed:
 
         with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
             assert self._answers(client) == self.NOT_SERVING
+            assert "reload" in client.get("/ready").json()["error"], (
+                "the commonest way into this state is not told how to recover"
+            )
 
     def test_a_refused_reload_after_it_stays_not_ready(
         self, api, monkeypatch, workspace, tmp_path
@@ -585,6 +590,32 @@ class TestReadinessFollowsWhatIsServed:
                     f"a refused reload changed app_state.{field}"
                 )
             assert self._answers(client) == self.SERVING
+
+    def test_the_whole_way_back_in_one_lifetime(self, api, monkeypatch, workspace, tmp_path):
+        """The acceptance as one chain, in one service: a refusal must leave
+        nothing behind that stops a later reload from restoring the service,
+        and the restored service must survive a later refusal."""
+        data_dir, checkpoint = workspace
+        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        fields = ("pipeline", "kg", "model_version",
+                  "_current_data_dir", "_current_checkpoint_path", "is_ready")
+
+        with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
+            assert self._answers(client) == self.NOT_SERVING
+
+            assert self._reload(client, data_dir, other)["success"] is False
+            assert self._answers(client) == self.NOT_SERVING
+
+            assert self._reload(client, data_dir, checkpoint)["success"] is True
+            assert self._answers(client) == self.SERVING
+            restored = {field: getattr(api.app_state, field) for field in fields}
+
+            assert self._reload(client, data_dir, other)["success"] is False
+            assert self._answers(client) == self.SERVING
+            for field, value in restored.items():
+                assert getattr(api.app_state, field) is value, (
+                    f"a refusal after recovery changed app_state.{field}"
+                )
 
     def test_a_configured_graph_that_is_missing_is_not_ready(
         self, api, monkeypatch, tmp_path

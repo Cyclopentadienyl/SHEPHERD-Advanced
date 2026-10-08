@@ -220,10 +220,10 @@ by the reviewer's review of `41dc927`:
   `/pipeline/status` agreed, while `/ready` stayed 503 until a restart, so anything routing on
   the probe kept the service out. The cause predates M1; M1 made it the outcome of the commonest
   misconfigurations and named the reload as the way back.
-  - `publish_pipeline`, the one writer of the served-pipeline fields, now writes readiness with
-    them.
-  - Readiness is therefore set only once a candidate is published, never when a reload starts,
-    and a refused reload leaves it as it was.
+  - `publish_pipeline`, the one writer of the served-pipeline fields, now also sets the
+    readiness flag. It is the one path that restores the flag after startup.
+  - So after a failed startup, readiness returns only once a candidate is published, never when
+    a reload starts. A refused reload leaves the flag as it was.
   - `/ready` and `/diagnose` also read one definition of the state `/diagnose` refuses: a real
     pipeline was asked for and none is being served (`AppState.requested_pipeline_missing`).
     Two states left the flag set while every diagnosis was refused, and `/ready` answered 200
@@ -239,7 +239,7 @@ A reload refusal no longer ends in a doubled full stop.
   (`DISEASE_SCORER_POLICY.md` §2).
 
 **Tests:**
-- `tests/unit/test_pipeline_fails_closed.py`, 30 tests, covers:
+- `tests/unit/test_pipeline_fails_closed.py`, 31 tests, covers:
   - each condition above, plus the invariant;
   - controls: a sound checkpoint builds, a GNN with optional SP absent builds, and no model
     source still builds path reasoning;
@@ -255,6 +255,8 @@ A reload refusal no longer ends in a doubled full stop.
       candidate was built;
     - a refused reload on a healthy service: the pipeline, its paths and readiness are the same
       objects as before, and it still serves;
+    - the whole chain in one lifetime: failed startup, refused reload, successful reload, and a
+      refusal after it that changes nothing;
     - a configured graph file missing at startup: not serving;
     - nothing configured: the demo answers and is ready, until a reload naming a workspace is
       refused;
@@ -265,9 +267,12 @@ A reload refusal no longer ends in a doubled full stop.
   fallback this change removes.
 - `tests/unit/conftest.py` puts `app_state.real_pipeline_requested` and `is_ready` back after
   each test.
-  - Three files left it set, so `test_diagnose_reserved_fields.py` failed whenever it ran after
-    them.
-  - This was already true at `4298aac`; the alphabetical full run hid it.
+  - Three files left `real_pipeline_requested` set, so `test_diagnose_reserved_fields.py`
+    failed whenever it ran after them. This was already true at `4298aac`; the alphabetical
+    full run hid it.
+  - `is_ready` could not leak before this change, because only the lifespan wrote it and its
+    shutdown clears it. `publish_pipeline` now sets it, so a reload driven without a lifespan
+    would leak it. No current test does; the restore is defensive.
 
 **Mutation check.** 19 mutants were run in a fresh copy of the tree, each restoring one old
 behaviour or removing one new check. Four are on readiness: publication not restoring it, a

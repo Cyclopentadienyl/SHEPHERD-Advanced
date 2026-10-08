@@ -78,10 +78,11 @@ class AppState:
         self.pipeline = None
         self.kg = None
         self.ontology = None
-        #: What `/ready` answers. Set by startup, cleared when startup's build
-        #: fails and at shutdown, and set again by `publish_pipeline` -- so a
-        #: reload that succeeds after a failed startup restores it, and one that
-        #: is refused leaves it as it was.
+        #: Startup's half of what `/ready` answers; the other half is
+        #: `requested_pipeline_missing`. Set when startup completes, cleared
+        #: when startup's build fails and at shutdown, and set again by
+        #: `publish_pipeline` -- so a reload that succeeds after a failed
+        #: startup restores it, and a refused reload leaves the flag as it was.
         self.is_ready = False
         self.start_time = None
         self.version = "1.0.0"
@@ -296,10 +297,13 @@ async def readiness_check() -> Dict[str, Any]:
     """
     Readiness probe
 
-    Returns whether the service is ready to accept requests: started, and not
+    Returns whether the service is ready to accept requests: startup succeeded
+    or a pipeline has since been published (`is_ready`), and the service is not
     in the state `/diagnose` refuses (`AppState.requested_pipeline_missing`).
+    That state is checked first, so a failed startup -- the commonest way into
+    it -- is told how to recover, as `/diagnose` tells it.
     """
-    if app_state.is_ready and app_state.requested_pipeline_missing:
+    if app_state.requested_pipeline_missing:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
@@ -589,11 +593,13 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
     describing a pipeline that is not the one loaded. Everything that can fail
     happened in `build_pipeline`; these assignments cannot.
 
-    **Readiness is one of them.** A startup whose build failed clears it, and the
-    way back is a reload that succeeds — which reaches the service only through
-    here. Restoring it anywhere else would let the probe and the pipeline
-    disagree: ready before a candidate is built, or not ready while one serves.
-    A refused reload never gets here, so it leaves readiness exactly as it was.
+    **And it is the one path that restores readiness after startup.** Startup
+    sets `is_ready` once; a startup whose build failed clears it, as shutdown
+    does. The way back is a reload that succeeds, which reaches the service only
+    through here, so `is_ready` is set with the fields it vouches for. Restoring
+    it anywhere else would let the flag claim a pipeline before a candidate is
+    built. A refused reload never gets here and leaves the flag as it was; what
+    `/ready` answers also depends on `AppState.requested_pipeline_missing`.
     """
     # **Formatted before the first assignment.** These are values out of an
     # arbitrary configuration dictionary, and formatting one calls its `__str__`;
