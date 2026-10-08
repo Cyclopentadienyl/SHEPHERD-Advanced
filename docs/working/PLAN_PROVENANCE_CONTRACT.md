@@ -189,8 +189,8 @@ both, where it answered 200. `/diagnose` already refused in both, so the old 200
 "ready". The way back is a reload that succeeds, or a restart. `/health` is unchanged, and the
 launcher and the WebUI read only `/health`.
 
-The reviewer ran the synthetic CPU cases on a pinned snapshot. The deployed service was
-accepted on the homelab afterwards ("M1's acceptance on the homelab", below).
+The reviewer ran the synthetic CPU cases on a pinned snapshot. Afterwards the service, run from
+`7714459` on the homelab GPU, was accepted ("M1's acceptance on the homelab", below).
 
 
 **A requested model is built, or the build raises `PipelineBuildError`**
@@ -312,76 +312,112 @@ shared definition. All 19 were caught.
 
 #### M1's acceptance on the homelab (2026-10-08)
 
-Run by the owner at `7714459`, a detached checkout; evidence collected by the author.
+Run by the owner at `7714459`, a detached checkout. The evidence was collected by the author
+from the owner's uploads and pasted output.
 
 **Environment.**
 - NVIDIA GB10, as for N1. PyTorch warns that the GPU's CUDA capability (12.1) is past the 12.0
-  it supports, and the model ran on CUDA regardless.
-- The usual launcher on port 8000, with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR` and
-  `SHEPHERD_DEVICE=cuda`. `SHEPHERD_CHECKPOINT_PATH` pointed at a file that does not exist.
-- The same workspace (`data/workspaces/hpo_2026_0929_5a`, 57,239 nodes and 617,773 edges),
-  checkpoint and graph as N1's acceptance. The owner's SHA-256s match N1's record:
-  - `checkpoints/hgt/model-02-0.1813.pt` `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`;
-  - `kg.json` `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`.
-- **A first attempt ran the wrong code and was discarded.** It ran a stale local branch on the
-  homelab (`60b3c89`, from August), and its startup published the path-reasoning fallback, which
-  is the behaviour before M1.
-  - The homelab's local branches were archived to a bundle outside the repository and removed,
-    leaving `main`. The bundle's SHA-256 is
-    `2106db34355b6811f76e441ee970e2489019b9c0e43b5ad65e57268cc0acc179`.
+  it supports.
+- **The owner's command, as pasted:** the usual launcher (`./launch_shepherd.sh`) on port 8000,
+  with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`, `SHEPHERD_DEVICE=cuda` and a
+  `SHEPHERD_CHECKPOINT_PATH` naming a file that does not exist. Its output was captured with
+  `tee` to `server_m1.log`.
+- **Workspace:** the same path as N1's, `data/workspaces/hpo_2026_0929_5a`. The startup log read
+  57,239 nodes and 617,773 edges.
+  - The owner hashed two files after the run, and both SHA-256s match N1's record:
+    - `checkpoints/hgt/model-02-0.1813.pt` `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`;
+    - `kg.json` `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`.
+  - The tensors, the manifest, the provenance record and the SP files were not hashed again.
+  - As with N1, a file hashed afterwards is not proof of the bytes consumed during the run.
+    That proof is the contract's M2.1.
+- **A first attempt ran the wrong code and was discarded.** The owner's `git switch` landed on a
+  stale local branch at `60b3c89`, from August, so the service ran old code. Its log shows the
+  pre-M1 behaviour: `Checkpoint not found`, then `Pipeline initialized:
+  scoring_mode=path_reasoning_fallback`.
+  - Before the run below, the homelab's 16 local branches other than `main` were archived to a
+    bundle outside the repository. `git bundle verify` reported all 17 refs and a complete
+    history, and the bundle's SHA-256 is
+    `2106db34355b6811f76e441ee970e2489019b9c0e43b5ad65e57268cc0acc179`. The 16 branches were then
+    removed.
   - Two of them held commits found nowhere on GitHub: `60b3c89`, a lockfile refresh, and
-    `61978b6`, an August backup.
-  - The run below is a detached checkout of `7714459`.
+    `61978b6`, an August backup. In the homelab clone, they were the only branches with commits
+    outside every remote branch and tag. In a clone with every GitHub branch and tag fetched,
+    neither commit exists.
 
-**Startup.** The graph loaded in about 10 s. The log then shows `Failed to build pipeline:
-Checkpoint … does-not-exist.pt does not exist` and `Startup failed`. No pipeline was published,
-and the fallback did not appear.
+**Startup.** The graph loaded in about 10 s, from 16:09:43 to 16:09:53. The log then shows
+`Failed to build pipeline: Checkpoint … does-not-exist.pt does not exist` and `Startup failed`.
+No pipeline was published, and the fallback did not appear.
 
-**Through the API.** A standard-library client calling only the running API ran 12 checks, and
-all passed:
+**Through the API.** The acceptance client, `m1_acceptance.py`, uses the standard library and
+calls only the running API. Its SHA-256 as delivered to the owner is
+`a82d42853d15bde0e3bb8d6ae16e817d0a33115142242ae74bb3d759d5d2f4e1`; it is not in the repository.
+It ran 12 checks, and all passed:
 1. **the failed startup:** `/ready` answered 503 with the reload guidance, `/diagnose` answered
    503, and the status said not initialized;
-2. **a reload to an unreadable checkpoint** was refused in 10.2 s, and all three surfaces still
-   said not serving;
+2. **a reload to an unreadable checkpoint** was refused in 10.2 s. A 16-byte file, not a pickle,
+   stood in for it. All three surfaces still said not serving;
 3. **a reload to the good checkpoint** succeeded in 79.5 s:
-   - **status:** `gnn_plus_shortest_path` with GNN and SP ready, eta 0.7, SP `max_hops` 5 from
-     the sidecar, graph binding *verified*, and no fingerprint warnings. The checkpoint read
-     epoch 2, 4,228,429 parameters, val MRR 0.1813, device cuda;
+   - **status:** `gnn_plus_shortest_path`, with GNN and SP ready. Eta was 0.7, and SP `max_hops`
+     was 5, from the sidecar. The SP table's graph binding was *verified*, and there were no
+     fingerprint warnings;
+   - **checkpoint metadata in the status:** epoch 2, val MRR 0.1813, 4,228,429 parameters
+     counted from the built model, and device cuda;
    - `/ready` answered 200 with a pipeline loaded;
    - `/diagnose` answered 200 with 10 candidates for `HP:0001250`, `HP:0001263`. Every GNN score
      was non-zero, and every total was 0.7 × GNN + 0.3 × SP. The top candidate was
-     `MONDO:0014942` at 0.8306 = 0.7 × 0.9722 + 0.3 × 0.5;
+     `MONDO:0014942`, at 0.83057 = 0.7 × 0.97224 + 0.3 × 0.5;
 4. **a reload to the unreadable checkpoint while serving** was refused in 10.0 s, with "still
    being served". The status, `/ready` and all 10 candidate records were identical to step 3,
-   field for field.
+   field for field; only the session identifier, timestamp and timing differed.
 
-**The server log agrees** (`server_m1.log`, captured with `tee`):
-- one build at startup, at 16:09:54;
+**The server log agrees.** The owner ran `grep -nE "Startup failed|Failed to build
+pipeline|Pipeline reload failed|Pipeline published|Lazy pipeline init" server_m1.log`, and the
+extract is `m1_log_grep.txt`. It shows:
+- one failed build at startup, ending at 16:09:54;
 - refused reloads at 16:12:38 and 16:14:08;
 - one publication, at 16:13:58, `gnn_plus_shortest_path`.
 
-There is no other build line. So the diagnoses in steps 1 and 2 did not rebuild the failed
-pipeline.
+The extract has no other `Failed to build pipeline` line and no `Lazy pipeline init` line. A
+rebuild triggered by a diagnosis would have logged one of them with this missing checkpoint, so
+the diagnoses in steps 1 and 2 did not rebuild the failed pipeline.
 
-**Evidence files** (SHA-256 as uploaded; the owner keeps the files on the homelab):
-- `summary.json` `1992dac75e6e0000c0d096d5e579b27bf88376a6087096a4afe751102b777bdf`;
-- `3_after_good_reload.json` `9472ef15447fe27356c6d7288c906eca770ca083df4d99dc6977698cc909603b`;
-- `4_after_refused_reload_on_healthy.json`
-  `7a09701e7eccf783551cdd58d5c285dd3b8bc95c967f6a26c13363d4d70981b7`;
-- `m1_sha256.txt` `8f76b872a8b92033977b4d15ff8cee2b22cbf1bc2bc7a910afcb01015e40bc1b`;
-- `m1_log_grep.txt` `e153059ee6f38e498c1995b94cf742b5f87d7fc483be048a3c117765f6b58d4f`.
+**Evidence.**
+- **Uploaded,** with SHA-256 as uploaded:
+  - `summary.json` `1992dac75e6e0000c0d096d5e579b27bf88376a6087096a4afe751102b777bdf`;
+  - `3_after_good_reload.json` `9472ef15447fe27356c6d7288c906eca770ca083df4d99dc6977698cc909603b`;
+  - `4_after_refused_reload_on_healthy.json`
+    `7a09701e7eccf783551cdd58d5c285dd3b8bc95c967f6a26c13363d4d70981b7`;
+  - `m1_sha256.txt` `8f76b872a8b92033977b4d15ff8cee2b22cbf1bc2bc7a910afcb01015e40bc1b`;
+  - `m1_log_grep.txt` `e153059ee6f38e498c1995b94cf742b5f87d7fc483be048a3c117765f6b58d4f`.
+- **Written by the client and not uploaded:** the snapshots of steps 1 and 2, the three reload
+  responses, and the full `server_m1.log`. Steps 1 and 2 rest on `summary.json` and the
+  terminal output the owner pasted.
 
-The client was first run against a local service built from `7714459` and from `41dc927`:
-- on `7714459` all 12 checks passed;
-- on `41dc927` exactly the three readiness checks failed (1a, 3c, 4c), the reviewer's P2;
-- against a service already serving, it stopped at its precondition.
+**Before the homelab run,** the author ran the client in the development container, on CPU, with
+a synthetic workspace of 9 nodes and 14 edges. The services were built from two commits:
+- **`7714459`:** all 12 checks passed;
+- **`41dc927`:** exactly three failed. 3c and 4c are the reviewer's P2: a successful reload did
+  not restore readiness. 1a failed because `/ready`'s 503 had no recovery guidance until
+  `ed4872a`;
+- **a service already serving:** the client stopped at its precondition.
 
 **What this holds for, and what it does not.**
-- It holds for this GB10, model, workspace, SP table and settings.
-- The reloads went through the API route the WebUI's Load / Reload button calls. The WebUI
-  itself was not exercised in this run.
-- It is not an acceptance for other GPUs or operating systems, nor of the provenance contract,
-  which is M2 onward.
+- **Failures exercised:** two — a missing checkpoint at startup, and an unreadable file on
+  reload. The other refusals in "What M1 did" were tested only on CPU, in the unit tests:
+  - a checkpoint trained over another graph;
+  - one with no weights;
+  - a file that is not a training checkpoint;
+  - a missing graph file;
+  - a checkpoint configured with no graph;
+  - a blank setting.
+- **Setup:** it holds for this GB10, this model, this workspace path and this SP table, with
+  these settings.
+- **WebUI:** the reloads went through the API route the WebUI's Load / Reload button calls. The
+  WebUI itself was not exercised in this run.
+- **Not covered:**
+  - other GPUs or operating systems;
+  - any of the contract's checks. Those begin at M2, and M1 passing is no claim that the model
+    matches its graph.
 
 ### M2 — the model↔graph relation, on the bytes actually read, with the resume parent
 
