@@ -1,7 +1,8 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: revision 2, amended twice after review. M1 is implemented and code-reviewed with no
-P1 or P2 at `ed4872a` (2026-10-08; §4, "What M1 did"). M2–M5 are not implemented.** Facts about the code are cited at
+**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1
+or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459` (2026-10-08; §4, "What M1 did"
+and "M1's acceptance on the homelab"). M2–M5 are not implemented.** Facts about the code are cited at
 `627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
 is the order of work.
 
@@ -188,8 +189,8 @@ both, where it answered 200. `/diagnose` already refused in both, so the old 200
 "ready". The way back is a reload that succeeds, or a restart. `/health` is unchanged, and the
 launcher and the WebUI read only `/health`.
 
-Not covered: a CUDA or homelab acceptance of the deployed service. The reviewer ran the
-synthetic CPU cases on a pinned snapshot.
+The reviewer ran the synthetic CPU cases on a pinned snapshot. The deployed service was
+accepted on the homelab afterwards ("M1's acceptance on the homelab", below).
 
 
 **A requested model is built, or the build raises `PipelineBuildError`**
@@ -308,6 +309,79 @@ shared definition. All 19 were caught.
 - **A configured knowledge graph file that is missing makes `build_pipeline` return `None`,**
   rather than raise. Both callers still fail closed: startup leaves `/diagnose` and `/ready` at
   503, and a reload is refused.
+
+#### M1's acceptance on the homelab (2026-10-08)
+
+Run by the owner at `7714459`, a detached checkout; evidence collected by the author.
+
+**Environment.**
+- NVIDIA GB10, as for N1. PyTorch warns that the GPU's CUDA capability (12.1) is past the 12.0
+  it supports, and the model ran on CUDA regardless.
+- The usual launcher on port 8000, with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR` and
+  `SHEPHERD_DEVICE=cuda`. `SHEPHERD_CHECKPOINT_PATH` pointed at a file that does not exist.
+- The same workspace (`data/workspaces/hpo_2026_0929_5a`, 57,239 nodes and 617,773 edges),
+  checkpoint and graph as N1's acceptance. The owner's SHA-256s match N1's record:
+  - `checkpoints/hgt/model-02-0.1813.pt` `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`;
+  - `kg.json` `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`.
+- **A first attempt ran the wrong code and was discarded.** It ran a stale local branch on the
+  homelab (`60b3c89`, from August), and its startup published the path-reasoning fallback, which
+  is the behaviour before M1.
+  - The homelab's local branches were archived to a bundle outside the repository and removed,
+    leaving `main`. The bundle's SHA-256 is
+    `2106db34355b6811f76e441ee970e2489019b9c0e43b5ad65e57268cc0acc179`.
+  - Two of them held commits found nowhere on GitHub: `60b3c89`, a lockfile refresh, and
+    `61978b6`, an August backup.
+  - The run below is a detached checkout of `7714459`.
+
+**Startup.** The graph loaded in about 10 s. The log then shows `Failed to build pipeline:
+Checkpoint … does-not-exist.pt does not exist` and `Startup failed`. No pipeline was published,
+and the fallback did not appear.
+
+**Through the API.** A standard-library client calling only the running API ran 12 checks, and
+all passed:
+1. **the failed startup:** `/ready` answered 503 with the reload guidance, `/diagnose` answered
+   503, and the status said not initialized;
+2. **a reload to an unreadable checkpoint** was refused in 10.2 s, and all three surfaces still
+   said not serving;
+3. **a reload to the good checkpoint** succeeded in 79.5 s:
+   - **status:** `gnn_plus_shortest_path` with GNN and SP ready, eta 0.7, SP `max_hops` 5 from
+     the sidecar, graph binding *verified*, and no fingerprint warnings. The checkpoint read
+     epoch 2, 4,228,429 parameters, val MRR 0.1813, device cuda;
+   - `/ready` answered 200 with a pipeline loaded;
+   - `/diagnose` answered 200 with 10 candidates for `HP:0001250`, `HP:0001263`. Every GNN score
+     was non-zero, and every total was 0.7 × GNN + 0.3 × SP. The top candidate was
+     `MONDO:0014942` at 0.8306 = 0.7 × 0.9722 + 0.3 × 0.5;
+4. **a reload to the unreadable checkpoint while serving** was refused in 10.0 s, with "still
+   being served". The status, `/ready` and all 10 candidate records were identical to step 3,
+   field for field.
+
+**The server log agrees** (`server_m1.log`, captured with `tee`):
+- one build at startup, at 16:09:54;
+- refused reloads at 16:12:38 and 16:14:08;
+- one publication, at 16:13:58, `gnn_plus_shortest_path`.
+
+There is no other build line. So the diagnoses in steps 1 and 2 did not rebuild the failed
+pipeline.
+
+**Evidence files** (SHA-256 as uploaded; the owner keeps the files on the homelab):
+- `summary.json` `1992dac75e6e0000c0d096d5e579b27bf88376a6087096a4afe751102b777bdf`;
+- `3_after_good_reload.json` `9472ef15447fe27356c6d7288c906eca770ca083df4d99dc6977698cc909603b`;
+- `4_after_refused_reload_on_healthy.json`
+  `7a09701e7eccf783551cdd58d5c285dd3b8bc95c967f6a26c13363d4d70981b7`;
+- `m1_sha256.txt` `8f76b872a8b92033977b4d15ff8cee2b22cbf1bc2bc7a910afcb01015e40bc1b`;
+- `m1_log_grep.txt` `e153059ee6f38e498c1995b94cf742b5f87d7fc483be048a3c117765f6b58d4f`.
+
+The client was first run against a local service built from `7714459` and from `41dc927`:
+- on `7714459` all 12 checks passed;
+- on `41dc927` exactly the three readiness checks failed (1a, 3c, 4c), the reviewer's P2;
+- against a service already serving, it stopped at its precondition.
+
+**What this holds for, and what it does not.**
+- It holds for this GB10, model, workspace, SP table and settings.
+- The reloads went through the API route the WebUI's Load / Reload button calls. The WebUI
+  itself was not exercised in this run.
+- It is not an acceptance for other GPUs or operating systems, nor of the provenance contract,
+  which is M2 onward.
 
 ### M2 — the model↔graph relation, on the bytes actually read, with the resume parent
 
