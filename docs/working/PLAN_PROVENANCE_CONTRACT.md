@@ -543,36 +543,46 @@ replacement (`scripts/build_knowledge_graph.py:330-336`).
 
 #### M2.1 — the work, at `90a668f` (2026-10-08, for review)
 
-This is how M2.1 would be built. It was mapped against the code at `90a668f`, the merge of M1, by
-independent readers of each entry point and of the shared readers. A completeness critic then
-checked the map and this breakdown. **Citations in this subsection are current at `90a668f`**;
-those above, taken at `627ed08`, are left as written. Nothing here is implemented.
+This is how M2.1 would be built. It was mapped against the code at `90a668f`, the merge of M1,
+by independent readers of each entry point and of the shared readers. A completeness critic then
+checked the map and this breakdown, and a second check verified this text against the code.
+**Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
+left as written. Nothing here is implemented.
 
-**What the code does today.** No entry point hashes and parses an input from one read.
-- **Training reads each workspace input three or four times:**
-  - the checks: `train_model.py:716-717`, which go to `artifacts.py:100` and `:113` and to
-    `cohort.py:275`;
-  - the run directories, `config.yaml` and `runtime.json` are written next (`:731-744`);
-  - the parse comes after them: `train_model.py:418`, `:424`, `:430` and `:455`;
-  - the record hash is taken last, after the model is built and any parent is restored:
-    `:854-860`, through `fingerprint.py:103`.
+**What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
+from one read. The pattern does exist elsewhere:
+- the KG build records the digest the ontology loader took from the handle it parsed
+  (`src/ontology/loader.py:242-264`), the precedent above;
+- the SP-reachability audit hashes the sidecar bytes it parsed (`audit_sp_reachability.py:544`).
 
-  The manifest is read separately by each verifier (`artifacts.py:100`, `cohort.py:275`) and
-  hashed a third time for the record, so the record describes neither parse.
-- **Serving** parses `kg.json` at `src/api/main.py:545` and then hashes it by path
-  (`artifacts.py:113`, `:386`). It reads the tensors again (`pipeline.py:609-655`) and loads the
-  checkpoint at `pipeline.py:973`.
-- **Measurement** verifies and hashes once per mode, after it has parsed
-  (`measure_scorer.py:370`, through `:102-155`).
-- **The SP producer** hashes `kg.json` at `compute_shortest_paths.py:458` and parses it again at
-  `:461`.
+At the entry points:
+- **Training reads each input it consumes three or four times.** `kg.json`, which it only
+  verifies, is read once, at `artifacts.py:113`.
+  - **The checks:** `train_model.py:716-717`. They go to:
+    - `artifacts.py:100`, the manifest, and `:113`, each graph file, hashed;
+    - `cohort.py:275`, the manifest again, `:286`, each sample file, hashed, and `:294`, each
+      sample file, parsed through `file_storage.py:100`.
+  - **The writes:** the run directories, `config.yaml` and `runtime.json` (`:731-744`).
+  - **The parse training uses:** `train_model.py:418`, `:424`, `:430` and `:455`.
+  - **The record hash:** taken last, after the model is built and any parent is restored
+    (`:854-860`, through `fingerprint.py:103`).
+
+  The manifest is parsed separately by each verifier and hashed a third time for the record, so
+  the record describes neither parse.
+- **Serving** parses `kg.json` at `src/api/main.py:545`, then hashes it by path (`artifacts.py:113`,
+  `:386`). It reads the tensors again (`src/inference/pipeline.py:609-655`) and loads the
+  checkpoint at `:973`.
+- **Measurement** verifies and hashes once per mode, after it has parsed (`measure_scorer.py:370`,
+  through `:102-155`).
+- **The SP producer** hashes `kg.json` at `compute_shortest_paths.py:458` and reads it a second
+  time, to parse it, at `:461`.
 
 **The primitive.**
 - `read_once(path) -> FileRead(path, data, sha256)` goes in `src/utils/fingerprint.py`, beside
   `file_sha256` (`:55-82`). `ReadIdentity(path, sha256)` carries no bytes.
 - **One open and one full read,** with the SHA-256 taken over that same bytes object.
-- **It never returns `None`,** as `file_sha256` does (`:79-80`). A missing path raises, so a
-  file deleted between two reads is refused instead of recorded as `None`.
+- **It never returns `None`,** as `file_sha256` does (`:79-80`). A missing path raises, so a file
+  deleted between two reads is refused instead of recorded as `None`.
 - **No retry, no fallback, no device handling.**
 - **Layers** (`.import-linter.ini`): it lives in `src.utils` and imports only the standard
   library. `src.kg`, `src.evaluation`, `src.inference`, `src.training` and the scripts may all
@@ -591,38 +601,47 @@ those above, taken at `627ed08`, are left as written. Nothing here is implemente
   `checkpoint_paths.py`, which promises no torch (`checkpoint_paths.py:14`).
 
 How they parse:
-- **JSON:** decoded as UTF-8 and parsed with `json.loads`. The writers write UTF-8, and today's
-  `read_text()` uses the locale default (`file_storage.py:56`, `:100`).
+- **JSON:** decoded as UTF-8 and parsed with `json.loads`.
+  - `kg.json`, the sample files and the manifest are written as UTF-8 (`graph.py:806`,
+    `sample_generator.py:334`, `:343`).
+  - `num_nodes.json` is written in the locale default (`graph.py:647-648`), but `json.dump`'s
+    default `ensure_ascii` makes it ASCII, which decodes the same way.
+  - Today's `read_text()` uses the locale default (`file_storage.py:56`, `:100`).
 - **Torch files:** `torch.load(BytesIO(data), ...)`, keeping each site's current `map_location`
   and `weights_only`.
-- **Memory:** one file at a time, with the buffer released before the next read. Each torch file
-  costs one transient copy of its size while it is parsed; that is about 29 MB for
-  `node_features.pt` and 48 MB for the designated checkpoint. These are expectations to measure
-  (S10), not bounds.
+- **Memory:** one file at a time, with the buffer released before the next read. Each file costs
+  about one transient copy of its size while it is parsed:
+  - about 29 MB of tensor payload for `node_features.pt`, computed from the recorded shapes; the
+    file's size is not recorded;
+  - 48 MB for the designated checkpoint;
+  - a JSON file's bytes and its decoded text coexist, so `kg.json` (size unrecorded) is likely
+    the largest new transient, at serving and in the SP producer.
+
+  These are expectations to measure (S10), not bounds.
 
 **Two constraints the plan above does not mention.**
-- **`read_samples`' new fields are opt-in** (`training_fields=True`). The frozen evaluator
-  builds samples with three fields (`scripts/evaluate_model.py:210-216`), and `gene_ids` become
-  subgraph seeds (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would
-  change measurement's Modes A and B.
-- **The test fixtures must become parseable.** `tests/fixtures/generated_workspace.py` writes
-  placeholder bytes for the graph files, which today's path-hashing verifiers accept and a
-  parsing reader would reject.
+- **`read_samples`' new fields are opt-in** (`training_fields=True`). The frozen evaluator builds
+  samples with three fields (`scripts/evaluate_model.py:210-216`), and `gene_ids` become subgraph
+  seeds (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would change
+  measurement's Modes A and B.
+- **The test fixtures must become parseable.** `tests/fixtures/generated_workspace.py:102` writes
+  placeholder bytes for the graph files. Today's path-hashing verifiers accept them; a parsing
+  reader would reject them.
 
 **The graph object and its identity travel together.** At serving, `DiagnosisPipeline` takes a
 `GraphRead` (the graph and the identity of the bytes it was parsed from) whenever it uses a
 workspace. It does not take the graph and an identity as two separate arguments.
 - With two arguments, a caller could pair an in-memory graph with another file's identity, and
   the SP binding would then be reported against bytes the graph was never parsed from
-  (`pipeline.py:532`, `:788-790`).
+  (`src/inference/pipeline.py:532`, `:788-790`).
 - A caller with an in-memory graph uses the `graph_data` seam, which makes no workspace claim.
 
 **The steps.** Each is one reviewable change. They are ordered smallest and safest first, and
 each moves its callers before anything is removed.
 1. **S1 — the primitive.** `read_once`, `FileRead` and `ReadIdentity`; no caller changes.
-   - **Tests:** the digest is the digest of the bytes returned; the file is opened once; a missing
-     file raises; replacing the file afterwards, by atomic rename or in-place rewrite, changes
-     neither the bytes nor the digest returned.
+   - **Tests:** the digest is the digest of the bytes returned; the file is opened once; a
+     missing file raises; replacing the file afterwards, by atomic rename or in-place rewrite,
+     changes neither the bytes nor the digest returned.
 2. **S2 — test infrastructure.** No production change.
    - **Parseable fixtures:** each workspace's `kg.json`, `num_nodes.json` and tensors are real
      files whose content differs per workspace. Tests that verify only digests gain
@@ -635,43 +654,70 @@ each moves its callers before anything is removed.
 3. **S3 — `read_json` and the SP producer.** `compute_shortest_paths.py` records the digest of
    the `kg.json` bytes it traversed, from its one read. The end-of-run comparison (`:472-479`)
    stays a warning, as the plan above says.
-4. **S4 — the shared readers.** The five readers above. Callers only unpack the new return
-   values; no recorded digest changes yet.
-5. **S5 — the verifiers compare reader digests with one manifest reading.**
-   - `verify_graph_artifacts`, `verify_graph_source` and `verify_generated_cohorts` take a
-     `ManifestRead` and the readers' identities, do no I/O, and name the file and the manifest in
-     a refusal.
-   - `verify_graph_artifacts` returns the manifest-bound map for all four graph roles. That is
-     the opening for M2.2's `kg` and M2.4's comparison.
+4. **S4 — the shared readers.** The other four readers above (`read_json` is S3's). Callers only
+   unpack the new return values; no recorded digest changes yet.
+5. **S5 — the verifiers compare reader results with one manifest reading.**
+   - `verify_graph_artifacts` and `verify_graph_source` take a `ManifestRead` and the readers'
+     identities.
+   - `verify_generated_cohorts` takes the `ManifestRead` and the `SamplesRead`s. It recomputes
+     the disease sets and measures disjointness from the samples already parsed.
+   - None of them does I/O, and each names the file and the manifest in a refusal.
+   - `verify_graph_artifacts` keeps returning the manifest-bound map for all four graph roles, as
+     it does today (`artifacts.py:138`). That is the opening for M2.2's `kg` and M2.4's
+     comparison.
    - The old path forms remain until S9, for callers not yet moved.
 6. **S6 — serving.**
    - `build_pipeline` reads `kg.json` with `read_json` and passes the `GraphRead`.
-   - The pipeline reads the manifest, the graph tensors and the checkpoint once each, verifies
-     from those reads, and keeps all four bound digests (the opening for M2.4).
-   - `_load_graph_data` (`pipeline.py:609-655`) is deleted, collapsing onto `file_storage`, and
-     so is the reader copy in `scripts/test_gnn_inference.py:170-182`.
-   - The SP table stays the stated exception (`pipeline.py:745`, its `build_id` check at
-     `:787`).
-   - **Tests updated:** the graph-binding and reload-availability tests change with the new read
-     order. Junk-byte cases become another workspace's valid file, and the stub of `load_json` is
-     replaced by the real reader.
+   - The pipeline reads the manifest, the graph tensors and the checkpoint once each, and
+     verifies from those reads.
+   - It keeps all four bound digests, the opening for M2.4. Today only `bound["kg"]` is kept
+     (`src/inference/pipeline.py:532`), so M2.4's "Serving keeps them already" holds only after
+     this step.
+   - `_load_graph_data` (`src/inference/pipeline.py:609-655`) is deleted, collapsing onto
+     `file_storage`, and so is the reader copy in `scripts/test_gnn_inference.py:170-182`.
+   - **Callers that build the graph apart from its identity move to `read_json`:**
+     - `scripts/test_gnn_inference.py:360-366`;
+     - the `bind_workspace` sites in `tests/integration/test_pipeline.py`;
+     - `tests/unit/test_pipeline_fails_closed.py:248`, `:275` and `:426`.
+
+     The archived `loadcheck.py` is left as evidence of its own commit.
+   - The SP table stays the stated exception (`src/inference/pipeline.py:745`, its `build_id`
+     check at `:787`).
+   - **Behaviour change:** serving checks the `kg.json` it parsed. So `data_dir/kg.json` is no
+     longer read when `SHEPHERD_KG_PATH` names another file holding the bound bytes, as
+     `artifacts.py:369-373` already allows. A reload always derives `kg_path` from `data_dir`
+     (`src/api/routes/pipeline.py:389`).
+   - **Tests updated:**
+     - the graph-binding and reload-availability tests change with the new read order;
+     - junk-byte cases become another workspace's valid file;
+     - the `load_json` stubs (`tests/unit/test_pipeline_fails_closed.py:309`,
+       `tests/unit/test_hop_bound_reaches_the_service.py:75`) are replaced by the real reader.
 7. **S7 — measurement.**
-   - **Before any model is built or output written:** `resolve_cohort` first, then one read of
-     the manifest, the graph tensors, the cohort's samples (default fields) and the checkpoint,
-     then verification from those reads.
+   - **Before any model is built or output written:**
+     - `resolve_cohort` first;
+     - then one read each of: the manifest; the graph tensors; the cohort's samples (default
+       fields); for a generated cohort, the other generated split's samples, for its binding and
+       the disjointness check; and the checkpoint;
+     - then verification from those reads.
    - **One digest map** feeds every mode's manifest, replacing the per-mode `artifact_digests`
      (`measure_scorer.py:102-155`). The verifier's bound map is kept instead of discarded
      (`:128`).
-   - **Mode A uses the run's single read.** `load_legacy_mode_a_inputs` is deleted, and the test
-     that proves a C-only run never reaches it is rewritten to prove it never builds Mode A's
-     model. Mode A's construction is unchanged, which is what the frozen evaluator's calibration
-     depends on.
+   - **Mode A uses the run's single read.**
+     - `load_legacy_mode_a_inputs` already delegates to `file_storage` (`:225-227`), so deleting
+       it does not change what Mode A reads. It is deleted ahead of the frozen evaluator, and the
+       two docstrings that tie their lifecycles are corrected in this step (`:205-208`,
+       `src/kg/storage/__init__.py:35-37`).
+     - `build_legacy_mode_a_model` takes the checkpoint dict from that read instead of loading
+       the path (`:248`). Its architecture and fallbacks are unchanged, which is what the frozen
+       evaluator's calibration depends on.
+     - The test that proves a C-only run never reaches the loader is rewritten to prove it never
+       builds Mode A's model.
    - `scripts/calibrate_mode_a.py` follows question 3 below.
 8. **S8 — training.**
    - **Before the run directories, `config.yaml` and `runtime.json`:** one read of the manifest,
      the graph tensors and both sample files, then verification from those reads.
-     `with_validation` is computed there from the parsed validation samples, which is the
-     opening for M2.3.
+     `with_validation` is computed there from the parsed validation samples, which is the opening
+     for M2.3.
    - `load_graph_data` and `load_samples` (`train_model.py:398-470`) are deleted, collapsing onto
      `file_storage`.
    - `Trainer.load_checkpoint(path)` becomes `restore_checkpoint(checkpoint)` over a dict already
@@ -682,43 +728,70 @@ each moves its callers before anything is removed.
 9. **S9 — remove the path forms, pin the contract, move the remaining callers.**
    - The verifiers lose their path forms. `compute_input_digests` goes once no caller records
      through it.
+   - **Tests that import what goes:**
+     - `tests/unit/test_training_provenance.py` imports `compute_input_digests` at module level;
+     - it and `tests/unit/test_measurement_mode_a.py:649-660` pin the `file_sha256` re-export in
+       `scripts/measure_scorer.py:99`.
+
+     Those tests move with the removal. The re-export is either kept, with its reason, or removed
+     with its pins.
    - **Callers moved:** `probe_deployment.py`; `audit_generator_fidelity.py`, including its
      `kg.json` parse and its separate manifest read; and `audit_split_overlap.py`.
-   - **A static pin** fails on any path hash, `torch.load` or JSON load of a known input outside
-     the readers and an allowlist that states each entry's reason:
+   - **A static pin** covers `src/**`, the entry-point scripts (`train_model.py`,
+     `measure_scorer.py`, `compute_shortest_paths.py`, `calibrate_mode_a.py`) and the scripts
+     moved here. It fails on any path hash, `torch.load` or JSON load of a known input outside the
+     readers and an allowlist that states each entry's reason:
      - the stated exceptions;
+     - the SP producer's end-of-run comparison (`compute_shortest_paths.py:472-479`), a warning
+       that records nothing;
      - `find_checkpoint` and the evaluation ledger;
      - the selection-time checkpoint reads (question 4);
-     - identification hashes of files nobody parses (question 1);
+     - the identification hashes of files nobody parses (question 1);
      - the calibration bracket (question 3);
-     - the provenance and workspace writers.
-   - **A dynamic pin** runs each entry point with the path-hash functions returning a poison
-     digest. No poison may reach a record: `training_input_digests`, the measurement manifest,
-     the SP sidecar or the pipeline's bound digests.
+     - the provenance status readers (`artifacts.py:278`, `:291`; `src/kg/provenance.py:275-283`,
+       `:381`), which M3b moves onto M2.1's reads;
+     - the provenance and workspace writers (`src/kg/provenance.py:233`,
+       `src/kg/workspace.py:298`).
+
+     The frozen evaluator, `build_index.py` and question 5's writers are outside the pin.
+   - **A dynamic pin** runs each entry point with `compute_input_digests` and every path hash at a
+     recording site returning a poison digest.
+     - The identification hashes of question 1 (b) and the calibration bracket get the true
+       digest, so each run completes and writes its record.
+     - No poison may reach a record: `training_input_digests`, the measurement manifest,
+       `calibration.json`, the SP sidecar or the pipeline's bound digests.
+     - Under question 1 (a), no exemption is needed.
    - Docs and docstrings that name removed functions are updated.
 10. **S10 — capacity on the homelab.**
     - Record the byte sizes of `kg.json`, the tensors and the sample files, which nothing records
       yet.
     - Measure peak memory at `90a668f` and at the M2.1 head, at each entry point:
-      - serving: `measure_served_pipeline.py` R1 and R4, against today's 23.77 GB at ready and
-        28.45 GB over a reload;
+      - serving: `measure_served_pipeline.py` R1 and R4. The last readings are 23.77 GB VmHWM at
+        ready and 28.45 GB over a reload, taken 2026-09-30 at `ecf17cd`
+        (`scorer-measurement/PLAN_B04_PRODUCTIONISATION.md:1199`, `:1202`). They predate M1, so
+        the baseline is the measurement at `90a668f`;
       - measurement: modes A, B and C;
       - training: the read and setup phase;
       - the SP producer.
     - A shortfall is fixed in the reader, never with a CPU fallback.
 
 **How the acceptance above is shown.**
-- **Read and record agree (item 1):** the replacement double fires after each read, by rename
-  and by in-place rewrite, at each entry point on the inputs that entry point reads. Each run
-  must use and record the bytes it read. A republished workspace, B together with a manifest
-  binding B, must still record A.
+- **Read and record agree (item 1).** The replacement double fires after each read, by rename and
+  by in-place rewrite, at each entry point on the inputs that entry point reads. Each run must use
+  and record the bytes it read, or refuse; it never reads A and records B. The inputs:
   - training: a graph tensor, a sample file, the resume parent (S8);
   - measurement: a graph tensor, the cohort's sample file, the checkpoint (S7);
   - serving: `kg.json` as the API loads it, a graph tensor, the checkpoint (S6);
   - the SP producer: `kg.json` (S3).
-- **A replacement after the manifest read is refused (item 2):** the double fires on the
-  manifest's read and replaces a sample file or a tensor. The refusal names the file, and
-  nothing is written or published (S5–S8).
+
+  A republished workspace (B together with a manifest binding B) is never recorded as B:
+  - fired after an entry point's last read, the run still records A;
+  - fired earlier, it refuses (item 2);
+  - at serving, where the API reads `kg.json` before the pipeline reads the manifest, a republish
+    after that read is refused ("is not the graph").
+- **A replacement after the manifest read is refused (item 2).** The double fires on the
+  manifest's read and replaces a sample file or a tensor. The refusal names the file, and nothing
+  is written or published (S5–S8).
 - **Records come only from readers (item 3):** the static and dynamic pins (S9).
 - **Capacity (item 4):** S10.
 
@@ -733,43 +806,52 @@ S9–S10, removal, pins and capacity. M2.1 ends as one pull request, as M1 did.
 - **Also unchanged:**
   - path-reasoning-only serving, which parses `kg.json` without verifying it (B-2's question);
   - the KG build record and the ontology loader;
-  - the SP producer's check against the workspace it publishes into;
+  - the SP producer still does not check its `kg.json` against the workspace it publishes into
+    (§4, "Not prerequisites");
   - resume from `last.pt` overwriting its parent, which is M3a's;
   - the served identity, which is M3c's.
 
-**Questions for the owner.** Each has the author's recommendation. The reviewer's view is
-asked for before the owner decides.
+**Questions for the owner.** Each has the author's recommendation. The reviewer's view is asked
+for before the owner decides.
 1. **`kg.json` where it is not parsed (training, measurement).**
    - **(a)** Drop the check of its bytes, so the role is the manifest's binding only. This is the
      literal reading of "the verifiers stop hashing paths".
    - **(b)** Keep an identification hash before the run, explicitly not a recorded input. This
-     is the plan's own allowance for "a file nobody is about to parse".
+     extends the plan's allowance for "a file nobody is about to parse", which names only a
+     search and an inventory, to a check that refuses. §2 rule 1's "or that a check compares" is
+     then read as applying to the inputs a step parses.
 
    **Recommended: (b).**
-   - A workspace whose `kg.json` disagrees with its manifest can never be served, so refusing
-     before a training run of hours costs nothing and saves the run.
+   - A workspace whose `kg.json` disagrees with its manifest cannot be served from that file (a
+     reload always derives `kg_path` from `data_dir`). Refusing before a training run of hours
+     costs nothing and saves the run.
    - The recorded `kg` role stays the manifest-bound digest either way, so nothing read is
      recorded as something else.
    - It also keeps the deployment probe's `kg` evidence, which today expects a replaced
      `kg.json` to be refused.
-2. **Measurement's `kg` role.** **Recommended: the manifest-bound digest, as for training,**
-   with the same identification check as question 1. No measurement mode uses the graph object.
+2. **Measurement's `kg` role.** **Recommended: the manifest-bound digest, as for training,** with
+   the same identification check as question 1. No measurement mode uses the graph object.
+   - This adds measurement's `kg` to M2.1's stated exceptions, beside training's.
+   - M2.4's "taken from M2.1's reads" then reads "the manifest-bound `kg`, and the other roles
+     from M2.1's reads".
 3. **The calibration bracket** (`calibrate_mode_a.py:396`, `:403`, `:433`). Today the parent
-   process verifies the workspace before the frozen oracle runs, and compares path hashes taken
-   before the oracle and after the harness.
+   process verifies the workspace before the frozen oracle runs. It also compares path hashes
+   taken before the oracle and after the harness.
    - **Recommended: keep both.**
      - Keep the verification before the oracle, by identification against the manifest, so a
        mixed workspace never reaches the frozen evaluator, which checks nothing itself.
      - Keep the bracket as identification of files the parent does not parse.
    - `calibration.json` then records the harness's reader digests. They equal the bracket
      whenever its comparison passes.
-4. **Checkpoint reads that only select or list.**
-   - These are the reload route scoring candidates (`src/api/routes/pipeline.py:328`, `:363`),
-     the training console's checkpoint list (`src/api/services/training_manager.py:464`), and the
-     conv-type classification in `migrate_checkpoints.py:50`.
-   - **Recommended: outside M2.1, allowlisted with that reason.** They record no digest.
-   - M3c should take the reported metric from the served build's own read, so that "chose A,
-     reported B, served C" cannot happen.
+4. **Checkpoint reads that only select or list:**
+   - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
+   - its second load of the chosen file for the reported metric (`:363`);
+   - the training console's checkpoint list (`src/api/services/training_manager.py:464`);
+   - the conv-type classification in `migrate_checkpoints.py:50`.
+
+   **Recommended: outside M2.1, allowlisted with that reason.** They record no digest. M3c should
+   take the reported metric from the served build's own read, so that "chose A, reported B,
+   served C" cannot happen.
 5. **Audit and evidence writers that still hash by path apart from their parse:**
    - `record_evaluation.py` and the evaluation ledger in `src/evaluation/sidecar.py`;
    - `measure_served_pipeline.py`;
