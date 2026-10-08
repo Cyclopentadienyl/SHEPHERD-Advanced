@@ -1,7 +1,7 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: revision 2, amended twice after review. M1 is implemented, awaiting review
-(2026-10-07; §4, "What M1 did"). M2–M5 are not implemented.** Facts about the code are cited at
+**Status: revision 2, amended twice after review. M1 is implemented and code-reviewed with no
+P1 or P2 at `ed4872a` (2026-10-08; §4, "What M1 did"). M2–M5 are not implemented.** Facts about the code are cited at
 `627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
 is the order of work.
 
@@ -172,7 +172,25 @@ explicit opt-in is B-2's policy question (§8).
 - a reload to such a checkpoint is refused, and the previous pipeline keeps serving;
 - tests for both, and a mutant that restores `return None` is caught.
 
-#### What M1 did (2026-10-07, awaiting review)
+#### What M1 did (2026-10-07; code-reviewed 2026-10-08)
+
+**Review.** Three rounds, all at no P1:
+- the independent review of `fad6be7` found three P2s, closed at `41dc927`;
+- the reviewer's review of `41dc927` found one P2: a successful reload did not restore
+  readiness. It was closed at `52f0805`;
+- the reviewer's incremental review of `ed4872a` found no P1 or P2. The reviewer recommends
+  keeping the shared `requested_pipeline_missing` definition rather than the one-line fix, and
+  asks that a pull request state the readiness change below.
+
+`/ready`'s observable behaviour changes in two states: a configured graph file missing at
+startup, and a refused reload on a service that had no pipeline. `/ready` now answers 503 in
+both, where it answered 200. `/diagnose` already refused in both, so the old 200 was a false
+"ready". The way back is a reload that succeeds, or a restart. `/health` is unchanged, and the
+launcher and the WebUI read only `/health`.
+
+Not covered: a CUDA or homelab acceptance of the deployed service. The reviewer ran the
+synthetic CPU cases on a pinned snapshot.
+
 
 **A requested model is built, or the build raises `PipelineBuildError`**
 (`src/inference/pipeline.py`). A model is requested when a checkpoint path or a pre-loaded model
