@@ -226,8 +226,9 @@ shortest_path_similarity = 1.0 / (1.0 + avg_sp)
 
 ### Graceful degradation
 - **`shortest_paths.pt` missing + `sp_optional=True`** (default): pipeline reports `scoring_mode="gnn_only"`, effective η = 1.0
-- **`shortest_paths.pt` missing + `sp_optional=False`**: pipeline init refuses to set `_gnn_ready=True`
-- **No GNN model loaded**: pipeline falls back to `confidence_score = path_reasoning_aggregate_score` (PathReasoner only)
+- **`shortest_paths.pt` missing + `sp_optional=False`**: the build is refused (`PipelineBuildError`); no pipeline is published
+- **A model requested (checkpoint or pre-loaded model) and not built** — missing or unreadable checkpoint, one that does not build over the graph, no graph data, no PyTorch: the build is refused (`PipelineBuildError`). Startup publishes nothing and `/diagnose` answers 503; a reload is refused and the served pipeline stays. Never replaced by path reasoning (provenance contract M1)
+- **No model source configured at all**: pipeline uses `confidence_score = path_reasoning_aggregate_score` (PathReasoner only); whether this needs an explicit opt-in is B-2's open policy question
 
 ### PathReasoner Role (explanation only)
 PathReasoner does NOT contribute to scoring. After ranking is determined, the **EvidencePanel** module (`src/reasoning/evidence_panel.py`) generates clinician-facing evidence for each top-K candidate. EvidencePanel uses PathReasoner internally as a building block.

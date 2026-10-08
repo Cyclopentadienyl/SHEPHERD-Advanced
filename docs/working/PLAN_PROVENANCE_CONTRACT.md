@@ -1,8 +1,11 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: draft for review, revision 2, amended twice after review.** Nothing here is implemented. Facts about the code are
-cited at `627ed08`; the code is unchanged at `463a0df`. §1 records decisions already made; §4 is
-the order of work.
+**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1
+or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that
+evidence with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab").
+M2–M5 are not implemented.** Facts about the code are cited at
+`627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
+is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
 - **The resume parent is checked in M2**, before any state is restored (§4, M2.3). Left to M3a,
@@ -170,6 +173,284 @@ explicit opt-in is B-2's policy question (§8).
 - a startup with a checkpoint that cannot load leaves `/diagnose` at 503;
 - a reload to such a checkpoint is refused, and the previous pipeline keeps serving;
 - tests for both, and a mutant that restores `return None` is caught.
+
+#### What M1 did (2026-10-07; code-reviewed 2026-10-08)
+
+**Review.** Three rounds, all at no P1:
+- the independent review of `fad6be7` found three P2s, closed at `41dc927`;
+- the reviewer's review of `41dc927` found one P2: a successful reload did not restore
+  readiness. It was closed at `52f0805`;
+- the reviewer's incremental review of `ed4872a` found no P1 or P2. The reviewer recommends
+  keeping the shared `requested_pipeline_missing` definition rather than the one-line fix, and
+  asks that a pull request state the readiness change below.
+
+`/ready`'s observable behaviour changes in two states: a configured graph file missing at
+startup, and a refused reload on a service that had no pipeline. `/ready` now answers 503 in
+both, where it answered 200. `/diagnose` already refused in both, so the old 200 was a false
+"ready". The way back is a reload that succeeds, or a restart. `/health` is unchanged, and the
+launcher and the WebUI read only `/health`.
+
+The reviewer ran the synthetic CPU cases on a pinned snapshot. Afterwards the service, run from
+`7714459` on the homelab GPU, was accepted ("M1's acceptance on the homelab", below).
+
+
+**A requested model is built, or the build raises `PipelineBuildError`**
+(`src/inference/pipeline.py`). A model is requested when a checkpoint path or a pre-loaded model
+is given. These conditions used to log and return without the GNN, and the pipeline was
+published as a success:
+- PyTorch is not available;
+- there is no graph to compute embeddings from, whether no `data_dir` or `graph_data` was given
+  or the directory lacks its tensors;
+- the checkpoint is missing, or does not build a model over this graph
+  (`_load_model_from_checkpoint`; the builder's error is kept as the cause);
+- shortest paths are required (`sp_optional=False`) and not available. This used to switch the
+  GNN off, so a configuration requiring both signals was served with neither.
+
+Three more cases now raise it, naming what is wrong:
+- an unreadable checkpoint. It already raised, as torch's own error;
+- a file that is not a training checkpoint;
+- a checkpoint with no weights.
+
+One invariant is added: `_gnn_ready` is set only with a model and with phenotype and disease
+embeddings, the two `_calculate_gnn_score` reads. It cannot be reached today, because every
+loader raises. It stops a loader that one day returns `None` again from leaving a pipeline that
+reports a GNN and scores every GNN term as zero. It does not show that the embedding rows agree
+with the graph's node identifiers; that is M2, and M1 passing is no claim about it.
+
+**The API's build-then-publish order put the refusal in the right place.** `build_pipeline`
+already re-raised, startup already published nothing on failure, and the reload route already
+built the candidate before publishing it. Four gaps beside it are closed (`src/api/main.py`,
+`src/api/routes/diagnose.py`). The first three were found by the independent review, the fourth
+by the reviewer's review of `41dc927`:
+- **a checkpoint configured with no knowledge graph is refused.** Before, `build_pipeline`
+  returned `None` before recording the request, and `/diagnose` gave the demo answer: invented
+  candidates over HTTP 200. Startup now also attempts the build when only
+  `SHEPHERD_CHECKPOINT_PATH` is set, so the refusal is seen there;
+- **`/diagnose` no longer rebuilds a failed pipeline on every request.** Before, the lazy
+  initialisation reran the whole build each time: graph load, workspace digests and tensor
+  reads. It ran synchronously in an async route, so `/health` and the WebUI waited, and each
+  request got the same 503. M1 would have sent the commonest misconfigurations there. Trying
+  again is now an explicit act, a reload or a restart, and the 503 says so. It is a choice, not a
+  necessity: the files or mount behind a failed build can be repaired while the service runs,
+  and a reload is how to try again without expensive I/O on every diagnosis;
+- **a blank environment value is unset.** An exported-but-empty `SHEPHERD_CHECKPOINT_PATH` would
+  otherwise be read as a request for a model;
+- **a reload that succeeds restores readiness.** A startup whose build fails sets `is_ready` to
+  false, and nothing set it back. After the reload the 503 points to, the pipeline served and
+  `/pipeline/status` agreed, while `/ready` stayed 503 until a restart, so anything routing on
+  the probe kept the service out. The cause predates M1; M1 made it the outcome of the commonest
+  misconfigurations and named the reload as the way back.
+  - `publish_pipeline`, the one writer of the served-pipeline fields, now also sets the
+    readiness flag. It is the one path that restores the flag after startup.
+  - So after a failed startup, readiness returns only once a candidate is published, never when
+    a reload starts. A refused reload leaves the flag as it was.
+  - `/ready` and `/diagnose` also read one definition of the state `/diagnose` refuses: a real
+    pipeline was asked for and none is being served (`AppState.requested_pipeline_missing`).
+    Two states left the flag set while every diagnosis was refused, and `/ready` answered 200
+    in both: a configured graph file missing at startup (`build_pipeline` returns `None` there
+    rather than raising), and a refused reload on a service that had no pipeline.
+
+A reload refusal no longer ends in a doubled full stop.
+
+**Unchanged, deliberately:**
+- with no model source at all, the pipeline still serves path reasoning. Whether that needs an
+  opt-in is B-2's policy question (§8, question 2);
+- absent shortest paths with `sp_optional=True`, the default, still give a GNN-only pipeline
+  (`DISEASE_SCORER_POLICY.md` §2).
+
+**Tests:**
+- `tests/unit/test_pipeline_fails_closed.py`, 31 tests, covers:
+  - each condition above, plus the invariant;
+  - controls: a sound checkpoint builds, a GNN with optional SP absent builds, and no model
+    source still builds path reasoning;
+  - startup with a missing, another graph's, and an unreadable checkpoint: nothing published,
+    `/diagnose` 503, with the same startup and a sound checkpoint as control. The first two were
+    the old fallback;
+  - one build for a failed startup followed by three diagnoses;
+  - readiness, through the real lifespan and routes, with `/ready`, `/pipeline/status` and
+    `/diagnose` compared each time:
+    - a failed startup: all three say not serving;
+    - a refused reload after it: still not serving;
+    - a successful reload after it: all three say serving, and readiness was false while the
+      candidate was built;
+    - a refused reload on a healthy service: the pipeline, its paths and readiness are the same
+      objects as before, and it still serves;
+    - the whole chain in one lifetime: failed startup, refused reload, successful reload, and a
+      refusal after it that changes nothing;
+    - a configured graph file missing at startup: not serving;
+    - nothing configured: the demo answers and is ready, until a reload naming a workspace is
+      refused;
+  - a checkpoint with no knowledge graph, and a blank checkpoint setting;
+  - reloads to an unreadable checkpoint and to one trained over another graph: refused, with
+    every served field the same object as before.
+- The graph-binding tests' stand-in now finishes the model build. Before, it ended in the
+  fallback this change removes.
+- `tests/unit/conftest.py` puts `app_state.real_pipeline_requested` and `is_ready` back after
+  each test.
+  - Three files left `real_pipeline_requested` set, so `test_diagnose_reserved_fields.py`
+    failed whenever it ran after them. This was already true at `4298aac`; the alphabetical
+    full run hid it.
+  - `is_ready` could not leak before this change, because only the lifespan wrote it and its
+    shutdown clears it. `publish_pipeline` now sets it, so a reload driven without a lifespan
+    would leak it. No current test does; the restore is defensive.
+
+**Mutation check.** 19 mutants were run in a fresh copy of the tree, each restoring one old
+behaviour or removing one new check. Four are on readiness: publication not restoring it, a
+reload setting it when it starts, a refused reload clearing it, and `/ready` not reading the
+shared definition. All 19 were caught.
+
+**Found, not changed:**
+- **One for M2.** `_calculate_gnn_score` clamps a disease index past the end of the embedding
+  table to the last row (`disease_idx = min(...)`). A graph whose node mapping disagrees with its
+  tensors is therefore scored against another disease's embedding, not refused.
+  - On the API path, the workspace binding prevents that mismatch.
+  - A direct caller's graph object is not checked against its `kg_path`, and a caller supplying
+    `graph_data` in memory has no binding at all.
+  - M2's model↔graph check is where the refusal belongs.
+- **A configured knowledge graph file that is missing makes `build_pipeline` return `None`,**
+  rather than raise. Both callers still fail closed: startup leaves `/diagnose` and `/ready` at
+  503, and a reload is refused.
+
+#### M1's acceptance on the homelab (2026-10-08)
+
+Run by the owner at `7714459`, a detached checkout. The evidence was collected by the author
+from the owner's uploads and pasted output.
+
+**Environment.**
+- NVIDIA GB10, as for N1. PyTorch warns that the GPU's CUDA capability (12.1) is past the 12.0
+  it supports.
+- **The owner's command, as pasted:** the usual launcher (`./launch_shepherd.sh`) on port 8000,
+  with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`, `SHEPHERD_DEVICE=cuda` and a
+  `SHEPHERD_CHECKPOINT_PATH` naming a file that does not exist. Its output was captured with
+  `tee` to `server_m1.log`.
+- **Workspace:** the same path as N1's, `data/workspaces/hpo_2026_0929_5a`. The startup log read
+  57,239 nodes and 617,773 edges.
+  - The owner hashed two files after the run, and both SHA-256s match N1's record:
+    - `checkpoints/hgt/model-02-0.1813.pt` `33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79`;
+    - `kg.json` `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`.
+  - The tensors, the manifest, the provenance record and the SP files were not hashed again.
+  - As with N1, a file hashed afterwards is not proof of the bytes consumed during the run.
+    That proof is the contract's M2.1.
+- **A first attempt ran the wrong code and was discarded.** The owner's `git switch` landed on a
+  stale local branch at `60b3c89`, from August, so the service ran old code. The log the owner
+  pasted shows the pre-M1 behaviour: `Checkpoint not found`, then `Pipeline initialized:
+  scoring_mode=path_reasoning_fallback`. That attempt's full log is not in the archive.
+  - Before the run below, the homelab's 16 local branches other than `main` were archived to a
+    bundle outside the repository. `git bundle verify` reported all 17 refs and a complete
+    history, and the bundle's SHA-256 is
+    `2106db34355b6811f76e441ee970e2489019b9c0e43b5ad65e57268cc0acc179`. The 16 branches were then
+    removed.
+  - Two of them held commits found nowhere on GitHub: `60b3c89`, a lockfile refresh, and
+    `61978b6`, an August backup. In the homelab clone, they were the only branches with commits
+    outside every remote branch and tag. In a clone with every GitHub branch and tag fetched,
+    neither commit exists.
+
+**Startup.** The graph loaded in about 10 s, from 16:09:43 to 16:09:53. The log then shows
+`Failed to build pipeline: Checkpoint … does-not-exist.pt does not exist` and `Startup failed`.
+No pipeline was published, and the fallback did not appear.
+
+**Through the API.** The acceptance client, `m1_acceptance.py`, uses the standard library and
+calls only the running API. Its SHA-256 as delivered to the owner is
+`a82d42853d15bde0e3bb8d6ae16e817d0a33115142242ae74bb3d759d5d2f4e1`; it is not in the repository.
+It ran 12 checks, and all passed:
+1. **the failed startup:** `/ready` answered 503 with the reload guidance, `/diagnose` answered
+   503, and the status said not initialized;
+2. **a reload to an unreadable checkpoint** was refused in 10.2 s. A 16-byte file, not a pickle,
+   stood in for it. All three surfaces still said not serving;
+3. **a reload to the good checkpoint** succeeded in 79.5 s:
+   - **status:** `gnn_plus_shortest_path`, with GNN and SP ready. Eta was 0.7, and SP `max_hops`
+     was 5, from the sidecar. The SP table's graph binding was *verified*, and there were no
+     fingerprint warnings;
+   - **checkpoint metadata in the status:** epoch 2, val MRR 0.1813, 4,228,429 parameters
+     counted from the built model, and device cuda;
+   - `/ready` answered 200 with a pipeline loaded;
+   - `/diagnose` answered 200 with 10 candidates for `HP:0001250`, `HP:0001263`. Every GNN score
+     was non-zero, and every total was 0.7 × GNN + 0.3 × SP. The top candidate was
+     `MONDO:0014942`, at 0.83057 = 0.7 × 0.97224 + 0.3 × 0.5;
+4. **a reload to the unreadable checkpoint while serving** was refused in 10.0 s, with "still
+   being served". The status, `/ready` and all 10 candidate records were identical to step 3,
+   field for field; only the session identifier, timestamp and timing differed.
+
+**The server log agrees.** The owner ran `grep -nE "Startup failed|Failed to build
+pipeline|Pipeline reload failed|Pipeline published|Lazy pipeline init" server_m1.log`, and the
+extract is `m1_log_grep.txt`. It shows:
+- one failed build at startup, ending at 16:09:54;
+- refused reloads at 16:12:38 and 16:14:08;
+- one publication, at 16:13:58, `gnn_plus_shortest_path`.
+
+The extract has no other `Failed to build pipeline` line and no `Lazy pipeline init` line. A
+rebuild triggered by a diagnosis would have logged one of them with this missing checkpoint, so
+the diagnoses in steps 1 and 2 did not rebuild the failed pipeline.
+
+**Evidence.**
+- **Uploaded,** with SHA-256 as uploaded:
+  - `summary.json` `1992dac75e6e0000c0d096d5e579b27bf88376a6087096a4afe751102b777bdf`;
+  - `3_after_good_reload.json` `9472ef15447fe27356c6d7288c906eca770ca083df4d99dc6977698cc909603b`;
+  - `4_after_refused_reload_on_healthy.json`
+    `7a09701e7eccf783551cdd58d5c285dd3b8bc95c967f6a26c13363d4d70981b7`;
+  - `m1_sha256.txt` `8f76b872a8b92033977b4d15ff8cee2b22cbf1bc2bc7a910afcb01015e40bc1b`;
+  - `m1_log_grep.txt` `e153059ee6f38e498c1995b94cf742b5f87d7fc483be048a3c117765f6b58d4f`.
+- **Written by the client and not uploaded:** the snapshots of steps 1 and 2, the three reload
+  responses, and the full `server_m1.log`. Steps 1 and 2 rest on `summary.json` and the
+  terminal output the owner pasted.
+- **Where they are:** after the run, the owner moved all of them to
+  `~/Desktop/SHEPHERD-archive/m1-acceptance-2026-10-08/` on the homelab, by the pasted command.
+  That covers the client's output directory, the full `server_m1.log`, both text files and the
+  client script.
+  - The branch bundle is in `~/Desktop/SHEPHERD-archive/`.
+  - The homelab checkout is back on `main`, level with `origin/main`.
+
+**Before the homelab run,** the author ran the client in the development container, on CPU, with
+a synthetic workspace of 9 nodes and 14 edges. The services were built from two commits:
+- **`7714459`:** all 12 checks passed;
+- **`41dc927`:** exactly three failed. 3c and 4c are the reviewer's P2: a successful reload did
+  not restore readiness. 1a failed because `/ready`'s 503 had no recovery guidance until
+  `ed4872a`;
+- **a service already serving:** the client stopped at its precondition.
+
+**What the reviewer checked independently** (2026-10-08, at document head `57c8684`; no P1 or
+P2). The reviewer read the archive on the homelab directly, not only the record.
+- **Hashes:** every file the record hashes was re-hashed and matched, the client script
+  included. The full `server_m1.log`, which the record did not hash, is
+  `c59567f8a3d27f084f480360585a88db306bf1087db53d52b5d13f133201ebb7`.
+- **Responses:** steps 1–4 were compared as whole JSON documents, beyond the fields the client
+  checks. Before and after the refused reload on the healthy service, the status, the `/ready`
+  body and all 10 candidates were identical. Only the diagnosis's session identifier, timestamp
+  and timing changed. Every total was exactly 0.7 × GNN + 0.3 × SP.
+- **The full log:**
+  - `Building diagnosis pipeline` appears 4 times: once at startup and once per reload;
+  - `Startup failed` once, `Pipeline reload failed` twice, `Pipeline published` once;
+  - `Lazy pipeline init` and `path_reasoning_fallback` never appear;
+  - regenerated with the recorded pattern, the extract is byte-identical to `m1_log_grep.txt`.
+- **Version:**
+  - `ed4872a..57c8684` changes no file under `src`, `scripts` or `tests`, so the code under test
+    is the code reviewed;
+  - the homelab's reflog puts HEAD at `7714459` from 16:09:39 to 16:42:15, which covers the run.
+    This is the operator's checkout, not a version reported by the service process;
+  - the bundle verifies, with 17 refs and a complete history, and the homelab has only `main`,
+    at `4298aac`.
+- **Not re-checked:**
+  - the discarded attempt's behaviour, which rests on the owner's paste;
+  - an audit of every GitHub ref for the two local-only commits.
+- **Read only:** nothing was re-run against the service, and nothing was changed.
+
+**What this holds for, and what it does not.**
+- **Failures exercised:** two — a missing checkpoint at startup, and an unreadable file on
+  reload. The other refusals in "What M1 did" were tested only on CPU, in the unit tests:
+  - a checkpoint trained over another graph;
+  - one with no weights;
+  - a file that is not a training checkpoint;
+  - a missing graph file;
+  - a checkpoint configured with no graph;
+  - a blank setting.
+- **Setup:** it holds for this GB10, this model, this workspace path and this SP table, with
+  these settings.
+- **WebUI:** the reloads went through the API route the WebUI's Load / Reload button calls. The
+  WebUI itself was not exercised in this run.
+- **Not covered:**
+  - other GPUs or operating systems;
+  - any of the contract's checks. Those begin at M2, and M1 passing is no claim that the model
+    matches its graph.
 
 ### M2 — the model↔graph relation, on the bytes actually read, with the resume parent
 

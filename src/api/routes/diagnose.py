@@ -284,8 +284,18 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         # Get application state
         from src.api.main import app_state, initialize_pipeline
 
-        # Attempt lazy pipeline initialization if not yet loaded
-        if app_state.pipeline is None:
+        # Attempt lazy pipeline initialization if not yet loaded, **and not
+        # after a build has already been asked for.** `real_pipeline_requested`
+        # is set by every build that names a workspace or a checkpoint, so it is
+        # True after a startup or an earlier lazy build that failed, and after a
+        # refused reload. Retrying here repeated the graph load, the workspace
+        # digests and the tensor reads on every request -- synchronously, in an
+        # async route, so `/health` and the WebUI waited behind it -- only to
+        # answer the same 503. **A retry is asked for, not implied:** the files
+        # or the mount behind a failed build can be repaired while the service
+        # runs, and the way to try again is a reload (or a restart), not
+        # expensive I/O on every diagnosis.
+        if app_state.pipeline is None and not app_state.real_pipeline_requested:
             try:
                 initialize_pipeline()
             except Exception as e:
@@ -309,14 +319,16 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             # API — a caller could point `/pipeline/reload` at a real workspace,
             # have the candidate refused, and still be handed invented
             # candidates here. `build_pipeline` records the request where both
-            # routes resolve their paths.
-            if app_state.real_pipeline_requested:
+            # routes resolve their paths. `/ready` reads the same definition.
+            if app_state.requested_pipeline_missing:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=(
                         "A pipeline is configured for this deployment but could "
                         "not be initialized, so no diagnosis can be produced. "
-                        "See the service logs for the condition that stopped it."
+                        "See the service logs for the condition that stopped it; "
+                        "load a pipeline (POST /api/v1/pipeline/reload) or "
+                        "restart the service to try again."
                     ),
                 )
 

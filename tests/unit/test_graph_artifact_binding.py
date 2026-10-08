@@ -163,13 +163,33 @@ class TestTheClinicalPathIsAGraphConsumer:
 
     @staticmethod
     def _pipeline_module(monkeypatch, reached):
+        """Records whether the graph was loaded, and stands in for the rest of
+        the model build.
+
+        **The stand-ins are what let a build past the binding check finish.**
+        These workspaces carry placeholder bytes, not a graph and a checkpoint a
+        model can be built from. A requested model that cannot be built is
+        refused (`PipelineBuildError`, M1), so without them every case that
+        passes the binding check would end in that refusal instead of in what it
+        is about.
+        """
         import src.inference.pipeline as pipeline
 
-        def _forbidden(self, *args, **kwargs):
+        def _graph_loaded(self, *args, **kwargs):
             reached.append("_load_graph_data")
-            return None
+            return {"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}}
 
-        monkeypatch.setattr(pipeline.DiagnosisPipeline, "_load_graph_data", _forbidden)
+        monkeypatch.setattr(pipeline.DiagnosisPipeline, "_load_graph_data", _graph_loaded)
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline, "_load_model_from_checkpoint",
+            lambda self, checkpoint_path, device: object(),
+        )
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
+            lambda self, device=None: setattr(
+                self, "_node_embeddings", {"phenotype": object(), "disease": object()}
+            ),
+        )
         return pipeline
 
     def test_a_mixed_workspace_is_refused_before_the_graph_is_loaded(

@@ -34,6 +34,7 @@
 
 from src.inference.pipeline import (
     DiagnosisPipeline,
+    PipelineBuildError,
     PipelineConfig,
     create_diagnosis_pipeline,
 )
@@ -41,6 +42,7 @@ from src.inference.pipeline import (
 __all__ = [
     # Pipeline
     "DiagnosisPipeline",
+    "PipelineBuildError",
     "PipelineConfig",
     "create_diagnosis_pipeline",
 ]
