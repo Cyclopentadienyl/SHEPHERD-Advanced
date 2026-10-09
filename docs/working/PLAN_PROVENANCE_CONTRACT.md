@@ -708,7 +708,8 @@ each moves its callers before anything is removed.
        - as a planned flow, the draft `PLAN_TEST_RESULTS.md:745` and `:766` (dropped below);
        - `scorer-measurement/README.md:33` (marked SUPERSEDED), `:53-55` (present tense, updated
          below) and `:103-105` (the decision amended below);
-       - as history, `PLAN_B03.md:23`, `:103` and `PLAN_CONFIGURABILITY_AND_PROVENANCE.md:235`;
+       - as history, `PLAN_B03.md:23`, `:103-105` and `:253-255`, and
+         `PLAN_CONFIGURABILITY_AND_PROVENANCE.md:235`;
        - BACKLOG 7a, 19.19 and §5.0's file table.
      - Only its own tests import it:
        - `tests/integration/test_seeding_bootstrap.py`;
@@ -794,8 +795,9 @@ each moves its callers before anything is removed.
      - `measure_scorer.py:5-6` loses its condition, and `:235-237` is tied to item 9.
 
      S7 handles the ones in code it rewrites: `load_legacy_mode_a_inputs`' docstring
-     (`measure_scorer.py:202-221`), which goes with the function, `:240` and `:561-565`, and
-     `test_legacy_equivalence.py:337-343`.
+     (`measure_scorer.py:203-224`), which goes with the function (`:202-227`); `:240` and
+     `:561-565`; `test_legacy_equivalence.py:337-343`; and the paragraph in
+     `src/kg/storage/__init__.py:35-37` that exempts the function, which is removed with it.
    - **A final search before S0 lands.** The repository is searched again, case-insensitively, for
      `calibrate_mode_a`, "launcher", "calibration", "frozen evaluator", "frozen oracle" and
      "oracle", and, if question 6 is answered (a), for `evaluate_model` and "evaluator", which
@@ -810,13 +812,17 @@ each moves its callers before anything is removed.
      The other hits stay: the application launcher (`scripts/launch/`), the differential
      calibration, Mode A's retained semantics, and item 9's surface, such as
      `src/evaluation/measurement.py:557-559`, which `scorer-measurement/README.md:106-109` leaves
-     to item 9's rename. Hits in code S7 rewrites belong to S7. The lists above and question 6
-     (a)'s are the hits S0 changes as found at `0708789`; the search is what makes them complete.
+     to item 9's rename. Hits in code S7 rewrites belong to S7, except those S0's lists name,
+     which S0 changes first: `measure_scorer.py:235-237` and, under question 6 (a), `:203` and
+     `:234`. The lists above, with question 6's for the option the owner chooses, are the hits S0
+     changes as found at `0708789`: under (a), (a)'s lists; under (b), (b)'s rewording; and under
+     either, the two corrections question 6 makes under either option. The search is what makes
+     them complete.
    - **Decisions amended when S0 lands** (this revision amends none of them), each with the
      owner's rule and date:
      - `scorer-measurement/README.md:103-105` ("rewritten, not deleted") is reversed;
      - **the deletion gate gains one exception,** in BACKLOG §5 ("Item 9 waits for everything")
-       and its restatement in §5.0 (`:834-836`), in `scorer-measurement/README.md:78-79` and its
+       and its restatement in §5.0 (`:835-837`), in `scorer-measurement/README.md:78-79` and its
        removal order's step 5 (`:122`), and in item 9's row. The exception: the oracle-parity
        tests in `test_legacy_equivalence.py`, which the README counts as oracle-only (`:95-97`),
        go with the launcher before 1d's institutional run. They check the frozen-evaluator
@@ -850,23 +856,32 @@ each moves its callers before anything is removed.
      binds the replacement.
    - **An open counter per path,** for the "read once" assertions.
    - **A release check** (`tests/fixtures/release.py`), on fixture-sized files on CPU, through the
-     same `read_once` wrapper as the replacement double. It runs on entry to each `read_once` call
-     a reader makes, covering the reads before it, and again after the reader returns. Each time:
-     - a `tracemalloc` snapshot holds no live allocation whose traceback runs through an earlier
-       `read_once` read. This catches the raw buffer whoever holds it: a local still bound inside
-       a reader of several files (`read_graph_artifacts` reads three, `file_storage.py:48-56`,
-       and a loop that rebinds one name still holds the previous buffer during the next read),
-       the return value, a closure or long-lived state. `bytes` cannot be weakly referenced, so
-       the buffer is checked through its allocation;
-     - a weak reference to each earlier `BytesIO` wrapper is dead.
-     - **Its settings let it see the buffer.** `tracemalloc` keeps enough frames to reach
-       `read_once`, and the filter matches `read_once`'s read in any frame (`all_frames=True`).
-       The default matches only the most recent frame, so it misses a read made one call deeper,
-       as with `Path.read_bytes`. The `BytesIO` weak references come from replacing the reader
-       module's `BytesIO` with a tracking subclass.
+     same `read_once` wrapper as the replacement double.
+     - **When it runs:** on entry to each `read_once` call a reader makes, covering the reads
+       before it, and again after the reader returns. Each time:
+       - a `tracemalloc` snapshot holds no live allocation whose traceback runs through an
+         earlier `read_once` read. This catches the raw buffer whoever holds it: a local still
+         bound inside a reader of several files (`read_graph_artifacts` reads three,
+         `file_storage.py:48-56`, and a loop that rebinds one name still holds the previous
+         buffer during the next read), the return value, a closure or long-lived state. `bytes`
+         cannot be weakly referenced, so the buffer is checked through its allocation;
+       - a weak reference to each earlier `BytesIO` wrapper is dead.
+     - **Its settings let it see the buffer.**
+       - `tracemalloc` keeps enough frames to reach `read_once`. The filter names `read_once`'s
+         file and the line of its read, and matches it in any frame (`all_frames=True`); the
+         default matches only the most recent frame.
+       - `read_once` opens the file on an earlier line and reads it with `handle.read()` on a line
+         that does nothing else. The digest, and anything else a `ReadIdentity` keeps, is made on
+         other lines, so a correct reader's identities never match the filter.
+       - The `BytesIO` weak references come from replacing the reader module's `BytesIO` with a
+         tracking subclass. For each torch file a reader reads, the check requires at least one
+         tracked `BytesIO`, so a reader that builds its wrapper some other way fails instead of
+         passing unseen.
      - **It is shown to fail.** A self-test, on the real `read_once` and a non-empty file,
        requires the check to fail on a reader that keeps the bytes on a module global, in a
-       closure, on its result or across its next read, or that keeps its `BytesIO`.
+       closure, on its result or across its next read. It must also fail on a reader that keeps
+       a `BytesIO` holding its own copy of the bytes (as after `getbuffer()`), which only the weak
+       reference catches; a `BytesIO` that still shares the bytes is caught through them.
      - **What it does not see:** a copy the reader makes into another object, such as a
        `bytearray` or the decoded text of a JSON file, and torch's tensor storages. Those are
        parsed results or copies, not the raw buffer; the readers' results are listed in S10's
@@ -947,7 +962,8 @@ each moves its callers before anything is removed.
      (`measure_scorer.py:102-155`). The verifier's bound map is kept instead of discarded
      (`:128`). The manifest's `kg` role is the manifest-bound source graph (M2.1 decision 2).
    - **Mode A uses the run's single read.**
-     - `load_legacy_mode_a_inputs` is deleted, and its docstring (`:205-208`) with it. It
+     - `load_legacy_mode_a_inputs` is deleted, and its docstring (`:203-224`, whose lifecycle
+       paragraph is `:205-208`) with it. It
        already delegates to `file_storage` (`:225-227`), so Mode A reads the same files.
      - `build_legacy_mode_a_model` takes the checkpoint dict from that read instead of loading
        the path (`:248`). Its behaviour is otherwise unchanged. It remains item 9's oracle-only
@@ -1077,8 +1093,8 @@ each moves its callers before anything is removed.
       - the probe runs inside the real entry point, only records, and stops at the stated
         boundary. It never rebuilds the reads, the verification or the model;
       - the same instrumentation runs at both commits. Each hook runs once, holds no large object
-        and reads none of the run's inputs again: the subject's files are read only by the entry
-        point, and a hook's only file read is the process's own `/proc/self/status`;
+        and reads none of the run's inputs again: no hook opens a subject file, and a hook's only
+        file read is the process's own `/proc/self/status`;
       - CUDA readings synchronise, and reset the peak counters, at the same points at both
         commits;
       - outputs, logs and the SP publication go to named scratch paths. Nothing is written to the
@@ -1194,9 +1210,12 @@ request, as M1 did.
    measurement read.
 3. **The calibration launcher: by the owner's rule, it is removed if nothing necessary uses it**
    (migrated minimally only if it must stay; no dead islands). S0's check found no necessary user,
-   and the reviewer accepted S0 in the re-review of `0708789` (2026-10-09). S0's text as revised
-   since (its claim limited to the checkpoints checked, and the final search) awaits incremental
-   review with the rest of the plan. The rule is the launcher's; it does not decide question 6.
+   and the reviewer accepted S0 in the re-review of `0708789` (2026-10-09). S0 as revised since
+   awaits incremental review with the rest of the plan: its opening (the owner's rule stated for
+   the launcher only), its claim limited to the checkpoints checked, the wider list of text it
+   rewords, the lifecycle statements it drops or ties to item 9, the hand-off to S7, the final
+   search, and the gate's documents (§5.0's restatement added), which S0's own change updates.
+   The rule is the launcher's; it does not decide question 6.
    The question of its digest bracket lapses with it.
 4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
    - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
