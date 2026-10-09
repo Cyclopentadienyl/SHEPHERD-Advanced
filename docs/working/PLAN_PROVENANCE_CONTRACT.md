@@ -618,7 +618,8 @@ At the entry points:
 **The primitive.**
 - `read_once(path) -> FileRead(path, data, sha256)` goes in `src/utils/fingerprint.py`, beside
   `file_sha256` (`:55-82`). `ReadIdentity(path, sha256)` carries no bytes.
-- **One open and one full read,** with the SHA-256 taken over that same bytes object.
+- **One open and one full read,** with the SHA-256 taken over that same bytes object. The read
+  is alone on its line (S1), because S2's release check filters on it.
 - **It never returns `None`,** as `file_sha256` does (`:79-80`). A missing path raises, so a file
   deleted between two reads is refused instead of recorded as `None`.
 - **No retry, no fallback, no device handling.**
@@ -812,12 +813,13 @@ each moves its callers before anything is removed.
      The other hits stay: the application launcher (`scripts/launch/`), the differential
      calibration, Mode A's retained semantics, and item 9's surface, such as
      `src/evaluation/measurement.py:557-559`, which `scorer-measurement/README.md:106-109` leaves
-     to item 9's rename. Hits in code S7 rewrites belong to S7, except those S0's lists name,
-     which S0 changes first: `measure_scorer.py:235-237` and, under question 6 (a), `:203` and
-     `:234`. The lists above, with question 6's for the option the owner chooses, are the hits S0
-     changes as found at `0708789`: under (a), (a)'s lists; under (b), (b)'s rewording; and under
-     either, the two corrections question 6 makes under either option. The search is what makes
-     them complete.
+     to item 9's rename. Hits in code S7 rewrites belong to S7, except those that S0's lists, or
+     question 6's for the option the owner chooses, name: S0 changes those first, even inside a
+     function S7 later rewrites, such as `measure_scorer.py:235-237`, `:658-661` and `:682` and,
+     under question 6 (a), `:203` and `:234`. The lists above, with question 6's for the option
+     the owner chooses, are the hits S0 changes as found at `0708789`: under (a), (a)'s lists and
+     the two corrections question 6 makes under either option; under (b), (b)'s rewording. The
+     search is what makes them complete.
    - **Decisions amended when S0 lands** (this revision amends none of them), each with the
      owner's rule and date:
      - `scorer-measurement/README.md:103-105` ("rewritten, not deleted") is reversed;
@@ -842,9 +844,13 @@ each moves its callers before anything is removed.
      in git.
    - **`scripts/evaluate_model.py`** follows question 6 below.
 1. **S1 — the primitive.** `read_once`, `FileRead` and `ReadIdentity`; no caller changes.
+   `read_once` opens the file on one line and reads it with `handle.read()` on a line that does
+   nothing else. The digest, and anything else its `ReadIdentity` keeps, is made on other lines,
+   because S2's release check filters on the read's line.
    - **Tests:** the digest is the digest of the bytes returned; the file is opened once; a
      missing file raises; replacing the file afterwards, by atomic rename or in-place rewrite,
-     changes neither the bytes nor the digest returned.
+     changes neither the bytes nor the digest returned; with `tracemalloc` filtered on the read's
+     line (`all_frames=True`), a kept `ReadIdentity` holds no live allocation from it.
 2. **S2 — test infrastructure.** No production change.
    - **Parseable fixtures:** each workspace's `kg.json`, `num_nodes.json` and tensors are real
      files whose content differs per workspace. Tests that verify only digests gain
@@ -1215,8 +1221,8 @@ request, as M1 did.
    the launcher only), its claim limited to the checkpoints checked, the wider list of text it
    rewords, the lifecycle statements it drops or ties to item 9, the hand-off to S7, the final
    search, and the gate's documents (§5.0's restatement added), which S0's own change updates.
-   The rule is the launcher's; it does not decide question 6.
-   The question of its digest bracket lapses with it.
+   The rule is the launcher's; it does not decide question 6. The question of the launcher's
+   digest bracket (BACKLOG 19.19) lapses with the launcher's removal.
 4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
    - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
    - its second load of the chosen file for the reported metric (`:363`);
@@ -1302,7 +1308,9 @@ removes its only runner.**
   - The citations above in `7dab728`'s numbering gain 25 lines, since they are wrong against
     today's file. Those in today's numbering, and those by name, already match it.
 
-**Under either option,** two corrections are made:
+**Under either option,** two corrections are made in S0's change. Under (a) S0 makes them false
+by deleting the file they describe. Under (b) they fix text that was already false, so they are
+named corrections, not hits S0 makes false:
 - `src/evaluation/measurement.py:1112-1113` cites `evaluate_model.py:285, 366`, which match no
   version of the file. The `compute_all` call is at `:318` at `7dab728`.
 - `src/inference/scoring.py:4-7`, `tests/unit/test_scoring_primitives.py:10-11` and
