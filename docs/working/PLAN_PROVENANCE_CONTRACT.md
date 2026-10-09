@@ -84,9 +84,10 @@ Being unable to verify the pairing is reason enough.
    - A digest that a record states as an input, or that a check compares, is taken from the
      same buffer the step parsed. Hashing the path again at another moment identifies whatever
      the path holds by then, not what was read (§4, M2.1).
-   - This applies to the inputs a step parses. A file a step does not parse may be identified,
-     without being recorded, by one refusing check against the step's manifest reading (§4,
-     M2.1 decision 1; the owner, 2026-10-09).
+   - This applies to the inputs a step parses. `kg.json`, where a step does not parse it, may
+     be identified, without being recorded, by one refusing check against the step's manifest
+     reading (§4, M2.1 decision 1; the owner, 2026-10-09). This is not a verification API for
+     consumers that parse their inputs.
 2. **Each producer records, in the record it already writes:**
    - the inputs it consumed, by role and digest;
    - the parameters actually in effect: resolved, not requested. A request that did not take
@@ -687,10 +688,12 @@ each moves its callers before anything is removed.
    - **Who depends on `scripts/calibrate_mode_a.py`.**
      - There is no CI. No Makefile target, launcher, deploy script or systemd unit names it.
      - No module under `src/` and no other script imports or runs it.
-     - No runbook or deployment guide instructs running it. The documents that name it are the
-       draft `PLAN_TEST_RESULTS.md:745` and `:766` (a planned flow, dropped below) and
-       `scorer-measurement/README.md:33`, `:54` and `:103-105` (marked SUPERSEDED, or the
-       decision amended below).
+     - No runbook or deployment guide instructs running it. The documents that name it:
+       - as a planned flow, the draft `PLAN_TEST_RESULTS.md:745` and `:766` (dropped below);
+       - `scorer-measurement/README.md:33` (marked SUPERSEDED), `:53-55` (present tense, updated
+         below) and `:103-105` (the decision amended below);
+       - as history, `PLAN_B03.md:23`, `:103` and `PLAN_CONFIGURABILITY_AND_PROVENANCE.md:235`;
+       - BACKLOG 7a, 19.19 and §5.0's file table.
      - Only its own tests import it:
        - `tests/integration/test_seeding_bootstrap.py`;
        - in `tests/integration/test_legacy_equivalence.py`: the launcher fixture (`:41-73`); the
@@ -747,10 +750,13 @@ each moves its callers before anything is removed.
      - **the deletion gate gains one exception,** in BACKLOG §5 ("Item 9 waits for everything"),
        in `scorer-measurement/README.md:78-79` and its removal order's step 5 (`:122`), and in
        item 9's row. The exception: the oracle-parity tests in `test_legacy_equivalence.py`,
-       which are oracle-only (`README.md:95-97`), go with the launcher before 1d's institutional
-       run. They check the frozen-evaluator parity that §3.1.2 retired as an acceptance, the
-       launcher could not run them on any real checkpoint, and the adopted acceptance, the
-       differential calibration, is untouched;
+       which the README counts as oracle-only (`:95-97`), go with the launcher before 1d's
+       institutional run. They check the frozen-evaluator parity that §3.1.2 retired as an
+       acceptance, the launcher could not run them on any real checkpoint, and the adopted
+       acceptance, the differential calibration, is untouched;
+     - `scorer-measurement/README.md:95-97` stops listing `test_legacy_equivalence.py` as a
+       whole: after S0 its remaining tests are the `measure_scorer` ladder, Mode C and `--split`
+       tests, not oracle parity, so step 8 does not delete them;
      - BACKLOG §5.0's file table drops the launcher.
    - **Item 7a's entry point is recorded as a backlog item.** Its runner is new code built on
      `compare_trainer_against_mode_a`. It records, beside its result, the digests of the bytes it
@@ -788,7 +794,7 @@ each moves its callers before anything is removed.
    - `verify_graph_artifacts` keeps returning the manifest-bound map for all four graph roles, as
      it does today (`artifacts.py:138`). That is the opening for M2.2's `kg` and M2.4's
      comparison.
-   - **The `kg.json` identification check** (decision 1) is one narrow helper. It hashes the
+   - **The `kg.json` identification check** (M2.1 decision 1) is one narrow helper. It hashes the
      file and compares it with the run's one `ManifestRead`; it never reads the manifest itself.
      It is used only before runs that do not parse `kg.json`, and it is not offered as a second
      verification API to consumers that parse their inputs.
@@ -802,7 +808,7 @@ each moves its callers before anything is removed.
      (`src/inference/pipeline.py:532`).
    - **The model is built from the final read.** `read_checkpoint`'s parsed object and digest are
      what the build uses and what M2.4 will check, never the data from a selection scan
-     (decision 4).
+     (M2.1 decision 4).
    - `_load_graph_data` (`src/inference/pipeline.py:609-655`) is deleted, collapsing onto
      `file_storage`, and so is the reader copy in `scripts/test_gnn_inference.py:170-182`.
    - **Callers that build the graph apart from its identity move to `read_json`:**
@@ -838,19 +844,20 @@ each moves its callers before anything is removed.
      - then one read each of: the manifest; the graph tensors; the cohort's samples (default
        fields); for a generated cohort, the other generated split's samples, for its binding and
        the disjointness check; and the checkpoint;
-     - then verification from those reads, with the `kg.json` identification check (decision 1).
+     - then verification from those reads, with the `kg.json` identification check (M2.1
+       decision 1).
    - **One digest map** feeds every mode's manifest, replacing the per-mode `artifact_digests`
      (`measure_scorer.py:102-155`). The verifier's bound map is kept instead of discarded
-     (`:128`). The manifest's `kg` role is the manifest-bound source graph (decision 2).
+     (`:128`). The manifest's `kg` role is the manifest-bound source graph (M2.1 decision 2).
    - **Mode A uses the run's single read.**
      - `load_legacy_mode_a_inputs` is deleted, and its docstring (`:205-208`) with it. It
        already delegates to `file_storage` (`:225-227`), so Mode A reads the same files.
      - `build_legacy_mode_a_model` takes the checkpoint dict from that read instead of loading
        the path (`:248`). Its behaviour is otherwise unchanged. It remains item 9's oracle-only
        surface (BACKLOG item 19), and it still cannot run on a pipeline checkpoint.
-     - Two statements that tie these functions' lifecycle to the frozen evaluator are corrected
-       to name item 9: `src/kg/storage/__init__.py:35-37` ("until both are deleted together"),
-       and `build_legacy_mode_a_model`'s "It retires with scripts/evaluate_model.py" (`:240`).
+     - `build_legacy_mode_a_model`'s "It retires with scripts/evaluate_model.py" (`:240`) is
+       corrected to name item 9. The paragraph in `src/kg/storage/__init__.py:35-37` that exempts
+       `load_legacy_mode_a_inputs` is removed with the function.
      - The test that proves a C-only run never reaches the loader is rewritten to prove it never
        builds Mode A's model.
    - **What runs where:** on the designated checkpoint only Mode C runs, and only Mode C is bound,
@@ -859,7 +866,7 @@ each moves its callers before anything is removed.
 8. **S8 — training.**
    - **Before the run directories, `config.yaml` and `runtime.json`:** one read of the manifest,
      the graph tensors and both sample files (`training_fields=True`), then verification from
-     those reads, with the `kg.json` identification check (decision 1). `with_validation` is
+     those reads, with the `kg.json` identification check (M2.1 decision 1). `with_validation` is
      computed there from the parsed validation samples, which is the opening for M2.3.
    - `load_graph_data` and `load_samples` (`train_model.py:398-470`) are deleted, collapsing onto
      `file_storage`.
@@ -888,8 +895,8 @@ each moves its callers before anything is removed.
      - the SP producer's end-of-run comparison (`compute_shortest_paths.py:472-479`), a warning
        that records nothing;
      - `find_checkpoint` and the evaluation ledger (BACKLOG items 18 and 19);
-     - the selection-time checkpoint reads (decision 4; BACKLOG item 19);
-     - the `kg.json` identification helper (decision 1);
+     - the selection-time checkpoint reads (M2.1 decision 4; BACKLOG item 19);
+     - the `kg.json` identification helper (M2.1 decision 1);
      - the provenance status readers, which M3b moves onto M2.1's reads: `artifacts.py:278` and
        `:291`, and `src/kg/provenance.py:381`, which hashes the record before `:398` parses it
        through `:275`;
@@ -1003,8 +1010,9 @@ each moves its callers before anything is removed.
       training and measurement, after its identification check), the run uses and records A;
     - fired after one of the two has been read and before the other, it is refused;
     - fired before either is read, the run reads and records B. At serving, where the workspace
-      holds an SP pair, a `kg.json` republished this way is also refused by the sidecar's
-      `kg_digest` (`src/inference/pipeline.py:787-790`), unless the pair is republished with it;
+      holds an SP pair whose sidecar records its graph, a `kg.json` republished this way is also
+      refused by the sidecar's `kg_digest` (`src/inference/pipeline.py:788-790`), unless the
+      pair is republished with it;
     - at serving, the API reads `kg.json` before the pipeline reads the manifest, so a `kg.json`
       republish between those two reads is refused ("is not the graph").
 - **A replacement after the manifest read is refused (item 2).** The double fires on the
@@ -1047,8 +1055,9 @@ request, as M1 did.
    computes from the tensors, never from a graph object. The stated exceptions above, M2.3,
    M2.4 and §5.1 are updated to say so, and the role is never presented as a graph that
    measurement read.
-3. **The calibration launcher is removed (S0).** The owner asked first whether it was worth
-   keeping, and the check found no necessary user. The question of its digest bracket lapses with
+3. **The calibration launcher: by the owner's rule, it is removed if nothing necessary uses it**
+   (migrated minimally only if it must stay; no dead islands). S0's check found no necessary user;
+   that finding awaits the reviewer's re-review. The question of its digest bracket lapses with
    it.
 4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
    - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
@@ -1079,10 +1088,10 @@ removes its only runner.**
   - comments that cite its lines as the source of semantics Mode A keeps
     (`src/evaluation/measurement.py:157`, `:166`, `:249-251`, `:702`, `:1112-1113`;
     `tests/fixtures/synthetic_workspace.py:109`; `tests/unit/test_measurement_mode_a.py:546`;
-    `measure_scorer.py:203`, `:234`);
-  - docstrings that tie other code's lifecycle to it: `measure_scorer.py:5-6` and `:240`;
-    `src/evaluation/measurement.py:179-181`; `src/kg/storage/__init__.py:35-37`, which S7
-    corrects either way.
+    `measure_scorer.py:234`);
+  - docstrings that tie other code's lifecycle to it: `measure_scorer.py:5-6` and
+    `src/evaluation/measurement.py:179-181`. (`measure_scorer.py:240` and
+    `src/kg/storage/__init__.py:35-37` are corrected or removed by S7 either way.)
 - **(a) Remove it and its pin test with S0.**
   - The gate exists so the harness is never left without an acceptance. Without the launcher this
     file accepts nothing, so the gate's reason no longer applies to it.
@@ -1097,11 +1106,14 @@ removes its only runner.**
     fixtures: `build_legacy_mode_a_model` and the parity assertions in
     `test_measurement_mode_a.py`.
 - **(b) Keep it until item 9's last step,** as a pinned historical file.
-  - Under the owner's rule this needs a necessary user, or a stated purpose, and a removal
-    condition, written beside it; "it might be used later" is not one.
+  - Under the owner's rule this needs a necessary user, named with its use and removal
+    condition beside it; "it might be used later" is not one. Without one, (b) keeps the dead
+    island S0 removes.
   - After S0 it is no longer the artefact Mode A is calibrated against. So
     `EVALUATION_COHORTS.md:975`, BACKLOG 11i and `tests/unit/test_frozen_evaluator.py:1-15` and
-    `:38-40` are reworded to "a pinned historical file nothing runs".
+    `:38-40` are reworded to "a pinned historical file nothing runs", and
+    `src/evaluation/measurement.py:179-181` ("checked against the frozen oracle") stops saying
+    so.
 
 **Recommended: (a).** Its only remaining purpose is to be a reference for semantics git history
 already holds. By the owner's rule, and the reviewer's "not because it might be used later", that
