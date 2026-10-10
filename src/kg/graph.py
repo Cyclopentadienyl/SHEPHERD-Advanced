@@ -24,7 +24,9 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, TYPE_CHECKING
+from typing import (
+    Any, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple, Union, TYPE_CHECKING,
+)
 
 import networkx as nx
 import numpy as np
@@ -39,6 +41,7 @@ from src.core.types import (
 )
 from src.core.schema import KnowledgeGraphSchema, get_kg_schema
 from src.kg.artifacts import GRAPH_ARTIFACTS
+from src.utils.fingerprint import ReadIdentity
 
 if TYPE_CHECKING:
     pass
@@ -812,9 +815,39 @@ class KnowledgeGraph:
         )
 
     @classmethod
+    def read_json(cls, filepath: Union[str, Path]) -> "GraphRead":
+        """Load the graph from one read of `filepath`, with that read's identity.
+
+        **The graph and the digest come from the same bytes** (contract M2.1).
+        Hashing the path and then loading it reads the file twice, so a file
+        replaced in between is traversed as one graph and recorded as another.
+
+        The bytes are decoded as UTF-8, as `save_json` writes them, and released
+        before they are parsed; the decoded text is released before the graph is
+        built. So at most two copies of the file coexist, and only while it is
+        decoded.
+
+        Raises:
+            FileNotFoundError: if there is no file at `filepath`.
+        """
+        from src.utils.fingerprint import read_once
+
+        read = read_once(filepath)
+        identity = read.identity
+        text = read.data.decode("utf-8")
+        del read
+        data = json.loads(text)
+        del text
+        return GraphRead(cls._from_json_data(data, filepath), identity)
+
+    @classmethod
     def load_json(cls, filepath: str) -> "KnowledgeGraph":
         """
         Load knowledge graph from JSON file.
+
+        For a caller that records nothing about the file. One that records or
+        checks which graph it used takes `read_json`'s identity instead of
+        hashing the path again.
 
         Args:
             filepath: Input file path (.json)
@@ -822,10 +855,14 @@ class KnowledgeGraph:
         Returns:
             Reconstructed KnowledgeGraph instance
         """
-        from src.core.types import Species
+        return cls.read_json(filepath).kg
 
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    @classmethod
+    def _from_json_data(
+        cls, data: Dict[str, Any], filepath: Union[str, Path]
+    ) -> "KnowledgeGraph":
+        """Build the graph from `save_json`'s parsed format."""
+        from src.core.types import Species
 
         kg = cls()
 
@@ -876,3 +913,14 @@ class KnowledgeGraph:
 
     def __repr__(self) -> str:
         return f"KnowledgeGraph(nodes={self.total_nodes}, edges={self.total_edges})"
+
+
+class GraphRead(NamedTuple):
+    """A graph and the identity of the bytes it was parsed from, together.
+
+    One object rather than two arguments, so a caller cannot pair an in-memory
+    graph with another file's identity.
+    """
+
+    kg: KnowledgeGraph
+    identity: ReadIdentity

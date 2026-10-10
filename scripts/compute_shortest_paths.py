@@ -448,33 +448,33 @@ def main() -> int:
         logger.error(f"max_hops must be in [1, 127], got {args.max_hops}")
         return 1
 
-    # **Taken before the read, and this is the one that is recorded.** The
-    # digest names the input this run was given. Re-hashing at the end and
-    # recording *that* would record whatever is at the path now and call it the
-    # input, which is the failure the binding exists to prevent, reached from
-    # the other direction.
+    # **The digest of the bytes traversed, from the one read that parsed them**
+    # (contract M2.1). Hashing the path and then loading it read the file twice,
+    # so a file replaced in between was traversed as one graph and recorded as
+    # another. Re-hashing at the end and recording *that* would record whatever
+    # is at the path now and call it the input, which is the same failure
+    # reached from the other direction.
     from src.utils.fingerprint import file_sha256
 
-    kg_digest = file_sha256(args.kg_path)
-
     logger.info(f"Loading KG from {args.kg_path}...")
-    kg = KnowledgeGraph.load_json(str(args.kg_path))
+    kg, kg_read = KnowledgeGraph.read_json(args.kg_path)
+    kg_digest = kg_read.sha256
     logger.info(f"Loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
     sp_data = compute_shortest_paths(kg, max_hops=args.max_hops, workers=args.workers)
 
-    # **A comparison, not a lock.** The BFS runs for hours at deployment scale
-    # and nothing holds the source file still. This catches a file that differs
-    # at the end from the beginning; it cannot see a change made and reverted in
-    # between. The recorded digest does not change — an operator is told that
-    # the snapshot assumption was visibly broken, and the artifact still says
-    # which bytes it was given.
+    # **A comparison, not a lock, and it records nothing.** The BFS runs for
+    # hours at deployment scale and nothing holds the source file still. This
+    # catches a file that differs at the end from the bytes read; it cannot see
+    # a change made and reverted in between. The recorded digest does not change
+    # — an operator is told the file at that path is no longer the graph these
+    # distances describe, and the artifact still names the bytes traversed.
     if file_sha256(args.kg_path) != kg_digest:
         logger.warning(
             "%s changed while the shortest paths were being computed. The "
-            "recorded kg_digest is the one read before the traversal, which is "
-            "the graph these distances describe; the file at that path is now a "
-            "different one. Recompute if that was not deliberate.",
+            "recorded kg_digest is that of the bytes read and traversed, which "
+            "is the graph these distances describe; the file at that path is "
+            "now a different one. Recompute if that was not deliberate.",
             args.kg_path,
         )
 

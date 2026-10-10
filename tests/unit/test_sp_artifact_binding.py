@@ -741,6 +741,88 @@ class TestTheDigestRecordedIsTheOneReadAtLoad:
         assert not any("changed while" in r.message for r in caplog.records)
 
 
+class TestTheGraphTraversedIsTheGraphRecorded:
+    """**One read of `kg.json` gives both the graph and the digest** (contract
+    M2.1, S3).
+
+    The producer hashed the path and then loaded it, so a file replaced between
+    the two was traversed as one graph and recorded as another. It now records
+    the digest of the bytes it parsed. Replacing the file after that read, by
+    either kind of replacement, leaves the run on what it read: the graph
+    traversed and the digest recorded are both the original's, and the
+    end-of-run comparison tells the operator the file moved.
+    """
+
+    @staticmethod
+    def _run(module, monkeypatch, kg_path, out_dir, traverse):
+        monkeypatch.setattr(module, "compute_shortest_paths", traverse)
+        monkeypatch.setattr(
+            sys, "argv",
+            ["compute_shortest_paths.py", "--kg-path", str(kg_path),
+             "--output-dir", str(out_dir), "--max-hops", "5"],
+        )
+        return module.main()
+
+    @pytest.mark.parametrize("how", ["rename", "rewrite"])
+    def test_a_replacement_after_the_read_leaves_the_run_on_what_it_read(
+        self, tmp_path, monkeypatch, caplog, how
+    ):
+        import hashlib
+
+        from scripts.setup_demo import build_demo_kg
+        from src.core.types import DataSource, Node, NodeID, NodeType
+        from tests.fixtures.replacement import replace_after_read
+
+        module = producer()
+        kg_path = tmp_path / "kg.json"
+        original = build_demo_kg()
+        original.save_json(str(kg_path))
+        read_bytes = kg_path.read_bytes()
+        other = build_demo_kg()
+        other.add_node(Node(id=NodeID(source=DataSource.MONDO, local_id="MONDO:other"),
+                            node_type=NodeType.DISEASE, name="other"))
+        other.save_json(str(tmp_path / "other.json"))
+        record = replace_after_read(
+            monkeypatch, after=kg_path, target=kg_path,
+            data=(tmp_path / "other.json").read_bytes(), how=how,
+        )
+        traversed = []
+
+        def traverse(kg, max_hops=5, workers=None):
+            traversed.append(kg.total_nodes)
+            return rows()
+
+        with caplog.at_level("WARNING"):
+            assert self._run(module, monkeypatch, kg_path, tmp_path, traverse) == 0
+
+        recorded = json.loads((tmp_path / "shortest_paths.meta.json").read_text())
+        assert record.fired == 1
+        assert traversed == [original.total_nodes] != [other.total_nodes]
+        assert recorded["kg_digest"] == hashlib.sha256(read_bytes).hexdigest()
+        assert recorded["kg_total_nodes"] == original.total_nodes
+        assert any("changed while the shortest paths" in r.message for r in caplog.records)
+
+    def test_the_graph_is_read_once_before_the_traversal(self, tmp_path, monkeypatch):
+        """The end-of-run comparison opens it again, after; the parse and the
+        recorded digest share one open."""
+        from scripts.setup_demo import build_demo_kg
+        from tests.fixtures.opens import count_opens
+
+        module = producer()
+        kg_path = tmp_path / "kg.json"
+        build_demo_kg().save_json(str(kg_path))
+        opens_at_traversal = []
+
+        with count_opens() as opens:
+            def traverse(kg, max_hops=5, workers=None):
+                opens_at_traversal.append(opens.opens(kg_path))
+                return rows()
+
+            assert self._run(module, monkeypatch, kg_path, tmp_path, traverse) == 0
+
+        assert opens_at_traversal == [1]
+
+
 class TestItReachesTheServiceResponse:
     """**A field added to the pipeline's dict is not a field in the response.**
 
