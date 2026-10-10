@@ -198,7 +198,7 @@ def test_the_manifest_reads_the_hop_count_rather_than_repeating_it(workspace, mo
         checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=3, num_workers=0, seed=DEFAULT_MEASUREMENT_SEED,
     )
-    graph_data = read_graph_artifacts(data_dir)
+    graph_data = read_graph_artifacts(data_dir).graph_data
     build = lambda: build_manifest(  # noqa: E731 - one expression, twice
         args, graph_data, 6, torch.device("cpu"), build_loader_config(args)
     )
@@ -260,8 +260,8 @@ def test_a_manifest_recording_a_different_regime_is_refused(workspace):
 
     _, data_dir, checkpoint = workspace
     device = torch.device("cpu")
-    graph_data = read_graph_artifacts(data_dir)
-    samples = read_samples(data_dir, "test")
+    graph_data = read_graph_artifacts(data_dir).graph_data
+    samples = read_samples(data_dir, "test").samples
     model = build_legacy_mode_a_model(checkpoint, device)
     args = argparse.Namespace(
         checkpoint=checkpoint, data_dir=data_dir, split="test", cohort_kind="supplied",

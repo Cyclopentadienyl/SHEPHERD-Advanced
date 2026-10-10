@@ -223,7 +223,7 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
     """
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
-    return read_graph_artifacts(data_dir), read_samples(data_dir, split)
+    return read_graph_artifacts(data_dir).graph_data, read_samples(data_dir, split).samples
 
 
 def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> Any:
@@ -576,8 +576,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if wants_legacy:
         graph_data, samples = load_legacy_mode_a_inputs(args.data_dir, args.split)
     else:
-        graph_data = read_graph_artifacts(args.data_dir)
-        samples = read_samples(args.data_dir, args.split)
+        graph_data = read_graph_artifacts(args.data_dir).graph_data
+        samples = read_samples(args.data_dir, args.split).samples
 
     legacy_model = build_legacy_mode_a_model(args.checkpoint, device) if wants_legacy else None
 

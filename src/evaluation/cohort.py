@@ -36,7 +36,6 @@ Module: src/evaluation/cohort.py
 """
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
@@ -47,7 +46,7 @@ from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
 from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
     MANIFEST_FILENAME,
-    require_manifest_schema,
+    read_split_manifest,
     verify_graph_artifacts,
 )
 
@@ -271,10 +270,8 @@ def verify_generated_cohorts(
             f"got {scope!r}"
         )
     cohorts = {split: resolve_cohort(data_dir, split) for split in scope}
-    manifest_path = data_dir / MANIFEST_FILENAME
-    manifest = json.loads(manifest_path.read_text())
-
-    require_manifest_schema(manifest, manifest_path)
+    manifest_read = read_split_manifest(data_dir)
+    manifest, manifest_path = manifest_read.manifest, manifest_read.identity.path
 
     artifacts = manifest.get("artifacts", {})
     realised = manifest.get("realised", {})
@@ -291,7 +288,9 @@ def verify_generated_cohorts(
                 "samples were replaced after the manifest was written, or the "
                 "manifest came from another workspace."
             )
-        ids = frozenset(int(sample.disease_id) for sample in read_samples(data_dir, split))
+        ids = frozenset(
+            int(sample.disease_id) for sample in read_samples(data_dir, split).samples
+        )
         disease_sets[split] = ids
         if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
             raise ValueError(

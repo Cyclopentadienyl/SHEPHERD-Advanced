@@ -506,7 +506,7 @@ def build_report(
     for split in ("train", "val"):
         cohorts[split] = [
             {"phenotype_ids": list(s.phenotype_ids), "disease_id": int(s.disease_id)}
-            for s in read_samples(data_dir, split)
+            for s in read_samples(data_dir, split).samples
         ]
         if not cohorts[split]:
             raise SystemExit(

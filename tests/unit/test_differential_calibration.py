@@ -88,8 +88,8 @@ def build_cohort(
     )
     assert_candidate_universe_is_stable(data_dir, "test", config=loader_config)
 
-    graph_data = read_graph_artifacts(data_dir)
-    samples = read_samples(data_dir, "test")
+    graph_data = read_graph_artifacts(data_dir).graph_data
+    samples = read_samples(data_dir, "test").samples
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model = build_shepherd_model(checkpoint, graph_data, device=device)
 

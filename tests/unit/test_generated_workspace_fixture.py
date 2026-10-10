@@ -33,7 +33,7 @@ def test_the_graph_files_load_through_the_production_readers(tmp_path):
     root, _ = _workspace(tmp_path / "ws")
 
     kg = KnowledgeGraph.load_json(str(root / "kg.json"))
-    graph = read_graph_artifacts(root)
+    graph = read_graph_artifacts(root).graph_data
 
     assert kg.total_nodes == sum(graph["num_nodes_dict"].values())
     assert set(graph["x_dict"]) == set(graph["num_nodes_dict"])

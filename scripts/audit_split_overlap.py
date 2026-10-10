@@ -95,7 +95,7 @@ def disease_ids(data_dir: Path, split: str) -> List[int]:
     """
     from src.kg.storage.file_storage import read_samples
 
-    return [int(sample.disease_id) for sample in read_samples(data_dir, split)]
+    return [int(sample.disease_id) for sample in read_samples(data_dir, split).samples]
 
 
 #: Bumped when this report's shape changes. Version 1 is the unversioned shape

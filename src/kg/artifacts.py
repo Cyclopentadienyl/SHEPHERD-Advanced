@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, NamedTuple, Tuple
+
+from src.utils.fingerprint import ReadIdentity
 
 #: Manifest role → filename, for the artifacts a graph consumer reads.
 #:
@@ -53,6 +55,57 @@ MANIFEST_FILENAME = "split_manifest.json"
 #: every graph consumer imports, down to the clinical inference pipeline — does
 #: not have to reach up into the generator to know what schema it is reading.
 SPLIT_MANIFEST_SCHEMA_VERSION = 3
+
+_REBUILD = "Rebuild it with scripts/build_knowledge_graph.py --generate-samples."
+
+
+class ManifestRead(NamedTuple):
+    """A split manifest as parsed, and the identity of the bytes it was parsed from.
+
+    A run reads its manifest once and compares every file's digest with this one
+    reading (contract M2.1), so a file replaced between two reads shows up as a
+    mismatch instead of being checked against a second, newer manifest.
+    """
+
+    manifest: Dict[str, Any]
+    identity: ReadIdentity
+
+
+def read_split_manifest(data_dir: Path) -> ManifestRead:
+    """Read `split_manifest.json` once, and refuse one this revision cannot read.
+
+    The refusals are the ones each verifier made when it parsed the manifest
+    itself: an absent manifest, a schema other than the current one, and a
+    missing or malformed export recipe. A file that is not UTF-8 JSON, or not a
+    JSON object, is refused naming the file; it used to surface as a bare
+    decoding or attribute error.
+
+    Decoded as UTF-8, as the generator writes it; the bytes are released before
+    the text is parsed.
+    """
+    from src.utils.fingerprint import read_once
+
+    manifest_path = data_dir / MANIFEST_FILENAME
+    if not manifest_path.is_file():
+        raise ValueError(
+            f"{data_dir} has no {MANIFEST_FILENAME}, so nothing records which "
+            f"graph export its artifacts are. {_REBUILD}"
+        )
+    read = read_once(manifest_path)
+    identity = read.identity
+    try:
+        text = read.data.decode("utf-8")
+        del read
+        manifest = json.loads(text)
+    except ValueError as exc:
+        raise ValueError(f"{manifest_path} is not UTF-8 JSON ({exc}). {_REBUILD}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError(
+            f"{manifest_path} is not a JSON object, so it records nothing this "
+            f"revision can read. {_REBUILD}"
+        )
+    require_manifest_schema(manifest, manifest_path)
+    return ManifestRead(manifest, identity)
 
 
 def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
@@ -90,16 +143,9 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
     """
     from src.utils.fingerprint import file_sha256
 
-    manifest_path = data_dir / MANIFEST_FILENAME
-    if not manifest_path.is_file():
-        raise ValueError(
-            f"{data_dir} has no {MANIFEST_FILENAME}, so nothing records which "
-            "graph export its artifacts are. Rebuild it with "
-            "scripts/build_knowledge_graph.py --generate-samples."
-        )
-    manifest = json.loads(manifest_path.read_text())
-    require_manifest_schema(manifest, manifest_path)
-    artifacts = manifest.get("artifacts", {})
+    manifest_read = read_split_manifest(data_dir)
+    manifest_path = manifest_read.identity.path
+    artifacts = manifest_read.manifest.get("artifacts", {})
 
     observed: Dict[str, str] = {}
     for role, filename in GRAPH_ARTIFACTS.items():
@@ -400,6 +446,8 @@ __all__ = [
     "MANIFEST_FILENAME",
     "SPLIT_MANIFEST_SCHEMA_VERSION",
     "GRAPH_EXPORT_REQUIRED",
+    "ManifestRead",
+    "read_split_manifest",
     "validate_graph_export_recipe",
     "require_graph_export_recipe",
     "require_manifest_schema",
