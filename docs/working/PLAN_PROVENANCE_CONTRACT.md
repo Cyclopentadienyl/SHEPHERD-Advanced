@@ -1049,6 +1049,11 @@ each moves its callers before anything is removed.
      - the `load_json` stubs (`tests/unit/test_pipeline_fails_closed.py:309`,
        `tests/unit/test_hop_bound_reaches_the_service.py:75`) are replaced by the real reader.
 7. **S7 — measurement.**
+   - **Mode A/B-specific items deferred (owner, 2026-10-10)** pending the Mode A/B retirement
+     assessment (`scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`, §1.3): "Mode A uses the
+     run's single read", the C-only test's rewrite around Mode A, and "Modes A and B keep their
+     shared-read regression tests". No A/B-specific compatibility design is added meanwhile. The
+     mode-agnostic items stand.
    - **Before any model is built or output written:**
      - `resolve_cohort` first;
      - then one read each of: the manifest; the graph tensors; the cohort's samples (default
