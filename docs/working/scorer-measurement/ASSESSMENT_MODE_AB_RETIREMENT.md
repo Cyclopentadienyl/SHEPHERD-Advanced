@@ -20,7 +20,9 @@ completeness critic that re-checked about 60 citations
 listed what they missed. The first committed draft (`a0b1ff4`) was then checked claim by claim by
 independent verifiers; the 43 corrections they confirmed are applied in this revision, and the one
 point on which two of them disagreed (whether the wide-cohort truncation test moves, §6.1) was
-settled by a further in-memory mutation run.
+settled by a further in-memory mutation run. A last consistency and citation check of that
+revision found 18 more, mostly places where the conditional framing had not been carried through
+and bare line numbers that pointed at the wrong file; they are applied too.
 
 ---
 
@@ -79,12 +81,15 @@ R2 narrows the sentence to say that (§2.10).
   docstring in `scripts/audit_split_overlap.py`, the test infrastructure, and docs: status lines,
   the plan's record of S1–S5 as implemented (its "As implemented" notes under S1 and S5),
   `task-scope/README.md` F6, a `PLAN_B04_PRODUCTIONISATION.md` citation, the `BACKLOG.md` row 15
-  status and the plan's `docs/README.md` index entry. **None of them is A/B-specific.** Four files this
+  status and the plan's `docs/README.md` index entry. **None of them is A/B-specific.** Six files this
   assessment cites had lines moved: `src/evaluation/cohort.py` (after `:59`, by +1: an added
-  `manifest_section` import, so the cited `:296` is `:297` at `6f16373`),
-  `tests/unit/test_measurement_mode_a.py` (after `:837`, by −1: the measurement-roles fixture
-  stopped writing placeholder tensors), `tests/unit/test_graph_artifact_binding.py` (after `:174`,
-  by +1) and `docs/working/PLAN_PROVENANCE_CONTRACT.md` (from `:10` on). Citations here stay at
+  `manifest_section` import, so the cited `:296` and `:343` are `:297` and `:344` at `6f16373`),
+  `src/kg/storage/__init__.py` (after `:7`, by +2: the rewritten package summary, so the cited
+  `:34-37` is `:36-39`), `scripts/audit_split_overlap.py` (within `:86-94`, by +1: the reworded
+  `read_samples` docstring, so the cited `:98` is `:99`), `tests/unit/test_measurement_mode_a.py`
+  (after `:837`, by −1: the measurement-roles fixture stopped writing placeholder tensors),
+  `tests/unit/test_graph_artifact_binding.py` (after `:174`, by +1) and
+  `docs/working/PLAN_PROVENANCE_CONTRACT.md` (from `:10` on). Citations here stay at
   `f581f9e`.
 
 ### 1.2 What in the committed S1–S5 serves only A/B
@@ -148,14 +153,14 @@ stays, with A-only wording or parameters removed); **Owner** (needs a decision i
 | `_assert_same_cohort` | `:496-519`, called `:659-660` only when A and C both ran | `main` | None: Mode C's own integrity check is `_assert_cohort_is_intact` inside `run_mode_c` (`measurement.py:1324-1330`) | `test_legacy_equivalence.py:304-334` | **Retire** |
 | `--predictions-output` and the legacy-shaped predictions file | flag `:407-411`; written `:683-691` only when A ran | none in code; its own docstring: "nothing diffs it against them now" (`measurement.py:707-708`) | None | `test_legacy_equivalence.py:96-121`, `:174`, `:235`, `:301`; `test_measurement_mode_a.py:548-581` | **Retire** |
 | `subgraph_candidate_construction` | `:267-284` | `build_manifest` default `:351`; A/B labels `:628`, `:632` | None for C, which passes "every disease in the knowledge graph" (`:647`) | `test_measurement_mode_a.py:180-217` | **Retire** |
-| `--num-workers` (as semantics) | `:415-426` | dataloader of A/B; recorded in every manifest | None for C, which has no dataloader (`measurement.py:1241-1245`; the script builds one only when A runs, `:615-620`), so the worker count does not change what it computes (`PLAN_TEST_RESULTS.md:487-488`) | ledger field (`sidecar.py:89`); `build_loader_config` reads it (`:300`) for every manifest, Mode C's included | **Retire** the option; the manifest field is §8 item 5 |
+| `--num-workers` (as semantics) | `:415-426` | dataloader of A/B; recorded in every manifest | None for C, which has no dataloader (`measurement.py:1241-1245`; the script builds one only when A runs, `measure_scorer.py:615-620`), so the worker count does not change what it computes (`PLAN_TEST_RESULTS.md:487-488`) | ledger field (`sidecar.py:89`); `build_loader_config` reads it (`measure_scorer.py:300`) for every manifest, Mode C's included | **Retire** the option; the manifest field is §8 item 5 |
 | `build_loader_config` | `:287-301` | `main` `:585` (every manifest, through `manifest_for` `:587-593`, which fills `build_manifest` `:355-363`; A/B's dataloader `:618-620`); the Mode C `world` fixture (`test_measurement_modes_bc.py:51`, `:67`) | Live only as the source of the loader and sampler fields in Mode C's manifest; reads `args.num_workers` | Removing `--num-workers` without changing it breaks every C run | **Owner, with §8 item 5**: if the loader and sampler fields go, delete it and record `batch_size` from `args`; if they stay, say what `num_workers` records once the option is gone. Lands in the same step as the option's removal (R2), not R3 |
 | Multi-mode output naming and the per-mode console block | `:662`, `:672-677` (`primary = … else "A"`, `_mode{X}.json`), `:696` (the `legacy_metrics` getattr), `:699-701` ("candidate columns per batch") | `main` | None for a C-only run | — | **Retire** the A fallback and the multi-mode naming: one Mode C report and its `_ranks.json` at `--output`; the console prints Mode C's own fields |
 | `--batch-size` | `:412-414` | A's candidate universe; C's chunk size (`measurement.py:1284`) | **Live for C**: moves C's numbers at floating-point level (`PLAN_TEST_RESULTS.md:488-490`) | — | **Keep**; its help text (reason given is A's) is rewritten |
 | `--seed` and its validation | `:431-437`, `:526`, `:544-546` | every mode; recorded as `python_seed`/`numpy_seed`/`torch_seed` (`:392-394`); the ledger refuses a null seed (`src/evaluation/sidecar.py:280-288`) | **None for C's numbers**: C consumes no randomness (`measurement.py:1241-1250`). The ledger's null-seed refusal and the three seed entries in its semantics list (`sidecar.py:90-92`) exist for A/B's worker streams, negatives and candidate universe (`sidecar.py:83-86`, `:267-271`; `measure_scorer.py:69-75`, `:528-535`) | the ledger's null-seed refusal; seed tests `test_measurement_mode_a.py:679`, `:689`, `:700`, `:708`, `:805` | **Owner** (§8 item 5): retire it with the A/B manifest fields and the refusal, or keep it with a stated Mode C reason (the identity of any future measurement randomness), reviewed at item 14's ledger v2 |
 | `_resolve_device` (the CUDA gate) | `:157-188` | every mode | **Live**: the formal Test runs on CUDA | — | **Keep** |
 | Production build: `torch.load(weights_only=True)`, `build_shepherd_model`, `encode_full_graph` | `:598-612` | Modes B and C; serving builds through `build_shepherd_model` too (`src/inference/pipeline.py:1014`) | **Live (Mode C)** | — | **Keep** (the `:598` guard and the `"B" in modes` guard `:605-606` go) |
-| `build_manifest` | `:304-395` | `main` `:589` (every mode, through `manifest_for` `:587-593`); tests `test_differential_calibration.py:75`, `:104`; `test_measurement_modes_bc.py:52`, `:76`; `test_measurement_mode_a.py:67`, `:202`, `:273`, `:466`, `:499`, `:534`, `:978` | **Live** for C's fields. Its defaults are Mode A's: `mode="A"`, `model_construction="frozen evaluator (legacy)"` (`:307-309`) and A's candidate text (`:350-354`) | callers that rely on the defaults: all seven `test_measurement_mode_a.py` calls and `test_differential_calibration.py:104` take `mode="A"` and the legacy `model_construction`. The `world` fixture (`test_measurement_modes_bc.py:76-85`) overrides only `mode`, `candidate_construction` and `n_samples`, so its Mode C manifests still record `model_construction="frozen evaluator (legacy)"`, unlike the CLI's Mode C (`:646-648`) | **Keep in C form**: no A defaults |
+| `build_manifest` | `:304-395` | `main` `:589` (every mode, through `manifest_for` `:587-593`); tests `test_differential_calibration.py:75`, `:104`; `test_measurement_modes_bc.py:52`, `:76`; `test_measurement_mode_a.py:67`, `:202`, `:273`, `:466`, `:499`, `:534`, `:978` | **Live** for C's fields. Its defaults are Mode A's: `mode="A"`, `model_construction="frozen evaluator (legacy)"` (`:307-309`) and A's candidate text (`:350-354`) | callers that rely on the defaults: all seven `test_measurement_mode_a.py` calls and `test_differential_calibration.py:104` take `mode="A"` and the legacy `model_construction`. The `world` fixture (`test_measurement_modes_bc.py:76-85`) overrides only `mode`, `candidate_construction` and `n_samples`, so its Mode C manifests still record `model_construction="frozen evaluator (legacy)"`, unlike the CLI's Mode C (`measure_scorer.py:646-648`) | **Keep in C form**: no A defaults |
 | `artifact_digests` | `:100-154` | every manifest; the ledger reads its digests (`sidecar.py:289-294`) | **Live (provenance)**. S7 replaces it with one digest map | — | **Keep** (until S7) |
 | Printed ladder lines and the item-7a note | `:703-710`, `:714-716` (the note prints on **every** run, C-only included) | console | None. It ties formal-Test output to an A-only gate in text | — | **Retire** the ladder lines; rewrite the note |
 | Module docstring, parser description "(Mode A)", run example naming no mode | `:2-33`, `:399`, `:19-23` | — | — | The example fails on real checkpoints (it runs A) | Rewrite |
@@ -198,7 +203,7 @@ stays, with A-only wording or parameters removed); **Owner** (needs a decision i
 | `ModeAResult` (`legacy_metrics`, `legacy_top_k_local`, `to_predictions`) | `:676-719` | `run_modes_ab`; `differential.py:102`, `:221`; CLI `:689` | No | **Retire** |
 | `_SamplerEvidence` | `:722-793` | `run_modes_ab` | No (C builds its own dict, `:1337-1349`) | **Retire** |
 | `_score_from_full_graph` and B's two clamps | `:839-879` (`:867`, `:873`) | `run_modes_ab` `:1077` | No | **Retire** |
-| `to_global_ids` | `:65-102` | `_SamplerEvidence` `:762`, `_score_from_full_graph` `:868`, `run_modes_ab` `:1062`, `differential.py:340` | **No**: C's ids are global and its candidates are `arange(D)` (`:1274`) | **Retire.** Two kinds of text name it, and neither is a dependency: the scorer README's "must not need touching" list (`README.md:146-150`), and D3's malformed-truth contract, which names it as the third of three refusal boundaries (`BACKLOG.md:93`, `:174-181`, `:650`; `src/kg/data_loader.py:976-979`; `tests/unit/test_trainer_truth_invariant.py:9-17`; `tests/unit/test_data_pipeline.py:612-622`). Retiring it re-points that boundary rather than losing it: Mode C's truth refusal is `_assert_ids_in_range` (`:1194-1225`, truth check `:1219-1224`, called at `:1286`). §4 has the row |
+| `to_global_ids` | `:65-102` | `_SamplerEvidence` `:762`, `_score_from_full_graph` `:868`, `run_modes_ab` `:1062`, `differential.py:340` | **No**: C's ids are global and its candidates are `arange(D)` (`:1274`) | **Retire.** Two kinds of text name it, and neither is a dependency: the scorer README's "must not need touching" list (`README.md:146-150`), and D3's malformed-truth contract, which names it as the third of three refusal boundaries (`BACKLOG.md:93`, `:174-181`, `:650`; `src/kg/data_loader.py:976-979`; `tests/unit/test_trainer_truth_invariant.py:9-17`; `tests/unit/test_data_pipeline.py:612-622`). Retiring it re-points that boundary rather than losing it: Mode C's truth refusal is `_assert_ids_in_range` (`measurement.py:1194-1225`, truth check `:1220-1225`, called at `:1286`). §4 has the row |
 | `assert_constructions_agree` | `:1148-1191` | CLI `:606`, only when B runs | No | **Retire** |
 | A's padding clamp | `:1046` | A only; it copies the Trainer's clamp (`src/training/trainer.py:795`), which stays | No: C validates and refuses (`:1286`, `:1304-1309`) | **Retire** |
 
@@ -211,11 +216,13 @@ stays, with A-only wording or parameters removed); **Owner** (needs a decision i
 `observe_torch_compile_wrapper` (`:265-346`); `encode_full_graph` (`:813-836`), bound to serving
 by `tests/integration/test_pipeline.py:381-429`; `_assert_cohort_is_intact` (`:882-917`, without
 the `n_legacy_rows` name and the "In Mode A…" message, `:903-909`); `_assert_ids_in_range`
-(`:1194-1225`); `run_mode_c` (`:1228-1353`); `validate_measurement_seed` (`:480-497`); and the
+(`:1194-1225`); `run_mode_c` (`:1228-1353`); and the
 served primitives `masked_mean_pool` and `cosine_score_matrix` (`src/inference/scoring.py:159-232`).
 `src/evaluation/__init__.py` (docstring only, `:1-24`) describes the package around Mode A and is
 rewritten. Several of these kept pieces give Mode A as their written reason; §2.10 lists them, and
-only the wording changes.
+only the wording changes. `validate_measurement_seed` (`:480-497`) is not in this list: Mode C
+does not need it, and it follows the seed decision (§2.1 `--seed` row, §8 item 5), staying with
+`--seed` and the ledger's refusal or retiring with them.
 
 Mode C's `sampler_evidence` (`measurement.py:1337-1349`): `candidate_columns` stays (§7 (a); test
 `test_measurement_modes_bc.py:293`). Its `max_subgraph_nodes: {}` and `negative_sampling` entries
@@ -240,7 +247,7 @@ is reclassified to match.
   (`BACKLOG.md:666`). `DifferentialResult.to_dict` has no writer.
 - **Decisions its result could change today:** none of mode choice, SP policy, Val selection or
   the formal Test. Every gate it holds is about Mode A/B themselves (item 9, 7b, 19.18; §4).
-- **The one live thing it protects, and the gap it would leave.** It is today the **only** test
+- **The one live engineering protection, and the gap it would leave.** It is today the **only** test
   that sees the *values* of the Trainer's validation ranking, which drive `val_mrr`, early
   stopping, checkpoint selection and serving's automatic checkpoint choice
   (`src/utils/checkpoint_paths.py:45-60`). Reversing the sort (`trainer.py:684`), dropping the
@@ -251,8 +258,10 @@ is reclassified to match.
   the served primitives caught a negated score and a dropped normalisation without Mode A; it had
   no padded batch, so it did not test the masked mean.
 - **Proposed: Retire, after its Trainer-value coverage moves to the Trainer's own tests** (§5,
-  §6). With Mode A gone there is one copy, so "two copies agree" has nothing to compare; what
-  remains necessary is that the one copy is right, which is a Trainer test.
+  §6) **and after the institution answers §8 item 7 on the AMP evidence it carries** (under (b),
+  once the Trainer-only CUDA comparison has replaced it). With Mode A gone there is one copy, so
+  "two copies agree" has nothing to compare; what remains necessary is that the one copy is
+  right, which is a Trainer test.
 - **Related:** `Trainer._EvaluationPass.predictions` and `.ground_truths` (`trainer.py:615-633`)
   exist for this comparison; the migrated Trainer test reads them, so they keep a reader. The
   Trainer's behaviour is not changed; only the `_EvaluationPass` docstring (`:623-626`) is
@@ -283,12 +292,12 @@ is reclassified to match.
   (`measure_scorer.py:652`, `measurement.py:1284`), moves C's numbers and stays (§2.1).
   Removing them changes new records' keys, but `software_revision` is already in the digest
   (`sidecar.py:104`), so every commit already gives new keys (`PLAN_TEST_RESULTS.md:492-493`). The
-  extra effect is on two tests. The field-partition test
+  extra effect is on the ledger's tests. The field-partition test
   (`tests/unit/test_evaluation_sidecar.py:159-180`) needs `SEMANTIC_MANIFEST_FIELDS`,
   `NON_SEMANTIC_FIELDS` and `MeasurementManifest` changed together. The `num_workers` and
   `shuffle` rows (`:186-187`) of `test_loader_and_numerical_semantics_change_the_digest`
   (`:183-206`) fail once those fields leave `SEMANTIC_MANIFEST_FIELDS`, because the digest hashes
-  only the named list (`sidecar.py:190-193`); its seed rows (`:188-190`) follow the seed decision.
+  only the named list (`sidecar.py:190-193`); its seed rows (`test_evaluation_sidecar.py:188-190`) follow the seed decision, and so do the ledger's seed tests `:267` and `:277` (§8 item 5).
   The rationales that cite Mode A or worker streams (`test_evaluation_sidecar.py:137-143`,
   `:199-201`, `:277-281`; `sidecar.py:60-64`, `:83-86`) are reworded (§2.10). Item 14's grouping
   already excludes the two `legacy_*` fields "when the oracle's surface retires"
@@ -363,8 +372,8 @@ a full external mode or a bounded test, and what is lost without it.
 | **A→B: encoder scope** (subgraph vs full-graph encoder, same candidates) | How much of the subgraph-vs-full gap comes from the encoder | No named user. It would have informed the choice of Test mode, which is made | **Research only** | A full mode on a checkpoint the current writer produces does not exist (Mode A cannot build one; B requires A) | An attribution number nobody has asked for. Re-derivable from history at a fixed revision if a research item ever names a user and a deliverable |
 | **B→C: candidate scope** (subgraph candidates vs every disease, same encoder) | How much comes from the candidate universe | Same | **Research only** | Same: B needs A | Same |
 | **The ladder as B-0's report** (README `:9-18`) | "Measure before changing the scorer" | Policy Gate 1 needs a "B-0 measurement report" before **B-1** (`DISEASE_SCORER_POLICY.md:285`, `:289`). The policy names no mode, never mentions A, B, calibration, 7a or item 9, and its revisit conditions name only C and E′ (`:316-318`). It does, however, call B-0 "approved for implementation" (`:289`) and refers to "the agreed B-0 scope" (`:318`). That scope is not recorded in the repository. The repository's only definition of B-0 includes Mode A (B-0.2) and Modes B and C (B-0.3) (README `:30-36`), and item 7b, the institutional measurement of B-0.2/B-0.3, is owned by "both" (`BACKLOG.md:667`) | Gate 1 is **institutional** and stays. Whether its agreed scope includes A/B is **unconfirmed; the institution must say**. Dropping A/B would narrow an approved, co-owned work item, which is a proposal to the institution, not an engineering decision | If the agreed scope includes A/B: full modes, and Mode A cannot build any checkpoint the current writer produces (19.18). Otherwise: none | Unknown until the institution confirms its agreed B-0 scope (§8 item 4) |
-| **Differential calibration** (1d / 7a) | Do the Trainer's validation and Mode A's copy agree? | Its only consumers are gates on Mode A itself (§4) | Historical acceptance for a harness being retired | The live part (Trainer ranking values) is a bounded Trainer test (§5) | Nothing live, **once** the Trainer test exists. Without it, the Trainer's ranking values are unprotected |
-| **7a's AMP-on leg** (does fp16 reorder validation?) | Whether CUDA autocast reorders the Trainer's validation ranking | The institution's experimenters own the question ("run it both ways if they wish"; the criterion is theirs, `BACKLOG.md:491-505`); no recorded engineering decision consumes the number | The institution's to decide | If wanted, it is the Trainer with `use_amp` on vs off on CUDA — Mode A is fp32 and equal to the Trainer on CPU, so it adds nothing. The CPU Trainer tests of §5 cannot cover it: `use_amp` is off on CPU (`BACKLOG.md:443-446`, `:465-469`) | The per-sample AMP evidence engineering recorded as already delivered to the institution's experimenters: `DifferentialResult`'s resolved `amp_enabled`/`amp_dtype`, `bit_exact_contract`, the disagreeing-sample count and rate, the affected rows with both rankings, and the MRR gap (`BACKLOG.md:499-505`; `differential.py:79-82`). Whether it is still wanted is the institution's call (§8 item 7) |
+| **Differential calibration** (1d / 7a) | Do the Trainer's validation and Mode A's copy agree? | Its only consumers are gates on Mode A itself (§4) | Historical acceptance for a harness being retired | The live part (Trainer ranking values) is a bounded Trainer test (§5) | Nothing live for engineering, **once** the Trainer test exists; the AMP evidence it carries is the next row's question (§8 item 7). Without the Trainer test, the Trainer's ranking values are unprotected |
+| **7a's AMP-on leg** (does fp16 reorder validation?) | Whether CUDA autocast reorders the Trainer's validation ranking | The institution's experimenters own the question ("run it both ways if they wish"; the criterion is theirs, `BACKLOG.md:491-505`); no recorded engineering decision consumes the number | The institution's to decide | If wanted, it is the Trainer with `use_amp` on vs off on CUDA — Mode A is fp32 and equal to the Trainer on CPU, so it adds nothing. The CPU Trainer tests of §5 cannot cover it: `use_amp` is off on CPU (`BACKLOG.md:443-446`, `:465-469`) | The per-sample AMP evidence that engineering recorded as already in place for the institution's experimenters (no runner has yet produced it on institutional hardware, §2.5): `DifferentialResult`'s resolved `amp_enabled`/`amp_dtype`, `bit_exact_contract`, the disagreeing-sample count and rate, the affected rows with both rankings, and the MRR gap (`BACKLOG.md:499-505`; `differential.py:79-82`). Whether it is still wanted is the institution's call (§8 item 7) |
 | **Mode A as "the control"** (`measure_scorer.py:12-17`; `BACKLOG.md:375` rejected dropping it because it "discards the control the whole ladder is built around") | — | The ladder is no longer an open requirement | **Historical** | — | The reason fails with the ladder |
 | **The predictions file**, **legacy MRR** | Diffing against the frozen evaluator | Nothing reads either; the evaluator is deleted | **Historical** | — | Nothing |
 | **`--num-workers`/seed as measurement semantics** | A/B's candidate universe depends on worker streams | A/B only | **Historical** for measurement; the same PyTorch property holds in training (§5) | Training's property, if kept, is a data_loader test | Nothing for measurement. Whether the seed stays as run identity is §8 item 5 |
@@ -396,10 +405,10 @@ existing decision are **proposals**; institutional items are not engineering's t
 | **Policy Gate 1: "B-0 measurement report" before B-1** | `DISEASE_SCORER_POLICY.md:285`, `:289` | The live clinical system against an unmeasured scorer change (`:265-266`) | **Yes — institutional** | **Keep.** Ask the institution to confirm "the agreed B-0 scope" (`:318`), which is not in the repository and may include A/B; propose that the report be defined without A/B, keeping the measurement of the deployed scorer (B-0.5 / Mode D) (§8 item 4) | B-1; whether R2 may proceed (§9) |
 | Policy: SP code "demoted, not removed … required for B-0's comparison modes" | `:256`, `:262-264` | SP for the modes that consume it (D, E′) — not A/B, which are cosine-only | Yes, institutional | **Keep**; unaffected | SP subsystem |
 | Institution: "the legacy measurement path is being kept removable" | `task-scope/README.md:40-42` | Maintainability | Yes | **Keep**; it supports this retirement | — |
-| Institution: AMP-on criterion is theirs | `BACKLOG.md:491-505` | Who judges 7a's AMP leg | Yes, as stated | **Keep** the criterion. Retiring the differential withdraws the evidence engineering recorded as supplied for it (`:499-505`), so that is put to the institution (§8 item 7) | §8 item 7 |
-| **Item 7a** (engineering differential run, institutional hardware) | `BACKLOG.md:666`; `:476-479` | Mode A's agreement with the Trainer under CUDA/AMP | **No** as a certification of a harness being retired. (Its status line is also stale: "blocked on 1d", but 1d is done, `:653`; no checkpoint is designated for it) | **Cancel** (proposal). Its AMP-off leg (two copies agree) is superseded by the Trainer-value tests (§5). Its AMP-on leg cannot be covered by those CPU tests, because `use_amp` is off on CPU (`:443-446`, `:465-469`); if the institution wants it, it becomes a Trainer-only item: the same validation pass, `use_amp` on vs off, on CUDA (§8 item 7) | item 9, 7b; the printed note `measure_scorer.py:714-716` |
+| Institution: AMP-on criterion is theirs | `BACKLOG.md:491-505` | Who judges 7a's AMP leg | Yes, as stated | **Keep** the criterion. Retiring the differential withdraws the evidence engineering recorded as in place for it (`:499-505`), so that is put to the institution (§8 item 7) | §8 item 7 |
+| **Item 7a** (engineering differential run, institutional hardware) | `BACKLOG.md:666`; `:476-479` | Mode A's agreement with the Trainer under CUDA/AMP | **No** as a certification of a harness being retired. (Its status line is also stale: "blocked on 1d", but 1d is done, `:653`; no checkpoint is designated for it) | **Cancel (proposal), conditional on §8 items 4 and 7**: if the institution keeps A/B in the agreed B-0 scope, 7b keeps its dependency on 7a and 7a stands. Otherwise its AMP-off leg (two copies agree) is superseded by the Trainer-value tests (§5). Its AMP-on leg cannot be covered by those CPU tests, because `use_amp` is off on CPU (`:443-446`, `:465-469`); if the institution wants it, it becomes a Trainer-only item: the same validation pass, `use_amp` on vs off, on CUDA (§8 item 7) | item 9, 7b; the printed note `measure_scorer.py:714-716` |
 | **Item 7b** (institutional measurement B-0.2/B-0.3 ← 7a) | `BACKLOG.md:667`; README `:34` ("institutional run inherits B-0.2's acceptance") | A→B→C numbers not used before the harness was accepted | Not for any recorded engineering decision: the institutional Mode C run is item 14's (Test, Mode C), which does not depend on 7a/7b (`BACKLOG.md:669`). Its A/B part also has an unlisted blocker: CLI Mode A cannot build a real checkpoint (19.18). Whether Gate 1 needs it is open (§3, §8 item 4) | **Rewrite (proposal; 7b is co-owned with the institution, owner "both", `:667`, so the institution must agree, together with §8 item 4)**: drop A/B and the 7a dependency only if the institution accepts §8 item 4. 7b's other preconditions do not lapse: item 6 (the institution's choice of authoritative checkpoint), deployment CUDA verification and Mode C peak memory on institutional CUDA (PLAN_B03 row below) carry over to whatever takes 7b's remainder, a Mode C run under item 14 or a B-0.5 measurement. Items 2 and 3 are already done (`:656`, `:657`) | 8b |
-| **Item 8b** (← 7b) | `BACKLOG.md:676` | B-0.5's institutional run | Depends on B-0.5, not on A/B | **Rewrite** its dependency on 7b (proposal; co-owned with the institution, owner "both", `:676`). 8a, 6, exact artifacts and the production-path prerequisites stay | B-0.5 |
+| **Item 8b** (← 7b) | `BACKLOG.md:676` | B-0.5's institutional run | Depends on B-0.5, not on A/B | **Rewrite** its dependency on 7b (proposal; co-owned with the institution, owner "both", `:676`; conditional on §8 item 4, like 7b). 8a, 6, exact artifacts and the production-path prerequisites stay | B-0.5 |
 | **Item 9** (rename ~70 refs, rewrite the checklist, delete the oracle-only surface; gated on "1d passed review incl. its institutional CUDA run") | `BACKLOG.md:677`; `:804-807`; §5.0 `:843-847`; README `:77-80` | That the harness is never left without an acceptance | **No**: the gate requires a test *of* Mode A before deleting Mode A. Once Mode A goes, there is no harness acceptance to protect; Mode C's acceptance is direct (§7) | **Replace** item 9 by the retirement change (§9); the deletion gate's precondition becomes "the migrated tests are in place" | item 9 steps 6–8 |
 | README "What is actually oracle-only" table | README `:95-104` | Separating Trainer-shaped behaviour from oracle-only code | Its facts stay true; its scope ("only `build_legacy_mode_a_model` and the parity assertions") is overtaken | **Rewrite** for the retirement scope | — |
 | README: `legacy_truncation_k`/`legacy_tie_policy` "renamed, not deleted" | README `:121-124` | Describing semantics the differential kept | **No** once the differential goes; the Trainer's `[:20]` is a literal in Trainer code | **Rewrite**; §8 item 5 | ledger fields |
@@ -411,10 +420,10 @@ existing decision are **proposals**; institutional items are not engineering's t
 | **Modes B/C/D may not import the legacy loader or builder** | `PLAN_B03.md:46`; `measure_scorer.py:206-207`, `:241-242`; tested `test_legacy_equivalence.py:270-301` | Mode C against breakage from A's paths | Its purpose is met trivially once A is gone | **Keep the C-only CLI test**; drop its two monkeypatches (`:286-287`) | — |
 | **Legacy builder: S0 left its build unchanged, and replacing or deleting it waits for item 9's verification; no new branch, metadata, schema or fallback for it** | `measure_scorer.py:238-239` (a past fact plus the item-9 gate; the earlier "may not" wording was removed in S0's review, plan `:612-616`); plan `:617-618`, `:726-727` | The no-fallback rule; no oracle revival | For the **production** builder (serving, Mode C): **yes**. For the legacy builder: moot once it is deleted | **Keep** the no-fallback rule and the stability of `build_shepherd_model` (README `:146-150`, "What must not need touching, at any step"; `:138` for the step-6 rename's "no … builder … behaviour change"). The item-9 gate on the legacy builder is replaced along with item 9; the rest lapses when the legacy builder is deleted | — |
 | "No cross-mode conclusion may rest on the synthetic fixture" | README `:56-59`; tested `test_measurement_modes_bc.py:375` | Over-reading A=B=C on the fixture | No | **Cancel**; replaced by Mode C's own value test (§7) | — |
-| §3.1: "drop Mode A — Rejected" | `BACKLOG.md:375`; `:400-402` | The ladder's control | No: rests on the ladder | **Rewrite** as superseded by this decision | — |
+| BACKLOG §3.1: "drop Mode A — Rejected" | `BACKLOG.md:375`; `:400-402` | The ladder's control | No: rests on the ladder | **Rewrite** as superseded by this decision | — |
 | **Item 1d** (done) | `BACKLOG.md:653` | Trainer ↔ Mode A agreement on CPU | Its live part moves (§5) | **Superseded**; keep as history | — |
 | PLAN_B03 acceptance: A→B→C on institutional CUDA; end-to-end B/C peak memory as an institutional CUDA acceptance measurement | `PLAN_B03.md:209-211`, `:27-28` | Claims from CPU runs; memory | A→B→C: no. Mode C end-to-end peak memory on institutional CUDA: **yes, institutional**. S10's homelab reading does not meet it: S10 covers only its designated subject and excludes "any other deployment" (`PLAN_PROVENANCE_CONTRACT.md:1096-1101`; decision 7, `:1362-1365`) | **Rewrite**: drop A→B→C; keep Mode C peak memory as an institutional CUDA acceptance | 7b's remainder (the institutional Mode C run, item 14 or B-0.5; §8 items 3–4); S10 unchanged |
-| **D3: malformed-truth REFUSE at three boundaries** — loader, loss, harness (`to_global_ids`) | `BACKLOG.md:93`; §2.3 table `:174-181`; item 1a2 `:650`; restated in `src/kg/data_loader.py:976-979`, `tests/unit/test_trainer_truth_invariant.py:9-17`, `tests/unit/test_data_pipeline.py:612-622` | A malformed truth never scored as a rank miss in training, validation or measurement | The REFUSE contract: **yes**. The harness's local-id boundary: **no**. Mode C carries global ids and scores against `arange(D)` (`measurement.py:1274`); its truth refusal is `_assert_ids_in_range` (`:1219-1224`) | **Rewrite (proposal)**: the third boundary becomes Mode C's `_assert_ids_in_range`; drop the citation of `test_measurement_ranking.py:52-56`, which §6.2 deletes. D3 stays closed and the contract is unchanged | R2: the D3, §2.3 and 1a2 text and the three docstrings (§2.10) |
+| **D3: malformed-truth REFUSE at three boundaries** — loader, loss, harness (`to_global_ids`) | `BACKLOG.md:93`; BACKLOG's §2.3 table `:174-181`; item 1a2 `:650`; restated in `src/kg/data_loader.py:976-979`, `tests/unit/test_trainer_truth_invariant.py:9-17`, `tests/unit/test_data_pipeline.py:612-622` | A malformed truth never scored as a rank miss in training, validation or measurement | The REFUSE contract: **yes**. The harness's local-id boundary: **no**. Mode C carries global ids and scores against `arange(D)` (`measurement.py:1274`); its truth refusal is `_assert_ids_in_range` (`:1220-1225`) | **Rewrite (proposal)**: the third boundary becomes Mode C's `_assert_ids_in_range`; drop the citation of `test_measurement_ranking.py:52-56`, which §6.2 deletes. D3 stays closed and the contract is unchanged | R2: BACKLOG's D3 text, its §2.3 table (`:174-181`) and item 1a2, and the three docstrings (§2.10) |
 | `masked_mean_pool`: "mirrors `Trainer._compute_model_outputs` operation for operation … behaviour to preserve, not to improve" | `src/inference/scoring.py:168-177` | Mode A as a faithful control of the Trainer | The Mode A reason: **no**. Mode C refuses an empty phenotype list before pooling (`measurement.py:1207-1212`). A mirror-the-Trainer reason remains because the migrated Trainer test takes its expected values from this function (§5.1 G1–G3) | **Rewrite** the reason to name that test (proposal); behaviour unchanged | G1–G3; B-1's pool unification (`BACKLOG.md:669`) |
 | PLAN_B02 "no conclusion until institutional Mode A calibration succeeds" | `PLAN_B02_shipped.md:109-110`, `:371-372` | B-0.2's parity acceptance | No; the file is "History, not authority" (`:1-4`) | **Leave as history** | — |
 | `read_samples`' three-field default, "would change Modes A and B" | plan `:698-702`; `file_storage.py:126-130` | A/B semantics | The reason lapses; the interface is harmless | **Rewrite** the reason (§1.4) | S8 unchanged |
@@ -488,7 +497,7 @@ training setting (`train_model.py:608-614`). These are for the owner to schedule
 
 ## 6. Tests: keep, move, delete
 
-Counts: 167 test functions (203 collected items, counted by `pytest --collect-only` at
+Counts: 169 test functions (224 collected items, counted by `pytest --collect-only` at
 `6f16373`) import or exercise an A/B component. Classes:
 
 - **class 1** — its subject is a retired feature; delete with it. Where it also touches a live
@@ -498,7 +507,7 @@ Counts: 167 test functions (203 collected items, counted by `pytest --collect-on
 - **class 2** — live; stays, at most moved or trimmed (`test_legacy_equivalence.py:270` drops its
   two monkeypatches at `:286-287`; `test_measurement_ranking.py:251` drops its `legacy_ranking`
   assertion; `test_evaluation_sidecar.py:198` drops its `num_workers`/`shuffle` rows if §8 item 5
-  removes those fields). **68.**
+  removes those fields, and its seed rows follow the seed decision, as do `:267` and `:277`). **70.**
 - **class 3** — live, reached through an A/B entry point; moves to the real use point. **36.**
 
 | File | Functions | Class 1 | Class 2 | Class 3 |
@@ -510,8 +519,8 @@ Counts: 167 test functions (203 collected items, counted by `pytest --collect-on
 | `tests/integration/test_legacy_equivalence.py` | 16 | 8 | 4 | 4 |
 | `tests/unit/test_scoring_primitives.py` (the 18 tests that reach `masked_mean_pool`/`cosine_score_matrix`, directly or through `cosine_scores`: `:135`, `:149`, `:162`, `:290`, `:812`, `:851`–`:1018`) | 18 | 0 | 18 | 0 |
 | `tests/unit/test_split_caveat.py` | 5 | 0 | 5 | 0 |
-| others (`test_graph_artifact_binding.py:278`, `:290`; `test_evaluation_sidecar.py:159`, `:198`; `test_training_provenance.py:65`, `:470`; `integration/test_pipeline.py:381`) | 7 | 0 | 7 | 0 |
-| **Total** | **167** | **63** | **68** | **36** |
+| others (`test_graph_artifact_binding.py:278`, `:290`; `test_evaluation_sidecar.py:159`, `:198`, `:267`, `:277`; `test_training_provenance.py:65`, `:470`; `integration/test_pipeline.py:381`) | 9 | 0 | 9 | 0 |
+| **Total** | **169** | **63** | **70** | **36** |
 
 The other 32 tests in `test_scoring_primitives.py` (served pooling, the SP index and transform,
 the η mixture, the pipeline's SP and combined wrappers) touch no A/B component and are outside
@@ -596,15 +605,18 @@ that comparison as a false premise).
    `run_mode_a`/`run_modes_ab` and their A/B-only helpers, the differential calibration and its
    tests — after the moved tests are in place. **Recommended, conditional on items 4 and 7.** If
    the institution requires A/B content in the B-0 report (item 4), this scope is reopened; if it
-   chooses item 7 (b), that comparison is scheduled before the differential is deleted.
-2. **The research comparisons (A→B, B→C)** are retired with no replacement. If a research item
-   later names a user and a deliverable, it builds on Mode C's code and the fixed-revision history;
-   nothing is kept as a standing research directory. **Recommended.**
-3. **Backlog rows** (proposals): cancel 7a; rewrite 7b without A/B and without 7a; rewrite 8b's
-   dependency; replace item 9 with the retirement change; close 19.18; rewrite §3.1's "drop Mode A —
-   Rejected" as superseded; re-point D3's third boundary (§4). 7b and 8b are co-owned with the
-   institution (`BACKLOG.md:667`, `:676`): their rewrites go to the institution with item 4 and
-   depend on its answer, and 7b's item-6, deployment-CUDA and institutional Mode C peak-memory
+   chooses item 7 (b), that comparison runs before the differential is deleted.
+2. **The research comparisons (A→B, B→C)** are retired with no replacement as research tools. If a
+   research item later names a user and a deliverable, it builds on Mode C's code and the
+   fixed-revision history; nothing is kept as a standing research directory. **Recommended,
+   subject to item 4**: if the institution's agreed B-0 scope includes A/B, these comparisons are
+   B-0 measurements, not research, and are reopened with item 1.
+3. **Backlog rows** (proposals; each lands only if the retirement goes ahead, i.e. after the
+   institution's answers to items 4 and 7, §9): cancel 7a; rewrite 7b without A/B and without
+   7a; rewrite 8b's dependency; replace item 9 with the retirement change; close 19.18; rewrite
+   BACKLOG §3.1's "drop Mode A — Rejected" as superseded; re-point D3's third boundary (§4). 7b and 8b are co-owned with the
+   institution (`BACKLOG.md:667`, `:676`): their rewrites go to the institution with items 4 and 7
+   and depend on its answers, and 7b's item-6, deployment-CUDA and institutional Mode C peak-memory
    preconditions carry over to whatever replaces it.
 4. **Policy Gate 1 (institutional).** Its "B-0 measurement report" names no mode, but the policy
    refers to "the agreed B-0 scope" (`DISEASE_SCORER_POLICY.md:318`; B-0 "approved for
@@ -628,9 +640,11 @@ that comparison as a false premise).
    fields (`:392-394`) and the ledger's null-seed refusal (`sidecar.py:267-288`). Either remove
    them with retirement (the ledger already rekeys on every commit; update `sidecar.py`'s field
    lists, its refusal and their tests: `test_evaluation_sidecar.py:159`, the `num_workers`,
-   `shuffle` and seed rows of `:198`, and `:277`), or keep them with a stated Mode C reason,
-   rewording `--seed`'s help (`:431-437`), `main`'s comment (`:528-536`) and the sidecar comments
-   (`:83-86`, `:267-271`), which today give only A/B's reasons. **Recommended: remove the
+   `shuffle` and seed rows of `:198`, and the seed tests `:267` and `:277`), or keep them with a
+   stated Mode C reason, rewording `--seed`'s help (`measure_scorer.py:431-437`), `main`'s comment
+   (`measure_scorer.py:528-536`) and the sidecar comments (`sidecar.py:83-86`, `:267-271`), which
+   today give only A/B's reasons. `validate_measurement_seed` (`measurement.py:480-497`) follows
+   the same choice. **Recommended: remove the
    `legacy_*` and loader/sampler fields with retirement**, so no Mode C record describes A's
    semantics. **The seed: owner's choice**; if kept, its review condition is item 14's ledger v2.
 6. **`read_samples`' default.** Keep the three-field default and `training_fields=True`, rewording
@@ -644,7 +658,7 @@ that comparison as a false premise).
    longer need it, or (b) that a Trainer-only comparison, the same validation pass with `use_amp`
    on vs off on CUDA, replace it, reporting the same per-sample quantities; Mode A adds nothing to
    that comparison. **This one needs the institution**, like item 4. If they choose (b), that
-   comparison is scheduled before the differential is deleted.
+   comparison runs before the differential is deleted.
 8. **Mode C input decisions** found while inventorying: refuse non-integer and boolean ids (today
    silently truncated), and give a missing embedding key a named refusal. **Recommended: refuse**;
    each is a small Mode C change with its test.
@@ -668,10 +682,10 @@ that comparison as a false premise).
 
 | Step | Change | Production code? | Gate before the next |
 |---|---|---|---|
-| **R0** | This assessment; owner decisions (§8) | No | Decisions recorded, **including the institution's answers to §8 items 4 and 7** |
-| **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric |
+| **R0** | This assessment; owner decisions (§8) | No | Owner decisions recorded (§8). R1 does not wait for the institution |
+| **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2:** the institution's answers to §8 items 4 and 7 are recorded and, if item 7 is (b), the Trainer-only CUDA comparison has run |
 | **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1) | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen |
-| **R3** | §8 items 5, 8, 9 as decided | Yes (small) | Their own tests |
+| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided | Yes (small) | Their own tests |
 | — | **M2.1 S7** then runs on Mode C alone | — | — |
 
 **What waits for the institution.** R1 is tests only and adds coverage whichever way the
