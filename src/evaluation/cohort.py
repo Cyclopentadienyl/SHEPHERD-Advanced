@@ -38,7 +38,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    FrozenSet,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 # `src.kg` writes these files, so it owns their names; importing the map from
 # there keeps the layer order right and gives the writer and the verifier one
@@ -46,9 +56,13 @@ from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
 from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
     MANIFEST_FILENAME,
+    ManifestRead,
     read_split_manifest,
     verify_graph_artifacts,
 )
+
+if TYPE_CHECKING:
+    from src.kg.storage.file_storage import SamplesRead
 
 #: The generator's own split names. Reserved: a supplied cohort using one would be
 #: indistinguishable from a generated one in every artifact downstream.
@@ -241,7 +255,8 @@ def verify_generated_cohorts(
        phenotypes, genes, patient ids, row order and multiplicity can all change
        while the disease set is preserved.
     2. **The disease sets are the ones it recorded** — recomputed from the
-       records through the reader training uses, against ``realised.*_digest``.
+       records through the shared reader (`read_samples`), against
+       ``realised.*_digest``.
     3. **Its realised sets are what the allocation cut** — internal to the file,
        and what makes "these files are that allocation's cohorts" transitive.
     4. **The cohorts are disjoint** — both the measurement and the manifest's own
@@ -255,80 +270,166 @@ def verify_generated_cohorts(
     caller consumes. Called once per run, before hours of training or minutes of
     measurement.
 
+    **The path form, a migration aid until contract M2.1's S9.** It hashes each
+    sample file by path and parses it through a second read, so the digest and
+    the disease sets can describe different bytes. `verify_cohort_reads` makes
+    the same four checks from the samples a run already parsed, against its one
+    manifest reading.
+
     Raises:
         ValueError: naming which of the four failed, and for which split.
     """
-    from src.kg.disease_allocation import disease_set_digest
     from src.kg.storage.file_storage import read_samples
     from src.utils.fingerprint import file_sha256
 
     scope = tuple(splits)
+    _require_scope(scope)
+    cohorts = {split: resolve_cohort(data_dir, split) for split in scope}
+    manifest_read = read_split_manifest(data_dir)
+    manifest, manifest_path = manifest_read.manifest, manifest_read.identity.path
+
+    disease_sets: Dict[str, FrozenSet[int]] = {}
+    for split, cohort in cohorts.items():
+        _check_samples_digest(manifest, manifest_path, split, cohort.samples,
+                              file_sha256(cohort.samples))
+        ids = frozenset(
+            int(sample.disease_id) for sample in read_samples(data_dir, split).samples
+        )
+        disease_sets[split] = ids
+        _check_disease_set(manifest, manifest_path, split, cohort.samples, ids)
+
+    both_in_scope = _check_disjointness(
+        manifest, manifest_path, scope, disease_sets,
+        {split: cohort.samples for split, cohort in cohorts.items()},
+    )
+    return GeneratedCohorts(
+        manifest, disease_sets, scope,
+        disjointness_claim_checked=both_in_scope,
+        disjointness_measured=both_in_scope,
+    )
+
+
+def verify_cohort_reads(
+    manifest: ManifestRead, samples: Mapping[str, "SamplesRead"]
+) -> GeneratedCohorts:
+    """`verify_generated_cohorts`' four checks, from reads a run already made.
+
+    **Compares, and reads nothing** (contract M2.1). `manifest` is the run's one
+    reading of its manifest and `samples` maps each generated split in scope to
+    what `read_samples` parsed and its identity. Each sample file's digest is the
+    digest of the bytes those samples were parsed from, and the disease sets are
+    recomputed from the same samples, so the check and the run's input cannot
+    describe different bytes. A file replaced after the manifest read is refused
+    by name.
+
+    The scope is the splits passed, in the generator's order; the disjointness
+    checks run only when both are in scope, as in the path form. The caller has
+    already resolved its cohort (`resolve_cohort`) and read the manifest through
+    `read_split_manifest`, which checked its schema.
+
+    Raises:
+        ValueError: naming which check failed, the file and the manifest.
+    """
+    manifest_dict, manifest_path = manifest.manifest, manifest.identity.path
+    unknown = [split for split in samples if split not in GENERATED_SPLITS]
+    scope = tuple(split for split in GENERATED_SPLITS if split in samples)
+    _require_scope(scope if not unknown else tuple(samples))
+
+    disease_sets: Dict[str, FrozenSet[int]] = {}
+    for split in scope:
+        read = samples[split]
+        _check_samples_digest(manifest_dict, manifest_path, split, read.identity.path,
+                              read.identity.sha256)
+        ids = frozenset(int(sample.disease_id) for sample in read.samples)
+        disease_sets[split] = ids
+        _check_disease_set(manifest_dict, manifest_path, split, read.identity.path, ids)
+
+    both_in_scope = _check_disjointness(
+        manifest_dict, manifest_path, scope, disease_sets,
+        {split: samples[split].identity.path for split in scope},
+    )
+    return GeneratedCohorts(
+        manifest_dict, disease_sets, scope,
+        disjointness_claim_checked=both_in_scope,
+        disjointness_measured=both_in_scope,
+    )
+
+
+def _require_scope(scope: Tuple[str, ...]) -> None:
     unknown = [split for split in scope if split not in GENERATED_SPLITS]
     if unknown or not scope:
         raise ValueError(
             f"verification scope must be a non-empty subset of {GENERATED_SPLITS}, "
             f"got {scope!r}"
         )
-    cohorts = {split: resolve_cohort(data_dir, split) for split in scope}
-    manifest_read = read_split_manifest(data_dir)
-    manifest, manifest_path = manifest_read.manifest, manifest_read.identity.path
 
-    artifacts = manifest.get("artifacts", {})
+
+def _check_samples_digest(
+    manifest: Dict[str, Any], manifest_path: Path, split: str, path: Path, observed: Any
+) -> None:
+    """Check 1: the file is the bytes the manifest describes."""
+    recorded = manifest.get("artifacts", {}).get(f"{split}_samples")
+    if recorded != observed:
+        raise ValueError(
+            f"{path} is not the file {manifest_path} describes "
+            f"({str(recorded)[:12]}... vs {str(observed)[:12]}...). Either the "
+            "samples were replaced after the manifest was written, or the "
+            "manifest came from another workspace."
+        )
+
+
+def _check_disease_set(
+    manifest: Dict[str, Any], manifest_path: Path, split: str, path: Path,
+    ids: FrozenSet[int],
+) -> None:
+    """Checks 2 and 3: the disease set is the one recorded, which is the one allocated."""
+    from src.kg.disease_allocation import disease_set_digest
+
     realised = manifest.get("realised", {})
     allocated = manifest.get("allocation", {}).get("allocated", {})
-    disease_sets: Dict[str, FrozenSet[int]] = {}
-
-    for split, cohort in cohorts.items():
-        recorded = artifacts.get(f"{split}_samples")
-        observed = file_sha256(cohort.samples)
-        if recorded != observed:
-            raise ValueError(
-                f"{cohort.samples} is not the file {manifest_path} describes "
-                f"({str(recorded)[:12]}... vs {str(observed)[:12]}...). Either the "
-                "samples were replaced after the manifest was written, or the "
-                "manifest came from another workspace."
-            )
-        ids = frozenset(
-            int(sample.disease_id) for sample in read_samples(data_dir, split).samples
+    if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
+        raise ValueError(
+            f"the {split} cohort's disease set ({path}) is not the one "
+            f"{manifest_path} records as realised"
         )
-        disease_sets[split] = ids
-        if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
-            raise ValueError(
-                f"the {split} cohort's disease set is not the one {manifest_path} "
-                "records as realised"
-            )
-        if realised.get(f"{split}_digest") != allocated.get(f"{split}_digest"):
-            raise ValueError(
-                f"{manifest_path} contradicts itself: its realised {split} digest "
-                "is not its allocated one, so full coverage did not hold"
-            )
+    if realised.get(f"{split}_digest") != allocated.get(f"{split}_digest"):
+        raise ValueError(
+            f"{manifest_path} contradicts itself: its realised {split} digest "
+            "is not its allocated one, so full coverage did not hold"
+        )
 
-    # **Both disjointness checks are scoped, not just the measurement.** The
-    # manifest's `disjoint` field describes the generated train/val relationship.
-    # A train-versus-supplied overlap audit consumes neither that relationship nor
-    # `val`, so refusing it on that field would block an institutional measurement
-    # on the state of an input it never reads — the same over-validation the
-    # scoping was introduced to remove, arriving through a claim instead of a file.
-    both_in_scope = set(scope) == set(GENERATED_SPLITS)
-    if both_in_scope:
-        if manifest.get("disjoint") is not True:
-            raise ValueError(
-                f"{manifest_path} claims disjoint={manifest.get('disjoint')!r}. "
-                "Disjointness is a contract of the allocation step, so this is a "
-                "broken workspace, not a measurement."
-            )
-        if disease_sets["train"] & disease_sets["val"]:
-            raise ValueError(
-                f"{data_dir} does not hold disease-disjoint cohorts, though "
-                f"{manifest_path} claims it does. Disjointness is a contract of "
-                "the allocation step, so this is a broken workspace, not a "
-                "measurement."
-            )
-    return GeneratedCohorts(
-        manifest, disease_sets, scope,
-        disjointness_claim_checked=both_in_scope,
-        disjointness_measured=both_in_scope,
-    )
+
+def _check_disjointness(
+    manifest: Dict[str, Any], manifest_path: Path, scope: Tuple[str, ...],
+    disease_sets: Dict[str, FrozenSet[int]], paths: Dict[str, Path],
+) -> bool:
+    """Check 4, when both cohorts are in scope. Returns whether it ran.
+
+    **Both disjointness checks are scoped, not just the measurement.** The
+    manifest's `disjoint` field describes the generated train/val relationship.
+    A train-versus-supplied overlap audit consumes neither that relationship nor
+    `val`, so refusing it on that field would block an institutional measurement
+    on the state of an input it never reads — the same over-validation the
+    scoping was introduced to remove, arriving through a claim instead of a file.
+    """
+    if set(scope) != set(GENERATED_SPLITS):
+        return False
+    if manifest.get("disjoint") is not True:
+        raise ValueError(
+            f"{manifest_path} claims disjoint={manifest.get('disjoint')!r}. "
+            "Disjointness is a contract of the allocation step, so this is a "
+            "broken workspace, not a measurement."
+        )
+    shared = disease_sets["train"] & disease_sets["val"]
+    if shared:
+        raise ValueError(
+            f"{paths['train'].parent} does not hold disease-disjoint cohorts: "
+            f"{paths['train'].name} and {paths['val'].name} share {len(shared)} "
+            f"diseases, though {manifest_path} claims they share none. "
+            "Disjointness is a contract of the allocation step, so this is a "
+            "broken workspace, not a measurement."
+        )
+    return True
 
 
 __all__ = [
@@ -341,6 +442,7 @@ __all__ = [
     "GeneratedCohorts",
     "resolve_cohort",
     "validate_split_name",
+    "verify_cohort_reads",
     "verify_generated_cohorts",
     "verify_graph_artifacts",
     "validate_kind",
