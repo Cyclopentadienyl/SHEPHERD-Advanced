@@ -11,7 +11,9 @@ Module: tests/fixtures/generated_workspace.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -30,11 +32,11 @@ def default_graph_export() -> Dict[str, Any]:
     domain moves cannot leave the fixture producing something the reader
     refuses.
 
-    Like the digests above it, this describes a production event the fixture did
-    not literally perform: the graph bytes are stand-ins. The recipe is recorded
-    rather than verified against the tensors -- only the writer of an export
-    knows what it passed -- so a fixture stating the default is exactly as
-    truthful here as its digests are.
+    The fixture's own export (`write_graph_export`) draws its features with this
+    recipe, so for the files it writes the recipe is true. A test that writes its
+    own tensors gets the recipe stated anyway: it is recorded rather than
+    verified against the tensors -- only the writer of an export knows what it
+    passed.
     """
     from src.kg.graph import (
         DEFAULT_FEATURE_SEED,
@@ -67,6 +69,88 @@ def one_sample_per_disease(split: str, ids: Sequence[int], profiles) -> List[Dic
     ]
 
 
+def training_samples_per_disease(
+    split: str, ids: Sequence[int], profiles
+) -> List[Dict[str, Any]]:
+    """`one_sample_per_disease`, with the two optional fields training reads.
+
+    Training reads `candidate_disease_ids` and `gene_ids` as well
+    (`scripts/train_model.py:463-464`); measurement reads neither. Every row here
+    carries both, so a test of training's read is about the fields and not only
+    about the flag that asks for them.
+    """
+    candidates = sorted({int(d) for d in ids})
+    rows = one_sample_per_disease(split, ids, profiles)
+    for row, d in zip(rows, ids, strict=True):
+        row["gene_ids"] = list(profiles[d]["gene_ids"])
+        row["candidate_disease_ids"] = list(candidates)
+    return rows
+
+
+def write_graph_export(root: Path, roles: Iterable[str]) -> None:
+    """Write the named graph files the way a build writes them, for this workspace.
+
+    **Real files, through the real writers.** `kg.json` comes from
+    `KnowledgeGraph.save_json` and the three tensor files from
+    `export_graph_data`, with the recipe `default_graph_export()` records, so a
+    reader that parses them (contract M2.1) gets what a build would give it.
+    Stand-in bytes satisfied a verifier that hashed paths, and would fail a
+    parsing reader for the wrong reason.
+
+    **Their content differs per workspace.** Node names carry the directory's
+    name, so `kg.json` always differs; the number of nodes of each type is drawn
+    from that name, so the tensors and `num_nodes.json` differ too unless two
+    names draw the same three counts (one chance in 262,144). A file copied from
+    another workspace is that workspace's file, never this one's by accident.
+
+    Writing a tensor file needs torch, and a test that has none is skipped here,
+    including one that only checks digests.
+    """
+    from src.core.types import DataSource, Edge, EdgeType, Node, NodeID, NodeType
+    from src.kg import KnowledgeGraph
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+
+    wanted = list(roles)
+    if not wanted:
+        return
+    draw = hashlib.sha256(root.name.encode("utf-8")).digest()
+    kinds = (
+        (NodeType.PHENOTYPE, DataSource.HPO, 1 + draw[0] % 64),
+        (NodeType.DISEASE, DataSource.MONDO, 1 + draw[1] % 64),
+        (NodeType.GENE, DataSource.DISGENET, 1 + draw[2] % 64),
+    )
+    kg = KnowledgeGraph()
+    nodes: Dict[Any, List[Any]] = {}
+    for node_type, source, count in kinds:
+        nodes[node_type] = [
+            Node(id=NodeID(source=source, local_id=f"{node_type.value}-{i}-of-{root.name}"),
+                 node_type=node_type, name=f"{node_type.value} {i} of {root.name}")
+            for i in range(count)
+        ]
+        for node in nodes[node_type]:
+            kg.add_node(node)
+    diseases = nodes[NodeType.DISEASE]
+    for node_type, edge_type in ((NodeType.PHENOTYPE, EdgeType.PHENOTYPE_OF_DISEASE),
+                                 (NodeType.GENE, EdgeType.GENE_ASSOCIATED_WITH_DISEASE)):
+        for i, node in enumerate(nodes[node_type]):
+            kg.add_edge(Edge(source_id=node.id, target_id=diseases[i % len(diseases)].id,
+                             edge_type=edge_type))
+
+    recipe = default_graph_export()
+    with tempfile.TemporaryDirectory() as staging_dir:
+        staging = Path(staging_dir)
+        kg.save_json(str(staging / GRAPH_ARTIFACTS["kg"]))
+        if any(role != "kg" for role in wanted):
+            import pytest
+
+            pytest.importorskip("torch")
+            kg.export_graph_data(output_dir=staging, feature_dim=recipe["feature_dim"],
+                                 feature_seed=recipe["feature_seed"])
+        for role in wanted:
+            filename = GRAPH_ARTIFACTS[role]
+            (root / filename).write_bytes((staging / filename).read_bytes())
+
+
 def write_generated_workspace(
     root: Path,
     *,
@@ -78,6 +162,7 @@ def write_generated_workspace(
     config: Optional[Dict[str, Any]] = None,
     graph_bytes: Optional[Dict[str, bytes]] = None,
     graph_export: Optional[Dict[str, Any]] = None,
+    training_fields: bool = False,
 ) -> Tuple[Path, Dict[str, Any]]:
     """Write `train_samples.json`, `val_samples.json` and a real manifest.
 
@@ -85,6 +170,10 @@ def write_generated_workspace(
     written, exactly as `generate_training_samples` takes them, so the workspace
     satisfies `verify_generated_cohorts` without the fixture knowing what that
     checks.
+
+    Graph files a test has already written, or passes in `graph_bytes`, are kept;
+    the rest are written by `write_graph_export`. `training_fields` gives the
+    default rows the two fields only training reads.
     """
     from src.kg.artifacts import GRAPH_ARTIFACTS
     from src.kg.disease_allocation import DiseaseAllocation, universe_digest
@@ -96,17 +185,20 @@ def write_generated_workspace(
     # fixture that omitted it would build a workspace no consumer accepts. Written
     # first, then digested, exactly as `build_knowledge_graph` does it.
     supplied = dict(graph_bytes or {})
-    for role, filename in GRAPH_ARTIFACTS.items():
-        path = root / filename
-        if role in supplied or not path.exists():
-            path.write_bytes(supplied.get(role, f"{role}-of-{root.name}".encode()))
+    for role, data in supplied.items():
+        (root / GRAPH_ARTIFACTS[role]).write_bytes(data)
+    write_graph_export(root, [
+        role for role, filename in GRAPH_ARTIFACTS.items()
+        if role not in supplied and not (root / filename).exists()
+    ])
     train_ids, val_ids = [int(d) for d in train_ids], [int(d) for d in val_ids]
     profiles = profiles or profiles_for(train_ids + val_ids)
+    rows_for = training_samples_per_disease if training_fields else one_sample_per_disease
     rows = {
         "train": train_samples if train_samples is not None
-        else one_sample_per_disease("train", train_ids, profiles),
+        else rows_for("train", train_ids, profiles),
         "val": val_samples if val_samples is not None
-        else one_sample_per_disease("val", val_ids, profiles),
+        else rows_for("val", val_ids, profiles),
     }
     for split, samples in rows.items():
         (root / f"{split}_samples.json").write_text(json.dumps(samples))
