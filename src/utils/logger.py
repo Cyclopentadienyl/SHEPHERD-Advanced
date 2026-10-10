@@ -14,8 +14,8 @@ appears at 15 sites: ``src/api/main.py`` and fourteen entry-point scripts
 ``measure_scorer``, ``probe_deployment``, ``record_evaluation``, ``setup_demo``,
 ``test_gnn_inference``, ``train_model`` and five ``audit_*`` scripts), each
 with its own format string and level. In an entry-point script that is a
-defensible place for it; the point is that no module owns the policy, so they
-differ.
+defensible place for it; the point is that no module owns the policy, so nothing
+keeps them consistent.
 
 Status: intentionally empty until that consolidation is done. Nothing imports
 this module. It is kept as a documented reserved home rather than deleted

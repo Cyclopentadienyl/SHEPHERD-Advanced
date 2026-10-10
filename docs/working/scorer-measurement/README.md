@@ -81,7 +81,9 @@ A test asserts that agreement so it is not mistaken for a result.
 > 2026-10-09 and decision of 2026-10-10 (`../PLAN_PROVENANCE_CONTRACT.md` M2.1,
 > decisions 3 and 6). The tests checked the parity `../BACKLOG.md` §3.1.2 retired,
 > the evaluator was its reference, and the pin test kept that reference's bytes
-> unchanged; the differential calibration is untouched. The
+> unchanged; as above, the launcher could not run that parity on the scanned family
+> or on a checkpoint the current writer produces; the differential calibration is
+> untouched. The
 > corrected boundary is below; the corrected checklist is written at step 7 of that
 > order, not now.
 
@@ -92,11 +94,11 @@ was carried by are trainer-validation shapes and survive:
 
 | Carrier | Oracle-only? | Where the trainer does the same thing |
 |---|---|---|
-| phenotype-id `clamp` on `-1` padding | **no** | `trainer.py:739` |
-| `legacy_ranking` — `Tensor.sort(descending=True)`, and its tie behaviour | **no** | `trainer.py:651`, the same call |
-| truncation at 20 (`LEGACY_TRUNCATION_K`) | **no** | `trainer.py:656`, `pred_indices[:20]` |
-| the per-sample local top-20 rows (`ModeAResult.legacy_top_k_local`) | **no** | `trainer.py:654-656` builds the same rows |
-| `build_legacy_mode_a_model` — mirrors `create_model_from_checkpoint` (`scripts/evaluate_model.py` at `7dab728`) **including its hardcoded fallbacks** | **yes** | the trainer builds from real feature dims |
+| phenotype-id `clamp` on `-1` padding | **no** | `trainer.py:795` |
+| `legacy_ranking` — `Tensor.sort(descending=True)`, and its tie behaviour | **no** | `trainer.py:684`, the same call |
+| truncation at 20 (`LEGACY_TRUNCATION_K`) | **no** | `trainer.py:689`, `pred_indices[:20]` |
+| the per-sample local top-20 rows (`ModeAResult.legacy_top_k_local`) | **no** | `trainer.py:686-689` builds the same rows |
+| `build_legacy_mode_a_model` — mirrors `create_model_from_checkpoint` (`scripts/evaluate_model.py` at `7dab728`) **in its hardcoded `hidden_dim`/`num_layers`/`num_heads` fallbacks**; unlike it, it indexes `metadata` and `in_channels_dict` directly | **yes** | the trainer builds from real feature dims |
 
 So the genuinely oracle-only surface is: `build_legacy_mode_a_model` and the
 oracle-parity assertions inside `tests/unit/test_measurement_mode_a.py`.
@@ -109,8 +111,9 @@ table lists is retained.
 Two rows of the old table were wrong in a second way as well, and both are
 recorded here so the correction is not lost when the checklist is rewritten:
 
-- **`scripts/calibrate_mode_a.py` is not purposeless after the oracle goes.**
-  Calibration still happens; only its reference changes. This bullet concluded
+- **`scripts/calibrate_mode_a.py` was not made purposeless by the oracle's retirement;
+  it was removed for a different reason.** Calibration still happens; only its reference
+  changed. This bullet concluded
   that it is rewritten, not deleted; that is reversed by the owner's rule of
   2026-10-09, that it is removed if nothing necessary uses it (contract M2.1,
   decision 3). Nothing did, and it was deleted: item 7a's runner is new code built
@@ -131,7 +134,7 @@ construction and step 8 is last.
 | 2 | Characterization tests freezing `Trainer._validate` and `Trainer.evaluate` observable behaviour | metric keys, loss aggregation, callback order and count, best-metric updates, forward count, local top-20 rows, truth ids, AMP placement, empty-result behaviour |
 | 3 | Extract the pass those two already duplicate | private and narrow; no evaluation framework, protocol hierarchy, callback extension point or generic result subsystem |
 | 4 | Same-batch differential calibration | **done** — `src/evaluation/differential.py`. Non-tautological **only if `trainer.py` never imports or calls the harness's traversal or ranking**. Review permitted sharing `masked_mean_pool` / `cosine_score_matrix`; `.import-linter.ini` places `src.training` **below** `src.inference` and forbids it outright, so the trainer keeps its own inline `F.normalize` + `torch.mm`. **Layers alone were not sufficient**: they are directional, and a probe import of `src.training` inside `src/inference/scoring.py` left all three green. A fourth contract, `scorer-independence`, forbids that direction and was mutation-checked against the same probe — `make lint-imports` reports 4 contracts kept. **Stated at the precision the contracts support**: what is forbidden is a direct import across the two scorer stacks, in either direction. Neither contract prevents both from delegating to a helper below both, and they already share `F.normalize` and `torch.mm`. The calibration therefore detects divergence between two maintained copies — which is what it is for — and is not a correctness proof of either, since Mode A preserves the legacy behaviour including its defects. The harness sits in `src.evaluation`, above both, which is the one direction it needs |
-| 5 | Bounded synthetic tests, then the institutional CUDA acceptance run | this is the deletion gate, with one exception: the oracle-parity tests in `tests/integration/test_legacy_equivalence.py`, `scripts/evaluate_model.py` and its pin test went with the launcher before this run (owner's rule of 2026-10-09 and decision of 2026-10-10, contract M2.1, decisions 3 and 6), since the tests checked the parity `../BACKLOG.md` §3.1.2 retired, the evaluator was its reference and the pin test kept that reference's bytes unchanged; the differential calibration is untouched. **First half done**: 20 tests, two cohorts, five mutation-checked legs. **Second half not started and not schedulable here** — the run is item 7a, it needs a designated loadable checkpoint, and `../BACKLOG.md` §3.1.3 records why the CPU result cannot stand in for it: AMP is off on CPU by construction, so the bounded tests ask the bit-exact question and the CUDA run asks a different one |
+| 5 | Bounded synthetic tests, then the institutional CUDA acceptance run | this is the deletion gate, with one exception: the oracle-parity tests in `tests/integration/test_legacy_equivalence.py`, `scripts/evaluate_model.py` and its pin test went with the launcher before this run (owner's rule of 2026-10-09 and decision of 2026-10-10, contract M2.1, decisions 3 and 6), for the reasons given in the banner above; the differential calibration is untouched. **First half done**: 20 tests, two cohorts, five mutation-checked legs. **Second half not started and not schedulable here** — the run is item 7a, it needs a designated loadable checkpoint, and `../BACKLOG.md` §3.1.3 records why the CPU result cannot stand in for it: AMP is off on CPU by construction, so the bounded tests ask the bit-exact question and the CUDA run asks a different one |
 | 6 | One mechanical rename commit | ~70 references across 9 files. **No** scoring, ranking, tie, schema, CLI, builder or manifest behaviour change |
 | 7 | Rewrite this checklist against the final boundary | |
 | 8 | Delete the oracle-only surface | `scripts/evaluate_model.py`, its pin test and the oracle-parity tests in `tests/integration/test_legacy_equivalence.py` already went in contract M2.1's S0 (step 5's exception) |

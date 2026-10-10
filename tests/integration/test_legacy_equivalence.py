@@ -22,6 +22,7 @@ this harness has already had.
 The rest of the file covers the mode ladder, the refusals of unsupported mode
 combinations, and `--split`.
 """
+import hashlib
 import json
 import subprocess
 import sys
@@ -84,6 +85,8 @@ def measured(tmp_path_factory):
         "measurement": read(output),
         "predictions": read(predictions),
         "default_predictions_path": output.parent / "measurement_predictions.json",
+        "checkpoint": checkpoint,
+        "data_dir": data_dir,
     }
 
 
@@ -145,6 +148,20 @@ def test_every_consumed_file_is_identified_by_content(measured):
         assert len(digests[role]) == 64, f"{role} has no sha256"
     assert digests["checkpoint"] != digests["samples"]
 
+    # And each is the digest of the file the command was given, not merely a
+    # digest-shaped string: a run that recorded another cohort's or another
+    # checkpoint's digest would pass the checks above.
+    data_dir = measured["data_dir"]
+    given = {
+        "checkpoint": measured["checkpoint"],
+        "samples": data_dir / "test_samples.json",
+        "node_features": data_dir / "node_features.pt",
+        "edge_indices": data_dir / "edge_indices.pt",
+        "num_nodes": data_dir / "num_nodes.json",
+    }
+    for role, path in given.items():
+        assert digests[role] == hashlib.sha256(path.read_bytes()).hexdigest(), role
+
 
 def test_the_cohort_is_whole(measured):
     """No absences, no shrinkage. In Mode A the truth is a subgraph seed, so an
@@ -180,6 +197,9 @@ def test_the_manifest_records_the_configured_ceiling_not_only_the_observed_one(m
     observed = measured["measurement"]["sampler_evidence"]["max_subgraph_nodes"]
 
     assert manifest["max_subgraph_nodes"] == 5000  # DataLoaderConfig default
+    # The fixture's --num-workers reached the loader configuration the manifest
+    # records (the same object the dataloader is built from).
+    assert manifest["num_workers"] == 4
     assert max(observed.values()) < manifest["max_subgraph_nodes"], (
         "the fixture is supposed to sit far below the cap; if it does not, the two "
         "fields no longer demonstrate anything different from each other"

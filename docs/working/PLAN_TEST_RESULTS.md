@@ -76,7 +76,7 @@ parallel one:
 - **A second verification round (2026-10-05)** corrected the first round's corrections:
   - **the cohort file is located twice today,** by `resolve_cohort` and by `read_samples`. One
     resolver now locates it, so the digest recorded is that of the samples scored. The frozen
-    oracle is the named exception (§5);
+    oracle was then the named exception (since closed with the oracle, §5);
   - **the checkpoint list is C3 checkpoint inspection,** so it follows D8 rather than being
     display. The Training Console's resume dropdown is a second listing, and it moves onto
     the one listing function;
@@ -88,11 +88,11 @@ parallel one:
   - **D8:** M1 is an explicit setting, checked together with the request's arrival socket and
     the absence of forwarding headers. Stop is per job type;
   - **D3:** B-1 must also settle the served disease clamp and the silent phenotype drop.
-- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging, which then
-  staged a directory the oracle read as its `--data-dir` (since closed with the oracle, §5). It also corrected the reader list,
-  now limited to measurement and audit readers with the generated-split readers named; the
-  Training Console's resume listing, now a named C3 exception; D4's field count; and the D3
-  citations, now at `1cab39f`.
+- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging design, a
+  directory the oracle would read as its `--data-dir` (since closed with the oracle, §5). It
+  also corrected the reader list, now limited to measurement and audit readers with the
+  generated-split readers named; the Training Console's resume listing, now a named C3
+  exception; D4's field count; and the D3 citations, now at `1cab39f`.
 
 Revision 2 (`6854265`) settled D3 by the scorer policy, made D5 follow the owner's checkbox, and
 reworked D4, D6 and D8.

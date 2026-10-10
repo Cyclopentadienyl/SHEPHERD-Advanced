@@ -115,8 +115,10 @@ def test_mean_rank_is_now_computable(workspace):
 
 
 def test_legacy_top_k_is_local_and_truncated(workspace):
-    """The oracle's observable artifact: subgraph-local column indices, cut at 20.
-    Local because the oracle never persists the mapping needed to translate."""
+    """In the shape of the oracle's observable artifact (at `7dab728`):
+    subgraph-local column indices, cut at 20. Local because the oracle never
+    persisted the mapping needed to translate, and the differential calibration
+    compares these rows with the trainer's local ones."""
     _, data_dir, checkpoint = workspace
 
     result = _run(data_dir, checkpoint)
@@ -702,6 +704,85 @@ class TestTheRandomStreamHasAnIdentity:
             parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
                         "--output", "o.json", "--seed", "not-a-number"])
 
+    @pytest.mark.parametrize("good", [0, 2 ** 32 - 1])
+    def test_both_ends_of_the_seed_domain_are_accepted(self, monkeypatch, good):
+        """The domain check must not reject the ends of the domain it enforces.
+        The run is stopped at device resolution, which comes after validation and
+        seeding, so reaching it shows the endpoint was accepted and applied."""
+        import scripts.measure_scorer as cli
+        from src.evaluation.measurement import MAX_MEASUREMENT_SEED
+
+        assert good in (0, MAX_MEASUREMENT_SEED)
+
+        class ReachedDeviceResolutionError(Exception):
+            pass
+
+        def stop(*args, **kwargs):
+            raise ReachedDeviceResolutionError
+
+        monkeypatch.setattr(cli, "_resolve_device", stop)
+
+        with pytest.raises(ReachedDeviceResolutionError):
+            cli.main(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                      "--output", "o.json", "--seed", str(good)])
+
+    @staticmethod
+    def _worker_negatives(seed: int, workers: int):
+        """Seed the parent exactly as the CLI does, then draw negatives through a
+        multi-worker loader. Negatives come from `random.randint` inside
+        `DiagnosisDataset.__getitem__`, which runs in the worker processes;
+        `num_diseases` is large relative to the batch so the draws really vary."""
+        import random
+
+        import numpy as np
+        from torch.utils.data import DataLoader
+
+        from src.kg.data_loader import DiagnosisDataset, DiagnosisSample, diagnosis_collate_fn
+
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        samples = [
+            DiagnosisSample(patient_id=f"P{i}", phenotype_ids=[i % 3, (i + 1) % 3],
+                            disease_id=i % 7)
+            for i in range(24)
+        ]
+        loader = DataLoader(
+            DiagnosisDataset(samples=samples, num_diseases=500, num_negative_diseases=5),
+            batch_size=4, num_workers=workers, shuffle=False, collate_fn=diagnosis_collate_fn,
+        )
+        return [batch["negative_disease_ids"].tolist() for batch in loader]
+
+    @staticmethod
+    def _default_workers() -> int:
+        from scripts.measure_scorer import parse_args
+
+        return parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                           "--output", "o.json"]).num_workers
+
+    def test_worker_drawn_negatives_follow_the_parent_seed(self):
+        """PyTorch seeds each worker as `base_seed + worker_id`, with `base_seed`
+        drawn from the parent's torch RNG. Seeding the parent therefore reaches
+        into the worker processes, which is the only reason a multi-worker run can
+        be compared at all. The second assertion is the half that makes the first
+        mean something: a constant reproduces perfectly too."""
+        workers = self._default_workers()
+
+        first = self._worker_negatives(DEFAULT_MEASUREMENT_SEED, workers)
+        assert first == self._worker_negatives(DEFAULT_MEASUREMENT_SEED, workers)
+        assert first != self._worker_negatives(DEFAULT_MEASUREMENT_SEED + 1, workers)
+
+    def test_the_worker_count_is_part_of_the_stream(self):
+        """Not a throughput setting. The same seed with a different worker count
+        consumes a different random stream and draws different negatives, which
+        is why the CLI's `--num-workers` is recorded as semantics."""
+        workers = self._default_workers()
+        assert workers > 0
+
+        assert self._worker_negatives(DEFAULT_MEASUREMENT_SEED, workers) != (
+            self._worker_negatives(DEFAULT_MEASUREMENT_SEED, 0)
+        )
+
     def test_the_manifest_never_records_a_null_rng_identity(self, workspace):
         """The three seed fields are what give the stream an identity in the
         semantics digest; a null there makes two different runs look alike."""
@@ -804,15 +885,16 @@ def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
     """Mode A must reproduce the frozen evaluator's index semantics, not a
     cancellation that happens to give the same answer.
 
-    `diagnosis_collate_fn` pads phenotype ids with `-1` and `_remap_indices`
-    leaves those positions at `-1`, so the oracle clamps before gathering and
-    reads **row 0** for every padded slot. Indexing with `-1` instead reads the
-    **last** row through Python negative indexing. For ordinary finite embeddings
-    the mask multiplies both away and the pooled vector is the same — which is
-    exactly why this test puts a `NaN` in the last phenotype row. `NaN * 0` is
-    `NaN`, so the difference between the two operations stops being invisible:
-    with the clamp the run completes, without it the score matrix is non-finite
-    and `canonical_ranking` refuses it.
+    `diagnosis_collate_fn` pads phenotype ids with `-1` and `_remap_indices` leaves
+    those positions at `-1`, so the oracle clamped before gathering and read **row
+    0** for every padded slot (`scripts/evaluate_model.py:278` at `7dab728`), as the
+    trainer still does (`src/training/trainer.py:795`). Indexing with `-1` instead
+    reads the **last** row through Python negative indexing. For ordinary finite
+    embeddings the mask multiplies both away and the pooled vector is the same —
+    which is exactly why this test puts a `NaN` in the last phenotype row. `NaN * 0`
+    is `NaN`, so the difference between the two operations stops being invisible:
+    with the clamp the run completes, without it the score matrix is non-finite and
+    `canonical_ranking` refuses it.
 
     A regression here is not cosmetic. Mode A is the control the whole ladder is
     read against, and a control that performs a *different* gather from the
@@ -861,7 +943,7 @@ def test_padded_phenotype_ids_are_clamped_the_way_the_oracle_clamps(workspace):
     )
 
     class _NaNInLastPhenotypeRow:
-        """Finite everywhere the oracle reads, NaN where only an unclamped -1 goes."""
+        """Finite everywhere the clamped gather reads, NaN where only an unclamped -1 goes."""
 
         def eval(self):
             return self

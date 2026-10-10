@@ -7,9 +7,12 @@ score an offline evaluation reports were computed by two separate
 implementations of the same formulas. Two implementations drift; when they
 drift, the evaluation stops describing the thing being evaluated.
 
-**That condition has ended.** The pipeline and the measurement harness compose
-the primitives; `scripts/evaluate_model.py`, the second implementation, was
-never migrated and is deleted (its code is at `7dab728`).
+**The evaluator's copy ended with its deletion, not by migration**:
+`scripts/evaluate_model.py` was never migrated and is deleted (its code is at
+`7dab728`). The pipeline and the measurement harness compose these primitives.
+The cosine is shared; the pool is still two deliberate implementations
+(`pool_patient_embeddings`, `masked_mean_pool`), bound by
+`test_masked_pool_and_served_pool_agree_on_one_unpadded_patient`.
 
 Three properties worth testing, and they are different:
 

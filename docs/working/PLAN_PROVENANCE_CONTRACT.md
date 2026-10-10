@@ -784,6 +784,13 @@ each moves its callers before anything is removed.
        to end. The split-default test (`:431-449`) keeps only its `measure_scorer` half;
      - `test_measurement_mode_a.py:890-939` goes;
      - `test_split_caveat.py` keeps only `measure_scorer` as an entry point.
+     - **Kept from the deleted tests, found in S0's review:** three assertions guarded live code,
+       not the launcher, and stay on the surviving entry point. `test_seeding_bootstrap.py`'s
+       worker half (negatives drawn in worker processes follow the parent seed, and the worker
+       count is part of the stream) moves to `tests/unit/test_measurement_mode_a.py`, without
+       the launcher's bootstrap; so does the seed validator's acceptance of both ends of its
+       domain. `test_legacy_equivalence.py` checks that the manifest's artifact digests are the
+       digests of the files the command was given, which the launcher's verdict used to check.
    - **Text the launcher's removal makes false.** The launcher
      was the only thing that compared Mode A with the frozen evaluator; after S0 nothing does.
      Text that names the launcher in the present tense, says that an artifact, a stream or a

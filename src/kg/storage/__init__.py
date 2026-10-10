@@ -31,7 +31,7 @@ framework: this package's name says "backends" plural, and that plural is
 aspirational. Those abstractions wait until a second real backend exists, at
 which point the shape it needs will be known instead of guessed.
 
-One consumer is exempt and stays on purpose:
+One wrapper stays on purpose:
 ``scripts/measure_scorer.py:load_legacy_mode_a_inputs`` is Mode A's entry point
 and already delegates to ``file_storage.py``; it goes when the run's single
 shared read of its inputs replaces it.

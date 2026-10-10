@@ -178,8 +178,8 @@ def legacy_ranking(scores: Tensor) -> Tensor:
     for persistence and rank extraction. Neither requires a second sort.
 
     **This function is not oracle-only**: the trainer makes the same sort
-    (`docs/working/scorer-measurement/README.md:90`). Nothing outside Mode A's
-    legacy stream may depend on legacy tie behaviour.
+    (`src/training/trainer.py:684`, as above). Nothing outside Mode A's legacy
+    stream may depend on legacy tie behaviour.
     """
     if scores.dim() != 2:
         raise ValueError(f"scores must be (B, D); got {tuple(scores.shape)}")
@@ -1149,10 +1149,10 @@ def assert_constructions_agree(legacy_model: Any, production_model: Any) -> None
     """Refuse to read A→B as encoder scope unless the two models are the same model.
 
     Mode A builds through the legacy builder, which mirrors the frozen evaluator's
-    loader; modes B and C build through production's. If those disagree — a different conv type recovered, a
-    different layer count, different weights — then A→B is encoder scope *plus*
-    architecture resolution, and the ladder's first rung measures two things at
-    once while reporting one.
+    loader; modes B and C build through production's. If those disagree — a different
+    conv type recovered, a different layer count, different weights — then A→B is
+    encoder scope *plus* architecture resolution, and the ladder's first rung measures
+    two things at once while reporting one.
 
     A difference here is a finding, not a nuisance: it means the served model and
     the historically evaluated model were never the same, which is worth knowing

@@ -113,9 +113,10 @@ def artifact_digests(
     business knowing what either is, and the training caller would then import a
     measurement-shaped signature to hash its own inputs. The generic contract
     (`compute_input_digests`) is shared; the **role vocabulary is not**, because
-    each run names the roles it consumed. This is one measurement script importing
-    another's domain concept, which is cohesion; the benchmark reaching in here for
-    a hash function was not.
+    each run names the roles it consumed. No other script imports it any more; its
+    callers are `build_manifest` here and the tests. The layering fault was the
+    benchmark reaching in here for a hash function, and it now imports
+    `src.utils.fingerprint` directly.
     """
     cohort = resolve_cohort(data_dir, split, cohort_kind)
     # **Every graph consumer, regardless of cohort kind.** A supplied
@@ -230,10 +231,13 @@ def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> An
 
     **Named for its lifecycle.** This mirrors
     `scripts/evaluate_model.py:create_model_from_checkpoint` at `7dab728` on
-    purpose, including its hardcoded architecture fallbacks. Replacing it with the
-    production architecture resolver would change the control being measured,
-    which is the one thing Mode A may not do, so it stays as it is until BACKLOG
-    item 9 removes it.
+    purpose in its hardcoded `hidden_dim`/`num_layers`/`num_heads` fallbacks
+    (`:131-135` there). Unlike it, it indexes `metadata` and `in_channels_dict`
+    directly, where the evaluator fell back to three node types and 256 channels
+    (`:138-148` there), so it raises `KeyError` without them (BACKLOG §3.1).
+    Replacing it with the production architecture resolver would change the
+    control being measured, which is the one thing Mode A may not do, so it stays
+    as it is until BACKLOG item 9 removes it.
 
     **Modes B, C and D must not import it** — they resolve architecture the way the
     deployed pipeline does. It goes with BACKLOG item 9's oracle-only surface.
@@ -433,8 +437,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--modes", default="A",
                         help="One of: A, A,B, C, A,B,C. Default A, which must "
                              "stay the default so that a run naming no mode still "
-                             "writes Mode A to --output and its predictions rows "
-                             "beside it. "
+                             "writes Mode A to --output and Mode A's predictions "
+                             "rows to --predictions-output (default <output "
+                             "stem>_predictions.json). "
                              "**B requires A** — it is A's candidates under a "
                              "different encoder, so it is refused without A "
                              "rather than silently adding it")
@@ -658,9 +663,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     # A single-mode run writes the mode the caller asked for to `--output`; a
-    # multi-mode run keeps A there, beside the predictions rows named after it, so
-    # adding modes never moves Mode A's artifacts and a reader of that path still
-    # finds Mode A in it. One file per mode either way, since a mode is one
+    # multi-mode run keeps A there, so adding modes never moves Mode A's report,
+    # and the predictions rows, which are always Mode A's and by default named
+    # after `--output`, stay paired with it; a reader of that path still finds
+    # Mode A in it. One file per mode either way, since a mode is one
     # measurement and merging them would put two manifests in one document.
     primary = modes[0] if len(modes) == 1 else "A"
     for mode, mode_result in results.items():
