@@ -591,9 +591,11 @@ left as written. Nothing here is implemented.
   (a), removing `scripts/evaluate_model.py` with its pin test, which the owner chose
   (decision 6).
 - **The incremental review of `7e1af96`** (2026-10-10) closed the re-review's P2 and found no new P1
-  or P2. It accepted the plan as revised, which is not acceptance of the readers, the release check,
-  the measuring tools or any reading, none of which exists yet. Its notes for the release check's
-  implementation are in S2.
+  or P2. It accepted the plan as revised by then, at plan level, which is not acceptance of the
+  readers, the release check, the measuring tools or any reading, none of which exists yet. Its
+  notes for the release check's implementation are in S2. The text changed since, for decisions 6
+  and 7 below, has not been reviewed: S0's additions (decision 3 lists them), the amended
+  "Capacity" rule, the memory sizes, and S10's subject, pre-flight and acceptance heading.
 - **The owner's decisions of 2026-10-10** settle the last two choices: `scripts/evaluate_model.py`
   is removed with its pin test in S0, and S10's capacity acceptance is limited to its designated
   subject (decisions 6 and 7 below). Neither is asked again unless a new dependency or
@@ -811,11 +813,13 @@ each moves its callers before anything is removed.
 
      S0 deletes the evaluator (decision 6), so it also rewords the statements in code S7 later
      rewrites that tie a function's lifetime to the evaluator: in `load_legacy_mode_a_inputs`'
-     docstring, `measure_scorer.py:205-217`; `build_legacy_mode_a_model`'s `:240`, tied to item 9;
-     the dispatch comment `:561-565`; `test_legacy_equivalence.py:337-343`; and the paragraph in
-     `src/kg/storage/__init__.py:35-37`. S7 then deletes `load_legacy_mode_a_inputs` (`:202-227`),
-     with its docstring and that paragraph, and rewrites the test and the comment for the shared
-     read.
+     docstring, `measure_scorer.py:205-217`, with its count at `:222` ("those five");
+     `build_legacy_mode_a_model`'s `:240`; the dispatch comment `:561-565`;
+     `test_legacy_equivalence.py:337-343`; and the paragraph in `src/kg/storage/__init__.py:35-37`.
+     What these say of `build_legacy_mode_a_model` is tied to item 9; what they say of
+     `load_legacy_mode_a_inputs` is tied to its deletion in S7, not to item 9. S7 then deletes
+     `load_legacy_mode_a_inputs` (`:202-227`), with its docstring and that paragraph, and rewrites
+     the test and the comment for the shared read.
    - **A final search before S0 lands.** The repository is searched again, case-insensitively, for
      `calibrate_mode_a`, "launcher", "calibration", "frozen evaluator", "frozen oracle" and
      "oracle", and for `evaluate_model` and "evaluator", which find text that names the
@@ -832,9 +836,9 @@ each moves its callers before anything is removed.
      `src/evaluation/measurement.py:557-559`, which `scorer-measurement/README.md:106-109` leaves to
      item 9's rename. Hits in code S7 rewrites belong to S7, except those that S0's lists or
      decision 6's name: S0 changes those first, even inside a function S7 later rewrites, such as
-     `measure_scorer.py:203`, `:205-217`, `:234-237`, `:240`, `:561-565`, `:658-661` and `:682`. The
-     lists above and decision 6's, with its two further corrections, are the hits S0 changes as
-     found at `0708789`. The search is what makes them complete.
+     `measure_scorer.py:203`, `:205-217`, `:222`, `:234-237`, `:240`, `:561-565`, `:658-661` and
+     `:682`. The lists above and decision 6's, with its two further corrections, are the hits S0
+     changes as found at `0708789`. The search is what makes them complete.
    - **Decisions amended when S0 lands** (this revision amends none of them), each with the
      owner's rule and date:
      - `scorer-measurement/README.md:103-105` ("rewritten, not deleted") is reversed;
@@ -1248,8 +1252,9 @@ request, as M1 did.
    limited to the checkpoints checked, the wider list of text it rewords, the lifecycle statements
    it drops or ties to item 9, the hand-off to S7, the final search, and the gate's documents
    (§5.0's restatement added). That is not acceptance of S0's change. S0's additions for decision 6,
-   made since, have not been reviewed: the evaluator in its opening and deletions, the gate
-   exception, the statements it now rewords before S7, and the corrections that go with them. The
+   made since, have not been reviewed: the evaluator in its opening and deletions, the evaluator
+   and its pin test in the gate exception, the statements it now rewords before S7, and the
+   corrections that go with them. The
    rule is the launcher's; the frozen evaluator is decision 6. The question of the launcher's digest
    bracket (BACKLOG 19.19) lapses with the launcher's removal.
 4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
@@ -1314,7 +1319,9 @@ new dependency or measurement fact appears.
      and `:293`.
    - **The exceptions it held are closed:** `EVALUATION_COHORTS.md:974-979`, BACKLOG item 11i,
      `PLAN_PHENOTYPE_NORMALISATION.md:312` (which says it "retires with the frozen evaluator";
-     the oracle clause goes, with its citation) and `PLAN_TEST_RESULTS.md:763-766`.
+     the oracle clause goes with its citation, and that row, "Two readers ... neither checks", and
+     `:523`, "the two named exceptions (§5)", then name one exception,
+     `measure_served_pipeline.py`) and `PLAN_TEST_RESULTS.md:763-766`.
    - **Two further corrections in S0's change:**
      - `src/evaluation/measurement.py:1112-1113` cites `evaluate_model.py:285, 366`, which match
        no version of the file. The `compute_all` call is at `:318` at `7dab728`;
