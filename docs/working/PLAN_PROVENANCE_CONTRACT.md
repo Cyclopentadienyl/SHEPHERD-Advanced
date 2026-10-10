@@ -3,9 +3,10 @@
 **Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1
 or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that
 evidence with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab").
-M2.1's work plan was reviewed and revised with the owner's decisions of 2026-10-09; the
-re-review of `0708789` found one P2, fixed here, and the plan awaits incremental review (§4,
-"M2.1 — the work, at `90a668f`"). M2–M5 are not implemented.** Facts about the code are cited at
+M2.1's work plan was reviewed and revised with the owner's decisions of 2026-10-09 and
+2026-10-10. The re-review of `0708789` found one P2, and the incremental review of `7e1af96` found
+no P1 or P2; the owner's two remaining choices are recorded since (§4, "M2.1 — the work, at
+`90a668f`"). M2–M5 are not implemented.** Facts about the code are cited at
 `627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
 is the order of work.
 
@@ -558,8 +559,11 @@ replacement (`scripts/build_knowledge_graph.py:330-336`).
 - **Capacity.** Peak memory is measured at each entry point on the homelab's largest workspace
   and checkpoint (measurement: Mode C, §4 S10). A shortfall is fixed in the reader. A CPU
   fallback is not a remedy.
+  - **Amended 2026-10-10 by the owner** (§4, M2.1 decision 7): it is measured on S10's
+    designated subject, and the acceptance is limited to that subject. It does not claim to
+    cover the largest inputs or every deployment.
 
-#### M2.1 — the work, at `90a668f` (2026-10-08; revised 2026-10-09 after review)
+#### M2.1 — the work, at `90a668f` (2026-10-08; revised 2026-10-09; decisions 2026-10-10)
 
 This is how M2.1 would be built. It was mapped against the code at `90a668f`, the merge of M1,
 by independent readers of each entry point and of the shared readers. A completeness critic then
@@ -581,10 +585,16 @@ and the owner's decisions of the same day, recorded under "Decisions" below.
   to the checkpoints checked, S0 ends with a final search for present-tense references, the
   measuring tools are bounded, and question 6 lists what each option changes. The re-review
   accepted S0, M2.1 decisions 1–5 as recorded, the three exceptions, the M2.4 and BACKLOG
-  relations, and the republish rule with its SP binding supplement. On question 6 it recommends
-  (a), which remains the owner's decision.
-- **For the owner:** open question 6 (`scripts/evaluate_model.py` after S0), and whether S10's
-  subject is the homelab's largest workspace and checkpoint.
+  relations, and the republish rule with its SP binding supplement. On question 6 it recommended
+  (a).
+- **The incremental review of `7e1af96`** (2026-10-10) found no P1 or P2. It accepted the plan
+  as revised, which is not acceptance of the readers, the release check, the measuring tools or
+  any reading, none of which exists yet. Its notes for the release check's implementation are in
+  S2.
+- **The owner's decisions of 2026-10-10** settle the last two choices: `scripts/evaluate_model.py`
+  is removed with its pin test in S0, and S10's capacity acceptance is limited to its designated
+  subject (decisions 6 and 7 below). Neither is asked again unless a new dependency or
+  measurement fact appears.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -664,9 +674,10 @@ How they parse:
   These are expectations to explain the readings with (S10), not bounds.
 
 **Two constraints the plan above does not mention.**
-- **`read_samples`' new fields are opt-in** (`training_fields=True`). The frozen evaluator builds
-  samples with three fields (`scripts/evaluate_model.py:210-216`), and `gene_ids` become subgraph
-  seeds (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would change
+- **`read_samples`' new fields are opt-in** (`training_fields=True`). Measurement's samples carry
+  three fields (`src/kg/storage/file_storage.py:94-100`), as the frozen evaluator's did
+  (`scripts/evaluate_model.py:185-191` at `7dab728`), and `gene_ids` become subgraph seeds
+  (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would change
   measurement's Modes A and B.
 - **The test fixtures must become parseable.** `tests/fixtures/generated_workspace.py:102` writes
   placeholder bytes for the graph files. Today's path-hashing verifiers accept them; a parsing
@@ -697,11 +708,11 @@ workspace. It does not take the graph and an identity as two separate arguments.
 **The steps.** Each is one reviewable change. They are ordered smallest and safest first, and
 each moves its callers before anything is removed.
 
-0. **S0 — remove the retired calibration launcher.** The owner's rule for this launcher
-   (decision 3, 2026-10-09): it is removed if nothing necessary uses it, and migrated minimally
-   only if it must stay, so that it does not stay behind as a dead island. The rule does not
-   decide `scripts/evaluate_model.py`, which S0 leaves with no runner; that is open question 6.
-   The check, at `4ecd2c2`:
+0. **S0 — remove the retired calibration launcher and the frozen evaluator.** The owner's rule
+   for the launcher (decision 3, 2026-10-09): it is removed if nothing necessary uses it, and
+   migrated minimally only if it must stay, so that it does not stay behind as a dead island.
+   `scripts/evaluate_model.py`, which the launcher's removal leaves with no runner, goes with it
+   by the owner's separate decision (decision 6, 2026-10-10). The check, at `4ecd2c2`:
    - **Who depends on `scripts/calibrate_mode_a.py`.**
      - There is no CI. No Makefile target, launcher, deploy script or systemd unit names it.
      - No module under `src/` and no other script imports or runs it.
@@ -728,7 +739,8 @@ each moves its callers before anything is removed.
      - The current writer, `ModelCheckpoint._save_checkpoint` (`src/training/callbacks.py:296-327`),
        writes neither key. The scanned family, 15 checkpoints (BACKLOG M1;
        `EVIDENCE_M1_M3_hgt.json`, `EVIDENCE_M1_M3_gat.json`), carries neither. The designated
-       checkpoint came from the same writer; S10's pre-flight lists its keys.
+       checkpoint came from the same writer, and the reviewer reports it carries neither (plan
+       review of `4ecd2c2`); S10's pre-flight records its keys.
      - Its tests pass only because the fixture writes those keys
        (`tests/fixtures/synthetic_workspace.py:159-160`).
      - Not checked: no historical audit was run (BACKLOG M1, §6), and the homelab's other
@@ -749,7 +761,8 @@ each moves its callers before anything is removed.
      adopted acceptance, `tests/unit/test_differential_calibration.py`, is unchanged.
 
    **What S0 changes:**
-   - **Deleted:** `scripts/calibrate_mode_a.py` and `tests/integration/test_seeding_bootstrap.py`.
+   - **Deleted:** `scripts/calibrate_mode_a.py` and `tests/integration/test_seeding_bootstrap.py`;
+     and, by decision 6, `scripts/evaluate_model.py` and `tests/unit/test_frozen_evaluator.py`.
    - **Tests:**
      - in `test_legacy_equivalence.py`, the launcher fixture (`:41-73`) and the tests at
        `:79-272` go. Their measurement-only assertions move onto a direct `measure_scorer` run
@@ -757,7 +770,7 @@ each moves its callers before anything is removed.
        to end. The split-default test (`:431-449`) keeps only its `measure_scorer` half;
      - `test_measurement_mode_a.py:890-939` goes;
      - `test_split_caveat.py` keeps only `measure_scorer` as an entry point.
-   - **Text the launcher's removal makes false, under either answer to question 6.** The launcher
+   - **Text the launcher's removal makes false.** The launcher
      was the only thing that compared Mode A with the frozen evaluator; after S0 nothing does.
      Text that names the launcher in the present tense, says that an artifact, a stream or a
      default exists for that comparison, or lists "calibration" as an entry point, is reworded to
@@ -773,22 +786,20 @@ each moves its callers before anything is removed.
        `tests/unit/test_measurement_modes_bc.py:131`, `:154-155`;
        `tests/unit/test_measurement_ranking.py:125-128`, `:138`;
        `tests/fixtures/synthetic_workspace.py:110`; `tests/unit/test_split_caveat.py:4-5`;
-       `tests/unit/test_frozen_evaluator.py:13`, if question 6 keeps that file;
      - **Docs:** `scorer-measurement/README.md:33`, `:53-55`; `EVALUATION_COHORTS.md:473`,
        `:918-919`, `:930-933`; BACKLOG M9's "on both entry points" (`:565-566`).
-       `PLAN_TEST_RESULTS.md:745` drops the launcher, and the staging design goes, from `:766`'s
-       second sentence ("`calibrate_mode_a.py` and `tests/integration/test_legacy_equivalence.py`
-       drive it on supplied cohorts.") through `:775`: it existed so the launcher and
-       `test_legacy_equivalence.py` could drive the oracle on supplied cohorts. The line
-       citations into `test_legacy_equivalence.py` at `:749-751` are updated. The oracle's named
-       exception (`:763-766`, through "(`:443`).") follows question 6.
+       `PLAN_TEST_RESULTS.md:745` drops the launcher, and `:763-775` goes: the oracle's named
+       exception closes with the evaluator (decision 6), and the staging design after it existed
+       so the launcher and `test_legacy_equivalence.py` could drive the oracle on supplied
+       cohorts. The line citations into `test_legacy_equivalence.py` at `:749-751` are
+       updated.
 
      Left as history: `PLAN_B03.md:23`, `:103-105` and `:253-255`,
      `PLAN_CONFIGURABILITY_AND_PROVENANCE.md:235`,
      the past-tense notes in `src/evaluation/caveats.py:5-6` and `src/utils/fingerprint.py:64-68`,
      and `tests/unit/test_split_caveat.py:17`, which is past tense.
-   - **Lifecycle statements that tie surviving code to the frozen evaluator, under either
-     answer.** §3.1.2 retired the parity they wait for, so each is dropped or tied to item 9:
+   - **Lifecycle statements that tie surviving code to the frozen evaluator.** §3.1.2 retired
+     the parity they wait for, so each is dropped or tied to item 9:
      - `legacy_ranking`'s "deletion date" (`src/evaluation/measurement.py:179-182`) is dropped:
        the trainer makes the same sort (`scorer-measurement/README.md:90`);
      - `src/evaluation/measurement.py:1044-1045` is dropped: the clamp and the A/B traversal are
@@ -801,25 +812,23 @@ each moves its callers before anything is removed.
      `src/kg/storage/__init__.py:35-37` that exempts the function, which is removed with it.
    - **A final search before S0 lands.** The repository is searched again, case-insensitively, for
      `calibrate_mode_a`, "launcher", "calibration", "frozen evaluator", "frozen oracle" and
-     "oracle", and, if question 6 is answered (a), for `evaluate_model` and "evaluator", which
-     find text that names the file without those words. A hit is reworded, or recorded as
-     history, in S0's change only if S0 makes it false, that is, if it:
+     "oracle", and for `evaluate_model` and "evaluator", which find text that names the
+     evaluator without those words. A hit is reworded, or recorded as history, in S0's change
+     only if S0 makes it false, that is, if it:
      - names the calibration launcher in the present tense;
      - says that something exists for the comparison of Mode A with the frozen evaluator, or
        that the comparison still runs;
      - ties the lifetime of surviving code to that parity;
-     - or, under (a), cites `scripts/evaluate_model.py` or names it as a live file.
+     - or cites `scripts/evaluate_model.py` without a fixed revision, or names it as a live file.
 
      The other hits stay: the application launcher (`scripts/launch/`), the differential
      calibration, Mode A's retained semantics, and item 9's surface, such as
      `src/evaluation/measurement.py:557-559`, which `scorer-measurement/README.md:106-109` leaves
-     to item 9's rename. Hits in code S7 rewrites belong to S7, except those that S0's lists, or
-     question 6's for the option the owner chooses, name: S0 changes those first, even inside a
-     function S7 later rewrites, such as `measure_scorer.py:235-237`, `:658-661` and `:682` and,
-     under question 6 (a), `:203` and `:234`. The lists above, with question 6's for the option
-     the owner chooses, are the hits S0 changes as found at `0708789`: under (a), (a)'s lists and
-     the two corrections question 6 makes under either option; under (b), (b)'s rewording. The
-     search is what makes them complete.
+     to item 9's rename. Hits in code S7 rewrites belong to S7, except those that S0's lists or
+     decision 6's name: S0 changes those first, even inside a function S7 later rewrites, such as
+     `measure_scorer.py:203`, `:234`, `:235-237`, `:658-661` and `:682`. The lists above and
+     decision 6's, with its two further corrections, are the hits S0 changes as found at
+     `0708789`. The search is what makes them complete.
    - **Decisions amended when S0 lands** (this revision amends none of them), each with the
      owner's rule and date:
      - `scorer-measurement/README.md:103-105` ("rewritten, not deleted") is reversed;
@@ -827,13 +836,15 @@ each moves its callers before anything is removed.
        and its restatement in §5.0 (`:835-837`), in `scorer-measurement/README.md:78-79` and its
        removal order's step 5 (`:122`), and in item 9's row. The exception: the oracle-parity
        tests in `test_legacy_equivalence.py`, which the README counts as oracle-only (`:95-97`),
-       go with the launcher before 1d's institutional run. They check the frozen-evaluator
+       go with the launcher before 1d's institutional run, and so, by decision 6, do
+       `scripts/evaluate_model.py` and its pin test. They check, or are, the frozen-evaluator
        parity that §3.1.2 retired as an acceptance. The launcher could not run that parity on the
        scanned family, or on a checkpoint the current writer produces (S0's check above). The
        adopted acceptance, the differential calibration, is untouched;
-     - `scorer-measurement/README.md:95-97` stops listing `test_legacy_equivalence.py` as a
-       whole: after S0 its remaining tests are the `measure_scorer` ladder, Mode C and `--split`
-       tests, not oracle parity, so step 8 does not delete them;
+     - `scorer-measurement/README.md:95-97` drops `scripts/evaluate_model.py`, and stops listing
+       `test_legacy_equivalence.py` as a whole: after S0 its remaining tests are the
+       `measure_scorer` ladder, Mode C and `--split` tests, not oracle parity, so step 8 does not
+       delete them. Step 8 (`:125`) notes what went with S0;
      - BACKLOG §5.0's file table drops the launcher.
 
      S0's change updates every document listed here in the same change. Until it lands, the gate
@@ -842,7 +853,8 @@ each moves its callers before anything is removed.
      `compare_trainer_against_mode_a`. It records, beside its result, the digests of the bytes it
      read (through M2.1's readers), the software revision and the deployment host. History stays
      in git.
-   - **`scripts/evaluate_model.py`** follows question 6 below.
+   - **`scripts/evaluate_model.py` and its pin test** go by decision 6, which lists the text
+     that changes with them.
 1. **S1 — the primitive.** `read_once`, `FileRead` and `ReadIdentity`; no caller changes.
    `read_once` opens the file on one line and reads it with `handle.read()` on a line that does
    nothing else. The digest, and anything else its `ReadIdentity` keeps, is made on other lines,
@@ -892,6 +904,10 @@ each moves its callers before anything is removed.
        `bytearray` or the decoded text of a JSON file, and torch's tensor storages. Those are
        parsed results or copies, not the raw buffer; the readers' results are listed in S10's
        readings, and S10 explains peaks against them.
+     - **What its implementation's review checks** (the reviewer, 2026-10-10): that it is wired
+       to each real reader, that tracing starts before the first read, that the self-test's
+       negative controls do fail, and that the wrapper itself keeps no strong reference to a
+       buffer.
 
      It is a test, not a capacity reading, and it never runs inside S10's measured runs.
 3. **S3 — `read_json` and the SP producer.** `compute_shortest_paths.py` records the digest of
@@ -1025,11 +1041,11 @@ each moves its callers before anything is removed.
      - the provenance and workspace writers, which are M3b's (`src/kg/provenance.py:233`,
        `src/kg/workspace.py:297-300`).
 
-     Outside the pin: the frozen evaluator, if question 6 keeps it; `build_index.py`; and item
-     19's scripts outside the pin's scope (`record_evaluation.py`, `measure_served_pipeline.py`,
-     `audit_split_feasibility.py`, `audit_checkpoint_family.py`, `benchmark_sp_lookup.py`,
-     `audit_sp_reachability.py`, `build_knowledge_graph.py`, `migrate_checkpoints.py`). Item
-     19's sites under `src/**` are allowlisted above.
+     Outside the pin: `build_index.py`, and item 19's scripts outside the pin's scope
+     (`record_evaluation.py`, `measure_served_pipeline.py`, `audit_split_feasibility.py`,
+     `audit_checkpoint_family.py`, `benchmark_sp_lookup.py`, `audit_sp_reachability.py`,
+     `build_knowledge_graph.py`, `migrate_checkpoints.py`). Item 19's sites under `src/**` are
+     allowlisted above.
    - **A dynamic pin** runs each entry point with `compute_input_digests` and every path hash at a
      recording site returning a poison digest.
      - The `kg.json` identification helper gets the true digest, so each run completes and writes
@@ -1044,20 +1060,20 @@ each moves its callers before anything is removed.
 10. **S10 — capacity on the homelab, an executable matrix.**
     - **The subject:** workspace `data/workspaces/hpo_2026_0929_5a` (`$WS` below), checkpoint
       `$WS/checkpoints/hgt/model-02-0.1813.pt` (47,931,987 bytes), SP table `shortest_paths.pt`
-      (10,797,575,893 bytes), on the GB10 with CUDA. It is M1's and N1's subject. **The owner is
-      asked to confirm that it is the homelab's largest workspace and checkpoint,** as M2.1's
-      capacity acceptance requires (§4, M2.1, "Capacity"). S10 does not run before that answer.
-      If it is not the largest, the owner decides whether the largest is measured or the
-      acceptance is stated as limited to this subject.
+      (10,797,575,893 bytes), on the GB10 with CUDA. It is M1's and N1's subject. **By the
+      owner's decision (2026-10-10, decision 7), S10's capacity acceptance is limited to this
+      subject.** It does not claim to cover the largest inputs, other workspaces or checkpoints,
+      or any other deployment. It has the largest graph files, SP table and checkpoint in the
+      homelab's `data/workspaces`, but not the largest sample files (decision 7).
     - **Before and after:** the same matrix runs at `90a668f` and at the M2.1 head, in the same
       checkout, venv and boot. The 2026-09-30 readings (23.77 GB VmHWM at ready, 28.45 GB over a
       reload; `ecf17cd`, `scorer-measurement/PLAN_B04_PRODUCTIONISATION.md:1199`, `:1202`) predate
       M1 and are context only.
     - **Pre-flight, once and read-only:** load the designated checkpoint with
       `weights_only=True`, the way Mode C does (`measure_scorer.py:593`), and list its keys.
-      - Expected: it loads, without `metadata` or `in_channels_dict`. No Mode C run on this file
-        is recorded yet; serving loaded it with `weights_only=False`
-        (`src/inference/pipeline.py:973`).
+      - Expected: it loads, without `metadata` or `in_channels_dict`, as the reviewer reported
+        (plan review of `4ecd2c2`). No Mode C run on this file is recorded yet; serving loaded it
+        with `weights_only=False` (`src/inference/pipeline.py:973`).
       - If it does not load, the reading records that Mode C cannot run on this file. No
         `weights_only=False` or other fallback is added.
 
@@ -1100,7 +1116,8 @@ each moves its callers before anything is removed.
         boundary. It never rebuilds the reads, the verification or the model;
       - the same instrumentation runs at both commits. Each hook runs once, holds no large object
         and reads none of the run's inputs again: no hook opens a subject file, and a hook's only
-        file read is the process's own `/proc/self/status`;
+        file read is the process's own `/proc/self/status`. This binds the hooks inside the
+        process; the outside sampler reads the `/proc` entries it samples;
       - CUDA readings synchronise, and reset the peak counters, at the same points at both
         commits;
       - outputs, logs and the SP publication go to named scratch paths. Nothing is written to the
@@ -1221,7 +1238,7 @@ request, as M1 did.
    the launcher only), its claim limited to the checkpoints checked, the wider list of text it
    rewords, the lifecycle statements it drops or ties to item 9, the hand-off to S7, the final
    search, and the gate's documents (§5.0's restatement added), which S0's own change updates.
-   The rule is the launcher's; it does not decide question 6. The question of the launcher's
+   The rule is the launcher's; the frozen evaluator is decision 6. The question of the launcher's
    digest bracket (BACKLOG 19.19) lapses with the launcher's removal.
 4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
    - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
@@ -1240,90 +1257,77 @@ request, as M1 did.
      claimed.
    - No lock, job runner or new ledger is added.
 
-**Open question 6, for the owner after the reviewer's view: `scripts/evaluate_model.py` once S0
-removes its only runner.**
-- **After S0, nothing runs it.** `tests/unit/test_frozen_evaluator.py` pins its bytes and fails if
-  any module under `src` imports it. Without a driver and a comparator, it is no longer an
-  acceptance path; it is a file nothing executes.
-- **What holds it today:**
-  - item 9's reviewed removal order, at its last step, and BACKLOG's deletion gate;
-  - the exceptions named in `EVALUATION_COHORTS.md:974-979`, BACKLOG item 11i,
-    `PLAN_PHENOTYPE_NORMALISATION.md:312` (which says it "retires with the frozen evaluator") and
-    `PLAN_TEST_RESULTS.md:763-766`;
-  - text that cites it or names it as a live file, listed under (a).
-- **Its own banner is already false, and pinned.** It says the file is "kept only so the new
-  harness can be calibrated against it", and to delete it "together with `legacy_ranking` and the
-  `LEGACY_TRUNCATION_K` path" (`evaluate_model.py:3-6`, `:19-24`). §3.1.2 retired that
-  calibration, and the trainer shares `legacy_ranking`'s sort (`scorer-measurement/README.md:90`).
-  The banner cannot be corrected without changing the pinned digest.
-- **(a) Remove it and its pin test with S0.**
-  - The gate exists so the harness is never left without an acceptance. Without the launcher this
-    file accepts nothing, so the gate's reason no longer applies to it. S0's gate exception then
-    names it and its pin test too: in BACKLOG §5, §5.0 and item 9's row, and in
-    `scorer-measurement/README.md:78-79`, `:95-97`, `:122` and `:125`.
-  - **Citations of its lines or functions** name the file at `7dab728` (`62b8103` only added the
-    25-line banner, so today's file is 25 lines further on):
-    - in `7dab728`'s numbering already: `src/evaluation/measurement.py:157` (`:295`), `:166`
-      (`:505-519`), `:249` (`:513`) and `:702` (`:508-519`);
-      `tests/fixtures/synthetic_workspace.py:109` (`:164-223`);
-      `tests/unit/test_measurement_mode_a.py:546` (`:508-519`);
-      `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:92` (`:111, 201, 205`); and
-      `measure_scorer.py:203` (`:164-223`), which S7 deletes with `load_legacy_mode_a_inputs`;
-    - in today's numbering, re-anchored to `7dab728`: `src/evaluation/measurement.py:250-251`
-      (`:324`, `:116`, which are `:299`, `:91` there); BACKLOG §3.1 (`BACKLOG.md:346`,
-      `:163-173`, which is `:138-148` there); and this plan's constraint on `read_samples`'
-      fields (`:210-216`, which is `:185-191` there), which under (a) rests on Modes A and B
-      alone;
-    - by name only: `measure_scorer.py:234` and `:420-422`, and
-      `scorer-measurement/README.md:93`.
-  - **Text that names it as a live file** becomes history or is removed:
-    `src/kg/storage/__init__.py:13-14`, with its counts at `:22-23` and `:28`;
-    `src/kg/storage/file_storage.py:9-16`; `src/utils/logger.py:11-17`;
-    `scripts/audit_checkpoint_family.py:9-10` and `:26-27`, and
-    `tests/unit/test_evidence_scripts.py:108-109`, which repeats `:26-27`;
-    `tests/unit/test_measurement_mode_a.py:434-435`; `tests/fixtures/synthetic_workspace.py:5-8`,
-    whose first sentence becomes "The dataloader seeds nothing";
-    `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:91-93`; `PLAN_TEST_RESULTS.md:162-164`, `:291`
-    and `:293`.
-  - The exceptions above are closed, and this plan's conditionals on question 6 are resolved:
-    S0's opening, its `test_frozen_evaluator.py:13` clause, its clause on the oracle's named
-    exception (`PLAN_TEST_RESULTS.md:763-766`, closed with the exceptions above), its last item
-    (`scripts/evaluate_model.py` is removed with S0), and S9's "outside the pin".
-  - **Nothing else is removed with it.** Item 9 keeps the rename and the rest of the oracle-only
-    surface, which still runs on fixtures: `build_legacy_mode_a_model` and the parity assertions
-    in `test_measurement_mode_a.py`. Code that the measurement CLI or a valid test still calls is
-    not deleted because its name says "legacy".
-- **(b) Keep it until item 9's last step,** as a pinned historical file.
-  - The owner's rule was given for the launcher (decision 3) and does not decide this file. If
-    the owner extends it here, (b) needs a necessary user, named with its use and removal
-    condition beside it; "it might be used later" is not one (the reviewer's criterion). Without
-    one, (b) keeps a file nothing runs.
-  - After S0 it is no longer the artefact Mode A is calibrated against. So
-    `EVALUATION_COHORTS.md:975`, BACKLOG 11i, `PLAN_PHENOTYPE_NORMALISATION.md:312`,
-    `PLAN_TEST_RESULTS.md:763-766` and `tests/unit/test_frozen_evaluator.py:1-16`, `:37-41` and
-    `:46-48` are reworded to "a pinned historical file nothing runs". The removal condition at
-    `PLAN_TEST_RESULTS.md:774-775` ("This exception goes when the frozen oracle retires."), which
-    S0 deletes with the staging design, moves onto `:763-766` as item 9's last step.
-  - Its banner stays false unless it is re-pinned deliberately with a corrected one.
-  - The citations above in `7dab728`'s numbering gain 25 lines, since they are wrong against
-    today's file. Those in today's numbering, and those by name, already match it.
+**Decisions — the owner, 2026-10-10, after the reviewer's view.** Neither is asked again unless a
+new dependency or measurement fact appears.
 
-**Under either option,** two corrections are made in S0's change. Under (a) S0 makes them false
-by deleting the file they describe. Under (b) they fix text that was already false, so they are
-named corrections, not hits S0 makes false:
-- `src/evaluation/measurement.py:1112-1113` cites `evaluate_model.py:285, 366`, which match no
-  version of the file. The `compute_all` call is at `:318` at `7dab728`.
-- `src/inference/scoring.py:4-7`, `tests/unit/test_scoring_primitives.py:10-11` and
-  `results-review/SPEC_1_RESULTS_REVIEW.md:332-336` stop saying the frozen evaluator is still to
-  be migrated onto the shared primitives ("is migrated later in B-0", "does not yet", and
-  "evaluator migration" as remaining B-0 scope). It is never migrated: its bytes are pinned. Under
-  (a) it is deleted with S0; under (b) it stays pinned until item 9's last step.
-
-**Recommended: (a).** Its only remaining purpose is to be a reference for semantics git history
-already holds. By the reviewer's "not because it might be used later", and by decision 3's
-launcher rule if the owner extends it to this file, that does not justify keeping a file nothing
-runs. **The reviewer's view (2026-10-09): (a), once the owner decides;** it is not extended to
-any other legacy code.
+6. **`scripts/evaluate_model.py` is removed with its pin test in S0.** The reviewer recommended
+   this in the re-reviews of `0708789` and `7e1af96`.
+   - **Why it can go.** After S0 nothing runs it: the launcher was its only runner, and
+     `tests/unit/test_frozen_evaluator.py` only pins its bytes and fails if a module under `src`
+     imports it. Its own banner is already false and pinned: it says the file is "kept only so
+     the new harness can be calibrated against it", and to delete it "together with
+     `legacy_ranking` and the `LEGACY_TRUNCATION_K` path" (`evaluate_model.py:3-6`, `:19-24`).
+     §3.1.2 retired that calibration, and the trainer shares `legacy_ranking`'s sort
+     (`scorer-measurement/README.md:90`).
+   - **The gate.** It exists so the harness is never left without an acceptance, and this file
+     accepts nothing once the launcher goes. S0's gate exception names it and its pin test: in
+     BACKLOG §5, §5.0 and item 9's row, and in `scorer-measurement/README.md:78-79`, `:95-97`,
+     `:122` and `:125`.
+   - **Historical citations name a fixed revision, `7dab728`.** `62b8103` only added the 25-line
+     banner, so today's file is 25 lines further on.
+     - Already in `7dab728`'s numbering: `src/evaluation/measurement.py:157` (`:295`), `:166`
+       (`:505-519`), `:249` (`:513`) and `:702` (`:508-519`);
+       `tests/fixtures/synthetic_workspace.py:109` (`:164-223`);
+       `tests/unit/test_measurement_mode_a.py:546` (`:508-519`);
+       `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:92` (`:111, 201, 205`); and
+       `measure_scorer.py:203` (`:164-223`), which S7 deletes with `load_legacy_mode_a_inputs`.
+     - In today's numbering, re-anchored to `7dab728`: `src/evaluation/measurement.py:250-251`
+       (`:324`, `:116`, which are `:299`, `:91` there); BACKLOG §3.1 (`BACKLOG.md:346`,
+       `:163-173`, which is `:138-148` there); and this plan's constraint on `read_samples`'
+       fields, which now rests on Modes A and B (above, "Two constraints").
+     - By name only, named at `7dab728`: `measure_scorer.py:234` and `:420-422`, and
+       `scorer-measurement/README.md:93`.
+   - **Text that names it as a live file** becomes history or is removed:
+     `src/kg/storage/__init__.py:13-14`, with its counts at `:22-23` and `:28`;
+     `src/kg/storage/file_storage.py:9-16`; `src/utils/logger.py:11-17`;
+     `scripts/audit_checkpoint_family.py:9-10` and `:26-27`, and
+     `tests/unit/test_evidence_scripts.py:108-109`, which repeats `:26-27`;
+     `tests/unit/test_measurement_mode_a.py:434-435`; `tests/fixtures/synthetic_workspace.py:5-8`,
+     whose first sentence becomes "The dataloader seeds nothing";
+     `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:91-93`; `PLAN_TEST_RESULTS.md:162-164`, `:291`
+     and `:293`.
+   - **The exceptions it held are closed:** `EVALUATION_COHORTS.md:974-979`, BACKLOG item 11i,
+     `PLAN_PHENOTYPE_NORMALISATION.md:312` (which says it "retires with the frozen evaluator")
+     and `PLAN_TEST_RESULTS.md:763-766`.
+   - **Two further corrections in S0's change:**
+     - `src/evaluation/measurement.py:1112-1113` cites `evaluate_model.py:285, 366`, which match
+       no version of the file. The `compute_all` call is at `:318` at `7dab728`;
+     - `src/inference/scoring.py:4-7`, `tests/unit/test_scoring_primitives.py:10-11` and
+       `results-review/SPEC_1_RESULTS_REVIEW.md:332-336` stop saying the frozen evaluator is still
+       to be migrated onto the shared primitives ("is migrated later in B-0", "does not yet", and
+       "evaluator migration" as remaining B-0 scope). It was never migrated, and S0 deletes it.
+   - **Nothing else is removed with it.** Item 9 keeps the rename and the rest of the
+     oracle-only surface, which still runs on fixtures: `build_legacy_mode_a_model` and the
+     parity assertions in `test_measurement_mode_a.py`. Code that the measurement CLI or a valid
+     test still calls is not deleted because its name says "legacy". The frozen file is not
+     edited before it goes, and item 7a's runner need not exist first.
+   - Not chosen: keeping it as a pinned historical file until item 9's last step.
+7. **S10's capacity acceptance is limited to its designated subject:** workspace
+   `hpo_2026_0929_5a` with checkpoint `model-02-0.1813.pt` (S10). It does not claim to cover the
+   largest inputs, other workspaces or checkpoints, or any other deployment. M2.1's "Capacity"
+   rule is amended to say so. A future guarantee for larger cohorts is its own capacity scenario.
+   - **The facts behind it,** from the reviewer's read-only inventory of the homelab's
+     `data/workspaces` on 2026-10-10 (file sizes only; nothing loaded, hashed or run):
+     - the subject has the largest `kg.json` (209,928,843 bytes), `node_features.pt` (29,308,567),
+       `edge_indices.pt` (19,772,821) and SP table (10,797,575,893), and the largest of the 21
+       checkpoints found (47,931,987);
+     - its sample files are not the largest: `hpo_2026_0623_v2_orpha` has the largest
+       `train_samples.json` (16,306,773 against 12,867,342) and `val_samples.json` (2,444,868
+       against 2,364,974);
+     - so no workspace is largest in every kind of input.
+   - **The inventory's limits:** it covered that directory only, not the whole machine, downloads,
+     external disks or archives; and the largest file is not necessarily the largest peak at
+     every entry point, since parsed shapes and lifetimes shape the readings.
 
 #### M2.2 — the producer records the graph it consumed
 
