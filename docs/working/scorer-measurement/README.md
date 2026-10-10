@@ -17,12 +17,14 @@ A→B isolates encoder scope. B→C isolates the candidate universe. **A is the
 control and preserves the legacy behaviour deliberately, including what is wrong
 with it** — a control that has been improved is not a control.
 
-**Under assessment (2026-10-10).** The formal Test is Mode C and the scorer policy
-is decided, so whether Modes A and B still have a use is assessed in
-[`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md). It proposes
-retiring them after their incidental protection of live training, validation and
-Mode C behaviour moves to the real use points. Nothing below is changed by it
-until the owner decides.
+**Assessed (2026-10-10).** The formal Test is Mode C and the scorer policy is
+decided, so whether Modes A and B still have a use is assessed in
+[`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md), reviewed with
+no P1 or P2 and accepted as a conditional plan. It proposes retiring them after their
+incidental protection of live training, validation and Mode C behaviour moves to the
+real use points, and only once the institution has answered its two questions (the
+agreed B-0 scope and the AMP evidence, its §8 items 4 and 7). Nothing below is
+changed by it until the owner and the institution decide.
 
 **C→D does not isolate one difference, and this table should not be read as
 though it does.** It changes the candidate construction *and* the scorer at once,

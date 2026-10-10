@@ -6,6 +6,11 @@ existing decision is a **proposal** for the owner; changes to the institution's 
 institution's. Sections 8 and 9 list what the owner has to decide, and the two questions only the
 institution can answer (§8 items 4 and 7), on which the retirement is conditional.
 
+**Reviewed (2026-10-10, `6f16373..9de4f30`): no P1 or P2; accepted as a conditional retirement
+plan.** That is not acceptance that Modes A and B are retired, that the moved tests exist, or that
+the institution has agreed to narrow B-0 or to give up the AMP evidence. R1's acceptance is its
+own: the moved tests, which import no Mode A, must catch the mutations §9 names.
+
 **Base.** The inventory read `f581f9e`'s tree (M2.1 S5) through `git show f581f9e:<path>`. The
 S1–S5 corrections from the internal review were then uncommitted in the working tree; they are not
 part of the base and were committed afterwards as `6f16373` (§1.1). **All citations below are at
@@ -488,10 +493,16 @@ identity map); exclusion of the positive from negatives; neighbour limits; prefe
 serial path; early-stopping patience and restore; top-k checkpoint mode; gradient accumulation,
 clipping, scheduler skip and train-loss aggregation; the CUDA AMP/`GradScaler` path; a model that
 yields no embeddings (validation returns `{'val_loss': 0.0}` and the run exits 0); negative global
-phenotype ids admitted silently; the unbounded negative-draw loop. **Also found:** `--seed` does
-not fix the initial weights, because the model is built (`train_model.py:751`) before the Trainer
-seeds (`trainer.py:256`); and validation always draws the default five negatives, whatever the
-training setting (`train_model.py:608-614`). These are for the owner to schedule separately.
+phenotype ids admitted silently; the unbounded negative-draw loop. **Also found:** validation
+always draws the default five negatives, whatever the training setting (`train_model.py:608-614`);
+no document tracks this, and it is for the owner to schedule. **Known, not fixed, and scheduled
+in M3a:** training's `--seed` does not fix the initial weights, because the model is built
+(`train_model.py:751`) before the Trainer seeds (`trainer.py:256`). M3a already requires the seed
+to be applied before the data loaders and the model are built
+(`PLAN_PROVENANCE_CONTRACT.md:1508-1510`). Its fix belongs in `train_model`'s own entry, not in
+a wrapper that seeds before training starts; no new seed work is proposed here.
+This is training's seed; §8 item 5's `--seed` is the measurement CLI's, and neither is a promise
+of bit-identical results across devices.
 
 ---
 
@@ -524,7 +535,9 @@ Counts: 169 test functions (224 collected items, counted by `pytest --collect-on
 
 The other 32 tests in `test_scoring_primitives.py` (served pooling, the SP index and transform,
 the η mixture, the pipeline's SP and combined wrappers) touch no A/B component and are outside
-this inventory; the first draft counted the whole file.
+this inventory; the first draft counted the whole file. The counts classify the 169 source test
+functions; they are not a promise that 169 remain after the move (`:495`, for one, folds into
+`:510`), and they are not the repository's test count.
 
 **Order matters.** All class-3 and 38 class-2 tests sit in files whose module-level imports name
 A/B code (`test_measurement_mode_a.py:20-28`, `test_measurement_modes_bc.py:31-38`,
@@ -647,6 +660,8 @@ that comparison as a false premise).
    the same choice. **Recommended: remove the
    `legacy_*` and loader/sampler fields with retirement**, so no Mode C record describes A's
    semantics. **The seed: owner's choice**; if kept, its review condition is item 14's ledger v2.
+   This is the measurement CLI's seed only. Training's seed keeps its use whatever is chosen
+   here, and its ordering defect is M3a's (§5.3).
 6. **`read_samples`' default.** Keep the three-field default and `training_fields=True`, rewording
    the reason, or always carry five fields. **Recommended: keep the interface** (no S1–S5 change);
    only the reason is reworded.
@@ -655,9 +670,10 @@ that comparison as a false premise).
    the per-sample evidence for it as already in place in `DifferentialResult` (`:499-505`).
    Retiring the differential removes that evidence, and the CPU Trainer tests of §5 cannot
    replace it (`use_amp` is off on CPU). Propose to the institution either (a) that they no
-   longer need it, or (b) that a Trainer-only comparison, the same validation pass with `use_amp`
-   on vs off on CUDA, replace it, reporting the same per-sample quantities; Mode A adds nothing to
-   that comparison. **This one needs the institution**, like item 4. If they choose (b), that
+   longer need it, or (b) that a Trainer-only comparison replace it: the same model and the same
+   batches through the same validation pass on CUDA, with only `use_amp` switched, reporting the
+   same per-sample quantities. Mode A adds nothing to that comparison, and a CPU test cannot stand
+   in for it. **This one needs the institution**, like item 4. If they choose (b), that
    comparison runs before the differential is deleted.
 8. **Mode C input decisions** found while inventorying: refuse non-integer and boolean ids (today
    silently truncated), and give a missing embedding key a named refusal. **Recommended: refuse**;
@@ -665,11 +681,14 @@ that comparison as a false premise).
 9. **The `--modes` option.** Remove it (and edit S10's command line, plan `:1120`), or keep it
    accepting only `C`. **Recommended: remove**, rather than keep a compatibility flag; the
    measurement CLI then measures Mode C.
-10. **Out of scope, surfaced for scheduling:** `--seed` does not fix initial weights; validation
-    always uses five negatives; the Trainer gaps of §5.3.
+10. **Out of scope, surfaced for scheduling:** validation always uses five negatives, which no
+    document tracks; the Trainer gaps of §5.3. Training's `--seed` not fixing the initial weights
+    is already M3a's and is not asked again (§5.3).
 11. **S7's timing if the institution's answer (items 4, 7) is slow:** hold S7, or run S7 for Mode C
     only and leave Mode A on its current reads until the answer. S7's Mode A items stay deferred
-    either way (§1.3). **Owner decides.**
+    either way (§1.3). A Mode C-only S7 states that Modes A and B are not migrated; M2.1 is not
+    reported complete while they are neither migrated nor retired; and no new read path is built
+    for them. **Owner decides.** S6, S8 and R1 do not wait for this.
 
 ---
 
@@ -698,7 +717,11 @@ before the differential is deleted.
 pin list follows R1 (§1.4). If the institution's answer is slow, the owner chooses between holding
 S7 and running S7 for Mode C only, with Mode A left on its current reads until the answer (§8 item
 11). Either way S7's Mode A items stay unbuilt; building them in the meantime is the cost this
-ordering avoids.
+ordering avoids, and a Mode C-only S7 does not make M2.1 complete.
+
+**What R1 does not change.** R1 moves and adds tests. It does not change the Trainer's scoring
+semantics, the negative-sampling policy or the order in which training applies its seed; each of
+those has, or needs, its own work item (§5.3).
 
 **Cost being avoided by deciding now:** S7's Mode A plumbing and A/B regression tests (plan
 `:1022-1039`), item 9's ~70-reference rename (`BACKLOG.md:677`), item 7a's runner and its

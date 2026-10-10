@@ -7,8 +7,8 @@ plan was reviewed and revised with the owner's decisions of 2026-10-09 and 2026-
 of `0708789` found one P2; the incremental review of `7e1af96` found it closed and no new P1 or P2;
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
 `90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at
-`3433bf8`; S1–S5 are implemented (2026-10-10) and await code review; the rest of M2–M5 is not
-implemented.** Facts about the code are cited at `627ed08`, before M1;
+`3433bf8`; S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`;
+the rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -572,7 +572,8 @@ by independent readers of each entry point and of the shared readers. A complete
 checked the map and this breakdown, and a second check verified this text against the code.
 **Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
 left as written. S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at `3433bf8`;
-S1–S5 are implemented (2026-10-10) and await code review; nothing else here is implemented.
+S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`; nothing else
+here is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -637,6 +638,25 @@ S1–S5 are implemented (2026-10-10) and await code review; nothing else here is
 
   The decisions S1–S5 took within the plan are recorded under their steps: the open counter in
   S1, the read forms' names and the `kg` pairing in S5. Neither changes a requirement.
+- **The code review of S1–S5** (`e3eefee..6f16373`, 2026-10-10) found no P1 or P2 and accepted
+  S1–S5 as the shared base for the entry-point migrations, which are reviewed in batches. That is
+  not acceptance of S6–S10, not a claim that any existing checkpoint meets M2's provenance
+  contract, and not the homelab capacity acceptance. It confirmed four limits the text already
+  states: `GraphRead` keeps the graph and its identity together by convention, not by
+  enforcement, so an entry point passes it whole; several files read in turn are not an atomic
+  snapshot, so what is guaranteed is that the bytes parsed are the bytes recorded, with the
+  manifest refusing a mismatch; the release check shows the raw read buffer is dropped, not that
+  decoded text, tensor storage, the allocator or resident memory fall back, which S10 measures
+  at the real entry points; and `read_graph_artifacts` still omits a missing file from its result,
+  so a reader's result is not a verified workspace until `verify_graph_reads` has accepted it.
+  Its focus for the migrations:
+  - S6–S8 show at the real entry points that the manifest is read once; that the checkpoint
+    record takes only the reader's result; that the graph and its identity are never re-paired;
+    that a failure publishes nothing and leaves no success artifact; and that no path-form digest
+    flows back into a record;
+  - a reader's result is never handed back to a path verifier to be read again, and the path and
+    read forms are not kept as two permanent options;
+  - S9 removes the migration interfaces, and only S10 concludes on capacity, for its subject.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1053,7 +1073,9 @@ each moves its callers before anything is removed.
      assessment (`scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`, §1.3): "Mode A uses the
      run's single read", the C-only test's rewrite around Mode A, and "Modes A and B keep their
      shared-read regression tests". No A/B-specific compatibility design is added meanwhile. The
-     mode-agnostic items stand.
+     mode-agnostic items stand. If S7 runs for Mode C before the retirement is decided, it states
+     that Modes A and B are not migrated, M2.1 is not reported complete while they are neither
+     migrated nor retired, and no new read path is built for them (the S1–S5 code review).
    - **Before any model is built or output written:**
      - `resolve_cohort` first;
      - then one read each of: the manifest; the graph tensors; the cohort's samples (default
