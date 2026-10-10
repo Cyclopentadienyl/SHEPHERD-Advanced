@@ -235,9 +235,8 @@ def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> An
     (`:131-135` there). Unlike it, it indexes `metadata` and `in_channels_dict`
     directly, where the evaluator fell back to three node types and 256 channels
     (`:138-148` there), so it raises `KeyError` without them (BACKLOG §3.1).
-    Replacing it with the production architecture resolver would change the
-    control being measured, which is the one thing Mode A may not do, so it stays
-    as it is until BACKLOG item 9 removes it.
+    S0 did not change how it builds the model; replacing or deleting it follows
+    BACKLOG item 9's verification.
 
     **Modes B, C and D must not import it** — they resolve architecture the way the
     deployed pipeline does. It goes with BACKLOG item 9's oracle-only surface.

@@ -745,7 +745,9 @@ class TestTheRandomStreamHasAnIdentity:
         """Seed the parent exactly as the CLI does, then draw negatives through a
         multi-worker loader. Negatives come from `random.randint` inside
         `DiagnosisDataset.__getitem__`, which runs in the worker processes;
-        `num_diseases` is large relative to the batch so the draws really vary."""
+        `num_diseases` is large relative to the batch so the draws really vary.
+        The finite `timeout` turns a hung worker into a failure instead of a
+        stalled test run."""
         import random
 
         import numpy as np
@@ -764,6 +766,7 @@ class TestTheRandomStreamHasAnIdentity:
         loader = DataLoader(
             DiagnosisDataset(samples=samples, num_diseases=500, num_negative_diseases=5),
             batch_size=4, num_workers=workers, shuffle=False, collate_fn=diagnosis_collate_fn,
+            timeout=60 if workers > 0 else 0,
         )
         return [batch["negative_disease_ids"].tolist() for batch in loader]
 
