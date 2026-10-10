@@ -81,9 +81,9 @@ A test asserts that agreement so it is not mistaken for a result.
 > 2026-10-09 and decision of 2026-10-10 (`../PLAN_PROVENANCE_CONTRACT.md` M2.1,
 > decisions 3 and 6). The tests checked the parity `../BACKLOG.md` §3.1.2 retired,
 > the evaluator was its reference, and the pin test kept that reference's bytes
-> unchanged; as above, the launcher could not run that parity on the scanned family
-> or on a checkpoint the current writer produces; the differential calibration is
-> untouched. The
+> unchanged; and the launcher could not run that parity on the scanned family (as
+> above) or on a checkpoint the current writer produces (`../BACKLOG.md` §3.1, M1,
+> 19.18); the differential calibration is untouched. The
 > corrected boundary is below; the corrected checklist is written at step 7 of that
 > order, not now.
 

@@ -418,8 +418,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "Negatives are drawn in the worker processes, which "
                              "PyTorch seeds from the parent's torch RNG as "
                              "base_seed + worker_id, so a different worker count "
-                             "consumes a different random stream and produces a "
-                             "different candidate universe. The default matches "
+                             "can assign batches to different streams and so "
+                             "produce a different candidate universe (it does "
+                             "whenever there are more batches than the smaller "
+                             "count). The default matches "
                              "EvalConfig.num_workers=4 in scripts/evaluate_model.py "
                              "at 7dab728, which the frozen evaluator hardcoded "
                              "and exposed no flag for")

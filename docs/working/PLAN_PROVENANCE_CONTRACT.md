@@ -790,7 +790,8 @@ each moves its callers before anything is removed.
        count is part of the stream) moves to `tests/unit/test_measurement_mode_a.py`, without
        the launcher's bootstrap; so does the seed validator's acceptance of both ends of its
        domain. `test_legacy_equivalence.py` checks that the manifest's artifact digests are the
-       digests of the files the command was given, which the launcher's verdict used to check.
+       digests of the files the command was given, hashing each file itself; the launcher's
+       verdict had compared them only with its own call to `artifact_digests`.
    - **Text the launcher's removal makes false.** The launcher
      was the only thing that compared Mode A with the frozen evaluator; after S0 nothing does.
      Text that names the launcher in the present tense, says that an artifact, a stream or a

@@ -706,9 +706,14 @@ class TestTheRandomStreamHasAnIdentity:
 
     @pytest.mark.parametrize("good", [0, 2 ** 32 - 1])
     def test_both_ends_of_the_seed_domain_are_accepted(self, monkeypatch, good):
-        """The domain check must not reject the ends of the domain it enforces.
-        The run is stopped at device resolution, which comes after validation and
-        seeding, so reaching it shows the endpoint was accepted and applied."""
+        """The domain check must not reject the ends of the domain it enforces,
+        and the value it accepts is the one applied. The run is stopped at device
+        resolution, which comes after validation and seeding; the three generators'
+        state there must be the state that seed gives."""
+        import random
+
+        import numpy as np
+
         import scripts.measure_scorer as cli
         from src.evaluation.measurement import MAX_MEASUREMENT_SEED
 
@@ -717,7 +722,12 @@ class TestTheRandomStreamHasAnIdentity:
         class ReachedDeviceResolutionError(Exception):
             pass
 
+        seen = {}
+
         def stop(*args, **kwargs):
+            seen["torch"] = torch.initial_seed()
+            seen["numpy"] = int(np.random.get_state()[1][0])
+            seen["python"] = random.getstate() == random.Random(good).getstate()
             raise ReachedDeviceResolutionError
 
         monkeypatch.setattr(cli, "_resolve_device", stop)
@@ -725,6 +735,10 @@ class TestTheRandomStreamHasAnIdentity:
         with pytest.raises(ReachedDeviceResolutionError):
             cli.main(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
                       "--output", "o.json", "--seed", str(good)])
+
+        assert seen["torch"] == good
+        assert seen["numpy"] == good
+        assert seen["python"] is True
 
     @staticmethod
     def _worker_negatives(seed: int, workers: int):
@@ -773,9 +787,11 @@ class TestTheRandomStreamHasAnIdentity:
         assert first != self._worker_negatives(DEFAULT_MEASUREMENT_SEED + 1, workers)
 
     def test_the_worker_count_is_part_of_the_stream(self):
-        """Not a throughput setting. The same seed with a different worker count
-        consumes a different random stream and draws different negatives, which
-        is why the CLI's `--num-workers` is recorded as semantics."""
+        """Not a throughput setting. PyTorch hands batch i to worker i mod W, whose
+        stream is seeded base_seed + (i mod W), so changing the count can move
+        batches onto different streams; loading in-process (0) uses the parent's
+        own stream instead. That case always differs and is the one pinned here,
+        which is why the CLI's `--num-workers` is recorded as semantics."""
         workers = self._default_workers()
         assert workers > 0
 

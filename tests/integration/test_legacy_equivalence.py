@@ -197,8 +197,9 @@ def test_the_manifest_records_the_configured_ceiling_not_only_the_observed_one(m
     observed = measured["measurement"]["sampler_evidence"]["max_subgraph_nodes"]
 
     assert manifest["max_subgraph_nodes"] == 5000  # DataLoaderConfig default
-    # The fixture's --num-workers reached the loader configuration the manifest
-    # records (the same object the dataloader is built from).
+    # The loader configuration the manifest records (the same object the dataloader
+    # is built from) has four workers. Four is also the CLI default, so this
+    # catches a hard-coded or overridden count, not a dropped --num-workers.
     assert manifest["num_workers"] == 4
     assert max(observed.values()) < manifest["max_subgraph_nodes"], (
         "the fixture is supposed to sit far below the cap; if it does not, the two "
