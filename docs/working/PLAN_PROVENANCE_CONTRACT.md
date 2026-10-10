@@ -1,14 +1,13 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1
-or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that
-evidence with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab").
-M2.1's work plan was reviewed and revised with the owner's decisions of 2026-10-09 and
-2026-10-10. The re-review of `0708789` found one P2; the incremental review of `7e1af96` found
-it closed and no new P1 or P2; the owner's two remaining choices are recorded since (§4, "M2.1 —
-the work, at `90a668f`"). M2–M5 are not implemented.** Facts about the code are cited at
-`627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
-is the order of work.
+**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
+at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that evidence
+with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab"). M2.1's work
+plan was reviewed and revised with the owner's decisions of 2026-10-09 and 2026-10-10. The re-review
+of `0708789` found one P2; the incremental review of `7e1af96` found it closed and no new P1 or P2;
+the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
+`90a668f`"). M2–M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
 - **The resume parent is checked in M2**, before any state is restored (§4, M2.3). Left to M3a,
@@ -594,8 +593,16 @@ left as written. Nothing here is implemented.
   or P2. It accepted the plan as revised by then, at plan level, which is not acceptance of the
   readers, the release check, the measuring tools or any reading, none of which exists yet. Its
   notes for the release check's implementation are in S2. The text changed since, for decisions 6
-  and 7 below, has not been reviewed: S0's additions (decision 3 lists them), the amended
-  "Capacity" rule, the memory sizes, and S10's subject, pre-flight and acceptance heading.
+  and 7 below, was reviewed next: S0's additions (decision 3 lists them), the amended "Capacity"
+  rule, the memory sizes, and S10's subject, pre-flight and acceptance heading.
+- **The review of the decision record** (`7e1af96..45d9dea`, 2026-10-10) found no P1 or P2. It
+  accepted decisions 6 and 7 and the S0 and S10 text they bring, at plan level. That is not
+  acceptance of S0's change, the readers, the release check, the measuring tools or any reading.
+  Its notes for S0's review: the old launcher, the evaluator and the pin test are deleted; their
+  surviving callers are moved; history no longer serves as a current deletion gate; and item 7a
+  reuses the differential core rather than a second evaluation engine. "Frozen" binds only the
+  file S0 deletes; it is no reason for a new reader, a fallback, or a new entry point shaped
+  around the retired evaluator.
 - **The owner's decisions of 2026-10-10** settle the last two choices: `scripts/evaluate_model.py`
   is removed with its pin test in S0, and S10's capacity acceptance is limited to its designated
   subject (decisions 6 and 7 below). Neither is asked again unless a new dependency or
@@ -1252,10 +1259,10 @@ request, as M1 did.
    limited to the checkpoints checked, the wider list of text it rewords, the lifecycle statements
    it drops or ties to item 9, the hand-off to S7, the final search, and the gate's documents
    (§5.0's restatement added). That is not acceptance of S0's change. S0's additions for decision 6,
-   made since, have not been reviewed: the evaluator in its opening and deletions, the evaluator
-   and its pin test in the gate exception, the statements it now rewords before S7, and the
-   corrections that go with them. The
-   rule is the launcher's; the frozen evaluator is decision 6. The question of the launcher's digest
+   made since (the evaluator in its opening and deletions, the evaluator and its pin test in the
+   gate exception, the statements it now rewords before S7, and the corrections that go with
+   them), were accepted at plan level in the review of `45d9dea` (2026-10-10). The rule is the
+   launcher's; the frozen evaluator is decision 6. The question of the launcher's digest
    bracket (BACKLOG 19.19) lapses with the launcher's removal.
 4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
    - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
