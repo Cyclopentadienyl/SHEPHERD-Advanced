@@ -6,14 +6,13 @@ The KG is written by `src/kg/builder.py` as files under
 needs it. This is the shared reader those copies are meant to collapse into.
 
 **This is the P1's first callers, not the P1.** The package docstring records the
-whole job: become the single reader of this layout, replacing all seven copies.
+whole job: become the single reader of this layout, replacing all six copies.
 Two of them are migrated here — the measurement harness's Mode C path and the
 legacy Mode A loader that delegates to it — because B-0.3 needed a reader that
-does **not** retire with the frozen evaluator, and adding an eighth copy to get
+does **not** retire with the frozen evaluator, and adding another copy to get
 one would have been the opposite of the point. `src/inference/pipeline.py`,
-`scripts/train_model.py`, `scripts/evaluate_model.py`, `scripts/build_index.py`
-and `scripts/setup_demo.py` still have their own; migrating them belongs to P1
-and is not smuggled in here.
+`scripts/train_model.py`, `scripts/build_index.py` and `scripts/setup_demo.py`
+still have their own; migrating them belongs to P1 and is not smuggled in here.
 
 **No abstraction beyond the two functions below.** No `Storage` Protocol, no
 backend registry, no adapter hierarchy, no migration framework. The package name

@@ -2,10 +2,10 @@
 A synthetic data directory and checkpoint, built so sampling randomness cannot
 change the answer.
 ======================================================================
-Neither the frozen evaluator nor the dataloader seeds anything: neighbour
-sampling uses `random.sample` / `random.choice` (`src/kg/data_loader.py:220,263`)
-and negatives use `np.random.choice` / `random.randint` (`:534-597`). Two
-processes running the same command can therefore build different subgraphs.
+The dataloader seeds nothing: neighbour sampling uses `random.sample` /
+`random.choice` (`src/kg/data_loader.py:220,263`) and negatives use
+`np.random.choice` / `random.randint` (`:534-597`). Two processes running the
+same command can therefore build different subgraphs.
 
 Rather than seed the RNG — which would mean reaching into production code — the
 graph is shaped so the draw cannot matter:
@@ -106,8 +106,9 @@ def build_workspace(
 ) -> Tuple[Path, Path]:
     """Write a data directory and a checkpoint. Returns ``(data_dir, checkpoint)``.
 
-    The layout is exactly what `scripts/evaluate_model.py:164-223` reads, so the
-    frozen oracle and the new harness can be pointed at the same fixture.
+    The layout is exactly what `scripts/evaluate_model.py:164-223` at `7dab728`
+    read, so the frozen oracle and the new harness could be pointed at the same
+    fixture.
 
     **The size arguments default to the original fixture**, so every existing
     caller gets exactly the workspace it got before. They exist because a

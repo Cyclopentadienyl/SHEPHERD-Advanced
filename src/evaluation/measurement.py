@@ -6,7 +6,7 @@ Module: src/evaluation/measurement.py
 Mode A has to satisfy two requirements that one ranking cannot:
 
   - **reproduce the frozen evaluator exactly**, so its aggregate number can be
-    compared against the historical one and the harness itself calibrated;
+    compared against the historical one and against the trainer's validation;
   - **rank deterministically**, so numbers from modes A, B, C and D can be
     compared with each other.
 
@@ -154,32 +154,32 @@ def legacy_ranking(scores: Tensor) -> Tensor:
     """Reproduce the frozen evaluator's order. ``(B, D)`` of **subgraph-local**
     column indices.
 
-    `scripts/evaluate_model.py:295` sorts with ``scores.sort(dim=-1,
+    `scripts/evaluate_model.py:295` at `7dab728` sorted with ``scores.sort(dim=-1,
     descending=True)`` over the subgraph-local columns, so this calls the same
     thing on the same columns. Tie behaviour is therefore whatever that call does
-    — **which is the point**: this stream exists to match the historical number,
-    not to be well defined. Non-finite scores are *not* rejected here for the same
-    reason: reproducing the oracle means reproducing whatever it did.
+    — **which is the point**: this stream exists to reproduce the legacy order,
+    which the trainer makes with the same call (`src/training/trainer.py:684`),
+    not to be well defined. Non-finite scores are *not* rejected here for the
+    same reason: reproducing the oracle means reproducing whatever it did.
 
-    **Local, deliberately.** The only per-sample artifact the frozen oracle writes
-    is ``predictions[i][:20]`` — subgraph-local column indices as strings
-    (`scripts/evaluate_model.py:505-519`) — and it does **not** persist the
-    ``original_indices`` needed to translate them. Local space is therefore the
-    only space in which the two can be compared at all, and returning global ids
-    from here would make the one comparison this function exists for impossible.
+    **Local, deliberately.** The only per-sample artifact the frozen oracle wrote
+    was ``predictions[i][:20]`` — subgraph-local column indices as strings
+    (`scripts/evaluate_model.py:505-519` at `7dab728`) — and it did **not** persist
+    the ``original_indices`` needed to translate them. The trainer builds the same
+    local rows, and the differential calibration compares Mode A's with them
+    (`src/evaluation/differential.py:469-471`); global ids here would break that.
 
     Translate explicitly where global identity is wanted:
 
         local_ids  = legacy_ranking(scores)
         global_ids = to_global_ids(original_indices, local_ids)
 
-    The local order is for exact oracle calibration; the translated order is for
-    persistence and rank extraction. Neither requires a second sort.
+    The local order is for the differential calibration; the translated order is
+    for persistence and rank extraction. Neither requires a second sort.
 
-    **This function has a deletion date.** It exists solely so the institutional
-    Mode A calibration can be checked against the frozen oracle, and it is removed
-    together with `scripts/evaluate_model.py` once that calibration succeeds.
-    Nothing else may depend on legacy tie behaviour.
+    **This function is not oracle-only**: the trainer makes the same sort
+    (`docs/working/scorer-measurement/README.md:90`). Nothing outside Mode A's
+    legacy stream may depend on legacy tie behaviour.
     """
     if scores.dim() != 2:
         raise ValueError(f"scores must be (B, D); got {tuple(scores.shape)}")
@@ -243,19 +243,19 @@ def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[
 # alongside it from the canonical ranking.
 
 LEGACY_TRUNCATION_K = 20
-"""Twenty, from two independent places in the frozen evaluator that happen to agree.
+"""Twenty, from two independent places in the frozen evaluator that happened to agree.
 
-Its predictions file is hardcoded `predictions[i][:20]`
-(`scripts/evaluate_model.py:513`). Its **MRR** is computed over lists truncated at
-`max(top_k_values)` (`:324`), and `top_k_values` defaults to `[1, 3, 5, 10, 20]`
-(`:116`) — so 20 again, but by a default rather than a constant. There is no
-`--top-k-values` flag and no `--config` flag, so nothing on the command line can
-move it; only editing the frozen file could, which is forbidden.
+Its predictions file was hardcoded `predictions[i][:20]`
+(`scripts/evaluate_model.py:513` at `7dab728`). Its **MRR** was computed over
+lists truncated at `max(top_k_values)` (`:299`), and `top_k_values` defaulted to
+`[1, 3, 5, 10, 20]` (`:91`) — so 20 again, but by a default rather than a
+constant. There was no `--top-k-values` flag and no `--config` flag, so nothing on
+the command line could move it.
 
-The distinction matters to calibration and is therefore checked rather than
-assumed: the oracle's report echoes its config, and `scripts/calibrate_mode_a.py`
-refuses to compare the two MRRs unless `max(top_k_values)` is this value. Two
-numbers truncated at different K are not the same quantity."""
+The distinction mattered to calibration and was therefore checked rather than
+assumed: the oracle's report echoed its config, and `scripts/calibrate_mode_a.py`,
+now deleted, refused to compare the two MRRs unless `max(top_k_values)` was this
+value. Two numbers truncated at different K are not the same quantity."""
 
 
 #: Where `torch.compile`'s wrapper class is exported. The package-level name is
@@ -675,21 +675,21 @@ class ModeResult:
 
 @dataclass(frozen=True)
 class ModeAResult(ModeResult):
-    """Mode A, which carries what no other mode can: the frozen oracle's own
-    artifacts.
+    """Mode A, which carries what no other mode can: artifacts in the legacy
+    evaluator's shape.
 
     The two metric families are kept apart in the type, not merged into one dict,
     because they answer different questions and only one of them is comparable
-    across modes. `legacy_metrics` exists **only** here — B and C have no frozen
-    oracle to be compared against, and a `legacy_mrr` on them would invite exactly
+    across modes. `legacy_metrics` exists **only** here — B and C have no legacy
+    number to be compared with, and a `legacy_mrr` on them would invite exactly
     the comparison that means nothing.
     """
 
     legacy_metrics: Dict[str, float]
     legacy_top_k_local: List[List[int]]
-    """Per sample, the frozen oracle's observable artifact: subgraph-local column
-    indices, truncated to `LEGACY_TRUNCATION_K`. This is what a comparison against
-    `--save-predictions` output is made of."""
+    """Per sample, in the shape of the frozen oracle's observable artifact:
+    subgraph-local column indices, truncated to `LEGACY_TRUNCATION_K`. This is what
+    its `--save-predictions` output was made of (at `7dab728`)."""
 
     def to_dict(self) -> Dict[str, Any]:
         report = super().to_dict()
@@ -699,13 +699,13 @@ class ModeAResult(ModeResult):
     def to_predictions(self) -> List[Dict[str, Any]]:
         """Per-sample rows in the frozen oracle's own artifact shape.
 
-        `scripts/evaluate_model.py:508-519` writes `sample_id`, `ground_truth` and
-        `predictions` — and mixes spaces while doing it: `ground_truth` is the
-        **global** disease id straight from the samples file, while `predictions`
-        are **subgraph-local** column indices rendered as strings. That is
-        reproduced here rather than tidied, because the only purpose of this
-        artifact is to be diffed against that one, and a tidier shape would not
-        diff.
+        `scripts/evaluate_model.py:508-519` at `7dab728` wrote `sample_id`,
+        `ground_truth` and `predictions` — and mixed spaces while doing it:
+        `ground_truth` was the **global** disease id straight from the samples
+        file, while `predictions` were **subgraph-local** column indices rendered
+        as strings. That is reproduced here rather than tidied, so this artifact
+        stays comparable with historical predictions files, which a tidier shape
+        would not be; nothing diffs it against them now.
         """
         return [
             {
@@ -946,8 +946,8 @@ def run_modes_ab(
     Then two rankings from the one score matrix:
 
       - `legacy_ranking` in **local** space, truncated to `LEGACY_TRUNCATION_K`,
-        which is the only representation the frozen oracle emits and therefore the
-        only one a calibration can compare;
+        which is the only representation the frozen oracle emitted (at `7dab728`)
+        and the one the differential calibration compares with the trainer's rows;
       - `canonical_ranking` in **global** space, untruncated, which is what modes
         A, B, C and D are compared with each other on.
 
@@ -1029,10 +1029,11 @@ def run_modes_ab(
             disease_ids_local = batch["disease_ids"].to(device)
             mask = batch["phenotype_mask"].to(device)
 
-            # **The clamp is oracle parity, not defensiveness, and it stays.**
+            # **The clamp is legacy parity, not defensiveness, and it stays.**
             # `diagnosis_collate_fn` pads phenotype ids with -1 and `_remap_indices`
-            # leaves those positions at -1, so the frozen evaluator clamps before
-            # gathering and reads row 0 for every padded slot. Indexing with -1
+            # leaves those positions at -1, so the frozen evaluator clamped before
+            # gathering and read row 0 for every padded slot, as the trainer still
+            # does (`src/training/trainer.py:795`). Indexing with -1
             # instead would read the *last* row through Python negative indexing —
             # a different operation, cancelled by the mask only for finite values,
             # and a NaN survives multiplication by zero. Mode A may not swap the
@@ -1041,8 +1042,7 @@ def run_modes_ab(
             # This is the opposite decision from Mode C's, and deliberately so:
             # there every id is a real value under a true mask, so clamping would
             # score a different patient. Here every out-of-range value is padding
-            # the mask already discards. This clamp and the Mode A/B traversal go
-            # when the frozen oracle goes; Mode C's validated no-clamp path remains.
+            # the mask already discards; Mode C keeps its validated no-clamp path.
             valid = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
             patient_phenotypes = phenotype_emb[valid.reshape(-1)].reshape(
                 phenotype_ids.size(0), phenotype_ids.size(1), -1
@@ -1109,11 +1109,12 @@ def run_modes_ab(
         manifest=manifest_a,
         legacy_metrics={
             # Through `RankingMetrics.mean_reciprocal_rank` — the same call the
-            # frozen evaluator reaches via `compute_all` (`evaluate_model.py:285,
-            # 366`) — over the same truncated lists it builds, as ids rather than
-            # as the strings it renders them to. A second implementation of
-            # `1/rank` here would have to be trusted to agree with that one; this
-            # cannot disagree with it.
+            # frozen evaluator reached via `compute_all`
+            # (`scripts/evaluate_model.py:318` at `7dab728`) — over the same
+            # truncated lists it built, as ids rather than as the strings it
+            # rendered them to. A second implementation of `1/rank` here would
+            # have to be trusted to agree with that one; this cannot disagree
+            # with it.
             f"legacy_mrr_truncated_at_{LEGACY_TRUNCATION_K}":
                 RankingMetrics().mean_reciprocal_rank(legacy_top_k, legacy_truth_local),
         },
@@ -1147,8 +1148,8 @@ def run_modes_ab(
 def assert_constructions_agree(legacy_model: Any, production_model: Any) -> None:
     """Refuse to read A→B as encoder scope unless the two models are the same model.
 
-    Mode A builds through the frozen evaluator's loader; modes B and C build
-    through production's. If those disagree — a different conv type recovered, a
+    Mode A builds through the legacy builder, which mirrors the frozen evaluator's
+    loader; modes B and C build through production's. If those disagree — a different conv type recovered, a
     different layer count, different weights — then A→B is encoder scope *plus*
     architecture resolution, and the ladder's first rung measures two things at
     once while reporting one.

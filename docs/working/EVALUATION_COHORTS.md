@@ -470,7 +470,7 @@ overlap.
 ### 1.7 What this project's guards are, and are not
 
 Two guards were added earlier in this phase and should not be confused with the boundary above:
-`--split` is required with no default on both measurement entry points, and `read_samples` refuses
+`--split` is required with no default on the measurement entry point, and `read_samples` refuses
 a missing split and lists what exists rather than substituting one.
 
 Neither separates validation from test. They prevent a number being produced on a split the caller
@@ -915,7 +915,7 @@ current one.
 
 Two rules follow, and both are enforced rather than advised:
 
-- **A generated cohort with no manifest is refused** at training, measurement, calibration and
+- **A generated cohort with no manifest is refused** at training, measurement and
   both audits — and *refused* means verified, not merely present: the manifest is checked against
   the sample files' exact SHA-256, against the disease sets recomputed from those records, and
   against its own allocated digests. Existence alone would let any `split_manifest.json` dropped
@@ -929,7 +929,7 @@ Two rules follow, and both are enforced rather than advised:
   of a file. The report records it as the unverified claim it is, and says which checks ran.
 - **Two contracts, and the split is load-bearing.** *Workspace graph binding* — `kg.json` and the
   three exported tensors match the writer-recorded digests — applies to **every graph consumer,
-  whatever the cohort kind**: training, measurement, calibration, the fidelity audit, and the
+  whatever the cohort kind**: training, measurement, the fidelity audit, and the
   **clinical inference pipeline**, which was outside it and is the costliest one to leave there.
   A supplied institutional cohort is scored against those same tensors, and so is a served
   diagnosis. Only the file-backed path is checked — a caller supplying graph data in memory makes
@@ -971,12 +971,11 @@ Two rules follow, and both are enforced rather than advised:
   when those fields say the regime was deterministic. The ledger refuses the second record either
   way — two answers under one identity cannot both stand — but the refusal is an instruction to
   look, not a proof of a defect.
-- **One exception, named rather than glossed.** `scripts/evaluate_model.py` has no such preflight
-  and will not get one. It is the behaviourally frozen artefact Mode A is calibrated against, and
-  editing it makes it no longer the thing being compared; `tests/unit/test_frozen_evaluator.py`
-  pins its bytes so the freeze is enforced rather than asserted. It is non-authoritative,
-  scheduled for deletion with the rest of the oracle-only surface, and nothing treats its output
-  as a supported production result.
+- **One exception, named rather than glossed, now closed.** `scripts/evaluate_model.py` had no
+  such preflight and was never given one: it was the behaviourally frozen artefact Mode A was
+  calibrated against, and `tests/unit/test_frozen_evaluator.py` pinned its bytes. Both were
+  deleted by the owner's decision of 2026-10-10 (`PLAN_PROVENANCE_CONTRACT.md` M2.1, decision 6),
+  after the parity they served was retired as an acceptance (BACKLOG §3.1.2).
 - **A supplied cohort may not be named `train` or `val`.** Written into `val_samples.json` it
   would inherit the manifest of a cut it was never part of and be recorded as an ordinary
   validation number — which is §6.7's role hazard, arriving through a filename.

@@ -105,7 +105,7 @@ def _run(script: str, argv: list):
 # M1-M3 — the family scan
 # ---------------------------------------------------------------------------
 def test_an_unreadable_checkpoint_is_recorded_rather_than_fatal(tmp_path):
-    """M1 exists because the frozen evaluator's loader fails on this family, so a
+    """M1 exists because the frozen evaluator's loader failed on this family, so a
     scan that stopped at the first unreadable file would destroy the evidence it
     was run to collect."""
     ck = tmp_path / "ck"

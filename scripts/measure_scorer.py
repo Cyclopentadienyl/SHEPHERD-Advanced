@@ -2,8 +2,8 @@
 r"""
 Measure the disease scorer — Mode A.
 ====================================
-The offline counterpart to `scripts/evaluate_model.py`, which this replaces once
-institutional Mode A calibration succeeds.
+The offline counterpart to `scripts/evaluate_model.py`, which this replaced.
+That evaluator is deleted, and is cited here at revision `7dab728`.
 
 **A thin CLI.** Argument parsing, artifact loading, manifest assembly, and one
 call into `src.evaluation.measurement`. No measurement logic lives here, so the
@@ -12,8 +12,9 @@ harness stays testable without a subprocess.
 Mode A reproduces the legacy candidate construction *deliberately* — it is the
 control against which modes B, C and D are read, and a control that has been
 improved is no longer one. It reports two metric families: the legacy truncated
-MRR, for comparison against the frozen evaluator, and the untruncated
-authoritative metrics, which are what the modes are compared with each other on.
+MRR, which the differential calibration compares with the trainer's own
+validation MRR, and the untruncated authoritative metrics, which are what the
+modes are compared with each other on.
 
     python scripts/measure_scorer.py \
         --checkpoint checkpoints/best.pt \
@@ -22,15 +23,13 @@ authoritative metrics, which are what the modes are compared with each other on.
         --output measurement.json
 
 Two artifacts come out: `--output`, the measurement report a human reads, and
-`--predictions-output`, the per-sample rows in the frozen evaluator's own shape.
-The second exists to be diffed, and **is the calibration evidence** — the report
-alone cannot show that the two scorers agree sample by sample.
+`--predictions-output`, Mode A's per-sample rows in the legacy predictions shape,
+which the report summarises but does not carry.
 
-**Do not run this by hand to calibrate.** `scripts/calibrate_mode_a.py` runs both
-scorers on one seeded stream with matching batch size, worker count and device,
-and compares what they wrote. Running the two separately leaves them on different
-random streams, and a comparison of two different candidate universes is not a
-calibration.
+**A run of this is not a calibration.** `scripts/calibrate_mode_a.py` compared
+those rows with the frozen evaluator's; both are deleted. The adopted acceptance
+is the same-batch differential calibration (`src/evaluation/differential.py`),
+whose institutional CUDA run is BACKLOG item 7a.
 
 Module: scripts/measure_scorer.py
 """
@@ -92,10 +91,9 @@ DEFAULT_MEASUREMENT_SEED = 0
 #: **Moving the definition did not by itself remove the edge**, and an earlier
 #: revision claimed it had. `scripts/benchmark_sp_lookup.py` now imports from
 #: `src.utils.fingerprint` directly, which is the edge that had no business
-#: existing — the SP benchmark has nothing to do with scorer measurement. The
-#: remaining importer is `scripts/calibrate_mode_a.py`, which reaches for
-#: `artifact_digests` as well: one measurement script using another's domain
-#: concept, which is cohesion rather than a layering fault.
+#: existing — the SP benchmark has nothing to do with scorer measurement. No
+#: script imports it from here any more; the remaining callers are tests, and
+#: `tests/unit/test_training_provenance.py` pins the re-export.
 file_sha256 = _file_sha256
 
 
@@ -200,26 +198,26 @@ def _software_revision() -> Optional[str]:
 
 
 def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any], List[Any]]:
-    """Read the same layout `scripts/evaluate_model.py:164-223` reads.
+    """Read the same layout `scripts/evaluate_model.py:164-223` at `7dab728` read.
 
-    **Named for its lifecycle, not its shape.** This is a deliberate duplicate of
-    the frozen evaluator's loader, kept only so Mode A consumes its inputs exactly
-    as the oracle does. **Modes B, C and D must not import it.** It retires with
-    `scripts/evaluate_model.py` once institutional parity succeeds.
+    **Named for its lifecycle, not its shape.** This was a deliberate duplicate of
+    the frozen evaluator's loader, kept so Mode A consumed its inputs exactly as
+    the oracle did; that evaluator is deleted. **Modes B, C and D must not import
+    it.** It goes when the run's single shared read of its inputs replaces it.
 
     **The reading is no longer duplicated here.** It delegates to
-    `src/kg/storage/file_storage.py`, which does not retire with the frozen
-    evaluator — Mode C needs the same files and may not reach them through this
-    function. What stays legacy about this one is its *name and lifecycle*: it is
-    the entry point Mode A uses, and it goes when the oracle goes.
+    `src/kg/storage/file_storage.py`, which stays when this function goes — Mode C
+    needs the same files and may not reach them through this function. What stays
+    legacy about this one is its *name and lifecycle*: it is the entry point Mode A
+    uses, and it goes when that shared read replaces it.
 
     The same read still appears in `src/inference/pipeline.py:579-606`,
-    `scripts/train_model.py`, `scripts/evaluate_model.py`,
-    `scripts/build_index.py` and `scripts/setup_demo.py`. Every copy depends on
-    the same filenames and serialisation format, so a format change breaks all of
-    them at once and the duplication buys nothing.
+    `scripts/train_model.py`, `scripts/build_index.py` and
+    `scripts/setup_demo.py`. Every copy depends on the same filenames and
+    serialisation format, so a format change breaks all of them at once and the
+    duplication buys nothing.
 
-    Migrating those five is P1 and stays out of this change; migrating them here
+    Migrating those four is P1 and stays out of this change; migrating them here
     would put the measurement behind an unrelated sweep.
     """
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
@@ -228,16 +226,17 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
 
 
 def build_legacy_mode_a_model(checkpoint_path: Path, device: torch.device) -> Any:
-    """Rebuild the model the way the frozen evaluator does.
+    """Rebuild the model the way the frozen evaluator did.
 
     **Named for its lifecycle.** This mirrors
-    `scripts/evaluate_model.py:create_model_from_checkpoint` on purpose, including
-    its hardcoded architecture fallbacks. Replacing it with the production
-    architecture resolver before parity is established would change the control
-    being measured, which is the one thing Mode A may not do.
+    `scripts/evaluate_model.py:create_model_from_checkpoint` at `7dab728` on
+    purpose, including its hardcoded architecture fallbacks. Replacing it with the
+    production architecture resolver would change the control being measured,
+    which is the one thing Mode A may not do, so it stays as it is until BACKLOG
+    item 9 removes it.
 
     **Modes B, C and D must not import it** — they resolve architecture the way the
-    deployed pipeline does. It retires with `scripts/evaluate_model.py`.
+    deployed pipeline does. It goes with BACKLOG item 9's oracle-only surface.
 
     `weights_only=True` — the safe loader. If a repository checkpoint proves
     incompatible with it, that is a checkpoint-format problem to fix explicitly,
@@ -403,23 +402,23 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the measurement JSON is written")
     parser.add_argument("--predictions-output", type=Path, default=None,
-                        help="Where the per-sample calibration rows are written. "
-                             "Defaults to <output stem>_predictions.json. This is "
-                             "the artifact the frozen oracle's predictions file is "
-                             "compared against; the measurement JSON carries only "
-                             "the summary")
+                        help="Where Mode A's per-sample rows, in the legacy "
+                             "predictions shape, are written. Defaults to "
+                             "<output stem>_predictions.json. The measurement "
+                             "JSON carries only the summary")
     parser.add_argument("--batch-size", type=int, default=32,
                         help="Part of Mode A's semantics, not a performance knob: "
                              "the candidate universe is the batch's subgraph")
     parser.add_argument("--num-workers", type=int, default=4,
-                        help="Also semantics under calibration, not throughput. "
+                        help="Also semantics, not throughput. "
                              "Negatives are drawn in the worker processes, which "
                              "PyTorch seeds from the parent's torch RNG as "
                              "base_seed + worker_id, so a different worker count "
                              "consumes a different random stream and produces a "
                              "different candidate universe. The default matches "
-                             "EvalConfig.num_workers=4, which the frozen evaluator "
-                             "hardcodes and exposes no flag for")
+                             "EvalConfig.num_workers=4 in scripts/evaluate_model.py "
+                             "at 7dab728, which the frozen evaluator hardcoded "
+                             "and exposed no flag for")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
@@ -432,8 +431,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "would carry identical recorded semantics while having "
                              "consumed different random streams")
     parser.add_argument("--modes", default="A",
-                        help="One of: A, A,B, C, A,B,C. Default A, which is the "
-                             "calibration path and must stay the default. "
+                        help="One of: A, A,B, C, A,B,C. Default A, which must "
+                             "stay the default so that a run naming no mode still "
+                             "writes Mode A to --output and its predictions rows "
+                             "beside it. "
                              "**B requires A** — it is A's candidates under a "
                              "different encoder, so it is refused without A "
                              "rather than silently adding it")
@@ -559,10 +560,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     wants_production = bool({"B", "C"} & set(modes))
 
     # Loading and construction are dispatched by mode, not done unconditionally.
-    # `load_legacy_mode_a_inputs` and `build_legacy_mode_a_model` retire with the
-    # frozen evaluator; a C-only run that touched them would fail when they go,
-    # and could fail today on a checkpoint the legacy loader cannot rebuild even
-    # though production can.
+    # `load_legacy_mode_a_inputs` goes when the run's single shared read replaces
+    # it, and `build_legacy_mode_a_model` with BACKLOG item 9's oracle-only
+    # surface; a C-only run that touched them would fail when they go, and could
+    # fail today on a checkpoint the legacy loader cannot rebuild even though
+    # production can.
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
     if wants_legacy:
@@ -656,10 +658,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     # A single-mode run writes the mode the caller asked for to `--output`; a
-    # multi-mode run keeps A there, because `scripts/calibrate_mode_a.py` reads
-    # that path and must keep finding Mode A in it. One file per mode either way,
-    # since a mode is one measurement and merging them would put two manifests in
-    # one document.
+    # multi-mode run keeps A there, beside the predictions rows named after it, so
+    # adding modes never moves Mode A's artifacts and a reader of that path still
+    # finds Mode A in it. One file per mode either way, since a mode is one
+    # measurement and merging them would put two manifests in one document.
     primary = modes[0] if len(modes) == 1 else "A"
     for mode, mode_result in results.items():
         path = (
@@ -679,7 +681,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         predictions_path.write_text(
             json.dumps(result.to_predictions(), indent=2, allow_nan=False)
         )
-        logger.info("Frozen-oracle comparison artifact -> %s", predictions_path)
+        logger.info("Mode A predictions (legacy shape) -> %s", predictions_path)
 
     for mode, mode_result in results.items():
         print(f"\nMode {mode} — {mode_result.n_ranked} ranked, "
@@ -702,7 +704,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if not cuda_executed:
         print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
-    print("\nNot calibrated. Institutional parity is a separate acceptance gate, and\n"
+    print("\nNot calibrated. The acceptance gate is a separate run, the differential\n"
+          "calibration on institutional CUDA hardware (BACKLOG item 7a), and\n"
           "no cross-mode conclusion may rest on a synthetic or CPU run.\n")
     return 0
 

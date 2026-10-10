@@ -1,10 +1,11 @@
 """
 Shared scoring primitives for served inference and offline evaluation.
 ======================================================================
-**Migration status: in progress.** `DiagnosisPipeline` composes these functions;
-`scripts/evaluate_model.py` does not yet and is migrated later in B-0. Until it
-is, two implementations of these formulas still exist, which is the condition
-this module is being built to end — not one it has already ended.
+**Migration status: ended by deletion.** `DiagnosisPipeline` and the offline
+measurement in `src/evaluation` compose these functions.
+`scripts/evaluate_model.py`, the second implementation of these formulas, was
+never migrated; it is deleted (its code is at `7dab728`), and that
+second implementation ended with it rather than through this module.
 
 Scope, and a boundary that is mechanically enforced. This module covers the
 **served inference** and **offline evaluation** paths. It deliberately does not

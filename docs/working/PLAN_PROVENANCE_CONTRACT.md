@@ -6,7 +6,8 @@ with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the hom
 plan was reviewed and revised with the owner's decisions of 2026-10-09 and 2026-10-10. The re-review
 of `0708789` found one P2; the incremental review of `7e1af96` found it closed and no new P1 or P2;
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
-`90a668f`"). M2–M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+`90a668f`"). M2.1's S0 is implemented (2026-10-10) and awaits code review; the rest of M2–M5 is
+not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -569,7 +570,8 @@ This is how M2.1 would be built. It was mapped against the code at `90a668f`, th
 by independent readers of each entry point and of the shared readers. A completeness critic then
 checked the map and this breakdown, and a second check verified this text against the code.
 **Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
-left as written. Nothing here is implemented.
+left as written. S0 is implemented (2026-10-10) and awaits code review; nothing else here is
+implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -846,7 +848,7 @@ each moves its callers before anything is removed.
      `measure_scorer.py:203`, `:205-217`, `:222`, `:234-237`, `:240`, `:561-565`, `:658-661` and
      `:682`. The lists above and decision 6's, with its two further corrections, are the hits S0
      changes as found at `0708789`. The search is what makes them complete.
-   - **Decisions amended when S0 lands** (this revision amends none of them), each with the
+   - **Decisions amended when S0 lands** (amended in S0's change, 2026-10-10), each with the
      owner's rule and date:
      - `scorer-measurement/README.md:103-105` ("rewritten, not deleted") is reversed;
      - **the deletion gate gains one exception,** in BACKLOG §5 ("Item 9 waits for everything")

@@ -122,10 +122,10 @@ def test_canonical_rejects_malformed_input(scores, ids):
 # Legacy ranking
 # ---------------------------------------------------------------------------
 def test_legacy_returns_local_columns_not_global_ids():
-    """The frozen oracle writes subgraph-local column indices and does not persist
-    the mapping needed to translate them, so local space is the only space in
-    which the two can be compared. Returning global ids here would make the one
-    comparison this stream exists for impossible."""
+    """The frozen oracle wrote subgraph-local column indices and did not persist
+    the mapping needed to translate them. The trainer builds the same local rows,
+    and the differential calibration compares Mode A's with them; returning
+    global ids here would break that comparison."""
     scores = torch.tensor([[0.1, 0.9, 0.5]])
 
     _, expected_local = scores.sort(dim=-1, descending=True)
@@ -135,8 +135,8 @@ def test_legacy_returns_local_columns_not_global_ids():
 
 
 def test_legacy_local_output_translates_without_a_second_sort():
-    """The documented two-step: rank locally for oracle comparison, translate for
-    persistence. One sort, two representations."""
+    """The documented two-step: rank locally for the differential calibration,
+    translate for persistence. One sort, two representations."""
     scores = torch.tensor([[0.1, 0.9, 0.5]])
     original = torch.tensor([70, 80, 90])
 

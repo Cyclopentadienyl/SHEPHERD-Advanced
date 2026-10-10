@@ -7,7 +7,8 @@ thread and have existed only as pasted text since:
 
   M1  no scanned checkpoint carries `metadata` or `in_channels_dict`
   M2  the input width is 128, where the frozen evaluator's hardcoded fallback
-      is 256 — the size mismatch it dies on
+      was 256 (`scripts/evaluate_model.py:144-148` at `7dab728`) — the size
+      mismatch it died on
   M3  the number in a filename is `val_mrr`
 
 Those three are what established that the frozen evaluator cannot be the
@@ -24,7 +25,7 @@ no operator or host names** — only the basename of each checkpoint, which is t
 subject of M3 and carries nothing else.
 
 **A checkpoint that will not load is a finding, not a crash.** M1 exists because
-the frozen evaluator's loader fails on this family, so a scan that stopped at the
+the frozen evaluator's loader failed on this family, so a scan that stopped at the
 first unreadable file would destroy the evidence it was run to collect.
 
 Usage:

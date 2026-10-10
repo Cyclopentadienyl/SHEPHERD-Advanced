@@ -88,8 +88,8 @@ parallel one:
   - **D8:** M1 is an explicit setting, checked together with the request's arrival socket and
     the absence of forwarding headers. Stop is per job type;
   - **D3:** B-1 must also settle the served disease clamp and the silent phenotype drop.
-- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging, which now
-  stages a directory the oracle reads as its `--data-dir`. It also corrected the reader list,
+- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging, which then
+  staged a directory the oracle read as its `--data-dir` (since closed with the oracle, §5). It also corrected the reader list,
   now limited to measurement and audit readers with the generated-split readers named; the
   Training Console's resume listing, now a named C3 exception; D4's field count; and the D3
   citations, now at `1cab39f`.
@@ -159,9 +159,7 @@ question one, and BACKLOG item 14):
 
 ### 2.2 The measurement engine, and what each mode measures
 
-`scripts/measure_scorer.py` is the only producer whose output the ledger accepts. The frozen
-`scripts/evaluate_model.py` is not one: its report has no manifest, and its `--split` choices
-are `train`/`val`/`test`.
+`scripts/measure_scorer.py` is the only producer whose output the ledger accepts.
 
 - **How a cohort is given.** It is `<data_dir>/<split>_samples.json` with `--cohort-kind
   supplied`. Even then the workspace's graph artifacts are verified (`measure_scorer.py:122-128`),
@@ -288,9 +286,9 @@ with the first, although only the newer one will be used. This item adds none:
 
 | Concern | The one path | Not used for it here, and not added alongside |
 |---|---|---|
-| Producing a test number | `measure_scorer.py`, Mode C | `evaluate_model.py`, the frozen oracle; Mode D, which measures the legacy behaviour and is a separate item |
+| Producing a test number | `measure_scorer.py`, Mode C | Mode D, which measures the legacy behaviour and is a separate item |
 | Scoring | one implementation of the pool, the cosine, the candidate universe and the tie rule, shared by Mode C and B-1 (D3). Only the cosine is shared today | a test-only scorer; two pools |
-| Resolving a test cohort | the cohort registry (D6): one resolver locates a cohort's file, and both the digest recorded and the samples scored come from that file (§5) | the loose `<split>_samples.json` supplied path, which today is located twice, by `resolve_cohort` and by `read_samples`. The frozen oracle is the one named exception (§5) |
+| Resolving a test cohort | the cohort registry (D6): one resolver locates a cohort's file, and both the digest recorded and the samples scored come from that file (§5) | the loose `<split>_samples.json` supplied path, which today is located twice, by `resolve_cohort` and by `read_samples` |
 | Recording | ledger v2 | a v1 reader inside v2 code (§5) |
 | Running a job | one job runner, made by reshaping `training_manager`; the Training Console moves onto it | a second process manager, or a runner extracted around the old one |
 | Listing checkpoints | one listing function behind the existing route and the Training Console's resume dropdown, upgraded: by workspace and architecture chosen among those the server lists, with a safe metadata read (§5) | a second listing path |
@@ -741,13 +739,12 @@ This is one pipeline extended, not a second one.
     - `scripts/audit_split_overlap.py`, including its direct hash;
     - `scripts/audit_generator_fidelity.py`, including its direct hashes
       (`audit_generator_fidelity.py:538-539`);
-    - `src/evaluation/cohort.py`'s own overlap reader;
-    - `scripts/calibrate_mode_a.py`, which passes `--cohort-kind` through.
+    - `src/evaluation/cohort.py`'s own overlap reader.
 
     A supplied cohort's argument changes from a split name to a registered cohort version.
     The tests that pass `--split test --cohort-kind supplied`, or test `read_samples`'
     split-name contract, change with it: `tests/integration/test_legacy_equivalence.py`
-    (`:53`, `:290-466`) and `tests/unit/test_measurement_mode_a.py` (its supplied-cohort
+    (`:64`, `:192-371`) and `tests/unit/test_measurement_mode_a.py` (its supplied-cohort
     cases, from `:54`).
   - **Readers of generated splits only are not moved onto the resolver,** and are listed so the
     claim is not read as wider.
@@ -760,19 +757,11 @@ This is one pipeline extended, not a second one.
 
     None of them reads a test cohort. Moving them onto the resolver is a follow-up outside
     this item.
-  - **The frozen oracle is the one named exception.** `scripts/evaluate_model.py` is
-    byte-pinned (`tests/unit/test_frozen_evaluator.py`). It reads `<split>_samples.json` and
-    the graph tensors from its `--data-dir` (`evaluate_model.py:203, 224-234`), and its
-    `--split` accepts only train, val or test (`:443`). `calibrate_mode_a.py` and
-    `tests/integration/test_legacy_equivalence.py` drive it on supplied cohorts. For them:
-    - **a staging directory per run** holds the registered version written as
-      `test_samples.json`, checked against the version's digest;
-    - **beside it** are links to the workspace's `node_features.pt`, `edge_indices.pt` and
-      `num_nodes.json`, checked against the workspace's graph digests;
-    - **the driver** passes that directory as the oracle's `--data-dir`, with `--split test`.
-
-    Nothing else reads the staging directory, and no loose file stays in the workspace. This
-    exception goes when the frozen oracle retires.
+  - **The frozen oracle's named exception is closed.** `scripts/evaluate_model.py` was
+    byte-pinned, so this plan exempted it from the resolver and designed a staging directory for
+    the calibration launcher and `tests/integration/test_legacy_equivalence.py` to drive it on
+    supplied cohorts. The launcher and the oracle were deleted on 2026-10-10 (the contract's
+    M2.1, decisions 3 and 6), so neither the exception nor the staging design is needed.
   - Generated cohorts, the workspace's own splits, stay where they are. The measurement and
     audit readers locate them through the same resolver.
   - The report carries the cohort's label and role, the source case count and the exclusion

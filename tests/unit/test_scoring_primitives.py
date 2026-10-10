@@ -7,8 +7,9 @@ score an offline evaluation reports were computed by two separate
 implementations of the same formulas. Two implementations drift; when they
 drift, the evaluation stops describing the thing being evaluated.
 
-**That condition is not yet ended.** The pipeline composes the primitives;
-`scripts/evaluate_model.py` does not yet. These tests cover the migrated half.
+**That condition has ended.** The pipeline and the measurement harness compose
+the primitives; `scripts/evaluate_model.py`, the second implementation, was
+never migrated and is deleted (its code is at `7dab728`).
 
 Three properties worth testing, and they are different:
 

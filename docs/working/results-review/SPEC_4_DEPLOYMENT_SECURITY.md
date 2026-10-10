@@ -88,9 +88,10 @@ wrong, and it left the dangerous path open:** the *final model load* still deser
 **"Trusted source" means selected by server-side configuration or an allowlisted repository.** A path
 supplied in the request is client-selected and is *not* trusted merely because it resolves locally.
 
-**Ordinary hardening, not P0** — same change, lower urgency, because they are not reachable over
-HTTP: `scripts/migrate_checkpoints.py:50`, and `scripts/evaluate_model.py:111, 201, 205` which pass
-no `weights_only` at all.
+**Ordinary hardening, not P0** — same change, lower urgency, because it is not reachable over
+HTTP: `scripts/migrate_checkpoints.py:50`. The three loads in `scripts/evaluate_model.py` that
+passed no `weights_only` at all (`:111, 201, 205` at `7dab728`) went with that file, deleted on
+2026-10-10 (`docs/working/PLAN_PROVENANCE_CONTRACT.md` M2.1, S0).
 
 > Calls that omit `weights_only` inherit a **version-dependent default. Make the argument explicit.**
 

@@ -431,8 +431,9 @@ def test_the_result_serialises_without_non_finite_values(workspace):
 # Failure behaviour
 # ---------------------------------------------------------------------------
 def test_a_model_producing_no_embeddings_is_an_error_not_a_skip(workspace):
-    """The legacy evaluator `continue`s past a batch with no embeddings, which
-    silently shrinks the cohort. Mode A refuses instead."""
+    """The legacy evaluator `continue`d past a batch with no embeddings
+    (`scripts/evaluate_model.py:263-264` at `7dab728`), which silently shrank
+    the cohort. Mode A refuses instead."""
     _, data_dir, checkpoint = workspace
 
     import argparse
@@ -540,13 +541,14 @@ def test_every_way_the_cohort_can_shrink_is_refused(workspace, kwargs, expected)
 
 
 # ---------------------------------------------------------------------------
-# The calibration artifact
+# The predictions artifact
 # ---------------------------------------------------------------------------
 def test_the_predictions_artifact_has_the_oracle_s_shape(workspace):
-    """Mixed spaces on purpose. `scripts/evaluate_model.py:508-519` writes the
-    **global** truth id beside **subgraph-local** prediction indices rendered as
-    strings; the only job of this artifact is to diff against that one, and a
-    tidier shape would not diff."""
+    """Mixed spaces on purpose. `scripts/evaluate_model.py:508-519` at `7dab728`
+    wrote the **global** truth id beside **subgraph-local** prediction indices
+    rendered as strings; this artifact keeps that shape rather than a tidier one,
+    so it stays comparable with historical predictions files, though nothing
+    diffs it against them now."""
     _, data_dir, checkpoint = workspace
 
     result = _run(data_dir, checkpoint)

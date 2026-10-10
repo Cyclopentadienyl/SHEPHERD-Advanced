@@ -309,7 +309,7 @@ express today.
 | D6 importer (`PLAN_TEST_RESULTS.md` D6) | Producer: applies the rule after mapping, writes the normalised mapped version, and records the counts |
 | Sample generator | Producer: already in normal form. It applies the same function, so the rule has one definition, and records the version |
 | Shared reader `read_samples` (`file_storage.py:60-101`) | Consumer: **checks** that a stored case is in normal form, and refuses a file that is not, naming the entry point that rebuilds it. It never changes the data. Training and measurement reach it through contract M2.1 |
-| Two readers that do not use it | **Named exceptions, and neither checks.** The frozen oracle, `scripts/evaluate_model.py:203-217`, reads samples itself and is byte-pinned (`tests/unit/test_frozen_evaluator.py`) for historical comparison; it is not changed for uniformity's sake, and it retires with the frozen evaluator. `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads` and does not check the file; that its producer writes no repeats is not a check. Its requests go through the API, so N1 applies to them. When it is next touched it moves onto the shared reader and its one check |
+| A reader that does not use it | **A named exception, and it does not check.** `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads` and does not check the file; that its producer writes no repeats is not a check. Its requests go through the API, so N1 applies to them. When it is next touched it moves onto the shared reader and its one check |
 | `DiagnosisPipeline.run` | Checks the per-position contract (§4.5), then applies the rule to a request after mapping (`pipeline.py:1195-1202`), with the request positions mapping kept, before the model's count check. Everything after it — scoring, explanations, the summary — reads the normalised list, and the result carries that list and its counts (§4.6). The result's warnings state how many repeats were removed. The API and the UI reach it through here |
 | API `/diagnose` | Enforces the list-length limit and, in its request model, the per-position contract. Builds its response from the result: the used count, and the received count only where labelled so (§4.6) |
 | WebUI | **Text parsing only** (decision W): extraction and canonical formatting, keeping order and repeats. It presents the API's answers, including the 422 below. Mapping, repeat removal and the count decision stay in the service |
@@ -520,7 +520,7 @@ compares the two.
 | API, more than 100 items | 422 | Unchanged | — |
 | WebUI, parsing | Removes repeated strings | Keeps order and repeats (decision W) | A pasted list of more than 100 entries that fits only after removing repeats is refused (422) |
 | WebUI, an API error | Shows the status and the raw response body | A list over the limit gets the message of §5, with both numbers from the server; any other 422 is one readable line per entry; other failures keep their messages | The echoed input no longer appears |
-| Training and measurement readers | Accept repeats | Refuse a file not in normal form; the two named exceptions (§5) do not check | Only files with repeats; generated files have none |
+| Training and measurement readers | Accept repeats | Refuse a file not in normal form; the named exception (§5) does not check | Only files with repeats; generated files have none |
 | Importer | Does not exist | Normalises after mapping and records the counts | New |
 | `InputValidator` | Unused | Removed (decided) | None at run time |
 

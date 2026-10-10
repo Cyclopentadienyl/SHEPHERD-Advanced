@@ -110,8 +110,8 @@ def manifest_verification(
     """What ``verify_generated_cohorts`` established, written into the report.
 
     **The verification itself is not repeated here.** It runs at every entry point
-    that consumes generated cohorts — training, measurement, calibration, this
-    audit — from one definition in ``src/evaluation/cohort.py``. A second copy in
+    that consumes generated cohorts — training, measurement, this audit — from
+    one definition in ``src/evaluation/cohort.py``. A second copy in
     the audit would be free to drift from the one the pipeline actually enforces,
     and would then report a workspace as sound under rules nothing else applies.
 

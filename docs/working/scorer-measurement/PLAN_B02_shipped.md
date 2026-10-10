@@ -1,7 +1,9 @@
 > **History, not authority.** This is the plan the shipped B-0.2 code was built
 > from, kept for the reasoning behind it. Where it disagrees with the code, the
 > code is what shipped — it went through several review rounds after this was
-> written. The stage map is in [`README.md`](README.md).
+> written. The stage map is in [`README.md`](README.md). Its citations into
+> `scripts/evaluate_model.py` are in that file's numbering at `7dab728`; the file
+> was deleted on 2026-10-10.
 
 # Review submission — B-0.2 work plan, rev 3
 

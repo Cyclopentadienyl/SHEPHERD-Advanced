@@ -128,8 +128,8 @@ def test_a_and_b_come_out_of_one_traversal_over_the_same_cohort(ab):
 
 
 def test_mode_b_carries_no_legacy_metric(ab):
-    """B has no frozen oracle to be compared against. A `legacy_mrr` on it would
-    invite exactly the comparison that means nothing."""
+    """B has no legacy counterpart; legacy metrics are Mode A's alone. A
+    `legacy_mrr` on it would invite exactly the comparison that means nothing."""
     _, result_b = ab
 
     assert "legacy_metrics" not in result_b.to_dict()
@@ -151,8 +151,8 @@ def test_mode_b_requires_the_embeddings_it_is_defined_by(world):
 
 
 def test_omitting_mode_b_returns_the_mode_a_run_alone(world):
-    """The calibration path is unchanged: `run_mode_a` is this case, and the
-    frozen-oracle comparison must not have been perturbed by adding B."""
+    """Mode A's path is unchanged: `run_mode_a` is this case, and adding B must
+    not perturb it."""
     result_a, result_b = run_modes_ab(
         model=world["legacy_model"],
         dataloader=world["loader"](),

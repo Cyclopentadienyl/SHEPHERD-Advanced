@@ -230,8 +230,8 @@ def verify_generated_cohorts(
     generated ``train`` and never reads generated ``val``; requiring ``val`` there
     would let a missing or corrupt file block an institutional measurement for a
     reason unrelated to it. Everything that *does* consume both — training,
-    measurement, calibration, the fidelity audit, a generated train/val audit —
-    passes both and gets the disjointness check with them. The returned value
+    measurement, the fidelity audit, a generated train/val audit — passes both
+    and gets the disjointness check with them. The returned value
     names the scope, so the caller's report can describe the gate that actually
     ran instead of the one it assumed.
 
