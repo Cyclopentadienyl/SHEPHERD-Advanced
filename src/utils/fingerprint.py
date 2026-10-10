@@ -24,6 +24,10 @@ question. They are kept separate rather than folded into the fingerprint, becaus
 a structural identity that also changed whenever a byte moved would stop being a
 compatibility check.
 
+`read_once` is the content digest of an input that is about to be parsed: it
+returns the bytes and the digest of those same bytes, so what a reader parses and
+what a record names cannot come from two different reads (contract M2.1).
+
 When a checkpoint is saved during training, the fingerprint of the
 graph data used is embedded in the checkpoint. At inference load time,
 the current graph data's fingerprint is compared against the saved one.
@@ -46,10 +50,64 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReadIdentity:
+    """Which file was read, and the SHA-256 of the bytes that read returned.
+
+    It carries no bytes, so a reader can keep it beside what it parsed and let the
+    raw buffer go.
+    """
+
+    path: Path
+    sha256: str
+
+
+@dataclass(frozen=True)
+class FileRead:
+    """One read of one file: its bytes, and the SHA-256 of exactly those bytes.
+
+    A reader parses `data`, keeps `identity`, and drops this object, so the buffer
+    is released once the parse is done.
+    """
+
+    path: Path
+    data: bytes
+    sha256: str
+
+    @property
+    def identity(self) -> ReadIdentity:
+        return ReadIdentity(path=self.path, sha256=self.sha256)
+
+
+def read_once(path: Union[str, Path]) -> FileRead:
+    """Read a file once and return its bytes with their SHA-256.
+
+    **One open, one full read, and the digest is taken over that same bytes
+    object.** Hashing a path and then loading it reads the file twice, and a file
+    replaced in between is parsed as one thing and recorded as another. Hashing an
+    open handle and then parsing from it survives an atomic rename but not an
+    in-place rewrite, which is how `torch.save` writes; hashing the buffer that is
+    parsed survives both.
+
+    **A missing file raises** (`FileNotFoundError`), unlike `file_sha256`. A file
+    deleted between two reads is then refused instead of recorded as absent.
+
+    No retry, no fallback. The read is alone on its line: the readers' release
+    check (contract M2.1, S2) finds the raw buffer by the allocation that line
+    makes, so nothing a reader keeps may be made on it.
+    """
+    path = Path(path)
+    with path.open("rb") as handle:
+        data = handle.read()
+    sha256 = hashlib.sha256(data).hexdigest()
+    return FileRead(path=path, data=data, sha256=sha256)
 
 
 def file_sha256(path: Union[str, Path]) -> Optional[str]:
