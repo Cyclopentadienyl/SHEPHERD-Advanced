@@ -1,7 +1,7 @@
 """
 The `--split` caveat has to reach the person running the command.
 =================================================================
-Backlog item 2. Both measurement entry points warn that `val` is not held-out
+Backlog item 2. The measurement entry point warns that `val` is not held-out
 data. The warning named two reasons; it now names **three**, and one of them
 changed direction. The split still selects the checkpoint. The overlap reason is
 gone — generation consumes a disease allocation and `src/evaluation/cohort.py`
@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-ENTRY_POINTS = ("measure_scorer", "calibrate_mode_a")
+ENTRY_POINTS = ("measure_scorer",)
 
 
 def _split_help(script: str) -> str:
