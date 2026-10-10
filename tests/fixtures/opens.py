@@ -1,11 +1,17 @@
 """
-Count how many times each file is opened, by any API.
-=====================================================
+Count how many times each file is opened through Python's io and os layers.
+===========================================================================
 The "read once" assertions of contract M2.1 count opens, not calls to one
 function. A `sys.addaudithook` hook sees the `open` audit event that `open()`,
-`Path.open`, `Path.read_text` and `os.open` all raise, and so `torch.load(path)`
-and `json.load(open(path))` too. A reader therefore cannot pass by opening its
-file a second time through another API.
+`Path.open`, `Path.read_text` and `os.open` all raise, and so `torch.load(path)`'s
+own open and `json.load(open(path))` too. A reader cannot pass by opening its
+file a second time through any of those.
+
+**What it does not see:** an open made inside a C extension, such as torch's
+`PyTorchFileReader` or `UntypedStorage.from_file` given a path, and an
+`os.open(..., dir_fd=...)`, whose relative path is keyed against the working
+directory. For torch readers, the release check's tracked-`BytesIO` rule is what
+keeps them on the hashed buffer.
 
 Audit hooks cannot be removed. One hook is installed for the process, the first
 time a counter is used, and it returns at once unless a counter is active.

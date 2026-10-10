@@ -918,8 +918,10 @@ class KnowledgeGraph:
 class GraphRead(NamedTuple):
     """A graph and the identity of the bytes it was parsed from, together.
 
-    One object rather than two arguments, so a caller cannot pair an in-memory
-    graph with another file's identity.
+    `read_json` returns them as one value, so a caller passes the pair whole
+    instead of a graph and an identity as two arguments, and never assembles the
+    pair itself. The type does not enforce that: anyone can construct one, and a
+    verifier given its identity cannot see which graph went with it.
     """
 
     kg: KnowledgeGraph

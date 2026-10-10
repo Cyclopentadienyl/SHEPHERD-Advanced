@@ -1,6 +1,6 @@
 """
-The readers' release check: no raw buffer outlives its parse.
-=============================================================
+The readers' release check: no raw buffer reaches the next read or the caller.
+==============================================================================
 Contract M2.1's readers parse the bytes `read_once` returns and keep only what
 they parsed and a `ReadIdentity`. That the raw buffer is then released is shown
 here, on fixture-sized files on CPU, never inferred from resident memory: the
@@ -34,8 +34,12 @@ unseen, so a reader that builds its wrapper some other way is caught.
 **What it does not see:** a copy the reader makes into another object, such as a
 `bytearray` or a JSON file's decoded text, and torch's tensor storages. Those are
 parsed results or copies, not the raw buffer; the readers' results are listed in
-S10's readings, which explain peaks against them. It is a test, not a capacity
-reading, and it never runs inside a measured run.
+S10's readings, which explain peaks against them. **Nor does it see a buffer kept
+between its parse and the reader's return:** it checks at the next read and after
+the return, so a reader that keeps its last buffer through the rest of its own
+work, and drops it before returning, passes. That the readers release the bytes
+before parsing is their code (`del read`), not something this check shows. It is
+a test, not a capacity reading, and it never runs inside a measured run.
 
 Module: tests/fixtures/release.py
 """

@@ -167,11 +167,12 @@ class TestTheClinicalPathIsAGraphConsumer:
         the model build.
 
         **The stand-ins are what let a build past the binding check finish.**
-        These workspaces carry placeholder bytes, not a graph and a checkpoint a
-        model can be built from. A requested model that cannot be built is
-        refused (`PipelineBuildError`, M1), so without them every case that
-        passes the binding check would end in that refusal instead of in what it
-        is about.
+        These workspaces carry a placeholder checkpoint, and a one-node
+        `kg.json` beside the shared fixture's tensors, which were exported from
+        another graph: nothing here is a graph and a checkpoint a model can be
+        built from. A requested model that cannot be built is refused
+        (`PipelineBuildError`, M1), so without them every case that passes the
+        binding check would end in that refusal instead of in what it is about.
         """
         import src.inference.pipeline as pipeline
 

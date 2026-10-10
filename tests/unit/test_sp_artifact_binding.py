@@ -653,12 +653,17 @@ class TestTheLoaderEnforcesTheBinding:
 
         from src.kg import artifacts
 
-        source = inspect.getsource(artifacts.verify_graph_artifacts)
-        for name in ("build_id", "kg_binding", "sp_artifact", "shortest_paths"):
-            assert name not in source, (
-                f"verify_graph_artifacts mentions {name}; the SP binding has "
-                "moved into the gate every graph consumer passes through"
-            )
+        # The read forms (contract M2.1, S5) are the same gate; the path form goes
+        # in S9, and the pin must outlive it.
+        for gate in (artifacts.verify_graph_artifacts, artifacts.verify_graph_reads,
+                     artifacts.verify_graph_source_read, artifacts.check_unparsed_kg_json,
+                     artifacts.read_split_manifest):
+            source = inspect.getsource(gate)
+            for name in ("build_id", "kg_binding", "sp_artifact", "shortest_paths"):
+                assert name not in source, (
+                    f"{gate.__name__} mentions {name}; the SP binding has "
+                    "moved into the gate every graph consumer passes through"
+                )
 
 
 class TestTheDigestRecordedIsTheOneReadAtLoad:

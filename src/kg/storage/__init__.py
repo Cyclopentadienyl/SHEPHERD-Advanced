@@ -1,7 +1,9 @@
 """
-Knowledge-graph storage backends — RESERVED package (no implementation yet).
+Knowledge-graph storage backends — the shared reader of a workspace's files.
 ============================================================================
-Reserved home for KG persistence. Nothing imports this package.
+`file_storage` is the one implementation (`read_graph_artifacts`,
+`read_samples`); callers import that submodule directly, and this package's own
+namespace exports nothing.
 
 The KG is written by ``src/kg/builder.py`` as files under
 ``data/workspaces/<kg>/`` (``kg.json``, ``node_features.pt``,

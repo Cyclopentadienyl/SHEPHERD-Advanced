@@ -8,8 +8,8 @@ they parsed with a `ReadIdentity`, never the bytes. For each:
 - the identity is the digest of the bytes parsed, and each file is opened once;
 - a replacement after the read, by atomic rename or in-place rewrite, changes
   neither what was parsed nor the identity;
-- the release check passes: no raw buffer, and no `BytesIO` over one, outlives
-  its parse or survives into the next read;
+- the release check passes: no raw buffer, and no `BytesIO` over one, survives
+  into the reader's next read or past its return;
 - the result holds identities, never a `FileRead` or bytes.
 
 Module: tests/unit/test_shared_readers.py
@@ -109,6 +109,23 @@ class TestReadGraphArtifacts:
     def test_tensors_are_loaded_onto_the_cpu(self, workspace):
         x_dict = read_graph_artifacts(workspace).graph_data["x_dict"]
         assert {tensor.device.type for tensor in x_dict.values()} == {"cpu"}
+
+    def test_the_map_location_given_is_the_one_used(self, workspace):
+        """The CPU test above cannot fail on a CPU-saved export; this one can."""
+        graph = read_graph_artifacts(workspace, map_location="meta").graph_data
+
+        assert {t.device.type for t in graph["x_dict"].values()} == {"meta"}
+        assert {t.device.type for t in graph["edge_index_dict"].values()} == {"meta"}
+
+    def test_a_graph_tensor_file_that_is_not_weights_is_refused(self, workspace):
+        """`weights_only=True`: a graph file that would execute code is refused."""
+        import argparse
+
+        torch.save({"object": argparse.Namespace(arbitrary=True)},
+                   workspace / "node_features.pt")
+
+        with pytest.raises(Exception, match="Weights only load failed"):
+            read_graph_artifacts(workspace)
 
     def test_an_absent_file_has_neither_data_nor_identity(self, workspace):
         (workspace / "num_nodes.json").unlink()
@@ -306,6 +323,20 @@ class TestReadCheckpoint:
             read_checkpoint(checkpoint)  # type: ignore[call-arg]
         with pytest.raises(TypeError):
             read_checkpoint(checkpoint, map_location="cpu")  # type: ignore[call-arg]
+
+    def test_the_options_given_are_the_ones_used(self, tmp_path, checkpoint):
+        """Each site keeps its own: serving's `weights_only=False` loads what the safe
+        loader refuses, and the device given is the one used."""
+        import argparse
+
+        pickled = tmp_path / "pickled.pt"
+        torch.save({"object": argparse.Namespace(arbitrary=True)}, pickled)
+
+        loaded = read_checkpoint(pickled, map_location="cpu", weights_only=False)
+        on_meta = read_checkpoint(checkpoint, map_location="meta", weights_only=True)
+
+        assert loaded.checkpoint["object"].arbitrary is True
+        assert on_meta.checkpoint["model_state_dict"]["w"].device.type == "meta"
 
     def test_the_safe_loader_refuses_what_it_refuses_with_no_fallback(self, tmp_path):
         import argparse

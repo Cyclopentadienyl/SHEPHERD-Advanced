@@ -742,7 +742,7 @@ scan on the measuring machine, the homelab GB10: 17 checkpoint files, none of
 them among the fifteen digests `EVIDENCE_M1_M3_*.json` records. That result is
 reported, not re-run here. A matching file would still have needed a fresh
 workspace to load against. The current reader requires a schema-3 `split_manifest.json`
-(`src/kg/artifacts.py:93-99`, `:333-356`), reload lists the manifest among
+(`src/kg/artifacts.py:94-99`, `:552-573`), reload lists the manifest among
 `REQUIRED_DATA_FILES` (`src/api/routes/pipeline.py:116-122`), and schema 3
 arrived on 2026-09-09 (`138f260`). Going by that date, the June workspaces
 those files sit beside predate it.

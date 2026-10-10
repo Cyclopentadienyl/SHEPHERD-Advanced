@@ -107,23 +107,54 @@ class TestVerifyGraphReads:
         reads = dict(read_graph_artifacts(workspace).reads)
         reads["kg"] = KnowledgeGraph.read_json(other / "kg.json").identity
 
-        with pytest.raises(ValueError, match="is not the kg artifact"):
+        with pytest.raises(ValueError, match="is not the kg artifact") as refused:
             verify_graph_reads(manifest, reads)
+        assert str(other / "kg.json") in str(refused.value)
+        assert str(workspace / "split_manifest.json") in str(refused.value)
+
+    @pytest.mark.parametrize("role", ["node_features", "edge_indices", "num_nodes", "kg"])
+    def test_a_role_given_with_no_identity_is_refused(self, workspace, role):
+        """`None` is not a read: it is refused, not skipped as if it had matched."""
+        manifest = read_split_manifest(workspace)
+        reads = dict(read_graph_artifacts(workspace).reads)
+        reads[role] = None
+
+        with pytest.raises(ValueError, match="was not read") as refused:
+            verify_graph_reads(manifest, reads)
+        assert role in str(refused.value)
+
+    @pytest.mark.parametrize("value", [[], "digests", None])
+    def test_artifacts_that_are_not_an_object_are_refused_naming_the_manifest(
+        self, workspace, value
+    ):
+        manifest = read_split_manifest(workspace)
+        manifest.manifest["artifacts"] = value
+
+        for check in (lambda: verify_graph_reads(manifest, read_graph_artifacts(workspace).reads),
+                      lambda: check_unparsed_kg_json(workspace, manifest),
+                      lambda: verify_cohort_reads(manifest, _samples(workspace))):
+            with pytest.raises(ValueError, match="records artifacts as .*not an object") as refused:
+                check()
+            assert str(workspace / "split_manifest.json") in str(refused.value)
 
     def test_a_manifest_missing_a_role_is_refused(self, workspace):
         manifest = read_split_manifest(workspace)
         del manifest.manifest["artifacts"]["num_nodes"]
 
-        with pytest.raises(ValueError, match="records no digest for num_nodes"):
+        with pytest.raises(ValueError, match="records no digest for num_nodes") as refused:
             verify_graph_reads(manifest, read_graph_artifacts(workspace).reads)
+        assert str(workspace / "num_nodes.json") in str(refused.value)
+        assert str(workspace / "split_manifest.json") in str(refused.value)
 
     def test_an_identity_for_a_role_the_manifest_does_not_bind_is_refused(self, workspace):
         manifest = read_split_manifest(workspace)
         reads = dict(read_graph_artifacts(workspace).reads)
         reads["shortest_paths"] = ReadIdentity(workspace / "shortest_paths.pt", "0" * 64)
 
-        with pytest.raises(ValueError, match="shortest_paths"):
+        with pytest.raises(ValueError, match="shortest_paths") as refused:
             verify_graph_reads(manifest, reads)
+        assert str(workspace / "shortest_paths.pt") in str(refused.value)
+        assert str(workspace / "split_manifest.json") in str(refused.value)
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +316,7 @@ class TestTheKgJsonIdentificationCheck:
 
         with pytest.raises(ValueError, match="is not the kg artifact") as refused:
             check_unparsed_kg_json(workspace, manifest)
+        assert str(workspace / "kg.json") in str(refused.value)
         assert str(workspace / "split_manifest.json") in str(refused.value)
 
     def test_an_absent_file_is_refused(self, workspace):
@@ -321,12 +353,14 @@ class TestVerifyCohortReads:
         assert set(result.disease_sets) == {"train"}
         assert not result.disjointness_claim_checked and not result.disjointness_measured
 
-    def test_the_scope_is_reported_in_the_generators_order(self, workspace):
+    def test_the_scope_is_reported_as_passed_as_the_path_form_reports_it(self, workspace):
         samples = _samples(workspace)
         reversed_samples = {"val": samples["val"], "train": samples["train"]}
 
-        assert verify_cohort_reads(read_split_manifest(workspace),
-                                   reversed_samples).verified == ("train", "val")
+        result = verify_cohort_reads(read_split_manifest(workspace), reversed_samples)
+
+        assert result.verified == ("val", "train")
+        assert result == verify_generated_cohorts(workspace, ("val", "train"))
 
     def test_training_fields_do_not_change_the_verdict(self, tmp_path):
         root, _ = write_generated_workspace(tmp_path / "ws", train_ids=[0, 1], val_ids=[2],
@@ -364,6 +398,32 @@ class TestVerifyCohortReads:
         with pytest.raises(ValueError, match="records as realised") as refused:
             verify_cohort_reads(manifest, _samples(workspace))
         assert str(workspace / "train_samples.json") in str(refused.value)
+        assert str(workspace / "split_manifest.json") in str(refused.value)
+
+    def test_a_manifest_with_no_samples_digest_is_refused_naming_both(self, workspace):
+        manifest = read_split_manifest(workspace)
+        del manifest.manifest["artifacts"]["val_samples"]
+
+        with pytest.raises(ValueError, match="records no digest for val_samples") as refused:
+            verify_cohort_reads(manifest, _samples(workspace))
+        assert str(workspace / "val_samples.json") in str(refused.value)
+        assert str(workspace / "split_manifest.json") in str(refused.value)
+
+    @pytest.mark.parametrize("section,value", [
+        (("realised",), None), (("allocation",), None), (("allocation", "allocated"), []),
+    ])
+    def test_a_cohort_section_that_is_not_an_object_is_refused_naming_the_manifest(
+        self, workspace, section, value
+    ):
+        manifest = read_split_manifest(workspace)
+        target = manifest.manifest
+        for key in section[:-1]:
+            target = target[key]
+        target[section[-1]] = value
+
+        with pytest.raises(ValueError, match=f"records {'.'.join(section)} as") as refused:
+            verify_cohort_reads(manifest, _samples(workspace))
+        assert str(workspace / "split_manifest.json") in str(refused.value)
 
     def test_realised_contradicting_allocated_is_refused(self, workspace):
         manifest = read_split_manifest(workspace)
@@ -401,4 +461,6 @@ class TestVerifyCohortReads:
 
         with pytest.raises(ValueError, match="does not hold disease-disjoint cohorts") as refused:
             verify_cohort_reads(manifest, _samples(workspace))
+        assert "train_samples.json" in str(refused.value)
+        assert "val_samples.json" in str(refused.value)
         assert str(workspace / "split_manifest.json") in str(refused.value)

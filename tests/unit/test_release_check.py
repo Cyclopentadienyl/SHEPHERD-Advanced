@@ -142,6 +142,27 @@ def test_bytes_kept_across_the_next_read_fail(monkeypatch, files):
         check_release(monkeypatch, reader)
 
 
+def test_bytes_kept_only_by_a_reference_cycle_fail(monkeypatch, files):
+    """Garbage collection is off while the reader runs, so a cycle cannot hide a
+    buffer by being collected at a lucky moment. The reader drops its cycle and
+    then allocates enough containers to trigger an automatic collection, which
+    would free the buffer if collection were on."""
+    first, _, _ = files
+
+    def reader():
+        box = {}
+        box["self"] = box
+        box["read"] = read_once(first)
+        parsed = json.loads(box["read"].data.decode("utf-8"))
+        del box
+        churn = [[] for _ in range(50_000)]
+        del churn
+        return parsed
+
+    with pytest.raises(ReleaseCheckError, match="after the reader returned"):
+        check_release(monkeypatch, reader)
+
+
 def test_a_kept_bytesio_with_its_own_copy_fails(monkeypatch, files):
     """`getbuffer()` makes the BytesIO copy the bytes, so the raw buffer is gone and only
     the weak reference sees what is kept."""

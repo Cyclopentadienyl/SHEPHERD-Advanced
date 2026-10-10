@@ -24,6 +24,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.utils import fingerprint
 
@@ -42,10 +43,21 @@ def hook_read_once(
     see the wrapper, because every module whose `read_once` is the current one
     is patched and `src.utils.fingerprint` itself is among them. Hooks stack: a
     second call wraps the first wrapper.
+
+    **Inert once the test's patches are undone.** A module imported for the
+    first time while the hook is active, which binds `read_once` at module level,
+    copies the wrapper, and monkeypatch never set that attribute so it cannot
+    restore it. The wrapper therefore checks a flag that monkeypatch itself
+    resets on undo, and from then on calls straight through, so a later test is
+    never run through this test's hooks.
     """
     current = fingerprint.read_once
+    state = SimpleNamespace(active=False)
+    monkeypatch.setattr(state, "active", True)
 
     def wrapper(path):
+        if not state.active:
+            return current(path)
         path = Path(path)
         if on_entry is not None:
             on_entry(path)

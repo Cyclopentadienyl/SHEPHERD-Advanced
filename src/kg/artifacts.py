@@ -38,10 +38,10 @@ GRAPH_ARTIFACTS: Dict[str, str] = {
     "num_nodes": "num_nodes.json",
 }
 
-#: The graph files every graph consumer parses. `kg.json` is parsed only where a
-#: graph object is built (serving, the SP producer); training and measurement
-#: compute from these three, and identify `kg.json` with
-#: `check_unparsed_kg_json` instead (contract M2.1, decision 1).
+#: The three files of the PyG export a model loads. Training and measurement parse
+#: only these; once they move onto the read forms (contract M2.1, S7 and S8) they
+#: identify `kg.json` with `check_unparsed_kg_json` (decision 1). Serving parses
+#: these and `kg.json`; the SP producer parses `kg.json` alone.
 GRAPH_TENSOR_ROLES: Tuple[str, ...] = ("node_features", "edge_indices", "num_nodes")
 
 #: The file the generator writes to record how a workspace was cut.
@@ -151,13 +151,13 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
 
     manifest_read = read_split_manifest(data_dir)
     manifest_path = manifest_read.identity.path
-    artifacts = manifest_read.manifest.get("artifacts", {})
+    artifacts = manifest_section(manifest_read.manifest, manifest_path, "artifacts")
 
     observed: Dict[str, str] = {}
     for role, filename in GRAPH_ARTIFACTS.items():
         recorded = artifacts.get(role)
         if recorded is None:
-            raise _no_digest(manifest_path, role)
+            raise _no_digest(manifest_path, role, data_dir / filename)
         digest = file_sha256(data_dir / filename)
         if digest != recorded:
             raise _not_the_artifact(data_dir / filename, role, manifest_path, recorded, digest)
@@ -181,11 +181,12 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
     return observed
 
 
-def _no_digest(manifest_path: Path, role: str) -> ValueError:
+def _no_digest(manifest_path: Path, role: str, path: Path) -> ValueError:
     return ValueError(
-        f"{manifest_path} records no digest for {role}. A manifest that "
-        "does not bind the graph its cohorts were cut from cannot say the "
-        "tensors beside it are that graph's export. Rebuild the workspace."
+        f"{manifest_path} records no digest for {role}, so nothing says {path} "
+        "is this workspace's. A manifest that does not bind the graph its cohorts "
+        "were cut from cannot say the tensors beside it are that graph's export. "
+        "Rebuild the workspace."
     )
 
 
@@ -200,14 +201,37 @@ def _not_the_artifact(
     )
 
 
+def manifest_section(
+    manifest: Dict[str, Any], manifest_path: Path, *keys: str
+) -> Dict[str, Any]:
+    """A nested section of a manifest that must be a JSON object, or a refusal.
+
+    An absent section reads as empty, so the check that needs a value in it
+    refuses with its own message ("records no digest for ..."). A section that is
+    there and is not an object is refused here, naming the manifest, instead of
+    surfacing as an `AttributeError` that names nothing.
+    """
+    section: Any = manifest
+    for depth, key in enumerate(keys):
+        section = section.get(key, {})
+        if not isinstance(section, dict):
+            where = ".".join(keys[: depth + 1])
+            raise ValueError(
+                f"{manifest_path} records {where} as {type(section).__name__}, not "
+                f"an object, so it binds nothing this revision can compare. {_REBUILD}"
+            )
+    return section
+
+
 def _bound_graph_digests(manifest: ManifestRead) -> Dict[str, str]:
     """The digest the manifest records for each of the four graph roles."""
-    artifacts = manifest.manifest.get("artifacts", {})
+    manifest_path = manifest.identity.path
+    artifacts = manifest_section(manifest.manifest, manifest_path, "artifacts")
     bound: Dict[str, str] = {}
-    for role in GRAPH_ARTIFACTS:
+    for role, filename in GRAPH_ARTIFACTS.items():
         recorded = artifacts.get(role)
         if recorded is None:
-            raise _no_digest(manifest.identity.path, role)
+            raise _no_digest(manifest_path, role, manifest_path.parent / filename)
         bound[role] = recorded
     return bound
 
@@ -225,25 +249,32 @@ def verify_graph_reads(
 
     **Every tensor role must have been read** (`GRAPH_TENSOR_ROLES`). An absent
     file has no identity, and is refused rather than skipped: the manifest binds
-    all four files of one export. `kg` is compared when it is in `reads`; a run
-    that parses `kg.json` passes its identity to `verify_graph_source_read`, and
-    one that does not identifies the file with `check_unparsed_kg_json`.
+    all four files of one export. A role given with no identity (`None`) is
+    refused the same way, whichever role it is. `kg` is compared when it is in
+    `reads`; otherwise the caller must cover it itself, with
+    `verify_graph_source_read` if it parses `kg.json` or `check_unparsed_kg_json`
+    if it does not, because the `kg` digest returned here is the manifest's.
 
     Returns the manifest-bound digest of all four graph roles, as the path form
     does.
 
     Raises:
-        ValueError: naming the file and the manifest.
+        ValueError: naming the manifest, and the file when the refusal is about
+            one.
     """
     manifest_path = manifest.identity.path
     bound = _bound_graph_digests(manifest)
     unknown = sorted(set(reads) - set(GRAPH_ARTIFACTS))
     if unknown:
+        files = [str(getattr(reads[role], "path", None)) for role in unknown]
         raise ValueError(
-            f"{unknown} are not graph artifacts {manifest_path} binds; its roles "
-            f"are {list(GRAPH_ARTIFACTS)}"
+            f"{files} were read as {unknown}, which are not graph artifacts "
+            f"{manifest_path} binds; its roles are {list(GRAPH_ARTIFACTS)}"
         )
-    unread = [role for role in GRAPH_TENSOR_ROLES if role not in reads]
+    unread = [
+        role for role in GRAPH_ARTIFACTS
+        if (role in GRAPH_TENSOR_ROLES or role in reads) and reads.get(role) is None
+    ]
     if unread:
         files = [str(manifest_path.parent / GRAPH_ARTIFACTS[role]) for role in unread]
         raise ValueError(
@@ -252,8 +283,10 @@ def verify_graph_reads(
             "of one export; a workspace missing one is not that export."
         )
     for role in GRAPH_ARTIFACTS:
-        identity = reads.get(role)
-        if identity is not None and identity.sha256 != bound[role]:
+        if role not in reads:
+            continue
+        identity = reads[role]
+        if identity.sha256 != bound[role]:
             raise _not_the_artifact(
                 identity.path, role, manifest_path, bound[role], identity.sha256
             )
@@ -266,12 +299,15 @@ def verify_graph_source_read(
     """The graph object's source bytes must be the `kg.json` this manifest binds.
 
     `verify_graph_source`'s composition check, for a consumer that parses
-    `kg.json`: `graph` is the identity `KnowledgeGraph.read_json` returned with
-    the graph, so the comparison is of the bytes the graph was built from, at any
-    path. Reads nothing.
+    `kg.json`. `graph` must be the identity `KnowledgeGraph.read_json` returned
+    with the graph the caller uses: that pairing is the caller's to keep, by
+    passing the `GraphRead` whole, and nothing here can see it. Given that, the
+    comparison is of the bytes the graph was built from, at any path. Reads
+    nothing.
 
     Raises:
-        ValueError: naming the file and the manifest.
+        ValueError: naming the manifest, and the file when the refusal is about
+            one.
     """
     bound = verify_graph_reads(manifest, reads)
     if graph.sha256 != bound["kg"]:
@@ -288,16 +324,18 @@ def verify_graph_source_read(
 def check_unparsed_kg_json(data_dir: Path, manifest: ManifestRead) -> None:
     """Identify `kg.json` before a run that does not parse it (M2.1, decision 1).
 
-    Training and measurement compute from the tensors and never parse `kg.json`;
-    the role they record is the manifest-bound source graph. This hashes the file
-    and compares it with the run's one manifest reading, so a workspace whose
-    `kg.json` is not the graph its manifest binds is refused.
+    For training and measurement once they move onto the read forms (S7, S8):
+    they compute from the tensors and never parse `kg.json`, and the role they
+    are to record is the manifest-bound source graph (M2.2; decision 2). This
+    hashes the file and compares it with the run's one manifest reading, so a
+    workspace whose `kg.json` is not the graph its manifest binds is refused.
 
     **Narrow on purpose.** It shows only that the file on disk matched at that
     moment: not that the run consumed it, and not that it will load at serving
     later. It never reads the manifest itself and returns nothing to record. A
     consumer that parses `kg.json` compares the identity of its own read instead
     (`verify_graph_source_read`); this is not a second verification API for it.
+    It is the one read form that opens a file: `kg.json`, to hash it.
 
     Raises:
         ValueError: naming the file and the manifest.
@@ -305,10 +343,10 @@ def check_unparsed_kg_json(data_dir: Path, manifest: ManifestRead) -> None:
     from src.utils.fingerprint import file_sha256
 
     manifest_path = manifest.identity.path
-    recorded = manifest.manifest.get("artifacts", {}).get("kg")
-    if recorded is None:
-        raise _no_digest(manifest_path, "kg")
     path = data_dir / GRAPH_ARTIFACTS["kg"]
+    recorded = manifest_section(manifest.manifest, manifest_path, "artifacts").get("kg")
+    if recorded is None:
+        raise _no_digest(manifest_path, "kg", path)
     observed = file_sha256(path)
     if observed is None:
         raise ValueError(
@@ -588,6 +626,7 @@ __all__ = [
     "GRAPH_TENSOR_ROLES",
     "ManifestRead",
     "read_split_manifest",
+    "manifest_section",
     "verify_graph_reads",
     "verify_graph_source_read",
     "check_unparsed_kg_json",

@@ -57,6 +57,7 @@ from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
     MANIFEST_FILENAME,
     ManifestRead,
+    manifest_section,
     read_split_manifest,
     verify_graph_artifacts,
 )
@@ -266,9 +267,9 @@ def verify_generated_cohorts(
        scope would be the same over-validation this scoping removes, arriving
        through a claim instead of a file.
 
-    Reads the sample files in scope, so it costs one pass over the cohorts the
-    caller consumes. Called once per run, before hours of training or minutes of
-    measurement.
+    Reads each sample file in scope twice, once to hash it and once to parse it
+    (the read form below reads nothing). Called once per run, before hours of
+    training or minutes of measurement.
 
     **The path form, a migration aid until contract M2.1's S9.** It hashes each
     sample file by path and parses it through a second read, so the digest and
@@ -322,18 +323,18 @@ def verify_cohort_reads(
     describe different bytes. A file replaced after the manifest read is refused
     by name.
 
-    The scope is the splits passed, in the generator's order; the disjointness
-    checks run only when both are in scope, as in the path form. The caller has
+    The scope is the splits passed, in the order passed, as the path form
+    reports it; the disjointness checks run only when both are in scope. The caller has
     already resolved its cohort (`resolve_cohort`) and read the manifest through
     `read_split_manifest`, which checked its schema.
 
     Raises:
-        ValueError: naming which check failed, the file and the manifest.
+        ValueError: naming which check failed and the manifest, and the samples
+            file when the refusal is about one.
     """
     manifest_dict, manifest_path = manifest.manifest, manifest.identity.path
-    unknown = [split for split in samples if split not in GENERATED_SPLITS]
-    scope = tuple(split for split in GENERATED_SPLITS if split in samples)
-    _require_scope(scope if not unknown else tuple(samples))
+    scope = tuple(samples)
+    _require_scope(scope)
 
     disease_sets: Dict[str, FrozenSet[int]] = {}
     for split in scope:
@@ -368,7 +369,12 @@ def _check_samples_digest(
     manifest: Dict[str, Any], manifest_path: Path, split: str, path: Path, observed: Any
 ) -> None:
     """Check 1: the file is the bytes the manifest describes."""
-    recorded = manifest.get("artifacts", {}).get(f"{split}_samples")
+    recorded = manifest_section(manifest, manifest_path, "artifacts").get(f"{split}_samples")
+    if recorded is None:
+        raise ValueError(
+            f"{manifest_path} records no digest for {split}_samples, so nothing "
+            f"says {path} is the cohort it describes. Rebuild the workspace."
+        )
     if recorded != observed:
         raise ValueError(
             f"{path} is not the file {manifest_path} describes "
@@ -385,8 +391,8 @@ def _check_disease_set(
     """Checks 2 and 3: the disease set is the one recorded, which is the one allocated."""
     from src.kg.disease_allocation import disease_set_digest
 
-    realised = manifest.get("realised", {})
-    allocated = manifest.get("allocation", {}).get("allocated", {})
+    realised = manifest_section(manifest, manifest_path, "realised")
+    allocated = manifest_section(manifest, manifest_path, "allocation", "allocated")
     if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
         raise ValueError(
             f"the {split} cohort's disease set ({path}) is not the one "

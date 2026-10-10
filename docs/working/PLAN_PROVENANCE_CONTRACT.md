@@ -7,7 +7,8 @@ plan was reviewed and revised with the owner's decisions of 2026-10-09 and 2026-
 of `0708789` found one P2; the incremental review of `7e1af96` found it closed and no new P1 or P2;
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
 `90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at
-`3433bf8`; S1–S5 are in progress; the rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+`3433bf8`; S1–S5 are implemented (2026-10-10) and await code review; the rest of M2–M5 is not
+implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -571,7 +572,7 @@ by independent readers of each entry point and of the shared readers. A complete
 checked the map and this breakdown, and a second check verified this text against the code.
 **Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
 left as written. S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at `3433bf8`;
-S1–S5 are in progress; nothing else here is implemented.
+S1–S5 are implemented (2026-10-10) and await code review; nothing else here is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -616,6 +617,26 @@ S1–S5 are in progress; nothing else here is implemented.
   finite `timeout`, so a hung worker fails rather than stalls. Its focus for S1–S5: bytes and
   digest from the same source; the real reader's buffer lifecycle; no identity made up when a
   read fails; and no new branch, metadata, schema or fallback for `build_legacy_mode_a_model`.
+- **S1–S5 as implemented (2026-10-10),** in `eecd803`, `2faaaa4`, `350cfee`, `e4cf737` and
+  `f581f9e`, then corrected after an internal adversarial review: five lenses, each finding
+  checked by a skeptic, and a completeness critic over the code map. It found no defect in what
+  the readers parse or record. The corrections:
+  - `verify_graph_reads` refused a missing tensor role but accepted a role given as `None`; it
+    now refuses both;
+  - the read forms raised a bare `AttributeError` on a manifest whose `artifacts`, `realised` or
+    `allocation` is not an object; they now refuse naming the manifest, and so do the path forms,
+    which share those checks;
+  - some refusals did not name the file they were about; they do now;
+  - `verify_cohort_reads` reported its scope in the generator's order where the path form keeps
+    the caller's; both keep the caller's;
+  - the test double's wrapper could stay installed in a module first imported while it was
+    active; it now goes inert when the test's patches are undone;
+  - tests were added where an option, a refusal or a check was claimed but not shown;
+  - text that claimed more than the code or the check does was narrowed (the release check's
+    limits, the open counter's, `GraphRead`'s pairing), and text S4 made false was corrected.
+
+  The decisions S1–S5 took within the plan are recorded under their steps: the open counter in
+  S1, the read forms' names and the `kg` pairing in S5. Neither changes a requirement.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -908,7 +929,10 @@ each moves its callers before anything is removed.
      replaces a target file once, right after a named read returns. It does so by atomic rename
      (a new inode) or by in-place rewrite (the same inode). It can also republish a manifest that
      binds the replacement.
-   - **An open counter per path,** for the "read once" assertions.
+   - **An open counter per path,** for the "read once" assertions. *As implemented:* it landed
+     with S1, whose own test needs it (`tests/fixtures/opens.py`). It sees opens through Python's
+     io and os layers, so not an open made inside a C extension; torch readers are held to the
+     hashed buffer by the release check's tracked-`BytesIO` rule instead.
    - **A release check** (`tests/fixtures/release.py`), on fixture-sized files on CPU, through the
      same `read_once` wrapper as the replacement double.
      - **When it runs:** on entry to each `read_once` call a reader makes, covering the reads
@@ -939,7 +963,10 @@ each moves its callers before anything is removed.
      - **What it does not see:** a copy the reader makes into another object, such as a
        `bytearray` or the decoded text of a JSON file, and torch's tensor storages. Those are
        parsed results or copies, not the raw buffer; the readers' results are listed in S10's
-       readings, and S10 explains peaks against them.
+       readings, and S10 explains peaks against them. Nor does it see a buffer kept between its
+       parse and the reader's return, since it checks at the next read and after the return
+       (found in S1–S5's review); that the readers drop the bytes before parsing is their code,
+       not something the check shows.
      - **What its implementation's review checks** (the reviewer, 2026-10-10): that it is wired
        to each real reader, that tracing starts before the first read, that the self-test's
        negative controls do fail, and that the wrapper itself keeps no strong reference to a
@@ -970,6 +997,19 @@ each moves its callers before anything is removed.
      verification API to consumers that parse their inputs.
    - **The old path forms are a migration aid only.** They remain until S9, for callers not yet
      moved, and S9 deletes them.
+   - **As implemented (2026-10-10).**
+     - The read forms are named apart from the path forms, rather than overloading them by
+       argument type, so that S9 can delete the path forms and pin their absence by name:
+       `verify_graph_reads` and `verify_graph_source_read` (`src/kg/artifacts.py`),
+       `verify_cohort_reads` (`src/evaluation/cohort.py`), and the identification helper
+       `check_unparsed_kg_json`.
+     - `verify_graph_reads` returns the manifest's `kg` digest and compares it only when `kg` is
+       among the reads. Each entry point therefore pairs it with `verify_graph_source_read`
+       (serving) or `check_unparsed_kg_json` (training, measurement), and S6–S8's tests replace
+       `kg.json` alone and expect a refusal.
+     - A refusal about a file names the file and the manifest. One about the manifest itself, or
+       about the caller's scope, names the manifest or the scope. `check_unparsed_kg_json` is the
+       one read form that opens a file: `kg.json`, to hash it.
 6. **S6 — serving.**
    - `build_pipeline` reads `kg.json` with `read_json` and passes the `GraphRead`.
    - The pipeline reads the manifest, the graph tensors and the checkpoint once each, and
@@ -1070,7 +1110,7 @@ each moves its callers before anything is removed.
        that records nothing;
      - `find_checkpoint` and the evaluation ledger (BACKLOG items 18 and 19);
      - the selection-time checkpoint reads (M2.1 decision 4; BACKLOG item 19);
-     - the `kg.json` identification helper (M2.1 decision 1);
+     - the `kg.json` identification helper, `check_unparsed_kg_json` (M2.1 decision 1);
      - the provenance status readers, which M3b moves onto M2.1's reads: `artifacts.py:278` and
        `:291`, and `src/kg/provenance.py:381`, which hashes the record before `:398` parses it
        through `:275`;

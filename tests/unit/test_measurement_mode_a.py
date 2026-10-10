@@ -831,10 +831,9 @@ class TestTheRolesAMeasurementRecords:
         )
 
         root.mkdir(parents=True, exist_ok=True)
-        # Written before the manifest, so the manifest binds these bytes rather
-        # than being overwritten by them afterwards.
-        for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
-            (root / name).write_bytes(b"content-of-" + name.encode())
+        # The graph files are the shared fixture's real export, which the
+        # manifest binds. A workspace with no manifest is refused before any of
+        # them is read, so it gets none.
         profiles = profiles_for([0, 1, 2])
         if manifest:
             write_generated_workspace(root, train_ids=[0, 1], val_ids=[2],

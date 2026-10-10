@@ -97,6 +97,33 @@ def test_a_republish_binds_the_replacement_in_the_manifest(monkeypatch, tmp_path
     assert republished["schema_version"] == 3
 
 
+def test_a_module_imported_during_the_hook_is_not_left_hooked(monkeypatch, tmp_path, two_files):
+    """A module that binds `read_once` at module level, imported while the hook is
+    active, keeps the wrapper; once the test's patches are undone it calls straight
+    through, so a later test never runs this test's hooks."""
+    import importlib
+    import sys
+
+    named, target = two_files
+    (tmp_path / "late_binder.py").write_text(
+        "from src.utils.fingerprint import read_once\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    seen = []
+    with monkeypatch.context() as patch:
+        from tests.fixtures.replacement import hook_read_once
+
+        hook_read_once(patch, on_return=seen.append)
+        late = importlib.import_module("late_binder")
+        late.read_once(named)
+        assert seen == [named]
+
+    late.read_once(named)
+    sys.modules.pop("late_binder", None)
+
+    assert seen == [named]
+
+
 def test_an_unknown_way_is_refused(monkeypatch, two_files):
     named, target = two_files
     with pytest.raises(ValueError, match="how must be one of"):

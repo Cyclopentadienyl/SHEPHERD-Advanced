@@ -86,9 +86,10 @@ logger = logging.getLogger(__name__)
 def disease_ids(data_dir: Path, split: str) -> List[int]:
     """Every sample's disease id in one split, in file order.
 
-    Read through `src.kg.storage.file_storage.read_samples`, which is what the
-    training and measurement paths read with — a second parser here could differ
-    from them in exactly the way this evidence exists to rule out. It also refuses
+    Read through `src.kg.storage.file_storage.read_samples`, the shared reader
+    measurement uses and training moves onto (contract M2.1, S8) — a second parser
+    here could differ from them in exactly the way this evidence exists to rule
+    out. It also refuses
     a missing split and names the ones that exist, so a workspace without the
     split asked for produces an error rather than an empty set silently reported
     as zero overlap.

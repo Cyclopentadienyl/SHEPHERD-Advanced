@@ -67,9 +67,8 @@ def _workspace(
             ))
     kg.save_json(str(root / "kg.json"))
     # The tensors are never opened by this audit, but the workspace binds them, so
-    # a fixture that omitted them would build one no consumer accepts.
-    for name in ("node_features.pt", "edge_indices.pt", "num_nodes.json"):
-        (root / name).write_bytes(f"{name}-of-{root.name}".encode())
+    # the shared fixture writes its own real export beside this `kg.json`. It is
+    # not this graph's export; the audit compares their digests only.
 
     rows = {
         split: [

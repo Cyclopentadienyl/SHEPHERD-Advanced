@@ -6,7 +6,7 @@ record names will parse `FileRead.data` and keep `FileRead.identity`, so these
 tests pin what the readers rely on:
 
 - the digest is the digest of the bytes returned, not of the path read again;
-- the file is opened once, by any API;
+- the file is opened once, through Python's io and os layers;
 - a missing file raises; there is no `None`, unlike `file_sha256`;
 - replacing the file afterwards, by atomic rename or in-place rewrite, changes
   neither the bytes nor the digest already returned (a lazy or memory-mapped
