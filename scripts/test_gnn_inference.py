@@ -167,21 +167,6 @@ def build_workspace(kg: KnowledgeGraph, data_dir: Path, hidden_dim: int = 64) ->
     return data_dir / GRAPH_ARTIFACTS["kg"]
 
 
-def load_graph_data_for_training(data_dir: Path) -> dict:
-    """Read back what the export wrote, so training uses the workspace's bytes."""
-    import json as _json
-
-    x_dict = torch.load(data_dir / "node_features.pt", weights_only=False)
-    edge_index_dict = torch.load(data_dir / "edge_indices.pt", weights_only=False)
-    with open(data_dir / "num_nodes.json") as handle:
-        num_nodes_dict = _json.load(handle)
-    return {
-        "x_dict": x_dict,
-        "edge_index_dict": edge_index_dict,
-        "num_nodes_dict": num_nodes_dict,
-    }
-
-
 # =============================================================================
 # Model Training (minimal)
 # =============================================================================
@@ -313,7 +298,11 @@ def test_gnn_inference():
         # step 5 below an end-to-end test rather than a fixture-shaped one.
         logger.info("\n[Step 2] Building a bound workspace...")
         kg_path = build_workspace(kg, data_dir, hidden_dim=hidden_dim)
-        graph_data = load_graph_data_for_training(data_dir)
+        # Read back through the shared reader, so training uses the workspace's
+        # bytes, loaded as every consumer loads them.
+        from src.kg.storage.file_storage import read_graph_artifacts
+
+        graph_data = read_graph_artifacts(data_dir).graph_data
         logger.info(f"  Node types: {list(graph_data['x_dict'].keys())}")
         logger.info(f"  Edge types: {len(graph_data['edge_index_dict'])}")
 
@@ -357,11 +346,12 @@ def test_gnn_inference():
 
         # --- Step 5: Test GNN pipeline (from checkpoint) ---
         logger.info("\n[Step 5] Loading GNN pipeline from checkpoint...")
+        # The graph is the one read from the workspace's `kg.json`, passed
+        # whole with the identity of its bytes, as the service passes it.
         gnn_pipeline = DiagnosisPipeline(
-            kg=kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
 

@@ -423,12 +423,13 @@ class TestARecordThatDoesNotBelongIsCaught:
 class TestProvenanceDoesNotGateService:
     """**Finding 1.** The reason this is its own class.
 
-    `verify_graph_artifacts` is not only an audit: `verify_graph_source` calls
-    it, and `DiagnosisPipeline._init_gnn_inference` calls that before loading a
-    tensor. An earlier revision raised from it when a declared record was
-    missing, so a lost note about where a graph came from stopped a model from
-    initialising — and through the API a cold start then answered `/diagnose`
-    with 503 while the tensors were sound.
+    The artifact verifiers are not only an audit: serving runs one before it
+    uses a tensor (`DiagnosisPipeline._init_gnn_inference`; since contract
+    M2.1's S6, `verify_graph_source_read` over its own reads). An earlier
+    revision raised from the path form when a declared record was missing, so a
+    lost note about where a graph came from stopped a model from initialising —
+    and through the API a cold start then answered `/diagnose` with 503 while
+    the tensors were sound.
 
     Reporting provenance is Phase 1's scope. Refusing on it is a policy nobody
     approved.
@@ -461,16 +462,35 @@ class TestProvenanceDoesNotGateService:
         assert observed["kg"] == _sha256(workspace / "kg.json")
 
     @pytest.mark.parametrize("how", ["deleted", "replaced", "corrupt"])
-    def test_the_graph_source_check_the_pipeline_runs_still_passes(self, tmp_path, how):
-        """The exact function `_init_gnn_inference` calls before a tensor is
-        read. This is the assertion that would have caught the defect."""
-        from src.kg.artifacts import verify_graph_source
+    def test_serving_still_builds_over_a_sound_graph(self, monkeypatch, tmp_path, how):
+        """Serving's own sequence, run by the pipeline: the graph read, the
+        manifest and tensor reads, and the check over them, with only the model
+        build stubbed. This is the assertion that would have caught the defect;
+        it pins the pipeline's path rather than one function it once called."""
+        import src.inference.pipeline as pipeline
+        from src.kg.graph import KnowledgeGraph
 
         workspace = tmp_path / "ws"
         _write(workspace, samples=_budget())
         self._break_it(workspace, how)
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline, "_load_model_from_checkpoint",
+            lambda self, checkpoint_path, device: object(),
+        )
+        monkeypatch.setattr(
+            pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
+            lambda self, device=None: setattr(
+                self, "_node_embeddings", {"phenotype": object(), "disease": object()}
+            ),
+        )
 
-        verify_graph_source(workspace / "kg.json", workspace)
+        built = pipeline.DiagnosisPipeline(
+            graph=KnowledgeGraph.read_json(workspace / "kg.json"),
+            data_dir=str(workspace),
+            checkpoint_path=str(workspace / "ckpt.pt"),
+        )
+
+        assert built._bound_digests["kg"] == _sha256(workspace / "kg.json")
 
     def test_a_real_tensor_mismatch_is_still_refused(self, tmp_path):
         """The other half: loosening provenance must not loosen the bindings

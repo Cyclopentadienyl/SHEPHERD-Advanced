@@ -165,12 +165,12 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
 
     # **Provenance is deliberately not checked here, and that is a correction.**
     # An earlier revision raised from this function when a declared record was
-    # missing or did not match. This function is not only an audit: it is called
-    # from `verify_graph_source`, which `DiagnosisPipeline._init_gnn_inference`
-    # calls before it loads a tensor — so a lost record stopped a model from
-    # initialising, and through the API a cold start then answered `/diagnose`
-    # with 503. The tensors were sound; only the note about where they came from
-    # was not.
+    # missing or did not match. This function was not only an audit: serving
+    # called it, through `verify_graph_source`, before it loaded a tensor — so a
+    # lost record stopped a model from initialising, and through the API a cold
+    # start then answered `/diagnose` with 503. The tensors were sound; only the
+    # note about where they came from was not. Serving now checks its reads with
+    # `verify_graph_source_read` (M2.1, S6), which keeps the same rule.
     #
     # Gating service on that is a policy nobody approved, and the plan says the
     # opposite: what a graph was built from is reported, not enforced. So it

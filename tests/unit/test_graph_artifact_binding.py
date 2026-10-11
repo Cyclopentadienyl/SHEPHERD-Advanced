@@ -176,14 +176,12 @@ class TestTheClinicalPathIsAGraphConsumer:
         """
         import src.inference.pipeline as pipeline
 
-        def _graph_loaded(self, *args, **kwargs):
-            reached.append("_load_graph_data")
-            return {"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}}
+        def _model_built(self, checkpoint_path, device):
+            reached.append("model")
+            return object()
 
-        monkeypatch.setattr(pipeline.DiagnosisPipeline, "_load_graph_data", _graph_loaded)
         monkeypatch.setattr(
-            pipeline.DiagnosisPipeline, "_load_model_from_checkpoint",
-            lambda self, checkpoint_path, device: object(),
+            pipeline.DiagnosisPipeline, "_load_model_from_checkpoint", _model_built,
         )
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
@@ -199,12 +197,12 @@ class TestTheClinicalPathIsAGraphConsumer:
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
-        (root / "node_features.pt").write_bytes(b"same shape, another workspace")
+        other = _workspace(tmp_path / "other")
+        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
 
         with pytest.raises(ValueError, match="is not the node_features artifact"):
             pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(), data_dir=str(root),
-                kg_path=str(root / "kg.json"),
+                graph=KnowledgeGraph.read_json(root / "kg.json"), data_dir=str(root),
                 checkpoint_path=str(root / "ckpt.pt"),
             )
 
@@ -218,12 +216,11 @@ class TestTheClinicalPathIsAGraphConsumer:
         (root / "ckpt.pt").write_bytes(b"weights")
 
         pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(), data_dir=str(root),
-            kg_path=str(root / "kg.json"),
+            graph=KnowledgeGraph.read_json(root / "kg.json"), data_dir=str(root),
             checkpoint_path=str(root / "ckpt.pt"),
         )
 
-        assert reached == ["_load_graph_data"]
+        assert reached == ["model"]
 
     def test_a_file_backed_pipeline_without_a_kg_path_is_refused(
         self, monkeypatch, tmp_path
@@ -242,7 +239,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         root = _workspace(tmp_path / "ws")
         (root / "ckpt.pt").write_bytes(b"weights")
 
-        with pytest.raises(ValueError, match="requires kg_path"):
+        with pytest.raises(ValueError, match="requires graph="):
             pipeline.DiagnosisPipeline(
                 kg=KnowledgeGraph(), data_dir=str(root),
                 checkpoint_path=str(root / "ckpt.pt"),
@@ -260,20 +257,32 @@ class TestTheClinicalPathIsAGraphConsumer:
         verified regardless would pass this test anyway. Supplying a `data_dir`
         that *would* fail is what isolates the seam: the graph is already in hand,
         so the files are never read and their state is irrelevant.
+
+        **Shown by what is opened, not by what is stubbed.** Since M2.1's S6 the
+        workspace read and its check are one step inside the pipeline, so the
+        assertion is that no workspace file is opened while the model is still
+        built over the data supplied.
         """
+        from tests.fixtures.opens import count_opens
+
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
-        (root / "node_features.pt").write_bytes(b"would fail verification")
+        other = _workspace(tmp_path / "other")
+        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
 
-        pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(),
-            graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
-            data_dir=str(root),
-            checkpoint_path=str(root / "ckpt.pt"),
+        with count_opens() as opens:
+            pipeline.DiagnosisPipeline(
+                kg=KnowledgeGraph(),
+                graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
+                data_dir=str(root),
+                checkpoint_path=str(root / "ckpt.pt"),
+            )
+
+        assert reached == ["model"], "the model is built over the data supplied"
+        assert not [path for path in root.iterdir() if opens.opens(path)], (
+            "a workspace file was opened for in-memory graph data"
         )
-
-        assert reached == [], "the file-backed loader is not used for in-memory data"
 
 
 def test_a_supplied_cohort_measurement_also_refuses_a_mixed_graph_workspace(tmp_path):
@@ -361,8 +370,8 @@ class TestTheCompositionMustNotCrossWorkspaces:
 
         with pytest.raises(ValueError, match="is not the graph"):
             pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(), data_dir=str(a),
-                kg_path=str(b / "kg.json"), checkpoint_path=str(a / "ckpt.pt"),
+                graph=KnowledgeGraph.read_json(b / "kg.json"), data_dir=str(a),
+                checkpoint_path=str(a / "ckpt.pt"),
             )
 
         assert reached == [], "graph loading was reached on a crossed pair"
@@ -383,11 +392,11 @@ class TestTheCompositionMustNotCrossWorkspaces:
         a, _ = self._two_workspaces(tmp_path)
 
         pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(), data_dir=str(a),
-            kg_path=str(a / "kg.json"), checkpoint_path=str(a / "ckpt.pt"),
+            graph=KnowledgeGraph.read_json(a / "kg.json"), data_dir=str(a),
+            checkpoint_path=str(a / "ckpt.pt"),
         )
 
-        assert reached == ["_load_graph_data"]
+        assert reached == ["model"]
 
     def test_the_bound_graph_may_live_at_another_path(self, monkeypatch, tmp_path):
         """A path is not an identity in this project; the bytes are. Requiring
@@ -402,11 +411,11 @@ class TestTheCompositionMustNotCrossWorkspaces:
         elsewhere.write_bytes((a / "kg.json").read_bytes())
 
         pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(), data_dir=str(a),
-            kg_path=str(elsewhere), checkpoint_path=str(a / "ckpt.pt"),
+            graph=KnowledgeGraph.read_json(elsewhere), data_dir=str(a),
+            checkpoint_path=str(a / "ckpt.pt"),
         )
 
-        assert reached == ["_load_graph_data"]
+        assert reached == ["model"]
 
     def test_a_late_initialization_failure_publishes_nothing(
         self, monkeypatch, tmp_path

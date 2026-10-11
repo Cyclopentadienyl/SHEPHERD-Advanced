@@ -268,8 +268,9 @@ def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
     this one by structure alone.
 
     So the manifest is built *after* the overwrite, over the bytes that are
-    actually there. Returns `kg.json`'s path, which the pipeline needs in order
-    to check that the graph object and the workspace are one composition.
+    actually there. Returns `kg.json`'s path. The caller reads it with
+    `KnowledgeGraph.read_json` and passes the result whole, so the pipeline can
+    check that the graph it serves and the workspace are one composition.
     """
     from tests.fixtures.generated_workspace import write_generated_workspace
 
@@ -334,10 +335,9 @@ class TestCheckpointBridge:
 
         # --- Load fresh pipeline from disk (production path) ---
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
 
@@ -410,10 +410,9 @@ class TestCheckpointBridge:
         kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
         cached = pipeline._node_embeddings
@@ -529,10 +528,9 @@ class TestShortestPathIntegration:
 
         with pytest.raises(ValueError, match="different graph"):
             DiagnosisPipeline(
-                kg=medium_kg,
+                graph=KnowledgeGraph.read_json(kg_path),
                 model=model,
                 data_dir=str(data_dir),
-                kg_path=str(kg_path),
                 device="cpu",
             )
 
@@ -556,10 +554,9 @@ class TestShortestPathIntegration:
         }, ckpt_path)
 
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
         assert pipeline._gnn_ready
@@ -599,10 +596,9 @@ class TestShortestPathIntegration:
         }, ckpt_path)
 
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
         assert pipeline._gnn_ready
@@ -633,10 +629,9 @@ class TestShortestPathIntegration:
         eta_value = 0.6
         config = PipelineConfig(eta=eta_value)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             config=config,
             device="cpu",
         )
@@ -675,10 +670,9 @@ class TestShortestPathIntegration:
         }, ckpt_path)
 
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             config=PipelineConfig(eta=1.0),
             device="cpu",
         )
@@ -710,10 +704,9 @@ class TestShortestPathIntegration:
         }, ckpt_path)
 
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             config=PipelineConfig(eta=0.0),
             device="cpu",
         )

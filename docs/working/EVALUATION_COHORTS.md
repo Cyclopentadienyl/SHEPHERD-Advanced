@@ -938,17 +938,20 @@ Two rules follow, and both are enforced rather than advised:
   `SHEPHERD_DATA_DIR` are resolved independently, so a deployment can pair one workspace's
   `kg.json` with another's tensors — each internally sound, and together producing embedding rows
   read through the wrong graph's node identifiers, which no structural check can see. A caller that
-  knows where its graph object came from states it (`kg_path`), and `verify_graph_source` compares
-  that file's digest with the one the workspace's manifest binds. **By digest, not by path**:
-  requiring `kg_path` to *be* `data_dir/kg.json` would also close it and would break a deployment
+  loaded its graph object from a file passes what `KnowledgeGraph.read_json` returned, the graph and
+  the identity of the bytes it was parsed from together, and the pipeline compares that digest with
+  the one the workspace's manifest binds (contract M2.1, S6; before it, `kg_path` and
+  `verify_graph_source` hashed the file again). **By digest, not by path**: requiring the file to
+  *be* `data_dir/kg.json` would also close it and would break a deployment
   that mounts the file elsewhere, and a path is not an identity in this project. **Required, not
   optional**, for any file-backed use: an optional check is no check for the caller who omits it,
   and that caller is the one it exists for. A caller holding only an in-memory graph belongs on the
   `graph_data` seam, which makes no persisted-workspace claim and is checked for nothing.
 - **A knowable refusal precedes the side effects.** Both training and inference verify before they
   create anything: `train` before the run directories, `config.yaml` and the checkpoint directory;
-  `DiagnosisPipeline` before the graph is loaded, a checkpoint is paired with it, embeddings are
-  precomputed or the pipeline reports itself ready. No rollback and no transactional writing — the
+  `DiagnosisPipeline` before a checkpoint is read and paired with the graph, embeddings are
+  precomputed or the pipeline reports itself ready. Since contract M2.1 they check the bytes they
+  parsed, so each file is read once, then checked, then used. No rollback and no transactional writing — the
   check simply moves ahead of the work. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
   disjointness — applies only to generated cohorts. Had the graph half lived inside the cohort
   verifier, generated validation would have been protected while institutional evaluation went on

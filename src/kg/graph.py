@@ -551,7 +551,9 @@ class KnowledgeGraph:
         """
         Export graph data files for GNN training and inference.
 
-        Produces the three files expected by DiagnosisPipeline._load_graph_data():
+        Produces the three files the shared reader
+        (`src/kg/storage/file_storage.py:read_graph_artifacts`) loads for
+        serving, training and measurement:
           - node_features.pt: {node_type: Tensor(N, feature_dim)}
           - edge_indices.pt:  {(src, rel, dst): Tensor(2, E)} with reverse edges
           - num_nodes.json:   {node_type: int}

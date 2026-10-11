@@ -1068,6 +1068,25 @@ each moves its callers before anything is removed.
      - junk-byte cases become another workspace's valid file;
      - the `load_json` stubs (`tests/unit/test_pipeline_fails_closed.py:309`,
        `tests/unit/test_hop_bound_reaches_the_service.py:75`) are replaced by the real reader.
+   - **As implemented (2026-10-11).**
+     - `DiagnosisPipeline` and `create_diagnosis_pipeline` take `graph=` (the `GraphRead`) in
+       place of `kg_path`, which is removed with no alias. `graph=` and the in-memory `kg=` are
+       exclusive, so a graph and an identity cannot be given apart. The pipeline keeps all four
+       bound digests (`_bound_digests`), the graph's identity (`_graph_identity`) and the
+       checkpoint's (`_checkpoint_identity`), for M2.4 and S9's dynamic pin; none is published,
+       since the served identity is M3c's.
+     - **The checkpoint is read after the graph check**, inside `_load_model_from_checkpoint`,
+       with this site's own options (`map_location="cpu"`, `weights_only=False`). M2.1 checks
+       nothing about the checkpoint, so a refused workspace reads no checkpoint.
+     - **The shared readers name a file that was read but does not parse** (`f3136d3`). Serving
+       is the first entry point to parse before it compares; without this, a junk tensor or JSON
+       file failed with the parser's message, which names nothing, where the path check used to
+       name it.
+     - Text S6 made false is corrected with it: the `file_storage` copy lists, `graph.py`'s
+       export docstring, `artifacts.py`'s provenance note, `EVALUATION_COHORTS.md`'s binding
+       paragraph and BACKLOG 19.20's citation. `test_kg_provenance.py`'s serving pin, missing
+       from the list above, now runs the pipeline's own sequence.
+     - Acceptance: `tests/unit/test_serving_reads_once.py`.
 7. **S7 — measurement.**
    - **Mode A/B-specific items deferred (owner, 2026-10-10)** pending the Mode A/B retirement
      assessment (`scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`, §1.3): "Mode A uses the

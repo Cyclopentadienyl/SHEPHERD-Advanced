@@ -32,9 +32,9 @@
 #   # Path-only reasoning (no GNN)
 #   pipeline = DiagnosisPipeline(kg=knowledge_graph)
 #
-#   # With GNN scoring from checkpoint
+#   # With GNN scoring from checkpoint, over a workspace
 #   pipeline = DiagnosisPipeline(
-#       kg=knowledge_graph,
+#       graph=KnowledgeGraph.read_json("data/workspaces/demo/kg.json"),
 #       checkpoint_path="checkpoints/last.pt",
 #       data_dir="data/workspaces/demo",
 #   )
@@ -43,7 +43,6 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 import math
 import time
@@ -52,7 +51,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
-from src.kg.artifacts import verify_graph_source
+from src.kg.artifacts import read_split_manifest, verify_graph_source_read
+from src.kg.storage.file_storage import read_graph_artifacts
+from src.utils.checkpoint_io import read_checkpoint
 from src.kg.phenotype_normalisation import normalise_phenotypes
 from src.core.types import (
     DataSource,
@@ -89,7 +90,9 @@ except ImportError:
 
 if TYPE_CHECKING:
     from src.kg import KnowledgeGraph
+    from src.kg.graph import GraphRead
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
+    from src.utils.fingerprint import ReadIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -332,20 +335,21 @@ class DiagnosisPipeline:
 
     def __init__(
         self,
-        kg: "KnowledgeGraph",
+        kg: Optional["KnowledgeGraph"] = None,
         config: Optional[PipelineConfig] = None,
         model: Optional[Any] = None,  # Optional pre-loaded GNN model
         checkpoint_path: Optional[str] = None,
         graph_data: Optional[Dict[str, Any]] = None,
         data_dir: Optional[str] = None,
-        kg_path: Optional[str] = None,
+        graph: Optional["GraphRead"] = None,
         device: Optional[str] = None,
     ):
         """
         Initialize the diagnosis pipeline.
 
         Args:
-            kg: Knowledge graph for reasoning
+            kg: An in-memory knowledge graph for reasoning, which makes no claim
+                about a persisted workspace. Give this or `graph`, not both.
             config: Pipeline configuration
             model: Optional pre-loaded GNN model instance
             checkpoint_path: Path to trained model checkpoint (.pt file).
@@ -357,18 +361,43 @@ class DiagnosisPipeline:
             data_dir: Path to processed data directory containing
                      node_features.pt, edge_indices.pt, num_nodes.json.
                      Alternative to graph_data for GNN inference.
-            kg_path: Where `kg` was loaded from. **Required whenever `data_dir`
-                     is used for GNN inference**, and checked:
-                     `data_dir` proves a workspace is internally consistent, and
-                     two consistent workspaces can still be crossed — one's
-                     `kg.json` paired with the other's tensors, so embedding rows
-                     are read through another graph's node identifiers. Only the
-                     caller knows where the object came from, so only the caller
-                     can state it; an in-memory graph has no source digest and is
-                     not pretended to have one.
+            graph: The `GraphRead` `KnowledgeGraph.read_json` returned: the
+                     graph and the identity of the bytes it was parsed from, in
+                     one value. **Required whenever `data_dir` is used for GNN
+                     inference**, and checked: `data_dir` proves a workspace is
+                     internally consistent, and two consistent workspaces can
+                     still be crossed, one's `kg.json` paired with the other's
+                     tensors, so embedding rows are read through another graph's
+                     node identifiers. It is passed whole and unpacked only
+                     here, so the graph served and the digest checked cannot
+                     come from two reads (contract M2.1, S6). An in-memory graph
+                     (`kg`) has no source digest and is not pretended to have
+                     one.
             device: Device for GNN inference ("cpu", "cuda", or None for auto).
         """
+        from src.kg.graph import GraphRead
+
+        if graph is not None:
+            if kg is not None:
+                raise ValueError(
+                    "pass the graph read from a file (graph=) or an in-memory "
+                    "graph (kg=), not both: a graph and an identity given apart "
+                    "could come from two different reads"
+                )
+            if not isinstance(graph, GraphRead):
+                raise TypeError(
+                    "graph= takes the GraphRead KnowledgeGraph.read_json returned, "
+                    f"not a {type(graph).__name__}"
+                )
+            kg = graph.kg
+        elif kg is None:
+            raise ValueError("a pipeline needs a graph: pass kg= or graph=")
         self.kg = kg
+        #: The identity of the bytes `self.kg` was parsed from, when it was read
+        #: from a file. None for an in-memory graph.
+        self._graph_identity: Optional["ReadIdentity"] = (
+            graph.identity if graph is not None else None
+        )
         self.config = config or PipelineConfig()
         self.model = model
 
@@ -376,7 +405,13 @@ class DiagnosisPipeline:
         self._node_embeddings: Optional[Dict[str, Any]] = None
         self._node_id_to_idx: Optional[Dict[str, Dict[str, int]]] = None
         self._graph_data: Optional[Dict[str, Any]] = graph_data
-        self._kg_path: Optional[str] = kg_path
+        #: The four digests the manifest binds (`kg`, `node_features`,
+        #: `edge_indices`, `num_nodes`), each compared with the read it names,
+        #: once the workspace has been verified. Kept whole for M2.4's
+        #: comparison with the checkpoint; None for in-memory graph data.
+        self._bound_digests: Optional[Dict[str, str]] = None
+        #: The identity of the checkpoint bytes the model was built from.
+        self._checkpoint_identity: Optional["ReadIdentity"] = None
         self._gnn_ready = False
 
         # Shortest path lookup state (populated by _load_shortest_paths).
@@ -392,10 +427,11 @@ class DiagnosisPipeline:
         #: "assumed" when none was there. Published, because a log line is not a
         #: surface anyone watches and the two states score differently.
         self._sp_hop_bound_source: Optional[str] = None
-        #: SHA-256 of the `kg.json` this pipeline's graph was verified against,
-        #: when it was loaded from a workspace. **None for a graph supplied in
-        #: memory**, which is not an oversight: that caller made no claim about
-        #: a persisted workspace, so there is nothing to bind an artifact to.
+        #: SHA-256 of the bytes this pipeline's graph was parsed from, as the
+        #: manifest binds it, once the workspace has been verified. **None for a
+        #: graph supplied in memory**, which is not an oversight: that caller made
+        #: no claim about a persisted workspace, so there is nothing to bind an
+        #: artifact to.
         #: The shortest-path artifact is checked against *this*, never against
         #: whatever `kg.json` happens to sit beside it — otherwise the binding
         #: could be bypassed by deleting a file.
@@ -424,7 +460,7 @@ class DiagnosisPipeline:
         logger.info(
             f"DiagnosisPipeline initialized: "
             f"version={self.VERSION}, "
-            f"kg_nodes={len(kg._nodes)}, "
+            f"kg_nodes={len(self.kg._nodes)}, "
             f"has_model={self.model is not None}, "
             f"gnn_ready={self._gnn_ready}"
         )
@@ -505,43 +541,54 @@ class DiagnosisPipeline:
             # Only for the file-backed path. A caller supplying `graph_data`
             # directly makes no claim about a persisted workspace, so there is no
             # manifest for it to match and nothing to verify.
-            # **`kg_path` is required here, not optional.** Verifying only that
-            # `data_dir` is internally consistent leaves the `kg` object bound to
-            # nothing: a caller can still pair workspace B's graph with workspace
-            # A's tensors and get embeddings read through the wrong node
-            # identifiers. An optional check is no check for the caller who omits
-            # it, and that caller is the one this exists for.
+            # **The graph's identity is required here, not optional.** Verifying
+            # only that `data_dir` is internally consistent leaves the `kg`
+            # object bound to nothing: a caller can still pair workspace B's
+            # graph with workspace A's tensors and get embeddings read through
+            # the wrong node identifiers. An optional check is no check for the
+            # caller who omits it, and that caller is the one this exists for.
             #
             # Nothing legitimate is lost. A caller who built its graph in memory
             # never had a source file and belongs on the `graph_data` seam above,
             # which makes no persisted-workspace claim; a caller who loaded one
-            # from disk knows where from and can say so.
-            if self._kg_path is None:
+            # from disk passes what `KnowledgeGraph.read_json` returned.
+            if self._graph_identity is None:
                 raise ValueError(
-                    "loading graph data from a workspace requires kg_path — where "
-                    "the `kg` object came from. Without it the graph object is "
-                    "bound to nothing, and this workspace's tensors could belong "
-                    "to a different graph entirely. Pass kg_path, or pass "
+                    "loading graph data from a workspace requires graph= — the "
+                    "GraphRead KnowledgeGraph.read_json returned, so the graph "
+                    "served is the one whose bytes are checked. Without it the "
+                    "graph object is bound to nothing, and this workspace's "
+                    "tensors could belong to a different graph entirely. Pass "
                     "graph_data directly if the graph was not loaded from a file."
                 )
-            # **The return value is kept.** It carries the manifest-bound
-            # digests, and this used to discard them — so the shortest-path
-            # binding would have had to hash `kg.json` a second time, or bind to
-            # a file rather than to the graph that was actually verified.
-            bound = verify_graph_source(Path(self._kg_path), Path(data_dir))
+            # **One read per input, and the check compares those reads**
+            # (contract M2.1, S6). The manifest, the graph tensors and `kg.json`
+            # (read by the caller) are each read once; the digests compared
+            # are those of the bytes parsed, and nothing is hashed again by path.
+            # A file replaced after its read is either the one used and checked,
+            # or refused as not the artifact the manifest records.
+            workspace = Path(data_dir)
+            manifest = read_split_manifest(workspace)
+            graph_read = read_graph_artifacts(workspace, map_location="cpu")
+            bound = verify_graph_source_read(
+                manifest, self._graph_identity, graph_read.reads
+            )
+            # **All four are kept**, the opening for M2.4's comparison with the
+            # checkpoint. The shortest-path binding reads `kg` from them, so it
+            # binds to the graph that was verified, not to a file hashed again.
+            self._bound_digests = dict(bound)
             self._graph_kg_digest = bound["kg"]
-            self._graph_data = self._load_graph_data(data_dir)
+            # **Only after the check.** The reader omits a file that is absent,
+            # and only the check turns that into a refusal.
+            self._graph_data = graph_read.graph_data
 
         if self._graph_data is None:
-            where = (
-                f"{data_dir} has no node_features.pt or edge_indices.pt"
-                if data_dir is not None
-                else "neither data_dir (SHEPHERD_DATA_DIR, on the service) "
-                "nor graph_data was given"
-            )
+            # A workspace without its tensors is refused by the check above, so
+            # only an absent source is left to report.
             raise PipelineBuildError(
-                f"A GNN was requested and there is no graph to compute its "
-                f"embeddings from: {where}."
+                "A GNN was requested and there is no graph to compute its "
+                "embeddings from: neither data_dir (SHEPHERD_DATA_DIR, on the "
+                "service) nor graph_data was given."
             )
 
         # Step 2: Load model from checkpoint if needed. A checkpoint that does
@@ -605,54 +652,6 @@ class DiagnosisPipeline:
             f"GNN inference initialized successfully "
             f"(sp_ready={self._sp_ready}, eta={self.config.eta})"
         )
-
-    def _load_graph_data(self, data_dir: str) -> Optional[Dict[str, Any]]:
-        """Load graph data files from a processed data directory."""
-        data_path = Path(data_dir)
-        graph_data: Dict[str, Any] = {
-            "x_dict": {},
-            "edge_index_dict": {},
-            "num_nodes_dict": {},
-        }
-
-        # Load node features
-        node_features_path = data_path / "node_features.pt"
-        if node_features_path.exists():
-            graph_data["x_dict"] = torch.load(
-                node_features_path, map_location="cpu", weights_only=True
-            )
-            logger.info(
-                f"Loaded node features: {list(graph_data['x_dict'].keys())}"
-            )
-        else:
-            logger.warning(f"Node features not found: {node_features_path}")
-            return None
-
-        # Load edge indices
-        edge_indices_path = data_path / "edge_indices.pt"
-        if edge_indices_path.exists():
-            graph_data["edge_index_dict"] = torch.load(
-                edge_indices_path, map_location="cpu", weights_only=True
-            )
-            logger.info(
-                f"Loaded edge indices: "
-                f"{len(graph_data['edge_index_dict'])} edge types"
-            )
-        else:
-            logger.warning(f"Edge indices not found: {edge_indices_path}")
-            return None
-
-        # Load node counts
-        num_nodes_path = data_path / "num_nodes.json"
-        if num_nodes_path.exists():
-            with open(num_nodes_path) as f:
-                graph_data["num_nodes_dict"] = json.load(f)
-        else:
-            # Infer from feature tensors
-            for node_type, features in graph_data["x_dict"].items():
-                graph_data["num_nodes_dict"][node_type] = features.size(0)
-
-        return graph_data
 
     def _load_shortest_paths(self, data_dir: Path) -> None:
         """Load the shortest-path table and build the index the scorer reads.
@@ -969,13 +968,20 @@ class DiagnosisPipeline:
             )
 
         logger.info(f"Loading GNN model from checkpoint: {ckpt_path}")
+        # **The model is built from this read** (contract M2.1, S6; decision 4).
+        # Its parsed object is what the build uses and its identity is what is
+        # kept, never anything a selection scan read earlier. The options are
+        # this site's own, unchanged by the move to one read.
         try:
-            checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            checkpoint_read = read_checkpoint(
+                ckpt_path, map_location="cpu", weights_only=False
+            )
         except Exception as exc:  # noqa: BLE001 — any unreadable file is the same refusal
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path} could not be read "
                 f"({type(exc).__name__}: {exc})."
             ) from exc
+        checkpoint = checkpoint_read.checkpoint
         if not isinstance(checkpoint, dict):
             raise PipelineBuildError(
                 f"{ckpt_path} is not a training checkpoint: it holds a "
@@ -1053,6 +1059,8 @@ class DiagnosisPipeline:
         model = model.to(device)
         self._checkpoint_meta["device"] = str(device)
 
+        # Kept for M2.4 and M3c; set only once the model it describes is built.
+        self._checkpoint_identity = checkpoint_read.identity
         num_params = self._checkpoint_meta["params"]
         logger.info(
             f"GNN model loaded: {num_params:,} parameters, device={device}"
@@ -1912,26 +1920,27 @@ class DiagnosisPipeline:
 # Factory Function
 # ==============================================================================
 def create_diagnosis_pipeline(
-    kg: "KnowledgeGraph",
+    kg: Optional["KnowledgeGraph"] = None,
     config: Optional[PipelineConfig] = None,
     model: Optional[Any] = None,
     checkpoint_path: Optional[str] = None,
     graph_data: Optional[Dict[str, Any]] = None,
     data_dir: Optional[str] = None,
-    kg_path: Optional[str] = None,
+    graph: Optional["GraphRead"] = None,
     device: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
     Factory function to create a diagnosis pipeline.
 
     Args:
-        kg: Knowledge graph
+        kg: An in-memory knowledge graph (give this or `graph`)
         config: Pipeline configuration
         model: Optional pre-loaded GNN model
         checkpoint_path: Path to trained model checkpoint
         graph_data: Pre-loaded graph data dict
         data_dir: Path to processed data directory
-        kg_path: Where `kg` was loaded from, so the composition can be checked
+        graph: The `GraphRead` `KnowledgeGraph.read_json` returned, passed
+            whole, so the composition can be checked
         device: Device for GNN inference
 
     Returns:
@@ -1944,6 +1953,6 @@ def create_diagnosis_pipeline(
         checkpoint_path=checkpoint_path,
         graph_data=graph_data,
         data_dir=data_dir,
-        kg_path=kg_path,
+        graph=graph,
         device=device,
     )

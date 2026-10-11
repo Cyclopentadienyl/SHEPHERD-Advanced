@@ -62,7 +62,6 @@ class TestItReachesTheFactory:
         import json
 
         import src.inference.pipeline as pipeline_module
-        from src.kg.graph import KnowledgeGraph
 
         seen = {}
 
@@ -71,9 +70,6 @@ class TestItReachesTheFactory:
             raise RuntimeError("stop here; the config is what this test wants")
 
         monkeypatch.setattr(pipeline_module, "create_diagnosis_pipeline", _capture)
-        monkeypatch.setattr(
-            KnowledgeGraph, "load_json", staticmethod(lambda *a, **k: KnowledgeGraph())
-        )
 
         kg_file = tmp_path / "kg.json"
         kg_file.write_text(json.dumps({"nodes": [], "edges": []}))
@@ -92,6 +88,11 @@ class TestItReachesTheFactory:
 
         assert "config" in seen, "the factory was called without a config at all"
         assert seen["config"].sp_hop_bound == 3
+        # The real reader parsed the file, and its result arrived whole.
+        from src.kg.graph import GraphRead
+
+        assert isinstance(seen["graph"], GraphRead)
+        assert "kg" not in seen and "kg_path" not in seen
 
     def test_no_setting_still_produces_a_config_with_none(
         self, monkeypatch, tmp_path

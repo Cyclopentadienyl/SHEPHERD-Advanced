@@ -241,11 +241,10 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="sp_optional=False"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
                 config=PipelineConfig(sp_optional=False),
                 checkpoint_path=str(checkpoint),
                 data_dir=str(data_dir),
-                kg_path=str(data_dir / "kg.json"),
                 device="cpu",
             )
 
@@ -269,10 +268,9 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
 
         pipeline = DiagnosisPipeline(
-            kg=KnowledgeGraph(),
+            graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
             checkpoint_path=str(checkpoint),
             data_dir=str(data_dir),
-            kg_path=str(data_dir / "kg.json"),
             device="cpu",
         )
 
@@ -294,9 +292,9 @@ class TestARequestedModelIsBuiltOrRefused:
 def api(monkeypatch):
     """App state as a fresh process has it, restored afterwards.
 
-    `kg.json` in the synthetic workspace is a placeholder the manifest binds, so
-    the graph object is stood in for. The digest check reads the file, not the
-    object, and still runs.
+    `kg.json` in the synthetic workspace is a placeholder the manifest binds. The
+    real reader parses it to an empty graph, and the check compares the digest
+    of the bytes it parsed (contract M2.1, S6).
     """
     pytest.importorskip("fastapi")
     import src.api.main as api_main
@@ -305,9 +303,6 @@ def api(monkeypatch):
         monkeypatch.setattr(api_main.app_state, field, None, raising=False)
     monkeypatch.setattr(api_main.app_state, "model_version", "unknown", raising=False)
     monkeypatch.setattr(api_main.app_state, "is_ready", False, raising=False)
-    monkeypatch.setattr(
-        KnowledgeGraph, "load_json", staticmethod(lambda *a, **k: KnowledgeGraph())
-    )
     for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")

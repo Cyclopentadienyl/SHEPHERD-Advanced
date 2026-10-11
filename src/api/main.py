@@ -474,7 +474,10 @@ def build_pipeline(
     does not exist; raises when a configured pipeline fails to build.
 
     Configuration is read from environment variables if not passed directly:
-        SHEPHERD_KG_PATH: Path to KG JSON file
+        SHEPHERD_KG_PATH: Path to KG JSON file. It may name a file outside
+            ``SHEPHERD_DATA_DIR`` holding the bytes the workspace manifest binds;
+            the graph checked is the one parsed from this file, and
+            ``data_dir/kg.json`` is then not read
         SHEPHERD_CHECKPOINT_PATH: Path to model checkpoint
         SHEPHERD_DATA_DIR: Path to processed graph data directory
         SHEPHERD_DEVICE: Inference device (cpu/cuda)
@@ -542,29 +545,34 @@ def build_pipeline(
             return None
 
         logger.info(f"Loading knowledge graph from {kg_file}...")
-        kg = KnowledgeGraph.load_json(str(kg_file))
+        # **One read, kept whole** (contract M2.1, S6). The graph and the
+        # identity of the bytes it was parsed from travel together into the
+        # pipeline, which checks that identity against the workspace manifest;
+        # nothing hashes the file again by path.
+        graph = KnowledgeGraph.read_json(kg_file)
+        kg = graph.kg
         logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
         # Step 2: Create pipeline (with optional GNN)
         #
-        # **`kg_path` is passed, and the composition is checked here.** These two
-        # settings are resolved independently from the environment, so a
-        # deployment can point them at two different workspaces — each internally
-        # consistent, and together producing embeddings from one graph's tensors
-        # read through the other graph's node identifiers. The pipeline refuses
-        # that composition, and because this function publishes nothing, a
-        # refused one cannot leave a graph visible as though it had been accepted.
+        # **The graph read is passed whole, and the composition is checked
+        # there.** These two settings are resolved independently from the
+        # environment, so a deployment can point them at two different
+        # workspaces — each internally consistent, and together producing
+        # embeddings from one graph's tensors read through the other graph's node
+        # identifiers. The pipeline refuses that composition, and because this
+        # function publishes nothing, a refused one cannot leave a graph visible
+        # as though it had been accepted.
         # **The hop bound a workspace without its sidecar needs.** The loader
         # refuses to guess it, and tells the operator to supply it — so there has
         # to be a way to, from the surface a deployment is actually started with.
         # This function is that surface for both entry points, and the factory
         # has always accepted a config; nothing was passing one.
         pipeline = create_diagnosis_pipeline(
-            kg=kg,
+            graph=graph,
             config=PipelineConfig(sp_hop_bound=_configured_hop_bound()),
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
-            kg_path=str(kg_file),
             device=device,
         )
         # Read the configuration back **before returning**, not after publishing.

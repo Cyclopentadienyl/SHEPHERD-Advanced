@@ -12,17 +12,16 @@ The KG is written by ``src/kg/builder.py`` as files under
 **Reading them is currently duplicated.** ``src/kg/data_loader.py`` does *not*
 read these files — it receives an already-loaded ``graph_data`` dictionary. The
 files are loaded independently by each consumer that needs them, and then handed
-to the dataloader: ``src/inference/pipeline.py:579-606``,
-``scripts/train_model.py``, ``scripts/build_index.py``,
+to the dataloader: ``scripts/train_model.py``, ``scripts/build_index.py``,
 ``scripts/setup_demo.py``, ``scripts/spikes/validate_fast_subgraph.py`` and
 ``scripts/measure_scorer.py``. Every copy depends on the same filenames and the
 same serialisation format, so a format change breaks all of them at once.
 
 Modules:
-  - ``file_storage.py`` — the shared reader. **Started, not finished.** Two
-    callers are migrated (`scripts/measure_scorer.py`, and Mode C through it);
-    the other five listed above still have their own copies, and collapsing
-    them is the rest of P1.
+  - ``file_storage.py`` — the shared reader. **Started, not finished.** Its
+    callers so far are `scripts/measure_scorer.py` (Mode C through it) and
+    serving, `src/inference/pipeline.py` (contract M2.1, S6); the others listed
+    above still have their own copies, and collapsing them is the rest of P1.
   - ``graph_db.py``     — reserved, empty: a graph-database backend
 
 **Scope guardrail for whoever implements ``file_storage.py`` (P1).** Its first

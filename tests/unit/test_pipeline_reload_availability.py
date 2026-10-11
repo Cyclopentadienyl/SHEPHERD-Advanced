@@ -128,15 +128,16 @@ class TestARejectedCandidateCostsNothing:
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
         assert result.success is False
-        assert "is not the kg artifact" in result.message
+        assert "is not the graph" in result.message
         _assert_untouched(api, before)
 
     def test_a_replaced_graph_artifact_is_refused_and_changes_nothing(
         self, monkeypatch, tmp_path
     ):
         api, before = _serving(monkeypatch)
+        other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
         root, _ = _candidate_workspace(monkeypatch, tmp_path)
-        (root / "node_features.pt").write_bytes(b"same shape, another workspace")
+        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
@@ -228,7 +229,8 @@ class TestAFailedReloadReportsWhatIsStillServing:
     ):
         api, _ = _serving(monkeypatch)
         root, _ = _candidate_workspace(monkeypatch, tmp_path)
-        (root / "edge_indices.pt").write_bytes(b"another workspace")
+        other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+        (root / "edge_indices.pt").write_bytes((other / "edge_indices.pt").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
@@ -310,7 +312,8 @@ class TestAnAcceptedCandidateReplacesAllOfIt:
         construction, so a refused workspace never reaches the loader."""
         api, _ = _serving(monkeypatch)
         root, reached = _candidate_workspace(monkeypatch, tmp_path)
-        (root / "num_nodes.json").write_bytes(b"another workspace")
+        other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+        (root / "num_nodes.json").write_bytes((other / "num_nodes.json").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
@@ -360,7 +363,8 @@ def test_a_service_with_no_pipeline_is_not_told_one_is_still_serving(
     import src.api.main as api
 
     root, _ = _candidate_workspace(monkeypatch, tmp_path)
-    (root / "node_features.pt").write_bytes(b"another workspace")
+    other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+    (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
     monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
     monkeypatch.setattr(api.app_state, "kg", None, raising=False)
     monkeypatch.setattr(api.app_state, "_current_data_dir", None, raising=False)
@@ -547,7 +551,8 @@ class TestNothingLeavesThisEndpointUnencodable:
             if case == "bad_conv_type":
                 kwargs["conv_type"] = "nonsense"
             elif case == "bad_workspace":
-                (root / "node_features.pt").write_bytes(b"another workspace")
+                other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+                (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
                 kwargs["checkpoint_path"] = str(root / "ckpt.pt")
 
         result = _reload(**kwargs)
