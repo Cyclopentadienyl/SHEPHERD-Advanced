@@ -435,18 +435,18 @@ class Trainer:
         return callbacks
 
     def _set_seed(self, seed: int) -> None:
-        """設置隨機種子"""
-        import random
-        import numpy as np
+        """設置隨機種子
 
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-        # Logged only after every RNG above is seeded successfully — an
-        # out-of-range seed raises in np.random.seed before reaching here.
-        logger.info("Random seed set to %s", seed)
+        The rule is `apply_seed`, at the end of this module. `train_model.train`
+        applies it before the data loaders and the model are built, so the seed
+        fixes the initial weights (contract M3a). Applied again here, it makes
+        the stream training draws from (negatives, shuffling, dropout) start
+        from the seed whatever building the loaders and the model consumed.
+        An out-of-range seed raises inside `apply_seed`, in `np.random.seed`,
+        before anything is logged, as it did when the rule was written out
+        here.
+        """
+        apply_seed(seed)
 
     # =========================================================================
     # Training Loop
@@ -1046,10 +1046,35 @@ class Trainer:
 
 
 # =============================================================================
+# Seeding
+# =============================================================================
+def apply_seed(seed: int) -> None:
+    """Seed Python's `random`, NumPy and torch, every CUDA device included.
+
+    The one seeding rule training uses: `scripts/train_model.py` applies it
+    before the data loaders and the model are built (contract M3a), and
+    `Trainer.__init__` applies it again through `_set_seed`.
+    """
+    import random
+
+    import numpy as np
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # Logged only after every RNG above is seeded successfully — an
+    # out-of-range seed raises in np.random.seed before reaching here.
+    logger.info("Random seed set to %s", seed)
+
+
+# =============================================================================
 # Module Exports
 # =============================================================================
 __all__ = [
     "TrainerConfig",
     "TrainingState",
     "Trainer",
+    "apply_seed",
 ]

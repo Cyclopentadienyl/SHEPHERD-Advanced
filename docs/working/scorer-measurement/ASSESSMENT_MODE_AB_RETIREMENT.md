@@ -500,9 +500,10 @@ clipping, scheduler skip and train-loss aggregation; the CUDA AMP/`GradScaler` p
 yields no embeddings (validation returns `{'val_loss': 0.0}` and the run exits 0); negative global
 phenotype ids admitted silently; the unbounded negative-draw loop. **Also found:** validation
 always draws the default five negatives, whatever the training setting (`train_model.py:608-614`);
-no document tracks this, and it is for the owner to schedule. **Known, not fixed, and scheduled
-in M3a:** training's `--seed` does not fix the initial weights, because the model is built
-(`train_model.py:751`) before the Trainer seeds (`trainer.py:256`). M3a already requires the seed
+no document tracks this, and it is for the owner to schedule. **Known and scheduled in M3a, now
+fixed (2026-10-11, ahead of the rest of M3a; plan M3a):** training's `--seed` did not fix the
+initial weights, because the model was built
+(`train_model.py:751`) before the Trainer seeded (`trainer.py:256`). M3a already requires the seed
 to be applied before the data loaders and the model are built
 (`PLAN_PROVENANCE_CONTRACT.md:1508-1510`). Its fix belongs in `train_model`'s own entry, not in
 a wrapper that seeds before training starts; no new seed work is proposed here.

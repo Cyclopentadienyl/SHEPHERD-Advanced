@@ -12,6 +12,11 @@ particular, the chain "M2 one read per input → whole-model determinism → mul
 full Test importer → full alignment with the paper" is not a dependency of the current work. This
 document does not clear policy Gate 1, does not show AMP equivalent, and does not widen M2.
 
+**Since this report (2026-10-11):** training's seed is now applied before the loaders and the
+model are built, so it fixes the initial weights (M3a's seed ordering, implemented ahead of the
+rest of M3a; plan M3a). Where the text below calls the initial weights not fixed, it describes
+`edf7a41`. The other open points stand.
+
 **Citations.**
 - This repository: `path:line` at `edf7a41`.
 - The original SHEPHERD code: `upstream:path:line` at `e95433a` of

@@ -97,7 +97,7 @@ ALLOCATOR_SOURCE = _apply_allocator() if __name__ == "__main__" else None
 import torch
 import yaml
 
-from src.training.trainer import Trainer, TrainerConfig
+from src.training.trainer import Trainer, TrainerConfig, apply_seed
 from src.training.loss_functions import LossConfig
 from src.kg.data_loader import (
     DataLoaderConfig,
@@ -746,6 +746,14 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # with it beside them.
     with open(output_dir / "runtime.json", "w") as f:
         json.dump(_allocator_record(), f, indent=2)
+
+    # **The seed governs the initial weights too** (contract M3a). The model
+    # draws its weights when it is built, and the seed used to be applied first in
+    # `Trainer.__init__`, after the loaders and the model, so `--seed` fixed the
+    # training stream but not the weights that stream started from. The Trainer
+    # applies the same seed again, so the stream training draws from is unchanged.
+    if config.seed is not None:
+        apply_seed(config.seed)
 
     # The data read and verified above, before anything was written.
     graph_data = inputs.graph.graph_data

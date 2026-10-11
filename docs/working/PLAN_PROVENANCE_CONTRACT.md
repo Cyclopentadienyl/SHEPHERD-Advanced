@@ -11,7 +11,8 @@ the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 —
 S6 and S8 are implemented (2026-10-11) and await code review; S7 is implemented for Mode C only
 (2026-10-11) and awaits code review, while measurement runs that include Mode A are not migrated,
 pending the Mode A/B retirement, so M2.1 is not complete while they are neither migrated nor
-retired; the rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+retired; M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and awaits code
+review; the rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -1693,6 +1694,14 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 - **The seed is applied before the data loaders and the model are built.** Today it is applied
   in `Trainer.__init__` (`trainer.py:255-257`), after the loaders (`train_model.py:748`) and the
   model (`train_model.py:751`), so the recorded seed does not govern initialisation.
+  - **Implemented ahead of the rest of M3a (2026-10-11), awaiting code review.** `train()`
+    applies the seed with the Trainer's own rule (`apply_seed` in `src/training/trainer.py`:
+    Python's `random`, NumPy and torch, every CUDA device included) before it builds the loaders
+    and the model, so the same seed gives the same initial weights. `Trainer.__init__` still
+    applies it, so the stream training draws from (negatives, shuffling, dropout) starts from
+    the seed as before, whatever construction consumed. In `train_model`'s own entry, not a
+    wrapper. It does not promise bit-identical GPU training or a restored random state on
+    resume. Acceptance: `tests/unit/test_training_seed.py`. The rest of M3a is not implemented.
 - **Device.** `auto` without CUDA refuses, as measurement's does (§5.2). Today training turns it
   into CPU silently (`train_model.py:688-691`).
 - **Resume, what M2 leaves.** A write-time guard in `ModelCheckpoint` refuses to overwrite the
