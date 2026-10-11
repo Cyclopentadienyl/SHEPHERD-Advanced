@@ -1230,11 +1230,12 @@ class TrainerProtocol(Protocol):
         """保存檢查點"""
         ...
 
-    def load_checkpoint(
+    def restore_checkpoint(
         self,
-        path: Path,
-    ) -> Tuple[DiagnosisModelProtocol, Dict]:
-        """載入檢查點"""
+        checkpoint: Dict[str, Any],
+    ) -> None:
+        """Restore from a checkpoint already read (`read_checkpoint`); reads
+        nothing. Contract M2.1, S8."""
         ...
 
 

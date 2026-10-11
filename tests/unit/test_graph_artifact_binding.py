@@ -84,12 +84,15 @@ def test_replacing_any_single_graph_artifact_is_refused(tmp_path, role):
 class TestTrainingRefusesBeforeItActs:
     """The refusal has to precede the side effects, not merely exist.
 
-    ``training_input_roles`` used to carry the verification, and a test calling it
+    A role-map helper used to carry the verification, and a test calling it
     directly proved only that the helper *can* reject. By the time `train` reached
     it, the run directories existed, `config.yaml` was written, the graph tensors
     were loaded, dataloaders and a model were built, a Trainer was constructed and
     a resume checkpoint may have been loaded. Whether the workspace is sound is
     knowable from the files alone, so it is knowable before any of that.
+
+    Since contract M2.1's S8 the files are read once and checked from those reads
+    (`read_training_inputs`), still before any of that.
     """
 
     @staticmethod
@@ -115,25 +118,37 @@ class TestTrainingRefusesBeforeItActs:
     @pytest.mark.parametrize(
         "break_it,expected",
         [
-            (lambda root: (root / "node_features.pt").write_bytes(b"another ws"),
-             "is not the node_features artifact"),
-            (lambda root: (root / "train_samples.json").write_text("[]"),
-             "is not the file"),
-            (lambda root: (root / "split_manifest.json").unlink(),
-             "Rebuild it with"),
+            # Another workspace's valid file: refused by digest, naming it.
+            (lambda root, other: (root / "node_features.pt").write_bytes(
+                (other / "node_features.pt").read_bytes()),
+             "node_features.pt is not the node_features artifact"),
+            # Junk: refused by the reader that could not parse it, naming it.
+            (lambda root, other: (root / "node_features.pt").write_bytes(b"another ws"),
+             "node_features.pt could not be parsed"),
+            (lambda root, other: (root / "train_samples.json").write_text("[]"),
+             "train_samples.json is not the file"),
+            (lambda root, other: (root / "kg.json").write_bytes(
+                (other / "kg.json").read_bytes()),
+             "kg.json is not the kg artifact"),
+            (lambda root, other: (root / "val_samples.json").unlink(),
+             "val_samples.json does not exist"),
+            (lambda root, other: (root / "split_manifest.json").unlink(),
+             "(?i)rebuild it with"),
         ],
-        ids=["mixed-graph", "replaced-cohort", "no-manifest"],
+        ids=["mixed-graph", "junk-graph", "replaced-cohort", "crossed-kg",
+             "missing-val", "no-manifest"],
     )
     def test_no_stage_and_no_run_artifact_is_reached(
         self, monkeypatch, tmp_path, break_it, expected
     ):
         train_model = self._forbid(
             monkeypatch,
-            ["load_graph_data", "create_dataloaders", "create_model_from_config",
+            ["create_dataloaders", "create_model_from_config", "Trainer",
              "resolve_resume_checkpoint"],
         )
         root = _workspace(tmp_path / "ws")
-        break_it(root)
+        other = _workspace(tmp_path / "other")
+        break_it(root, other)
 
         with pytest.raises(ValueError, match=expected):
             train_model.train(self._config(train_model, root, tmp_path))
@@ -144,11 +159,12 @@ class TestTrainingRefusesBeforeItActs:
 
     def test_a_sound_workspace_reaches_the_next_stage(self, monkeypatch, tmp_path):
         """The refusal must be about the workspace, not about the ordering itself:
-        an unbroken workspace passes the preflight and goes on to load the graph."""
-        train_model = self._forbid(monkeypatch, ["load_graph_data"])
+        an unbroken workspace passes the preflight and goes on to build its
+        dataloaders."""
+        train_model = self._forbid(monkeypatch, ["create_dataloaders"])
         root = _workspace(tmp_path / "ws")
 
-        with pytest.raises(AssertionError, match="load_graph_data ran"):
+        with pytest.raises(AssertionError, match="create_dataloaders ran"):
             train_model.train(self._config(train_model, root, tmp_path))
 
 

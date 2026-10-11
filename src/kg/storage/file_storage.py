@@ -11,9 +11,10 @@ Two of them are migrated here — the measurement harness's Mode C path and the
 legacy Mode A loader that delegates to it — because B-0.3 needed a reader that
 does **not** retire with the frozen evaluator, and adding another copy to get
 one would have been the opposite of the point. Serving
-(`src/inference/pipeline.py`) moved here in contract M2.1's S6.
-`scripts/train_model.py`, `scripts/build_index.py` and `scripts/setup_demo.py`
-still have their own; migrating them belongs to P1 and is not smuggled in here.
+(`src/inference/pipeline.py`) and training (`scripts/train_model.py`) moved here
+in contract M2.1's S6 and S8. `scripts/build_index.py` and
+`scripts/setup_demo.py` still have their own; migrating them belongs to P1 and
+is not smuggled in here.
 
 **No abstraction beyond the two readers below.** No `Storage` Protocol, no
 backend registry, no adapter hierarchy, no migration framework. The package name

@@ -75,7 +75,8 @@ def training_samples_per_disease(
     """`one_sample_per_disease`, with the two optional fields training reads.
 
     Training reads `candidate_disease_ids` and `gene_ids` as well
-    (`scripts/train_model.py:463-464`); measurement reads neither. Every row here
+    (`read_samples(..., training_fields=True)`, from `scripts/train_model.py`'s
+    `read_training_inputs`); measurement reads neither. Every row here
     carries both, so a test of training's read is about the fields and not only
     about the flag that asks for them.
     """

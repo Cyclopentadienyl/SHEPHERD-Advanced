@@ -8,7 +8,8 @@ of `0708789` found one P2; the incremental review of `7e1af96` found it closed a
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
 `90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at
 `3433bf8`; S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`;
-the rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+S6 and S8 are implemented (2026-10-11) and await code review; the rest of M2–M5 is not
+implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -572,8 +573,8 @@ by independent readers of each entry point and of the shared readers. A complete
 checked the map and this breakdown, and a second check verified this text against the code.
 **Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
 left as written. S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at `3433bf8`;
-S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`; nothing else
-here is implemented.
+S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`; S6 and S8
+are implemented (2026-10-11) and await code review; nothing else here is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -1135,6 +1136,29 @@ each moves its callers before anything is removed.
    - `training_input_digests` is built only from the reads. The role set is unchanged until M2.2
      adds `kg`, and a `None` digest can no longer be recorded.
    - `TrainerProtocol.load_checkpoint` (`src/core/protocols.py`) follows.
+   - **As implemented (2026-10-11).**
+     - `read_training_inputs(data_dir)` reads the manifest, the graph tensors and both sample
+       files once each and verifies from those reads, with the identification check; it returns
+       one `TrainingInputs` value that is carried whole to the record, so the data trained on
+       and the digests recorded cannot be paired from different reads. It first calls
+       `resolve_cohort` for both splits, which only stats, so a missing split keeps today's
+       message. The empty-train refusal moved there, after verification and before anything is
+       written.
+     - `training_input_digests(inputs, parent=...)` builds the record from the reads only and
+       refuses a role with no read, so a `None` digest cannot be recorded. The role set is
+       unchanged.
+     - **The parent is read where it is restored** (`resolve_resume_checkpoint`), with the site's
+       own options (`map_location` the trainer's device, `weights_only=False`). Moving that read
+       to the top, with its checks, is M2.3's. A requested parent that is missing still warns
+       and continues (M2.3 refuses it); one that vanishes after that check raises.
+     - `Trainer.restore_checkpoint(checkpoint)` replaces `load_checkpoint(path)` with no alias,
+       and `TrainerProtocol` follows; `trainer.py` loads nothing itself any more. The seed is not
+       moved (M3a).
+     - The reader imports sit inside the functions that use them: `train_model.py` applies the
+       allocator before importing torch, so module-level imports after it each add an E402.
+     - Acceptance: `tests/unit/test_training_reads.py`; the record checked at the end of a real
+       run in `tests/integration/test_train_model_run.py`. The path-form poisoning is a fixture,
+       `tests/fixtures/path_forms.py`, for S9 to reuse.
 9. **S9 — remove the path forms, pin the contract, move the remaining callers.**
    - **Deleted:** the verifiers' path forms. `compute_input_digests` goes once no caller records
      through it.
@@ -1469,7 +1493,8 @@ new dependency or measurement fact appears.
 
 **Change:**
 - **`training_input_digests` gains `kg`**, beside the three tensors and the manifest
-  (`train_model.py:551-574`).
+  (`train_model.py:551-574` at `90a668f`; since S8, the builder `training_input_digests` over
+  the run's reads).
 - **Training does not parse `kg.json`.** Its `kg` role is the digest bound by the manifest the
   run read, against which the tensors it parsed were verified. This is the transitive claim
   `verify_graph_artifacts` already describes (`artifacts.py:73-75`).
@@ -1511,13 +1536,13 @@ passes M2.4.
   - **It gates data, not settings.** M3a records the settings in effect; it does not require a
     resumed run's settings to equal its parent's.
 - **Whether this run validates is decided here, from the samples already parsed.** It validates
-  exactly when the parsed `val_samples` are not empty, which is the condition
-  `create_dataloaders` applies (`train_model.py:606-624`). Today that is only known after the
-  loaders are built (`:748`, `:857`), by which time the run has written its directories.
+  exactly when the parsed `val_samples` are not empty. S8 already decides it there
+  (`read_training_inputs`, `with_validation`), before the run writes its directories.
 - **The comparison is M2.4's comparator** over a wider set of roles. It is one function, and the
   set of roles is its argument.
-- **`Trainer.load_checkpoint` restores from the dict already read and checked.** It no longer
-  reads the path a second time (`trainer.py:1009-1016`).
+- **The trainer restores from the dict already read and checked.** S8 made the restore read
+  nothing (`Trainer.restore_checkpoint`, over `read_checkpoint`'s result); M2.3 moves that read
+  to the top and puts its checks before the restore.
 
 **Why the same data rather than a lineage walk.**
 - By induction, every checkpoint in a resume chain then read the same sample files. Each link

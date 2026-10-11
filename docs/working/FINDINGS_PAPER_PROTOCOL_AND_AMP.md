@@ -614,7 +614,7 @@ digests, so they certify nothing beyond it. The probe script is kept outside the
   mouse_gene 1.
 - **Process.** `torch.use_deterministic_algorithms(True)` before any model code is imported; the
   PyG flag, when pinned, set before construction.
-- **Model.** Built as `scripts/train_model.py` does (`load_graph_data`, `create_dataloaders`,
+- **Model.** Built as `scripts/train_model.py` did at `8421b8c` (`load_graph_data`, `create_dataloaders`,
   `create_model_from_config`), with `TrainConfig(device="cpu", seed=42, num_workers=0, hidden_dim=32,
   num_layers=2, num_heads=4, batch_size=8)` and `conv_type` GAT or HGT. **Unlike `train_model.py`,
   the probe calls `torch.manual_seed(0)` immediately before the model is built**, so two builds start

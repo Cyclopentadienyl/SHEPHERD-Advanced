@@ -1125,7 +1125,7 @@ Three points where the implementation had to decide something this section left 
 - **The allocation provenance had to be added upstream first.** A measurement's
   `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
   which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace
-  has one, mirroring `training_input_roles`. Without it the ledger would faithfully store two
+  has one, mirroring training's record of its inputs. Without it the ledger would faithfully store two
   incomparable quantities under one metric name.
 
 A contradiction — one key, two metric sets — is refused rather than merged, and no override flag is

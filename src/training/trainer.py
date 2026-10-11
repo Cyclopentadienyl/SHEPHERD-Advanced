@@ -52,7 +52,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -1006,15 +1006,16 @@ class Trainer:
         torch.save(checkpoint, filepath)
         logger.info(f"Checkpoint saved to {filepath}")
 
-    def load_checkpoint(self, filepath: Union[str, Path]) -> None:
-        """載入檢查點"""
-        filepath = Path(filepath)
+    def restore_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
+        """Restore model, optimizer, scheduler, scaler and state from a checkpoint
+        that has already been read.
 
-        if not filepath.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {filepath}")
-
-        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
-
+        **Reads nothing** (contract M2.1, S8). The caller reads the parent once,
+        with `src.utils.checkpoint_io.read_checkpoint`, and records that read's
+        identity; restoring from the dict it parsed means the state restored and
+        the digest recorded cannot come from two reads of a file that changed in
+        between. There is no path form beside this one.
+        """
         # Accept both key conventions: Trainer.save_checkpoint() uses
         # "model_state_dict" while ModelCheckpoint callback uses "state_dict".
         model_sd = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
@@ -1041,7 +1042,7 @@ class Trainer:
                 if hasattr(self.state, key):
                     setattr(self.state, key, value)
 
-        logger.info(f"Checkpoint loaded from {filepath}")
+        logger.info(f"Checkpoint restored (epoch {self.state.epoch})")
 
 
 # =============================================================================
