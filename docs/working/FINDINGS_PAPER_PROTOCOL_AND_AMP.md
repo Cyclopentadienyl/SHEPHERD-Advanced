@@ -5,6 +5,13 @@ in another document is changed by it.** It answers two questions the project own
 2026-10-10 and 2026-10-11, for the owner's discussion with the reviewer. §5 lists the points left
 open.
 
+**Reviewed (2026-10-11, `edf7a41..bd3ea00`): three P2, no P1; applied in this revision.** The
+review's warning is kept here as a boundary: none of the research questions below becomes a
+prerequisite of the provenance contract or of the Mode A/B retirement by being written down. In
+particular, the chain "M2 one read per input → whole-model determinism → multi-seed retraining → a
+full Test importer → full alignment with the paper" is not a dependency of the current work. This
+document does not clear policy Gate 1, does not show AMP equivalent, and does not widen M2.
+
 **Citations.**
 - This repository: `path:line` at `edf7a41`.
 - The original SHEPHERD code: `upstream:path:line` at `e95433a` of
@@ -46,10 +53,12 @@ exactly that code and configuration is not shown.
 
 ## 2. Summary
 
-**Question 1: no.**
-- Under the paper and the released code's default settings, validation and test differ in four
-  ways (the 1,000-disease validation set is the code's default; the paper does not separate
-  training from validation sampling):
+**Question 1: the paper does not require it; whether the institution separately agreed to it is not
+recorded.**
+- For the disease task, under the paper and the released code's default settings, validation and
+  test differ in four ways (the 1,000-disease validation set is the code's default; the paper does
+  not separate training from validation sampling; the gene and patients-like-me tasks use their data
+  differently, §3.1):
   - population: simulated against real patients;
   - candidate set: about 1,000 sampled diseases against all 21,233;
   - GNN context: a per-batch sampled subgraph against either a cohort-wide sampled subgraph or a
@@ -62,8 +71,12 @@ exactly that code and configuration is not shown.
   - the evaluation structure: disease-disjoint synthetic validation for selection, real cohorts for
     the final evaluation.
 - No document ties the A/B/C/D ladder, or the reconciliation of validation and Test numbers, to
-  paper fidelity or to an institutional requirement.
-- The decided data division mirrors the paper's structure, so the question does not arise from it.
+  paper fidelity. The decided data division mirrors the paper's structure, so the question does not
+  arise from it either.
+- Technical judgement: the ladder need not be kept to make validation and Test numbers agree.
+- That does not settle what the institution agreed to. Policy Gate 1 still requires a "B-0
+  measurement report" and refers to "the agreed B-0 scope", which is not recorded (§3.5). Whether
+  the institution agreed to particular comparisons or deliverables is open, and has to be asked.
 
 **Question 2: the data half can be done today; the training half cannot yet.**
 - The dataset and the generation seeds reproduce byte for byte in a CPU probe on the demo KG, and
@@ -76,10 +89,12 @@ exactly that code and configuration is not shown.
   expected to be removable without modifying PyG (source-level, §4.3):
   - PyTorch's deterministic mode covers every atomic operation this model runs;
   - for HGT, one PyG backend flag must also be pinned.
-- Academically, fixing and recording every controllable input is necessary but not sufficient. The
-  accepted standard is several seeds per arm and mean ± SD or a confidence interval, with the error
-  bar's scope stated. GPU nondeterminism is treated as ordinary run-to-run variance and at most
-  disclosed. It is not treated as a disqualifying threat (§4.4).
+- Academically, fixing and recording every controllable input is a necessary base, not the whole of
+  it. Common research practice is to repeat runs and state which sources of variation the reported
+  spread covers. Whether determinism is needed, and what spread is acceptable, depends on the
+  study's purpose and the decision it supports (§4.4). The number of runs varies between sources,
+  and none sets one for this project. Studies also find that nondeterminism can matter far more for
+  subgroup and per-case results than for top-line metrics.
 - The comparison the owner describes is a **training-time** AMP comparison. The retirement
   assessment's option (b) is an **evaluation-time** comparison: one model, scored with autocast on
   and off. The two are different experiments (§4.6).
@@ -165,7 +180,8 @@ is still `0.7·((cos+1)/2) + 0.3·SP` (`docs/DISEASE_SCORER_POLICY.md:123`).
   paper itself did not ask.
 - **The question to the institution is still needed.** "The agreed B-0 scope" remains unrecorded, so
   the assessment's question to the institution (its §8 item 4) still stands.
-- **Nothing in the assessment changes** until the owner decides.
+- **Nothing in the assessment changes** until the owner decides, and this document does not clear
+  or change Gate 1.
 
 ### 3.6 Further fidelity gaps that bear on validation and Test (not a complete list; none of them part of the A/B question)
 
@@ -294,33 +310,44 @@ four node types):
 | GAT | No error. Repeat runs bitwise equal |
 | HGT, PyG's default (timing decides) | No error. Repeat runs bitwise equal; gradient digest `503046ea…` |
 | HGT, `torch_geometric.backend.use_segment_matmul = False` | No error. Repeat runs bitwise equal; gradient digest `0d5580c0…`, **different from the default** |
-| HGT, `use_segment_matmul = True` | **Crashes**: `IndexError` in `HGTConv.propagate` |
+| HGT, `use_segment_matmul = True` | **Crashes** in this configuration: `IndexError` in `HGTConv.propagate`, because the node-type order of `x_dict` differs from the layers' order (below) |
 
 **Two consequences:**
 1. **The timing-based choice is a real source of run-to-run difference.** The two paths give
    different numbers, and the timing cache is not saved in the checkpoint. An evaluation or serving
    process re-times, so it may score through a different path than training used.
-2. **Setting the flag to `True` breaks this model.**
+2. **Setting the flag to `True` breaks this model in this project's configuration.**
    - With the flag on, `HeteroDictLinear` takes `pyg_lib.grouped_matmul`. That path computes outputs
      in the order of its own layers but assigns them in `x_dict`'s order
-     (`torch_geometric/nn/dense/linear.py:437-449`). This project's orders differ (phenotype, gene,
-     disease, mouse_gene against phenotype, disease, gene, mouse_gene).
+     (`torch_geometric/nn/dense/linear.py:437-449`).
+   - **The trigger is an order mismatch, not `True` as such.** The reviewer reproduced it
+     independently on CPU with a two-layer HGT on the demo graph: when the two orders match, the
+     default, `False` and `True` all complete forward and backward; with the layers ordered phenotype,
+     gene, disease, mouse_gene and the inputs ordered phenotype, disease, gene, mouse_gene, `False`
+     completes and `True` raises `IndexError` in message passing. This project's orders differ in
+     exactly that way. Where row counts happened to fit, the result could be silently wrong
+     instead of a crash.
    - The default takes that path only from ten node types up (`linear.py:434-435`).
      `src/kg/builder.py` names eight node types (seven with literature off, its default), so the
      current knowledge graph is expected to stay below ten. That is unverified for a production
      graph: no real data is in the repository, and `NodeType` has more values (`src/core/types.py:40-74`).
    - So it is a latent hazard: a graph with ten or more node types would send default HGT down the
      broken path.
+   - Both this and the timing-based choice are recorded as BACKLOG item 20.
 
 **A recipe for determinism, if wanted:**
 1. Fix the seed before the model is built (M3a). Without this, nothing else matters.
 2. Call `torch.use_deterministic_algorithms(True)` at process start.
-3. HGT only: set `torch_geometric.backend.use_segment_matmul = False`. **Never `True`.**
+3. HGT only: set `torch_geometric.backend.use_segment_matmul = False`. **Never `True`** while the
+   order mismatch above exists. This is an existing library setting, not a second scoring path, but
+   it selects different kernels: pinning it is its own change, with the setting recorded and its
+   numerical and performance effect checked.
 4. Keep `torch.set_float32_matmul_precision('highest')`. It is the default today, and the project
    never changes it.
 5. Keep the worker count and `--compile` fixed.
 6. Accept the result only if two same-seed runs on the target GPU give bitwise-equal weights after N
-   steps.
+   steps. That verifies the specified path and environment only, not every shape, AMP dtype,
+   compile setting or later version.
 
 **Its cost has to be measured.** The literature reports about 12.6× at the op level and about 2.7×
 end to end for GraphSAGE, on an older PyTorch (Shanmugavelu et al., SC24-W). Subgraph sampling in
@@ -348,7 +375,10 @@ describe the default behaviour.
 
 ### 4.4 How research treats this
 
-**The norm is to repeat runs and report the spread, not to remove GPU nondeterminism.**
+**A common practice is to repeat runs and report the spread, stating what it covers. Each practice
+below has its own scope:** OGB's seed rule governs its leaderboard, and the NeurIPS checklist asks
+that uncertainty and its sources be stated without fixing a number of runs. None of them is an
+acceptance threshold for this project.
 
 | Source | Practice |
 |---|---|
@@ -391,11 +421,18 @@ describe the default behaviour.
   unverified on GPU.
 
 **Answer to the owner's academic question:**
-- Fixing and recording every controllable input is the necessary base, and above common practice.
-- It does not replace repeated runs. A single run per arm is not the standard, even with every seed
-  fixed.
-- GPU or PyG nondeterminism is not commonly flagged as an uncontrollable harm. It is folded into
-  seed variance and disclosed.
+- Fixing and recording every controllable input is the necessary base.
+- Repeating runs, and stating what the spread covers, is common practice. The sources use 3 to 10
+  runs, or splits × initialisations; none sets a number for this project. The 5–10 seeds in §4.5 are
+  a proposal to be weighed.
+- A spread across seeds that includes GPU nondeterminism measures the combined variation. It does
+  not separate the two sources, and it does not show that the effect on individual patients is
+  acceptable.
+- The cited magnitudes (CNNs, GraphSAGE) show what can happen and how to measure it. They are not
+  estimates for this project's HGT or GAT model.
+- Whether GPU nondeterminism must be removed, or only measured and disclosed, depends on what the
+  comparison is for and how sensitive the decision is (Zhuang et al. make the same point).
+  Per-patient rankings are a sensitive setting.
 - For this model it is also expected to be removable on a fixed stack (§4.3), if the cost is
   acceptable.
 
@@ -405,7 +442,9 @@ describe the default behaviour.
    - M3a's seed-before-build fix;
    - effective AMP and the worker count recorded;
    - for HGT, `use_segment_matmul = False` in both arms;
-   - a formal Test cohort that can be imported (item 14).
+   - for a formal external Test comparison, a cohort imported through item 14 and scored by Mode
+     C. The seed fix, the HGT path and M2.1 do not depend on that importer. Their tests may use small
+     controlled data, which are not institutional acceptance results.
 2. **Fixed across arms:**
    - one verified workspace, revision, GPU, worker count, batch size and AMP dtype;
    - compile off;
@@ -413,23 +452,37 @@ describe the default behaviour.
    - the selection rule, including ties.
 3. **Seeds.** The same list of 5–10 seeds in both arms, paired by seed.
 4. **Noise floor.** For training, measure either:
-   - same-seed fp32 repeats with deterministic mode off, which give the GPU noise floor; or
+   - same-seed fp32 repeats with deterministic mode off, which measure the run-to-run variation left
+     under the controlled conditions (it is a pure GPU noise floor only if loader, CPU and
+     execution-order effects have been excluded); or
    - deterministic mode in both arms, which is expected to make the within-seed noise zero
      (source-level; it must pass §4.3's bitwise check on the target GPU, and it is unverified for
      cuBLASLt fp16 paths under AMP). Its kernels give different but repeatable numbers, so both arms
      must use the same mode.
 
-   For evaluation, repeat Mode C on one checkpoint, or use a CPU Mode C run (recorded
-   `cuda_executed=false`) as the repeatable reference.
-5. **What to report:**
-   - per arm: mean ± SD of the selected epoch, the selection `val_mrr`, and Mode C MRR and hits@k on
-     the same Test cohort;
-   - the paired difference with a 95% CI, judged against the fp32 seed-to-seed SD or a pre-declared
-     equivalence margin;
-   - per-patient rank changes between arms, compared with those between fp32 seeds;
-   - GradScaler skipped steps, training time and memory;
-   - the full environment.
-6. **Wording.** "No difference shown within δ", never "identical".
+   For evaluation, repeat Mode C on one checkpoint on the target GPU. A CPU Mode C run (recorded
+   `cuda_executed=false`) can be a clearly labelled diagnostic comparison. It does not replace the
+   CUDA evaluation, and CPU–GPU closeness does not show that CUDA runs repeat.
+5. **Purpose first.** Before running, state whether the study only describes the difference or must
+   support a decision ("not worse than" or "equivalent").
+   - **Descriptive.** Report, per arm, mean ± SD of the selected epoch, the selection `val_mrr`, and
+     Mode C MRR and hits@k on the same Test cohort; the paired differences with 95% CIs; per-patient
+     rank changes between arms, beside those between fp32 seeds; GradScaler skipped steps, training
+     time and memory; the full environment; and the limits. **No equivalence claim.**
+   - **Decision.** Specify in advance the metric, the direction of the difference, a practically
+     acceptable margin δ, and the criterion. δ is set by whoever owns the decision; the fp32
+     seed-to-seed SD describes noise and is not a margin. A simple conservative criterion: the claim
+     is made only if the chosen CI lies entirely within the pre-specified range (±δ for
+     equivalence; above −δ for "not worse than"). Otherwise the result is **inconclusive**. Not
+     finding a difference does not show the difference is smaller than δ (Lakens 2017).
+   - **Example.** Mean difference 0, 95% CI [−0.03, 0.03], δ = 0.01: "within ±0.01" cannot be
+     claimed; the data cannot rule out a relevant difference.
+6. **Scope of each interval.** A CI across training seeds on one fixed cohort covers training
+   variation on that cohort. It is not a CI for generalisation to new patients, which is a
+   patient-level interval of a different kind (TRIPOD+AI item 23a). State which sources each
+   interval covers.
+7. **Wording.** Descriptive: "difference X (95% CI …)". Decision: "equivalent within δ" or "not
+   worse than δ" only when the criterion is met, otherwise "inconclusive". Never "identical".
 
 ### 4.6 Training-time AMP against evaluation-time autocast
 
@@ -443,7 +496,9 @@ describe the default behaviour.
 evaluation-time autocast affects only the validation pass inside training, that is, which
 checkpoint is selected. A training-time comparison includes that effect in its AMP arm, but mixed
 with the effect of training under AMP. It does not isolate it, and it does not give option (b)'s
-same-model, same-batch, per-sample quantities.
+same-model, same-batch, per-sample quantities. Replacing option (b) with a training-time study
+needs an explicit decision about which question has to be answered; a larger study does not
+automatically satisfy the smaller one, and neither study is required merely for completeness.
 
 **What the institution meant is not recorded.** The institution's recorded position ("the switch
 stays a switch … run it both ways if they wish", `docs/working/BACKLOG.md:491-497`) sits in the
@@ -460,8 +515,9 @@ An AMP comparison is therefore this project's own addition.
 
 ## 5. Points for discussion (none decided)
 
-1. Is the answer to Question 1 accepted? Should the question to the institution about the B-0 scope
-   cite §3.1 and §3.4?
+1. Is the limited answer to Question 1 accepted: the paper does not require reconciling validation
+   and Test numbers? The institution's agreed B-0 scope still has to be confirmed, and this document
+   does not clear Gate 1. Should that question cite §3.1 and §3.4?
 2. Should the fidelity gaps of §3.6 become tracked items? The validation candidate set (five
    negatives, a top-20 window) shapes checkpoint selection, and the paper's differs.
 3. Should the texts of §3.7 be corrected in a documentation-only change?
@@ -472,6 +528,33 @@ An AMP comparison is therefore this project's own addition.
 6. Should the assessment's option (b) be replaced by the training-time comparison of §4.5? That is a
    proposal to the owner, and through the owner to the institution.
 7. Which cohort serves as the formal Test for the comparison? It needs item 14's importer.
+
+**The reviewer's recommendations on these points (2026-10-11), not yet the owner's decisions:**
+1. Accept that the paper does not require reconciling validation and Test numbers. Do not answer the
+   unknown B-0 scope as "no"; keep the limited question to the institution.
+2. Link the deviations that actually affect product design to existing backlog items. Do not open a
+   separate paper-parity programme, and do not change the scorer because of the literature review.
+3. Correct the texts of §3.7 in a separate documentation change, kept apart from any change of
+   product policy.
+4. The seed-before-build fix is the known M3a item. It can come forward as a small change through the
+   existing training entry and configuration, without a seed-wrapping entry point, scheduled with S8
+   or M3a.
+5. First a small GPU probe in the target environment, then decide whether a deterministic or
+   multi-seed study is needed. The two are not exclusive: each seed's run can itself be
+   deterministic. Handle the HGT defect separately from the study design, and fix it properly rather
+   than working around it in an experiment script.
+6. Do not assume a training-time study replaces the evaluation-time evidence. Decide which question
+   needs answering and keep the smallest sufficient experiment; do not require both for
+   completeness.
+7. The formal Test uses item 14's import and Mode C when they are ready. Tests of the underlying
+   fixes may use small controlled data, and are not institutional acceptance results.
+
+**The reviewer's suggested order:** correct this report; continue M2.1 under its approved plan, not
+held for an AMP study; keep the seed order and the record of effective settings in M3a; list the
+HGT order defect as its own reproducible defect; if an AMP study is chosen, start with a small
+feasibility check and size it to the decision, through the existing training, validation and Mode C
+paths; keep in the Mode A/B retirement only the uses and acceptance requirements that are really
+still open.
 
 ## 6. Sources
 
@@ -511,9 +594,33 @@ An AMP comparison is therefore this project's own addition.
 - NeurIPS Paper Checklist: https://neurips.cc/public/guides/PaperChecklist.
 - Collins et al., TRIPOD+AI, BMJ 2024;385:e078378, https://doi.org/10.1136/bmj-2023-078378.
 - Heil et al., Nature Methods 18:1132–1135 (2021), https://pmc.ncbi.nlm.nih.gov/articles/PMC9131851/.
+- Lakens, "Equivalence Tests: A Practical Primer for t Tests, Correlations, and Meta-Analyses",
+  Social Psychological and Personality Science 8(4):355–362 (2017),
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC5502906/.
 
 **Mixed precision:**
 - Micikevicius et al., "Mixed Precision Training", ICLR 2018, https://arxiv.org/abs/1710.03740.
 - NVIDIA Mixed Precision Training guide:
   https://docs.nvidia.com/deeplearning/performance/mixed-precision-training/index.html.
 - Tarafder et al., HPDC 2025, https://arxiv.org/abs/2411.01109.
+
+## Appendix: the CPU probe of §4.3
+
+The digests in §4.3 come from this configuration only; a different configuration gives different
+digests, so they certify nothing beyond it. The probe script is kept outside the repository.
+- **Workspace.** `write_workspace(build_demo_kg(), ws, feature_dim=16,
+  samples=SampleBudget(num_train=40, num_val=10, val_disease_fraction=0.2, seed=42))`, with
+  `build_demo_kg` from `scripts/setup_demo.py`. Four node types: phenotype 10, gene 8, disease 5,
+  mouse_gene 1.
+- **Process.** `torch.use_deterministic_algorithms(True)` before any model code is imported; the
+  PyG flag, when pinned, set before construction.
+- **Model.** Built as `scripts/train_model.py` does (`load_graph_data`, `create_dataloaders`,
+  `create_model_from_config`), with `TrainConfig(device="cpu", seed=42, num_workers=0, hidden_dim=32,
+  num_layers=2, num_heads=4, batch_size=8)` and `conv_type` GAT or HGT. **Unlike `train_model.py`,
+  the probe calls `torch.manual_seed(0)` immediately before the model is built**, so two builds start
+  from the same weights; this stands in for the M3a fix.
+- **Step.** The first training batch, drawn after `torch.manual_seed(123)` and `random.seed(123)`.
+  `torch.manual_seed(1)` before the forward pass, so the dropout masks match. One forward,
+  `_compute_model_outputs`, loss and backward, as in `Trainer._train_epoch`.
+- **Digest.** SHA-256 over the gradients of all parameters, sorted by name, first 16 hex digits.
+  "Repeat runs bitwise equal" means a second, fresh build in the same process gave the same digest.
