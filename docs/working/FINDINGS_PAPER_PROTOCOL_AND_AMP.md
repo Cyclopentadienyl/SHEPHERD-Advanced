@@ -8,7 +8,8 @@ open.
 **Citations.**
 - This repository: `path:line` at `edf7a41`.
 - The original SHEPHERD code: `upstream:path:line` at `e95433a` of
-  https://github.com/mims-harvard/SHEPHERD, which equals its GitHub HEAD when checked.
+  https://github.com/mims-harvard/SHEPHERD, which equals its GitHub HEAD when checked. Paths are
+  relative to that repository's root.
 - The paper: Alsentzer et al., "Few shot learning for phenotype-driven diagnosis of patients with
   rare genetic diseases", *npj Digital Medicine* 8:380 (2025), full text PMC12181314, and its
   Supplementary PDF.
@@ -20,11 +21,12 @@ agent that tried to refute it. Where two reports disagreed on a probe result, th
 by hand (§4.3). **No CUDA device was available.** Every probe ran on CPU. A statement about CUDA
 behaviour rests on source code and documentation and is marked *source-level*.
 
-**One caveat on the upstream code.** As committed, the released upstream code does not run:
+**One caveat on the upstream code.** As committed, the released upstream code would not run. This
+was found by reading the code; it was not executed:
 - all three run scripts leave gene augmentation on without its similarity dictionary
-  (`upstream:hparams.py:81`, `upstream:train.py:142-146`, `upstream:samplers.py:590`);
-- `predict.py` reads an `alpha` key its hyperparameters do not define (`upstream:hparams.py:208-230`,
-  `upstream:samplers.py:296`);
+  (`upstream:shepherd/hparams.py:81`, `upstream:shepherd/train.py:142-146`, `upstream:shepherd/samplers.py:590`);
+- `predict.py` reads an `alpha` key its hyperparameters do not define (`upstream:shepherd/hparams.py:208-230`,
+  `upstream:shepherd/samplers.py:296`);
 - paths are hard-coded.
 
 So a fact taken from that code describes the released design. Whether the paper's numbers came from
@@ -45,13 +47,16 @@ exactly that code and configuration is not shown.
 ## 2. Summary
 
 **Question 1: no.**
-- The paper's own validation and test differ in four ways:
+- Under the paper and the released code's default settings, validation and test differ in four
+  ways (the 1,000-disease validation set is the code's default; the paper does not separate
+  training from validation sampling):
   - population: simulated against real patients;
   - candidate set: about 1,000 sampled diseases against all 21,233;
-  - GNN context: a sampled subgraph against the whole graph;
+  - GNN context: a per-batch sampled subgraph against either a cohort-wide sampled subgraph or a
+    full-graph pass (the paper does not say which produced its numbers);
   - metric: exact-disease MRR against a category-level top-10 measure.
-- The paper reports no validation numbers and never discusses the gap. Validation only selects
-  hyperparameters and checkpoints.
+- The paper reports no validation numbers and never discusses the gap. As far as the paper shows,
+  validation only selects hyperparameters and checkpoints (inference).
 - The fidelity direction recorded in this repository governs:
   - the scorer policy: GNN-primary, SP out of the ranking;
   - the evaluation structure: disease-disjoint synthetic validation for selection, real cohorts for
@@ -61,10 +66,12 @@ exactly that code and configuration is not shown.
 - The decided data division mirrors the paper's structure, so the question does not arise from it.
 
 **Question 2: the data half can be done today; the training half cannot yet.**
-- The dataset and the generation seeds already reproduce byte for byte, and are recorded and
-  digest-checked.
-- One known defect remains on the training side: the model is built before the seed is applied, so
-  the recorded seed does not govern the initial weights (M3a).
+- The dataset and the generation seeds reproduce byte for byte in a CPU probe on the demo KG, and
+  are recorded and digest-checked.
+- On the training side, the largest gap is that the model is built before the seed is applied, so
+  the recorded seed does not govern the initial weights (M3a). Others remain (§4.2): effective AMP
+  and the worker count are not recorded, there is no environment record and no deterministic
+  option, and HGT's kernel path is chosen by timing.
 - GPU nondeterminism is not beyond reach for this model. On a fixed GPU and library stack it is
   expected to be removable without modifying PyG (source-level, §4.3):
   - PyTorch's deterministic mode covers every atomic operation this model runs;
@@ -86,10 +93,10 @@ exactly that code and configuration is not shown.
 | | Validation | Test (the reported results) |
 |---|---|---|
 | **Patients** | Simulated. Train and validation are split by disease: "patients with the same disease are either entirely in the training or fully in the validation set … 36,224 and 6400 patients" (Methods) | Real: UDN (465) and MyGene2 (146), each the evaluation cohort of a task |
-| **Use** | Hyperparameters by random search, "optimizing the mean reciprocal rank … on the disease-split simulated validation set", which "is entirely independent of the evaluation dataset". Checkpoints by "early stopping based on validation performance", with the set not named. The upstream code has no early stopping: it keeps every epoch's checkpoint, with validation MRR in the filename, and the best one is chosen by hand (`upstream:train.py:283-292`, `:84`, `:202`, `:208`) | Reported |
-| **GNN context** | A sampled computation graph per batch: the batch's own nodes, plus random sparse nodes, expanded by neighbour sampling (paper, *Additional training details*; `upstream:samplers.py:365-387`, `:555-577`) | A cohort-wide sampled graph (`upstream:train.py --do_inference`) or a full-graph pass (`upstream:predict.py`). Which one produced the paper's numbers is not stated |
-| **Disease candidates** | 1,000 random KG diseases plus the batch's correct diseases, pooled for the batch (`upstream:hparams.py:101`; `upstream:samplers.py:522-534`; `upstream:utils/loss_utils.py:154-177`) | Every KG disease, 21,233 (`upstream:hparams.py:102`; Table 1) |
-| **Metric** | Exact-answer MRR and top-k, with `rankdata(method='average')` (`upstream:gene_prioritization_model.py:493-507`; `upstream:patient_nca_model.py:455-467`) | Genes: recall@k and win rates. Patients-like-me: each UDN patient queries the whole MyGene2 cohort, recall@k (75 queries). Disease: the share of top-10 diseases in the patient's disease category, 45.7% against 16.4% at random, plus case studies. **No exact-disease rank or MRR** |
+| **Use** | Hyperparameters by random search, chosen "to optimize the mean reciprocal rank … on the disease-split simulated validation set", which "is entirely independent of the evaluation dataset". Checkpoints by "early stopping based on validation performance", with the set not named. The paper's Results sections also call the real cohorts "validation", and a commented-out upstream configuration validates on MyGene2 (`upstream:project_config.py:18-19`); simulated validation is the most consistent reading, but which set selected the paper's checkpoints is not shown. The upstream code has no early stopping: it keeps every epoch's checkpoint, with validation MRR in the filename, and the best one is chosen by hand (`upstream:shepherd/train.py:283-292`, `:84`, `:202`, `:208`) | Reported |
+| **GNN context** | A sampled computation graph per batch: the batch's own nodes, plus random sparse nodes, expanded by neighbour sampling (paper, *Additional training details*; `upstream:shepherd/samplers.py:365-387`, `:555-577`) | A cohort-wide sampled graph (`upstream:shepherd/train.py --do_inference`) or a full-graph pass (`upstream:shepherd/predict.py`). Which one produced the paper's numbers is not stated |
+| **Disease candidates** | 1,000 random KG diseases plus the batch's correct diseases, pooled for the batch (`upstream:shepherd/hparams.py:101`; `upstream:shepherd/samplers.py:522-534`; `upstream:shepherd/utils/loss_utils.py:154-177`) | Every KG disease, 21,233 (`upstream:shepherd/hparams.py:102`; Table 1) |
+| **Metric** | Exact-answer MRR and top-k (`upstream:shepherd/gene_prioritization_model.py:493-507`; `upstream:shepherd/patient_nca_model.py:455-467`), with ranks from `rankdata(method='average')` (`upstream:shepherd/patient_nca_model.py:85`, `:96`; `upstream:shepherd/task_heads/gp_aligner.py:150`) | Genes: recall@k and win rates (Methods also says MRR was measured). Patients-like-me: each UDN patient queries the whole MyGene2 cohort, recall@k (75 queries). Disease: the share of top-10 diseases in the patient's disease category, 45.7% against 16.4% at random, plus case studies. **No exact-disease rank or MRR** |
 
 **What the paper says about the gap: nothing.**
 - None of its 17 mentions of "validation" reports a validation metric.
@@ -120,12 +127,19 @@ A/B/C/D ladder, or to reconciling validation and Test numbers.
 
 1. **B-0 came first.** It was already an approved work item in the policy's first commit (`db0ecad`).
    Its named comparison was "C-vs-E′": the η mixture against raw cosine.
-2. **E′ was dropped the same day.** It became "optional and non-gating under the agreed B-0 scope"
-   (`54a473f`; now `DISEASE_SCORER_POLICY.md:316-318`).
-3. **The ladder came a day later** (`3a255f3`), to tell apart what the offline evaluator measured and
-   what the deployed scorer does (`docs/working/scorer-measurement/README.md:3-7`).
+2. **E′ was made optional the same day.** It became "optional and non-gating under the agreed B-0
+   scope", and remains a revisit condition if it is ever run (`54a473f`; now
+   `DISEASE_SCORER_POLICY.md:316-318`).
+3. **The A/B/C/D ladder was first written down a day later** (`3a255f3`), to tell apart what the
+   offline evaluator measured and what the deployed scorer does
+   (`docs/working/scorer-measurement/README.md:3-7`). B-0 already had lettered comparison modes at
+   `db0ecad`, and Mode A's code landed earlier that day (`62b8103`).
 4. **The training `val_mrr` came in later still.** It was proposed as a calibration target after the
-   frozen evaluator proved unrunnable, and was withdrawn (point 2 of §3.2).
+   frozen evaluator proved unrunnable. Calibration against the `val_mrr` number was withdrawn
+   (`docs/working/BACKLOG.md:376-377`; the first point under "What is recorded about the two numbers"
+   in §3.2). What was adopted instead is a same-batch differential test against the trainer's own
+   validation pass (`BACKLOG.md:378`): it compares two scoring paths on identical batches, not the
+   validation and Test numbers.
 
 ### 3.4 The paper's auxiliary scores, by task
 
@@ -134,25 +148,32 @@ because they bear on Question 1.
 
 | Task | Score | Is the GNN the only ranking signal? |
 |---|---|---|
-| Causal gene discovery | Eq 14: `η·EMBSIM + (1−η)·SPLSIM`, with SPLSIM from Eq 13. The run script sets α = 0.5 (`upstream:run_causal_gene_discovery.sh:18`); `train.py`'s default is 0 (`upstream:train.py:76`). SP also enters the training loss (`upstream:gp_aligner.py:109-111`) | No: mixed with SP |
+| Causal gene discovery | Eq 14: `η·EMBSIM + (1−η)·SPLSIM`, with SPLSIM from Eq 13. The run script sets α = 0.5 (`upstream:shepherd/run_causal_gene_discovery.sh:18`); `train.py`'s default is 0 (`upstream:shepherd/train.py:76`). SP also enters the training loss (`upstream:shepherd/task_heads/gp_aligner.py:124-126`, the batch-wide branch used when `step_type == 'train'`, `upstream:shepherd/gene_prioritization_model.py:128`) | No: mixed with SP |
 | Patients-like-me | Eq 16: `−‖z_Pi − z_Pj‖²` | Yes |
 | Novel disease characterisation | Eq 18: `−‖z_d − z_P‖²` over every KG disease | Yes |
 
 **Squared distance ranks like cosine here.** Upstream computes Eq 16 and Eq 18 on L2-normalised
-embeddings: `LpDistance(power=2)` (`upstream:utils/loss_utils.py:267-268`), and pytorch-metric-learning
+embeddings: `LpDistance(power=2)` (`upstream:shepherd/utils/loss_utils.py:267-268`), and pytorch-metric-learning
 v0.9.98 normalises by default. On unit vectors ‖a−b‖² = 2 − 2cos, so the rankings equal cosine
-rankings of the projected embeddings. The policy keeps SP out of disease ranking, which matches what
-the paper did for its disease task.
+rankings of the projected embeddings. The policy removes SP from disease ranking, which matches what
+the paper did for its disease task. That is not yet implemented: until B-1, the served disease score
+is still `0.7·((cos+1)/2) + 0.3·SP` (`docs/DISEASE_SCORER_POLICY.md:123`).
 
 ### 3.5 What this means for the A/B retirement assessment
 
-- **The case to the institution is stronger.** The A→B and B→C comparisons answer a question the
+- **Paper fidelity gives no reason to keep A→B and B→C (inference).** They answer a question the
   paper itself did not ask.
 - **The question to the institution is still needed.** "The agreed B-0 scope" remains unrecorded, so
   the assessment's question to the institution (its §8 item 4) still stands.
 - **Nothing in the assessment changes** until the owner decides.
 
-### 3.6 Fidelity gaps that do remain (none of them part of the A/B question)
+### 3.6 Further fidelity gaps that bear on validation and Test (not a complete list; none of them part of the A/B question)
+
+The repository does not implement the reference paper's method
+(`docs/working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md:54`). The scorer deviations are
+recorded in `docs/DISEASE_SCORER_POLICY.md` §2 and `docs/working/scorer-retraining/README.md`: the
+served SP fusion and BFS-gated candidates until B-1, interim raw cosine, and a contrastive objective
+in place of Eq 19. The table adds the gaps that bear on validation and Test.
 
 | Gap | Paper | This repository |
 |---|---|---|
@@ -162,17 +183,20 @@ the paper did for its disease task.
 | Synthetic patients | The authors' simulator | A degenerate generator, "below" the simulator's own degenerate baseline (`EVALUATION_COHORTS.md:366-370`) |
 | Disease Test metric | Category-level share of the top 10 | The formal Test reports exact-disease MRR and hits@k (Mode C) |
 
-The first four are recorded elsewhere in the repository. The fifth is a project choice. It is listed
-here because it is a departure from the paper's reported metric, and no document found here records
-it as one.
+The repository-side facts of the first four rows are recorded elsewhere; the negatives only as an
+untracked finding (`ASSESSMENT_MODE_AB_RETIREMENT.md:684`). The paper side of the first row is not:
+the repository describes upstream's validation pool as every KG disease (§3.7 item 3). The fifth is a
+project choice. It is listed here because it is a departure from the paper's reported metric, and no
+document found here records it as one.
 
 ### 3.7 Repository texts that describe the paper imprecisely (for a later documentation fix)
 
 1. **`docs/SP_SCORE_GUIDE.md:420`** says SPLSIM is "min–max rescaled across the candidate set".
    - Upstream uses fixed constants on each gene's mean distance over the patient's phenotypes:
-     `x_min = 1`, and `x_max = 6.84` for the mean (`upstream:add_spl_to_patients.py:18-19`, `:45`,
+     `x_min = 1`, and `x_max = 6.84` for the mean (`upstream:data_prep/shortest_paths/add_spl_to_patients.py:18-19`, `:45`,
      `:105`).
-   - The paper's printed NORM has a sign typo; the code computes `2(x−x_min)/(x_max−x_min) − 1`.
+   - The paper's printed NORM has a typo (`x − max` where the code has `x − x_min`); the code
+     computes `2(x−x_min)/(x_max−x_min) − 1`.
 2. **`docs/working/EVALUATION_COHORTS.md:893`** says early stopping runs on the unseen-disease
    validation "as it does upstream".
    - Upstream has no early stopping: it keeps every checkpoint, and the best is chosen by hand.
@@ -201,11 +225,11 @@ it as one.
 
 | Link | State |
 |---|---|
-| Synthetic patients, allocation and node features | **Fixed and recorded.**<br>• Every stream is `derive_stream(seed, name)`, which does not depend on `PYTHONHASHSEED` (`src/kg/disease_allocation.py:122-142`; `src/kg/sample_generator.py:263-268`). Node features use a recorded `feature_seed` (`src/kg/workspace.py:346-351`).<br>• The split manifest records both seeds and every file's SHA-256 (`disease_allocation.py:203-209`; `sample_generator.py:299-314`). Training and measurement refuse a workspace that does not match.<br>• CPU probe: two builds with seed 42 gave all eight workspace files byte-identical, across two processes with different `PYTHONHASHSEED`.<br>• A real build reproduces only if the ontology and annotation source files are identical too; their digests are recorded in `kg.provenance.json` |
+| Synthetic patients, allocation and node features | **Fixed and recorded.**<br>• Every stream is `derive_stream(seed, name)`, which does not depend on `PYTHONHASHSEED` (`src/kg/disease_allocation.py:122-142`, used at `:346`; `src/kg/sample_generator.py:263-268`, `:695`). Node features use a recorded `feature_seed` (`src/kg/workspace.py:346-351`).<br>• The split manifest records both seeds and every file's SHA-256 (`disease_allocation.py:203-209`; `sample_generator.py:299-314`). Training and measurement refuse a workspace that does not match.<br>• CPU probe (`write_workspace` on the demo KG; the build CLI on real sources was not run): two builds with seed 42 gave all eight workspace files byte-identical, across two processes with different `PYTHONHASHSEED`.<br>• A real build reproduces only if the ontology and annotation source files are identical too; their digests are recorded in `kg.provenance.json` |
 | Training seed: batch order, negatives, subgraphs | **Fixed, if the worker count is fixed.** The trainer seeds before the first iteration, and PyTorch seeds workers from the main generator.<br>CPU probe: the same seed and the same worker count gave identical epochs; a different worker count gave different negatives and subgraphs.<br>The worker count is not recorded in the checkpoint (M3a) |
 | Training seed: initial weights | **Not fixed.** The model is built (`scripts/train_model.py:751`) before `Trainer.__init__` seeds (`src/training/trainer.py:255-257`), and torch seeds its default CPU generator randomly in every process.<br>CPU probe: two fresh processes with `--seed 42` gave different initial-weight digests.<br>The defect reaches every entry point, because the WebUI and API launch the same script. Its fix is M3a's (`docs/working/PLAN_PROVENANCE_CONTRACT.md:1575-1577`), not implemented |
 | AMP state | The checkpoint records the *requested* `use_amp`, `amp_dtype`, `seed` and the resolved device (`src/training/callbacks.py:304-308`).<br>Effective AMP is `use_amp and device == cuda` (`trainer.py:380`); it is derivable but not stated (M3a, `PLAN_PROVENANCE_CONTRACT.md:1572`). `auto` falls back to CPU silently, taking AMP with it (M3a, `:1578`) |
-| Judging both runs by the formal Test | Mode C scores any two checkpoints on one cohort file, records digests and per-patient ranks, and runs without autocast, as serving does. So both arms are judged in fp32.<br>The formal Test is a supplied cohort (`src/evaluation/cohort.py:70` generates only train and val), and its importer does not exist yet (item 14). Measuring on the validation split gives a number contaminated by selection |
+| Judging both runs by the formal Test | Mode C scores any two checkpoints on one cohort file, records digests and per-patient ranks, and runs without autocast, as serving does. So both arms are judged in fp32.<br>On CUDA, Mode C is itself not bit-deterministic: its full-graph forward uses `scatter_add_`, so repeated runs of one checkpoint can differ (`docs/working/PLAN_TEST_RESULTS.md:473-476`), and measurement gets a deterministic switch only in phase 2 (`:514-515`).<br>The formal Test is a supplied cohort (`src/evaluation/cohort.py:70` generates only train and val), and its importer does not exist yet (item 14). Measuring on the validation split gives a number contaminated by selection |
 
 Further facts for the comparison:
 - **Selection is scored under the arm's precision.** With AMP on, the validation pass, and therefore
@@ -229,6 +253,8 @@ Further facts for the comparison:
 | The loader and sampling settings (worker count) are not in the checkpoint | M3a |
 | No environment record: GPU, driver, cuDNN, determinism flags | M3a, through §5.3 of the contract |
 | No deterministic option in training | None |
+| No deterministic option in measurement; Mode C on CUDA is not bit-deterministic | `PLAN_TEST_RESULTS.md` phase 2 |
+| The worker count and the AMP dtype can be set only through YAML; a missing `--config` file and unknown keys are ignored silently (`scripts/train_model.py:353`, `:357`) | None |
 | HGT's kernel choice is made by timing (§4.3) | None |
 | No importer for the formal Test cohort | Item 14 |
 
@@ -237,13 +263,13 @@ Further facts for the comparison:
 **Expected no, for this model on a fixed GPU, driver and library stack.** This is source-level and
 was not run on CUDA.
 
-**What PyTorch's deterministic mode covers.** Since torch 1.13, `torch.use_deterministic_algorithms(True)`
-reroutes the atomic CUDA kernels this model reaches to sort-based deterministic paths (installed
-docstring, `torch/__init__.py:1379-1406`):
-- `scatter_add_` (PyG's sum aggregation and the softmax denominator, `torch_geometric/utils/_scatter.py:67-70`);
-- `index_add_` (the backward of the message gather, `index_select`);
-- the backward of `gather`;
-- `scatter_reduce` with sum or mean.
+**What PyTorch's deterministic mode covers.** In torch 2.10, `torch.use_deterministic_algorithms(True)`
+makes the atomic CUDA kernels this model reaches act deterministically (installed docstring,
+`torch/__init__.py:1379-1406`); in the source they are rerouted to sort-based `index_put` paths:
+- `scatter_add_`: PyG's sum aggregation and the softmax denominator
+  (`torch_geometric/utils/_scatter.py:67-70`); deterministic on CUDA since torch 1.13 (PR #79466);
+- `index_add_`, the backward of the message gather `index_select`; deterministic since torch 1.9;
+- the backward of `gather`.
 
 None of the ops this model dispatches is among the 47 sites in torch 2.10 that raise under the mode.
 
@@ -279,9 +305,12 @@ four node types):
      in the order of its own layers but assigns them in `x_dict`'s order
      (`torch_geometric/nn/dense/linear.py:437-449`). This project's orders differ (phenotype, gene,
      disease, mouse_gene against phenotype, disease, gene, mouse_gene).
-   - The default never takes that path: it is used from ten node types up (`linear.py:434-435`), and
-     the knowledge-graph builder emits at most seven (`src/kg/builder.py`).
-   - So it is a latent hazard, not a current fault.
+   - The default takes that path only from ten node types up (`linear.py:434-435`).
+     `src/kg/builder.py` names eight node types (seven with literature off, its default), so the
+     current knowledge graph is expected to stay below ten. That is unverified for a production
+     graph: no real data is in the repository, and `NodeType` has more values (`src/core/types.py:40-74`).
+   - So it is a latent hazard: a graph with ten or more node types would send default HGT down the
+     broken path.
 
 **A recipe for determinism, if wanted:**
 1. Fix the seed before the model is built (M3a). Without this, nothing else matters.
@@ -305,15 +334,17 @@ Python is this project's per-batch bottleneck, so the slowdown is probably small
 - AMP itself, which is the variable under study;
 - a resumed run, because checkpoints store no generator state.
 
-**History.** The original SHEPHERD stack could not have been made deterministic on GPU:
+**History.** By source-level reading, the original SHEPHERD stack could not have been made
+deterministic on GPU:
 - it ran torch 1.8, PyG 1.7.2 and torch_scatter 2.0.8;
 - under the flag, `scatter_add_` and the `index_select` backward raised in torch 1.8;
 - Lightning 1.4.5's `deterministic=True` only sets the cuDNN flag.
 
-Its five-seed error bars therefore include kernel nondeterminism. The PyG maintainers' statements
-that "scatter is a non-deterministic operation by design" (issues #446, #2788, #3175, discussion
-#8266) date from before torch 1.13 made `scatter_add_` deterministic, or describe the default
-behaviour.
+Its five-seed error bars therefore probably include kernel nondeterminism (inference; it also
+assumes the paper's runs used the released code). The PyG maintainers' statements that GPU scatter
+is nondeterministic ("Scatter is a non-deterministic operation by design", #2788; similar wording in
+#446, #3175 and discussion #8266) date from before torch 1.13 made `scatter_add_` deterministic, or
+describe the default behaviour.
 
 ### 4.4 How research treats this
 
@@ -355,8 +386,9 @@ behaviour.
   single runs.
 - No source found prescribes a statistical equivalence protocol for AMP.
 - One GNN study found fp16 aggregation unstable in another framework (Tarafder et al., HPDC 2025).
-- This model's aggregation probably stays fp32 under autocast, through type promotion. This was
-  shown by a CPU autocast probe and is unverified on GPU.
+- This model's aggregation probably stays fp32 under autocast, through type promotion. This rests
+  on the autocast docs, source reading and a CPU autocast probe of GAT and SAGE layers, and is
+  unverified on GPU.
 
 **Answer to the owner's academic question:**
 - Fixing and recording every controllable input is the necessary base, and above common practice.
@@ -380,10 +412,15 @@ behaviour.
    - separate output, checkpoint and log directories;
    - the selection rule, including ties.
 3. **Seeds.** The same list of 5–10 seeds in both arms, paired by seed.
-4. **Noise floor.** Measure either:
+4. **Noise floor.** For training, measure either:
    - same-seed fp32 repeats with deterministic mode off, which give the GPU noise floor; or
-   - deterministic mode in both arms, which makes the within-seed noise zero. Its kernels give
-     different but repeatable numbers, so both arms must use the same mode.
+   - deterministic mode in both arms, which is expected to make the within-seed noise zero
+     (source-level; it must pass §4.3's bitwise check on the target GPU, and it is unverified for
+     cuBLASLt fp16 paths under AMP). Its kernels give different but repeatable numbers, so both arms
+     must use the same mode.
+
+   For evaluation, repeat Mode C on one checkpoint, or use a CPU Mode C run (recorded
+   `cuda_executed=false`) as the repeatable reference.
 5. **What to report:**
    - per arm: mean ± SD of the selected epoch, the selection `val_mrr`, and Mode C MRR and hits@k on
      the same Test cohort;
@@ -404,16 +441,20 @@ behaviour.
 
 **Where evaluation-time autocast matters.** Serving and the Mode C CLI run without autocast. So
 evaluation-time autocast affects only the validation pass inside training, that is, which
-checkpoint is selected. A training-time comparison captures that effect too.
+checkpoint is selected. A training-time comparison includes that effect in its AMP arm, but mixed
+with the effect of training under AMP. It does not isolate it, and it does not give option (b)'s
+same-model, same-batch, per-sample quantities.
 
 **What the institution meant is not recorded.** The institution's recorded position ("the switch
 stays a switch … run it both ways if they wish", `docs/working/BACKLOG.md:491-497`) sits in the
 context of item 7a's evaluation-time leg. `TrainerConfig.use_amp` controls both training and
 validation autocast, so whether the institution also meant training-time AMP is not recorded.
 
-**Upstream precedent.** Upstream trains in fp32: its hyperparameters contain `'precision': 16`, but
-no trainer is passed it, and Lightning 1.4.5 defaults to 32. The paper never mentions mixed
-precision. An AMP comparison is therefore this project's own addition.
+**Upstream precedent.** The released upstream code trains in fp32: its hyperparameters contain
+`'precision': 16`, but no trainer is passed it, and Lightning 1.4.5 defaults to 32. What precision
+the paper's own runs used is not shown, since the released code does not run as committed. The
+paper never mentions mixed precision, and there is no upstream evidence on what AMP does to results.
+An AMP comparison is therefore this project's own addition.
 
 ---
 
