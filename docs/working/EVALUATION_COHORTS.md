@@ -950,8 +950,13 @@ Two rules follow, and both are enforced rather than advised:
 - **A knowable refusal precedes the side effects.** Both training and inference verify before they
   create anything: `train` before the run directories, `config.yaml` and the checkpoint directory;
   `DiagnosisPipeline` before a checkpoint is read and paired with the graph, embeddings are
-  precomputed or the pipeline reports itself ready. Since contract M2.1 they check the bytes they
-  parsed, so each file is read once, then checked, then used. No rollback and no transactional writing — the
+  precomputed or the pipeline reports itself ready. Since contract M2.1's S6 and S8 they check the
+  bytes they parsed: the manifest, the graph tensors, serving's `kg.json` and training's samples are
+  each read once, then checked, then used. M2.1 checks nothing about the checkpoint: serving reads
+  it once, after the graph check, and training reads a resume parent once where it is restored,
+  after the run directories and `config.yaml` exist. A requested parent that is missing still warns
+  and trains from scratch; refusing it, and checking the parent before anything is written, is
+  contract M2.3's. No rollback and no transactional writing — the
   check simply moves ahead of the work. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
   disjointness — applies only to generated cohorts. Had the graph half lived inside the cohort
   verifier, generated validation would have been protected while institutional evaluation went on

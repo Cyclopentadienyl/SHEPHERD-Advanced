@@ -1078,15 +1078,21 @@ each moves its callers before anything is removed.
        since the served identity is M3c's.
      - **The checkpoint is read after the graph check**, inside `_load_model_from_checkpoint`,
        with this site's own options (`map_location="cpu"`, `weights_only=False`). M2.1 checks
-       nothing about the checkpoint, so a refused workspace reads no checkpoint.
+       nothing about the checkpoint, so the pipeline reads none for a refused workspace. When a
+       reload selects a checkpoint itself (no `checkpoint_path`), the route's selection-time reads
+       (M2.1 decision 4; BACKLOG 19.1 and 19.2) still come before that refusal.
      - **The shared readers name a file that was read but does not parse** (`f3136d3`). Serving
        and training are the entry points M2.1 moves to parse before they compare (measurement
        already parsed first, so its refusals of a junk file named nothing either and now name the
        file too); without this, a junk tensor or JSON file failed with the parser's message,
        which names nothing, where the path check used to name it. Two refinements came with the
        internal review: a memory shortfall while loading tensors is passed through unchanged,
-       not reported as an unparseable file, and a JSON file that parses but is not a list of
-       sample rows is refused under its name.
+       not reported as an unparseable file (in the three forms the reader recognises:
+       `MemoryError`, the CPU allocator's `RuntimeError` and `torch.OutOfMemoryError`), and a
+       JSON file that parses but holds entries that are not sample rows (an object with keys,
+       `null`, a number) is refused under its name. An empty object or string still parses as
+       zero samples; the manifest's digest comparison refuses that for a generated cohort, and
+       training refuses an empty training split.
      - Text S6 made false is corrected with it: the `file_storage` copy lists, `graph.py`'s
        export docstring, `artifacts.py`'s provenance note, `EVALUATION_COHORTS.md`'s binding
        paragraph and BACKLOG 19.20's citation. `test_kg_provenance.py`'s serving pin, missing
@@ -1152,9 +1158,15 @@ each moves its callers before anything is removed.
        refuses a role with no read, so a `None` digest cannot be recorded. The role set is
        unchanged.
      - **The parent is read where it is restored** (`resolve_resume_checkpoint`), with the site's
-       own options (`map_location` the trainer's device, `weights_only=False`). Moving that read
-       to the top, with its checks, is M2.3's. A requested parent that is missing still warns
-       and continues (M2.3 refuses it); one that vanishes after that check raises.
+       own options (`map_location` the trainer's device, `weights_only=False`). That is after the
+       run directories, `config.yaml` and `runtime.json` exist and after the model and the
+       Trainer are built, so only the workspace checks above precede the first run artifact.
+       Moving that read to the top, with its checks, is M2.3's. A requested parent that is missing
+       still warns and the run trains from scratch (M2.3 refuses it); one that vanishes after that
+       check raises. **Not done in S8, and not to be read into it:** M2.3's parent checks and
+       their placement, and M2.4's comparison of the model with the data it is served or resumed
+       on. S8 makes the digests recorded those of the bytes parsed; it does not make the parent
+       match the workspace.
      - `Trainer.restore_checkpoint(checkpoint)` replaces `load_checkpoint(path)` with no alias,
        and `TrainerProtocol` follows; `trainer.py` loads nothing itself any more. The seed is not
        moved (M3a).

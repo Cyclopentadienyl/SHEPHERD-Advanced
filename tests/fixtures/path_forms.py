@@ -5,7 +5,10 @@ Contract M2.1's dynamic pin (S9), brought forward for each entry point as it
 moves (S6, S8): run the entry point with every path-form verifier raising and
 every path hash returning a poison digest, then assert the run completes and no
 poison reaches its record. A record built only from the readers' results passes;
-one that took a digest from a path at any recording site fails.
+one that took a digest at a recording site through `fingerprint.file_sha256` or
+`compute_input_digests` fails. A path hashed another way (with `hashlib`
+directly, through a `file_sha256` bound at import, or for a file in
+`true_digest_for`) is not caught here; that is for S9's static pin.
 
 `true_digest_for` names files whose path hash must stay true: the `kg.json`
 identification check (`check_unparsed_kg_json`, M2.1 decision 1) hashes the file

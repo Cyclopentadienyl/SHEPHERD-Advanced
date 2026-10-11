@@ -368,9 +368,10 @@ class DiagnosisPipeline:
                      internally consistent, and two consistent workspaces can
                      still be crossed, one's `kg.json` paired with the other's
                      tensors, so embedding rows are read through another graph's
-                     node identifiers. It is passed whole and unpacked only
-                     here, so the graph served and the digest checked cannot
-                     come from two reads (contract M2.1, S6). An in-memory graph
+                     node identifiers. It is passed whole, so when it is the
+                     value `read_json` returned, the graph served and the digest
+                     checked come from one read (contract M2.1, S6); the type
+                     does not enforce that pairing. An in-memory graph
                      (`kg`) has no source digest and is not pretended to have
                      one.
             device: Device for GNN inference ("cpu", "cuda", or None for auto).

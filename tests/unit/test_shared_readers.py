@@ -11,9 +11,11 @@ they parsed with a `ReadIdentity`, never the bytes. For each:
 - the release check passes: no raw buffer, and no `BytesIO` over one, survives
   into the reader's next read or past its return;
 - the result holds identities, never a `FileRead` or bytes;
-- a file that was read but does not parse is refused under its own name, since an
-  entry point that parses before it verifies would otherwise report torch's or
-  json's message, which names no file.
+- a graph tensor, sample or manifest file that was read but does not parse is
+  refused under its own name, since an entry point that parses before it verifies
+  would otherwise report torch's or json's message, which names no file;
+  `read_checkpoint` raises torch's error unchanged, and its two callers name the
+  file (serving in its refusal, training in the line it logs first).
 
 Module: tests/unit/test_shared_readers.py
 """
@@ -156,8 +158,9 @@ class TestReadGraphArtifacts:
     def test_a_memory_shortfall_is_not_reported_as_a_bad_file(
         self, monkeypatch, workspace, failure
     ):
-        """A capacity shortfall is not a property of the export: it passes
-        through unchanged, whichever way torch reports it."""
+        """A capacity shortfall is not a property of the export: in the three
+        forms the reader recognises (`MemoryError`, the CPU allocator's
+        `RuntimeError`, `torch.OutOfMemoryError`) it passes through unchanged."""
         def no_memory(*args, **kwargs):
             raise failure
 

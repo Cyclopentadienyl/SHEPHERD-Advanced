@@ -271,8 +271,9 @@ def test_a_requested_but_missing_parent_warns_restores_nothing_and_records_nothi
 
 def test_the_parent_restored_and_the_identity_returned_come_from_one_read(tmp_path):
     """The returned identity **is** that of the bytes the trainer restored from,
-    and the parent is opened once, so recording a parent the run did not restore
-    cannot be introduced without editing the function that does both."""
+    and the parent is opened once, so this function cannot return a parent other
+    than the one it restored without being edited; that `train` records this
+    return value is shown at the entry point (`test_training_reads.py`)."""
     from scripts.train_model import resolve_resume_checkpoint
     from tests.fixtures.opens import count_opens
 

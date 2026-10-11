@@ -547,8 +547,9 @@ def build_pipeline(
         logger.info(f"Loading knowledge graph from {kg_file}...")
         # **One read, kept whole** (contract M2.1, S6). The graph and the
         # identity of the bytes it was parsed from travel together into the
-        # pipeline, which checks that identity against the workspace manifest;
-        # nothing hashes the file again by path.
+        # pipeline, which checks that identity against the workspace manifest
+        # when it builds a GNN over `data_dir`; a pipeline with no checkpoint
+        # checks nothing (BACKLOG 19.20). Nothing hashes the file again by path.
         graph = KnowledgeGraph.read_json(kg_file)
         kg = graph.kg
         logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")

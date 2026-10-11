@@ -213,10 +213,10 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
     uses, and it goes when that shared read replaces it.
 
     The same read still appears in `scripts/build_index.py` and
-    `scripts/setup_demo.py`; serving and training moved to the shared readers in
-    M2.1 S6 and S8. Each remaining copy depends on the same filenames and
-    serialisation format, so a format change breaks them at once and the
-    duplication buys nothing.
+    `scripts/spikes/validate_fast_subgraph.py`; serving and training moved to the
+    shared readers in M2.1 S6 and S8, and `scripts/setup_demo.py` reads through
+    training. Each remaining copy depends on the same filenames and serialisation
+    format, so a format change breaks them at once and the duplication buys nothing.
 
     Migrating those two is P1 and stays out of this change; migrating them here
     would put the measurement behind an unrelated sweep.

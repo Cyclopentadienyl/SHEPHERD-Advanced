@@ -1,10 +1,12 @@
 """
-Serving reads each recorded input once, and checks those reads.
-===============================================================
+Serving reads each recorded input once, and checks its graph reads.
+===================================================================
 Contract M2.1, S6. `build_pipeline` reads `kg.json` with `read_json` and passes
-the `GraphRead` whole; the pipeline reads the manifest, the graph tensors and the
-checkpoint once each, verifies from those reads, keeps all four bound digests,
-and builds the model from the checkpoint it read. The acceptance shown here:
+the `GraphRead` whole; the pipeline reads the manifest and the graph tensors once
+each, verifies the graph from those reads and keeps all four bound digests; only
+then does it read the checkpoint, once, and build the model from that read. M2.1
+checks nothing about the checkpoint; comparing it with the graph is M2.4's. The
+acceptance shown here:
 
 - a file replaced after its read, by atomic rename or in-place rewrite, is the
   one used and recorded; one replaced after the manifest read, or a graph whose

@@ -401,7 +401,10 @@ TRAINING_SPLITS = ("train", "val")
 
 
 class TrainingInputs(NamedTuple):
-    """What a training run read, once each, and checked.
+    """What a training run read from its workspace, once each, and checked.
+
+    The resume parent is not among them: it is read later, where it is restored,
+    and nothing compares it with this workspace yet (M2.3).
 
     Carried whole from `read_training_inputs` to the record, so the tensors and
     samples a run trains on and the digests it records come from the same reads
@@ -485,8 +488,8 @@ def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optiona
     purpose** (contract M2.1, S8). The parent is read once, with this site's own
     options (`map_location` the trainer's device, `weights_only=False`), the
     trainer restores from the dict that read parsed, and the identity returned is
-    that read's. Recording a parent other than the one restored is not a bug that
-    can be introduced without editing this function.
+    that read's. The identity returned therefore cannot describe bytes other than
+    those restored; `train()` records it from its one binding site.
 
     **Extracted so the decision itself is testable.** Its outcomes used to be
     reachable only by running `train()`.
@@ -544,8 +547,9 @@ def training_input_digests(
     disease level or at the sample level, and nothing in their digests
     distinguishes those regimes.
 
-    The role set is unchanged from before M2.1. `kg` is not among them: training
-    does not parse `kg.json`, and M2.2 records the manifest-bound source graph.
+    The role set is unchanged from before M2.1. `kg` is not among them yet:
+    training does not parse `kg.json`, and recording the manifest-bound source
+    graph is M2.2's.
     Nothing globs the directory, so an unrelated split appearing beside these
     files does not change the record of a run that never read it.
     """
@@ -697,8 +701,13 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # before any of that. Verifying later left a run that had already written its
     # configuration and loaded a mixed graph.
     #
-    # **One read per input, and the check compares those reads** (contract M2.1,
-    # S8). What is verified here is what is trained on and what is recorded.
+    # **One read per workspace input, and the check compares those reads**
+    # (contract M2.1, S8). The graph tensors and samples verified here are the
+    # ones trained on and recorded; `kg.json` is only identified (decision 1).
+    # The resume parent is not checked here: it is read later, where it is
+    # restored, after the run directories and `config.yaml` exist, and a
+    # requested parent that is missing still warns and trains from scratch
+    # (refusing it is M2.3's).
     #
     # No rollback and no transactional writing: the refusal simply moves ahead of
     # the side effects.
