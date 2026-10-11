@@ -59,6 +59,18 @@ class SamplesRead(NamedTuple):
     identity: ReadIdentity
 
 
+def _unparseable(path: Path, what: str, exc: Exception) -> ValueError:
+    """A file that was read but does not parse, refused under its own name.
+
+    **Why the readers say this, not the caller.** An entry point reads, then
+    verifies the digest against the manifest. A file that does not parse fails
+    in the parse, before the comparison that would have named it, and torch's
+    or json's own message (`pop from empty list`, `Expecting value`) names
+    nothing. The cause stays chained for whoever debugs it.
+    """
+    return ValueError(f"{path} could not be parsed as {what} ({type(exc).__name__}: {exc})")
+
+
 def _read_json(path: Path) -> Tuple[Any, ReadIdentity]:
     """Decoded as UTF-8, as the workspace writers write it; the bytes are released
     before the text is parsed."""
@@ -66,9 +78,13 @@ def _read_json(path: Path) -> Tuple[Any, ReadIdentity]:
 
     read = read_once(path)
     identity = read.identity
-    text = read.data.decode("utf-8")
-    del read
-    return json.loads(text), identity
+    try:
+        text = read.data.decode("utf-8")
+        del read
+        parsed = json.loads(text)
+    except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are both ValueErrors
+        raise _unparseable(path, "UTF-8 JSON", exc) from exc
+    return parsed, identity
 
 
 def _read_tensors(path: Path, map_location: Any) -> Tuple[Any, ReadIdentity]:
@@ -77,10 +93,15 @@ def _read_tensors(path: Path, map_location: Any) -> Tuple[Any, ReadIdentity]:
     from src.utils.fingerprint import read_once
 
     read = read_once(path)
-    return (
-        torch.load(BytesIO(read.data), weights_only=True, map_location=map_location),
-        read.identity,
-    )
+    try:
+        tensors = torch.load(BytesIO(read.data), weights_only=True, map_location=map_location)
+    except MemoryError:
+        # Not a property of the file. Converting it would send a capacity
+        # shortfall to whoever reads the message as a corrupt export.
+        raise
+    except Exception as exc:  # noqa: BLE001 — torch raises a different type for each kind of junk
+        raise _unparseable(path, "a tensor file", exc) from exc
+    return tensors, read.identity
 
 
 def read_graph_artifacts(data_dir: Path, *, map_location: Any = "cpu") -> GraphArtifactsRead:

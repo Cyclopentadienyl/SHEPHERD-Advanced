@@ -10,7 +10,10 @@ they parsed with a `ReadIdentity`, never the bytes. For each:
   neither what was parsed nor the identity;
 - the release check passes: no raw buffer, and no `BytesIO` over one, survives
   into the reader's next read or past its return;
-- the result holds identities, never a `FileRead` or bytes.
+- the result holds identities, never a `FileRead` or bytes;
+- a file that was read but does not parse is refused under its own name, since an
+  entry point that parses before it verifies would otherwise report torch's or
+  json's message, which names no file.
 
 Module: tests/unit/test_shared_readers.py
 """
@@ -127,6 +130,32 @@ class TestReadGraphArtifacts:
         with pytest.raises(Exception, match="Weights only load failed"):
             read_graph_artifacts(workspace)
 
+    @pytest.mark.parametrize("name, junk", [
+        ("node_features.pt", b"same shape, another workspace"),
+        ("edge_indices.pt", b""),
+        ("num_nodes.json", b"{not json"),
+        ("num_nodes.json", b"\xff\xfe not utf-8"),
+    ])
+    def test_a_file_that_does_not_parse_is_refused_under_its_name(self, workspace, name, junk):
+        path = workspace / name
+        path.write_bytes(junk)
+
+        with pytest.raises(ValueError, match="could not be parsed") as refused:
+            read_graph_artifacts(workspace)
+
+        assert str(path) in str(refused.value)
+        assert refused.value.__cause__ is not None, "the parser's own error stays chained"
+
+    def test_a_memory_error_is_not_reported_as_a_bad_file(self, monkeypatch, workspace):
+        """A capacity shortfall is not a property of the export."""
+        def no_memory(*args, **kwargs):
+            raise MemoryError
+
+        monkeypatch.setattr(torch, "load", no_memory)
+
+        with pytest.raises(MemoryError):
+            read_graph_artifacts(workspace)
+
     def test_an_absent_file_has_neither_data_nor_identity(self, workspace):
         (workspace / "num_nodes.json").unlink()
 
@@ -200,6 +229,16 @@ class TestReadSamples:
     def test_a_missing_split_is_refused_with_no_identity(self, workspace):
         with pytest.raises(FileNotFoundError, match="this workspace has: train, val"):
             read_samples(workspace, "test")
+
+    @pytest.mark.parametrize("junk", [b"[{\"patient_id\": ", b"\xff\xfe not utf-8"])
+    def test_a_file_that_does_not_parse_is_refused_under_its_name(self, workspace, junk):
+        path = workspace / "train_samples.json"
+        path.write_bytes(junk)
+
+        with pytest.raises(ValueError, match="could not be parsed as UTF-8 JSON") as refused:
+            read_samples(workspace, "train", training_fields=True)
+
+        assert str(path) in str(refused.value)
 
     @pytest.mark.parametrize("how", ["rename", "rewrite"])
     def test_a_replacement_after_the_read_changes_nothing_returned(
