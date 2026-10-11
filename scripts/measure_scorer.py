@@ -212,13 +212,13 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
     legacy about this one is its *name and lifecycle*: it is the entry point Mode A
     uses, and it goes when that shared read replaces it.
 
-    The same read still appears in `src/inference/pipeline.py:579-606`,
-    `scripts/train_model.py`, `scripts/build_index.py` and
-    `scripts/setup_demo.py`. Every copy depends on the same filenames and
-    serialisation format, so a format change breaks all of them at once and the
+    The same read still appears in `scripts/build_index.py` and
+    `scripts/setup_demo.py`; serving and training moved to the shared readers in
+    M2.1 S6 and S8. Each remaining copy depends on the same filenames and
+    serialisation format, so a format change breaks them at once and the
     duplication buys nothing.
 
-    Migrating those four is P1 and stays out of this change; migrating them here
+    Migrating those two is P1 and stays out of this change; migrating them here
     would put the measurement behind an unrelated sweep.
     """
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples

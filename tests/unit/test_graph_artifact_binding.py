@@ -91,8 +91,9 @@ class TestTrainingRefusesBeforeItActs:
     a resume checkpoint may have been loaded. Whether the workspace is sound is
     knowable from the files alone, so it is knowable before any of that.
 
-    Since contract M2.1's S8 the files are read once and checked from those reads
-    (`read_training_inputs`), still before any of that.
+    Since contract M2.1's S8 the files are read once (`read_training_inputs`):
+    those reads parse the graph tensors and the samples, and the check compares
+    them before the dataloaders, the model, the Trainer and any run artifact.
     """
 
     @staticmethod
@@ -179,7 +180,7 @@ class TestTheClinicalPathIsAGraphConsumer:
 
     @staticmethod
     def _pipeline_module(monkeypatch, reached):
-        """Records whether the graph was loaded, and stands in for the rest of
+        """Records whether the model was built, and stands in for the rest of
         the model build.
 
         **The stand-ins are what let a build past the binding check finish.**
@@ -207,7 +208,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         )
         return pipeline
 
-    def test_a_mixed_workspace_is_refused_before_the_graph_is_loaded(
+    def test_a_mixed_workspace_is_refused_before_the_model_is_built(
         self, monkeypatch, tmp_path
     ):
         reached: list = []
@@ -222,9 +223,9 @@ class TestTheClinicalPathIsAGraphConsumer:
                 checkpoint_path=str(root / "ckpt.pt"),
             )
 
-        assert reached == [], "graph loading was reached after a digest mismatch"
+        assert reached == [], "the model was built after a digest mismatch"
 
-    def test_a_sound_workspace_goes_on_to_load_the_graph(self, monkeypatch, tmp_path):
+    def test_a_sound_workspace_goes_on_to_build_the_model(self, monkeypatch, tmp_path):
         """The refusal is about the workspace, not about the ordering itself."""
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
@@ -238,7 +239,7 @@ class TestTheClinicalPathIsAGraphConsumer:
 
         assert reached == ["model"]
 
-    def test_a_file_backed_pipeline_without_a_kg_path_is_refused(
+    def test_a_file_backed_pipeline_without_a_graph_read_is_refused(
         self, monkeypatch, tmp_path
     ):
         """An optional check is no check for the caller who omits it, and that
@@ -248,7 +249,8 @@ class TestTheClinicalPathIsAGraphConsumer:
         with itself; the `kg` object stays bound to nothing, so workspace B's
         graph can still be paired with workspace A's tensors. Nothing legitimate
         is lost by requiring it: a graph built in memory belongs on the
-        `graph_data` seam, and a graph loaded from disk has a path to state.
+        `graph_data` seam, and a graph loaded from disk passes the `GraphRead`
+        `KnowledgeGraph.read_json` returned.
         """
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
@@ -261,7 +263,7 @@ class TestTheClinicalPathIsAGraphConsumer:
                 checkpoint_path=str(root / "ckpt.pt"),
             )
 
-        assert reached == [], "graph loading was reached without a source binding"
+        assert reached == [], "the model was built without a source binding"
 
     def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
         """A caller supplying the graph directly is not pointing at a persisted
@@ -390,7 +392,7 @@ class TestTheCompositionMustNotCrossWorkspaces:
                 checkpoint_path=str(a / "ckpt.pt"),
             )
 
-        assert reached == [], "graph loading was reached on a crossed pair"
+        assert reached == [], "the model was built on a crossed pair"
 
     def test_each_workspace_is_valid_on_its_own(self, tmp_path):
         """Otherwise the test above would prove only that one of them is broken."""
@@ -416,8 +418,9 @@ class TestTheCompositionMustNotCrossWorkspaces:
 
     def test_the_bound_graph_may_live_at_another_path(self, monkeypatch, tmp_path):
         """A path is not an identity in this project; the bytes are. Requiring
-        `kg_path` to *be* `data_dir/kg.json` would also close the crossing, and
-        would break a deployment that mounts or copies the file elsewhere."""
+        the graph's file to *be* `data_dir/kg.json` would also close the
+        crossing, and would break a deployment that mounts or copies the file
+        elsewhere."""
         reached: list = []
         pipeline = TestTheClinicalPathIsAGraphConsumer._pipeline_module(
             monkeypatch, reached

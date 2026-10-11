@@ -1080,9 +1080,13 @@ each moves its callers before anything is removed.
        with this site's own options (`map_location="cpu"`, `weights_only=False`). M2.1 checks
        nothing about the checkpoint, so a refused workspace reads no checkpoint.
      - **The shared readers name a file that was read but does not parse** (`f3136d3`). Serving
-       is the first entry point to parse before it compares; without this, a junk tensor or JSON
-       file failed with the parser's message, which names nothing, where the path check used to
-       name it.
+       and training are the entry points M2.1 moves to parse before they compare (measurement
+       already parsed first, so its refusals of a junk file named nothing either and now name the
+       file too); without this, a junk tensor or JSON file failed with the parser's message,
+       which names nothing, where the path check used to name it. Two refinements came with the
+       internal review: a memory shortfall while loading tensors is passed through unchanged,
+       not reported as an unparseable file, and a JSON file that parses but is not a list of
+       sample rows is refused under its name.
      - Text S6 made false is corrected with it: the `file_storage` copy lists, `graph.py`'s
        export docstring, `artifacts.py`'s provenance note, `EVALUATION_COHORTS.md`'s binding
        paragraph and BACKLOG 19.20's citation. `test_kg_provenance.py`'s serving pin, missing

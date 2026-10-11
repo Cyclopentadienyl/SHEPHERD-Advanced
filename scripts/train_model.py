@@ -506,6 +506,9 @@ def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optiona
         logger.warning(f"Checkpoint not found: {resume_path}")
         return None
 
+    # Named before the read, so a parent that does not load or restore fails
+    # after a line that says which file it was.
+    logger.info(f"Resuming from checkpoint: {resume_path}")
     parent = read_checkpoint(resume_path, map_location=trainer.device, weights_only=False)
     trainer.restore_checkpoint(parent.checkpoint)
     logger.info(

@@ -21,8 +21,10 @@ shown here, at the real entry point (`train`, with `Trainer.train` stubbed):
 - with every path form raising and every path hash poisoned, the run completes
   and no poison reaches the record;
 - a workspace with no validation samples records none; an unrelated split is
-  never opened;
-- a parent that does not parse leaves no checkpoint and no metrics;
+  never opened; an empty training split is refused before anything is written;
+- training trains on both optional sample fields (`training_fields=True`);
+- a parent that does not parse leaves no checkpoint and no metrics, after a
+  line that names it;
 - the path forms are gone, not kept beside the read forms.
 
 Module: tests/unit/test_training_reads.py
@@ -248,6 +250,26 @@ def test_a_file_replaced_after_the_manifest_read_is_refused_naming_it(
 
 
 @pytest.mark.parametrize("how", HOWS)
+def test_json_that_is_not_samples_replacing_a_split_is_refused_naming_it(
+    train_model, workspace, monkeypatch, tmp_path, how
+):
+    """Training parses before it compares, so a replacement that is JSON but not
+    sample rows fails in the parse; the reader names the file there."""
+    _forbid_stages(monkeypatch, train_model)
+    target = workspace / "val_samples.json"
+    run = tmp_path / "run"
+    record = replace_after_read(monkeypatch, after=workspace / "split_manifest.json",
+                                target=target, data=b'[{"tampered": true}]', how=how)
+
+    with pytest.raises(ValueError, match="could not be parsed as a samples file") as refused:
+        train_model.train(_config(train_model, workspace, run))
+
+    assert record.fired == 1
+    assert str(target) in str(refused.value)
+    assert _run_artifacts(run) == []
+
+
+@pytest.mark.parametrize("how", HOWS)
 def test_a_manifest_republished_before_the_tensor_read_is_refused(
     train_model, workspace, other, monkeypatch, tmp_path, how
 ):
@@ -342,6 +364,42 @@ def test_a_workspace_without_validation_samples_records_none(
     assert opens.opens(root / "val_samples.json") == 1, "read and verified, once"
 
 
+def test_an_empty_training_split_is_refused_before_anything_is_written(
+    train_model, monkeypatch, tmp_path
+):
+    """The empty-train refusal runs after verification and before the run
+    directories, `config.yaml` and `runtime.json`."""
+    _forbid_stages(monkeypatch, train_model)
+    root = _workspace(tmp_path / "ws", train_ids=[])
+    run = tmp_path / "run"
+
+    with pytest.raises(ValueError, match="No training samples found") as refused:
+        train_model.train(_config(train_model, root, run))
+
+    assert str(root / "train_samples.json") in str(refused.value)
+    assert _run_artifacts(run) == [], "a run artifact was written before the refusal"
+
+
+def test_training_trains_on_both_optional_sample_fields(
+    train_model, captured, workspace, tmp_path
+):
+    """`training_fields=True` at the entry point: every row's `gene_ids` and
+    `candidate_disease_ids` reach the samples trained on. Dropping the flag would
+    leave both `None` and change the subgraph seeds silently."""
+    train_model.train(_config(train_model, workspace, tmp_path / "run"))
+
+    trainer = captured["trainer"]
+    for split, loader in (("train", trainer.train_dataloader),
+                          ("val", trainer.val_dataloader)):
+        rows = json.loads((workspace / f"{split}_samples.json").read_text(encoding="utf-8"))
+        expected = {row["patient_id"]: (row["gene_ids"], row["candidate_disease_ids"])
+                    for row in rows}
+        trained_on = {sample.patient_id: (sample.gene_ids, sample.candidate_disease_ids)
+                      for sample in loader.dataset.samples}
+        assert trained_on == expected, split
+        assert all(genes and candidates for genes, candidates in trained_on.values()), split
+
+
 def test_an_unrelated_split_is_never_opened(train_model, captured, workspace, tmp_path):
     (workspace / "test_samples.json").write_text("[]")
 
@@ -353,17 +411,23 @@ def test_an_unrelated_split_is_never_opened(train_model, captured, workspace, tm
 
 
 def test_a_parent_that_does_not_parse_leaves_no_checkpoint_and_no_metrics(
-    train_model, captured, workspace, tmp_path
+    train_model, captured, workspace, tmp_path, caplog
 ):
     """The parent is read where it is restored (its move to the top is M2.3's), so
     the run directories and `config.yaml` exist by then; what a failed read must
-    not leave is anything that looks like a result."""
+    not leave is anything that looks like a result. The failure follows a line
+    that names the file, since torch's own message does not."""
+    import logging
+
     junk = tmp_path / "junk.pt"
     junk.write_bytes(b"not a checkpoint")
     run = tmp_path / "run"
 
-    with pytest.raises(Exception):  # noqa: B017 — torch's own unpickling error
-        train_model.train(_config(train_model, workspace, run, resume_from=str(junk)))
+    with caplog.at_level(logging.INFO, logger=train_model.logger.name):
+        with pytest.raises(Exception):  # noqa: B017 — torch's own unpickling error
+            train_model.train(_config(train_model, workspace, run, resume_from=str(junk)))
+
+    assert f"Resuming from checkpoint: {junk}" in caplog.text
 
     assert "trainer" not in captured, "training started after a failed parent read"
     assert not (run / "outputs" / "final_metrics.json").exists()

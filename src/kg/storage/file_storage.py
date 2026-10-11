@@ -101,6 +101,13 @@ def _read_tensors(path: Path, map_location: Any) -> Tuple[Any, ReadIdentity]:
         # Not a property of the file. Converting it would send a capacity
         # shortfall to whoever reads the message as a corrupt export.
         raise
+    except RuntimeError as exc:
+        # Neither is torch's own report of a failed allocation: c10's CPU
+        # allocator raises a plain RuntimeError ("DefaultCPUAllocator: can't
+        # allocate memory"), and a device raises `torch.OutOfMemoryError`.
+        if isinstance(exc, torch.OutOfMemoryError) or "can't allocate memory" in str(exc):
+            raise
+        raise _unparseable(path, "a tensor file", exc) from exc
     except Exception as exc:  # noqa: BLE001 — torch raises a different type for each kind of junk
         raise _unparseable(path, "a tensor file", exc) from exc
     return tensors, read.identity
@@ -172,24 +179,29 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
         raise FileNotFoundError(f"Samples file not found: {path} — {detail}")
 
     entries, identity = _read_json(path)
-    if training_fields:
-        samples = [
-            DiagnosisSample(
-                patient_id=entry["patient_id"],
-                phenotype_ids=entry["phenotype_ids"],
-                disease_id=entry["disease_id"],
-                candidate_disease_ids=entry.get("candidate_disease_ids"),
-                gene_ids=entry.get("gene_ids"),
-            )
-            for entry in entries
-        ]
-    else:
-        samples = [
-            DiagnosisSample(
-                patient_id=entry["patient_id"],
-                phenotype_ids=entry["phenotype_ids"],
-                disease_id=entry["disease_id"],
-            )
-            for entry in entries
-        ]
+    # A file that is JSON but not a list of sample rows is refused under its
+    # name too: the entry point compares digests only after this parse.
+    try:
+        if training_fields:
+            samples = [
+                DiagnosisSample(
+                    patient_id=entry["patient_id"],
+                    phenotype_ids=entry["phenotype_ids"],
+                    disease_id=entry["disease_id"],
+                    candidate_disease_ids=entry.get("candidate_disease_ids"),
+                    gene_ids=entry.get("gene_ids"),
+                )
+                for entry in entries
+            ]
+        else:
+            samples = [
+                DiagnosisSample(
+                    patient_id=entry["patient_id"],
+                    phenotype_ids=entry["phenotype_ids"],
+                    disease_id=entry["disease_id"],
+                )
+                for entry in entries
+            ]
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise _unparseable(path, "a samples file (a list of sample rows)", exc) from exc
     return SamplesRead(samples, identity)

@@ -305,20 +305,22 @@ class TestAnAcceptedCandidateReplacesAllOfIt:
         assert result.status.scoring_mode == CANDIDATE_CONFIG["scoring_mode"]
         assert result.status.current_data_dir == str(root)
 
-    def test_the_graph_is_only_loaded_after_the_workspace_is_accepted(
+    def test_the_model_is_only_built_after_the_workspace_is_accepted(
         self, monkeypatch, tmp_path
     ):
         """The swap is not the only ordering that matters: verification precedes
-        construction, so a refused workspace never reaches the loader."""
+        construction, so a refused workspace never reaches the checkpoint or the
+        model. `other` is built first because each `_candidate_workspace` call
+        installs a fresh recorder, and only the last one installed is live."""
         api, _ = _serving(monkeypatch)
-        root, reached = _candidate_workspace(monkeypatch, tmp_path)
         other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+        root, reached = _candidate_workspace(monkeypatch, tmp_path)
         (root / "num_nodes.json").write_bytes((other / "num_nodes.json").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
         assert result.success is False
-        assert reached == [], "the graph was loaded out of a refused workspace"
+        assert reached == [], "the model was built out of a refused workspace"
 
 
 # --------------------------------------------------------------------------

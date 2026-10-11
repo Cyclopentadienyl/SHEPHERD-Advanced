@@ -42,9 +42,10 @@ from src.utils.fingerprint import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # The digest primitives
 # ---------------------------------------------------------------------------
-def test_a_missing_file_is_recorded_as_absent_rather_than_raised(tmp_path):
-    """A role a run did not consume and a file that is genuinely gone read the
-    same way, and neither stops a training run to report itself."""
+def test_file_sha256_returns_none_for_an_absent_file(tmp_path):
+    """`file_sha256` identifies a file nobody is about to parse, and an absent
+    file answers `None` rather than raising. Training does not record through it
+    since contract M2.1's S8: its record is built from the reads it parsed."""
     assert file_sha256(tmp_path / "never_written.json") is None
 
 

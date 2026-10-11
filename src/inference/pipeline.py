@@ -535,8 +535,10 @@ class DiagnosisPipeline:
             # **The clinical path is a graph consumer, and the costliest one.**
             # A same-shaped `node_features.pt` from another workspace is refused
             # by training and by measurement, and without this it would still be
-            # loaded here, paired with a checkpoint, precomputed into embeddings
-            # and served. The check runs before any of that.
+            # adopted here, paired with a checkpoint, precomputed into embeddings
+            # and served. The tensors are parsed first (one read per input); the
+            # check runs before they are adopted, before the checkpoint is read
+            # and before anything is served.
             #
             # Only for the file-backed path. A caller supplying `graph_data`
             # directly makes no claim about a persisted workspace, so there is no

@@ -146,15 +146,27 @@ class TestReadGraphArtifacts:
         assert str(path) in str(refused.value)
         assert refused.value.__cause__ is not None, "the parser's own error stays chained"
 
-    def test_a_memory_error_is_not_reported_as_a_bad_file(self, monkeypatch, workspace):
-        """A capacity shortfall is not a property of the export."""
+    @pytest.mark.parametrize("failure", [
+        MemoryError(),
+        # c10's CPU allocator reports a failed allocation as a plain RuntimeError.
+        RuntimeError("[enforce fail at alloc_cpu.cpp:127] err == 0. DefaultCPUAllocator: "
+                     "can't allocate memory: you tried to allocate 400000000 bytes."),
+        torch.OutOfMemoryError("CUDA out of memory."),
+    ], ids=["MemoryError", "cpu-allocator", "OutOfMemoryError"])
+    def test_a_memory_shortfall_is_not_reported_as_a_bad_file(
+        self, monkeypatch, workspace, failure
+    ):
+        """A capacity shortfall is not a property of the export: it passes
+        through unchanged, whichever way torch reports it."""
         def no_memory(*args, **kwargs):
-            raise MemoryError
+            raise failure
 
         monkeypatch.setattr(torch, "load", no_memory)
 
-        with pytest.raises(MemoryError):
+        with pytest.raises(type(failure)) as raised:
             read_graph_artifacts(workspace)
+
+        assert raised.value is failure
 
     def test_an_absent_file_has_neither_data_nor_identity(self, workspace):
         (workspace / "num_nodes.json").unlink()
@@ -239,6 +251,21 @@ class TestReadSamples:
             read_samples(workspace, "train", training_fields=True)
 
         assert str(path) in str(refused.value)
+
+    @pytest.mark.parametrize("training_fields", [False, True])
+    @pytest.mark.parametrize("junk", [b'[{"tampered": true}]', b'{"samples": []}',
+                                      b'[[1, 2, 3]]', b"null"])
+    def test_json_that_is_not_sample_rows_is_refused_under_its_name(
+        self, workspace, junk, training_fields
+    ):
+        path = workspace / "train_samples.json"
+        path.write_bytes(junk)
+
+        with pytest.raises(ValueError, match="could not be parsed as a samples file") as refused:
+            read_samples(workspace, "train", training_fields=training_fields)
+
+        assert str(path) in str(refused.value)
+        assert refused.value.__cause__ is not None
 
     @pytest.mark.parametrize("how", ["rename", "rewrite"])
     def test_a_replacement_after_the_read_changes_nothing_returned(
