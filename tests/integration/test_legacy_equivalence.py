@@ -4,8 +4,8 @@ Mode A's command line, run end to end on a synthetic workspace — NOT calibrati
 `scripts/measure_scorer.py` is run as an operator runs it, as a subprocess, and
 the assertions read **the files it writes** rather than an in-memory object. The
 parts a direct call to `run_mode_a` skips are therefore exercised: argument
-parsing, artifact identity, the device gate, the worker processes and the
-predictions writer.
+parsing, the worker processes and the predictions writer. Artifact identity and
+the device claim are tested on Mode C's run, in `test_measure_scorer_run.py`.
 
 Reading the written files matters more than it sounds. A result object can carry
 a field that `to_dict()` never emits, and an in-memory check would still pass
@@ -19,10 +19,9 @@ this harness has already had.
 > `tests/unit/test_differential_calibration.py`); its institutional CUDA run is
 > BACKLOG item 7a.
 
-The rest of the file covers the mode ladder, the refusals of unsupported mode
-combinations, and `--split`.
+The rest of the file covers the mode ladder and the refusals of unsupported mode
+combinations.
 """
-import hashlib
 import json
 import subprocess
 import sys
@@ -138,31 +137,6 @@ def test_the_measurement_artifact_carries_the_sampler_evidence(measured):
     assert negatives["unique_global_ids"] <= negatives["total_drawn"]
 
 
-def test_every_consumed_file_is_identified_by_content(measured):
-    """Paths are not identities. `checkpoints/best.pt` names a different file after
-    every improvement, and the structural fingerprint is shared by every checkpoint
-    trained on the same graph."""
-    digests = measured["measurement"]["manifest"]["artifact_digests"]
-
-    for role in ("checkpoint", "samples", "node_features", "edge_indices", "num_nodes"):
-        assert len(digests[role]) == 64, f"{role} has no sha256"
-    assert digests["checkpoint"] != digests["samples"]
-
-    # And each is the digest of the file the command was given, not merely a
-    # digest-shaped string: a run that recorded another cohort's or another
-    # checkpoint's digest would pass the checks above.
-    data_dir = measured["data_dir"]
-    given = {
-        "checkpoint": measured["checkpoint"],
-        "samples": data_dir / "test_samples.json",
-        "node_features": data_dir / "node_features.pt",
-        "edge_indices": data_dir / "edge_indices.pt",
-        "num_nodes": data_dir / "num_nodes.json",
-    }
-    for role, path in given.items():
-        assert digests[role] == hashlib.sha256(path.read_bytes()).hexdigest(), role
-
-
 def test_the_cohort_is_whole(measured):
     """No absences, no shrinkage. In Mode A the truth is a subgraph seed, so an
     absence would mean the harness is wrong — and a metric over a silently
@@ -172,22 +146,6 @@ def test_the_cohort_is_whole(measured):
     assert measurement["n_ground_truth_absent"] == 0
     assert measurement["n_ranked"] == measurement["manifest"]["n_samples"]
     assert len(measured["predictions"]) == measurement["manifest"]["n_samples"]
-
-
-# ---------------------------------------------------------------------------
-# The claim guard
-# ---------------------------------------------------------------------------
-def test_this_run_records_that_it_is_not_a_cuda_run(measured):
-    """A guard against the claim rather than the code. Nothing here touches real
-    data, a real checkpoint or CUDA, and the manifest has to say so in writing."""
-    manifest = measured["measurement"]["manifest"]
-
-    assert manifest["cuda_executed"] is False, (
-        "a CPU run reported itself as having executed on CUDA; every assertion "
-        "above would still pass while the recorded claim was false"
-    )
-    assert manifest["device"] == "cpu"
-    assert manifest["n_samples"] < 100
 
 
 def test_the_manifest_records_the_configured_ceiling_not_only_the_observed_one(measured):
@@ -267,40 +225,6 @@ def test_mode_b_without_mode_a_is_refused(tmp_path):
         ])
 
 
-def test_mode_c_alone_touches_no_retiring_legacy_path(tmp_path, monkeypatch):
-    """The lifecycle claim, enforced rather than documented.
-
-    `load_legacy_mode_a_inputs` is deleted in M2.1's S7, and
-    `build_legacy_mode_a_model` goes with item 9's oracle-only surface. A C-only
-    run that called either would break the day it goes — and could fail today on
-    a checkpoint the legacy builder cannot rebuild but production can.
-    """
-    import scripts.measure_scorer as cli
-    from tests.fixtures.synthetic_workspace import build_workspace as build
-
-    data_dir, checkpoint = build(tmp_path / "ws")
-
-    def refuse(*args, **kwargs):
-        raise AssertionError("a C-only run reached a retiring legacy entry point")
-
-    monkeypatch.setattr(cli, "load_legacy_mode_a_inputs", refuse)
-    monkeypatch.setattr(cli, "build_legacy_mode_a_model", refuse)
-
-    output = tmp_path / "c_only" / "measurement.json"
-    assert cli.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
-        "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
-        "--device", "cpu", "--modes", "C",
-    ]) == 0
-
-    # A single-mode run writes the mode that was asked for to --output, rather
-    # than leaving the requested path absent and a suffixed one beside it.
-    written = json.loads(output.read_text())
-    assert written["manifest"]["mode"] == "C"
-    assert not (output.parent / "measurement_predictions.json").exists()
-
-
 def test_a_and_c_must_agree_on_the_cohort_before_anything_is_written(tmp_path, monkeypatch):
     """The CLI prints that the modes share a cohort; that has to be checked, not
     announced. A and C reach their patients by different routes — the dataloader
@@ -356,37 +280,3 @@ def test_unsupported_mode_combinations_are_refused_not_repaired(tmp_path, spec, 
             "--split", "test", "--cohort-kind", "supplied", "--output", str(tmp_path / "m.json"),
             "--device", "cpu", "--modes", spec,
         ])
-
-
-# ==============================================================================
-# --split is required, and a missing split says what the workspace has
-# ==============================================================================
-def test_split_has_no_default_on_the_measurement_entry_point():
-    """It defaulted to `test`, which the generator never writes.
-
-    `src/kg/sample_generator.py` produces train and val only, so the default named
-    a file no ordinary workspace contains. Requiring the flag is deliberate rather
-    than switching the default to `val`: `val` is the checkpoint-selection split,
-    and a default would let a caller measure on it without ever deciding to.
-    """
-    import scripts.measure_scorer as measure
-
-    with pytest.raises(SystemExit):
-        measure.parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--output", "o.json"])
-
-
-def test_missing_split_error_lists_what_the_workspace_actually_has(tmp_path):
-    from src.kg.storage.file_storage import read_samples
-
-    (tmp_path / "train_samples.json").write_text("[]")
-    (tmp_path / "val_samples.json").write_text("[]")
-
-    with pytest.raises(FileNotFoundError, match=r"this workspace has: train, val"):
-        read_samples(tmp_path, "test")
-
-
-def test_missing_split_error_when_nothing_is_there(tmp_path):
-    from src.kg.storage.file_storage import read_samples
-
-    with pytest.raises(FileNotFoundError, match="no \\*_samples.json files at all"):
-        read_samples(tmp_path, "val")

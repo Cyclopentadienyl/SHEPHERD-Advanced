@@ -24,7 +24,10 @@ no P1 or P2 and accepted as a conditional plan. It proposes retiring them after 
 incidental protection of live training, validation and Mode C behaviour moves to the
 real use points, and only once the institution has answered its two questions (the
 agreed B-0 scope and the AMP evidence, its §8 items 4 and 7). Nothing below is
-changed by it until the owner and the institution decide.
+changed by it until the owner and the institution decide. Its first step, R1 (tests
+only), is implemented (2026-10-11): the live guarantees Modes A and B used to protect
+incidentally now have their own tests at the real use points, and Modes A and B are
+unchanged.
 
 **C→D does not isolate one difference, and this table should not be read as
 though it does.** It changes the candidate construction *and* the scorer at once,

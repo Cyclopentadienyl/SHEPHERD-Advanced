@@ -202,6 +202,21 @@ def test_rank_extraction_rejects_non_integer_ids():
         ranks_of_truth(torch.tensor([[1.0, 2.0]]), torch.tensor([1]))
 
 
+@pytest.mark.parametrize("bad", [torch.float32, torch.float64, torch.bool])
+def test_ranking_identifiers_must_be_integers(bad):
+    """`Tensor.long()` turns 1.7 into 1 and True into 1, so a float or boolean id
+    wired in by mistake becomes a plausible index rather than an error. Both
+    helpers Mode C ranks with refuse it, on every identifier they take."""
+    ids = torch.tensor([0, 1])
+
+    with pytest.raises(ValueError, match="integer"):
+        canonical_ranking(torch.tensor([[0.1, 0.2]]), ids.to(bad))
+    with pytest.raises(ValueError, match="integer"):
+        ranks_of_truth(ids.unsqueeze(0).to(bad), torch.tensor([1]))
+    with pytest.raises(ValueError, match="integer"):
+        ranks_of_truth(ids.unsqueeze(0), torch.tensor([1]).to(bad))
+
+
 # ---------------------------------------------------------------------------
 # Rank extraction
 # ---------------------------------------------------------------------------

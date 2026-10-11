@@ -1180,7 +1180,9 @@ each moves its callers before anything is removed.
      through it.
    - **Tests that import what goes:**
      - `tests/unit/test_training_provenance.py` imports `compute_input_digests` at module level;
-     - it and `tests/unit/test_measurement_mode_a.py:649-660` pin the `file_sha256` re-export in
+     - it and `tests/unit/test_measure_scorer_cli.py`'s
+       `test_artifact_digests_identify_content_not_paths` (moved there from
+       `test_measurement_mode_a.py` by the retirement's R1) pin the `file_sha256` re-export in
        `scripts/measure_scorer.py:99`.
 
      Those tests move with the removal. The re-export is either kept, with its reason, or removed

@@ -11,6 +11,10 @@ plan.** That is not acceptance that Modes A and B are retired, that the moved te
 the institution has agreed to narrow B-0 or to give up the AMP evidence. R1's acceptance is its
 own: the moved tests, which import no Mode A, must catch the mutations §9 names.
 
+**R1 approved by the owner (2026-10-11) and implemented (2026-10-11), awaiting code review**
+(§9.1). Tests only: nothing in Modes A or B, and no class-1 test, is deleted, and no production code
+changes. R2 and everything after it still wait for the institution's answers (§8 items 4 and 7).
+
 **Base.** The inventory read `f581f9e`'s tree (M2.1 S5) through `git show f581f9e:<path>`. The
 S1–S5 corrections from the internal review were then uncommitted in the working tree; they are not
 part of the base and were committed afterwards as `6f16373` (§1.1). **All citations below are at
@@ -728,3 +732,104 @@ those has, or needs, its own work item (§5.3).
 institutional run, and the 4-worker Mode A subprocess every `make check` runs
 (`test_legacy_equivalence.py:46-90`, the `measured` fixture, whose subprocess at `:60-77` passes
 `--num-workers 4` at `:69`; `Makefile:66`).
+
+### 9.1 R1 as implemented (2026-10-11)
+
+Approved by the owner on 2026-10-11 as a bounded step: move and strengthen the live tests only,
+with no change to scoring, ranking, the top-20 window, negative sampling or the seed, and no A/B
+deletion. Tests only; `src/`, `scripts/`, `tests/fixtures/` and the `Makefile` are unchanged.
+
+**New test modules** (none imports a Mode A/B name at module level):
+
+| Module | What it holds |
+|---|---|
+| `tests/unit/test_trainer_validation_values.py` | G1–G4: `_run_evaluation_pass` on real loader batches and a `build_shepherd_model` model, expected rows, truths and MRR computed with the served `masked_mean_pool`/`cosine_score_matrix`; a default and a wide workspace (every candidate universe above 20, asserted inline), a padded cohort (G2), an unequal-norm cohort (G3) and a non-identity candidate map |
+| `tests/unit/test_diagnosis_loader.py` | G5–G8: the negative count; the worker stream following the parent seed (the two tests moved from `test_measurement_mode_a.py`); the 2-hop subgraph; the truth as a seed on a graph where no patient reaches it; and the loader refusing a batch whose truth the seeding lost |
+| `tests/unit/test_measurement_mode_c.py` | the 14 Mode C tests moved from `test_measurement_modes_bc.py`, on a fixture read and built the way the CLI's Mode C does; C-only versions of the Mode C halves of the A-named tests; §7's direct tests that need no code decision |
+| `tests/unit/test_measure_scorer_cli.py` | the CLI's own guards moved out of `test_measurement_mode_a.py` (the compile-wrapper probes, the device gate, the `file_sha256` re-export, seed validation and application, artifact roles) and the three `--split` tests from `test_legacy_equivalence.py` |
+| `tests/integration/test_measure_scorer_run.py` | `--modes C` run as a subprocess; the relocated digest and `cuda_executed` tests; C versions of the metric-family and whole-cohort tests; `test_mode_c_alone_touches_no_retiring_legacy_path`, moved unchanged |
+
+Plus `test_ranking_identifiers_must_be_integers` in `tests/unit/test_measurement_ranking.py`, the
+dtype test retargeted to `canonical_ranking` and both arguments of `ranks_of_truth`.
+
+**Moved** (cut and pasted): 44 collected items, from `test_measurement_mode_a.py` (23),
+`test_measurement_modes_bc.py` (15) and `test_legacy_equivalence.py` (6). 42 are text-identical,
+and `test_artifact_digests_identify_content_not_paths` drops only its unused `workspace` argument.
+The two worker-stream tests keep their assertions but not their surroundings: the seed constant is
+renamed (its value, 0, is unchanged), one docstring clause about `--num-workers` is dropped, the
+class is renamed `TestTheWorkerStreamFollowsTheParentSeed`, and the helpers are rewired (below).
+Collected items across `tests/unit` and `tests/integration` go from 2631 to 2673.
+
+**Originals kept for R2**, because each still carries a Mode A/B half; R2 deletes them with class 1:
+`test_differential_calibration.py` `:177`, `:495`, `:510`, `:698`; `test_measurement_mode_a.py`
+`:85`, `:107`, `:145`, `:161`, `:471`, `:514`, `:568`, `:587`; `test_measurement_modes_bc.py`
+`:311`, `:328`; `test_measurement_ranking.py` `:173`; `test_legacy_equivalence.py` `:103`, `:166`
+(lines at `f581f9e`). `test_measurement_mode_a.py:805` (no null seed) is not moved: it follows the
+seed decision (§8 item 5), and R2 must not delete it before that decision.
+
+**Decisions taken while implementing:**
+- The worker-stream tests now draw through `create_diagnosis_dataloader`, the loader training
+  builds, rather than a bare `DataLoader`; the bare one never reached the project's loader, so a
+  change to its worker seeding went unseen. The seed value is unchanged (0) and the worker count is
+  the loader's default, which is training's.
+- `test_mode_c_alone_touches_no_retiring_legacy_path` moved unchanged, as §6.1 planned; R2 drops
+  its two monkeypatches and `--num-workers 0`.
+- Two tests close gaps listed in §5.3 because they sit on G5 and G8: no negative equals its own
+  sample's truth, and the loader's run-time refusal of a truth missing from its subgraph.
+
+**Gate evidence.** Each mutation applied in memory to the code under test, against the committed
+test files:
+
+| Gate mutation (site at `3e8e559`) | Caught by |
+|---|---|
+| Trainer: ascending sort (`trainer.py:684`) | all five Trainer value tests |
+| Trainer: `pred_indices[-20:]` (`:689`) on rows wider than 20 | the wide, padded and unequal-norm tests |
+| Trainer: masked mean dropped (`:801`) | the padded and non-identity-map tests |
+| Trainer: raw dot product in place of the cosine (`:838`) | the unequal-norm test |
+| Loader: truth emptied from the seeds (`data_loader.py:936`) | the G8 test (through the loader's refusal at `:864`; with that refusal also removed, on its own assertion) |
+| Loader: one hop (`:853`) | the G7 test |
+| Loader: a private worker generator, or workers reseeding `random` (`:832-840`) | the worker-stream test |
+| Loader: one negative too many or too few (`:666`) | the G5 test |
+| Mode C: ties by descending id; an unstable sort (`measurement.py:145-150`) | the 40-way tie test, every case |
+| Mode C: MRR on ranks truncated at 20; hits@k off by one; MRR as 1/mean rank (`metrics.py:132-135`) | the exact-metric tests |
+| Mode C: masked mean dropped in `run_mode_c` (`measurement.py:1310`) | the padding and pool-routing tests |
+| Ranking: the bool clause of `_require_integer_ids` dropped (`measurement.py:61`) | the new dtype test (and the original it replaces) |
+
+Not caught, and not gate items: dropping only the patient-side normalisation (scaling a row by a
+positive number cannot change its ranking); ties by input order through `run_mode_c` (above).
+
+**Independence from Modes A and B, simulated.** With the A/B names deleted in memory, the
+differential made unimportable and the fixture's checkpoints stripped to the writer's shape, the
+Trainer, loader and CLI unit files pass unchanged. The Mode C unit file and the integration test
+then fail only on production code R2 rewrites anyway (`build_manifest`'s function-local import of
+`LEGACY_TRUNCATION_K`, and `main`'s unconditional import of `run_modes_ab` and
+`assert_constructions_agree`); with those two edits simulated, all five new files pass except
+`test_mode_c_alone_touches_no_retiring_legacy_path`, whose two monkeypatches R2 drops (above).
+
+**Limits, stated rather than tested:**
+- "Ties by input order" cannot be caught through `run_mode_c`: its candidates are `arange(D)`, so
+  input order is id order. Input-order independence stays covered at the helper
+  (`test_canonical_is_independent_of_candidate_input_order`).
+- A `batch_size` below one is refused today without a message of its own; the test pins that no
+  result comes out, not a message.
+- The compile-wrapper probe that passes only after an earlier probe has imported `torch._dynamo`
+  keeps its pre-existing order dependence; the eight probes stay together and in order.
+
+**Found, not part of R1, for the owner to schedule:**
+- The effective hop count is `min(DIAGNOSIS_SUBGRAPH_HOPS, len(num_neighbors))`
+  (`src/kg/data_loader.py:206`), so a training configuration with a one-element `num_neighbors`
+  expands one hop silently. The G7 test pins only the default configuration.
+- Mode C pads short patients with phenotype 0, and a NaN in that row refuses every padded patient
+  with "NaN or infinity" and no patient named. It fails closed.
+
+**What R2 must still do with R1's files:** edit the Mode C `world` fixture if `build_loader_config`
+or `build_manifest`'s `loader_config` goes (§2.1); edit the CLI seed tests per §8 item 5; drop
+`--modes C` from the integration fixture if §8 item 9 removes the option; drop the two
+monkeypatches and `--num-workers 0` named above; edit `test_mode_c_ran_no_sampler_and_says_so` if
+§8 item 5 removes `sampler_evidence["negative_sampling"]`; keep the refusal text "absent from the
+candidate set" that a Mode C test matches when `_assert_cohort_is_intact`'s wording is rewritten; drop `to_global_ids`/`legacy_ranking` from
+`test_measurement_ranking.py`'s import line in the same commit that deletes them; keep
+`tests/fixtures/synthetic_workspace.py`'s `_samples` (imported by the loader tests) as well as
+`_graph`. Add to §2.10's wording list: the relocated `test_an_out_of_range_phenotype_is_refused_not_clamped`
+docstring ("Mode A clamps…"), the `TestTheRandomStreamHasAnIdentity` docstring copied into the CLI
+test file, and the `--num-workers` wording.

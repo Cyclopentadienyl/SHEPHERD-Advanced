@@ -178,136 +178,6 @@ def mode_c(world):
     )
 
 
-def _encode_here(world):
-    """Embeddings computed in the caller's ambient context."""
-    return encode_full_graph(
-        world["production_model"], world["graph_data"], world["device"])
-
-
-def test_mode_c_accepts_a_run_whose_embeddings_manifest_and_scoring_all_agree(world):
-    """The capability the blanket refusal removed, and **all three** halves must
-    be in the same regime for it.
-
-    A first version of this test used the fixture's fp32 embeddings, built a
-    bfloat16 manifest and scored under bfloat16, and asserted success. That is the
-    mixed-regime run this module says a single field cannot describe — the test
-    froze the defect as a specification, and the review caught it.
-    """
-    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        result = run_mode_c(
-            full_graph_embeddings=_encode_here(world),
-            samples=world["samples"],
-            manifest=world["manifest"](
-                "C", "every disease in the graph", regime_here=True),
-            device=world["device"],
-            batch_size=BATCH_SIZE,
-        )
-
-    assert result.manifest.amp_enabled is True
-    assert result.manifest.amp_dtype == "torch.bfloat16"
-
-
-def test_fp32_embeddings_scored_under_autocast_are_refused(world):
-    """Half the mixed-regime case: the embeddings predate the context the scoring
-    runs in. The manifest can describe one or the other, never both."""
-    fp32_encoded = _encode_here(world)
-    assert fp32_encoded.regime.enabled is False, "the fixture must really be fp32"
-
-    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        with pytest.raises(RuntimeError, match="records|computed under"):
-            run_mode_c(
-                full_graph_embeddings=fp32_encoded,
-                samples=world["samples"],
-                manifest=world["manifest"](
-                    "C", "every disease in the graph", regime_here=True),
-                device=world["device"],
-                batch_size=BATCH_SIZE,
-            )
-
-
-def test_autocast_embeddings_scored_in_fp32_are_refused(world):
-    """The other half, which only the embeddings' own regime can catch: the
-    scoring context and the manifest agree with each other and are both wrong
-    about where the numbers came from."""
-    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        bf16_encoded = _encode_here(world)
-    assert bf16_encoded.regime.enabled is True
-
-    with pytest.raises(RuntimeError, match="computed under"):
-        run_mode_c(
-            full_graph_embeddings=bf16_encoded,
-            samples=world["samples"],
-            manifest=world["manifest"]("C", "every disease in the graph"),
-            device=world["device"],
-            batch_size=BATCH_SIZE,
-        )
-
-
-def test_a_manifest_disagreeing_with_the_embeddings_regime_is_refused(world):
-    """Stated on its own because it is the association the split-at-the-caller
-    version could not check at all: everything runs in fp32 and the manifest
-    claims bfloat16."""
-    fp32_encoded = _encode_here(world)
-
-    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        bf16_manifest = world["manifest"](
-            "C", "every disease in the graph", regime_here=True)
-
-    with pytest.raises(RuntimeError, match="computed under"):
-        run_mode_c(
-            full_graph_embeddings=fp32_encoded,
-            samples=world["samples"],
-            manifest=bf16_manifest,
-            device=world["device"],
-            batch_size=BATCH_SIZE,
-        )
-
-
-def test_embeddings_are_not_labelled_with_a_later_context(world):
-    """**The mutation the review asked for, and the reason the regime travels.**
-
-    The embeddings are computed under bfloat16; the manifest is constructed
-    afterwards, outside that context. An implementation observing at manifest
-    construction would label these embeddings fp32 — silently, since nothing
-    downstream can recover the regime from the tensors.
-
-    `encode_full_graph` observes inside itself and returns the pair, so the
-    context it actually ran in is what reaches the manifest.
-    """
-    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        encoded = encode_full_graph(
-            world["production_model"], world["graph_data"], world["device"])
-
-    # Out here it is fp32 again — and the reported regime must still be the
-    # embeddings' own.
-    assert encoded.regime.enabled is True
-    assert encoded.regime.dtype == "torch.bfloat16"
-
-    from src.evaluation.measurement import observe_autocast_regime
-
-    assert observe_autocast_regime(world["device"]).enabled is False, (
-        "the surrounding context must really be fp32, or this proves nothing"
-    )
-
-
-def test_mode_c_scores_every_disease(mode_c, world):
-    """The candidate universe is the graph's disease count, not a sampled subset —
-    which is what the reference method does and what nothing here did before."""
-    n_diseases = world["graph_data"]["x_dict"]["disease"].size(0)
-
-    assert mode_c.sampler_evidence["candidate_columns"]["min"] == n_diseases
-    assert mode_c.sampler_evidence["candidate_columns"]["max"] == n_diseases
-
-
-def test_mode_c_ran_no_sampler_and_says_so(mode_c):
-    """`observed: False` with a reason, rather than an empty structure that would
-    read as "not recorded"."""
-    negatives = mode_c.sampler_evidence["negative_sampling"]
-
-    assert negatives["observed"] is False
-    assert "every disease" in negatives["reason"]
-
-
 def test_mode_c_covers_the_same_cohort_as_a(mode_c, ab):
     """B→C is only a candidate-universe comparison if the patients are the same
     patients in the same order. C reads them from the samples file; A and B get
@@ -318,29 +188,12 @@ def test_mode_c_covers_the_same_cohort_as_a(mode_c, ab):
     assert mode_c.truth_global_ids == result_a.truth_global_ids
 
 
-def test_mode_c_cannot_lose_a_ground_truth(mode_c):
-    """Absence is impossible by construction — the truth is a disease and every
-    disease is a candidate — so a non-zero count would mean the ids are wrong."""
-    assert mode_c.n_ground_truth_absent == 0
-    assert mode_c.n_ranked == mode_c.manifest.n_samples
-
-
 def test_every_mode_serialises_without_non_finite_values(ab, mode_c):
     result_a, result_b = ab
 
     for result in (result_a, result_b, mode_c):
         payload = json.loads(json.dumps(result.to_dict(), allow_nan=False))
         assert payload["manifest"]["mode"] in {"A", "B", "C"}
-
-
-def test_per_sample_ranks_line_up_with_the_cohort(mode_c):
-    """Aggregate metrics hide a cohort where half the ranks improved and half
-    collapsed, so the per-sample rows are what a mode comparison reads."""
-    rows = mode_c.to_ranks()
-
-    assert len(rows) == len(mode_c.sample_ids)
-    assert rows[0]["sample_id"] == mode_c.sample_ids[0]
-    assert all(row["rank"] >= 1 for row in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -392,102 +245,6 @@ def test_the_three_modes_agree_here_because_the_fixture_makes_them_agree(ab, mod
     )
     assert result_a.canonical_ranks == result_b.canonical_ranks
     assert result_a.canonical_ranks == mode_c.canonical_ranks
-
-
-# ---------------------------------------------------------------------------
-# Mode C refuses ids it cannot honestly score
-# ---------------------------------------------------------------------------
-def _sample(patient_id, phenotype_ids, disease_id):
-    from src.kg.data_loader import DiagnosisSample
-
-    return DiagnosisSample(
-        patient_id=patient_id, phenotype_ids=phenotype_ids, disease_id=disease_id
-    )
-
-
-@pytest.mark.parametrize("phenotypes, fragment", [
-    ([-1, 0], "phenotype id -1"),
-    ([0, 99999], "phenotype id 99999"),
-])
-def test_an_out_of_range_phenotype_is_refused_not_clamped(world, phenotypes, fragment):
-    """The defect this was corrected for.
-
-    Mode A clamps, and is right to: its out-of-range values are the dataloader's
-    `-1` padding under a `False` mask, so the clamp only keeps the gather in
-    bounds. In Mode C every id is a real value from a real patient with
-    `mask=True`. Clamping would score phenotype -1 as phenotype 0 and 99999 as
-    the last node in the graph — a real patient, a plausible rank, and the wrong
-    one, indistinguishable downstream from a genuine result.
-    """
-    bad = [_sample("P-bad", phenotypes, 0)]
-
-    with pytest.raises(ValueError, match=fragment):
-        run_mode_c(
-            full_graph_embeddings=world["encoded"],
-            samples=bad,
-            manifest=world["manifest"]("C", "every disease"),
-            device=world["device"],
-        )
-
-
-def test_the_offending_patient_is_named(world):
-    """An operator needs the row, not just the fact. A cohort of thousands with
-    "an id is out of range" is a search; with the patient id it is a lookup."""
-    bad = [_sample("P-good", [0], 0), _sample("P-offending", [0, -5], 0)]
-
-    with pytest.raises(ValueError, match="P-offending"):
-        run_mode_c(
-            full_graph_embeddings=world["encoded"],
-            samples=bad,
-            manifest=world["manifest"]("C", "every disease"),
-            device=world["device"],
-        )
-
-
-def test_an_out_of_range_ground_truth_is_refused(world):
-    """Caught before ranking rather than surfacing later as an absence. Absence
-    is Mode C's signal that the id spaces are wrong; letting a bad truth reach it
-    would report the symptom instead of the cause."""
-    bad = [_sample("P-truth", [0], 99999)]
-
-    with pytest.raises(ValueError, match="ground-truth disease id 99999"):
-        run_mode_c(
-            full_graph_embeddings=world["encoded"],
-            samples=bad,
-            manifest=world["manifest"]("C", "every disease"),
-            device=world["device"],
-        )
-
-
-def test_a_patient_with_no_phenotypes_is_refused(world):
-    """Pooling nothing yields the zero vector, whose cosine against every disease
-    is zero, whose ranking is an arbitrary tie-break over the whole graph. That
-    is a rank, and it means nothing."""
-    with pytest.raises(ValueError, match="no phenotypes"):
-        run_mode_c(
-            full_graph_embeddings=world["encoded"],
-            samples=[_sample("P-empty", [], 0)],
-            manifest=world["manifest"]("C", "every disease"),
-            device=world["device"],
-        )
-
-
-def test_valid_ids_at_both_boundaries_are_accepted(world):
-    """The negative control for the four refusals above: index 0 and the last
-    node are in range, and a guard that rejected them would be worse than none.
-    """
-    n_phenotypes = world["encoded"].embeddings["phenotype"].size(0)
-    n_diseases = world["encoded"].embeddings["disease"].size(0)
-    edge = [_sample("P-edge", [0, n_phenotypes - 1], n_diseases - 1)]
-
-    result = run_mode_c(
-        full_graph_embeddings=world["encoded"],
-        samples=edge,
-        manifest=world["manifest"]("C", "every disease", n_samples=1),
-        device=world["device"],
-    )
-
-    assert result.n_ranked == 1
 
 
 def test_a_generator_yielding_from_inside_autocast_is_refused(world):

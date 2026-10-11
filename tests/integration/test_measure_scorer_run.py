@@ -1,0 +1,212 @@
+"""
+Mode C's command line, run end to end on a synthetic workspace.
+===============================================================
+`scripts/measure_scorer.py` is run as an operator runs it, as a subprocess, and
+the assertions read **the files it writes** rather than an in-memory object. The
+parts a direct call to `run_mode_c` skips are therefore exercised: argument
+parsing, artifact identity, the device gate, the production model build, the
+full-graph encode and the writers.
+
+Reading the written files matters more than it sounds. A result object can carry
+a field that `to_dict()` never emits, and an in-memory check would still pass
+while the artifact a reviewer actually receives is missing it.
+
+> **Nothing here is an acceptance result, and nothing here may be reported as
+> one.** It shows the command runs and writes complete, self-describing
+> artifacts on a synthetic graph in this container, on CPU.
+
+Module: tests/integration/test_measure_scorer_run.py
+"""
+import hashlib
+import json
+import math
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+torch = pytest.importorskip("torch")
+
+from tests.fixtures.synthetic_workspace import build_workspace  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MEASURE_SCORER = REPO_ROOT / "scripts" / "measure_scorer.py"
+
+BATCH_SIZE = 3
+RUN_TIMEOUT_SECONDS = 900
+
+
+@pytest.fixture(scope="module")
+def measured(tmp_path_factory):
+    """Run Mode C's command once and hand back what it wrote.
+
+    Only the flags Mode C consumes: no `--num-workers` and no `--seed`, since
+    Mode C has no dataloader and draws nothing, so the run is the one their
+    defaults give. sys.executable rather than "python": a bare name resolves
+    against PATH, which is only this environment when a venv happens to be
+    active.
+    """
+    root = tmp_path_factory.mktemp("mode_c_cli")
+    data_dir, checkpoint = build_workspace(root)
+    output = root / "run" / "measurement.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable, str(MEASURE_SCORER),
+            "--checkpoint", str(checkpoint),
+            "--data-dir", str(data_dir),
+            "--split", "test", "--cohort-kind", "supplied",
+            "--output", str(output),
+            "--batch-size", str(BATCH_SIZE),
+            "--device", "cpu",
+            "--modes", "C",
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=RUN_TIMEOUT_SECONDS,
+    )
+    assert completed.returncode == 0, completed.stderr[-4000:]
+
+    def read(path: Path):
+        assert path.exists(), f"{path.name} was not written"
+        return json.loads(path.read_text())
+
+    return {
+        "measurement": read(output),
+        "ranks": read(output.with_name("measurement_ranks.json")),
+        "written": sorted(p.name for p in output.parent.iterdir()),
+        "checkpoint": checkpoint,
+        "data_dir": data_dir,
+    }
+
+
+# ---------------------------------------------------------------------------
+# What Mode C's command writes
+# ---------------------------------------------------------------------------
+def test_the_report_at_output_is_mode_c_scored_against_every_disease(measured):
+    """A single-mode run writes the mode that was asked for to `--output`, beside
+    its own ranks, and nothing else: no suffixed copy and no rows file. Every
+    batch is scored against every disease the workspace's graph has."""
+    measurement = measured["measurement"]
+    manifest = measurement["manifest"]
+    n_diseases = json.loads((measured["data_dir"] / "num_nodes.json").read_text())["disease"]
+
+    assert measured["written"] == ["measurement.json", "measurement_ranks.json"]
+    assert manifest["mode"] == "C"
+    assert manifest["candidate_construction"] == "every disease in the knowledge graph"
+    assert manifest["model_construction"].startswith("production")
+
+    columns = measurement["sampler_evidence"]["candidate_columns"]
+    assert (columns["min"], columns["max"]) == (n_diseases, n_diseases)
+    n_batches = measurement["sampler_evidence"]["n_batches"]
+    assert n_batches == math.ceil(manifest["n_samples"] / BATCH_SIZE)
+
+
+def test_the_report_carries_only_the_untruncated_metric_family(measured):
+    """Mode C reports the untruncated metrics and nothing truncated. The report
+    carries exactly its summary fields, so a second metric family, or the
+    per-sample rows, cannot ride along in it unnoticed."""
+    measurement = measured["measurement"]
+
+    assert set(measurement) == {
+        "manifest", "authoritative_metrics", "n_ranked", "n_ground_truth_absent",
+        "sampler_evidence",
+    }
+    assert "untruncated_mrr" in measurement["authoritative_metrics"]
+    assert "mrr" not in measurement["authoritative_metrics"]
+    assert measurement["authoritative_metrics"]["mean_rank"] is not None
+
+
+def test_every_consumed_file_is_identified_by_content(measured):
+    """Paths are not identities. `checkpoints/best.pt` names a different file after
+    every improvement, and the structural fingerprint is shared by every checkpoint
+    trained on the same graph."""
+    digests = measured["measurement"]["manifest"]["artifact_digests"]
+
+    for role in ("checkpoint", "samples", "node_features", "edge_indices", "num_nodes"):
+        assert len(digests[role]) == 64, f"{role} has no sha256"
+    assert digests["checkpoint"] != digests["samples"]
+
+    # And each is the digest of the file the command was given, not merely a
+    # digest-shaped string: a run that recorded another cohort's or another
+    # checkpoint's digest would pass the checks above.
+    data_dir = measured["data_dir"]
+    given = {
+        "checkpoint": measured["checkpoint"],
+        "samples": data_dir / "test_samples.json",
+        "node_features": data_dir / "node_features.pt",
+        "edge_indices": data_dir / "edge_indices.pt",
+        "num_nodes": data_dir / "num_nodes.json",
+    }
+    for role, path in given.items():
+        assert digests[role] == hashlib.sha256(path.read_bytes()).hexdigest(), role
+
+
+def test_the_cohort_is_whole_and_ranked_in_the_order_given(measured):
+    """No absences, no shrinkage, no reordering. Every disease is a candidate in
+    Mode C, so an absence would mean the ids are wrong — and a metric over a
+    silently reduced or reordered cohort answers a question nobody asked. The
+    ranks file is compared with the samples file the command was given."""
+    measurement = measured["measurement"]
+    samples = json.loads((measured["data_dir"] / "test_samples.json").read_text())
+
+    assert measurement["n_ground_truth_absent"] == 0
+    assert measurement["n_ranked"] == measurement["manifest"]["n_samples"] == len(samples)
+    assert [(row["sample_id"], row["ground_truth"]) for row in measured["ranks"]] == [
+        (sample["patient_id"], sample["disease_id"]) for sample in samples
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The claim guard
+# ---------------------------------------------------------------------------
+def test_this_run_records_that_it_is_not_a_cuda_run(measured):
+    """A guard against the claim rather than the code. Nothing here touches real
+    data, a real checkpoint or CUDA, and the manifest has to say so in writing."""
+    manifest = measured["measurement"]["manifest"]
+
+    assert manifest["cuda_executed"] is False, (
+        "a CPU run reported itself as having executed on CUDA; every assertion "
+        "above would still pass while the recorded claim was false"
+    )
+    assert manifest["device"] == "cpu"
+    assert manifest["n_samples"] < 100
+
+
+# ---------------------------------------------------------------------------
+# A C-only run reaches no retiring entry point
+# ---------------------------------------------------------------------------
+def test_mode_c_alone_touches_no_retiring_legacy_path(tmp_path, monkeypatch):
+    """The lifecycle claim, enforced rather than documented.
+
+    `load_legacy_mode_a_inputs` is deleted in M2.1's S7, and
+    `build_legacy_mode_a_model` goes with item 9's oracle-only surface. A C-only
+    run that called either would break the day it goes — and could fail today on
+    a checkpoint the legacy builder cannot rebuild but production can.
+    """
+    import scripts.measure_scorer as cli
+    from tests.fixtures.synthetic_workspace import build_workspace as build
+
+    data_dir, checkpoint = build(tmp_path / "ws")
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a C-only run reached a retiring legacy entry point")
+
+    monkeypatch.setattr(cli, "load_legacy_mode_a_inputs", refuse)
+    monkeypatch.setattr(cli, "build_legacy_mode_a_model", refuse)
+
+    output = tmp_path / "c_only" / "measurement.json"
+    assert cli.main([
+        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
+        "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
+        "--device", "cpu", "--modes", "C",
+    ]) == 0
+
+    # A single-mode run writes the mode that was asked for to --output, rather
+    # than leaving the requested path absent and a suffixed one beside it.
+    written = json.loads(output.read_text())
+    assert written["manifest"]["mode"] == "C"
+    assert not (output.parent / "measurement_predictions.json").exists()
