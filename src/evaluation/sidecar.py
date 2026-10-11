@@ -134,7 +134,9 @@ NON_SEMANTIC_FIELDS: Dict[str, str] = {
     ),
     "artifact_digests": (
         "hashed selectively rather than wholesale: checkpoint and samples are "
-        "already key fields, and the rest are covered by SEMANTIC_ARTIFACT_ROLES"
+        "already key fields, the graph tensors and the allocation are covered by "
+        "SEMANTIC_ARTIFACT_ROLES, and `kg` is the manifest-bound source graph, "
+        "which no mode computes from"
     ),
     "cuda_executed": (
         "implied by `device`, which is in the digest; `_resolve_device` sets the "

@@ -471,7 +471,9 @@ overlap.
 
 Two guards were added earlier in this phase and should not be confused with the boundary above:
 `--split` is required with no default on the measurement entry point, and `read_samples` refuses
-a missing split and lists what exists rather than substituting one.
+a missing split and lists what exists rather than substituting one. (Since contract M2.1's S7 a
+`--modes C` run refuses a missing split earlier, at `resolve_cohort`, before anything is read, with
+"does not exist" and no listing; runs that include Mode A still reach the reader's listing.)
 
 Neither separates validation from test. They prevent a number being produced on a split the caller
 did not ask for — which is a defect the original repository does have, at `hparams.py:184`, where
@@ -956,7 +958,10 @@ Two rules follow, and both are enforced rather than advised:
   it once, after the graph check, and training reads a resume parent once where it is restored,
   after the run directories and `config.yaml` exist. A requested parent that is missing still warns
   and trains from scratch; refusing it, and checking the parent before anything is written, is
-  contract M2.3's. No rollback and no transactional writing — the
+  contract M2.3's. Measurement's `--modes C` runs do the same since S7: the manifest, the tensors and
+  the cohort (and, for a generated cohort, its sibling split) are read once and checked before the
+  model is built or anything is written, and the checkpoint is read after those checks; runs that
+  include Mode A are not migrated and still check by path. No rollback and no transactional writing — the
   check simply moves ahead of the work. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
   disjointness — applies only to generated cohorts. Had the graph half lived inside the cohort
   verifier, generated validation would have been protected while institutional evaluation went on

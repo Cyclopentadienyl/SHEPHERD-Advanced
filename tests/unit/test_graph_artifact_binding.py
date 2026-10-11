@@ -305,7 +305,9 @@ class TestTheClinicalPathIsAGraphConsumer:
 
 def test_a_supplied_cohort_measurement_also_refuses_a_mixed_graph_workspace(tmp_path):
     """The case that would have been missed by putting graph binding inside the
-    generated-cohort verifier: this path never touches a generated cohort."""
+    generated-cohort verifier: this path never touches a generated cohort. This
+    is the path form runs including Mode A still use; a run without Mode A is
+    pinned in `test_measurement_reads_once.py`."""
     from scripts.measure_scorer import artifact_digests
 
     root = _workspace(tmp_path / "ws", supplied=True)

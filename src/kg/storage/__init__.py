@@ -20,9 +20,10 @@ same serialisation format, so a format change breaks all of them at once.
 
 Modules:
   - ``file_storage.py`` — the shared reader. **Started, not finished.** Its
-    callers so far are `scripts/measure_scorer.py` (Mode C through it),
-    serving, `src/inference/pipeline.py`, and training, `scripts/train_model.py`
-    (contract M2.1, S6 and S8); the two listed above still have their own
+    callers so far are `scripts/measure_scorer.py` (Mode C through
+    `read_measurement_inputs`, contract M2.1, S7), serving,
+    `src/inference/pipeline.py`, and training, `scripts/train_model.py` (S6 and
+    S8); the two listed above still have their own
     copies, and collapsing them is the rest of P1.
   - ``graph_db.py``     — reserved, empty: a graph-database backend
 
@@ -36,8 +37,9 @@ which point the shape it needs will be known instead of guessed.
 
 One wrapper stays on purpose:
 ``scripts/measure_scorer.py:load_legacy_mode_a_inputs`` is Mode A's entry point
-and already delegates to ``file_storage.py``; it goes when the run's single
-shared read of its inputs replaces it.
+and already delegates to ``file_storage.py``. Runs that include Mode A still
+read through it: they are not migrated (contract M2.1, S7 moved only runs
+without Mode A), and it goes when Modes A and B are migrated or retired.
 
 Status: this whole package belongs to a later build phase, which is why the
 status is recorded once here rather than in two separate module docstrings.

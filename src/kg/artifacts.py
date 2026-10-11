@@ -39,9 +39,11 @@ GRAPH_ARTIFACTS: Dict[str, str] = {
 }
 
 #: The three files of the PyG export a model loads. Training and measurement parse
-#: only these; once they move onto the read forms (contract M2.1, S7 and S8) they
-#: identify `kg.json` with `check_unparsed_kg_json` (decision 1). Serving parses
-#: these and `kg.json`; the SP producer parses `kg.json` alone.
+#: only these; on the read forms (contract M2.1: training since S8, measurement's
+#: runs without Mode A since S7) they identify `kg.json` with
+#: `check_unparsed_kg_json` (decision 1). Measurement's runs that include Mode A
+#: still verify by path: they are not migrated. Serving parses these and
+#: `kg.json`; the SP producer parses `kg.json` alone.
 GRAPH_TENSOR_ROLES: Tuple[str, ...] = ("node_features", "edge_indices", "num_nodes")
 
 #: The file the generator writes to record how a workspace was cut.
@@ -142,7 +144,9 @@ def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
     file by path, at one instant, while the caller loads it at another, so a file
     replaced between the two is not detected. `verify_graph_reads` closes that: it
     compares the identities of the bytes the run parsed with the run's one
-    manifest reading. Callers move to it in S6-S8, and S9 deletes this form.
+    manifest reading. Serving, training and measurement's runs without Mode A
+    moved to it in S6-S8; measurement's runs that include Mode A still call this
+    form, so S9 deletes it only once Modes A and B are migrated or retired.
 
     Raises:
         ValueError: naming the artifact whose bytes are not the ones recorded.
@@ -324,9 +328,10 @@ def verify_graph_source_read(
 def check_unparsed_kg_json(data_dir: Path, manifest: ManifestRead) -> None:
     """Identify `kg.json` before a run that does not parse it (M2.1, decision 1).
 
-    For training and measurement once they move onto the read forms (S7, S8):
+    For training (since S8) and measurement's runs without Mode A (since S7):
     they compute from the tensors and never parse `kg.json`, and the role they
-    are to record is the manifest-bound source graph (M2.2; decision 2). This
+    record is the manifest-bound source graph (decision 2; measurement records it
+    since S7, training from M2.2). This
     hashes the file and compares it with the run's one manifest reading, so a
     workspace whose `kg.json` is not the graph its manifest binds is refused.
 

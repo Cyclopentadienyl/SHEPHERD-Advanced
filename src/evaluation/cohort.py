@@ -275,7 +275,9 @@ def verify_generated_cohorts(
     sample file by path and parses it through a second read, so the digest and
     the disease sets can describe different bytes. `verify_cohort_reads` makes
     the same four checks from the samples a run already parsed, against its one
-    manifest reading.
+    manifest reading. Training (S8) and measurement's runs without Mode A (S7)
+    use that; measurement's runs that include Mode A still call this form, so S9
+    deletes it only once Modes A and B are migrated or retired.
 
     Raises:
         ValueError: naming which of the four failed, and for which split.

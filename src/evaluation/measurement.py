@@ -569,14 +569,22 @@ class MeasurementManifest:
     data_dir: str
     graph_fingerprint: Dict[str, Any]
     artifact_digests: Dict[str, Optional[str]]
-    """Raw SHA-256 of every file the measurement consumed, keyed by role.
+    """Raw SHA-256 of every file the measurement consumed, keyed by role, plus
+    `kg` for a run without Mode A.
 
     `graph_fingerprint` above is a **structural** identity — node types, counts,
     feature dimensions. Two different checkpoints trained on the same graph share
     it, and so do two different sample files of the same shape. A path is not an
     identity either: `checkpoints/best.pt` names a different file every time
     training improves. These digests are what let a number be traced back to the
-    exact bytes that produced it. `None` where the file was absent."""
+    exact bytes that produced it.
+
+    A run without Mode A records the digests of the bytes it parsed (contract
+    M2.1, S7), and its `kg` role is not a file it read: measurement never parses
+    `kg.json`, so `kg` is the digest the workspace's manifest binds for the
+    source graph (M2.1 decision 2). A run that includes Mode A is not migrated:
+    it hashes the files by path, records no `kg`, and records `None` where a
+    file was absent."""
     cuda_executed: bool
     """Whether this run executed on CUDA. **That is all it claims.**
 

@@ -13,7 +13,7 @@ own: the moved tests, which import no Mode A, must catch the mutations §9 names
 
 **R1 approved by the owner (2026-10-11) and implemented (2026-10-11), awaiting code review**
 (§9.1). Tests only: nothing in Modes A or B, and no class-1 test, is deleted, and no production code
-changes. R2 and everything after it still wait for the institution's answers (§8 items 4 and 7).
+changes. R2 and everything after it still wait for the institution's answers (§8 items 4 and 7), except S7 for Mode C only, which the owner chose to run now (§8 item 11) and which was implemented the same day.
 
 **Base.** The inventory read `f581f9e`'s tree (M2.1 S5) through `git show f581f9e:<path>`. The
 S1–S5 corrections from the internal review were then uncommitted in the working tree; they are not
@@ -158,7 +158,7 @@ stays, with A-only wording or parameters removed); **Owner** (needs a decision i
 |---|---|---|---|---|---|
 | `--modes`, default `"A"`, help "must stay the default" | `:438-446` | `main` `:564`; no caller of the script in `src/`, a Makefile, CI or a deploy script | **None.** Its original consumer, the calibration launcher, was deleted in S0 (`PLAN_B03.md:253-255`). Consequence today: a run naming no mode runs A, which raises `KeyError` on every checkpoint the current writer produces (§2.2) | `test_legacy_equivalence.py`'s `measured` fixture runs without `--modes` (`:60-77`) | **Retire** A and B as values; whether the option survives for `C` alone is §8 item 9 |
 | `SUPPORTED_MODE_SETS`, `parse_modes` | `:450-493` | `main` `:564` | None: they make inter-mode comparisons attributable (`PLAN_B03.md:248-252`) | `test_legacy_equivalence.py:253-267`, `:337-358` | **Retire** |
-| A/B dispatch | `:565`, `:568-573`, `:576-578`, `:582`, `:605-606`, `:615-640` | `main` | None live | — | **Retire**: the `if wants_legacy`/`else` collapses. Mode C's read stays: the import `:574` and the reads `:579-580`, unindented. `wants_production` (`:566`) becomes always true and goes with its `:598` guard, so the production build `:599-612` runs unconditionally |
+| A/B dispatch | `:565`, `:568-573`, `:576-578`, `:582`, `:605-606`, `:615-640` | `main` | None live | — | **Retire**: the `if wants_legacy`/`else` collapses. Mode C's read stays: the import `:574` and the reads `:579-580`, unindented (since S7, `read_measurement_inputs` and `measurement_input_digests`). `wants_production` (`:566`) becomes always true and goes with its `:598` guard, so the production build `:599-612` runs unconditionally |
 | `_assert_same_cohort` | `:496-519`, called `:659-660` only when A and C both ran | `main` | None: Mode C's own integrity check is `_assert_cohort_is_intact` inside `run_mode_c` (`measurement.py:1324-1330`) | `test_legacy_equivalence.py:304-334` | **Retire** |
 | `--predictions-output` and the legacy-shaped predictions file | flag `:407-411`; written `:683-691` only when A ran | none in code; its own docstring: "nothing diffs it against them now" (`measurement.py:707-708`) | None | `test_legacy_equivalence.py:96-121`, `:174`, `:235`, `:301`; `test_measurement_mode_a.py:548-581` | **Retire** |
 | `subgraph_candidate_construction` | `:267-284` | `build_manifest` default `:351`; A/B labels `:628`, `:632` | None for C, which passes "every disease in the knowledge graph" (`:647`) | `test_measurement_mode_a.py:180-217` | **Retire** |
@@ -168,9 +168,9 @@ stays, with A-only wording or parameters removed); **Owner** (needs a decision i
 | `--batch-size` | `:412-414` | A's candidate universe; C's chunk size (`measurement.py:1284`) | **Live for C**: moves C's numbers at floating-point level (`PLAN_TEST_RESULTS.md:488-490`) | — | **Keep**; its help text (reason given is A's) is rewritten |
 | `--seed` and its validation | `:431-437`, `:526`, `:544-546` | every mode; recorded as `python_seed`/`numpy_seed`/`torch_seed` (`:392-394`); the ledger refuses a null seed (`src/evaluation/sidecar.py:280-288`) | **None for C's numbers**: C consumes no randomness (`measurement.py:1241-1250`). The ledger's null-seed refusal and the three seed entries in its semantics list (`sidecar.py:90-92`) exist for A/B's worker streams, negatives and candidate universe (`sidecar.py:83-86`, `:267-271`; `measure_scorer.py:69-75`, `:528-535`) | the ledger's null-seed refusal; seed tests `test_measurement_mode_a.py:679`, `:689`, `:700`, `:708`, `:805` | **Owner** (§8 item 5): retire it with the A/B manifest fields and the refusal, or keep it with a stated Mode C reason (the identity of any future measurement randomness), reviewed at item 14's ledger v2 |
 | `_resolve_device` (the CUDA gate) | `:157-188` | every mode | **Live**: the formal Test runs on CUDA | — | **Keep** |
-| Production build: `torch.load(weights_only=True)`, `build_shepherd_model`, `encode_full_graph` | `:598-612` | Modes B and C; serving builds through `build_shepherd_model` too (`src/inference/pipeline.py:1014`) | **Live (Mode C)** | — | **Keep** (the `:598` guard and the `"B" in modes` guard `:605-606` go) |
+| Production build: `torch.load(weights_only=True)`, `build_shepherd_model`, `encode_full_graph` | `:598-612` | Modes B and C; serving builds through `build_shepherd_model` too (`src/inference/pipeline.py:1014`) | **Live (Mode C)** | — | **Keep** (the `:598` guard and the `"B" in modes` guard `:605-606` go). Since S7 a C-only run builds from `read_measurement_inputs`' checkpoint read; the `torch.load` branch serves only `A,B` and `A,B,C` and goes with them |
 | `build_manifest` | `:304-395` | `main` `:589` (every mode, through `manifest_for` `:587-593`); tests `test_differential_calibration.py:75`, `:104`; `test_measurement_modes_bc.py:52`, `:76`; `test_measurement_mode_a.py:67`, `:202`, `:273`, `:466`, `:499`, `:534`, `:978` | **Live** for C's fields. Its defaults are Mode A's: `mode="A"`, `model_construction="frozen evaluator (legacy)"` (`:307-309`) and A's candidate text (`:350-354`) | callers that rely on the defaults: all seven `test_measurement_mode_a.py` calls and `test_differential_calibration.py:104` take `mode="A"` and the legacy `model_construction`. The `world` fixture (`test_measurement_modes_bc.py:76-85`) overrides only `mode`, `candidate_construction` and `n_samples`, so its Mode C manifests still record `model_construction="frozen evaluator (legacy)"`, unlike the CLI's Mode C (`measure_scorer.py:646-648`) | **Keep in C form**: no A defaults |
-| `artifact_digests` | `:100-154` | every manifest; the ledger reads its digests (`sidecar.py:289-294`) | **Live (provenance)**. S7 replaces it with one digest map | — | **Keep** (until S7) |
+| `artifact_digests` | `:100-154` | every manifest (since S7, only the manifests of runs that include Mode A; C-only runs record through `measurement_input_digests`); the ledger reads its digests (`sidecar.py:289-294`) | **Live (provenance)**. S7 replaced it for C-only runs with a record built from the run's reads (2026-10-11) | — | **Keep** while runs that include Mode A record through it; it goes with them |
 | Printed ladder lines and the item-7a note | `:703-710`, `:714-716` (the note prints on **every** run, C-only included) | console | None. It ties formal-Test output to an A-only gate in text | — | **Retire** the ladder lines; rewrite the note |
 | Module docstring, parser description "(Mode A)", run example naming no mode | `:2-33`, `:399`, `:19-23` | — | — | The example fails on real checkpoints (it runs A) | Rewrite |
 
@@ -196,7 +196,8 @@ stays, with A-only wording or parameters removed); **Owner** (needs a decision i
 
 - **What it does:** the same two calls as Mode C's branch (`:579-580`):
   `read_graph_artifacts(...).graph_data` and `read_samples(...).samples`. Only the name and the
-  planned lifetime differ.
+  planned lifetime differ. (Since S7, Mode C reads through `read_measurement_inputs` instead, with
+  verification, the sibling split and the checkpoint.)
 - **Callers:** `main` `:577`; the test callers listed in §1.4; `test_legacy_equivalence.py:286`.
 - **Live behaviour protected: none.**
 - **Proposed: Retire** (S7 planned to delete it anyway; with retirement, before S7).
@@ -693,6 +694,9 @@ that comparison as a false premise).
     either way (§1.3). A Mode C-only S7 states that Modes A and B are not migrated; M2.1 is not
     reported complete while they are neither migrated nor retired; and no new read path is built
     for them. **Owner decides.** S6, S8 and R1 do not wait for this.
+    **Decided by the owner (2026-10-11): run S7 for Mode C now**, on the same entry point and the
+    shared readers, with Modes A and B not migrated. Implemented the same day (plan S7, "As
+    implemented"); runs that include Mode A keep their own reads until R2 or a migration.
 
 ---
 
@@ -709,7 +713,7 @@ that comparison as a false premise).
 | **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2:** the institution's answers to §8 items 4 and 7 are recorded and, if item 7 is (b), the Trainer-only CUDA comparison has run |
 | **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1) | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen |
 | **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided | Yes (small) | Their own tests |
-| — | **M2.1 S7** then runs on Mode C alone | — | — |
+| — | **M2.1 S7** then runs on Mode C alone. By the owner's choice it ran after R1 instead (§8 item 11, 2026-10-11); S7's Mode A items stay unbuilt | — | — |
 
 **What waits for the institution.** R1 is tests only and adds coverage whichever way the
 institution answers, so it can go ahead once the owner approves. R2's A/B deletions and the
@@ -721,7 +725,8 @@ before the differential is deleted.
 pin list follows R1 (§1.4). If the institution's answer is slow, the owner chooses between holding
 S7 and running S7 for Mode C only, with Mode A left on its current reads until the answer (§8 item
 11). Either way S7's Mode A items stay unbuilt; building them in the meantime is the cost this
-ordering avoids, and a Mode C-only S7 does not make M2.1 complete.
+ordering avoids, and a Mode C-only S7 does not make M2.1 complete. The owner chose the Mode C-only
+S7 on 2026-10-11, after R1 (§8 item 11).
 
 **What R1 does not change.** R1 moves and adds tests. It does not change the Trainer's scoring
 semantics, the negative-sampling policy or the order in which training applies its seed; each of

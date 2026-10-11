@@ -43,7 +43,7 @@ import random
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Tuple
 
 import numpy as np
 import torch
@@ -57,12 +57,19 @@ from src.evaluation.measurement import validate_measurement_seed
 from src.evaluation.cohort import (
     COHORT_KINDS,
     DEFAULT_COHORT_KIND,
+    GENERATED_SPLITS,
+    CohortProvenance,
     resolve_cohort,
     verify_generated_cohorts,
     verify_graph_artifacts,
 )
 from src.utils.fingerprint import compute_input_digests
 from src.utils.fingerprint import file_sha256 as _file_sha256
+
+if TYPE_CHECKING:
+    from src.kg.artifacts import ManifestRead
+    from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
+    from src.utils.checkpoint_io import CheckpointRead
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +107,17 @@ file_sha256 = _file_sha256
 def artifact_digests(
     checkpoint: Path, data_dir: Path, split: str, cohort_kind: str = DEFAULT_COHORT_KIND
 ) -> Dict[str, Optional[str]]:
-    """Every file a Mode A number depends on, by role.
+    """Every file a run that includes Mode A depends on, by role, hashed by path.
+
+    **Not migrated, pending retirement.** Contract M2.1's S7 moved runs without
+    Mode A (`--modes C`) onto one read per input (`read_measurement_inputs`)
+    and a record built from those reads (`measurement_input_digests`). Runs that
+    include Mode A (`A`, `A,B`, `A,B,C`) still record through this function,
+    which hashes each file at a different moment from the one at which it was
+    loaded, so a file replaced in between can be loaded as one thing and
+    recorded as another. They stay so until Modes A and B are migrated or
+    retired (`docs/working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`),
+    and M2.1 is not complete until then.
 
     Paths are recorded too, but a path is not an identity — `checkpoints/best.pt`
     names a different file after every improvement — and the structural
@@ -154,6 +171,156 @@ def artifact_digests(
     return compute_input_digests(roles)
 
 
+class MeasurementInputs(NamedTuple):
+    """What a run without Mode A read once each: the workspace files it checked,
+    and the checkpoint, which M2.1 does not check (contract M2.1, S7).
+
+    Carried whole from `read_measurement_inputs` to `measurement_input_digests`,
+    so the tensors
+    and samples Mode C scores, the checkpoint its model is built from and the
+    digests its manifest records come from the same reads and cannot be paired
+    with another read of a file that changed in between.
+
+    The other generated split, read for its binding and the disjointness check,
+    is not kept: it is checked, not consumed, and no role records it.
+    """
+
+    cohort: CohortProvenance
+    manifest: ManifestRead
+    graph: GraphArtifactsRead
+    samples: SamplesRead
+    checkpoint: CheckpointRead
+    #: The digest the run's one manifest reading binds for each of the four
+    #: graph roles, `kg` included, as `verify_graph_reads` returned it after
+    #: comparing the three tensors read with it. Kept, not discarded: it is the
+    #: `kg` role (M2.1 decision 2) and the opening for M2.4's comparison.
+    bound: Dict[str, str]
+
+
+def read_measurement_inputs(
+    checkpoint: Path, data_dir: Path, split: str, cohort_kind: str, device: torch.device,
+) -> MeasurementInputs:
+    """Read the manifest, the graph tensors, the cohort and the checkpoint once
+    each, and verify from those reads (contract M2.1, S7, Mode C only).
+
+    **Before any model is built or any output written.** `main` calls this for a
+    run without Mode A, right after the device is resolved and the modes parsed.
+    Runs that include Mode A keep their own reads (`load_legacy_mode_a_inputs`,
+    `build_legacy_mode_a_model`, `artifact_digests`): they are not migrated.
+
+    **The cohort is resolved first, and that only stats.** A split that is not
+    an identifier, a reserved name claimed as supplied, a non-generator name
+    claimed as generated, or a generated cohort with no manifest is refused
+    before any file is opened.
+
+    **The digests compared are those of the bytes parsed.** The manifest is read
+    once, for both cohort kinds, because the graph binding applies to both; each
+    tensor's digest and, for a generated cohort, each sample file's digest is
+    compared with that one reading. A file replaced after its read is the one
+    scored and recorded. A graph tensor, or for a generated cohort a sample
+    file, replaced before its read and after the manifest's is refused by name;
+    a supplied cohort's samples and the checkpoint are bound to nothing and are
+    recorded as read. Nothing is hashed again by path.
+
+    `kg.json` is never parsed by measurement, so it gets the identification
+    check (M2.1 decision 1): the file on disk is compared with this run's one
+    manifest reading, and its digest is not recorded as a file read; the `kg`
+    role is the manifest-bound source graph (`bound["kg"]`, decision 2).
+
+    **A generated cohort reads its sibling split too**, with the default fields,
+    so `verify_cohort_reads` checks both splits' bindings, the disease sets, and
+    the manifest's disjointness claim and the measured disjointness, as the path
+    form did. A supplied cohort carries no allocation, so it gets none of these
+    and its samples are bound by their own digest only.
+
+    The graph tensors load on CPU (`map_location="cpu"`, the shared reader's
+    default and what this run passed before); `encode_full_graph` moves them.
+    The checkpoint keeps this site's options: `map_location` the run's device,
+    `weights_only=True`. It is read after the workspace checks, so a refused
+    workspace reads no checkpoint; M2.1 checks nothing about it.
+    """
+    from src.evaluation.cohort import verify_cohort_reads
+    from src.kg.artifacts import check_unparsed_kg_json, read_split_manifest, verify_graph_reads
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+    from src.utils.checkpoint_io import read_checkpoint
+
+    # Stat only.
+    cohort = resolve_cohort(data_dir, split, cohort_kind)
+    siblings: Tuple[str, ...] = ()
+    if cohort.is_generated:
+        siblings = tuple(name for name in GENERATED_SPLITS if name != split)
+        for name in siblings:
+            resolve_cohort(data_dir, name)
+
+    manifest = read_split_manifest(data_dir)
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    samples = read_samples(data_dir, split)
+    checked = {name: read_samples(data_dir, name) for name in siblings}
+
+    bound = verify_graph_reads(manifest, graph.reads)
+    check_unparsed_kg_json(data_dir, manifest)
+    if cohort.is_generated:
+        verify_cohort_reads(
+            manifest,
+            {name: samples if name == split else checked[name] for name in GENERATED_SPLITS},
+        )
+    # The sibling is checked, not consumed: nothing holds it past this point, so
+    # it is not resident while the checkpoint is read.
+    del checked
+
+    read = read_checkpoint(checkpoint, map_location=device, weights_only=True)
+    logger.info(
+        "Read %d %s samples; checkpoint %s (sha256 %s)",
+        len(samples.samples), split, read.identity.path, read.identity.sha256[:12],
+    )
+    return MeasurementInputs(cohort, manifest, graph, samples, read, bound)
+
+
+def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
+    """The record of what a run without Mode A consumed, by role, built only
+    from its reads (contract M2.1, S7).
+
+    **Only from the readers' results.** Every file role is the digest of the
+    bytes a reader parsed: the checkpoint the model was built from, the cohort
+    scored, the three graph tensors encoded, and, for a generated cohort, the
+    manifest those were verified against. Nothing here hashes a path, so a file
+    replaced after its read cannot change what is recorded, and a digest that
+    was never taken cannot be recorded as `None`.
+
+    **`kg` is not a file this run read.** Measurement never parses `kg.json`;
+    its role is the digest the run's manifest binds for the source graph, the
+    graph the tensors scored were verified as the export of (M2.1 decision 2).
+    The identification check compared `kg.json` on disk with that digest at the
+    start of the run; it records nothing itself.
+
+    `split_manifest` is recorded for a generated cohort only. A supplied cohort's
+    run reads the manifest too, for the graph binding, but no allocation cut it,
+    so the manifest says nothing about how its cohort was made.
+
+    Nothing globs the directory, so an unrelated file beside these does not
+    change the record of a run that never read it.
+    """
+    from src.kg.artifacts import GRAPH_TENSOR_ROLES
+
+    reads: Dict[str, Any] = {
+        "checkpoint": inputs.checkpoint.identity,
+        "samples": inputs.samples.identity,
+        **{role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES},
+    }
+    if inputs.cohort.is_generated:
+        reads["split_manifest"] = inputs.manifest.identity
+
+    missing = sorted(role for role, read in reads.items() if read is None)
+    if missing:
+        raise ValueError(
+            f"no read of {', '.join(missing)}, so there is no digest to record; a "
+            "measurement record names only bytes a reader parsed"
+        )
+    digests = {role: read.sha256 for role, read in reads.items()}
+    digests["kg"] = inputs.bound["kg"]
+    return digests
+
+
 def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
     """Return the device and whether it is CUDA.
 
@@ -204,13 +371,21 @@ def load_legacy_mode_a_inputs(data_dir: Path, split: str) -> Tuple[Dict[str, Any
     **Named for its lifecycle, not its shape.** This was a deliberate duplicate of
     the frozen evaluator's loader, kept so Mode A consumed its inputs exactly as
     the oracle did; that evaluator is deleted. **Modes B, C and D must not import
-    it.** It goes when the run's single shared read of its inputs replaces it.
+    it.**
+
+    **Not migrated, pending retirement.** Contract M2.1's S7 moved runs without
+    Mode A onto one read per input, verified and recorded from those reads
+    (`read_measurement_inputs`). Runs that include Mode A (`A`, `A,B`, `A,B,C`)
+    still read through this function and record through `artifact_digests`,
+    which hashes the files again by path. This goes when Modes A and B are
+    migrated or retired (`docs/working/scorer-measurement/
+    ASSESSMENT_MODE_AB_RETIREMENT.md`); M2.1 is not complete until then.
 
     **The reading is no longer duplicated here.** It delegates to
-    `src/kg/storage/file_storage.py`, which stays when this function goes — Mode C
-    needs the same files and may not reach them through this function. What stays
-    legacy about this one is its *name and lifecycle*: it is the entry point Mode A
-    uses, and it goes when that shared read replaces it.
+    `src/kg/storage/file_storage.py`, which stays when this function goes; Mode C
+    reads the same files through `read_measurement_inputs`, never through this
+    function. What stays legacy about this one is its *name and lifecycle*: it is
+    the entry point Mode A uses.
 
     The same read still appears in `scripts/build_index.py` and
     `scripts/spikes/validate_fast_subgraph.py`; serving and training moved to the
@@ -308,8 +483,15 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    candidate_construction: Optional[str] = None,
                    model_construction: str = "frozen evaluator (legacy)",
                    model: Any = None,
-                   regime: Any = None) -> Any:
+                   regime: Any = None,
+                   digests: Optional[Mapping[str, str]] = None) -> Any:
     """Build the manifest for one mode.
+
+    `digests` is the record of what the run read, from
+    `measurement_input_digests`, and a run without Mode A always passes it
+    (contract M2.1, S7). Omitting it hashes the inputs by path through
+    `artifact_digests`, which only runs that include Mode A still do: they are
+    not migrated, pending retirement.
 
     `candidate_construction` defaults to the subgraph description derived from
     `DIAGNOSIS_SUBGRAPH_HOPS`, so it cannot drift from `subgraph_hops` in the same
@@ -369,8 +551,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
-        artifact_digests=artifact_digests(
-            args.checkpoint, args.data_dir, args.split, args.cohort_kind
+        artifact_digests=(
+            dict(digests) if digests is not None
+            else artifact_digests(args.checkpoint, args.data_dir, args.split, args.cohort_kind)
         ),
         cuda_executed=(
             device.type == "cuda" if cuda_executed is None else cuda_executed
@@ -566,18 +749,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     wants_production = bool({"B", "C"} & set(modes))
 
     # Loading and construction are dispatched by mode, not done unconditionally.
-    # `load_legacy_mode_a_inputs` goes when the run's single shared read replaces
-    # it, and `build_legacy_mode_a_model` with BACKLOG item 9's oracle-only
-    # surface; a C-only run that touched them would fail when they go, and could
-    # fail today on a checkpoint the legacy loader cannot rebuild even though
-    # production can.
-    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
-
+    # A run without Mode A reads each input once and verifies and records from
+    # those reads, before any model is built (contract M2.1, S7). A run that
+    # includes Mode A is not migrated, pending retirement: it keeps
+    # `load_legacy_mode_a_inputs`, the checkpoint loaded by path below and
+    # `artifact_digests`, and M2.1 is not complete until it is migrated or
+    # retired. `build_legacy_mode_a_model` goes with BACKLOG item 9's
+    # oracle-only surface; a C-only run that touched it could fail on a
+    # checkpoint the legacy builder cannot rebuild even though production can.
+    inputs: Optional[MeasurementInputs] = None
+    input_digests: Optional[Dict[str, str]] = None
     if wants_legacy:
         graph_data, samples = load_legacy_mode_a_inputs(args.data_dir, args.split)
     else:
-        graph_data = read_graph_artifacts(args.data_dir).graph_data
-        samples = read_samples(args.data_dir, args.split).samples
+        inputs = read_measurement_inputs(
+            args.checkpoint, args.data_dir, args.split, args.cohort_kind, device
+        )
+        graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
+        input_digests = measurement_input_digests(inputs)
 
     legacy_model = build_legacy_mode_a_model(args.checkpoint, device) if wants_legacy else None
 
@@ -590,6 +779,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args, graph_data, len(samples), device, loader_config, cuda_executed,
             mode=mode, candidate_construction=candidates,
             model_construction=construction, model=model, regime=regime,
+            digests=input_digests,
         )
 
     encoded = None
@@ -598,7 +788,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if wants_production:
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
-        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=True)
+        checkpoint = (
+            inputs.checkpoint.checkpoint if inputs is not None
+            # A,B and A,B,C: not migrated (above).
+            else torch.load(args.checkpoint, map_location=device, weights_only=True)
+        )
         production_model = build_shepherd_model(checkpoint, graph_data, device)
         # Only B is read against A as encoder scope, so only B needs the two
         # constructions to be the same model. C is never compared to A directly.

@@ -17,8 +17,9 @@ compare it against:
     manifest and scoring context disagree is refused.
 
 Two kinds of input, for two kinds of claim. The workspace (`world`) is read the
-way the CLI's Mode C reads it — `read_graph_artifacts`, `read_samples`,
-`build_shepherd_model`, a Mode C manifest — and it is degenerate on purpose
+way the CLI's Mode C reads it — `read_measurement_inputs`, `build_shepherd_model`
+over the checkpoint that read, a Mode C manifest given the record built from
+those reads — and it is degenerate on purpose
 (`tests/fixtures/synthetic_workspace.py`), so **no rank from it is evidence about
 the scorer**. Every value test therefore builds its own `EncodedGraph` by hand,
 with vectors placed so each expected rank is a fact of geometry rather than the
@@ -53,26 +54,33 @@ METRIC_KEYS = {
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
-    """One workspace, read and built the way the CLI's Mode C reads and builds it."""
+    """One workspace, read and built the way the CLI's Mode C reads and builds it:
+    one read of each input through `read_measurement_inputs`, the model built from
+    that read's checkpoint, and every manifest given the record built from those
+    reads (contract M2.1, S7)."""
     import argparse
 
-    from scripts.measure_scorer import build_loader_config, build_manifest
-    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+    from scripts.measure_scorer import (
+        build_loader_config,
+        build_manifest,
+        measurement_input_digests,
+        read_measurement_inputs,
+    )
     from src.models.gnn.shepherd_gnn import build_shepherd_model
 
     root = tmp_path_factory.mktemp("mode_c")
     data_dir, checkpoint_path = build_workspace(root)
     device = torch.device("cpu")
 
-    graph_data = read_graph_artifacts(data_dir).graph_data
-    samples = read_samples(data_dir, "test").samples
+    inputs = read_measurement_inputs(checkpoint_path, data_dir, "test", "supplied", device)
+    digests = measurement_input_digests(inputs)
+    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
     args = argparse.Namespace(
         checkpoint=checkpoint_path, data_dir=data_dir, split="test", cohort_kind="supplied",
         batch_size=BATCH_SIZE, num_workers=0, seed=None,
     )
     loader_config = build_loader_config(args)
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    production_model = build_shepherd_model(checkpoint, graph_data, device)
+    production_model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
 
     def manifest(mode, construction, n_samples=None, regime_here=False):
         """`regime_here=True` observes the caller's ambient context, which is what
@@ -86,6 +94,7 @@ def world(tmp_path_factory):
             model_construction="production (build_shepherd_model)",
             model=production_model,
             regime=observe_autocast_regime(device) if regime_here else None,
+            digests=digests,
         )
 
     return {

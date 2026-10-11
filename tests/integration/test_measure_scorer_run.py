@@ -144,6 +144,20 @@ def test_every_consumed_file_is_identified_by_content(measured):
         assert digests[role] == hashlib.sha256(path.read_bytes()).hexdigest(), role
 
 
+def test_the_kg_role_is_the_manifest_bound_source_graph(measured):
+    """Mode C never parses `kg.json`, so its `kg` role is the digest the
+    workspace's manifest binds for the source graph the tensors scored were
+    verified as the export of (contract M2.1 decision 2), not a file it read. A
+    supplied cohort records no allocation, and nothing else becomes a role."""
+    digests = measured["measurement"]["manifest"]["artifact_digests"]
+    manifest = json.loads((measured["data_dir"] / "split_manifest.json").read_text())
+
+    assert digests["kg"] == manifest["artifacts"]["kg"]
+    assert set(digests) == {
+        "checkpoint", "samples", "node_features", "edge_indices", "num_nodes", "kg",
+    }
+
+
 def test_the_cohort_is_whole_and_ranked_in_the_order_given(measured):
     """No absences, no shrinkage, no reordering. Every disease is a candidate in
     Mode C, so an absence would mean the ids are wrong — and a metric over a
@@ -181,10 +195,12 @@ def test_this_run_records_that_it_is_not_a_cuda_run(measured):
 def test_mode_c_alone_touches_no_retiring_legacy_path(tmp_path, monkeypatch):
     """The lifecycle claim, enforced rather than documented.
 
-    `load_legacy_mode_a_inputs` is deleted in M2.1's S7, and
-    `build_legacy_mode_a_model` goes with item 9's oracle-only surface. A C-only
-    run that called either would break the day it goes — and could fail today on
-    a checkpoint the legacy builder cannot rebuild but production can.
+    A C-only run reads through `read_measurement_inputs` (contract M2.1, S7).
+    `load_legacy_mode_a_inputs` stays only for runs that include Mode A, which
+    are not migrated, pending retirement, and `build_legacy_mode_a_model` goes
+    with item 9's oracle-only surface. A C-only run that called either would
+    break the day it goes — and could fail today on a checkpoint the legacy
+    builder cannot rebuild but production can.
     """
     import scripts.measure_scorer as cli
     from tests.fixtures.synthetic_workspace import build_workspace as build

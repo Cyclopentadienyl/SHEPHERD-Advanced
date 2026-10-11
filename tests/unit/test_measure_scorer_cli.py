@@ -290,6 +290,10 @@ class TestTheRolesAMeasurementRecords:
     of new phenotype subsets of diseases that have them. Two different quantities
     under one name, and nothing in `val_samples.json`'s digest separates them --
     only `split_manifest.json` does.
+
+    These call `artifact_digests`, the path form that runs including Mode A still
+    record through (not migrated); a run without Mode A records from its reads,
+    pinned in `test_measurement_reads_once.py` (contract M2.1, S7).
     """
 
     @staticmethod
@@ -367,7 +371,8 @@ class TestTheRolesAMeasurementRecords:
 
 
 # ==============================================================================
-# --split is required, and a missing split says what the workspace has
+# --split is required, and a missing split says what the workspace has (at the
+# reader; a run without Mode A refuses it earlier, at `resolve_cohort`)
 # ==============================================================================
 def test_split_has_no_default_on_the_measurement_entry_point():
     """It defaulted to `test`, which the generator never writes.
