@@ -9,18 +9,23 @@ of `0708789` found one P2; the incremental review of `7e1af96` found it closed a
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
 `90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2
 (`45d9dea..3433bf8`); S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 (`e3eefee..6f16373`);
-S6 and S8 are implemented (2026-10-11); their batch (`8421b8c..cddad9d`) awaits code review, and the
+S6 and S8 are implemented (2026-10-11); their batch (`8421b8c..cddad9d`) is code-reviewed with no P1 or P2
+(2026-10-12), and the
 later increment that narrowed their claims (`cddad9d..3e8e559`) was reviewed with no P1 or P2
 (2026-10-12), which is not a review of that batch. S7 is implemented for Mode C only (2026-10-11)
 and code-reviewed with no P1 or P2 (`3d53c9b..7327798`, 2026-10-12), as that declared scope, not as every
 mode migrated. M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and
 code-reviewed with no P1 or P2 (`7327798..290c03a`, 2026-10-12). Measurement runs that include Mode A
 were not migrated; since the owner's clarification of 2026-10-12 they were deleted by the Mode A/B
-retirement's R2 (2026-10-12, awaiting code review), so since R2 every measurement run takes S7's reads;
+retirement's R2 (2026-10-12; code-reviewed with no P1 or P2 in
+`1d0b5a6..06fd0f1`, 2026-10-12), so since R2 every measurement run takes S7's reads;
 that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
-complete: S9 is implemented (2026-10-12) and awaits code review, and S10 is not run; the S6/S8 batch (`8421b8c..cddad9d`) awaits code review,
-and so do R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a change to the shared reader `read_samples` made after S1–S5's
-review. The rest
+complete: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
+but S10's tools, delivered with it and kept outside the repository, had three P2 in that review and await
+re-review, and S10 is not run, so capacity is not accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
+(`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
+homelab. The rest
 of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -586,13 +591,16 @@ checked the map and this breakdown, and a second check verified this text agains
 **Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
 left as written. S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at `3433bf8`;
 S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`; S6 and S8
-are implemented (2026-10-11) and their batch awaits code review (the later increment that narrowed
+are implemented (2026-10-11) and their batch is code-reviewed with no P1 or P2 at
+`cddad9d` (2026-10-12; the later increment that narrowed
 their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for Mode C only
 (2026-10-11) and code-reviewed with no P1 or P2 at `7327798` (2026-10-12) as that declared scope,
 and measurement runs that include Mode A were not migrated: since the owner's clarification of
-2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12, awaiting code review);
-S9 is implemented (2026-10-12) and awaits code review (its "As implemented" note below);
-S10 has not run, and nothing else here is implemented.
+2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12; code-reviewed with no P1
+or P2 in `1d0b5a6..06fd0f1`, 2026-10-12); S9 is implemented (2026-10-12) and code-reviewed with no P1
+or P2 at `f481882` (2026-10-12; its "As implemented" note below); S10 has not run, its tools
+(outside the repository) had three P2 in that review and await re-review, and nothing else here
+is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -680,7 +688,8 @@ S10 has not run, and nothing else here is implemented.
   S6/S8's claims (`cddad9d..3e8e559`), in S7 for Mode C only (`3d53c9b..7327798`), reviewed as the
   declared C-only scope (code-review level) and not as every mode migrated, and in M3a's seed ordering
   (`7327798..290c03a`). The first is a text increment, not a review of the S6/S8 batch
-  (`8421b8c..cddad9d`), which still awaits code review. The same review found no P1 or P2 in the
+  (`8421b8c..cddad9d`), which then still awaited code review (since code-reviewed with no P1 or P2,
+  2026-10-12; below). The same review found no P1 or P2 in the
   retirement's R1 (`3e8e559..3d53c9b`), which is not part of this plan. M2.1 is not complete.
 - **The owner's clarification of 2026-10-12.** The owner reported on 2026-10-12 that the
   institution had already authorised retiring the old pipeline's Mode A/B comparison tools, and
@@ -688,7 +697,8 @@ S10 has not run, and nothing else here is implemented.
   scoring comparison the differential recorded. The retirement assessment's §8 items 4 and 7
   therefore no longer hold the retirement's R2 back: S7's Mode A/B items will never be built, runs that include
   Mode A are to be deleted by R2 rather than migrated, and S9's measurement part follows R2. R2 was
-  implemented the same day (awaiting code review): runs that include Mode A are deleted, and
+  implemented the same day (then awaiting code review; since code-reviewed with no P1 or P2 in
+  `1d0b5a6..06fd0f1`, 2026-10-12): runs that include Mode A are deleted, and
   `measure_scorer.py` no longer calls a path form.
 - **The reviewer's convergence instruction (2026-10-12), adopted by the owner.** Finish S9 and S10
   to close M2.1, then M2.2–M2.6, so the contract is enforced: producer and consumer delivered
@@ -700,7 +710,41 @@ S10 has not run, and nothing else here is implemented.
   (with its range) and accepted in the designated environment it is, and one never stands for
   another. Code review version for that round: `06fd0f1`; awaiting code review: the S6/S8 batch
   (`8421b8c..cddad9d`) and `1d0b5a6..06fd0f1` (HGT P2 `418b37e`, the record `84d69fb`, HGT Edit 1
-  `8eae614`, telemetry `a535ae2`, R2 `e210b12`, item 8 `06fd0f1`).
+  `8eae614`, telemetry `a535ae2`, R2 `e210b12`, item 8 `06fd0f1`). Both have since been
+  code-reviewed with no P1 or P2 (2026-10-12; the next bullet).
+- **The code review at `c1b8a12`** (2026-10-12), read-only, judged five ranges apart, with
+  targeted CPU tests in an isolated copy. Each is a code review of its range, not an acceptance:
+  - **the S6/S8 batch** (`8421b8c..cddad9d`; serving and training read each recorded input once):
+    no new P1 or P2; 212 targeted CPU tests passed. The reviewer notes that M2.3's parent checks
+    are not in this range: the resume parent is still read where it is restored, and a missing
+    requested parent still warns and the run trains from scratch; both stay with M2.3;
+  - **HGT, telemetry, R2 and item 8** (`1d0b5a6..06fd0f1`, six commits): no new P1 or P2; 179
+    targeted CPU tests passed, 1 skipped. The commits: the HGT proposal states the kernel as
+    observed, not inferred (`418b37e`), so the earlier P2 on that proposal can be closed; the
+    record of the owner's clarification of 2026-10-12 (`84d69fb`); HGT Edit 1 (`8eae614`), at CPU
+    code-review level only, not a GB10 performance or CUDA numeric acceptance; the dashboard's
+    telemetry off (`a535ae2`, Gradio's `analytics_enabled=False`), which does not mean the project
+    never makes other network requests; R2 (`e210b12`), Modes A and B deleted with the retirement
+    assessment's §8 items 5 and 9 (ledger schema 2); and item 8 (`06fd0f1`), `read_samples`
+    refusing non-integer and boolean ids;
+  - **the status wording** (`06fd0f1..02a6954`; planned, implemented, reviewed, accepted): no new
+    P1 or P2;
+  - **S9** (`02a6954..f481882`): no new P1 or P2 in the product code; 554 targeted CPU tests
+    passed, and import-linter reported 4 kept. S10's tools, delivered with it and kept outside the
+    repository as planned, had three P2: the comparison prints "met" for evidence that fails the
+    declared acceptance conditions; the sampler stops only its direct child, so SP workers can be
+    left running; and the driver can reuse an old output directory, so a failed run mixes with an
+    earlier run's evidence. The tools were fixed afterwards, outside the repository (S10, "The
+    tools"), and await re-review;
+  - **S10's plan amendments** (`f481882..c1b8a12`): no new P1 or P2. The plan is acceptable; the
+    tools do not yet meet all its requirements.
+
+  The whole suite at `c1b8a12`, in an isolated copy: 2615 passed, 9 skipped and 1 failed, only
+  because a `git archive` copy has no git metadata; with temporary metadata that test and the docs
+  index passed (61 passed). **What this round does not establish:** S10's tools are not passed;
+  S10 has not run and capacity is not accepted; M2.1 is not complete (S10 is outstanding), and
+  neither is M2; nothing is accepted on the homelab. HGT Edit 2, the AMP study and item 14 are not
+  part of it.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1235,7 +1279,7 @@ each moves its callers before anything is removed.
        `tests/unit/test_measurement_reads_once.py`. The Mode C unit fixture
        (`tests/unit/test_measurement_mode_c.py`) now reads through `read_measurement_inputs`, and
        `tests/integration/test_measure_scorer_run.py` pins the `kg` role.
-     - **The retirement's R2 (2026-10-12), awaiting code review.** Modes A and B are deleted, with the runs that
+     - **The retirement's R2 (2026-10-12), code-reviewed with no P1 or P2 (`1d0b5a6..06fd0f1`, 2026-10-12).** Modes A and B are deleted, with the runs that
        include Mode A, `load_legacy_mode_a_inputs`, the checkpoint loaded by path,
        `artifact_digests` and `--modes`, so every measurement run is the path above and records
        `kg`. With them went the manifest's loader, sampler and seed fields, `--seed` and
@@ -1342,7 +1386,9 @@ each moves its callers before anything is removed.
    - Docs and docstrings that name removed functions are updated, including the copy lists that
      S6 and S8 shorten: `src/kg/storage/__init__.py:10-30` and
      `src/kg/storage/file_storage.py:9-16`.
-   - **As implemented (2026-10-12), awaiting code review.**
+   - **As implemented (2026-10-12); code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12).**
+     That review covered the product code (554 targeted CPU tests passed; import-linter 4 kept).
+     S10's tools, delivered with it, had three P2 and await re-review (S10, "The tools").
      - **Deleted:** `verify_graph_artifacts`, `verify_graph_source`, `verify_generated_cohorts`,
        `compute_input_digests`, and the `file_sha256` re-export in `scripts/measure_scorer.py`
        (the plan allowed either; its pins became pins of its absence). Their reasoning moved into
@@ -1404,6 +1450,10 @@ each moves its callers before anything is removed.
         S9 with S10's tools have closed, with any review fixes on it, so that no review can change
         measured code after the run. Its full SHA is written here and in the evidence before the
         run, and `git diff <after> <the M2.1 pull request's head> -- src scripts` must be empty.
+        On 2026-10-12 the reviews of the S6/S8 batch, of `1d0b5a6..06fd0f1` and of S9's code
+        (`02a6954..f481882`) closed with no P1 or P2; S10's tools had three P2 in that last review
+        and await re-review, so the
+        "after" commit is fixed once that re-review closes.
       - **It runs before M2.3 and M2.4 refuse.** The subject records no `kg` role (its training
         roles at `43d47c5` are the samples, the tensors and the manifest), so once M2.3 refuses a
         resume parent missing a role and M2.4 refuses serving and measurement on one, the
@@ -1453,9 +1503,14 @@ each moves its callers before anything is removed.
         (`src/config/runtime_presets.py:29-35`); serving applies its own;
       - the kernel, driver, Python and torch versions, and the venv;
       - a quiet machine, with the service stopped;
-      - the page-cache state, the same at both commits: warm by default (each row's inputs read
-        once before its run; no privilege needed), or dropped before each row if the owner
-        chooses it (needs `sudo` without a prompt); the state used is recorded;
+      - the page-cache state: `PAGE_CACHE=warm`, by the owner's decision through the reviewer
+        (2026-10-12), which replaces "warm by default, or dropped before each row if the owner
+        chooses it":
+        - both commits use the same pre-read file set, order and tools;
+        - the same pre-read runs before each measured row, and R0 is taken after it;
+        - the environment record and the report say this is a capacity comparison after a
+          pre-read, not a cold start;
+        - there is no drop control and no extra matrix;
       - the byte size and SHA-256 of every input: `kg.json`, the tensors, `num_nodes.json`, the
         sample files, the manifest, the SP pair and the checkpoint;
       - the sampler and the probe, with SHA-256 equal at both commits, and the sampling interval:
@@ -1576,7 +1631,9 @@ each moves its callers before anything is removed.
 the entry points; S9–S10, removal of the path forms, pins and capacity. M2.1 ends as one pull
 request, as M1 did. As delivered: S0 (`45d9dea..3433bf8`) and S1–S5 (`e3eefee..6f16373`) were
 reviewed apart, S7 (Mode C only) on its own (`3d53c9b..7327798`), and the S6/S8 batch
-(`8421b8c..cddad9d`) awaits review; S9's code and S10's tools are to be reviewed together, and S10's
+(`8421b8c..cddad9d`) on its own (no P1 or P2, 2026-10-12). S9's code (`02a6954..f481882`) and S10's
+tools were reviewed together and judged apart (2026-10-12): S9 with no P1 or P2; S10's tools with
+three P2, awaiting re-review. S10's
 evidence follows its run.
 
 **What M2.1 does not change.**

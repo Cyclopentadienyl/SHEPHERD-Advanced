@@ -78,7 +78,7 @@ Mode C's expected ranks from hand-built geometry
 (`tests/integration/test_measure_scorer_run.py`) shows only that the command runs
 and writes complete artifacts.
 
-## The retirement of Modes A and B — implemented 2026-10-12, awaiting code review
+## The retirement of Modes A and B — implemented 2026-10-12, code-reviewed 2026-10-12 with no P1 or P2 (`1d0b5a6..06fd0f1`)
 
 > **Supersedes "Removing the legacy path — SUSPENDED, DO NOT EXECUTE".** That
 > checklist was written when Mode A's acceptance was bit-parity with
