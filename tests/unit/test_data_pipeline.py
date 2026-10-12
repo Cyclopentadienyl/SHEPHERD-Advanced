@@ -618,8 +618,9 @@ class TestDiseaseTruthRangeInvariant:
     run after `_move_to_device` and force a host-device synchronisation on every
     valid batch.
 
-    The two downstream boundaries — `DiagnosisLoss` and `to_global_ids` — are
-    covered by their own files and are deliberately independent of this one.
+    The two downstream boundaries — `DiagnosisLoss` and Mode C's
+    `_assert_ids_in_range` — are covered by their own files and are deliberately
+    independent of this one.
     """
 
     @staticmethod

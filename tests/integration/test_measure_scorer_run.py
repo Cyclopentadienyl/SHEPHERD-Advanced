@@ -41,11 +41,8 @@ RUN_TIMEOUT_SECONDS = 900
 def measured(tmp_path_factory):
     """Run Mode C's command once and hand back what it wrote.
 
-    Only the flags Mode C consumes: no `--num-workers` and no `--seed`, since
-    Mode C has no dataloader and draws nothing, so the run is the one their
-    defaults give. sys.executable rather than "python": a bare name resolves
-    against PATH, which is only this environment when a venv happens to be
-    active.
+    sys.executable rather than "python": a bare name resolves against PATH,
+    which is only this environment when a venv happens to be active.
     """
     root = tmp_path_factory.mktemp("mode_c_cli")
     data_dir, checkpoint = build_workspace(root)
@@ -60,7 +57,6 @@ def measured(tmp_path_factory):
             "--output", str(output),
             "--batch-size", str(BATCH_SIZE),
             "--device", "cpu",
-            "--modes", "C",
         ],
         cwd=str(REPO_ROOT),
         capture_output=True,
@@ -86,9 +82,9 @@ def measured(tmp_path_factory):
 # What Mode C's command writes
 # ---------------------------------------------------------------------------
 def test_the_report_at_output_is_mode_c_scored_against_every_disease(measured):
-    """A single-mode run writes the mode that was asked for to `--output`, beside
-    its own ranks, and nothing else: no suffixed copy and no rows file. Every
-    batch is scored against every disease the workspace's graph has."""
+    """The run writes Mode C's report to `--output`, beside its own ranks, and
+    nothing else. Every batch is scored against every disease the workspace's
+    graph has."""
     measurement = measured["measurement"]
     manifest = measurement["manifest"]
     n_diseases = json.loads((measured["data_dir"] / "num_nodes.json").read_text())["disease"]
@@ -117,6 +113,14 @@ def test_the_report_carries_only_the_untruncated_metric_family(measured):
     assert "untruncated_mrr" in measurement["authoritative_metrics"]
     assert "mrr" not in measurement["authoritative_metrics"]
     assert measurement["authoritative_metrics"]["mean_rank"] is not None
+
+
+def test_the_manifest_records_the_chunk_size_the_run_used(measured):
+    """`batch_size` is the one loader-era field Mode C's manifest keeps: it is the
+    chunk size, it can move scores at floating-point level, and the ledger's
+    semantics digest carries it. The run asked for 3, not the default 32."""
+    assert BATCH_SIZE != 32
+    assert measured["measurement"]["manifest"]["batch_size"] == BATCH_SIZE
 
 
 def test_every_consumed_file_is_identified_by_content(measured):
@@ -190,39 +194,27 @@ def test_this_run_records_that_it_is_not_a_cuda_run(measured):
 
 
 # ---------------------------------------------------------------------------
-# A C-only run reaches no retiring entry point
+# In process, on a checkpoint in the training writer's shape
 # ---------------------------------------------------------------------------
-def test_mode_c_alone_touches_no_retiring_legacy_path(tmp_path, monkeypatch):
-    """The lifecycle claim, enforced rather than documented.
-
-    A C-only run reads through `read_measurement_inputs` (contract M2.1, S7).
-    `load_legacy_mode_a_inputs` stays only for runs that include Mode A, which
-    are not migrated, pending retirement, and `build_legacy_mode_a_model` goes
-    with item 9's oracle-only surface. A C-only run that called either would
-    break the day it goes — and could fail today on a checkpoint the legacy
-    builder cannot rebuild but production can.
-    """
+def test_an_in_process_run_writes_mode_c_at_output(tmp_path):
+    """`main` called directly, as the unit tests call it, on the fixture's
+    checkpoint, which carries only what the training writer writes: the model is
+    built the way production builds it, and Mode C's report is at `--output`
+    beside its ranks, with nothing else written."""
     import scripts.measure_scorer as cli
     from tests.fixtures.synthetic_workspace import build_workspace as build
 
     data_dir, checkpoint = build(tmp_path / "ws")
 
-    def refuse(*args, **kwargs):
-        raise AssertionError("a C-only run reached a retiring legacy entry point")
-
-    monkeypatch.setattr(cli, "load_legacy_mode_a_inputs", refuse)
-    monkeypatch.setattr(cli, "build_legacy_mode_a_model", refuse)
-
-    output = tmp_path / "c_only" / "measurement.json"
+    output = tmp_path / "run" / "measurement.json"
     assert cli.main([
         "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
         "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
-        "--batch-size", str(BATCH_SIZE), "--num-workers", "0",
-        "--device", "cpu", "--modes", "C",
+        "--batch-size", str(BATCH_SIZE), "--device", "cpu",
     ]) == 0
 
-    # A single-mode run writes the mode that was asked for to --output, rather
-    # than leaving the requested path absent and a suffixed one beside it.
     written = json.loads(output.read_text())
     assert written["manifest"]["mode"] == "C"
-    assert not (output.parent / "measurement_predictions.json").exists()
+    assert sorted(p.name for p in output.parent.iterdir()) == [
+        "measurement.json", "measurement_ranks.json",
+    ]

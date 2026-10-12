@@ -1,15 +1,12 @@
 """
-The two ranking streams, and the identifier translation between them.
-=====================================================================
-Three failure modes are worth testing here, and they are different:
+The canonical ranking and the rank of the truth in it.
+======================================================
+Two failure modes are worth testing here, and they are different:
 
-  - **Direction.** Subgraph-local and global disease ids are both integers of a
-    plausible magnitude, so translating in the wrong direction produces valid-
-    looking ids and therefore valid-looking, wrong metrics. Nothing downstream
-    can detect it.
   - **Determinism.** `canonical_ranking` must depend on the scores and the global
-    ids and on nothing else. If the order candidates arrive in can change the
-    result, then a number from Mode A cannot be compared with one from Mode C.
+    ids and on nothing else. If the order candidates arrive in, or how a cohort
+    is chunked, could change the result, two runs over the same scores could
+    report different ranks.
   - **Absence.** A ground truth outside the candidate set has no rank. It must
     stay `None` rather than becoming a large integer that flows into a mean.
 """
@@ -19,46 +16,8 @@ torch = pytest.importorskip("torch")
 
 from src.evaluation.measurement import (  # noqa: E402
     canonical_ranking,
-    legacy_ranking,
     ranks_of_truth,
-    to_global_ids,
 )
-
-
-# ---------------------------------------------------------------------------
-# Identifier translation
-# ---------------------------------------------------------------------------
-def test_local_ids_translate_through_original_indices():
-    """`original_indices["disease"]` is indexed by LOCAL position and holds the
-    GLOBAL index, so it is already the direction needed."""
-    original = torch.tensor([12, 47, 300, 9001])  # local 0..3 -> these globals
-
-    got = to_global_ids(original, torch.tensor([2, 0, 3]))
-
-    assert got.tolist() == [300, 12, 9001]
-
-
-def test_translation_is_not_the_inverse_direction():
-    """The guard against the error this function exists to prevent.
-
-    `node_mapping` is the global->local dict. Using it where `original_indices`
-    belongs, or vice versa, yields ids in range and completely wrong.
-    """
-    original = torch.tensor([5, 11, 40])
-
-    assert to_global_ids(original, torch.tensor([0])).tolist() == [5]
-    assert to_global_ids(original, torch.tensor([2])).tolist() == [40]
-
-
-@pytest.mark.parametrize("bad_local", [[3], [99], [-1]])
-def test_out_of_range_local_ids_are_rejected(bad_local):
-    with pytest.raises(ValueError):
-        to_global_ids(torch.tensor([5, 11, 40]), torch.tensor(bad_local))
-
-
-def test_translation_rejects_a_non_vector_table():
-    with pytest.raises(ValueError):
-        to_global_ids(torch.tensor([[1, 2], [3, 4]]), torch.tensor([0]))
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +39,8 @@ def test_canonical_breaks_ties_by_ascending_global_id():
 
 
 def test_canonical_is_independent_of_candidate_input_order():
-    """Determinism across modes. Mode A and Mode C will present the same
-    candidates in different orders; the ranking must not notice."""
+    """The same (id, score) pairs in a different column order rank the same: the
+    tie rule is the global id, not the position a candidate arrived in."""
     ids_a = torch.tensor([90, 70, 80, 60])
     scores_a = torch.tensor([[0.5, 0.5, 0.2, 0.5]])
     # same (id, score) pairs, shuffled into a different column order
@@ -119,69 +78,8 @@ def test_canonical_rejects_malformed_input(scores, ids):
 
 
 # ---------------------------------------------------------------------------
-# Legacy ranking
-# ---------------------------------------------------------------------------
-def test_legacy_returns_local_columns_not_global_ids():
-    """The frozen oracle wrote subgraph-local column indices and did not persist
-    the mapping needed to translate them. The trainer builds the same local rows,
-    and the differential calibration compares Mode A's with them; returning
-    global ids here would break that comparison."""
-    scores = torch.tensor([[0.1, 0.9, 0.5]])
-
-    _, expected_local = scores.sort(dim=-1, descending=True)
-
-    assert legacy_ranking(scores).tolist() == expected_local.tolist()
-    assert legacy_ranking(scores).tolist() == [[1, 2, 0]]
-
-
-def test_legacy_local_output_translates_without_a_second_sort():
-    """The documented two-step: rank locally for the differential calibration,
-    translate for persistence. One sort, two representations."""
-    scores = torch.tensor([[0.1, 0.9, 0.5]])
-    original = torch.tensor([70, 80, 90])
-
-    local = legacy_ranking(scores)
-    global_ids = to_global_ids(original, local)
-
-    assert local.tolist() == [[1, 2, 0]]
-    assert global_ids.tolist() == [[80, 90, 70]]
-
-
-def test_the_two_streams_agree_when_no_scores_tie():
-    """They differ only at ties. Anywhere else, a disagreement would mean one of
-    them is simply wrong."""
-    torch.manual_seed(0)
-    scores = torch.randn(4, 9)
-    ids = torch.tensor([31, 4, 77, 12, 90, 5, 68, 23, 51])
-
-    legacy_global = to_global_ids(ids, legacy_ranking(scores))
-
-    assert canonical_ranking(scores, ids).tolist() == legacy_global.tolist()
-
-
-def test_legacy_does_not_reject_non_finite_scores():
-    """The deliberate asymmetry. Reproducing the oracle means reproducing what it
-    did, including with degenerate scores; the canonical stream refuses them."""
-    scores = torch.tensor([[0.5, float("nan"), 0.1]])
-
-    assert legacy_ranking(scores).shape == (1, 3)
-
-
-# ---------------------------------------------------------------------------
 # Input contracts
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("bad", [torch.float32, torch.float64, torch.bool])
-def test_identifier_tensors_must_be_integers(bad):
-    """`Tensor.long()` turns 1.7 into 1 and True into 1, so a float or boolean id
-    wired in by mistake becomes a plausible index rather than an error."""
-    original = torch.tensor([5, 11, 40])
-
-    with pytest.raises(ValueError, match="integer"):
-        to_global_ids(original, torch.tensor([1]).to(bad))
-    with pytest.raises(ValueError, match="integer"):
-        to_global_ids(original.to(bad), torch.tensor([1]))
-
-
 def test_canonical_rejects_non_integer_global_ids():
     with pytest.raises(ValueError, match="integer"):
         canonical_ranking(torch.tensor([[0.1, 0.2]]), torch.tensor([1.0, 2.0]))
@@ -273,5 +171,4 @@ def test_ranking_on_cuda():
 
     assert ranked.device.type == "cuda"
     assert ranked.cpu().tolist() == [[70, 90, 80]]
-    assert legacy_ranking(scores).device.type == "cuda"
     assert ranks_of_truth(ranked, torch.tensor([90], device=device)) == [2]

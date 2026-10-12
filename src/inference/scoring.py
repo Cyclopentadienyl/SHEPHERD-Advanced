@@ -166,15 +166,17 @@ def masked_mean_pool(embeddings: Tensor, mask: Tensor) -> Tensor:
     equivalence test binds them instead.
 
     **This mirrors `Trainer._compute_model_outputs` operation for operation**
-    (`src/training/trainer.py:744-751`), because Mode A's purpose is to reproduce
-    what that code measures:
+    (`src/training/trainer.py:744-751`), because the Trainer value test
+    (`tests/unit/test_trainer_validation_values.py`) takes its expected values
+    from this function:
 
       - the mask is cast with ``.float()``, so the output dtype is whatever
         promotion and autocast produce from that and ``embeddings`` — **not** an
         assumed "preserve the input dtype" rule, and no cast is added to force one;
       - the denominator is ``clamp(min=1)``, so an **all-false row yields a zero
         vector** rather than a division by zero. That is behaviour to preserve, not
-        to improve: changing it would move Mode A off the control it exists to be.
+        to improve: changing it would make that test's expected values differ from
+        the Trainer's formula.
 
     **The mask must be boolean.** A validity mask and a same-shaped floating-point
     tensor are otherwise indistinguishable at this boundary, and ``.float()``

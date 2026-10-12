@@ -162,6 +162,7 @@ counter-example that refuted it.
 | Institutional scheduling | **Not requested** |
 
 **Nothing in work item B depends on this phase**, and this phase does not block
-B-0.4, B-0.5 or the legacy-removal checklist.
+B-0.4, B-0.5 or the legacy-removal checklist (since 2026-10-12 replaced by the Mode A/B
+retirement, which this phase did not block either).
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.

@@ -18,7 +18,7 @@ P2 (2026-10-12, `3e8e559..3d53c9b`)**
 (§9.1). Tests only: nothing in Modes A or B, and no class-1 test, is deleted, and no production code
 changes. R2 and everything after it were to wait for the institution's answers (§8 items 4 and 7);
 that wait is superseded by the owner's clarification of 2026-10-12 (next paragraph), so R2 no
-longer waits for the institution. R2 is not implemented. S7 for Mode C only, which the owner chose
+longer waits for the institution. R2 was implemented on 2026-10-12 and awaits code review (§9.2). S7 for Mode C only, which the owner chose
 to run (§8 item 11), was implemented on 2026-10-11 and code-reviewed with no P1 or P2 (2026-10-12,
 `3d53c9b..7327798`) as its declared C-only scope: Modes A and B are not migrated, and M2.1 is not
 complete.
@@ -41,7 +41,8 @@ items 4 and 7 is kept and marked as superseded by the owner's clarification of 2
 
 **Owner's decisions (2026-10-12).** R2 starts now, together with §8 item 5 (the measurement-only
 manifest fields and the measurement seed are removed) and item 9 (`--modes` is removed); item 8 is
-decided as refuse, a separate change after R2 (§8 items 1, 5, 8 and 9). R2 is not implemented yet.
+decided as refuse, a separate change after R2 (§8 items 1, 5, 8 and 9). **R2 was implemented the
+same day, with items 5 and 9, and awaits code review (§9.2).** Item 8 is not implemented yet.
 
 **Base.** The inventory read `f581f9e`'s tree (M2.1 S5) through `git show f581f9e:<path>`. The
 S1–S5 corrections from the internal review were then uncommitted in the working tree; they are not
@@ -153,8 +154,8 @@ unchanged. Three items touch A/B:
 | BACKLOG 19.18 (`BACKLOG.md:708`) and the clauses that cite it (`:674`, `:681-687`) | The legacy builder's deferred read | Entirely A/B-specific |
 
 The deferred rows above will not be built: S7 ran for Mode C only (§8 item 11), and with §8 items 4
-and 7 closed by the owner's clarification of 2026-10-12, Modes A and B are to be retired in R2 (not
-implemented) instead of migrated. R2 rewrites the S10 text and closes 19.18 (§1.4, §4).
+and 7 closed by the owner's clarification of 2026-10-12, Modes A and B were retired in R2
+(2026-10-12, §9.2) instead of migrated. R2 annotated the S10 text and closed 19.18 (§1.4, §4).
 
 Everything else in S6–S10 is mode-agnostic: S6 (serving), S7's one read of manifest, tensors,
 samples and checkpoint with verification and one digest map, S8 (training), S9 (path forms and
@@ -474,7 +475,7 @@ existing decision are **proposals**; institutional items are not engineering's t
 | `masked_mean_pool`: "mirrors `Trainer._compute_model_outputs` operation for operation … behaviour to preserve, not to improve" | `src/inference/scoring.py:168-177` | Mode A as a faithful control of the Trainer | The Mode A reason: **no**. Mode C refuses an empty phenotype list before pooling (`measurement.py:1207-1212`). A mirror-the-Trainer reason remains because the migrated Trainer test takes its expected values from this function (§5.1 G1–G3) | **Rewrite** the reason to name that test (proposal); behaviour unchanged | G1–G3; B-1's pool unification (`BACKLOG.md:669`) |
 | PLAN_B02 "no conclusion until institutional Mode A calibration succeeds" | `PLAN_B02_shipped.md:109-110`, `:371-372` | B-0.2's parity acceptance | No; the file is "History, not authority" (`:1-4`) | **Leave as history** | — |
 | `read_samples`' three-field default, "would change Modes A and B" | plan `:698-702`; `file_storage.py:126-130` | A/B semantics | The reason lapses; the interface is harmless | **Rewrite** the reason (§1.4) | S8 unchanged |
-| S7's Mode A block; A/B regression tests | plan `:1022-1039` | Mode A on the shared read | No | **Cancel** (deferred now, §1.3; superseded by the owner's clarification of 2026-10-12: S7 ran for Mode C only, and its Mode A items will not be built, since Modes A and B are to be retired in R2) | S7 |
+| S7's Mode A block; A/B regression tests | plan `:1022-1039` | Mode A on the shared read | No | **Cancel** (deferred now, §1.3; superseded by the owner's clarification of 2026-10-12: S7 ran for Mode C only, and its Mode A items will not be built, since Modes A and B were retired in R2) | S7 |
 | S10's A/B "not applicable" rows | plan `:1124-1133` | Recording why A/B were not measured | No | **Rewrite** to one line | S10 |
 | Item 14 phase 1: "`measure_scorer` in all its modes" moves onto the resolver | `PLAN_TEST_RESULTS.md:737-748` | Moving every mode | Only C remains | **Rewrite**: Mode C | item 14 (smaller) |
 | BACKLOG 19.18 | `BACKLOG.md:708` | The deferred legacy builder | No | **Close** as "removed by …", as 19.19 was | — |
@@ -664,7 +665,7 @@ that comparison as a false premise).
    chooses item 7 (b), that comparison runs before the differential is deleted. Both conditions are
    superseded by the owner's clarification of 2026-10-12, which closed items 4 and 7: the scope no
    longer waits for the institution, and no comparison runs first. The moved tests are in place (R1,
-   §9.1); R2 is not implemented.
+   §9.1); R2 is implemented (2026-10-12, §9.2).
    **Decided by the owner (2026-10-12): R2 starts now**, together with items 5 and 9 below, under
    the owner's principle (header): no compatibility flag, no read branch for older records and no
    parallel pipeline is kept for old-pipeline artifacts.
@@ -776,7 +777,7 @@ that comparison as a false premise).
     for them. **Owner decides.** S6, S8 and R1 do not wait for this.
     **Decided by the owner (2026-10-11): run S7 for Mode C now**, on the same entry point and the
     shared readers, with Modes A and B not migrated. Implemented the same day (plan S7, "As
-    implemented"); runs that include Mode A keep their own reads until R2 or a migration.
+    implemented"); runs that include Mode A kept their own reads until R2 deleted them (§9.2).
     Code-reviewed with no P1 or P2 (2026-10-12, `3d53c9b..7327798`) as the declared C-only scope.
     "Or a migration" is superseded by the owner's clarification of 2026-10-12: with items 4 and 7
     closed, S7's Mode A items will not be built, and those reads go with R2. M2.1 is not complete.
@@ -794,7 +795,7 @@ that comparison as a false premise).
 |---|---|---|---|
 | **R0** | This assessment; owner decisions (§8) | No | Owner decisions recorded (§8). R1 does not wait for the institution |
 | **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2** (as first written): the institution's answers to §8 items 4 and 7 recorded and, if item 7 were (b), the Trainer-only CUDA comparison run. Superseded by the owner's clarification of 2026-10-12, which closed both: R2 waits for no institutional answer and no CUDA comparison |
-| **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1) | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen (chosen by the owner on 2026-10-12: removed in R2, §8 item 5) |
+| **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1). **Implemented 2026-10-12, with §8 items 5 and 9 (§9.2)** | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen (chosen by the owner on 2026-10-12: removed in R2, §8 item 5) |
 | **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided. Superseded by the owner's decisions of 2026-10-12: items 5 and 9 land in R2, so R3 is item 8 alone (refuse non-integer and boolean ids), a separate change after R2 | Yes (small) | Their own tests |
 | — | **M2.1 S7** then runs on Mode C alone. By the owner's choice it ran after R1 instead (§8 item 11, 2026-10-11); S7's Mode A items stay unbuilt | — | — |
 
@@ -806,7 +807,7 @@ differential's deletion if item 7 were answered (b). **Superseded by the owner's
 of 2026-10-12:** the owner reported that the institution had already authorised retiring the old
 pipeline (item 4), and the institution's AMP question is a training study, not the scoring
 comparison (item 7). Nothing in R2 or in those rewrites waits for the institution any more. R2 is
-not implemented, and Policy Gate 1 stays, with its comparison of the currently served ranking
+implemented (2026-10-12, §9.2), and Policy Gate 1 stays, with its comparison of the currently served ranking
 (Mode D / B-0.5) against the planned new GNN ranking (Mode C).
 
 **Relation to M2.1:** R1–R2 before S7. S6 (serving) and S8 (training) proceed independently. S9's
@@ -816,10 +817,10 @@ S7 and running S7 for Mode C only, with Mode A left on its current reads until t
 ordering avoids, and a Mode C-only S7 does not make M2.1 complete. The owner chose the Mode C-only
 S7 on 2026-10-11, after R1 (§8 item 11), and it was code-reviewed with no P1 or P2 on 2026-10-12
 (`3d53c9b..7327798`) as its declared C-only scope. With §8 items 4 and 7 closed by the owner's
-clarification of 2026-10-12, S7's Mode A items will not be built: R2 is to retire Modes A and B
-instead. S9's deletion of the measurement path forms and its static pin over `measure_scorer.py`,
+clarification of 2026-10-12, S7's Mode A items will not be built: R2 retired Modes A and B
+instead (2026-10-12, §9.2). S9's deletion of the measurement path forms and its static pin over `measure_scorer.py`,
 which the plan's S9 held for "the Mode A/B decision", now follow R2 rather than an open decision.
-M2.1 is not complete: until R2 lands, runs that include Mode A keep their own reads, and the S6/S8
+M2.1 is not complete: S9 and S10 remain, and the S6/S8
 batch (`8421b8c..cddad9d`) still awaits code review (the review of `cddad9d..3e8e559` covered only
 the narrowing of its claims).
 
@@ -866,7 +867,8 @@ Collected items across `tests/unit` and `tests/integration` go from 2631 to 2673
 `:85`, `:107`, `:145`, `:161`, `:471`, `:514`, `:568`, `:587`; `test_measurement_modes_bc.py`
 `:311`, `:328`; `test_measurement_ranking.py` `:173`; `test_legacy_equivalence.py` `:103`, `:166`
 (lines at `f581f9e`). `test_measurement_mode_a.py:805` (no null seed) is not moved: it follows the
-seed decision (§8 item 5), and R2 must not delete it before that decision.
+seed decision (§8 item 5), and R2 must not delete it before that decision. The owner decided on
+2026-10-12 to remove the measurement seed, and R2 deleted it with its file (§9.2).
 
 **Decisions taken while implementing:**
 - The worker-stream tests now draw through `create_diagnosis_dataloader`, the loader training
@@ -934,3 +936,116 @@ candidate set" that a Mode C test matches when `_assert_cohort_is_intact`'s word
 `_graph`. Add to §2.10's wording list: the relocated `test_an_out_of_range_phenotype_is_refused_not_clamped`
 docstring ("Mode A clamps…"), the `TestTheRandomStreamHasAnIdentity` docstring copied into the CLI
 test file, and the `--num-workers` wording.
+
+### 9.2 R2 as implemented (2026-10-12)
+
+Decided by the owner on 2026-10-12: R2 now, together with §8 item 5 (remove the measurement-only
+manifest fields and the measurement seed) and item 9 (remove `--modes`), with no compatibility
+flag, no read branch for older records and no parallel path. Awaiting code review. Item 8 (refuse
+non-integer and boolean ids) is a separate change after it.
+
+**Deleted:**
+- `src/evaluation/differential.py`, whole;
+- in `src/evaluation/measurement.py`: `run_mode_a`, `run_modes_ab`, `assert_constructions_agree`,
+  `ModeAResult`, `legacy_ranking`, `to_global_ids`, `LEGACY_TRUNCATION_K`, `_SamplerEvidence`,
+  `_score_from_full_graph`, `MAX_MEASUREMENT_SEED` and `validate_measurement_seed`;
+- in `scripts/measure_scorer.py`: `artifact_digests`, `load_legacy_mode_a_inputs`,
+  `build_legacy_mode_a_model`, `subgraph_candidate_construction`, `build_loader_config`,
+  `parse_modes`, `SUPPORTED_MODE_SETS`, `_assert_same_cohort`, `DEFAULT_MEASUREMENT_SEED`, the
+  `torch.load` branch, the predictions writer, the ladder lines and the 7a note, and the options
+  `--modes`, `--seed`, `--num-workers` and `--predictions-output`;
+- 13 manifest fields: the loader and sampler fields other than `batch_size`
+  (`negative_sampling_strategy`, `num_negative_samples`, `subgraph_strategy`, `subgraph_hops`,
+  `num_neighbors`, `max_subgraph_nodes`, `shuffle`, `num_workers`), `legacy_truncation_k`,
+  `legacy_tie_policy` and the three seed fields; the same names leave the ledger's
+  `SEMANTIC_MANIFEST_FIELDS`, and the ledger's null-seed refusal goes;
+- Mode C's `sampler_evidence` entries `max_subgraph_nodes` and `negative_sampling`;
+- the fixture's `assert_candidate_universe_is_stable`, and its checkpoint's `metadata` and
+  `in_channels_dict` keys, so every test built on it runs on a checkpoint in the training
+  writer's shape;
+- the class-1 tests: `tests/unit/test_measurement_mode_a.py`, `test_measurement_modes_bc.py`,
+  `test_differential_calibration.py` and `tests/integration/test_legacy_equivalence.py` (79
+  collected items), with R1's kept originals; and, where they tested a deleted name, the
+  `to_global_ids` and `legacy_ranking` tests, the CLI's seed class and its `artifact_digests`
+  class, two `artifact_digests` tests in `test_graph_artifact_binding.py`, the ledger's seed
+  tests and the S7 test of an `A,B,C` run. What those `artifact_digests` tests asserted is
+  asserted from the reads in `tests/unit/test_measurement_reads_once.py`.
+
+**What remains:** one mode. `main` reads once (`read_measurement_inputs`), records from those
+reads (`measurement_input_digests`), builds the production model, encodes the full graph and
+calls `run_mode_c`; it writes `--output` and `<stem>_ranks.json`. `build_manifest` takes no mode,
+candidate or model-construction argument and requires `digests`, so nothing can write a manifest
+for another mode or one hashed by path. The `file_sha256` re-export stays (S9's). The
+`scorer-independence` import contract is kept; its reason now names the Trainer value test.
+
+**Decisions taken while implementing:**
+- `sampler_evidence` keeps its key name although no sampler runs, because R1's tests pin the
+  report's key set; renaming it would be a change of its own.
+- **The ledger reads only the current manifest.** Without the null-seed refusal, `build_record`
+  would have accepted a report written before R2, of any mode, and hashed it under the shorter
+  field list, losing what told its runs apart: two pre-R2 Mode A reports with different seeds
+  would have been refused as a contradiction. That would make the ledger a reader of records
+  written before R2, which item 5's decision rules out. `build_record` now refuses a manifest
+  carrying any field outside `SEMANTIC_MANIFEST_FIELDS` and `NON_SEMANTIC_FIELDS`, naming the
+  fields, and `scripts/record_evaluation.py` exits with that message. **A ledger file written
+  before R2 is refused too:** its records' semantics digests were computed over the longer field
+  list, and it holds records of the retired modes, so appending new records to it would put them
+  side by side as though comparable. `LEDGER_SCHEMA_VERSION` goes from 1 to 2, and `read_ledger`
+  refuses a version 1 file with its existing message (read it with the revision that wrote it).
+  Both are refusals, not branches: nothing is converted or migrated. No ledger or measurement
+  report is committed in the repository.
+- The worker count Mode C never used is gone with `--num-workers`; nothing replaces it.
+- **Six tests were deleted beyond §9.1's list,** forced by deleting `artifact_digests`: the CLI's
+  `TestTheRolesAMeasurementRecords` (4) and two tests in `test_graph_artifact_binding.py`. Each
+  claim is asserted from the reads in `test_measurement_reads_once.py` (the digest record for both
+  cohort kinds, nothing else opened, a workspace without a manifest refused, a graph file from
+  another workspace refused, a tensor that does not parse refused).
+- **Two R1 tests are renamed,** because their names stopped being true:
+  `test_mode_c_alone_touches_no_retiring_legacy_path` is
+  `test_an_in_process_run_writes_mode_c_at_output` (there is no legacy path left to touch), and
+  `test_mode_c_ran_no_sampler_and_says_so` is `test_mode_c_evidence_records_only_what_mode_c_observes`.
+- **Not replaced:** `test_measurement_mode_a.py`'s case of a model that produces no embeddings.
+  Mode C fails on it with a bare `KeyError`; the named refusal of a missing embedding key is the
+  part of item 8 the owner left open.
+- **`compute_input_digests`** has no production caller after R2 (only `artifact_digests` used
+  it); it stays for S9, which deletes it once no caller records through it.
+
+**New tests**, each closing a gap that only Mode A covered or that no test covered, each
+mutation-checked:
+
+| Property | Test | Mutation caught |
+|---|---|---|
+| The manifest records the chunk size the run used | `test_measure_scorer_run.py::test_the_manifest_records_the_chunk_size_the_run_used` | `batch_size=32` in `build_manifest` |
+| Every way the cohort can shrink is refused, absence first | `test_measurement_mode_c.py::test_every_way_the_cohort_can_shrink_is_refused` (4) | the ranks count dropped from the check; absence checked after the counts |
+| Mode C draws no Python, NumPy or torch randomness, which is why no seed is recorded | `test_measurement_mode_c.py::test_mode_c_draws_nothing_from_the_global_random_generators` | a torch or Python draw inside `run_mode_c` |
+| No option survives that Mode C would ignore | `test_measure_scorer_cli.py::test_the_cli_has_no_option_mode_c_would_ignore` (4) | `--seed` or `--modes C` added back |
+| The ledger refuses a manifest carrying a field the current one does not, and a ledger file written before R2 | `test_evaluation_sidecar.py::test_a_manifest_carrying_a_field_this_revision_does_not_record_is_refused` (3), `::test_the_cli_refuses_a_report_from_an_earlier_revision`, `::test_a_ledger_written_before_the_mode_ab_retirement_is_refused` | the refusal removed |
+| D3's third boundary refuses a negative truth and the first id past the last disease, not only a far one | `test_measurement_mode_c.py::test_an_out_of_range_ground_truth_is_refused` (now 3 cases; it replaces the `-1` case the deleted `to_global_ids` test carried) | — |
+
+Two rewritten tests catch their mutation too: the evidence key-set test (a `negative_sampling`
+entry added back) and the dynamic pin (a path form imported into the CLI at module level). **Not
+caught:** a model left in `train()` mode, because the production build resolves `dropout=0.0`
+for the fixture, so nothing draws.
+
+**Verification.** Full suite: 2645 passed, 15 skipped, 0 failed (2759 passed before; 131 items
+deleted, 17 added). A field-by-field comparison of the reports of the CLI before and after R2
+on three workspaces (supplied, a wide supplied cohort, generated) differs only in the 13 removed
+manifest fields and the two removed `sampler_evidence` entries; metrics, counts and every digest
+are equal, and the ranks files are byte-identical. import-linter: 4 contracts kept. `ruff --select F` on the changed production
+files: clean. The CLI runs end to end on the fixture's writer-shaped checkpoint; `--modes C` and
+`--seed 1` are argparse errors.
+
+**Wording** (§2.10) rewritten in the kept files: `src/inference/scoring.py`,
+`src/inference/pipeline.py` and `src/models/gnn/shepherd_gnn.py` (the builder's shared use), `src/utils/fingerprint.py`,
+`src/kg/data_loader.py` (D3's third boundary now Mode C's `_assert_ids_in_range`),
+`src/kg/storage/__init__.py`, `src/kg/storage/file_storage.py`, `src/kg/artifacts.py`,
+`src/evaluation/cohort.py`, `src/evaluation/__init__.py`, `src/training/trainer.py`,
+`scripts/record_evaluation.py`, `.import-linter.ini`, and the test docstrings that named Mode A
+or the differential. The scorer README is rewritten for Mode C, with the retirement's record
+in place of the suspended checklist (which stays in git history at `a535ae2`). BACKLOG (header,
+§1, §2.2, §2.3 and D3, D5, 1a2, 1d, 7a, 9, 15, 19, 19.18, §3.1, §5), the plan (status, S7, S9,
+S10, decision 6, M2.4), `PLAN_TEST_RESULTS.md` (D4, D5, item 14), `EVALUATION_COHORTS.md`
+(revision 30), `PLAN_B03.md`'s status, `PLAN_HGT_LINEAR_PATHS.md`'s entry-point table,
+`task-scope/README.md` (Q2, §5), `scorer-retraining/README.md` and the two docs indexes record the deletion. Where a decision changed,
+the earlier text is kept and marked; dated documents that pin their citations to a revision are
+left as they are.

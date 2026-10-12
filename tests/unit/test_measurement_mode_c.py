@@ -61,7 +61,6 @@ def world(tmp_path_factory):
     import argparse
 
     from scripts.measure_scorer import (
-        build_loader_config,
         build_manifest,
         measurement_input_digests,
         read_measurement_inputs,
@@ -77,24 +76,20 @@ def world(tmp_path_factory):
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
     args = argparse.Namespace(
         checkpoint=checkpoint_path, data_dir=data_dir, split="test", cohort_kind="supplied",
-        batch_size=BATCH_SIZE, num_workers=0, seed=None,
+        batch_size=BATCH_SIZE,
     )
-    loader_config = build_loader_config(args)
     production_model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
 
-    def manifest(mode, construction, n_samples=None, regime_here=False):
-        """`regime_here=True` observes the caller's ambient context, which is what
-        a manifest built alongside its own computation would record."""
+    def manifest(n_samples=None):
+        """The regime is the caller's ambient context, which is what a manifest
+        built alongside its own computation would record."""
         from src.evaluation.measurement import observe_autocast_regime
 
         return build_manifest(
-            args, graph_data, len(samples) if n_samples is None else n_samples,
-            device, loader_config,
-            mode=mode, candidate_construction=construction,
-            model_construction="production (build_shepherd_model)",
-            model=production_model,
-            regime=observe_autocast_regime(device) if regime_here else None,
+            args, graph_data, len(samples) if n_samples is None else n_samples, device,
             digests=digests,
+            model=production_model,
+            regime=observe_autocast_regime(device),
         )
 
     return {
@@ -114,7 +109,7 @@ def mode_c(world):
     return run_mode_c(
         full_graph_embeddings=world["encoded"],
         samples=world["samples"],
-        manifest=world["manifest"]("C", "every disease in the graph"),
+        manifest=world["manifest"](),
         device=world["device"],
         batch_size=BATCH_SIZE,
     )
@@ -142,8 +137,7 @@ def test_mode_c_accepts_a_run_whose_embeddings_manifest_and_scoring_all_agree(wo
         result = run_mode_c(
             full_graph_embeddings=_encode_here(world),
             samples=world["samples"],
-            manifest=world["manifest"](
-                "C", "every disease in the graph", regime_here=True),
+            manifest=world["manifest"](),
             device=world["device"],
             batch_size=BATCH_SIZE,
         )
@@ -163,8 +157,7 @@ def test_fp32_embeddings_scored_under_autocast_are_refused(world):
             run_mode_c(
                 full_graph_embeddings=fp32_encoded,
                 samples=world["samples"],
-                manifest=world["manifest"](
-                    "C", "every disease in the graph", regime_here=True),
+                manifest=world["manifest"](),
                 device=world["device"],
                 batch_size=BATCH_SIZE,
             )
@@ -182,7 +175,7 @@ def test_autocast_embeddings_scored_in_fp32_are_refused(world):
         run_mode_c(
             full_graph_embeddings=bf16_encoded,
             samples=world["samples"],
-            manifest=world["manifest"]("C", "every disease in the graph"),
+            manifest=world["manifest"](),
             device=world["device"],
             batch_size=BATCH_SIZE,
         )
@@ -195,8 +188,7 @@ def test_a_manifest_disagreeing_with_the_embeddings_regime_is_refused(world):
     fp32_encoded = _encode_here(world)
 
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=True):
-        bf16_manifest = world["manifest"](
-            "C", "every disease in the graph", regime_here=True)
+        bf16_manifest = world["manifest"]()
 
     with pytest.raises(RuntimeError, match="computed under"):
         run_mode_c(
@@ -247,13 +239,45 @@ def test_mode_c_scores_every_disease(mode_c, world):
     assert mode_c.sampler_evidence["candidate_columns"]["max"] == n_diseases
 
 
-def test_mode_c_ran_no_sampler_and_says_so(mode_c):
-    """`observed: False` with a reason, rather than an empty structure that would
-    read as "not recorded"."""
-    negatives = mode_c.sampler_evidence["negative_sampling"]
+def test_mode_c_evidence_records_only_what_mode_c_observes(mode_c, world):
+    """Mode C runs no sampler and no dataloader, so its evidence is the chunks it
+    scored and the candidate columns each had. Nothing describing a sampler is
+    there to be read as an observation of one."""
+    evidence = mode_c.sampler_evidence
 
-    assert negatives["observed"] is False
-    assert "every disease" in negatives["reason"]
+    assert set(evidence) == {"n_batches", "candidate_columns"}
+    assert evidence["n_batches"] == math.ceil(len(world["samples"]) / BATCH_SIZE)
+
+
+def test_mode_c_draws_nothing_from_the_global_random_generators(world):
+    """Why a measurement records no seed. The embeddings and the ranks consume no
+    Python, NumPy or torch randomness, so two runs over the same inputs agree
+    whatever state the generators were in, and the ledger's semantics digest
+    needs no seed to tell them apart. Checked on the generators' state rather
+    than on the output, so a draw whose value happened not to matter still
+    fails."""
+    import random
+
+    import numpy as np
+
+    manifest = world["manifest"]()
+    python_state, numpy_state, torch_state = (
+        random.getstate(), np.random.get_state(), torch.get_rng_state())
+
+    result = run_mode_c(
+        full_graph_embeddings=_encode_here(world),
+        samples=world["samples"],
+        manifest=manifest,
+        device=world["device"],
+        batch_size=BATCH_SIZE,
+    )
+
+    assert result.n_ranked == len(world["samples"])
+    assert random.getstate() == python_state
+    after = np.random.get_state()
+    assert after[0] == numpy_state[0] and after[2:] == numpy_state[2:]
+    assert np.array_equal(after[1], numpy_state[1])
+    assert torch.equal(torch.get_rng_state(), torch_state)
 
 
 def test_mode_c_reports_ids_and_truths_in_samples_order(mode_c, world):
@@ -336,9 +360,7 @@ def test_a_cohort_other_than_the_one_the_manifest_declares_is_refused(world, dec
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=world["samples"],
-            manifest=world["manifest"](
-                "C", "every disease in the graph",
-                n_samples=len(world["samples"]) + declared_extra),
+            manifest=world["manifest"](n_samples=len(world["samples"]) + declared_extra),
             device=world["device"],
             batch_size=BATCH_SIZE,
         )
@@ -349,7 +371,7 @@ def test_an_empty_cohort_is_refused_rather_than_given_metrics(world):
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=[],
-            manifest=world["manifest"]("C", "every disease in the graph", n_samples=0),
+            manifest=world["manifest"](n_samples=0),
             device=world["device"],
         )
 
@@ -372,10 +394,30 @@ def test_a_truth_missing_from_the_ranking_is_refused_as_absence(world, monkeypat
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=world["samples"],
-            manifest=world["manifest"]("C", "every disease in the graph"),
+            manifest=world["manifest"](),
             device=world["device"],
             batch_size=BATCH_SIZE,
         )
+
+
+@pytest.mark.parametrize("counts, declared, expected", [
+    # One truth absent leaves one rank fewer, as a run produces it.
+    ({"n_absent": 1, "n_canonical_ranks": 5}, 6, "absent from the candidate set"),
+    ({"n_canonical_ranks": 5}, 6, "cohort shrinkage"),
+    ({"n_sample_ids": 5}, 6, "cohort shrinkage"),
+    ({}, 0, "nothing to measure"),
+], ids=["absent", "ranks", "sample_ids", "empty"])
+def test_every_way_the_cohort_can_shrink_is_refused(world, counts, declared, expected):
+    """Called directly, because `run_mode_c` reaches most of these only through a
+    defect: absence has its own message, checked before the counts, so a truth
+    outside the candidate set reads as what it is rather than as an arithmetic
+    mismatch."""
+    from src.evaluation.measurement import _assert_cohort_is_intact
+
+    call = {"n_sample_ids": 6, "n_canonical_ranks": 6, "n_absent": 0, **counts}
+
+    with pytest.raises(ValueError, match=expected):
+        _assert_cohort_is_intact(manifest=world["manifest"](n_samples=declared), **call)
 
 
 # ---------------------------------------------------------------------------
@@ -396,9 +438,7 @@ def _sample(patient_id, phenotype_ids, disease_id):
 def test_an_out_of_range_phenotype_is_refused_not_clamped(world, phenotypes, fragment):
     """The defect this was corrected for.
 
-    Mode A clamps, and is right to: its out-of-range values are the dataloader's
-    `-1` padding under a `False` mask, so the clamp only keeps the gather in
-    bounds. In Mode C every id is a real value from a real patient with
+    Every id Mode C gathers is a real value from a real patient with
     `mask=True`. Clamping would score phenotype -1 as phenotype 0 and 99999 as
     the last node in the graph — a real patient, a plausible rank, and the wrong
     one, indistinguishable downstream from a genuine result.
@@ -409,7 +449,7 @@ def test_an_out_of_range_phenotype_is_refused_not_clamped(world, phenotypes, fra
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=bad,
-            manifest=world["manifest"]("C", "every disease"),
+            manifest=world["manifest"](),
             device=world["device"],
         )
 
@@ -423,22 +463,26 @@ def test_the_offending_patient_is_named(world):
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=bad,
-            manifest=world["manifest"]("C", "every disease"),
+            manifest=world["manifest"](),
             device=world["device"],
         )
 
 
-def test_an_out_of_range_ground_truth_is_refused(world):
+@pytest.mark.parametrize("truth", ["-1", "n_diseases", "99999"])
+def test_an_out_of_range_ground_truth_is_refused(world, truth):
     """Caught before ranking rather than surfacing later as an absence. Absence
     is Mode C's signal that the id spaces are wrong; letting a bad truth reach it
-    would report the symptom instead of the cause."""
-    bad = [_sample("P-truth", [0], 99999)]
+    would report the symptom instead of the cause. D3's third boundary: a negative
+    id, the first id past the last disease, and one far beyond it."""
+    n_diseases = world["graph_data"]["x_dict"]["disease"].size(0)
+    value = {"-1": -1, "n_diseases": n_diseases, "99999": 99999}[truth]
+    bad = [_sample("P-truth", [0], value)]
 
-    with pytest.raises(ValueError, match="ground-truth disease id 99999"):
+    with pytest.raises(ValueError, match=f"ground-truth disease id {value}"):
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=bad,
-            manifest=world["manifest"]("C", "every disease"),
+            manifest=world["manifest"](),
             device=world["device"],
         )
 
@@ -451,7 +495,7 @@ def test_a_patient_with_no_phenotypes_is_refused(world):
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=[_sample("P-empty", [], 0)],
-            manifest=world["manifest"]("C", "every disease"),
+            manifest=world["manifest"](),
             device=world["device"],
         )
 
@@ -467,7 +511,7 @@ def test_valid_ids_at_both_boundaries_are_accepted(world):
     result = run_mode_c(
         full_graph_embeddings=world["encoded"],
         samples=edge,
-        manifest=world["manifest"]("C", "every disease", n_samples=1),
+        manifest=world["manifest"](n_samples=1),
         device=world["device"],
     )
 
@@ -483,7 +527,7 @@ def test_a_batch_size_below_one_gives_no_result(world, batch_size):
         run_mode_c(
             full_graph_embeddings=world["encoded"],
             samples=world["samples"],
-            manifest=world["manifest"]("C", "every disease in the graph"),
+            manifest=world["manifest"](),
             device=world["device"],
             batch_size=batch_size,
         )
@@ -502,7 +546,7 @@ def test_a_non_finite_embedding_is_refused_not_ranked(world, node_type):
         run_mode_c(
             full_graph_embeddings=poisoned,
             samples=[_sample("P-reads-row-1", [1], 0)],
-            manifest=world["manifest"]("C", "every disease", n_samples=1),
+            manifest=world["manifest"](n_samples=1),
             device=world["device"],
         )
 
@@ -543,8 +587,7 @@ def _run(world, encoded, samples, batch_size=32):
     return run_mode_c(
         full_graph_embeddings=encoded,
         samples=samples,
-        manifest=world["manifest"](
-            "C", "every disease in the knowledge graph", n_samples=len(samples)),
+        manifest=world["manifest"](n_samples=len(samples)),
         device=world["device"],
         batch_size=batch_size,
     )

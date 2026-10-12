@@ -17,20 +17,24 @@ graph is shaped so the draw cannot matter:
     from any disease seed reaches all diseases. Whichever negatives are drawn,
     the candidate universe is the same set.
 
-`assert_candidate_universe_is_stable` checks that empirically over several seeds
-rather than trusting the argument, because the argument depends on sampling
-internals that are not this test's to police.
+The tests that drive the sampling loader over this workspace (the Trainer's
+validation values, `tests/unit/test_trainer_validation_values.py`) rely on that
+shape. Mode C uses no sampler: it scores every disease, so the shape matters to
+it only in that it is degenerate — no rank from this workspace is evidence about
+the scorer.
+
+The checkpoint is written in the shape the training writer produces (weights,
+config, epoch, logs): there is no `metadata` or `in_channels_dict` key, so every
+test built on it builds the model the way production does.
 
 Module: tests/fixtures/synthetic_workspace.py
 """
 from __future__ import annotations
 
 import json
-import random
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import numpy as np
 import torch
 
 # Small enough that every degree sits under the sampling limits, and complete
@@ -53,9 +57,7 @@ def _graph(
     consumer's `num_neighbors` limit turns the 2-hop expansion into a real draw and
     the candidate universe stops being seed-independent. The defaults sit under the
     library default of `[15, 10, 5]`; a caller asking for more must widen
-    `num_neighbors` to match and check it with
-    `assert_candidate_universe_is_stable`, which takes the same config for exactly
-    this reason.
+    `num_neighbors` to match, as the wide Trainer cohort does.
     """
     torch.manual_seed(20260818)
     x_dict = {
@@ -106,16 +108,15 @@ def build_workspace(
 ) -> Tuple[Path, Path]:
     """Write a data directory and a checkpoint. Returns ``(data_dir, checkpoint)``.
 
-    The layout is exactly what `scripts/evaluate_model.py:164-223` at `7dab728`
-    read, so the frozen oracle and the new harness could be pointed at the same
-    fixture.
+    The layout is the one the shared readers read (`read_graph_artifacts`,
+    `read_samples`), with the manifest that binds the graph.
 
     **The size arguments default to the original fixture**, so every existing
     caller gets exactly the workspace it got before. They exist because a
-    four-disease cohort cannot exercise anything that only happens above
-    `LEGACY_TRUNCATION_K` candidates: a top-20 truncation and no truncation are the
-    same list at four columns, and a test on it would certify a truncation it never
-    performed. See `_graph` for the precondition a wider workspace carries.
+    four-disease cohort cannot exercise anything that only happens above twenty
+    candidates — the Trainer keeps the first twenty columns of its validation
+    ranking, and a top-20 window and no window are the same list at four columns.
+    See `_graph` for the precondition a wider workspace carries.
     """
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
 
@@ -157,72 +158,9 @@ def build_workspace(
         {
             "state_dict": model.state_dict(),
             "config": {"hidden_dim": HIDDEN_DIM, "num_layers": 2, "num_heads": 2},
-            "metadata": metadata,
-            "in_channels_dict": in_channels_dict,
             "epoch": 1,
             "logs": {"val_mrr": 0.0},
         },
         checkpoint_path,
     )
     return data_dir, checkpoint_path
-
-
-def assert_candidate_universe_is_stable(
-    data_dir: Path, split: str, seeds=(0, 1, 7, 99), config=None
-) -> None:
-    """The fixture's precondition, checked rather than assumed.
-
-    If different seeds produced different candidate sets, a comparison between two
-    processes would be measuring the sampler rather than the scorer — and it would
-    fail intermittently, which is worse than failing.
-
-    **`config` must be the one the caller actually scores with.** Stability is a
-    property of the workspace *and* the sampling limits together, not of the
-    workspace alone: a wider workspace is stable under a wider `num_neighbors` and
-    unstable under the default. Checking it under a config nobody uses would prove
-    nothing about the run. `None` keeps the original default, which is what the
-    default-sized workspace is checked under.
-    """
-    from src.kg.data_loader import (
-        DataLoaderConfig,
-        DiagnosisSample,
-        create_diagnosis_dataloader,
-    )
-
-    raw = json.loads((data_dir / f"{split}_samples.json").read_text())
-    samples = [
-        DiagnosisSample(
-            patient_id=s["patient_id"],
-            phenotype_ids=s["phenotype_ids"],
-            disease_id=s["disease_id"],
-        )
-        for s in raw
-    ]
-    graph_data = {
-        "x_dict": torch.load(data_dir / "node_features.pt", weights_only=True),
-        "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=True),
-        "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
-    }
-
-    observed = []
-    for seed in seeds:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        loader = create_diagnosis_dataloader(
-            samples=samples,
-            graph_data=graph_data,
-            config=config
-            or DataLoaderConfig(batch_size=3, num_workers=0, shuffle=False),
-        )
-        observed.append(
-            [batch["original_indices"]["disease"].tolist() for batch in loader]
-        )
-
-    first = observed[0]
-    for seed, run in zip(seeds[1:], observed[1:]):
-        assert run == first, (
-            f"the candidate universe moved under seed {seed}: {run} != {first}. "
-            "The fixture is not randomness-insensitive and any comparison built on "
-            "it would be measuring the sampler."
-        )

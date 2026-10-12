@@ -13,10 +13,11 @@ later increment that narrowed their claims (`cddad9d..3e8e559`) was reviewed wit
 (2026-10-12), which is not a review of that batch. S7 is implemented for Mode C only (2026-10-11)
 and code-reviewed with no P1 or P2 at `7327798` (2026-10-12), as that declared scope, not as every
 mode migrated. M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and
-code-reviewed with no P1 or P2 at `290c03a` (2026-10-12). M2.1 is not complete: measurement runs
-that include Mode A are neither migrated nor retired yet, and since the owner's clarification of
-2026-10-12 they are to be deleted by the Mode A/B retirement's R2, not migrated; R2 is not
-implemented. The rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+code-reviewed with no P1 or P2 at `290c03a` (2026-10-12). Measurement runs that include Mode A
+were not migrated; since the owner's clarification of 2026-10-12 they were deleted by the Mode A/B
+retirement's R2 (2026-10-12, awaiting code review), so every measurement run takes S7's reads.
+M2.1 is not complete: S9 and S10 are not implemented, and the S6/S8 batch awaits review. The rest
+of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -584,8 +585,8 @@ S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16
 are implemented (2026-10-11) and their batch awaits code review (the later increment that narrowed
 their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for Mode C only
 (2026-10-11) and code-reviewed with no P1 or P2 at `7327798` (2026-10-12) as that declared scope,
-and measurement runs that include Mode A are not migrated: since the owner's clarification of
-2026-10-12 they are to be deleted by the Mode A/B retirement's R2, which is not implemented;
+and measurement runs that include Mode A were not migrated: since the owner's clarification of
+2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12, awaiting code review);
 nothing else here is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
@@ -681,8 +682,9 @@ nothing else here is implemented.
   that the AMP question the owner and the institution want answered is a training study, not the
   scoring comparison the differential recorded. The retirement assessment's §8 items 4 and 7
   therefore no longer hold R2 back: S7's Mode A/B items will never be built, runs that include
-  Mode A are to be deleted by R2 rather than migrated, and S9's measurement part follows R2. R2 is
-  not implemented.
+  Mode A are to be deleted by R2 rather than migrated, and S9's measurement part follows R2. R2 was
+  implemented the same day (awaiting code review): runs that include Mode A are deleted, and
+  `measure_scorer.py` no longer calls a path form.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -765,8 +767,10 @@ How they parse:
 - **`read_samples`' new fields are opt-in** (`training_fields=True`). Measurement's samples carry
   three fields (`src/kg/storage/file_storage.py:94-100`), as the frozen evaluator's did
   (`scripts/evaluate_model.py:185-191` at `7dab728`), and `gene_ids` become subgraph seeds
-  (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would change
-  measurement's Modes A and B.
+  (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would have changed
+  measurement's Modes A and B. Since the retirement's R2 (2026-10-12) the reason is that training
+  passes its two extra fields explicitly and measurement (Mode C) reads neither; the interface is
+  kept (retirement assessment §8 item 6).
 - **The test fixtures must become parseable.** `tests/fixtures/generated_workspace.py:102` writes
   placeholder bytes for the graph files. Today's path-hashing verifiers accept them; a parsing
   reader would reject them.
@@ -1137,7 +1141,7 @@ each moves its callers before anything is removed.
      **Superseded by the owner's clarification of 2026-10-12:** the owner reported that the
      institution had already authorised retiring the old pipeline's Mode A/B tools, so these
      Mode A/B items will never be built; Modes A and B are to be deleted by the retirement
-     assessment's R2 instead of migrated. R2 is not implemented.
+     assessment's R2 instead of migrated. R2 deleted them (2026-10-12).
    - **Before any model is built or output written:**
      - `resolve_cohort` first;
      - then one read each of: the manifest; the graph tensors; the cohort's samples (default
@@ -1148,7 +1152,7 @@ each moves its callers before anything is removed.
    - **One digest map** feeds every mode's manifest, replacing the per-mode `artifact_digests`
      (`measure_scorer.py:102-155`). The verifier's bound map is kept instead of discarded
      (`:128`). The manifest's `kg` role is the manifest-bound source graph (M2.1 decision 2).
-   - **Mode A uses the run's single read.**
+   - **Mode A uses the run's single read.** *Never built; retired by the retirement's R2 (2026-10-12).*
      - `load_legacy_mode_a_inputs` is deleted, and its docstring (`:203-224`, whose lifecycle
        paragraph is `:205-208`) with it. It
        already delegates to `file_storage` (`:225-227`), so Mode A reads the same files.
@@ -1165,7 +1169,8 @@ each moves its callers before anything is removed.
        rewritten to match.
    - **What runs where:** on the designated checkpoint only Mode C runs, and only Mode C is bound,
      measured and accepted on it. Modes A and B keep their shared-read regression tests on the
-     executable fixtures. Fixture numbers are never offered as capacity readings.
+     executable fixtures (never written; Modes A and B were deleted by the retirement's
+     R2, 2026-10-12). Fixture numbers are never offered as capacity readings.
    - **As implemented (2026-10-11), for Mode C only.**
      - **Scope, under the owner's boundary of 2026-10-11** (the retirement assessment's §8
        item 11: run S7 for Mode C now). A run without Mode A (`--modes C`, the formal Test's
@@ -1174,8 +1179,7 @@ each moves its callers before anything is removed.
        loaded by path and `artifact_digests`, and the Mode C manifest of an `A,B,C` run records
        no `kg`. M2.1 is not complete while they are neither migrated nor retired. Since the owner's
        clarification of 2026-10-12 they will not be migrated: they are to be deleted by the
-       retirement assessment's R2, which no longer waits for the institution and is not
-       implemented. The Mode A
+       retirement assessment's R2, which deleted them on 2026-10-12. The Mode A
        bullets above are not built, no new read path is built for Modes A or B, and there is no
        Mode C-specific entry point: the change is in `scripts/measure_scorer.py`.
      - `read_measurement_inputs` runs right after the device is resolved and the modes parsed:
@@ -1196,7 +1200,8 @@ each moves its callers before anything is removed.
        `SEMANTIC_ARTIFACT_ROLES`. `build_manifest` takes the record as `digests=`; omitting it
        keeps the path form, which only runs that include Mode A still use, and it goes with
        their migration or retirement (since the owner's clarification of 2026-10-12, their
-       retirement in R2) and with S9. The bound map is kept
+       retirement in R2) and with S9. R2 removed the fallback: `digests` is required. The bound
+       map is kept
        (`MeasurementInputs.bound`), the opening for M2.4.
      - **Behaviour changes for C-only runs:** cohort refusals (an absolute or traversing split, a
        wrong kind, a missing file, sibling or manifest) come before any file is opened and before
@@ -1208,10 +1213,16 @@ each moves its callers before anything is removed.
        (S9's). S9's deletion of the path forms and its static pin over `measure_scorer.py` wait
        for the Mode A/B decision, because runs that include Mode A still use them. Since the
        owner's clarification of 2026-10-12 that decision is no longer open: the deletion and the
-       pin follow R2, which deletes those runs and is not implemented.
+       pin follow R2, which deleted those runs on 2026-10-12.
      - Acceptance: `tests/unit/test_measurement_reads_once.py`. The Mode C unit fixture
        (`tests/unit/test_measurement_mode_c.py`) now reads through `read_measurement_inputs`, and
        `tests/integration/test_measure_scorer_run.py` pins the `kg` role.
+     - **R2 (2026-10-12), awaiting code review.** Modes A and B are deleted, with the runs that
+       include Mode A, `load_legacy_mode_a_inputs`, the checkpoint loaded by path,
+       `artifact_digests` and `--modes`, so every measurement run is the path above and records
+       `kg`. With them went the manifest's loader, sampler and seed fields, `--seed` and
+       `--num-workers` (the retirement assessment's §8 items 5 and 9). `measure_scorer.py` binds
+       no path form at import; it keeps the `file_sha256` re-export, which is S9's.
      - **Found, not changed:** a checkpoint that does not parse is refused with torch's own
        error, which names no file, as before S7 (`read_checkpoint` passes torch's errors through
        by design). Naming it would change the exception a C-only run raises; for the owner to
@@ -1262,16 +1273,19 @@ each moves its callers before anything is removed.
      clarification of 2026-10-12 this waited for the Mode A/B decision):
      measurement runs that include Mode A still call `artifact_digests`, `verify_graph_artifacts`,
      `verify_generated_cohorts` and `compute_input_digests`, so the deletion below and the static
-     pin over `measure_scorer.py` follow their deletion in the retirement assessment's R2 (not
-     implemented).
+     pin over `measure_scorer.py` follow their deletion in the retirement assessment's R2. R2 deleted
+     them on 2026-10-12: `measure_scorer.py` calls none of the four and binds none at import, so
+     for measurement only the `file_sha256` re-export is left for S9. The path forms' remaining
+     callers are outside measurement.
    - **Deleted:** the verifiers' path forms. `compute_input_digests` goes once no caller records
      through it.
    - **Tests that import what goes:**
      - `tests/unit/test_training_provenance.py` imports `compute_input_digests` at module level;
      - it and `tests/unit/test_measure_scorer_cli.py`'s
        `test_artifact_digests_identify_content_not_paths` (moved there from
-       `test_measurement_mode_a.py` by the retirement's R1) pin the `file_sha256` re-export in
-       `scripts/measure_scorer.py:99`.
+       `test_measurement_mode_a.py` by the retirement's R1; renamed
+       `test_the_file_sha256_reexport_identifies_content_not_paths` by the retirement's R2, when
+       `artifact_digests` went) pin the `file_sha256` re-export in `scripts/measure_scorer.py`.
 
      Those tests move with the removal. The re-export is either kept, with its reason, or removed
      with its pins.
@@ -1322,32 +1336,31 @@ each moves its callers before anything is removed.
       reload; `ecf17cd`, `scorer-measurement/PLAN_B04_PRODUCTIONISATION.md:1199`, `:1202`) predate
       M1 and are context only.
     - **Pre-flight, once and read-only:** load the designated checkpoint with
-      `weights_only=True`, the way Mode C does (`measure_scorer.py:593`), and list its keys.
-      - Expected: it loads and carries neither `metadata` nor `in_channels_dict`. The reviewer
-        reported the two keys missing (plan review of `4ecd2c2`), not a load with
-        `weights_only=True`: no Mode C run on this file is recorded yet; serving loaded it with
-        `weights_only=False` (`src/inference/pipeline.py:973`).
+      `weights_only=True`, the way Mode C does (`read_checkpoint` in `read_measurement_inputs`),
+      and list its keys.
+      - Expected: it loads. No Mode C run on this file is recorded yet; serving loaded it with
+        `weights_only=False` (`src/inference/pipeline.py:973`). The earlier expectation that it
+        carries neither `metadata` nor `in_channels_dict` supported only Mode A's "not
+        applicable" row, which went with Mode A in the retirement's R2 (2026-10-12).
       - If it does not load, the reading records that Mode C cannot run on this file. No
         `weights_only=False` or other fallback is added.
 
     | Entry point | Command (key arguments) | What runs on the subject | Readings | Compared |
     |---|---|---|---|---|
     | Serving | `measure_served_pipeline.py --workspace $WS --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --output <scratch>/served_readings.json --repeats 3 --seed 20260930`. It applies its own environment; its SHA-256 must be equal at both commits | launch to ready, 200 serial `/diagnose` requests, then one reload, each asserting `gnn_plus_shortest_path` | R1: VmHWM and VmRSS at ready, system peak less R0. R4: VmHWM over the reload. R2, R3: VmRSS after | all of these, with equal subject digests, allocator reading and `readings_complete` |
-    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --modes C --device cuda --output <scratch>/measurement.json` | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
+    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json` (`--modes C` until R2 removed the option, 2026-10-12) | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
     | Training | `train_model.py --data-dir $WS --device cuda --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42 --output-dir <scratch> --checkpoint-dir <scratch>` (the subject's flags, `scorer-measurement/subject-hgt-2026-09-29/commands.txt`), with `Trainer.train` replaced by a reading; once without and once with `--resume $WS/checkpoints/hgt/model-02-0.1813.pt` | the checks, reads, model, `Trainer` and resume read; no epoch and no checkpoint written | VmHWM and VmRSS at `Trainer.__init__` and at the replaced `train`; CUDA max allocated; system peak | all of these; VmRSS at the replaced `train`, compared and explained (acceptance 2) |
     | SP producer | `compute_shortest_paths.py --kg-path …/kg.json --output-dir <scratch> --max-hops 5 --workers 15` | a full run, about 15 minutes. The published pair in the workspace stays untouched, checked by size and time | parent VmHWM after the graph read; VmRSS when the workers fork, after the graph read; at publication; tree PSS; system peak | all of these; the new sidecar names graph `6cae2d1a…`, 431,902,937 pairs, `max_hops` 5 |
 
     - **Not applicable, recorded as such:**
-      - Mode A: `KeyError` at `measure_scorer.py:251`, if the pre-flight finds neither key, as
-        expected;
-      - Mode B: allowed only beside A (`:443`);
+      - Modes A and B: deleted by the Mode A/B retirement's R2 (2026-10-12); the CLI has no `--modes`;
       - the calibration launcher: removed in S0;
       - serving's CUDA allocator counters, which `PLAN_B04_PRODUCTIONISATION.md` §7.3 excludes.
 
       **M2.1's capacity acceptance is complete with Mode C as measurement's reading.** M2.1 owes
       no Mode A or B reading on a real checkpoint, and none is wanted until a runnable subject is
       named (BACKLOG 19.18). Since the owner's clarification of 2026-10-12 none will be: Modes A
-      and B are to be deleted by the retirement assessment's R2 (not implemented).
+      and B were deleted by the retirement assessment's R2 (2026-10-12).
     - **Why training stops before its first epoch:** an epoch with the default checkpoint
       directory writes `last.pt` beside the designated checkpoint (`checkpoint_paths.py:98-100`,
       `callbacks.py:271-274`), and M2.1 does not change the training loop. No step limit exists,
@@ -1538,7 +1551,7 @@ new dependency or measurement fact appears.
        `tests/fixtures/synthetic_workspace.py:109` (`:164-223`);
        `tests/unit/test_measurement_mode_a.py:546` (`:508-519`);
        `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:92` (`:111, 201, 205`); and
-       `measure_scorer.py:203` (`:164-223`), which was to go with `load_legacy_mode_a_inputs` in S7 and now goes when Modes A and B are migrated or retired (S7 was implemented for Mode C only); since the owner's clarification of 2026-10-12, when R2 deletes them.
+       `measure_scorer.py:203` (`:164-223`), which was to go with `load_legacy_mode_a_inputs` in S7 and went with it in the retirement's R2 (2026-10-12; S7 was implemented for Mode C only).
      - In today's numbering, re-anchored to `7dab728`: `src/evaluation/measurement.py:250-251`
        (`:324`, `:116`, which are `:299`, `:91` there); and BACKLOG §3.1 (`BACKLOG.md:346`,
        `:163-173`, which is `:138-148` there).
@@ -1546,7 +1559,7 @@ new dependency or measurement fact appears.
        in `7dab728`'s numbering throughout (for example `:22`, `:95`, `:214`, `:248`, `:261`). Its
        history note gains one sentence: those citations are at `7dab728`.
      - This plan's constraint on `read_samples`' fields is already re-anchored, to `:185-191` at
-       `7dab728`, and rests on Modes A and B (above, "Two constraints").
+       `7dab728`, and rested on Modes A and B (above, "Two constraints"; since the retirement's R2, on training passing its two fields explicitly).
      - By name only, named at `7dab728`: `measure_scorer.py:234` and `:420-422`, and
        `scorer-measurement/README.md:93`.
    - **Text that names it as a live file** becomes history or is removed:
@@ -1575,6 +1588,10 @@ new dependency or measurement fact appears.
      parity assertions in `test_measurement_mode_a.py`. Code that the measurement CLI or a valid
      test still calls is not deleted because its name says "legacy". The frozen file is not
      edited before it goes, and item 7a's runner need not exist first.
+     *Superseded by the Mode A/B retirement (the owner, 2026-10-12):* item 9 was replaced by the
+     retirement's R2, which deleted `build_legacy_mode_a_model`, the parity assertions and the rest
+     of Modes A and B (2026-10-12) because nothing current used them, not because a name says
+     "legacy"; the rule in the sentence before stands.
    - Not chosen: keeping it as a pinned historical file until item 9's last step.
 7. **S10's capacity acceptance is limited to its designated subject:** workspace
    `hpo_2026_0929_5a` with checkpoint `model-02-0.1813.pt` (S10). It does not claim to cover all
@@ -1671,8 +1688,8 @@ The rest of resume — the overwrite guard — is M3a's.
   2026-10-09), and the other three roles come from M2.1's reads.
   - Serving keeps only `kg` today (`src/inference/pipeline.py:532` at `90a668f`), and all four
     after M2.1's S6. Measurement's runs without Mode A keep them since S7
-    (`MeasurementInputs.bound`); runs that include Mode A still discard them
-    (`measure_scorer.py:128` at `90a668f`).
+    (`MeasurementInputs.bound`); runs that include Mode A discarded them
+    (`measure_scorer.py:128` at `90a668f`) until R2 deleted those runs (2026-10-12).
   - A missing `training_input_digests`, or a missing role, refuses.
 - **The comparison lives in the slot `verify_fingerprint` deferred** (`fingerprint.py:168-176`),
   so there is one model↔graph comparator.

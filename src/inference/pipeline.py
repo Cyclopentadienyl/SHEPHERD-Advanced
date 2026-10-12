@@ -1014,8 +1014,8 @@ class DiagnosisPipeline:
             )
 
         # Construction is shared with the measurement harness
-        # (`src/models/gnn/shepherd_gnn.py:build_shepherd_model`), so modes B and
-        # C cannot encode with semantics that have drifted from the served model.
+        # (`src/models/gnn/shepherd_gnn.py:build_shepherd_model`), so measurement's
+        # Mode C cannot encode with semantics that have drifted from the served model.
         # Metadata derivation from graph_data keys, architecture recovery and
         # weight loading all live there; what stays here is what only a running
         # pipeline needs.

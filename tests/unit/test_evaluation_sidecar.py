@@ -34,24 +34,19 @@ from src.evaluation.sidecar import (
 
 
 def _report(**overrides):
-    """A measurement artifact in the shape `MeasurementResult.to_dict` writes."""
+    """A measurement artifact in the shape `ModeResult.to_dict` writes."""
     manifest = {
-        "mode": "A",
+        "mode": "C",
         "split": "val",
         "cohort_kind": "generated",
         "metric_schema_version": 1,
         "batch_size": 3,
-        "shuffle": False,
-        "num_workers": 4,
-        "python_seed": 0,
-        "numpy_seed": 0,
-        "torch_seed": 0,
         "torch_version": "2.5.0",
         "cuda_version": "12.4",
         "cudnn_benchmark": False,
         "cudnn_deterministic": True,
         "torch_compile_wrapped": None,
-        "candidate_construction": "2-hop subgraph",
+        "candidate_construction": "every disease in the knowledge graph",
         "device": "cuda",
         "dtype": "float32",
         "deterministic_algorithms": True,
@@ -108,6 +103,17 @@ def test_an_unknown_schema_version_is_refused_rather_than_reinterpreted(tmp_path
         read_ledger(path)
 
 
+def test_a_ledger_written_before_the_mode_ab_retirement_is_refused(tmp_path):
+    """Version 1 files hold records of the retired modes and semantics digests
+    over the longer field list; the ledger is not appended to under new rules."""
+    path = tmp_path / "evaluations.json"
+    path.write_text(json.dumps({"schema_version": 1, "records": []}))
+
+    assert LEDGER_SCHEMA_VERSION == 2
+    with pytest.raises(ValueError, match="schema 1.*Read it with the revision that wrote it"):
+        read_ledger(path)
+
+
 def test_a_ledger_without_a_records_list_is_refused(tmp_path):
     path = tmp_path / "evaluations.json"
     path.write_text(json.dumps({"schema_version": LEDGER_SCHEMA_VERSION}))
@@ -122,14 +128,14 @@ def test_a_ledger_without_a_records_list_is_refused(tmp_path):
 @pytest.mark.parametrize(
     "differing",
     [
-        {"mode": "C"},
+        {"mode": "D"},
         {"batch_size": 8},
         {"amp_enabled": True, "amp_dtype": "bfloat16"},
         {"software_revision": "def5678"},
         {"device": "cpu"},
         {"metric_schema_version": 2},
         {"canonical_tie_policy_version": "v2"},
-        {"candidate_construction": "full disease set"},
+        {"candidate_construction": "path-reachable diseases"},
     ],
     ids=lambda d: "-".join(sorted(d)),
 )
@@ -138,8 +144,9 @@ def test_runs_differing_in_anything_score_affecting_are_separate_records(differi
 
     The earlier key was (checkpoint, cohort, mode, tie policy), and every case
     here except the first collided under it and was refused as a contradiction.
-    `batch_size` is the sharpest: the manifest documents it as semantics rather
-    than performance, because Mode A's candidate universe is the batch's subgraph.
+    `batch_size` is the sharpest: it is Mode C's chunk size, which can move scores
+    at floating-point level, so two honest runs at different sizes are two
+    measurements.
     """
     ledger = append_record(empty_ledger(), build_record(_report(), None))
     second = build_record(_report(manifest=differing), None)
@@ -160,9 +167,9 @@ def test_every_manifest_field_is_decided_one_way_or_the_other():
     """The claim "this list holds everything that can move a metric" is only worth
     making if it is checkable.
 
-    Five score-affecting fields were missing from the first version -- `shuffle`,
-    `num_workers` and the three seeds -- while the docstring claimed completeness.
-    A new field on `MeasurementManifest` now fails here until someone decides
+    Score-affecting fields were missing from the first version while the
+    docstring claimed completeness. A field added to or removed from
+    `MeasurementManifest` now fails here until someone decides
     which side it falls on, so omission has to be a decision rather than an
     oversight.
     """
@@ -183,11 +190,6 @@ def test_every_manifest_field_is_decided_one_way_or_the_other():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("num_workers", 8),
-        ("shuffle", True),
-        ("python_seed", 7),
-        ("numpy_seed", 7),
-        ("torch_seed", 7),
         ("torch_version", "2.6.0"),
         ("cuda_version", "12.8"),
         ("cudnn_benchmark", True),
@@ -195,10 +197,10 @@ def test_every_manifest_field_is_decided_one_way_or_the_other():
         ("torch_compile_wrapped", True),
     ],
 )
-def test_loader_and_numerical_semantics_change_the_digest(field, value):
-    """`num_workers` is the sharpest: PyTorch seeds each worker as
-    `base_seed + worker_id`, so a different worker count consumes a different
-    random stream and produces a different candidate universe."""
+def test_numerical_semantics_change_the_digest(field, value):
+    """The numerical regime is part of what a number means: a different torch or
+    CUDA build, a cuDNN setting or a compile wrapper can move scores, so two runs
+    differing in one are two measurements."""
     base = _report()["manifest"]
 
     assert measurement_semantics_digest(base) != measurement_semantics_digest(
@@ -259,32 +261,18 @@ def test_a_record_missing_a_key_field_is_refused(tmp_path):
         record_key({"checkpoint_digest": "c" * 64})
 
 
+@pytest.mark.parametrize("field", ["python_seed", "legacy_truncation_k", "num_workers"])
+def test_a_manifest_carrying_a_field_this_revision_does_not_record_is_refused(field):
+    """A report written before the Mode A/B retirement's R2, or by a retired mode,
+    carries fields the current manifest does not. Hashed under the current list
+    it would lose what told its runs apart, so it is refused rather than read."""
+    with pytest.raises(ValueError, match=f"records {field}.*not read"):
+        build_record(_report(manifest={field: 0}), None)
+
+
 # ---------------------------------------------------------------------------
 # What a record carries
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("field", ["python_seed", "numpy_seed", "torch_seed"])
-@pytest.mark.parametrize("bad", [True, False, -1, 2 ** 32, 1.0, "42"])
-def test_a_seed_outside_its_domain_is_not_an_rng_identity(field, bad):
-    """`bool` is an `int` subclass, so `True` would record a stream's identity as
-    a flag; and one seed drives Python, NumPy and torch, so a value NumPy's
-    seeder would reject is not a seed for this harness even where torch takes it.
-    """
-    with pytest.raises(ValueError, match="must be an integer in"):
-        build_record(_report(manifest={field: bad}), None)
-
-
-@pytest.mark.parametrize("missing", ["python_seed", "numpy_seed", "torch_seed"])
-def test_a_run_with_no_recorded_rng_identity_cannot_be_a_record(missing):
-    """Two unseeded runs consume different worker streams, different negatives and
-    a different candidate universe while hashing to the same semantics digest --
-    so the ledger would see one measurement with two answers and refuse the second
-    as a contradiction. The stream has to have an identity."""
-    report = _report(manifest={missing: None})
-
-    with pytest.raises(ValueError, match=f"records no {missing}"):
-        build_record(report, None)
-
-
 def test_the_record_is_derived_from_the_manifest_not_asserted(tmp_path):
     """A run's own manifest says which checkpoint, cohort and mode it was."""
     record = build_record(_report(), "d" * 64)
@@ -292,7 +280,7 @@ def test_the_record_is_derived_from_the_manifest_not_asserted(tmp_path):
     assert record["checkpoint_digest"] == "c" * 64
     assert record["cohort_digest"] == "s" * 64
     assert record["cohort_role"] == "val"
-    assert record["mode"] == "A"
+    assert record["mode"] == "C"
     assert record["metrics"] == {"mrr": 0.5, "hits_at_1": 0.25}
     assert record["source_artifact_digest"] == "d" * 64
 
@@ -381,7 +369,7 @@ def test_a_failed_write_leaves_the_previous_ledger_intact(tmp_path, monkeypatch)
     monkeypatch.setattr(sidecar.json, "dump", _explode)
     with pytest.raises(OSError):
         write_ledger(path, append_record(first, build_record(
-            _report(manifest={"mode": "C"}), None)), ledger_digest(path))
+            _report(manifest={"mode": "D"}), None)), ledger_digest(path))
 
     assert path.read_bytes() == before
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")], (
@@ -409,7 +397,7 @@ def test_the_ledger_must_be_beside_the_weights_it_describes(tmp_path):
 
     empty = tmp_path / "elsewhere"
     empty.mkdir()
-    report_path = tmp_path / "mode_a.json"
+    report_path = tmp_path / "measurement.json"
     report_path.write_text(json.dumps(_report()))
 
     with pytest.raises(SystemExit, match="holds no checkpoint whose bytes"):
@@ -426,7 +414,7 @@ def test_duplicate_checkpoint_bytes_are_acceptable(tmp_path):
     (checkpoints / "best.pt").write_bytes(b"the weights")
     report = _report()
     report["manifest"]["artifact_digests"]["checkpoint"] = digest
-    report_path = tmp_path / "mode_a.json"
+    report_path = tmp_path / "measurement.json"
     report_path.write_text(json.dumps(report))
 
     record_evaluation.main(["--checkpoint-dir", str(checkpoints),
@@ -452,7 +440,7 @@ def test_a_writer_holding_a_stale_read_is_refused(tmp_path):
     write_ledger(path, first, None)
     stale = ledger_digest(path)
 
-    other = append_record(first, build_record(_report(manifest={"mode": "C"}), None))
+    other = append_record(first, build_record(_report(manifest={"mode": "D"}), None))
     write_ledger(path, other, stale)
 
     with pytest.raises(ValueError, match="changed since it was read"):
@@ -487,7 +475,7 @@ def test_the_cli_records_and_then_reads_back(tmp_path, capsys):
     checkpoints, digest = _checkpoint_dir(tmp_path)
     report = _report()
     report["manifest"]["artifact_digests"]["checkpoint"] = digest
-    report_path = tmp_path / "mode_a.json"
+    report_path = tmp_path / "measurement.json"
     report_path.write_text(json.dumps(report))
 
     record_evaluation.main(["--checkpoint-dir", str(checkpoints),
@@ -496,7 +484,7 @@ def test_the_cli_records_and_then_reads_back(tmp_path, capsys):
     record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show", digest])
 
     shown = json.loads(capsys.readouterr().out)
-    assert len(shown) == 1 and shown[0]["mode"] == "A"
+    assert len(shown) == 1 and shown[0]["mode"] == "C"
 
 
 def test_the_cli_shows_an_empty_result_for_unknown_weights(tmp_path, capsys):
@@ -516,6 +504,21 @@ def test_the_cli_refuses_a_report_that_is_not_a_measurement_artifact(tmp_path):
     with pytest.raises(SystemExit, match="not a measurement artifact"):
         record_evaluation.main(["--checkpoint-dir", str(tmp_path),
                                 "--report", str(report_path)])
+
+
+def test_the_cli_refuses_a_report_from_an_earlier_revision(tmp_path):
+    import scripts.record_evaluation as record_evaluation
+
+    checkpoints, digest = _checkpoint_dir(tmp_path)
+    report = _report(manifest={"python_seed": 0})
+    report["manifest"]["artifact_digests"]["checkpoint"] = digest
+    report_path = tmp_path / "measurement.json"
+    report_path.write_text(json.dumps(report))
+
+    with pytest.raises(SystemExit, match="python_seed"):
+        record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                                "--report", str(report_path)])
+    assert not (checkpoints / "evaluations.json").exists()
 
 
 def test_the_cli_needs_exactly_one_of_report_and_show(tmp_path):

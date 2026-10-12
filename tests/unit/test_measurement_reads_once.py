@@ -1,11 +1,11 @@
 """
 Measurement reads each recorded input once, and records those reads — Mode C.
 =============================================================================
-Contract M2.1, S7, for runs without Mode A (`--modes C`). Before any model is
-built or output written, `main` resolves the cohort (stat only), then reads the
-manifest, the graph tensors, the cohort's samples, for a generated cohort the
-sibling split, and the checkpoint once each (`read_measurement_inputs`), and
-verifies from those reads with the `kg.json` identification check (decision 1).
+Contract M2.1, S7. Before any model is built or output written, `main`
+resolves the cohort (stat only), then reads the manifest, the graph tensors, the
+cohort's samples, for a generated cohort the sibling split, and the checkpoint
+once each (`read_measurement_inputs`), and verifies from those reads with the
+`kg.json` identification check (decision 1).
 The manifest's `artifact_digests` are built only from those reads
 (`measurement_input_digests`); its `kg` role is the manifest-bound source graph
 (decision 2). The acceptance shown here, at the real entry point (`main`, with
@@ -27,10 +27,7 @@ generated cohort:
   `kg.json` identification check takes (it records nothing), the run completes
   and no poison reaches the record;
 - graph tensors load on CPU and safely; the checkpoint keeps this site's options;
-  the samples are read with the default fields;
-- **runs that include Mode A are not migrated** (pending retirement): an
-  `A,B,C` run still reads through `load_legacy_mode_a_inputs` and never reaches
-  S7's reads. M2.1 is not complete while they are neither migrated nor retired.
+  the samples are read with the default fields.
 
 Module: tests/unit/test_measurement_reads_once.py
 """
@@ -137,12 +134,12 @@ def _other_checkpoint(checkpoint, path):
     return path
 
 
-def _main(cli, ws, *, split=None, kind=None, modes="C"):
+def _main(cli, ws, *, split=None, kind=None):
     return cli.main([
         "--checkpoint", str(ws.checkpoint), "--data-dir", str(ws.data_dir),
         "--split", split or ws.split, "--cohort-kind", kind or ws.kind,
         "--output", str(ws.output), "--batch-size", str(BATCH_SIZE),
-        "--num-workers", "0", "--device", "cpu", "--modes", modes,
+        "--device", "cpu",
     ])
 
 
@@ -151,8 +148,8 @@ def _recorded(ws):
 
 
 def _expected(ws):
-    """The record a C-only run must write: the digest of each file it read, and
-    `kg` as the manifest binds it."""
+    """The record a run must write: the digest of each file it read, and `kg` as
+    the manifest binds it."""
     manifest = json.loads((ws.data_dir / "split_manifest.json").read_text())
     expected = {
         "checkpoint": _sha(ws.checkpoint),
@@ -574,17 +571,20 @@ def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(cli, supplied, n
 # Only from the readers
 # ---------------------------------------------------------------------------
 def test_no_path_form_is_reached_and_no_path_digest_is_recorded(cli, ws, monkeypatch):
-    """S9's dynamic pin, brought forward for Mode C. `poison_path_forms` cannot
-    reach names `measure_scorer` bound at import, and runs that include Mode A
-    still use them, so those are made to fail here too."""
+    """S9's dynamic pin, brought forward for measurement. `poison_path_forms`
+    patches the source modules, which cannot reach a name `measure_scorer` bound
+    at import. The only such names left are the `file_sha256` re-export (S9's to
+    remove), so those are made to fail here too, and the path forms are asserted
+    not to be bound here at all, which would put them out of the poison's reach."""
+    for name in ("artifact_digests", "verify_graph_artifacts", "verify_generated_cohorts",
+                 "compute_input_digests"):
+        assert not hasattr(cli, name), f"measure_scorer binds {name} at import"
     poison_path_forms(monkeypatch, true_digest_for=[ws.data_dir / "kg.json"])
 
     def reached(*args, **kwargs):
-        raise AssertionError("a C-only run reached a path form or Mode A's reads")
+        raise AssertionError("a measurement reached a path hash")
 
-    for name in ("artifact_digests", "verify_graph_artifacts", "verify_generated_cohorts",
-                 "compute_input_digests", "file_sha256", "_file_sha256",
-                 "load_legacy_mode_a_inputs", "build_legacy_mode_a_model"):
+    for name in ("file_sha256", "_file_sha256"):
         monkeypatch.setattr(cli, name, reached)
 
     assert _main(cli, ws) == 0
@@ -639,11 +639,10 @@ def test_the_samples_are_read_with_the_default_fields(cli, ws, monkeypatch):
 
 
 def test_the_read_and_the_record_hash_no_path(cli):
-    """Static half of the pin: neither function names a path form, a path hash,
-    Mode A's loader or `torch.load`."""
-    gone = {"artifact_digests", "verify_graph_artifacts", "verify_generated_cohorts",
+    """Static half of the pin: neither function names a path form, a path hash
+    or `torch.load`."""
+    gone = {"verify_graph_artifacts", "verify_generated_cohorts",
             "verify_graph_source", "compute_input_digests", "file_sha256", "_file_sha256",
-            "load_legacy_mode_a_inputs", "build_legacy_mode_a_model",
             # Any other way of reading or hashing a file by path.
             "hashlib", "file_digest", "read_once", "read_bytes", "read_text", "open"}
     for function in (cli.read_measurement_inputs, cli.measurement_input_digests):
@@ -655,29 +654,3 @@ def test_the_read_and_the_record_hash_no_path(cli):
                   if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
         assert not names & gone, f"{function.__name__} names {sorted(names & gone)}"
         assert "torch.load" not in ast.unparse(body), function.__name__
-
-
-# ---------------------------------------------------------------------------
-# Runs that include Mode A: not migrated, pending retirement
-# ---------------------------------------------------------------------------
-def test_runs_that_include_mode_a_are_not_migrated(cli, supplied, monkeypatch):
-    """The boundary, stated by assertion and not endorsed: an `A,B,C` run keeps
-    Mode A's own reads and never reaches S7's. When Modes A and B are migrated or
-    retired, this test goes with them."""
-    def reached(*args, **kwargs):
-        raise AssertionError("a run including Mode A reached S7's read")
-
-    monkeypatch.setattr(cli, "read_measurement_inputs", reached)
-    monkeypatch.setattr(cli, "measurement_input_digests", reached)
-    loads = []
-    real_load = cli.load_legacy_mode_a_inputs
-
-    def load(*args, **kwargs):
-        loads.append(args)
-        return real_load(*args, **kwargs)
-
-    monkeypatch.setattr(cli, "load_legacy_mode_a_inputs", load)
-
-    assert _main(cli, supplied, modes="A,B,C") == 0
-
-    assert len(loads) == 1

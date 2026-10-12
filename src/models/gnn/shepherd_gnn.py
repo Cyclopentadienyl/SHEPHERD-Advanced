@@ -511,8 +511,8 @@ def build_shepherd_model(
     """Rebuild a trained model the way the deployed pipeline does.
 
     **One implementation, two callers.** `src/inference/pipeline.py` uses this to
-    load the served model, and `src/evaluation` uses it so measurement modes B and
-    C encode with production semantics. Written twice, the copies would drift, and
+    load the served model, and `src/evaluation` uses it so measurement's Mode C
+    encodes with production semantics. Written twice, the copies would drift, and
     a measurement that quietly stopped describing the deployed scorer is the one
     failure this work item cannot detect from its own output.
 

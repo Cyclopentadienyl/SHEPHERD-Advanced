@@ -7,10 +7,9 @@ needs it. This is the shared reader those copies are meant to collapse into.
 
 **This is the P1's first callers, not the P1.** The package docstring records the
 whole job: become the single reader of this layout, replacing all six copies.
-Two of them are migrated here — the measurement harness's Mode C path and the
-legacy Mode A loader that delegates to it — because B-0.3 needed a reader that
-does **not** retire with the frozen evaluator, and adding another copy to get
-one would have been the opposite of the point. Serving
+The measurement harness was the first migrated here, because B-0.3 needed a
+reader that does **not** retire with the frozen evaluator, and adding another
+copy to get one would have been the opposite of the point. Serving
 (`src/inference/pipeline.py`) and training (`scripts/train_model.py`) moved here
 in contract M2.1's S6 and S8, and `scripts/setup_demo.py` reads through
 training. `scripts/build_index.py` and `scripts/spikes/validate_fast_subgraph.py`
@@ -154,10 +153,9 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
     rather than held-out data.
 
     **Three fields by default; `training_fields=True` adds the two only
-    training reads,** `candidate_disease_ids` and `gene_ids`. Measurement reads
-    three fields, as the frozen evaluator did, and `gene_ids` become subgraph
-    seeds (`src/kg/data_loader.py:675-676`), so carrying them by default would
-    change what Modes A and B measure.
+    training reads,** `candidate_disease_ids` and `gene_ids`. Measurement and
+    the verifiers read the three default fields; training passes its two extra
+    fields explicitly.
     """
     from src.kg.data_loader import DiagnosisSample
 

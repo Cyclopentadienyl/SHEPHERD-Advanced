@@ -383,7 +383,7 @@ class TestCheckpointBridge:
     ):
         """`encode_full_graph` must be the pipeline's own forward, not a lookalike.
 
-        Modes B and C encode offline rather than by constructing a
+        Measurement's Mode C encodes offline rather than by constructing a
         `DiagnosisPipeline`, which would drag in the knowledge-graph object, the
         shortest-path table and the path-finding and explanation machinery they do
         not use. That saving is only safe while the two really are the same three

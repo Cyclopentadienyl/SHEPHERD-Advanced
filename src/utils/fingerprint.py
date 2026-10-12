@@ -149,9 +149,11 @@ def compute_input_digests(roles: Mapping[str, Union[str, Path]]) -> Dict[str, Op
     vocabulary or share a schema. That is what keeps a shared digest contract from
     turning into a shared domain model.
 
-    What it does own is the one decision both callers must not disagree about:
+    What it does own is the one decision its callers must not disagree about:
     a missing file is `None`, uniformly. Two dict comprehensions could drift on
-    that; this cannot.
+    that; this cannot. **No production code calls it since the Mode A/B
+    retirement's R2** (2026-10-12), which deleted measurement's path-form record;
+    contract M2.1's S9 deletes it once no caller records through it.
 
     Callers should pass **only the roles the run actually consumed**. Hashing every
     file that happens to sit in a directory records the directory, not the run —

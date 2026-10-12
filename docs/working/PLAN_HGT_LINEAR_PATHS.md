@@ -18,11 +18,11 @@
 |---|---|
 | Training | `scripts/train_model.py` `create_model_from_config` |
 | Serving | `src/inference/pipeline.py` `_load_model_from_checkpoint` → `build_shepherd_model` |
-| Measurement, Modes B and C | `scripts/measure_scorer.py` → `build_shepherd_model` |
+| Measurement (Mode C) | `scripts/measure_scorer.py` → `build_shepherd_model` |
 | Index build | `scripts/build_index.py` |
 | Smoke test, fixtures | `scripts/test_gnn_inference.py`, `tests/fixtures/synthetic_workspace.py` |
 
-`build_shepherd_model` is not shared by training or `build_index`, so it is not the shared location; `HeteroGNNLayer` is. Legacy Mode A builds GAT only (it never sets `conv_type`) and is unaffected.
+`build_shepherd_model` is not shared by training or `build_index`, so it is not the shared location; `HeteroGNNLayer` is. Measurement's legacy Mode A, which built GAT only, was retired in the Mode A/B retirement's R2.
 
 ---
 
@@ -129,7 +129,7 @@ With the flag at `None`, `HeteroLinear` (HGT's `k_rel` and `v_rel`) times `pyg_l
 
 **Step 2 — the simplest sufficient shared policy.** If one fixed setting meets correctness and performance, it is applied at the one place HGT runs, `HeteroGNNLayer`, scoped to the conv call by a single save-and-restore in a `finally`, with no per-module hooks. Only if the relation and node linears genuinely need different paths is that split designed, inside the same layer. No PyG fork and no second backend.
 
-**The requested policy is explicit and recorded.** It is a model-configuration field (in `ShepherdGNNConfig`), so it is saved with the checkpoint's `model_config` and read back by `build_shepherd_model`. The builders that copy the configuration by hand (`create_model_from_config` in `scripts/train_model.py`, and `scripts/build_index.py`) are fixed to carry it: that wiring gap is a defect to repair, not a reason to do without the field. Mode A is being retired and is not accommodated.
+**The requested policy is explicit and recorded.** It is a model-configuration field (in `ShepherdGNNConfig`), so it is saved with the checkpoint's `model_config` and read back by `build_shepherd_model`. The builders that copy the configuration by hand (`create_model_from_config` in `scripts/train_model.py`, and `scripts/build_index.py`) are fixed to carry it: that wiring gap is a defect to repair, not a reason to do without the field. Mode A was retired (R2) and is not accommodated.
 
 **Three facts, recorded separately and never inferred from one another:** the requested policy (the configuration field); the compile setting and whether the model carries a compile wrapper; and the kernel each relation linear was observed to run in that execution. A compile wrapper does not mean the loop ran (§2.1); a control experiment in the review (torch 2.10.0, PyG 2.8.0.post1, a compiler-disabled `HeteroLinear.forward` under a `torch.compile` wrapper) observed segment_matmul. Where nothing was observed the kernel is recorded as unknown; where one execution ran different paths it is recorded per instance, not as a single value. They are written to training's `runtime.json`, the measurement manifest and the serving log at precompute, with the torch_geometric and pyg_lib versions. The observation is a spy on the two kernels, not a compiler-tracing framework.
 

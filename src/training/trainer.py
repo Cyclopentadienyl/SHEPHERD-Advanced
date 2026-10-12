@@ -620,9 +620,9 @@ class Trainer:
         of the loop and a tuple would make the call sites unreadable. **Not** a
         public result type, not a protocol, and nothing subclasses it.
 
-        `predictions` and `ground_truths` are carried out of the pass although no
-        caller reads them yet. They are the per-sample artifact item 1d compares
-        against Mode A's `legacy_top_k_local`, and returning them here costs
+        `predictions` and `ground_truths` are carried out of the pass for the
+        Trainer value test (`tests/unit/test_trainer_validation_values.py`), which
+        compares them with rows computed independently; returning them costs
         nothing and changes nothing observable.
         """
 
@@ -885,8 +885,8 @@ class Trainer:
         # **A cohort with no rows is refused rather than scored.** `mean_loss`
         # divides by `max(num_batches, 1)`, so an empty traversal returns
         # `{"loss": 0.0}` — a number about a model, produced without reading a
-        # single patient. `RankingMetrics`, `measurement.py` and
-        # `differential.py` all refuse to invent a value for an empty cohort;
+        # single patient. `RankingMetrics` and `measurement.py` both refuse to
+        # invent a value for an empty cohort;
         # this is the same refusal at the entry point that could still fabricate
         # one. Checked after the traversal rather than before, so a generator
         # that yields nothing is caught as surely as an empty list.

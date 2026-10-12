@@ -9,6 +9,12 @@ fixed; §6.8's audit built and run, its evidence committed (revision 28).
 <details>
 <summary><b>Revision history</b></summary>
 
+- **30** — the Mode A/B retirement's R2 (2026-10-12): measurement runs Mode C only and records no
+  seed and no loader fields. §1.7, §6.1 and §6.5's "As built" are amended in place; the two seed
+  bullets of §6.1 are marked superseded rather than removed. The ledger reads only what the
+  current measurement writes: `build_record` refuses a manifest carrying a field the current one
+  does not, and the ledger's `schema_version` is 2, so a ledger file written before R2 is refused,
+  neither read nor migrated.
 - **29** — the institution confirmed §5's two gating answers, as reported by the project owner on
   2026-10-02, and the document catches up with what has been built. Question one is confirmed *in
   principle*, with an addition recorded beside it: a selected checkpoint's real-cohort test results
@@ -472,8 +478,9 @@ overlap.
 Two guards were added earlier in this phase and should not be confused with the boundary above:
 `--split` is required with no default on the measurement entry point, and `read_samples` refuses
 a missing split and lists what exists rather than substituting one. (Since contract M2.1's S7 a
-`--modes C` run refuses a missing split earlier, at `resolve_cohort`, before anything is read, with
-"does not exist" and no listing; runs that include Mode A still reach the reader's listing.)
+Mode C run (`--modes C` until the Mode A/B retirement's R2 removed the option, 2026-10-12) refuses a missing split earlier, at `resolve_cohort`, before anything is read, with
+"does not exist" and no listing; runs that include Mode A reached the reader's listing until R2
+deleted them.)
 
 Neither separates validation from test. They prevent a number being produced on a split the caller
 did not ask for — which is a defect the original repository does have, at `hparams.py:184`, where
@@ -958,10 +965,10 @@ Two rules follow, and both are enforced rather than advised:
   it once, after the graph check, and training reads a resume parent once where it is restored,
   after the run directories and `config.yaml` exist. A requested parent that is missing still warns
   and trains from scratch; refusing it, and checking the parent before anything is written, is
-  contract M2.3's. Measurement's `--modes C` runs do the same since S7: the manifest, the tensors and
+  contract M2.3's. Measurement's Mode C runs do the same since S7 (every measurement run since R2, 2026-10-12): the manifest, the tensors and
   the cohort (and, for a generated cohort, its sibling split) are read once and checked before the
   model is built or anything is written, and the checkpoint is read after those checks; runs that
-  include Mode A are not migrated and still check by path. No rollback and no transactional writing — the
+  include Mode A were not migrated and checked by path until R2 deleted them. No rollback and no transactional writing — the
   check simply moves ahead of the work. *Generated cohort binding* — sample bytes, realised-versus-allocated disease sets,
   disjointness — applies only to generated cohorts. Had the graph half lived inside the cohort
   verifier, generated validation would have been protected while institutional evaluation went on
@@ -976,14 +983,18 @@ Two rules follow, and both are enforced rather than advised:
   nulls; two such runs consumed different worker streams while hashing to the same semantics. The
   default is a documented constant, and both the CLI and the ledger check the value is an integer
   in `[0, 2**32 - 1]` — `bool` is an `int` subclass, and one seed drives all three RNGs, so
-  NumPy's range is the binding one.
+  NumPy's range is the binding one. *Superseded by the Mode A/B retirement's R2 (2026-10-12):* Mode C
+  draws no randomness, so the measurement CLI takes no `--seed`, the manifest records no seed and
+  the ledger no longer refuses a record without one (retirement assessment §8 item 5). This bullet
+  records why the seed existed while Modes A and B did. Training's seed is unaffected.
 - **What a seed establishes, stated narrowly.** It identifies and controls the random streams this
   harness owns; it does **not** make CUDA execution bit-deterministic, which is why the manifest
   records `deterministic_algorithms`, `cudnn_deterministic` and `cudnn_benchmark` as separate
   facts. A seeded rerun that disagrees is a finding to investigate, and a proven contradiction only
   when those fields say the regime was deterministic. The ledger refuses the second record either
   way — two answers under one identity cannot both stand — but the refusal is an instruction to
-  look, not a proof of a defect.
+  look, not a proof of a defect. *Since R2* a measurement records no seed; what this bullet says
+  about the regime fields and the ledger's refusal still holds.
 - **One exception, named rather than glossed, now closed.** `scripts/evaluate_model.py` had no
   such preflight and was never given one: it was the behaviourally frozen artefact Mode A was
   calibrated against, and `tests/unit/test_frozen_evaluator.py` pinned its bytes. Both were
@@ -1109,11 +1120,14 @@ Three points where the implementation had to decide something this section left 
 
 - **`mode` is part of the key.** This section predates the A/B/C/D modes. Mode A and Mode C over
   one checkpoint and one cohort are different measurements with different candidate universes, and
-  a key without the mode would report them as a contradiction.
+  a key without the mode would report them as a contradiction. *Since the Mode A/B retirement's R2
+  (2026-10-12) Mode C is the only mode the CLI measures; `mode` stays in the key for Mode D (B-0.5),
+  which scores a different candidate universe over the same checkpoint and cohort.*
 - **The key is a semantics digest, not a field list.** An earlier version keyed on
   (checkpoint, cohort, mode, tie policy) and refused two honest runs at different batch sizes as a
   contradiction — `batch_size` is documented on the manifest as *semantics*, since Mode A's
-  candidate universe is the batch's subgraph. `measurement_semantics_digest` hashes a named list
+  candidate universe was the batch's subgraph (since R2, because Mode C's chunk size moves its
+  numbers at floating-point level). `measurement_semantics_digest` hashes a named list
   of score-affecting fields instead: construction, scoring, AMP state and dtype, device, software
   revision, tie policy, metric schema, and the graph and allocation artifact digests. The list is
   explicit rather than "the whole manifest", so a later descriptive field cannot churn every key

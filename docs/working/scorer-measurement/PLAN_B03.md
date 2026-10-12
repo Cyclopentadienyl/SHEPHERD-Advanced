@@ -1,7 +1,11 @@
 # B-0.3 — Modes B and C
 
 **Status:** implemented. Revised twice under review — once before implementation
-(three decisions) and once after (five corrections, §7).
+(three decisions) and once after (five corrections, §7). **Kept as the design record of B-0.3**,
+cited at `0711441`: Mode B, the A/B/C ladder and the decisions that served it (§2's
+architecture-equality precondition, A and B sharing one traversal, the enumerated mode
+combinations of §7) were retired with Mode A in the Mode A/B retirement's R2 (2026-10-12). Mode C
+stands, and so do its refusals and its full-graph encode.
 
 Modes B and C need almost no new machinery. Nearly everything they run on was
 either built in B-0.2 or already exists in production, and the point of this

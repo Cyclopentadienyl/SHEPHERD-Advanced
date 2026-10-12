@@ -114,7 +114,10 @@ registry, a reservation framework, or implementing gene scoring now.
 
 ### Q2 — Does this scenario change the legacy-removal plan?
 
-**Position: no, and the checklist in `../scorer-measurement/README.md` stands.**
+**Position: no, and the checklist in `../scorer-measurement/README.md` stands.** *Since
+2026-10-12 the legacy path is gone:* the Mode A/B retirement's R2 deleted it, and that checklist
+was replaced by the retirement's record in the same README (the checklist is in git at
+`a535ae2`). The position stands, since `cosine_score_matrix` was kept.
 
 The legacy candidate set is **answer-seeded** — a 2-hop subgraph grown from the
 ground truth plus sampled negatives — so the answer is guaranteed present. A
@@ -122,7 +125,7 @@ clinician's short list carries no such guarantee and is known at inference time.
 They are opposites in the property that matters.
 
 Nor does legacy own the capability. Scoring a restricted candidate set lives in
-`cosine_score_matrix` (F7), which the checklist already retains. A shorter
+`cosine_score_matrix` (F7), which the checklist already retained, and which R2 kept. A shorter
 candidate list needs **less** machinery than Mode C's full universe, not more.
 
 ### Q3 — Supplied candidate universe: an input field, or a clinician-selectable scoring mode?
@@ -318,7 +321,9 @@ schedule it at all is an institutional roadmap decision, not this document's.
 ## 5. What this changes in B-0
 
 **The implemented A/B/C work: nothing.** The legacy-removal checklist is
-unamended — review accepted Q2 as written. B-0.4 proceeds as planned.
+unamended — review accepted Q2 as written. B-0.4 proceeds as planned. *(Since
+2026-10-12 Modes A and B are retired and the checklist is replaced by the
+retirement's record; Mode C is unchanged.)*
 
 **B-0.5 gains one output-contract requirement**, from Q4: if the offline SP
 analysis is to be claimed as available, the institutional run must persist the

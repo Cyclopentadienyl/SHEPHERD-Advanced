@@ -15,7 +15,9 @@ it and passes.
 no allocation and is never subject to the generated splits' disjointness, but it
 is scored against those same tensors. Had graph binding lived inside the
 generated-cohort verifier, generated validation would have been protected while
-institutional evaluation went on consuming a mixed workspace.
+institutional evaluation went on consuming a mixed workspace. Measurement's
+supplied-cohort case is pinned at its entry point, from the reads it scores
+(`test_measurement_reads_once.py`).
 
 Module: tests/unit/test_graph_artifact_binding.py
 """
@@ -33,14 +35,10 @@ from src.evaluation.cohort import (
     verify_generated_cohorts,
     verify_graph_artifacts,
 )
-from tests.fixtures.generated_workspace import (
-    one_sample_per_disease,
-    profiles_for,
-    write_generated_workspace,
-)
+from tests.fixtures.generated_workspace import write_generated_workspace
 
 
-def _workspace(root: Path, *, supplied=False):
+def _workspace(root: Path):
     # A real, loadable `kg.json` — the API path opens it before the pipeline is
     # built, so a stand-in byte string would fail there for the wrong reason.
     # Written before the manifest, which binds these bytes.
@@ -50,10 +48,6 @@ def _workspace(root: Path, *, supplied=False):
                      node_type=NodeType.DISEASE, name=root.name))
     kg.save_json(str(root / "kg.json"))
     write_generated_workspace(root, train_ids=[0, 1, 2], val_ids=[3])
-    if supplied:
-        (root / "institutional_acceptance_samples.json").write_text(
-            json.dumps(one_sample_per_disease("inst", [0], profiles_for([0])))
-        )
     return root
 
 
@@ -301,37 +295,6 @@ class TestTheClinicalPathIsAGraphConsumer:
         assert not [path for path in root.iterdir() if opens.opens(path)], (
             "a workspace file was opened for in-memory graph data"
         )
-
-
-def test_a_supplied_cohort_measurement_also_refuses_a_mixed_graph_workspace(tmp_path):
-    """The case that would have been missed by putting graph binding inside the
-    generated-cohort verifier: this path never touches a generated cohort. This
-    is the path form runs including Mode A still use; a run without Mode A is
-    pinned in `test_measurement_reads_once.py`."""
-    from scripts.measure_scorer import artifact_digests
-
-    root = _workspace(tmp_path / "ws", supplied=True)
-    (root / "edge_indices.pt").write_bytes(b"from another workspace")
-
-    with pytest.raises(ValueError, match="is not the edge_indices artifact"):
-        artifact_digests(root / "ckpt.pt", root, "institutional_acceptance", "supplied")
-
-
-def test_a_valid_supplied_cohort_needs_no_place_in_the_split_manifest(tmp_path):
-    """It was never cut from this disease universe. It is identified by its own
-    digest and is not subject to the generated splits' disjointness."""
-    from scripts.measure_scorer import artifact_digests
-
-    root = _workspace(tmp_path / "ws", supplied=True)
-    (root / "ckpt.pt").write_bytes(b"weights")
-    digests = artifact_digests(
-        root / "ckpt.pt", root, "institutional_acceptance", "supplied"
-    )
-
-    manifest = json.loads((root / "split_manifest.json").read_text())
-    assert "institutional_acceptance" not in json.dumps(manifest)
-    assert "split_manifest" not in digests, "a supplied cohort carries no allocation"
-    assert digests["samples"] is not None
 
 
 def test_a_pre_migration_manifest_is_refused_with_a_rebuild_instruction(tmp_path):
