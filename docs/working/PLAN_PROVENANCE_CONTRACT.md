@@ -1478,7 +1478,7 @@ each moves its callers before anything is removed.
 
     | Entry point | Command (key arguments) | What runs on the subject | Readings | Compared |
     |---|---|---|---|---|
-    | Serving | `measure_served_pipeline.py --workspace $WS --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --output <scratch>/served_readings.json --repeats 3 --seed 20260930`. It applies its own environment; its SHA-256 must be equal at both commits | launch to ready, 200 serial `/diagnose` requests, then one reload, each asserting `gnn_plus_shortest_path` | R1: VmHWM and VmRSS at ready, system peak less R0. R4: VmHWM over the reload. R2, R3: VmRSS after | all of these, with equal subject digests, allocator reading and `readings_complete` |
+    | Serving | `measure_served_pipeline.py --workspace $WS --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --output <evidence>/served_readings.json --repeats 3 --seed 20260930` (an aggregate with no paths). It applies its own environment; its SHA-256 must be equal at both commits | launch to ready, 200 serial `/diagnose` requests, then one reload, each asserting `gnn_plus_shortest_path` | R1: VmHWM and VmRSS at ready, system peak less R0. R4: VmHWM over the reload. R2, R3: VmRSS after | all of these, with equal subject digests, allocator reading and `readings_complete` |
     | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json`, plus `--modes C` at `90a668f` only, where `--modes` defaults to `A` and Mode A cannot run on this checkpoint; the retirement's R2 removed the option (2026-10-12), so the "after" commit takes none | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
     | Training | `train_model.py --data-dir $WS --device cuda --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42 --output-dir <scratch> --checkpoint-dir <scratch>` (the subject's flags, `scorer-measurement/subject-hgt-2026-09-29/commands.txt`), with `Trainer.train` replaced by a reading; once without and once with `--resume $WS/checkpoints/hgt/model-02-0.1813.pt` | the checks, reads, model, `Trainer` and resume read; no epoch and no checkpoint written | VmHWM and VmRSS at `Trainer.__init__` and at the replaced `train`; CUDA max allocated; system peak | all of these; VmRSS at the replaced `train`, compared and explained (acceptance 2) |
     | SP producer | `compute_shortest_paths.py --kg-path …/kg.json --output-dir <scratch> --max-hops 5 --workers 15` | a full run, about 15 minutes. The published pair in the workspace stays untouched, checked by size and time | parent VmHWM after the graph read; VmRSS when the workers fork, after the graph read; at publication; tree PSS; system peak | all of these; the new sidecar names graph `6cae2d1a…`, 431,902,937 pairs, `max_hops` 5 |
@@ -1506,7 +1506,9 @@ each moves its callers before anything is removed.
       - the page-cache state: `PAGE_CACHE=warm`, by the owner's decision through the reviewer
         (2026-10-12), which replaces "warm by default, or dropped before each row if the owner
         chooses it":
-        - both commits use the same pre-read file set, order and tools;
+        - both commits use the same pre-read file set, order and tools: every `.pt` and `.json`
+          file in the workspace, in byte order of the name (a symlinked file followed), then the
+          checkpoint, listed in the evidence's `preread.txt`;
         - the same pre-read runs before each measured row, and R0 is taken after it;
         - the environment record and the report say this is a capacity comparison after a
           pre-read, not a cold start;
@@ -1546,11 +1548,51 @@ each moves its callers before anything is removed.
         guarantee that every transient was caught.
 
       The tools' full source and SHA-256 are sent with the measurement instructions, for review
-      before any run. They are a sampler, a probe, a matrix driver that runs the four rows the
-      same way at both commits (it adds `--modes C` only where the CLI has the option) and a
-      comparison that prints before, after and the difference and judges only acceptance 1's
-      mechanical part. Drafts were dry-run on CPU, without serving, at `90a668f`, `06fd0f1` and
-      `f481882`; a dry run is not a reading.
+      before any run. They are a sampler, a probe, a matrix driver that runs the rows the same way
+      at both commits (it adds `--modes C` only where the CLI has the option), a comparison, and
+      the tools' own tests. Drafts were dry-run on CPU, without serving, at `90a668f`, `06fd0f1`
+      and `f481882`; a dry run is not a reading.
+      - **The review of 2026-10-12** (with S9's code, `02a6954..f481882`) found three P2 in those
+        drafts: the comparison printed "met" for evidence that fails the declared conditions; the
+        sampler stopped only its direct child, so SP workers could be left running; the driver
+        could reuse an old output directory, so a failed run could mix with an earlier run's
+        evidence. The plan as amended (`f481882..c1b8a12`) was reviewed with no P1 or P2.
+      - **The fixes (2026-10-12, outside the repository), awaiting the reviewer's re-review.** An
+        internal adversarial review and a re-check of its findings followed; every P2 they
+        confirmed is fixed in the tools delivered, and what they left is listed in the
+        instructions:
+        - the comparison judges each condition as an explicit check over the evidence files,
+          PASS, FAIL or UNKNOWN (a missing file or field, named, never read as zero); a definite
+          failure is not hidden by missing data in the same check; its one verdict says "met"
+          only when every check passes, with exit status 0, 1 or 2. It checks acceptance 1 at the
+          after commit (this run's rows each once with exit 0, every boundary, training's stop
+          with `--resume` only on the resume row and CUDA initialised, scratch with no epoch
+          output, Mode C with `cuda_executed`, the SP sidecar, serving complete with no OOM kill
+          or swap increase in any phase of any repeat, no sampled row stopped, killed or leaving a
+          process, serving's R0 swap precondition and increase rule for every sampled row, the
+          workspace unchanged, the subject by digest and by the sizes above, readings written by
+          the recorded tools) and comparability (the same row checks on the before run; inputs,
+          tools, pre-read list, environment, boot and the matrix's own settings equal and the
+          plan's; the rows' explicit allocator the same as serving's, and serving's allocator
+          reported and equal; the service stopped and no GPU process; each commit's `--modes`
+          form). Its output names the reference values and one evidence digest per directory.
+          Acceptance 2 and 3 stay a person's explanation;
+        - the sampler starts the measured command in a session and process group of its own and
+          ends that group however the row ends: a stop signal (SIGINT, SIGTERM, SIGHUP, SIGQUIT)
+          is forwarded to the group, a second one or one outliving 30 s becomes SIGKILL, workers
+          left after the root exits are recorded and stopped, every wait is bounded, and the root
+          is reaped last, after which nothing is sent to its group id. It signals nothing outside
+          the group it created;
+        - the driver refuses, before it creates or measures anything, an evidence or scratch
+          directory that exists and is not empty, a scratch directory inside the evidence one (other
+          than its default) or the reverse, a wrong HEAD and modified tracked files; it claims both
+          directories, deletes nothing, records the matrix's settings, and stops before the next row
+          when a stop arrives between rows; a rerun uses a new directory;
+        - tests: a complete passing control and single negative controls for the comparison; the
+          stop signals, a second signal during the cleanup, a root exiting before its workers, a
+          root outliving SIGKILL, an error in the sampler's own readings, a signal before and
+          while the command starts, nohup, and serving's swap rules, with real forked workers; the
+          directory refusals. Dry-run again, without serving, at `90a668f` and `c1b8a12`.
     - **The evidence** goes under `docs/working/scorer-measurement/` beside the 2026-09-30 readings,
       as aggregates with no paths or host names: the environment, the tools' and inputs'
       SHA-256, the pre-flight, each row's sampler and probe readings, and a README with the
