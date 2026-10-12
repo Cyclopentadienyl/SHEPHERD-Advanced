@@ -80,6 +80,13 @@ def create_gradio_app() -> gr.Blocks:
     """
     with gr.Blocks(
         title="SHEPHERD-Advanced Dashboard",
+        # No usage analytics and no version check (owner, 2026-10-12). Left to
+        # Gradio's default, building this app started a version check against
+        # api.gradio.app and an analytics request through huggingface_hub, and
+        # the API builds it at import, so every start of the service tried to
+        # reach both. This is the one place the dashboard is built. It switches
+        # off only Gradio's own requests, not every Hugging Face request.
+        analytics_enabled=False,
         theme=gr.themes.Soft(
             font=["IBM Plex Sans"],
             font_mono=["IBM Plex Mono"],
