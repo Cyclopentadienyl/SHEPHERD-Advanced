@@ -1399,6 +1399,23 @@ each moves its callers before anything is removed.
       checkout, venv and boot. The 2026-09-30 readings (23.77 GB VmHWM at ready, 28.45 GB over a
       reload; `ecf17cd`, `scorer-measurement/PLAN_B04_PRODUCTIONISATION.md:1199`, `:1202`) predate
       M1 and are context only.
+      - **The "after" commit, fixed (2026-10-12).** It is the commit that completes S9 once the
+        code reviews of the S6/S8 batch, of `1d0b5a6..06fd0f1` (R2 and item 8 among them) and of
+        S9 with S10's tools have closed, with any review fixes on it, so that no review can change
+        measured code after the run. Its full SHA is written here and in the evidence before the
+        run, and `git diff <after> <the M2.1 pull request's head> -- src scripts` must be empty.
+      - **It runs before M2.3 and M2.4 refuse.** The subject records no `kg` role (its training
+        roles at `43d47c5` are the samples, the tensors and the manifest), so once M2.3 refuses a
+        resume parent missing a role and M2.4 refuses serving and measurement on one, the
+        training `--resume`, serving and measurement rows would refuse (M2.3, M2.4, and "every
+        existing checkpoint is refused" under M2's consequences). If those land first, S10 still
+        runs at the fixed commit, from a detached checkout, and the evidence says so. Nothing is
+        added to the subject's checkpoint to make it pass.
+      - **Not only M2.1 changed between the two commits** on the measured paths: M3a's seed
+        ordering (`290c03a`, training), HGT Edit 1 (`8eae614`, every HGT forward), the dashboard's
+        telemetry off (`a535ae2`, the served process mounts it), R2 (`e210b12`, the measurement
+        CLI) and item 8 (`06fd0f1`, the sample reader). Acceptance 2 and 3 account for them.
+        Dependencies are equal at both commits.
     - **Pre-flight, once and read-only:** load the designated checkpoint with
       `weights_only=True`, the way Mode C does (`read_checkpoint` in `read_measurement_inputs`),
       and list its keys.
@@ -1412,7 +1429,7 @@ each moves its callers before anything is removed.
     | Entry point | Command (key arguments) | What runs on the subject | Readings | Compared |
     |---|---|---|---|---|
     | Serving | `measure_served_pipeline.py --workspace $WS --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --output <scratch>/served_readings.json --repeats 3 --seed 20260930`. It applies its own environment; its SHA-256 must be equal at both commits | launch to ready, 200 serial `/diagnose` requests, then one reload, each asserting `gnn_plus_shortest_path` | R1: VmHWM and VmRSS at ready, system peak less R0. R4: VmHWM over the reload. R2, R3: VmRSS after | all of these, with equal subject digests, allocator reading and `readings_complete` |
-    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json` (`--modes C` until the retirement's R2 removed the option, 2026-10-12) | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
+    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json`, plus `--modes C` at `90a668f` only, where `--modes` defaults to `A` and Mode A cannot run on this checkpoint; the retirement's R2 removed the option (2026-10-12), so the "after" commit takes none | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
     | Training | `train_model.py --data-dir $WS --device cuda --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42 --output-dir <scratch> --checkpoint-dir <scratch>` (the subject's flags, `scorer-measurement/subject-hgt-2026-09-29/commands.txt`), with `Trainer.train` replaced by a reading; once without and once with `--resume $WS/checkpoints/hgt/model-02-0.1813.pt` | the checks, reads, model, `Trainer` and resume read; no epoch and no checkpoint written | VmHWM and VmRSS at `Trainer.__init__` and at the replaced `train`; CUDA max allocated; system peak | all of these; VmRSS at the replaced `train`, compared and explained (acceptance 2) |
     | SP producer | `compute_shortest_paths.py --kg-path …/kg.json --output-dir <scratch> --max-hops 5 --workers 15` | a full run, about 15 minutes. The published pair in the workspace stays untouched, checked by size and time | parent VmHWM after the graph read; VmRSS when the workers fork, after the graph read; at publication; tree PSS; system peak | all of these; the new sidecar names graph `6cae2d1a…`, 431,902,937 pairs, `max_hops` 5 |
 
@@ -1436,7 +1453,9 @@ each moves its callers before anything is removed.
         (`src/config/runtime_presets.py:29-35`); serving applies its own;
       - the kernel, driver, Python and torch versions, and the venv;
       - a quiet machine, with the service stopped;
-      - the page-cache state;
+      - the page-cache state, the same at both commits: warm by default (each row's inputs read
+        once before its run; no privilege needed), or dropped before each row if the owner
+        chooses it (needs `sudo` without a prompt); the state used is recorded;
       - the byte size and SHA-256 of every input: `kg.json`, the tensors, `num_nodes.json`, the
         sample files, the manifest, the SP pair and the checkpoint;
       - the sampler and the probe, with SHA-256 equal at both commits, and the sampling interval:
@@ -1451,14 +1470,38 @@ each moves its callers before anything is removed.
         file read is the process's own `/proc/self/status`. This binds the hooks inside the
         process; the outside sampler reads the `/proc` entries it samples;
       - CUDA readings synchronise, and reset the peak counters, at the same points at both
-        commits;
+        commits; whether torch's peak counters work under the saved `cudaMallocAsync` preset is
+        confirmed on the GB10, and if they do not, the probe records the error and the row goes
+        on;
+      - **the boundaries,** which exist by name at both commits: `run_mode_c` entry and exit;
+        `Trainer.__init__`'s return, and `Trainer.train`, which the probe replaces by a reading
+        and a stop (the only function it replaces); in the SP producer, after the graph read, the
+        first worker fork (`os.register_at_fork`), and the start and end of `publish_sp_artifact`;
+        and the end of the process. The probe observes them with `sys.monitoring` on those named
+        code objects, running the entry point in its own process as `__main__`. Besides
+        `/proc/self/status`, its only reads are its own source, for its digest, and the entry
+        script it runs;
+      - **a boundary's peak is the maximum over the probe's readings,** because VmHWM as read was
+        not monotonic in the dry runs (a later reading was lower), and the interpreter's shutdown
+        after the last boundary is reported apart: it moved the root's high-water mark by up to
+        0.12 GB, in either direction, between identical runs;
       - outputs, logs and the SP publication go to named scratch paths. Nothing is written to the
         designated checkpoint or the workspace;
       - a system or process-tree peak from 0.2 s sampling is labelled a sampled peak. It does not
         guarantee that every transient was caught.
 
       The tools' full source and SHA-256 are sent with the measurement instructions, for review
-      before any run.
+      before any run. They are a sampler, a probe, a matrix driver that runs the four rows the
+      same way at both commits (it adds `--modes C` only where the CLI has the option) and a
+      comparison that prints before, after and the difference and judges only acceptance 1's
+      mechanical part. Drafts were dry-run on CPU, without serving, at `90a668f`, `06fd0f1` and
+      `f481882`; a dry run is not a reading.
+    - **The evidence** goes under `docs/working/scorer-measurement/` beside the 2026-09-30 readings,
+      as aggregates with no paths or host names: the environment, the tools' and inputs'
+      SHA-256, the pre-flight, each row's sampler and probe readings, and a README with the
+      before, after, difference and explanation of each reading. The run's scratch (server logs,
+      the measurement report with paths, ranks, configurations and the SP table) is not
+      evidence and stays on the homelab.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.
