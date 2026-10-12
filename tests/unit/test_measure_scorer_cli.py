@@ -11,7 +11,7 @@ measurement itself:
   that never guesses (`observe_torch_compile_wrapper`);
 - the device gate: `auto` refuses to fall back to CPU, and an explicit `cpu`
   run is permitted but recorded as not CUDA;
-- the `file_sha256` re-export (contract M2.1, S9's to remove);
+- that the `file_sha256` re-export is gone (contract M2.1, S9);
 - `--split`, which has no default, and the missing-split error.
 
 Which files a measurement records, and that each is the digest of the bytes
@@ -187,24 +187,16 @@ def test_explicit_cpu_is_permitted_but_ineligible(monkeypatch):
     assert eligible is False
 
 
-def test_the_file_sha256_reexport_identifies_content_not_paths(tmp_path):
-    """Two files with identical content hash the same however they are named; a
-    one-byte change does not."""
-    import hashlib
+def test_the_file_sha256_reexport_is_gone():
+    """The re-export existed so callers importing a hashing primitive from this
+    script kept working; none did but tests. Since contract M2.1's S9 a
+    measurement records only the digests of the bytes it read, so the entry point
+    binds no path hash at all (the primitive's own tests are in
+    `test_training_provenance.py`)."""
+    import scripts.measure_scorer as measure_scorer
 
-    from scripts.measure_scorer import file_sha256
-
-    original = tmp_path / "a.bin"
-    copy = tmp_path / "b.bin"
-    altered = tmp_path / "c.bin"
-    original.write_bytes(b"shepherd")
-    copy.write_bytes(b"shepherd")
-    altered.write_bytes(b"shepherE")
-
-    assert file_sha256(original) == hashlib.sha256(b"shepherd").hexdigest()
-    assert file_sha256(original) == file_sha256(copy)
-    assert file_sha256(original) != file_sha256(altered)
-    assert file_sha256(tmp_path / "absent.bin") is None
+    assert not hasattr(measure_scorer, "file_sha256")
+    assert not hasattr(measure_scorer, "_file_sha256")
 
 
 @pytest.mark.parametrize("retired", [

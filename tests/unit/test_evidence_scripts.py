@@ -959,7 +959,7 @@ def _allocated_workspace(root: Path, n_diseases: int = 8, n_val: int = 2):
     """A workspace as the current pipeline leaves it: two cohorts and a manifest.
 
     Built through the shared fixture, which builds it through
-    ``build_split_manifest`` -- so it satisfies ``verify_generated_cohorts``
+    ``build_split_manifest`` -- so it satisfies ``verify_cohort_reads``
     without this file encoding what that checks.
     """
     from tests.fixtures.generated_workspace import write_generated_workspace
@@ -1158,11 +1158,15 @@ def test_a_supplied_cohort_audit_does_not_depend_on_generated_val(tmp_path):
 
 def test_a_generated_audit_over_the_same_workspace_still_refuses(tmp_path):
     """The scope narrows what is read, not what soundness means. The same corrupt
-    val that a supplied audit ignores stops a generated one dead."""
+    val that a supplied audit ignores stops a generated one dead.
+
+    Since contract M2.1's S9 the audit parses each split from its one read before
+    it compares digests, so a file that is not JSON is refused by the shared
+    reader, naming it, as training and measurement refuse it."""
     data_dir = _splits(tmp_path / "ws", [0, 1], [1])
     (data_dir / "val_samples.json").write_text("corrupted, not even json")
 
-    with pytest.raises(SystemExit, match="is not the file"):
+    with pytest.raises(SystemExit, match="val_samples.json could not be parsed"):
         _run("audit_split_overlap",
              ["--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json")])
 
@@ -1326,6 +1330,50 @@ def test_a_supplied_cohort_claimed_as_generated_is_refused(tmp_path):
             "--data-dir", str(data_dir), "--output", str(tmp_path / "m4.json"),
             "--splits", "train", "test",
         ])
+
+
+@pytest.mark.parametrize("kind", ["generated", "supplied"])
+def test_the_overlap_report_records_the_digests_of_the_bytes_it_read(
+    tmp_path, monkeypatch, kind
+):
+    """S9's dynamic pin for the overlap audit: every path hash is poisoned, and
+    the report still records the digest of each split's one read, from which the
+    verifier compared and the counts were taken."""
+    import hashlib
+
+    from tests.fixtures.path_forms import POISON, poison_path_forms
+
+    data_dir = _splits(tmp_path / "ws", [0, 1], [1])
+    out = tmp_path / "m4.json"
+    poison_path_forms(monkeypatch)
+
+    if kind == "supplied":
+        _supplied(data_dir, out)
+        splits = ("train", "test")
+    else:
+        _run("audit_split_overlap", ["--data-dir", str(data_dir), "--output", str(out)])
+        splits = ("train", "val")
+
+    digests = json.loads(out.read_text())["digests"]
+    assert POISON not in digests.values()
+    assert digests == {
+        f"{split}_samples": hashlib.sha256(
+            (data_dir / f"{split}_samples.json").read_bytes()).hexdigest()
+        for split in splits
+    }
+
+
+def test_the_overlap_audit_opens_each_file_once(tmp_path):
+    from tests.fixtures.opens import count_opens
+
+    data_dir, _ = _allocated_workspace(tmp_path / "ws")
+
+    with count_opens() as opens:
+        _run("audit_split_overlap", ["--data-dir", str(data_dir),
+                                     "--output", str(tmp_path / "m4.json")])
+
+    for name in ("train_samples.json", "val_samples.json", "split_manifest.json"):
+        assert opens.opens(data_dir / name) == 1, name
 
 
 def test_the_manifest_section_carries_no_identifiers(tmp_path):

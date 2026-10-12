@@ -643,15 +643,16 @@ that, never as the record not being there. Note the manifest case in
 particular — an unreadable manifest means *whether a record was ever declared
 cannot be established*, which is not the same as *nothing declared one*, and
 only the second of those licenses the "this workspace predates provenance"
-reading. Refusing a workspace over a broken manifest remains
-`verify_graph_artifacts()`'s job.
+reading. Refusing a workspace over a broken manifest remains the job of each
+entry point's own workspace check (`read_split_manifest` and
+`verify_graph_reads`, on the files that entry point read).
 
-> **Correction.** An earlier version of this section had
-> `verify_graph_artifacts()` raise on a broken record. That function is called by
-> `verify_graph_source()`, which `DiagnosisPipeline` runs before loading a
-> tensor — so a lost note about where a graph came from stopped a model from
-> initialising, and a cold start answered `/diagnose` with 503 while the tensors
-> were sound. It reports now rather than refusing.
+> **Correction.** An earlier version of this section had the graph verifier
+> (then `verify_graph_artifacts()`, removed since) raise on a broken record.
+> Serving ran that check before loading a tensor — so a lost note about where a
+> graph came from stopped a model from initialising, and a cold start answered
+> `/diagnose` with 503 while the tensors were sound. It reports now rather than
+> refusing.
 
 ### Older workspaces
 

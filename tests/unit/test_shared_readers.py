@@ -450,3 +450,31 @@ class TestReadCheckpoint:
         )
 
         assert reads == (checkpoint,)
+
+
+# ---------------------------------------------------------------------------
+# KnowledgeGraph.read_json
+# ---------------------------------------------------------------------------
+class TestReadGraph:
+    @pytest.mark.parametrize("junk", [b'{"nodes": [', b"\xff\xfe not utf-8", b"[]"],
+                             ids=["truncated", "not-utf-8", "not-an-object"])
+    def test_a_file_that_does_not_parse_is_refused_under_its_name(self, tmp_path, junk):
+        """As the workspace readers refuse theirs: the decoder's or the parser's
+        own message names no file, and the callers that compare the read's
+        identity afterwards (serving, the SP producer, the audits) never reach
+        the comparison that would have named it."""
+        from src.kg.graph import KnowledgeGraph
+
+        path = tmp_path / "kg.json"
+        path.write_bytes(junk)
+
+        with pytest.raises(ValueError, match="could not be parsed as a knowledge graph") as refused:
+            KnowledgeGraph.read_json(path)
+
+        assert str(path) in str(refused.value)
+
+    def test_a_missing_file_is_still_file_not_found(self, tmp_path):
+        from src.kg.graph import KnowledgeGraph
+
+        with pytest.raises(FileNotFoundError):
+            KnowledgeGraph.read_json(tmp_path / "kg.json")

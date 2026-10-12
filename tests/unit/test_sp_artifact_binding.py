@@ -645,7 +645,7 @@ class TestTheLoaderEnforcesTheBinding:
     def test_the_refusal_does_not_reach_the_graph_verifier(self, tmp_path):
         """**Scope.** A rejected shortest-path table must not stop a consumer
         that never reads it. The check belongs to the SP loader, not to
-        `verify_graph_artifacts`, which is what a graph or training consumer
+        `verify_graph_reads`, which is what a graph or training consumer
         goes through — that is the provenance round's lesson, where a check put
         there blocked model loading over a note that gates nothing.
         """
@@ -653,9 +653,9 @@ class TestTheLoaderEnforcesTheBinding:
 
         from src.kg import artifacts
 
-        # The read forms (contract M2.1, S5) are the same gate; the path form goes
-        # in S9, and the pin must outlive it.
-        for gate in (artifacts.verify_graph_artifacts, artifacts.verify_graph_reads,
+        # The read forms (contract M2.1, S5) are the gate; the path form went in
+        # S9, and the pin outlived it.
+        for gate in (artifacts.verify_graph_reads,
                      artifacts.verify_graph_source_read, artifacts.check_unparsed_kg_json,
                      artifacts.read_split_manifest):
             source = inspect.getsource(gate)
@@ -767,6 +767,33 @@ class TestTheGraphTraversedIsTheGraphRecorded:
              "--output-dir", str(out_dir), "--max-hops", "5"],
         )
         return module.main()
+
+    def test_no_path_digest_reaches_the_sidecar(self, tmp_path, monkeypatch, caplog):
+        """S9's dynamic pin for the SP producer: every path hash is poisoned and
+        the sidecar still records the digest of the bytes traversed. The
+        end-of-run comparison hashes the path, sees the poison, and only warns:
+        it records nothing."""
+        import hashlib
+
+        from scripts.setup_demo import build_demo_kg
+        from tests.fixtures.path_forms import POISON, poison_path_forms
+
+        module = producer()
+        kg_path = tmp_path / "kg.json"
+        build_demo_kg().save_json(str(kg_path))
+        read = hashlib.sha256(kg_path.read_bytes()).hexdigest()
+        poison_path_forms(monkeypatch)
+
+        with caplog.at_level("WARNING"):
+            assert self._run(module, monkeypatch, kg_path, tmp_path,
+                             lambda kg, max_hops=5, workers=None: rows()) == 0
+
+        recorded = json.loads((tmp_path / "shortest_paths.meta.json").read_text())
+        assert recorded["kg_digest"] == read
+        assert POISON not in json.dumps(recorded)
+        assert any("changed while the shortest paths" in r.message for r in caplog.records), (
+            "the poisoned comparison should only have warned"
+        )
 
     @pytest.mark.parametrize("how", ["rename", "rewrite"])
     def test_a_replacement_after_the_read_leaves_the_run_on_what_it_read(

@@ -169,7 +169,7 @@ def write_generated_workspace(
 
     The manifest's artifact digests are taken from the files after they are
     written, exactly as `generate_training_samples` takes them, so the workspace
-    satisfies `verify_generated_cohorts` without the fixture knowing what that
+    satisfies `verify_cohort_reads` without the fixture knowing what that
     checks.
 
     Graph files a test has already written, or passes in `graph_bytes`, are kept;

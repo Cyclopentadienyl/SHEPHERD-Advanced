@@ -829,18 +829,32 @@ class KnowledgeGraph:
         built. So at most two copies of the file coexist, and only while it is
         decoded.
 
+        **A file that was read but does not parse is refused under its own name,**
+        as the workspace readers refuse theirs (`src/kg/storage/file_storage.py`):
+        the decoder's or the parser's own message names nothing, and a caller that
+        compares the read's identity afterwards never gets to name it.
+
         Raises:
             FileNotFoundError: if there is no file at `filepath`.
+            ValueError: naming `filepath`, if its bytes are not UTF-8 JSON
+                describing a graph.
         """
         from src.utils.fingerprint import read_once
 
         read = read_once(filepath)
         identity = read.identity
-        text = read.data.decode("utf-8")
-        del read
-        data = json.loads(text)
-        del text
-        return GraphRead(cls._from_json_data(data, filepath), identity)
+        try:
+            text = read.data.decode("utf-8")
+            del read
+            data = json.loads(text)
+            del text
+            kg = cls._from_json_data(data, filepath)
+        except (UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ValueError(
+                f"{filepath} could not be parsed as a knowledge graph "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
+        return GraphRead(kg, identity)
 
     @classmethod
     def load_json(cls, filepath: str) -> "KnowledgeGraph":

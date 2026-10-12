@@ -11,8 +11,8 @@ acceptance shown here:
 - a file replaced after its read, by atomic rename or in-place rewrite, is the
   one used and recorded; one replaced after the manifest read, or a graph whose
   manifest is republished after the read, is refused, and the refusal names it;
-- each input is opened once, no path-form verifier is reached, and no digest
-  hashed by path reaches what the pipeline keeps;
+- each input is opened once, and with every path hash poisoned no poisoned
+  digest reaches what the pipeline keeps;
 - graph tensors load with ``map_location="cpu"`` and ``weights_only=True``; the
   checkpoint keeps this site's own options;
 - the `GraphRead` arrives whole, and the pipeline refuses a graph and an
@@ -221,27 +221,20 @@ def test_each_input_is_opened_once(api, workspace):
     assert opens.opens(checkpoint) == 1
 
 
-def test_no_path_form_is_reached_and_no_path_digest_is_kept(api, workspace, monkeypatch):
-    """S9's dynamic pin, brought forward for serving: every path verifier raises
-    and every path hash is poisoned, and the build still succeeds with the true
-    digests of the bytes it read."""
-    import src.kg.artifacts as artifacts
-    import src.utils.fingerprint as fingerprint
+def test_no_path_digest_is_kept(api, workspace, monkeypatch):
+    """S9's dynamic pin for serving: every path hash is poisoned, with no
+    exception (serving parses `kg.json`, so nothing here is identified by path),
+    and the build still succeeds with the true digests of the bytes it read."""
+    from tests.fixtures.path_forms import POISON, poison_path_forms
 
     data_dir, checkpoint = workspace
-
-    def reached(*args, **kwargs):
-        raise AssertionError("a path form was reached")
-
-    monkeypatch.setattr(artifacts, "verify_graph_source", reached)
-    monkeypatch.setattr(artifacts, "verify_graph_artifacts", reached)
-    # `artifacts` imports `file_sha256` inside its functions, so patching it at
-    # its source reaches every path hash there.
-    monkeypatch.setattr(fingerprint, "file_sha256", lambda *a, **k: "0" * 64)
-    monkeypatch.setattr(fingerprint, "compute_input_digests", reached)
+    poison_path_forms(monkeypatch)
 
     pipeline = _build(api, data_dir, checkpoint).pipeline
 
+    kept = [*pipeline._bound_digests.values(), pipeline._graph_kg_digest,
+            pipeline._checkpoint_identity.sha256]
+    assert POISON not in kept
     for role, name in GRAPH_FILES.items():
         assert pipeline._bound_digests[role] == _sha(data_dir / name), role
     assert pipeline._graph_kg_digest == _sha(data_dir / "kg.json")

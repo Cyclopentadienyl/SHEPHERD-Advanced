@@ -989,7 +989,8 @@ non-integer and boolean ids) is a separate change after it.
 reads (`measurement_input_digests`), builds the production model, encodes the full graph and
 calls `run_mode_c`; it writes `--output` and `<stem>_ranks.json`. `build_manifest` takes no mode,
 candidate or model-construction argument and requires `digests`, so nothing can write a manifest
-for another mode or one hashed by path. The `file_sha256` re-export stays (S9's). The
+for another mode or one hashed by path. The `file_sha256` re-export stays (S9's; S9 removed it,
+2026-10-12). The
 `scorer-independence` import contract is kept; its reason now names the Trainer value test.
 
 **Decisions taken while implementing:**
@@ -1022,7 +1023,8 @@ for another mode or one hashed by path. The `file_sha256` re-export stays (S9's)
   Mode C fails on it with a bare `KeyError`; the named refusal of a missing embedding key is the
   part of item 8 the owner left open.
 - **`compute_input_digests`** has no production caller after R2 (only `artifact_digests` used
-  it); it stays for S9, which deletes it once no caller records through it.
+  it); it stays for S9, which deletes it once no caller records through it (S9 deleted it,
+  2026-10-12).
 
 **New tests**, each closing a gap that only Mode A covered or that no test covered, each
 mutation-checked:

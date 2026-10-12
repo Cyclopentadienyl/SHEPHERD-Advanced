@@ -114,74 +114,6 @@ def read_split_manifest(data_dir: Path) -> ManifestRead:
     return ManifestRead(manifest, identity)
 
 
-def verify_graph_artifacts(data_dir: Path) -> Dict[str, str]:
-    """The graph a run consumes must be the export this workspace's manifest names.
-
-    **A separate contract from the cohort one, and it applies to every graph
-    consumer.** A supplied institutional cohort carries no allocation and is never
-    subject to the generated splits' disjointness — but it is scored against
-    ``node_features.pt`` and ``edge_indices.pt`` exactly like a generated one. Had
-    graph binding lived inside ``verify_generated_cohorts``, generated validation
-    would have been protected while supplied evaluation went on consuming a mixed
-    workspace, which is the case the whole distinction exists to keep straight.
-
-    **Why the whole set rather than the roles a caller opens.** Cohort
-    verification is scoped because a *use* can legitimately not involve `val`.
-    No use can legitimately involve a workspace missing one of these four: they
-    are written together by one export from one graph, and a workspace that has a
-    manifest has all four. Verifying the set therefore blocks nothing, and it is
-    what makes the transitive claim available — training reads only the three
-    tensors, and only the manifest ties them to the `kg.json` they were exported
-    from.
-
-    ``graph_fingerprint`` does not substitute for this. It is structural — node
-    types, counts, feature dimensions — so a same-shaped ``node_features.pt`` from
-    another workspace shares it and passes.
-
-    **The path form, a migration aid until contract M2.1's S9.** It hashes each
-    file by path, at one instant, while the caller loads it at another, so a file
-    replaced between the two is not detected. `verify_graph_reads` closes that: it
-    compares the identities of the bytes the run parsed with the run's one
-    manifest reading. Serving, training and measurement moved to it in S6-S8;
-    S9 deletes this form once its remaining callers have moved.
-
-    Raises:
-        ValueError: naming the artifact whose bytes are not the ones recorded.
-    """
-    from src.utils.fingerprint import file_sha256
-
-    manifest_read = read_split_manifest(data_dir)
-    manifest_path = manifest_read.identity.path
-    artifacts = manifest_section(manifest_read.manifest, manifest_path, "artifacts")
-
-    observed: Dict[str, str] = {}
-    for role, filename in GRAPH_ARTIFACTS.items():
-        recorded = artifacts.get(role)
-        if recorded is None:
-            raise _no_digest(manifest_path, role, data_dir / filename)
-        digest = file_sha256(data_dir / filename)
-        if digest != recorded:
-            raise _not_the_artifact(data_dir / filename, role, manifest_path, recorded, digest)
-        observed[role] = digest
-
-    # **Provenance is deliberately not checked here, and that is a correction.**
-    # An earlier revision raised from this function when a declared record was
-    # missing or did not match. This function was not only an audit: serving
-    # called it, through `verify_graph_source`, before it loaded a tensor — so a
-    # lost record stopped a model from initialising, and through the API a cold
-    # start then answered `/diagnose` with 503. The tensors were sound; only the
-    # note about where they came from was not. Serving now checks its reads with
-    # `verify_graph_source_read` (M2.1, S6), which keeps the same rule.
-    #
-    # Gating service on that is a policy nobody approved, and the plan says the
-    # opposite: what a graph was built from is reported, not enforced. So it
-    # moved to `workspace_provenance_status`, which returns a state instead of
-    # raising, and callers decide. The four bindings above are unchanged and
-    # still raise — those say the tensors are not this graph's, which is a
-    # different claim entirely.
-    return observed
-
-
 def _no_digest(manifest_path: Path, role: str, path: Path) -> ValueError:
     return ValueError(
         f"{manifest_path} records no digest for {role}, so nothing says {path} "
@@ -242,11 +174,33 @@ def verify_graph_reads(
 ) -> Dict[str, str]:
     """The graph files a run read must be the export its one manifest reading binds.
 
+    **A separate contract from the cohort one, and it applies to every graph
+    consumer.** A supplied institutional cohort carries no allocation and is never
+    subject to the generated splits' disjointness — but it is scored against
+    ``node_features.pt`` and ``edge_indices.pt`` exactly like a generated one. Had
+    graph binding lived inside the cohort check (`verify_cohort_reads`), generated
+    validation would have been protected while supplied evaluation went on
+    consuming a mixed workspace.
+
+    ``graph_fingerprint`` does not substitute for this. It is structural — node
+    types, counts, feature dimensions — so a same-shaped ``node_features.pt`` from
+    another workspace shares it and passes.
+
     **Compares, and reads nothing** (contract M2.1). `reads` are the identities
     the readers returned with what they parsed (`read_graph_artifacts`, keyed by
     role), and `manifest` is the run's one reading of its manifest. A file
     replaced between the manifest read and its own read therefore shows up here
-    as a mismatch, and the run refuses instead of mixing.
+    as a mismatch, and the run refuses instead of mixing. Since S9 there is no
+    path form beside it: no path form verifies the tensors, and `kg.json`, where
+    a run does not parse it, is identified by `check_unparsed_kg_json`.
+
+    **Provenance is deliberately not checked here.** An earlier revision raised
+    from the graph check when a declared build record was missing or did not
+    match; serving ran that check before it loaded a tensor, so a lost record
+    stopped a model from initialising over a note about where sound tensors came
+    from. What a graph was built from is reported, not enforced
+    (`workspace_provenance_status`, which returns a state); the four bindings
+    here still raise, because they say the tensors are not this graph's.
 
     **Every tensor role must have been read** (`GRAPH_TENSOR_ROLES`). An absent
     file has no identity, and is refused rather than skipped: the manifest binds
@@ -256,8 +210,8 @@ def verify_graph_reads(
     `verify_graph_source_read` if it parses `kg.json` or `check_unparsed_kg_json`
     if it does not, because the `kg` digest returned here is the manifest's.
 
-    Returns the manifest-bound digest of all four graph roles, as the path form
-    does.
+    Returns the manifest-bound digest of all four graph roles: the opening for
+    M2.2's `kg` role and M2.4's comparison with a checkpoint.
 
     Raises:
         ValueError: naming the manifest, and the file when the refusal is about
@@ -299,12 +253,23 @@ def verify_graph_source_read(
 ) -> Dict[str, str]:
     """The graph object's source bytes must be the `kg.json` this manifest binds.
 
-    `verify_graph_source`'s composition check, for a consumer that parses
-    `kg.json`. `graph` must be the identity `KnowledgeGraph.read_json` returned
-    with the graph the caller uses: that pairing is the caller's to keep, by
-    passing the `GraphRead` whole, and nothing here can see it. Given that, the
-    comparison is of the bytes the graph was built from, at any path. Reads
-    nothing.
+    **The composition, not the components.** `verify_graph_reads` proves the
+    tensors are this workspace's, and two workspaces can each be internally
+    consistent while a caller pairs one's `kg.json` with the other's tensors. The
+    clinical path did exactly that: the API resolves ``SHEPHERD_KG_PATH`` and
+    ``SHEPHERD_DATA_DIR`` independently. Embedding rows then come from one graph
+    and the node-id mapping that interprets them from another, and same-shaped
+    workspaces pass every structural check on the way.
+
+    **Compared by digest rather than by path.** Requiring the graph's file to
+    *be* ``data_dir/kg.json`` would break a deployment that mounts or copies it
+    elsewhere; any location holding the bound bytes is the bound graph.
+
+    For a consumer that parses `kg.json`. `graph` must be the identity
+    `KnowledgeGraph.read_json` returned with the graph the caller uses: that
+    pairing is the caller's to keep, by passing the `GraphRead` whole, and
+    nothing here can see it. Given that, the comparison is of the bytes the graph
+    was built from, at any path. Reads nothing.
 
     Raises:
         ValueError: naming the manifest, and the file when the refusal is about
@@ -505,7 +470,7 @@ def _workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
                 f"{MANIFEST_FILENAME} is here and could not be read "
                 f"({type(exc).__name__}: {exc}), so whether a record was ever "
                 "declared cannot be established. Refusing the workspace over "
-                "that manifest is `verify_graph_artifacts`'s to do, not this.",
+                "that manifest is the consumers' own check, not this.",
             )
 
     try:
@@ -575,51 +540,6 @@ def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> No
     require_graph_export_recipe(manifest, manifest_path)
 
 
-def verify_graph_source(kg_path: Path, data_dir: Path) -> Dict[str, str]:
-    """The graph object's source file must be this workspace's bound `kg.json`.
-
-    **The composition, not the components.** ``verify_graph_artifacts`` proves a
-    workspace is internally consistent, and two workspaces can each be internally
-    consistent while a caller pairs one's `kg.json` with the other's tensors. The
-    clinical path did exactly that: the API resolves ``SHEPHERD_KG_PATH`` and
-    ``SHEPHERD_DATA_DIR`` independently, loads the ``KnowledgeGraph`` from the
-    first and hands it to a pipeline pointed at the second. Embedding rows then
-    come from one graph and the node-id mapping that interprets them from another,
-    and same-shaped workspaces pass every structural check on the way.
-
-    **Compared by digest rather than by path.** Requiring ``kg_path`` to *be*
-    ``data_dir/kg.json`` would also close it, and would break a deployment that
-    mounts or copies the file elsewhere for reasons of its own. A path is not an
-    identity in this project; the bytes are. Any location holding the bound bytes
-    is the bound graph.
-
-    This is the one thing a caller must state rather than the code recover: an
-    in-memory ``KnowledgeGraph`` has no source digest, so a caller who has only an
-    object cannot be checked and is not pretended to be.
-
-    **The path form, a migration aid until contract M2.1's S9.** It hashes
-    ``kg_path`` again rather than the bytes the graph was built from;
-    ``verify_graph_source_read`` compares the identity of that read.
-
-    Raises:
-        ValueError: if the workspace is unsound, or if ``kg_path``'s bytes are not
-            the ones its manifest binds.
-    """
-    from src.utils.fingerprint import file_sha256
-
-    bound = verify_graph_artifacts(data_dir)
-    observed = file_sha256(kg_path)
-    if observed != bound["kg"]:
-        raise ValueError(
-            f"{kg_path} is not the graph {data_dir} was built from "
-            f"({str(observed)[:12]}... vs {str(bound['kg'])[:12]}...). Its "
-            "embeddings would be computed from one graph's tensors and read "
-            "through another graph's node identifiers, which no structural check "
-            "can see. Point both at one workspace."
-        )
-    return bound
-
-
 __all__ = [
     "GRAPH_ARTIFACTS",
     "MANIFEST_FILENAME",
@@ -636,6 +556,4 @@ __all__ = [
     "require_graph_export_recipe",
     "require_manifest_schema",
     "workspace_provenance_status",
-    "verify_graph_artifacts",
-    "verify_graph_source",
 ]

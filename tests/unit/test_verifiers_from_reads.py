@@ -11,7 +11,8 @@ touches the disk: it hashes `kg.json`, for a run that does not parse it, and
 compares it with the same manifest reading, which it never reads itself.
 
 The path forms (`verify_graph_artifacts`, `verify_graph_source`,
-`verify_generated_cohorts`) remain for callers not yet moved, until S9.
+`verify_generated_cohorts`) were deleted in S9, once their last callers had
+moved; `tests/unit/test_provenance_pins.py` pins their absence.
 
 Module: tests/unit/test_verifiers_from_reads.py
 """
@@ -35,7 +36,7 @@ from tests.fixtures.replacement import replace_after_read
 
 torch = pytest.importorskip("torch")
 
-from src.evaluation.cohort import verify_cohort_reads, verify_generated_cohorts  # noqa: E402
+from src.evaluation.cohort import verify_cohort_reads  # noqa: E402
 from src.kg.graph import KnowledgeGraph  # noqa: E402
 from src.kg.storage.file_storage import read_graph_artifacts, read_samples  # noqa: E402
 
@@ -331,9 +332,7 @@ class TestTheKgJsonIdentificationCheck:
 # verify_cohort_reads
 # ---------------------------------------------------------------------------
 class TestVerifyCohortReads:
-    def test_a_sound_workspace_gives_what_the_path_form_gives_and_opens_nothing(
-        self, workspace
-    ):
+    def test_a_sound_workspace_is_described_and_nothing_is_opened(self, workspace):
         manifest = read_split_manifest(workspace)
         samples = _samples(workspace)
 
@@ -341,7 +340,8 @@ class TestVerifyCohortReads:
             result = verify_cohort_reads(manifest, samples)
 
         assert _opens_inside(opens, workspace) == {}
-        assert result == verify_generated_cohorts(workspace)
+        assert result.manifest == manifest.manifest
+        assert result.disease_sets == {"train": frozenset({0, 1, 2}), "val": frozenset({3})}
         assert result.verified == ("train", "val")
         assert result.disjointness_claim_checked and result.disjointness_measured
 
@@ -353,14 +353,15 @@ class TestVerifyCohortReads:
         assert set(result.disease_sets) == {"train"}
         assert not result.disjointness_claim_checked and not result.disjointness_measured
 
-    def test_the_scope_is_reported_as_passed_as_the_path_form_reports_it(self, workspace):
+    def test_the_scope_is_reported_in_the_order_passed(self, workspace):
         samples = _samples(workspace)
         reversed_samples = {"val": samples["val"], "train": samples["train"]}
 
         result = verify_cohort_reads(read_split_manifest(workspace), reversed_samples)
 
         assert result.verified == ("val", "train")
-        assert result == verify_generated_cohorts(workspace, ("val", "train"))
+        assert result.disease_sets == {"train": frozenset({0, 1, 2}), "val": frozenset({3})}
+        assert result.disjointness_claim_checked and result.disjointness_measured
 
     def test_training_fields_do_not_change_the_verdict(self, tmp_path):
         root, _ = write_generated_workspace(tmp_path / "ws", train_ids=[0, 1], val_ids=[2],

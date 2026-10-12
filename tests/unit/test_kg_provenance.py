@@ -451,13 +451,13 @@ class TestProvenanceDoesNotGateService:
 
     @pytest.mark.parametrize("how", ["deleted", "replaced", "corrupt"])
     def test_the_artifact_verifier_still_accepts_a_sound_graph(self, tmp_path, how):
-        from src.kg.artifacts import verify_graph_artifacts
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = tmp_path / "ws"
         _write(workspace, samples=_budget())
         self._break_it(workspace, how)
 
-        observed = verify_graph_artifacts(workspace)
+        observed, _ = verify_workspace_reads(workspace)
 
         assert observed["kg"] == _sha256(workspace / "kg.json")
 
@@ -494,15 +494,20 @@ class TestProvenanceDoesNotGateService:
 
     def test_a_real_tensor_mismatch_is_still_refused(self, tmp_path):
         """The other half: loosening provenance must not loosen the bindings
-        that say the tensors are not this graph's."""
-        from src.kg.artifacts import verify_graph_artifacts
+        that say the tensors are not this graph's. A valid tensor file with other
+        values, not junk: the checks parse before they compare (contract M2.1)."""
+        import torch
+
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = tmp_path / "ws"
         _write(workspace, samples=_budget())
-        (workspace / "node_features.pt").write_bytes(b"another graph's tensor")
+        features = torch.load(workspace / "node_features.pt", weights_only=True)
+        torch.save({key: value + 1 for key, value in features.items()},
+                   workspace / "node_features.pt")
 
         with pytest.raises(ValueError, match="is not the node_features artifact"):
-            verify_graph_artifacts(workspace)
+            verify_workspace_reads(workspace)
 
 
 class TestAWorkspaceFromBeforeThisStillWorks:
@@ -522,9 +527,10 @@ class TestAWorkspaceFromBeforeThisStillWorks:
     def test_an_undeclared_record_does_not_stop_artifact_verification(self, tmp_path):
         """A schema-3 workspace built before provenance existed declares none in
         its manifest, and every other binding still holds."""
-        from src.kg.artifacts import MANIFEST_FILENAME, verify_graph_artifacts
+        from src.kg.artifacts import MANIFEST_FILENAME
         from src.kg.provenance import PROVENANCE_FILENAME
         from src.utils.fingerprint import file_sha256
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = tmp_path / "ws"
         _write(workspace, samples=_budget())
@@ -534,7 +540,7 @@ class TestAWorkspaceFromBeforeThisStillWorks:
         (workspace / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))
         (workspace / PROVENANCE_FILENAME).unlink()
 
-        observed = verify_graph_artifacts(workspace)
+        observed, _ = verify_workspace_reads(workspace)
 
         assert "provenance" not in observed
         assert observed["kg"] == file_sha256(workspace / "kg.json")

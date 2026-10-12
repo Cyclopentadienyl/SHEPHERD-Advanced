@@ -18,7 +18,7 @@ code-reviewed with no P1 or P2 (`7327798..290c03a`, 2026-10-12). Measurement run
 were not migrated; since the owner's clarification of 2026-10-12 they were deleted by the Mode A/B
 retirement's R2 (2026-10-12, awaiting code review), so since R2 every measurement run takes S7's reads;
 that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
-complete: S9 and S10 are not implemented; the S6/S8 batch (`8421b8c..cddad9d`) awaits code review,
+complete: S9 is implemented (2026-10-12) and awaits code review, and S10 is not run; the S6/S8 batch (`8421b8c..cddad9d`) awaits code review,
 and so do R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a change to the shared reader `read_samples` made after S1–S5's
 review. The rest
 of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
@@ -591,8 +591,8 @@ their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for M
 (2026-10-11) and code-reviewed with no P1 or P2 at `7327798` (2026-10-12) as that declared scope,
 and measurement runs that include Mode A were not migrated: since the owner's clarification of
 2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12, awaiting code review);
-nothing else here is implemented (S9's dynamic pin exists per entry point in S6–S8's tests,
-`tests/fixtures/path_forms.py`; S9's deletions, static pin and caller moves do not).
+S9 is implemented (2026-10-12) and awaits code review (its "As implemented" note below);
+S10 has not run, and nothing else here is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -1342,6 +1342,51 @@ each moves its callers before anything is removed.
    - Docs and docstrings that name removed functions are updated, including the copy lists that
      S6 and S8 shorten: `src/kg/storage/__init__.py:10-30` and
      `src/kg/storage/file_storage.py:9-16`.
+   - **As implemented (2026-10-12), awaiting code review.**
+     - **Deleted:** `verify_graph_artifacts`, `verify_graph_source`, `verify_generated_cohorts`,
+       `compute_input_digests`, and the `file_sha256` re-export in `scripts/measure_scorer.py`
+       (the plan allowed either; its pins became pins of its absence). Their reasoning moved into
+       the read forms' docstrings (`verify_graph_reads`, `verify_graph_source_read`,
+       `verify_cohort_reads`).
+     - **Callers moved onto the readers,** each input read once and its record taken from that
+       read: `audit_split_overlap.py` (`resolve_cohort`, one manifest read, one `read_samples` per
+       split, `verify_cohort_reads`); `audit_generator_fidelity.py` (the manifest, `kg.json`, the
+       tensors and both cohorts read once and checked with `verify_graph_source_read` and
+       `verify_cohort_reads`; `phenotype.hpoa`, which the plan did not name, is read once with
+       `read_once` and its rows counted from those bytes as they stream, so its recorded digest is
+       the read's); `probe_deployment.py` (a script-local `verify_workspace` composing the shared
+       readers as serving and training compose them, returning the read identities that C1's
+       listing now reports; D2 reads the checkpoint with `read_checkpoint`). No composition helper
+       was added to `src/`; the tests' own composition is `tests/fixtures/workspace_reads.py`.
+     - **The fidelity audit parses the tensors** to check the workspace binding it reports, as
+       every graph consumer does; it measures nothing from them, and so now imports torch.
+     - **Static pin:** `tests/unit/test_provenance_pins.py` scans `src/**`, the three entry points
+       and the three moved scripts. It counts every reference to `file_sha256`, `read_once`,
+       `hashlib.*`, `torch.load`, `json.load(s)` and `load_json`, whether called, passed as a
+       value, re-exported or imported under another name, and fails on any site outside its
+       `ALLOWED` list and on any stale entry. `ALLOWED` stays in the test and names more sites than
+       the allowlist above (the readers themselves, the ontology loader and resolver, the SP
+       sidecar read, in-memory digests, configuration and UI loads, and the probe's identification
+       sites), each with its use and owner. The removed names may appear nowhere in scope, and
+       nothing in scope may bind `hashlib.file_digest`, which the poison replaces.
+     - **Dynamic pin:** the poison now sits on `hashlib.file_digest`, so it also reaches a
+       `file_sha256` bound at import; a self-test checks that it reaches `file_sha256` and spares
+       the files named in `true_digest_for`. Serving uses the shared fixture, the SP producer has a
+       poison pin (the sidecar records the bytes traversed; the end-of-run comparison only warns),
+       and the moved scripts each have one.
+     - **`KnowledgeGraph.read_json`** now refuses a `kg.json` that is not UTF-8 JSON describing a
+       graph with a `ValueError` naming the file, as the workspace readers refuse theirs; the
+       fidelity audit and the probe refuse a missing `kg.json` naming it and the manifest.
+     - **Behaviour changes:** a non-JSON sample file is refused by the reader ("could not be
+       parsed", naming the file) rather than by a digest mismatch, as S6 and S8 already did; a
+       non-generated training split under a supplied evaluation cohort gets `resolve_cohort`'s
+       refusal; the probe's C2 and C4 expect "is not the graph" for `kg`, since it checks
+       `kg.json` as serving does.
+     - Acceptance tests (CPU, development container; not a homelab acceptance):
+       `test_provenance_pins.py`, `test_probe_workspace_phase.py`, the poison pins in
+       `test_evidence_scripts.py`, `test_audit_generator_fidelity.py` and
+       `test_sp_artifact_binding.py`, and the moved read-form tests. The static pin run against the
+       code before S9 fails, and so do the new audit poison pins.
 10. **S10 — capacity on the homelab, an executable matrix.**
     - **The subject:** workspace `data/workspaces/hpo_2026_0929_5a` (`$WS` below), checkpoint
       `$WS/checkpoints/hgt/model-02-0.1813.pt` (47,931,987 bytes), SP table `shortest_paths.pt`

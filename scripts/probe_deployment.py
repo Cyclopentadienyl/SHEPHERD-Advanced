@@ -203,6 +203,42 @@ def refuses(fn: Callable[[], Any], expected: type, fragment: str) -> None:
     raise AssertionError(f"accepted an input that should have been refused ({fragment!r})")
 
 
+def verify_workspace(directory: Path):
+    """The workspace checks a graph consumer makes, from one read of each file.
+
+    Contract M2.1: the manifest, `kg.json`, the graph tensors and both generated
+    cohorts are each read once through the shared readers, and the read-form
+    verifiers compare those reads with that one manifest reading — `kg.json` as
+    serving checks it (`verify_graph_source_read`, on the identity of the bytes
+    the graph was parsed from) and the cohorts as training and measurement check
+    them (`verify_cohort_reads`). Nothing is hashed by path. Returns the
+    manifest-bound digests of the four graph roles, the verified cohorts, and the
+    digest of each file as these reads returned it, by file name.
+    """
+    from src.evaluation.cohort import GENERATED_SPLITS, resolve_cohort, verify_cohort_reads
+    from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest, verify_graph_source_read
+    from src.kg.graph import KnowledgeGraph
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+
+    for split in GENERATED_SPLITS:
+        resolve_cohort(directory, split)
+    manifest = read_split_manifest(directory)
+    kg_path = directory / GRAPH_ARTIFACTS["kg"]
+    if not kg_path.is_file():
+        raise ValueError(
+            f"{kg_path} does not exist, and {manifest.identity.path} records a kg artifact "
+            "for this workspace"
+        )
+    _, graph = KnowledgeGraph.read_json(kg_path)
+    tensors = read_graph_artifacts(directory, map_location="cpu")
+    samples = {split: read_samples(directory, split) for split in GENERATED_SPLITS}
+    bound = verify_graph_source_read(manifest, graph, tensors.reads)
+    cohorts = verify_cohort_reads(manifest, samples)
+    reads = [manifest.identity, graph, *tensors.reads.values(),
+             *(read.identity for read in samples.values())]
+    return bound, cohorts, {Path(read.path).name: read.sha256 for read in reads}
+
+
 # =============================================================================
 # Phase A — what this machine is
 # =============================================================================
@@ -367,16 +403,25 @@ def _demo_kg():
 
 
 def _other_kg():
-    """The demo graph plus one disease, so its `kg.json` is genuinely other."""
-    from src.core.types import DataSource, NodeType
-    from src.kg.graph import Node, NodeID
+    """The demo graph plus one disease with one phenotype edge, so its `kg.json`
+    and every file of its export are genuinely other: the node changes
+    `kg.json`, the features and the node counts, and the edge changes
+    `edge_indices.pt`, which a node without edges would leave byte-identical."""
+    from src.core.types import DataSource, EdgeType, NodeType
+    from src.kg.graph import Edge, Node, NodeID
 
     kg = _demo_kg()
+    disease = NodeID(source=DataSource.MONDO, local_id="MONDO:9999999")
     kg.add_node(Node(
-        id=NodeID(source=DataSource.MONDO, local_id="MONDO:9999999"),
+        id=disease,
         node_type=NodeType.DISEASE,
         name="Probe-only disease",
         attributes={"mondo_id": "MONDO:9999999", "name": "Probe-only disease"},
+    ))
+    kg.add_edge(Edge(
+        source_id=NodeID(source=DataSource.HPO, local_id="HP:0000486"),
+        target_id=disease,
+        edge_type=EdgeType.PHENOTYPE_OF_DISEASE,
     ))
     return kg
 
@@ -638,13 +683,10 @@ def phase_writer(report: Report, work: Path) -> Optional[Path]:
 # =============================================================================
 def phase_workspace(report: Report, work: Path, sound: Path) -> None:
     print("\nC. The workspace contract, attacked")
-    from src.evaluation.cohort import verify_generated_cohorts
-    from src.kg.artifacts import GRAPH_ARTIFACTS, verify_graph_artifacts, verify_graph_source
+    from src.kg.artifacts import GRAPH_ARTIFACTS
 
     def _accepted() -> Tuple[str, Dict[str, Any]]:
-        digests = verify_graph_artifacts(sound)
-        verify_graph_source(sound / "kg.json", sound)
-        cohorts = verify_generated_cohorts(sound)
+        digests, cohorts, read = verify_workspace(sound)
         assert cohorts.verified == ("train", "val")
         assert cohorts.disjointness_measured and cohorts.disjointness_claim_checked
         overlap = cohorts.disease_sets["train"] & cohorts.disease_sets["val"]
@@ -659,6 +701,10 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
         # The open question it answers is whether a seeded `torch.Generator`
         # draws the same bytes on two architectures. Nothing in this project
         # asserts that it does; this measures it.
+        #
+        # The files the checks read are listed with the digest of the bytes they
+        # verified; a file they do not parse (the provenance record) is
+        # identified by path, which is all a listing of it can be.
         from src.utils.fingerprint import file_sha256
 
         return "every verifier accepted it", {
@@ -666,7 +712,7 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
             # evidence artifacts, and the identifiers are what those lists are.
             "kg_digest": digests["kg"],
             "workspace_digests": {
-                path.name: file_sha256(path)
+                path.name: read[path.name] if path.name in read else file_sha256(path)
                 for path in sorted(sound.iterdir()) if path.is_file()
             },
             "train_diseases": len(cohorts.disease_sets["train"]),
@@ -678,16 +724,41 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
         "C1", "workspace", "CONTROL: the sound workspace verifies", _accepted
     )
 
+    def _other() -> Path:
+        # **A different graph, not the same graph under a different seed.** The
+        # first version of C4 built the other workspace with seed+1 and copied
+        # its kg.json across -- but the demo graph is deterministic, so the two
+        # files were byte-identical and nothing was crossed. It failed loudly,
+        # which is the only reason it was caught. The seed moves the
+        # allocation; only the graph moves the graph.
+        other = work / "other_workspace"
+        if not other.exists():
+            from src.kg.workspace import write_workspace
+
+            write_workspace(
+                _other_kg(), other, feature_dim=FEATURE_DIM, samples=_budget(),
+            )
+        return other
+
     for role in sorted(GRAPH_ARTIFACTS):
         def _replaced(role=role):
+            # **Another workspace's valid file, not junk bytes.** The checks
+            # parse each file before they compare it (contract M2.1), so junk
+            # is refused by the reader that could not parse it; a file that
+            # parses and is another export's is what only the digest catches.
+            other = _other()
+            name = GRAPH_ARTIFACTS[role]
+            assert (other / name).read_bytes() != (sound / name).read_bytes(), (
+                f"the two workspaces hold the same {name}, so this probe replaces nothing"
+            )
             copy = work / f"replaced_{role}"
             if copy.exists():
                 shutil.rmtree(copy)
             shutil.copytree(sound, copy)
-            (copy / GRAPH_ARTIFACTS[role]).write_bytes(b"same shape, another workspace")
+            (copy / name).write_bytes((other / name).read_bytes())
             refuses(
-                lambda: verify_graph_artifacts(copy), ValueError,
-                f"is not the {role} artifact",
+                lambda: verify_workspace(copy), ValueError,
+                "is not the graph" if role == "kg" else f"is not the {role} artifact",
             )
             shutil.rmtree(copy)
             return "the replacement was refused", {}
@@ -704,7 +775,7 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
         shutil.copytree(sound, copy)
         (copy / "split_manifest.json").unlink()
         refuses(
-            lambda: verify_graph_artifacts(copy), ValueError,
+            lambda: verify_workspace(copy), ValueError,
             "has no split_manifest.json",
         )
         shutil.rmtree(copy)
@@ -715,19 +786,7 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
     )
 
     def _crossed() -> Tuple[str, Dict[str, Any]]:
-        # **A different graph, not the same graph under a different seed.** The
-        # first version of this probe built the other workspace with seed+1 and
-        # copied its kg.json across -- but the demo graph is deterministic, so
-        # the two files were byte-identical and nothing was crossed. It failed
-        # loudly, which is the only reason it was caught. The seed moves the
-        # allocation; only the graph moves the graph.
-        other = work / "other_workspace"
-        if not other.exists():
-            from src.kg.workspace import write_workspace
-
-            write_workspace(
-                _other_kg(), other, feature_dim=FEATURE_DIM, samples=_budget(),
-            )
+        other = _other()
         assert (other / "kg.json").read_bytes() != (sound / "kg.json").read_bytes(), (
             "the two workspaces hold the same graph, so this probe crosses nothing"
         )
@@ -736,9 +795,7 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
             shutil.rmtree(copy)
         shutil.copytree(sound, copy)
         (copy / "kg.json").write_bytes((other / "kg.json").read_bytes())
-        refuses(
-            lambda: verify_graph_artifacts(copy), ValueError, "is not the kg artifact"
-        )
+        refuses(lambda: verify_workspace(copy), ValueError, "is not the graph")
         shutil.rmtree(copy)
         return "another workspace's graph was refused", {}
 
@@ -810,12 +867,12 @@ def phase_training(
         return None
 
     def _provenance() -> Tuple[str, Dict[str, Any]]:
-        import torch
+        from src.utils.checkpoint_io import read_checkpoint
 
-        from src.kg.artifacts import verify_graph_artifacts
-
-        checkpoint = torch.load(selected["path"], map_location="cpu", weights_only=False)
-        digests = verify_graph_artifacts(sound)
+        checkpoint = read_checkpoint(
+            selected["path"], map_location="cpu", weights_only=False
+        ).checkpoint
+        digests, _, _ = verify_workspace(sound)
         recorded = checkpoint.get("training_input_digests")
         assert recorded is not None, "the checkpoint records no training inputs"
         # **The roles must be present, not merely consistent.** Comparing only
@@ -1114,8 +1171,6 @@ def phase_real_build(
 
     def _build() -> Tuple[str, Dict[str, Any]]:
         from scripts.build_knowledge_graph import build_knowledge_graph
-        from src.evaluation.cohort import verify_generated_cohorts
-        from src.kg.artifacts import verify_graph_artifacts, verify_graph_source
 
         missing = [
             name for name in ("phenotype.hpoa", "genes_to_phenotype.txt")
@@ -1134,9 +1189,7 @@ def phase_real_build(
         )
         elapsed = round(time.time() - started, 1)
 
-        digests = verify_graph_artifacts(workspace)
-        verify_graph_source(workspace / "kg.json", workspace)
-        cohorts = verify_generated_cohorts(workspace)
+        digests, cohorts, _ = verify_workspace(workspace)
         overlap = cohorts.disease_sets["train"] & cohorts.disease_sets["val"]
         assert not overlap, "the real cohorts share a disease"
         return "a real workspace was built and verified", {

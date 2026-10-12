@@ -18,9 +18,9 @@ shown here, at the real entry point (`train`, with `Trainer.train` stubbed):
   irrelevant after both reads;
 - a file removed after its read is still recorded by the digest of what was
   read, never as `None`;
-- with every path form raising and every path hash poisoned except the one the
-  `kg.json` identification check takes (it records nothing), the run completes
-  and no poison reaches the record;
+- with every path hash poisoned except the one the `kg.json` identification
+  check takes (it records nothing), the run completes and no poison reaches the
+  record;
 - a workspace with no validation samples records none; an unrelated split is
   never opened; an empty training split is refused before anything is written;
 - training trains on both optional sample fields (`training_fields=True`);

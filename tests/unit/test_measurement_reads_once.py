@@ -23,9 +23,9 @@ generated cohort:
   recorded when it lands before the run;
 - the cohort is resolved before anything is opened; a workspace with no
   manifest, or with no `kg.json`, is refused before the checkpoint is read;
-- with every path form raising and every path hash poisoned except the one the
-  `kg.json` identification check takes (it records nothing), the run completes
-  and no poison reaches the record;
+- with every path hash poisoned except the one the `kg.json` identification
+  check takes (it records nothing), the run completes and no poison reaches the
+  record;
 - graph tensors load on CPU and safely; the checkpoint keeps this site's options;
   the samples are read with the default fields.
 
@@ -571,21 +571,14 @@ def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(cli, supplied, n
 # Only from the readers
 # ---------------------------------------------------------------------------
 def test_no_path_form_is_reached_and_no_path_digest_is_recorded(cli, ws, monkeypatch):
-    """S9's dynamic pin, brought forward for measurement. `poison_path_forms`
-    patches the source modules, which cannot reach a name `measure_scorer` bound
-    at import. The only such names left are the `file_sha256` re-export (S9's to
-    remove), so those are made to fail here too, and the path forms are asserted
-    not to be bound here at all, which would put them out of the poison's reach."""
+    """S9's dynamic pin for measurement: every path hash is poisoned except the
+    `kg.json` identification check's, and the record is still the digests of
+    the bytes read. `measure_scorer` binds no path hash at import since S9
+    removed the `file_sha256` re-export, so none is out of the poison's reach."""
     for name in ("artifact_digests", "verify_graph_artifacts", "verify_generated_cohorts",
-                 "compute_input_digests"):
+                 "compute_input_digests", "file_sha256", "_file_sha256"):
         assert not hasattr(cli, name), f"measure_scorer binds {name} at import"
     poison_path_forms(monkeypatch, true_digest_for=[ws.data_dir / "kg.json"])
-
-    def reached(*args, **kwargs):
-        raise AssertionError("a measurement reached a path hash")
-
-    for name in ("file_sha256", "_file_sha256"):
-        monkeypatch.setattr(cli, name, reached)
 
     assert _main(cli, ws) == 0
 

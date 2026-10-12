@@ -66,9 +66,9 @@ def _workspace(
                 weight=1.0 if weights is None else weights[(d, p)],
             ))
     kg.save_json(str(root / "kg.json"))
-    # The tensors are never opened by this audit, but the workspace binds them, so
-    # the shared fixture writes its own real export beside this `kg.json`. It is
-    # not this graph's export; the audit compares their digests only.
+    # The audit reads and parses the tensors only to check the workspace binding;
+    # it measures nothing from them. The shared fixture writes its own real
+    # export beside this `kg.json`, valid but not this graph's export.
 
     rows = {
         split: [
@@ -475,6 +475,94 @@ def test_an_emptied_cohort_is_refused_by_the_manifest_binding(tmp_path):
 
     with pytest.raises(SystemExit, match="is not the file"):
         _run(root, tmp_path / "f.json")
+
+
+def test_the_report_records_the_digests_of_the_bytes_it_read(tmp_path, monkeypatch):
+    """S9's dynamic pin for the fidelity audit: every path hash is poisoned, and
+    each artifact the report names is the digest of the one read the audit
+    verified and measured, `phenotype.hpoa` included."""
+    import hashlib
+
+    from tests.fixtures.path_forms import POISON, poison_path_forms
+
+    external = tmp_path / "ext"
+    external.mkdir()
+    (external / "phenotype.hpoa").write_text("OMIM:1\tA\t\tHP:0000001\tR\tE\t\t3/12\t\n")
+    root = _workspace(tmp_path / "ws", diseases=[[0, 1], [2, 3]],
+                      train=[(0, [0, 1])], val=[(1, [2, 3])],
+                      manifest_config=DEFAULTS)
+    poison_path_forms(monkeypatch)
+
+    report = _run(root, tmp_path / "f.json", external_dir=external)
+
+    def sha(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    assert POISON not in report["artifacts"].values()
+    assert report["artifacts"] == {
+        "kg": sha(root / "kg.json"),
+        "node_features": sha(root / "node_features.pt"),
+        "edge_indices": sha(root / "edge_indices.pt"),
+        "num_nodes": sha(root / "num_nodes.json"),
+        "train_samples": sha(root / "train_samples.json"),
+        "val_samples": sha(root / "val_samples.json"),
+        "split_manifest": sha(root / "split_manifest.json"),
+        "phenotype_hpoa": sha(external / "phenotype.hpoa"),
+    }
+
+
+def test_each_input_is_opened_once(tmp_path):
+    from tests.fixtures.opens import count_opens
+
+    external = tmp_path / "ext"
+    external.mkdir()
+    (external / "phenotype.hpoa").write_text("OMIM:1\tA\t\tHP:0000001\tR\tE\t\t3/12\t\n")
+    root = _workspace(tmp_path / "ws", diseases=[[0, 1], [2, 3]],
+                      train=[(0, [0, 1])], val=[(1, [2, 3])],
+                      manifest_config=DEFAULTS)
+
+    with count_opens() as opens:
+        _run(root, tmp_path / "f.json", external_dir=external)
+
+    for name in ("kg.json", "node_features.pt", "edge_indices.pt", "num_nodes.json",
+                 "train_samples.json", "val_samples.json", "split_manifest.json"):
+        assert opens.opens(root / name) == 1, name
+    assert opens.opens(external / "phenotype.hpoa") == 1
+
+
+def test_a_graph_tensor_from_another_workspace_is_refused_naming_it(tmp_path):
+    """The audit does not measure the tensors, but the binding it claims is
+    checked on their bytes, as every graph consumer checks it."""
+    root = _workspace(tmp_path / "ws", diseases=[[0, 1], [2, 3]],
+                      train=[(0, [0, 1])], val=[(1, [2, 3])],
+                      manifest_config=DEFAULTS)
+    other = _workspace(tmp_path / "other", diseases=[[0, 1], [2, 3]],
+                       train=[(0, [0, 1])], val=[(1, [2, 3])],
+                       manifest_config=DEFAULTS)
+    (root / "edge_indices.pt").write_bytes((other / "edge_indices.pt").read_bytes())
+
+    with pytest.raises(SystemExit, match="edge_indices.pt is not the edge_indices artifact"):
+        _run(root, tmp_path / "f.json")
+
+
+@pytest.mark.parametrize("damage", ["junk", "missing"])
+def test_a_kg_json_that_cannot_be_read_is_refused_naming_it(tmp_path, damage):
+    """The audit parses `kg.json` before it compares its identity, so a file that
+    does not parse, or is not there, is refused by name rather than with a
+    parser's message or a traceback."""
+    root = _workspace(tmp_path / "ws", diseases=[[0, 1], [2, 3]],
+                      train=[(0, [0, 1])], val=[(1, [2, 3])],
+                      manifest_config=DEFAULTS)
+    kg_path = root / "kg.json"
+    if damage == "junk":
+        kg_path.write_bytes(b'{"nodes": [')
+    else:
+        kg_path.unlink()
+
+    with pytest.raises(SystemExit) as refused:
+        _run(root, tmp_path / "f.json")
+
+    assert str(kg_path) in str(refused.value)
 
 
 def test_an_existing_output_is_not_overwritten_by_default(tmp_path):

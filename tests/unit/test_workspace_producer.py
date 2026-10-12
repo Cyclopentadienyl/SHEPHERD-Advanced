@@ -220,22 +220,15 @@ class TestTheDemoWorkspaceIsAProductionWorkspace:
         return workspace
 
     def test_every_verifier_accepts_it(self, tmp_path, monkeypatch):
-        from src.evaluation.cohort import verify_generated_cohorts
-        from src.kg.artifacts import (
-            GRAPH_ARTIFACTS,
-            verify_graph_artifacts,
-            verify_graph_source,
-        )
+        from src.kg.artifacts import GRAPH_ARTIFACTS
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = self._run(tmp_path, monkeypatch)
 
-        # Superset, not equality: the verifier returns what it checked, and it
-        # now also checks the provenance record when a manifest declares one.
-        # Pinning the exact set would make every future binding a test edit
-        # rather than a contract change.
-        assert set(GRAPH_ARTIFACTS) <= set(verify_graph_artifacts(workspace))
-        verify_graph_source(workspace / "kg.json", workspace)
-        cohorts = verify_generated_cohorts(workspace)
+        # Superset, not equality: pinning the exact set would make every future
+        # binding a test edit rather than a contract change.
+        bound, cohorts = verify_workspace_reads(workspace)
+        assert set(GRAPH_ARTIFACTS) <= set(bound)
         assert cohorts.verified == ("train", "val")
         assert cohorts.disjointness_measured is True
         assert cohorts.disjointness_claim_checked is True
@@ -246,16 +239,16 @@ class TestTheDemoWorkspaceIsAProductionWorkspace:
         """The property the superseded generator could not provide: it drew a
         disease per patient for each partition independently, so a disease with
         patients on both sides was the norm rather than an accident."""
-        from src.evaluation.cohort import verify_generated_cohorts
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = self._run(tmp_path, monkeypatch)
-        sets = verify_generated_cohorts(workspace).disease_sets
+        sets = verify_workspace_reads(workspace)[1].disease_sets
 
         assert sets["train"] and sets["val"], "a partition came out empty"
         assert not (sets["train"] & sets["val"])
 
     def test_it_writes_a_manifest_at_the_current_schema(self, tmp_path, monkeypatch):
-        """Without one, `verify_graph_artifacts` refuses the directory and the
+        """Without one, `read_split_manifest` refuses the directory and the
         startup command the script prints cannot work."""
         import json
 
@@ -389,8 +382,8 @@ class TestTheWriterCarriesItsOwnCorrectness:
     def test_budgets_that_cover_the_allocation_are_written(self, tmp_path):
         """Otherwise the tests above would pass against a writer that refuses
         everything."""
-        from src.evaluation.cohort import verify_generated_cohorts
         from src.kg.workspace import SampleBudget, write_workspace
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = tmp_path / "ws"
         written = write_workspace(
@@ -399,7 +392,7 @@ class TestTheWriterCarriesItsOwnCorrectness:
         )
 
         assert written.manifest is not None
-        assert verify_generated_cohorts(workspace).verified == ("train", "val")
+        assert verify_workspace_reads(workspace)[1].verified == ("train", "val")
 
 
 class TestAGraphOnlyBuildSaysWhatItIs:
@@ -696,13 +689,13 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
         """The stream comes from the decimal form and nothing downstream packs
         it into a machine word, so a bound here would be invention. This is the
         half that keeps the validator from becoming restrictive."""
-        from src.evaluation.cohort import verify_generated_cohorts
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = tmp_path / f"ws{abs(seed)}"
         written = self._write(workspace, seed)
 
         assert written.manifest["allocation"]["seed"] == seed
-        assert verify_generated_cohorts(workspace).verified == ("train", "val")
+        assert verify_workspace_reads(workspace)[1].verified == ("train", "val")
 
     def test_the_allocation_refuses_a_bad_seed_for_direct_callers_too(self):
         """The writer is not the only caller. `allocate_diseases` is public and
@@ -1132,9 +1125,9 @@ class TestTheRecipeIsRequiredWhereItIsRead:
         `require_graph_export_recipe` directly, which proves the rules and
         nothing about who applies them: with the call removed from
         `require_manifest_schema` every one of those tests still passed, and the
-        original defect — `verify_graph_artifacts` accepting a schema-3
-        workspace that recorded no recipe — was back with the suite green. So
-        these two go through the functions a consumer actually calls.
+        original defect — the graph verifier accepting a schema-3 workspace
+        that recorded no recipe — was back with the suite green. So these two go
+        through the functions a consumer actually calls.
         """
         import json
 
@@ -1154,44 +1147,37 @@ class TestTheRecipeIsRequiredWhereItIsRead:
         manifest_path.write_text(json.dumps(manifest))
         return workspace
 
-    @pytest.mark.parametrize("reader", ["artifacts", "cohorts"])
     @pytest.mark.parametrize("recipe,message", [
         ({}, "records no graph_export recipe"),
         ({"feature_dim": 16}, "missing"),
         ({"feature_dim": 0, "feature_seed": 7, "initialisation": "standard-normal",
           "initialisation_version": 1}, "malformed"),
     ])
-    def test_a_boundary_reader_refuses_a_workspace_without_a_usable_recipe(
-        self, tmp_path, reader, recipe, message
+    def test_the_boundary_reader_refuses_a_workspace_without_a_usable_recipe(
+        self, tmp_path, recipe, message
     ):
-        """The two places a persisted manifest is read for real.
+        """The one place a persisted manifest is read for real.
 
-        Both reach the schema check, and the schema check is where schema 3's
-        promise has to be collected — a workspace whose `node_features.pt` can
-        be recognised and not rebuilt is not one, whatever its version field
-        says.
+        Every consumer reads its manifest through `read_split_manifest`
+        (contract M2.1), which reaches the schema check, and the schema check is
+        where schema 3's promise has to be collected — a workspace whose
+        `node_features.pt` can be recognised and not rebuilt is not one,
+        whatever its version field says.
         """
-        from src.evaluation.cohort import verify_generated_cohorts
-        from src.kg.artifacts import verify_graph_artifacts
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = self._persisted(tmp_path, recipe)
-        verify = verify_graph_artifacts if reader == "artifacts" else verify_generated_cohorts
         with pytest.raises(ValueError, match=message):
-            verify(workspace)
+            verify_workspace_reads(workspace)
 
-    @pytest.mark.parametrize("reader", ["artifacts", "cohorts"])
-    def test_a_boundary_reader_accepts_the_workspace_the_writer_produced(
-        self, tmp_path, reader
-    ):
+    def test_the_boundary_reader_accepts_the_workspace_the_writer_produced(self, tmp_path):
         """Without this the refusals above could be about the editing, not the
         recipe — and the writer's own output failing its readers would be the
         larger defect of the two."""
-        from src.evaluation.cohort import verify_generated_cohorts
-        from src.kg.artifacts import verify_graph_artifacts
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         workspace = self._persisted(tmp_path, _UNTOUCHED)
-        verify = verify_graph_artifacts if reader == "artifacts" else verify_generated_cohorts
-        verify(workspace)
+        verify_workspace_reads(workspace)
 
     def test_the_sound_recipe_is_accepted(self):
         """Otherwise every refusal below could be firing for another reason."""

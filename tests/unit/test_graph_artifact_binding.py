@@ -30,12 +30,10 @@ import pytest
 
 from src.core.types import DataSource, NodeType
 from src.kg.graph import Edge, KnowledgeGraph, Node, NodeID
-from src.evaluation.cohort import (
-    GRAPH_ARTIFACTS,
-    verify_generated_cohorts,
-    verify_graph_artifacts,
-)
+from src.evaluation.cohort import GRAPH_ARTIFACTS
+from src.kg.artifacts import read_split_manifest, verify_graph_reads
 from tests.fixtures.generated_workspace import write_generated_workspace
+from tests.fixtures.workspace_reads import verify_workspace_reads
 
 
 def _workspace(root: Path):
@@ -59,20 +57,23 @@ def test_the_recorded_digests_are_the_exact_exported_bytes(tmp_path):
 
     for role, filename in GRAPH_ARTIFACTS.items():
         assert manifest["artifacts"][role] == file_sha256(root / filename)
-    assert verify_graph_artifacts(root) == {
-        role: manifest["artifacts"][role] for role in GRAPH_ARTIFACTS
-    }
+    bound, _ = verify_workspace_reads(root)
+    assert bound == {role: manifest["artifacts"][role] for role in GRAPH_ARTIFACTS}
 
 
 @pytest.mark.parametrize("role", sorted(GRAPH_ARTIFACTS))
 def test_replacing_any_single_graph_artifact_is_refused(tmp_path, role):
     """A same-shaped artifact from another workspace passes structural
-    fingerprinting. Only the recorded bytes catch it."""
+    fingerprinting. Only the recorded bytes catch it. Another workspace's valid
+    file, not junk: the checks parse before they compare (contract M2.1), so
+    junk is refused by the reader instead."""
     root = _workspace(tmp_path / "ws")
-    (root / GRAPH_ARTIFACTS[role]).write_bytes(b"same shape, another workspace")
+    other = _workspace(tmp_path / "other")
+    (root / GRAPH_ARTIFACTS[role]).write_bytes((other / GRAPH_ARTIFACTS[role]).read_bytes())
 
-    with pytest.raises(ValueError, match=f"is not the {role} artifact"):
-        verify_graph_artifacts(root)
+    with pytest.raises(ValueError, match="is not the graph" if role == "kg"
+                       else f"is not the {role} artifact"):
+        verify_workspace_reads(root)
 
 
 class TestTrainingRefusesBeforeItActs:
@@ -239,7 +240,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         """An optional check is no check for the caller who omits it, and that
         caller is the one it exists for.
 
-        `verify_graph_artifacts` alone proves only that `data_dir` is consistent
+        `verify_graph_reads` alone proves only that `data_dir` is consistent
         with itself; the `kg` object stays bound to nothing, so workspace B's
         graph can still be paired with workspace A's tensors. Nothing legitimate
         is lost by requiring it: a graph built in memory belongs on the
@@ -308,9 +309,9 @@ def test_a_pre_migration_manifest_is_refused_with_a_rebuild_instruction(tmp_path
         manifest["artifacts"].pop(role)
     (root / "split_manifest.json").write_text(json.dumps(manifest))
 
-    for check in (verify_graph_artifacts, verify_generated_cohorts):
-        with pytest.raises(ValueError, match="Rebuild it with"):
-            check(root)
+    # The one place a persisted manifest is read: every consumer goes through it.
+    with pytest.raises(ValueError, match="Rebuild it with"):
+        read_split_manifest(root)
 
 
 def test_a_manifest_at_the_current_schema_missing_a_graph_role_is_refused(tmp_path):
@@ -321,14 +322,16 @@ def test_a_manifest_at_the_current_schema_missing_a_graph_role_is_refused(tmp_pa
     manifest["artifacts"]["node_features"] = None
     (root / "split_manifest.json").write_text(json.dumps(manifest))
 
+    from src.kg.storage.file_storage import read_graph_artifacts
+
     with pytest.raises(ValueError, match="records no digest for node_features"):
-        verify_graph_artifacts(root)
+        verify_graph_reads(read_split_manifest(root), read_graph_artifacts(root).reads)
 
 
 class TestTheCompositionMustNotCrossWorkspaces:
     """Two internally valid workspaces, paired.
 
-    `verify_graph_artifacts` proves a workspace is consistent with itself. It
+    `verify_graph_reads` proves a workspace is consistent with itself. It
     cannot see a caller that takes one workspace's `kg.json` and another's
     tensors -- which is exactly what the API allowed, since `SHEPHERD_KG_PATH` and
     `SHEPHERD_DATA_DIR` are resolved independently. Embedding rows then come from
@@ -361,11 +364,9 @@ class TestTheCompositionMustNotCrossWorkspaces:
 
     def test_each_workspace_is_valid_on_its_own(self, tmp_path):
         """Otherwise the test above would prove only that one of them is broken."""
-        from src.kg.artifacts import verify_graph_artifacts as verify
-
         a, b = self._two_workspaces(tmp_path)
-        assert set(verify(a)) == set(GRAPH_ARTIFACTS)
-        assert set(verify(b)) == set(GRAPH_ARTIFACTS)
+        assert set(verify_workspace_reads(a)[0]) == set(GRAPH_ARTIFACTS)
+        assert set(verify_workspace_reads(b)[0]) == set(GRAPH_ARTIFACTS)
 
     def test_a_matching_pair_proceeds(self, monkeypatch, tmp_path):
         reached: list = []

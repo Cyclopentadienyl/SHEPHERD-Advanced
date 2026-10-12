@@ -1132,12 +1132,13 @@ workspace 目錄本身無法進入**（此時連 `Path.is_file()` 都會拋例�
 在」會據實回報，不會被講成「紀錄不在」。manifest 這一項尤其要分清楚——manifest 讀不到的意思是
 **「無從得知是否曾宣告過來源紀錄」**，不是**「從未宣告過」**，而只有後者才能推得
 「這個 workspace 建於 provenance 之前」。要不要因為 manifest 壞掉而拒絕整個
-workspace，仍然是 `verify_graph_artifacts()` 的職責。
+workspace，仍然是各入口自己的 workspace 檢查（`read_split_manifest` 與
+`verify_graph_reads`，比對該入口實際讀到的檔案）的職責。
 
-> **修正紀錄**：本節的早期版本讓 `verify_graph_artifacts()` 在來源紀錄損壞時直接拋
-> 例外。那個函數被 `verify_graph_source()` 呼叫，而後者在 `DiagnosisPipeline`
-> 載入張量前執行——結果是「一張便條不見了」會讓模型無法初始化，冷啟動時 `/diagnose`
-> 回 503，而張量本身完好無損。已改為回報而非拒絕。
+> **修正紀錄**：本節的早期版本讓圖驗證函數（當時的 `verify_graph_artifacts()`，現已
+> 移除）在來源紀錄損壞時直接拋例外。serving 在載入張量前執行那項檢查——結果是「一張便條
+> 不見了」會讓模型無法初始化，冷啟動時 `/diagnose` 回 503，而張量本身完好無損。已改為
+> 回報而非拒絕。
 
 ### 舊 workspace
 

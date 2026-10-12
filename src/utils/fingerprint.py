@@ -19,14 +19,19 @@ It answers "is this checkpoint structurally compatible with the graph in front o
 me?". It cannot answer "which exact inputs produced this checkpoint" — two runs
 over different sample files share it, and sample files do not enter it at all.
 
-*Content digests* (`file_sha256`, `compute_input_digests`) answer the second
-question. They are kept separate rather than folded into the fingerprint, because
+*Content digests* (`read_once`, `file_sha256`) answer the second question. They are
+kept separate rather than folded into the fingerprint, because
 a structural identity that also changed whenever a byte moved would stop being a
 compatibility check.
 
 `read_once` is the content digest of an input that is about to be parsed: it
 returns the bytes and the digest of those same bytes, so what a reader parses and
 what a record names cannot come from two different reads (contract M2.1).
+`file_sha256` identifies a file nobody is about to parse. Within the static
+pin's scope (`src/**`, the entry points and the scripts M2.1's S9 moved), every
+remaining caller is a named exception in `tests/unit/test_provenance_pins.py`;
+BACKLOG item 19's scripts outside that scope still hash by path, each with its
+home there.
 
 When a checkpoint is saved during training, the fingerprint of the
 graph data used is embedded in the checkpoint. At inference load time,
@@ -52,7 +57,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -138,29 +143,6 @@ def file_sha256(path: Union[str, Path]) -> Optional[str]:
         return None
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
-
-
-def compute_input_digests(roles: Mapping[str, Union[str, Path]]) -> Dict[str, Optional[str]]:
-    """Content digests keyed by the **semantic role** each file played.
-
-    Role-keyed and nothing more. This function knows nothing about splits,
-    checkpoints, training or measurement — each caller names the roles *its own
-    run* consumed, and two callers with different roles do not have to agree on a
-    vocabulary or share a schema. That is what keeps a shared digest contract from
-    turning into a shared domain model.
-
-    What it does own is the one decision its callers must not disagree about:
-    a missing file is `None`, uniformly. Two dict comprehensions could drift on
-    that; this cannot. **No production code calls it since the Mode A/B
-    retirement's R2** (2026-10-12), which deleted measurement's path-form record;
-    contract M2.1's S9 deletes it once no caller records through it.
-
-    Callers should pass **only the roles the run actually consumed**. Hashing every
-    file that happens to sit in a directory records the directory, not the run —
-    an unrelated split appearing beside the inputs would change a record of work
-    that never read it.
-    """
-    return {role: file_sha256(path) for role, path in roles.items()}
 
 
 def compute_fingerprint(

@@ -48,7 +48,6 @@ from src.evaluation.cohort import (
     CohortProvenance,
     resolve_cohort,
 )
-from src.utils.fingerprint import file_sha256 as _file_sha256
 
 if TYPE_CHECKING:
     from src.kg.artifacts import ManifestRead
@@ -64,20 +63,6 @@ CANDIDATE_CONSTRUCTION = "every disease in the knowledge graph"
 #: How the scored model was built: through `build_shepherd_model`, the builder
 #: the deployed pipeline uses.
 MODEL_CONSTRUCTION = "production (build_shepherd_model)"
-
-
-#: Re-exported so callers that import the name from here keep working. The
-#: definition moved to `src/utils/fingerprint.py`, the bottom layer, because
-#: consumers importing a hashing primitive **from a script** made an entry point
-#: into a library.
-#:
-#: **Moving the definition did not by itself remove the edge**, and an earlier
-#: revision claimed it had. `scripts/benchmark_sp_lookup.py` now imports from
-#: `src.utils.fingerprint` directly, which is the edge that had no business
-#: existing — the SP benchmark has nothing to do with scorer measurement. No
-#: script imports it from here any more; the remaining callers are tests, and
-#: `tests/unit/test_training_provenance.py` pins the re-export.
-file_sha256 = _file_sha256
 
 
 class MeasurementInputs(NamedTuple):

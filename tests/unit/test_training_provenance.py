@@ -33,7 +33,6 @@ torch = pytest.importorskip("torch")
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
 from src.utils.fingerprint import (  # noqa: E402
     compute_fingerprint,
-    compute_input_digests,
     file_sha256,
     verify_fingerprint,
 )
@@ -49,33 +48,33 @@ def test_file_sha256_returns_none_for_an_absent_file(tmp_path):
     assert file_sha256(tmp_path / "never_written.json") is None
 
 
-def test_digests_are_keyed_by_role_and_follow_content_not_name(tmp_path):
+def test_digests_follow_content_not_name(tmp_path):
     """Two files with different names and identical bytes share a digest; the same
     name with different bytes does not. That is the whole claim: same digest means
-    the same bytes were consumed."""
+    the same bytes."""
+    import hashlib
+
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"
     first.write_text('{"x": 1}')
     second.write_text('{"x": 1}')
 
-    same = compute_input_digests({"one": first, "two": second})
-    assert same["one"] == same["two"]
+    assert file_sha256(first) == file_sha256(second)
+    assert file_sha256(first) == hashlib.sha256(b'{"x": 1}').hexdigest()
 
     second.write_text('{"x": 2}')
-    assert compute_input_digests({"two": second})["two"] != same["two"]
+    assert file_sha256(second) != file_sha256(first)
 
 
 def test_the_shared_contract_lives_below_the_scripts_that_use_it():
     """`file_sha256` was defined in `scripts/measure_scorer.py` and imported from
     there by two other scripts and a test — an entry point serving as a library,
     and the SP benchmark in particular had no business depending on the scorer
-    measurement to get a hash function.
+    measurement to get a hash function. It lives in `src.utils.fingerprint`, and
+    since contract M2.1's S9 the measurement script no longer re-exports it."""
+    import scripts.measure_scorer as measure_scorer
 
-    The re-export is asserted too, because those callers must keep working.
-    """
-    from scripts.measure_scorer import file_sha256 as reexported
-
-    assert reexported is file_sha256
+    assert not hasattr(measure_scorer, "file_sha256")
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +90,7 @@ def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
 
     **Everything is written before the manifest**, because the manifest binds the
     bytes on disk — the graph export as well as the cohorts. Writing a tensor
-    afterwards produces exactly the mixed workspace `verify_graph_artifacts`
+    afterwards produces exactly the mixed workspace `verify_graph_reads`
     exists to refuse, which is the right behaviour and the wrong fixture.
     """
     from tests.fixtures.generated_workspace import (
