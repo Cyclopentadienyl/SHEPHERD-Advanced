@@ -22,8 +22,11 @@ retirement's R2 (2026-10-12; code-reviewed with no P1 or P2 in
 that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
 complete: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
 and S10's tools, kept outside the repository, passed their re-review with no P1 or P2 (draft 3, 2026-10-12),
-and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md)): acceptance 1's mechanical part is met at
-the after commit and every reading is explained, awaiting review, so capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md)): every acceptance 1 check passes at
+the after commit; comparability has 1 UNKNOWN (the service state, supplemented by the owner's statement; the
+comparison's exit status 2 kept); acceptance 2 and 3 are explained, the serving reload's +0.022 to +0.033 GB
+resident rise by inference, and the owner is to decide whether a diagnostic run comes first; awaiting review,
+so capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -1631,8 +1634,8 @@ each moves its callers before anything is removed.
       before, after, difference and explanation of each reading. The run's scratch (server logs,
       the measurement report with paths, ranks, configurations and the SP table) is not
       evidence and stays on the homelab.
-      - **As run (2026-10-12):** [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md). Acceptance 1's mechanical
-        part is met at the after commit (51 checks PASS). Comparability: 60 PASS and 1 UNKNOWN,
+      - **As run (2026-10-12):** [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md). Every acceptance 1 check
+        passes at the after commit (51 PASS). Comparability: 60 PASS and 1 UNKNOWN,
         the service state, because the homelab has no `shepherd` user unit; the owner's statement
         of 2026-10-13 that the backends were closed supplements it, and the exit status 2 is
         kept. Acceptance 2 and 3 are explained there; acceptance 4 is not triggered. One question

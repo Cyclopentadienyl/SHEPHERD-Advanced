@@ -4,13 +4,16 @@ Contract M2.1 step S10 ([`PLAN_PROVENANCE_CONTRACT.md`](../../PLAN_PROVENANCE_CO
 10). This directory holds the evidence of the one reported run at each commit, byte for byte as
 the owner sent it, and this explanation.
 
-**Status.** The run is complete. Acceptance 1's mechanical part is met at the after commit (51
-checks PASS, none FAIL). Comparability: 60 checks PASS and 1 UNKNOWN, the service state, which the
-owner's statement below supplements; the comparison's exit status 2 is kept as recorded.
-Acceptance 2 and 3 are explained below; acceptance 4 is not triggered (no shortfall). **Awaiting
-the reviewer's review: S10's capacity is not accepted until that review closes, and this is not
-acceptance of M2.1 or M2.** One question is left to the owner (§6.1): whether the serving reload's
-small resident rise needs a separate diagnostic run before acceptance.
+**Status.** The run is complete. Every acceptance 1 check passes at the after commit (51 PASS, 0
+FAIL, 0 UNKNOWN). Comparability: 60 checks PASS and 1 is UNKNOWN, the service state, so the
+comparison's single verdict, which covers both, is "NOT judged: data missing" (exit status 2),
+kept as recorded; the owner's statement below supplements the UNKNOWN and does not turn it into a
+pass. Acceptance 2 and 3 are explained below, including the changes other than M2.1 on the
+measured paths (§4.6); the serving reload's small resident rise is explained by inference and was
+not investigated. Acceptance 4 is not triggered (no shortfall). **Awaiting the reviewer's review:
+S10's capacity is not accepted until that review closes, and this is not acceptance of M2.1 or
+M2.** One question is the owner's (§6.1): whether that reload rise needs a separate diagnostic
+run before acceptance.
 
 ## 1. What was run
 
@@ -23,8 +26,8 @@ small resident rise needs a separate diagnostic run before acceptance.
 | Software | Python 3.12.3; torch 2.10.0+cu130 (CUDA 13.0); one venv (python `c86f21d0…`, distributions `a117e53e…`), equal at both commits |
 | Allocator | `PYTORCH_ALLOC_CONF=backend:cudaMallocAsync`, the saved preset, set explicitly for the sampled rows; serving applied the same value itself |
 | Page cache | warm, by the owner's decision: before each row the same 10 workspace files (`preread.txt`) and the checkpoint were read once, and R0 was taken after that. A capacity comparison after a pre-read, not a cold start |
-| Tools | draft 3, re-reviewed with no P1 or P2: `s10_probe.py` `04458fd7…`, `s10_sampler.py` `1ae557ad…`, `s10_run_matrix.sh` `6eaeffcf…`, `s10_compare.py` `7fbb86d5…`; serving script `measure_served_pipeline.py` `d097cf97…`, equal at both commits (`tools_sha256.txt`, full digests in the plan) |
-| Times (homelab, local) | pre-flight 13:44; before 13:44–15:42; after 15:53–17:37 |
+| Tools | draft 3, re-reviewed with no P1 or P2: `s10_probe.py` `04458fd7…`, `s10_sampler.py` `1ae557ad…`, `s10_run_matrix.sh` `6eaeffcf…`, `s10_compare.py` `7fbb86d5…`; serving script `measure_served_pipeline.py` `d097cf97…`, equal at both commits (`tools_sha256.txt`; `s10_compare.py`'s digest in `compare.txt`; full digests in the plan) |
+| Times (UTC, from the files and `driver.log`) | pre-flight 13:44; before 13:44–15:42; after 15:53–17:37, on 2026-10-12 |
 | Matrix | serving 3 repeats (seed 20260930); Mode C on the generated val cohort, `--device cuda` (`--modes C` at `90a668f` only); training `--conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42`, without and with `--resume`, stopped at `Trainer.train`; SP producer `--max-hops 5 --workers 15` into scratch |
 
 **Inputs, equal at both commits and before and after each run** (`inputs_sha256_*_rows.txt`):
@@ -37,33 +40,48 @@ small resident rise needs a separate diagnostic run before acceptance.
 training roles are the two sample files, the two tensors, `num_nodes` and the split manifest (no
 `kg`), as S10 expected.
 
-**The owner's statement (2026-10-13).** Before both runs the SHEPHERD backends were closed. The
-environment records 0 GPU compute processes at both commits. The comparison reports the service
-state as UNKNOWN because the homelab has no `shepherd` systemd user unit (`LoadState not-found`):
-the `systemctl --user stop shepherd` step of the runbook did nothing there, and the backends were
-closed by hand. The UNKNOWN and the exit status 2 stay as recorded; the statement supplements
-them and does not turn them into a pass.
+**The page cache at R0 was not the same.** In every sampled row R0's page cache was about 10.8 GB
+larger at the after commit (median 18.9 GB at `90a668f`, 29.7 GB at `343e90e`): about one SP
+table more, plausibly the before run's own scratch publication still cached. The pre-read
+procedure was the same; the system figures exclude reclaimable cache. Recorded, not attributed.
+The whole-machine R0 baselines differ by up to 0.5 GB between the runs (serving 10.70–10.99 GB
+before, 11.08–11.51 GB after); the system figures are taken less their own R0.
+
+**The owner's statement (2026-10-13, the owner's date).** The owner states that the SHEPHERD
+backends were closed by hand before both runs. The evidence: both environment records show no
+`shepherd` systemd user unit (`service_load_state not-found`) and 0 GPU compute processes. So
+the runbook's `systemctl --user stop shepherd` had no unit to stop (inferred), and the comparison
+reports the service state as UNKNOWN, as the runbook foresaw for a service run another way. The
+UNKNOWN and the exit status 2 stay as recorded; the statement supplements them and does not turn
+them into a pass.
 
 ## 2. Acceptance 1 (mechanical), from `compare.txt`
 
-At the after commit every check passes: all five rows of this run exited 0; every probe boundary
-fired; training stopped at its boundary, the resume row with `--resume` and the fresh row
+At the after commit every acceptance 1 check passes: all five rows of this run exited 0; every
+probe boundary fired; training stopped at its boundary, the resume row with `--resume` and the fresh row
 without, both on CUDA, with no epoch output and no checkpoint written; Mode C ran with
 `cuda_executed` at this commit (15,000 cases ranked); the SP producer published into scratch a
-sidecar naming graph `6cae2d1a…`, 431,902,937 pairs and `max_hops` 5, and a table of
-10,797,575,893 bytes; serving completed every phase of its three repeats with `readings_complete`;
-no row saw an OOM kill, a swap increase or a swap rise during R0; no row was stopped or left a
-process behind; the workspace was unchanged; every reading was written by the recorded tools. The
-before run passes the same checks. The two runs are comparable: inputs, tools, pre-read list,
-environment, boot, the matrix's settings and serving's allocator are equal, and the rows'
-explicit allocator is serving's.
+sidecar naming graph `6cae2d1a…`, 431,902,937 pairs and `max_hops` 5, and a non-empty table
+(10,797,575,893 bytes per `sp_table_bytes.txt`, a size the tool does not compare); serving
+completed every phase of its three repeats with `readings_complete`; no row saw an OOM kill, a
+swap increase or a swap rise during R0; no sampled row was stopped or left a process behind
+(serving's server is ended by its own script, and the comparison does not check it for
+leftovers); the workspace was unchanged; every reading was written by the recorded tools. The
+before run passes the same checks.
+
+Comparability: 60 checks pass (inputs, tools, pre-read list, environment, boot, the matrix's
+settings, serving's allocator, the rows' explicit allocator being serving's, and each commit's
+`--modes` form). The quiet-machine check is UNKNOWN (§1), so the comparison's verdict is "NOT
+judged" (exit status 2).
 
 ## 3. How the readings are judged
 
-- **Noise.** One sampled row per commit; serving three repeats per commit. Serving's repeats
-  spread by up to 1–2 MB (R1, R2) and 5–11 MB (R3, R4) within a commit, so a process reading of a
-  few MB is within noise. Anonymous memory moves in 2 MiB steps (huge pages). VmHWM is the
-  kernel's high-water mark, read at named boundaries.
+- **Noise.** One sampled row per commit; serving three repeats per commit. Within a commit,
+  serving's repeats spread by under 1 MB in R1 and in R2's VmHWM, by up to 3.8 MB in R2's VmRSS
+  after the requests, and by 4.7–10.4 MB in R3 and R4, so a process reading of a few MB is within
+  noise. Anonymous memory moves in 4 KiB pages and sometimes in 2 MiB huge-page steps (the
+  measurement exit readings differ by exactly 2,097,152 B). VmHWM is the kernel's high-water mark,
+  read at named boundaries.
 - **System figures** (`system in use, sampled peak less R0`) are whole-machine and sampled: every
   process, the CUDA pool (GB10 memory is unified), kernel memory and page cache that is not
   reclaimable all count. They are reported, not attributed. In the SP row the sampler took about
@@ -73,10 +91,15 @@ explicit allocator is serving's.
   `tests/unit/test_shared_readers.py`, `tests/unit/test_graph_read_json.py`), not by RSS
   (acceptance 2). Those checks run the readers with their own options (for the checkpoint,
   `weights_only=True` on the CPU); the measured entry points call the same reader code with other
-  `torch.load` options (CUDA, or `weights_only=False` in training).
-- **Wall times** are not acceptance quantities. Every row ran 1–3 s faster at the after commit,
-  much of it before the first boundary; the code explains a few tenths of a second (fewer page
-  reads of `kg.json`, less hashing). Not investigated.
+  `torch.load` options: measurement on CUDA with `weights_only=True`, training on CUDA with
+  `weights_only=False`, serving on the CPU with `weights_only=False`. For those, release rests on
+  the reader's code (the buffer is a local of `read_checkpoint`), not on a check.
+- **Wall times** are not acceptance quantities. Every row ran faster at the after commit: the
+  measurement and training rows by 1.2–2.9 s, mostly before the first boundary; the SP producer by
+  20.1 s, 3.3 s before the graph-read boundary and about 18.5 s in the BFS, whose code is
+  identical; serving's R1, R2 and R3 by 1.9–13.0 s, 137–494 s and 1.8–14.1 s. The code explains a
+  few tenths of a second (fewer page reads of `kg.json`, less hashing). Not investigated; the R0
+  page-cache difference (§1) is one candidate.
 
 ## 4. The readings, explained
 
@@ -95,8 +118,9 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
 
 - **The entry peak, −0.095 GB, is a phase move.** The probe reads at `run_mode_c`'s start, after
   its arguments are evaluated. At `90a668f` the `manifest` argument ran `build_manifest` →
-  `artifact_digests` → `verify_generated_cohorts`, which re-parsed `train_samples.json` and
-  `val_samples.json` after the model was built and the graph encoded, just before entry: VmHWM −
+  `artifact_digests` → `verify_generated_cohorts`, which parsed `train_samples.json` and parsed
+  `val_samples.json` a second time after the model was built and the graph encoded, just before
+  entry: VmHWM −
   VmRSS = 0.076 GB at entry. At `343e90e` those parses happen in `read_measurement_inputs`, before
   the model exists, below the later RSS: VmHWM − VmRSS = 0.002 GB. The row's peak is unchanged
   (+0.003 GB). That 0.095 GB is close to the checkpoint and the two tensors' sizes together
@@ -104,12 +128,13 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
   for them come before CUDA's first use or during the checkpoint's own load, and set no peak.
 - **Resident after the reads, −0.022 GB.** The objects alive at entry are the same at both commits
   (the graph tensors, 29.3 + 19.8 MB on the CPU; the val samples; the checkpoint, model and
-  embeddings on CUDA); `343e90e` adds identities of a few bytes. The difference is anonymous
-  memory, most plausibly pages left resident after `90a668f`'s late parse; it closes by
-  `run_mode_c`'s exit (+0.002 GB), inside code identical at both commits. A decrease: no added
+  embeddings on CUDA); `343e90e` adds a few KB (the parsed split manifest, a 1,970-byte file,
+  and the read identities). The difference is anonymous memory, most plausibly pages left
+  resident after `90a668f`'s late parse; it closes by `run_mode_c`'s exit (+0.002 GB), inside code
+  that differs between the commits only by two evidence fields R2 removed. A decrease: no added
   cost to assess.
-- **End of process, +0.015 GB:** about 1% of RSS, below any single transient copy, after the
-  peak; which freed allocations stayed resident at each commit is not established. Not a peak
+- **End of process, +0.015 GB:** about 1% of RSS, below each of the three torch-file buffers
+  (19.8–47.9 MB) though above the `train_samples.json` buffer (12.9 MB), after the peak; which freed allocations stayed resident at each commit is not established. Not a peak
   change.
 - **CUDA** is identical to the byte at every boundary: Mode C's device work is unchanged.
 
@@ -121,16 +146,22 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
 | resume: VmRSS at the replaced `train` (acceptance 2) | 1.968 | 1.968 | +0.1 MB |
 | resume: VmHWM at the replaced `train` (the row's peak) | 1.968 | 2.015 | **+0.047** |
 | CUDA max allocated, each phase | 0.017; resume 0.065 | equal | 0 |
+| System sampled peak less R0 | fresh 1.828; resume 1.938 | 1.877; 2.001 | +0.049; +0.063 |
 
 - **Fresh: unchanged.** VmHWM equals VmRSS at `Trainer.__init__`'s return at both commits, so the
   new reads' transients (whole-file buffers of up to 29.3 MB at `343e90e`) come before the
   loaders and the model and set no peak.
 - **Resume: +0.047 GB at the peak, resident equal. This is one transient copy of the checkpoint**
-  (47,931,987 B; the window's rise is 47,325,184 B more at the after commit). At `343e90e`
+  (47,931,987 B; VmHWM at the replaced `train` is 47,325,184 B higher at the after commit, and its
+  rise from `Trainer.__init__`'s return is 48,939,008 B against 1,998,848 B, 46,940,160 B more). At `343e90e`
   `read_checkpoint` holds the file's bytes while `torch.load(BytesIO)` parses them; at `90a668f`
   `torch.load` read the records from the file by path. The buffer is released on return: VmRSS
-  is equal, and the release check covers the reader. This is the plan's "about 48 MB for the
-  designated checkpoint, one transient copy": +2.4% of the row's peak, no resident cost.
+  is equal, and the release rests on the reader's code (§3). This is the plan's "about one
+  transient copy" per file, "48 MB for the designated checkpoint" (Memory section): +2.4% of the
+  row's peak, no resident cost.
+- **The system figures** are whole-machine and sampled (26–42 samples a row): resume's +0.063 GB
+  includes the checkpoint's transient; fresh's +0.049 GB, with the process figures equal, is
+  reported and not attributed.
 
 ### 4.3 SP producer
 
@@ -145,22 +176,24 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
 
 - **Where M2.1 acts, nothing changed.** S3 moved the graph read into `KnowledgeGraph.read_json`
   (one read; bytes, then text, then the parsed tree). The resident and peak figures after the read
-  and at the fork are equal within a page or two.
+  and at the fork are equal within 0.05–0.23 MB (12–57 pages of 4 KiB).
 - **The plan's kg.json expectation did not hold, because its premise was wrong.** The plan named
   `kg.json`'s bytes and decoded text, coexisting, as likely the largest new transient at serving
   and in the SP producer (about 0.21 GB). They are not new: at `90a668f` `load_json` called
   `json.load` on a text-mode file, and CPython's `TextIOWrapper.read()` reads the whole file into
   one bytes object and decodes it while that object is alive. `343e90e`'s `read_json` has the same
   shape (read, decode, release the bytes, parse, release the text). The transient is the same at
-  both commits (at least the file's size; more if the text holds characters beyond Latin-1, since
-  `save_json` writes `ensure_ascii=False`). The plan's Memory section is corrected accordingly.
+  both commits: at least twice the file's size (the bytes and the text, about 0.42 GB) for ASCII
+  text, and 3, 4 or 6 times it if the text holds any non-ASCII, BMP or astral character, since
+  `save_json` writes `ensure_ascii=False`. The plan's Memory section is corrected accordingly.
 - **The later decreases come from code identical at both commits** (the BFS, the conversion to
-  tensors, publication). The peak (−0.107 GB, matched by the tree's Pss) and the resident figure
+  tensors, publication), apart from three more modules imported before publication at `343e90e`
+  (`src/inference/pipeline.py`'s imports): a sub-MB rise in the opposite direction. The peak (−0.107 GB, matched by the tree's Pss) and the resident figure
   at publication (−0.29 GB, all anonymous) fall; which order-dependent allocations set them is not
   recorded. Decreases: no added cost to assess, and no diagnostic needed.
 - **The system figure, +0.48 GB,** is whole-machine and sampled about once a second: 0.20 GB of it
-  is a lower R0 at the after commit, and the rest lies outside the process tree, whose own peak
-  fell.
+  is a lower R0 at the after commit. The rest is not attributed: the system and tree peaks need not
+  fall on the same sample, and the tree's own sampled peak fell.
 
 ### 4.4 Serving: launch to ready (R1) and 200 requests (R2)
 
@@ -177,7 +210,8 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
   (47.9 MB), each released before the next read — come earlier, about 21 GB below that peak, and
   leave nothing at ready: S6 keeps only identities. The `kg.json` transient is not new (§4.3).
 - The 1–2 MB lower resident baseline at the after commit is plausibly the dashboard's analytics
-  being off (`a535ae2`); not established and not needed. The R1 system figure moves both ways by
+  being off (`a535ae2`), if `GRADIO_ANALYTICS_ENABLED` was unset in the before run's server
+  environment, which the evidence does not record; not established and not needed. The R1 system figure moves both ways by
   up to 0.3 GB against a within-commit range of up to 0.53 GB: noise.
 - These figures reproduce the 2026-09-30 context readings (R1 VmHWM 23.77 GB, R2 after 6.45 GB;
   [`PLAN_B04_PRODUCTIONISATION.md`](../PLAN_B04_PRODUCTIONISATION.md)).
@@ -200,22 +234,42 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
   `num_nodes`, the two tensors and the checkpoint are each read once and parsed from that read;
   the SP table is loaded by path at both. The new transients are the same three whole-file
   buffers as at startup.
-- **Not a kept buffer:** the release checks cover every reader on the reload path. **Not a larger
-  live set:** the same build code leaves R1 and R2 unchanged at startup, and within each repeat the
+- **Not a kept buffer:** for `kg.json`, the manifest, `num_nodes` and the two tensors, by their
+  release checks, which run with serving's options; for the checkpoint, which serving reads on the
+  CPU with `weights_only=False`, by the reader's code (§3). **By inference, not a larger live
+  set:** the same build code leaves R1 and R2 unchanged at startup, and within each repeat the
   offset is the same at the reload's peak and after the swap — the drop from peak to after is
-  21.660–21.662 GB at both commits — so it is taken before the peak and stays.
+  21.660–21.661 GB at both commits — so it is taken before the peak and stays.
 - **What it is, inferred and not investigated:** memory the C allocator keeps after the reload's
   transient buffers are freed (for example a freed buffer's region kept in the heap, or a raised
   trim threshold), rather than a Python object. Which buffer, and why the same reads leave no such
   offset at startup, the code does not settle. **No diagnostic run was made.**
 - **Not measured:** each server process does one reload, so whether the offset recurs or
   accumulates over several reloads in one process is unknown. The 0.4% holds for one reload.
-- **Assessment (acceptance 2):** an added resident cost of about 0.03 GB after a reload, with no
-  kept buffer and no larger live set. It does not by itself call for a reader rewrite, and
+- **Assessment (acceptance 2):** an added resident cost of about 0.03 GB after a reload; no kept
+  buffer; by inference, no larger live set. It does not by itself call for a reader rewrite, and
   acceptance 4 rules out `malloc_trim` and the like. Whether "an observation to investigate"
   needs the diagnostic run before acceptance is the owner's decision (§6.1).
 - The R4 system figure is whole-machine noise (mean −0.001 GB). R3's wall time was 1.8–14 s shorter
   at the after commit; the code explains at most about 0.5 s of it; not investigated.
+
+### 4.6 Changes other than M2.1 on the measured paths
+
+S10 requires acceptance 2 and 3 to account for them. None is needed to explain a reading beyond
+what is said here:
+
+- **`290c03a`** (M3a: training's seed applied before the loaders and the model are built): moves
+  a seed call; no allocation. The training rows are unchanged where the model is built.
+- **`8eae614`** (HGT Edit 1: each HGT convolution receives its inputs in its own node- and
+  edge-type order): no parameter is added; its work is on CUDA. Mode C's and training's CUDA
+  counters are equal to the byte at every boundary.
+- **`a535ae2`** (the dashboard's Gradio analytics off): only at serving's startup; the plausible
+  cause of the 1–2 MB lower baseline (§4.4).
+- **`e210b12`** (R2: Modes A and B deleted): the measurement CLI takes `--modes C` at `90a668f`
+  only; it removes measurement's seeding and its Mode A/B code (well under 1 MB) and two of
+  `run_mode_c`'s evidence fields; elsewhere on the measured paths it changed docstrings only.
+- **`06fd0f1`** (item 8: `read_samples` refuses non-integer ids): an id check during the sample
+  parse; CPU time only, no retained object.
 
 ## 5. Objects alive at each boundary (acceptance 3's list)
 
@@ -224,18 +278,25 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
   model, the encoded embeddings and the allocator's pool. At `90a668f` the cohort re-parse was
   freed moments before entry; at `343e90e` every file's raw bytes were freed as its reader
   returned, before the model existed.
+- **Measurement after `run_mode_c` returns, where the row's peak is set** (VmHWM 1.600 → 1.608 GB
+  at `90a668f`, 1.602 → 1.611 GB at `343e90e`): the entry objects plus the result (ranks and
+  sample ids) and the JSON being written; the same code at both commits.
 - **Training at the replaced `train`:** the graph tensors, the parsed train and val samples, the
   two loaders (not iterated), the model, optimizer, scheduler and scaler; with `--resume`, the
   restored state (CUDA tensors). The checkpoint's raw bytes (resume, `343e90e`) were alive only
   during its parse.
-- **SP producer:** after the read, the `KnowledgeGraph` (the parsed tree freed); at the fork, the
-  adjacency and the BFS inputs; at the peak, the BFS results as Python lists and their tensor
-  conversion (about 10.8 GB of tensors); at publication, the four tensors. How the 53.6–53.7 GB peak
-  splits between them is not recorded.
-- **Serving at ready and after the reload:** the pipeline (graph, model, node embeddings, the SP
-  index, about 3.9 GB). At the startup and reload peaks, the SP table's columns and the index
-  build's key, sort output and order; the code drops the columns as they are folded into the key,
-  so which of them coexist at the 23.8 GB and 28.5 GB marks (the sort's scratch, or columns still
+- **SP producer:** after the read, the `KnowledgeGraph` (the parsed tree freed), which stays alive
+  in `main` until the process ends; at the fork, also the adjacency, the gene and disease maps and
+  their sets, which `_init_worker_state` keeps in module globals in the parent for the rest of the
+  run; at the peak, the graph, the adjacency, the BFS results as Python lists (including the last
+  chunk's four lists, still bound to the loop variables) and their tensor conversion (about
+  10.8 GB of tensors); at publication, the graph, the adjacency and the four tensors. How the
+  53.6–53.7 GB peak splits between them is not recorded.
+- **Serving at ready and after the reload:** the pipeline (graph, model, node embeddings, and the
+  SP index of about 3.9 GB). At the startup peak, the SP table's columns and the index build's
+  key, sort output and order; at the reload peak, the same plus the pipeline still being served,
+  released only at the swap. The code drops the columns as they are folded into the key, so which
+  of them coexist at the 23.8 GB and 28.5 GB marks (the sort's scratch, or columns still
   referenced) is not settled. That code is identical at both commits. At `343e90e` the parsed
   split manifest (a few KB) stays alive through the SP load.
 
@@ -257,12 +318,17 @@ make RSS fall.
 The serving reload's +0.03 GB is explained in kind (allocator-level, not a kept buffer, not a
 larger live set) but by inference. Two choices:
 
-1. **Record it as explained and assessed** (this README), with the attribution marked as inferred
-   and the accumulation over repeated reloads as unmeasured; or
+1. **Record it as explained by inference and assessed, without the investigation acceptance 2
+   calls for** (a rise "is an observation to investigate"; "an investigation uses a separate
+   diagnostic run"). That is the owner's decision to accept the rise uninvestigated, recorded as
+   such in the plan, with the attribution marked as inferred and the accumulation over repeated
+   reloads as unmeasured; or
 2. **Run a separate diagnostic** before acceptance, never a reported run: at both commits, startup
-   and three reloads in one server process, with `strace -e trace=mmap,munmap,brk` filtered to the
-   29,308,567 / 19,772,821 / 47,931,987-byte requests, glibc `mallinfo2()` at the reader
-   boundaries, and a control with `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=4194304`. It would
+   and three reloads in one server process, with `strace -e trace=mmap,munmap,mremap,brk`
+   matching anonymous mappings of the page-rounded sizes just above the three files (29,308,567 /
+   19,772,821 / 47,931,987 bytes plus headers), glibc `mallinfo2()` at the reader boundaries to
+   catch heap placements, and a control with
+   `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=4194304`, at both commits. It would
    name the allocation and show whether the offset accumulates. It needs the homelab for about an
    hour and a small instrument outside the repository.
 
@@ -272,11 +338,18 @@ baseline's 1–2 MB and R2's 54–59 MB fall during requests (equal at both comm
 
 ## 7. The evidence's limits
 
-- `measure_served_pipeline.py` hashes the subject by path before the service starts, so the
-  serving readings name the files designated, not the bytes the service read (BACKLOG 19.8). Its
-  fix lands after S10 so that the script stays equal at both commits.
+- `measure_served_pipeline.py` hashes the subject (`kg.json`, the checkpoint, the SP table) by
+  path before the service starts, so the serving readings name the files designated, not the bytes
+  the service read. It also parses `val_samples.json` and hashes it again by path, so the
+  workload's recorded digest need not be that of the samples drawn (BACKLOG 19.8). The subject's
+  fix is M3c's; the workload read's fix lands after S10, so that the script stays byte-identical
+  at both commits.
+- Not applicable, as the plan records: Modes A and B (deleted by R2, `e210b12`; `--modes C` at
+  `90a668f` only), the calibration launcher (removed in S0), and serving's CUDA allocator counters
+  (PLAN_B04 §7.3).
 - Sampled figures can miss a transient shorter than the interval (0.2 s; about 1 s in the SP row).
 - Serving records no CUDA counters (PLAN_B04 §7.3); the sampled rows do.
+- The R0 page cache differed by about one SP table between the runs (§1).
 - One reported run per commit for the sampled rows; three repeats for serving.
 - This covers the designated subject only (decision 7): not other workspaces, checkpoints or
   deployments.
