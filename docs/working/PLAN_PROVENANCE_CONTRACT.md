@@ -745,6 +745,11 @@ is implemented.
   S10 has not run and capacity is not accepted; M2.1 is not complete (S10 is outstanding), and
   neither is M2; nothing is accepted on the homelab. HGT Edit 2, the AMP study and item 14 are not
   part of it.
+- **The re-review at `3c9563f`** (2026-10-12), read-only, of `c1b8a12..3c9563f` (docs only) and of
+  S10's fixed tools: no new P1 or P2 in the documents; the three P2 on the tools are closed. It
+  found one more P2 in the tools: a warm pre-read that failed did not stop its row, which then ran
+  and was recorded as a warm reading. Fixed the same day (S10, "The tools"); the fixed driver and
+  its tests await a narrow re-review. S10 has not run, and M2.1 and M2 are not complete.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1557,7 +1562,9 @@ each moves its callers before anything is removed.
         sampler stopped only its direct child, so SP workers could be left running; the driver
         could reuse an old output directory, so a failed run could mix with an earlier run's
         evidence. The plan as amended (`f481882..c1b8a12`) was reviewed with no P1 or P2.
-      - **The fixes (2026-10-12, outside the repository), awaiting the reviewer's re-review.** An
+      - **The fixes (2026-10-12, outside the repository).** The reviewer's re-review at `3c9563f`
+        closed the three P2 and found one more, a failed pre-read that did not stop its row; that
+        fix and its tests await a narrow re-review. An
         internal adversarial review and a re-check of its findings followed; every P2 they
         confirmed is fixed in the tools delivered, and what they left is listed in the
         instructions:
@@ -1587,12 +1594,15 @@ each moves its callers before anything is removed.
           directory that exists and is not empty, a scratch directory inside the evidence one (other
           than its default) or the reverse, a wrong HEAD and modified tracked files; it claims both
           directories, deletes nothing, records the matrix's settings, and stops before the next row
-          when a stop arrives between rows; a rerun uses a new directory;
+          when a stop arrives between rows; one pre-read step serves every row, and a pre-read that
+          fails stops the run before that row's command starts, recorded in `rows.txt` as not run
+          (exit status 4); a rerun uses a new directory;
         - tests: a complete passing control and single negative controls for the comparison; the
           stop signals, a second signal during the cleanup, a root exiting before its workers, a
           root outliving SIGKILL, an error in the sampler's own readings, a signal before and
           while the command starts, nohup, and serving's swap rules, with real forked workers; the
-          directory refusals. Dry-run again, without serving, at `90a668f` and `c1b8a12`.
+          directory refusals; a good pre-read and a failed one before serving, before a sampled row
+          and without serving. Dry-run again, without serving, at `90a668f` and `c1b8a12`.
     - **The evidence** goes under `docs/working/scorer-measurement/` beside the 2026-09-30 readings,
       as aggregates with no paths or host names: the environment, the tools' and inputs'
       SHA-256, the pre-flight, each row's sampler and probe readings, and a README with the
