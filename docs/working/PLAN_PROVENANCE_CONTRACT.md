@@ -1,22 +1,26 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
 **Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
-at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that evidence
+at `ed4872a`, and accepted on the homelab GB10 at `7714459` (evidence recorded by SHA-256 below; the
+files are archived on the homelab, not in the repository); the reviewer re-checked that evidence
 with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab"). M2.1's work
 plan was reviewed and revised with the owner's decisions of 2026-10-09 and 2026-10-10. The re-review
 of `0708789` found one P2; the incremental review of `7e1af96` found it closed and no new P1 or P2;
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
-`90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at
-`3433bf8`; S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`;
+`90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2
+(`45d9dea..3433bf8`); S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 (`e3eefee..6f16373`);
 S6 and S8 are implemented (2026-10-11); their batch (`8421b8c..cddad9d`) awaits code review, and the
 later increment that narrowed their claims (`cddad9d..3e8e559`) was reviewed with no P1 or P2
 (2026-10-12), which is not a review of that batch. S7 is implemented for Mode C only (2026-10-11)
-and code-reviewed with no P1 or P2 at `7327798` (2026-10-12), as that declared scope, not as every
+and code-reviewed with no P1 or P2 (`3d53c9b..7327798`, 2026-10-12), as that declared scope, not as every
 mode migrated. M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and
-code-reviewed with no P1 or P2 at `290c03a` (2026-10-12). Measurement runs that include Mode A
+code-reviewed with no P1 or P2 (`7327798..290c03a`, 2026-10-12). Measurement runs that include Mode A
 were not migrated; since the owner's clarification of 2026-10-12 they were deleted by the Mode A/B
-retirement's R2 (2026-10-12, awaiting code review), so every measurement run takes S7's reads.
-M2.1 is not complete: S9 and S10 are not implemented, and the S6/S8 batch awaits review. The rest
+retirement's R2 (2026-10-12, awaiting code review), so since R2 every measurement run takes S7's reads;
+that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
+complete: S9 and S10 are not implemented; the S6/S8 batch (`8421b8c..cddad9d`) awaits code review,
+and so do R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a change to the shared reader `read_samples` made after S1–S5's
+review. The rest
 of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -587,7 +591,8 @@ their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for M
 (2026-10-11) and code-reviewed with no P1 or P2 at `7327798` (2026-10-12) as that declared scope,
 and measurement runs that include Mode A were not migrated: since the owner's clarification of
 2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12, awaiting code review);
-nothing else here is implemented.
+nothing else here is implemented (S9's dynamic pin exists per entry point in S6–S8's tests,
+`tests/fixtures/path_forms.py`; S9's deletions, static pin and caller moves do not).
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
 (one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
@@ -672,8 +677,8 @@ nothing else here is implemented.
     read forms are not kept as two permanent options;
   - S9 removes the migration interfaces, and only S10 concludes on capacity, for its subject.
 - **The code review at `1d0b5a6`** (2026-10-12) found no P1 or P2 in the increment that narrowed
-  S6/S8's claims (`cddad9d..3e8e559`), in S7 for Mode C only (`3d53c9b..7327798`), accepted as the
-  declared C-only scope and not as every mode migrated, and in M3a's seed ordering
+  S6/S8's claims (`cddad9d..3e8e559`), in S7 for Mode C only (`3d53c9b..7327798`), reviewed as the
+  declared C-only scope (code-review level) and not as every mode migrated, and in M3a's seed ordering
   (`7327798..290c03a`). The first is a text increment, not a review of the S6/S8 batch
   (`8421b8c..cddad9d`), which still awaits code review. The same review found no P1 or P2 in the
   retirement's R1 (`3e8e559..3d53c9b`), which is not part of this plan. M2.1 is not complete.
@@ -681,10 +686,21 @@ nothing else here is implemented.
   institution had already authorised retiring the old pipeline's Mode A/B comparison tools, and
   that the AMP question the owner and the institution want answered is a training study, not the
   scoring comparison the differential recorded. The retirement assessment's §8 items 4 and 7
-  therefore no longer hold R2 back: S7's Mode A/B items will never be built, runs that include
+  therefore no longer hold the retirement's R2 back: S7's Mode A/B items will never be built, runs that include
   Mode A are to be deleted by R2 rather than migrated, and S9's measurement part follows R2. R2 was
   implemented the same day (awaiting code review): runs that include Mode A are deleted, and
   `measure_scorer.py` no longer calls a path form.
+- **The reviewer's convergence instruction (2026-10-12), adopted by the owner.** Finish S9 and S10
+  to close M2.1, then M2.2–M2.6, so the contract is enforced: producer and consumer delivered
+  together, with a formal way to produce acceptable new models (`train_model.py` →
+  `ModelCheckpoint`) and the deployment inventory. HGT (BACKLOG item 20), AMP (item 21), item 14 and
+  M3 stay independent. No new framework, registry, signing or second reader; a capacity shortfall
+  is fixed in the real reader, never by a CPU fallback, a second reader, `malloc_trim`, forced
+  collection or `empty_cache`. Each status here says which of planned, implemented, code-reviewed
+  (with its range) and accepted in the designated environment it is, and one never stands for
+  another. Code review version for that round: `06fd0f1`; awaiting code review: the S6/S8 batch
+  (`8421b8c..cddad9d`) and `1d0b5a6..06fd0f1` (HGT P2 `418b37e`, the record `84d69fb`, HGT Edit 1
+  `8eae614`, telemetry `a535ae2`, R2 `e210b12`, item 8 `06fd0f1`).
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1129,7 +1145,8 @@ each moves its callers before anything is removed.
        export docstring, `artifacts.py`'s provenance note, `EVALUATION_COHORTS.md`'s binding
        paragraph and BACKLOG 19.20's citation. `test_kg_provenance.py`'s serving pin, missing
        from the list above, now runs the pipeline's own sequence.
-     - Acceptance: `tests/unit/test_serving_reads_once.py`.
+     - Acceptance tests (CPU, development container; not a homelab acceptance, which is S10's):
+       `tests/unit/test_serving_reads_once.py`.
 7. **S7 — measurement.**
    - **Mode A/B-specific items deferred (owner, 2026-10-10)** pending the Mode A/B retirement
      assessment (`scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`, §1.3): "Mode A uses the
@@ -1167,8 +1184,8 @@ each moves its callers before anything is removed.
        builds Mode A's model. Its docstring (`test_legacy_equivalence.py:337-343`) and the dispatch
        comment (`measure_scorer.py:561-565`), which S0 stopped tying to the frozen evaluator, are
        rewritten to match.
-   - **What runs where:** on the designated checkpoint only Mode C runs, and only Mode C is bound,
-     measured and accepted on it. Modes A and B keep their shared-read regression tests on the
+   - **What runs where:** on the designated checkpoint only Mode C runs, and only Mode C is to be bound,
+     measured and accepted on it (S10). Modes A and B keep their shared-read regression tests on the
      executable fixtures (never written; Modes A and B were deleted by the retirement's
      R2, 2026-10-12). Fixture numbers are never offered as capacity readings.
    - **As implemented (2026-10-11), for Mode C only.**
@@ -1200,7 +1217,7 @@ each moves its callers before anything is removed.
        `SEMANTIC_ARTIFACT_ROLES`. `build_manifest` takes the record as `digests=`; omitting it
        keeps the path form, which only runs that include Mode A still use, and it goes with
        their migration or retirement (since the owner's clarification of 2026-10-12, their
-       retirement in R2) and with S9. R2 removed the fallback: `digests` is required. The bound
+       retirement in R2) and with S9. The retirement's R2 removed the fallback: `digests` is required. The bound
        map is kept
        (`MeasurementInputs.bound`), the opening for M2.4.
      - **Behaviour changes for C-only runs:** cohort refusals (an absolute or traversing split, a
@@ -1214,10 +1231,11 @@ each moves its callers before anything is removed.
        for the Mode A/B decision, because runs that include Mode A still use them. Since the
        owner's clarification of 2026-10-12 that decision is no longer open: the deletion and the
        pin follow R2, which deleted those runs on 2026-10-12.
-     - Acceptance: `tests/unit/test_measurement_reads_once.py`. The Mode C unit fixture
+     - Acceptance tests (CPU, development container; not a homelab acceptance, which is S10's):
+       `tests/unit/test_measurement_reads_once.py`. The Mode C unit fixture
        (`tests/unit/test_measurement_mode_c.py`) now reads through `read_measurement_inputs`, and
        `tests/integration/test_measure_scorer_run.py` pins the `kg` role.
-     - **R2 (2026-10-12), awaiting code review.** Modes A and B are deleted, with the runs that
+     - **The retirement's R2 (2026-10-12), awaiting code review.** Modes A and B are deleted, with the runs that
        include Mode A, `load_legacy_mode_a_inputs`, the checkpoint loaded by path,
        `artifact_digests` and `--modes`, so every measurement run is the path above and records
        `kg`. With them went the manifest's loader, sampler and seed fields, `--seed` and
@@ -1265,11 +1283,12 @@ each moves its callers before anything is removed.
        moved (M3a).
      - The reader imports sit inside the functions that use them: `train_model.py` applies the
        allocator before importing torch, so module-level imports after it each add an E402.
-     - Acceptance: `tests/unit/test_training_reads.py`; the record checked at the end of a real
+     - Acceptance tests (CPU, development container; not a homelab acceptance, which is S10's):
+       `tests/unit/test_training_reads.py`; the record checked at the end of a real
        run in `tests/integration/test_train_model_run.py`. The path-form poisoning is a fixture,
        `tests/fixtures/path_forms.py`, for S9 to reuse.
 9. **S9 — remove the path forms, pin the contract, move the remaining callers.**
-   - **Follows R2 where measurement is concerned** (S7, as implemented; until the owner's
+   - **Follows the retirement's R2 where measurement is concerned** (S7, as implemented; until the owner's
      clarification of 2026-10-12 this waited for the Mode A/B decision):
      measurement runs that include Mode A still call `artifact_digests`, `verify_graph_artifacts`,
      `verify_generated_cohorts` and `compute_input_digests`, so the deletion below and the static
@@ -1348,7 +1367,7 @@ each moves its callers before anything is removed.
     | Entry point | Command (key arguments) | What runs on the subject | Readings | Compared |
     |---|---|---|---|---|
     | Serving | `measure_served_pipeline.py --workspace $WS --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --output <scratch>/served_readings.json --repeats 3 --seed 20260930`. It applies its own environment; its SHA-256 must be equal at both commits | launch to ready, 200 serial `/diagnose` requests, then one reload, each asserting `gnn_plus_shortest_path` | R1: VmHWM and VmRSS at ready, system peak less R0. R4: VmHWM over the reload. R2, R3: VmRSS after | all of these, with equal subject digests, allocator reading and `readings_complete` |
-    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json` (`--modes C` until R2 removed the option, 2026-10-12) | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
+    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json` (`--modes C` until the retirement's R2 removed the option, 2026-10-12) | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
     | Training | `train_model.py --data-dir $WS --device cuda --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42 --output-dir <scratch> --checkpoint-dir <scratch>` (the subject's flags, `scorer-measurement/subject-hgt-2026-09-29/commands.txt`), with `Trainer.train` replaced by a reading; once without and once with `--resume $WS/checkpoints/hgt/model-02-0.1813.pt` | the checks, reads, model, `Trainer` and resume read; no epoch and no checkpoint written | VmHWM and VmRSS at `Trainer.__init__` and at the replaced `train`; CUDA max allocated; system peak | all of these; VmRSS at the replaced `train`, compared and explained (acceptance 2) |
     | SP producer | `compute_shortest_paths.py --kg-path …/kg.json --output-dir <scratch> --max-hops 5 --workers 15` | a full run, about 15 minutes. The published pair in the workspace stays untouched, checked by size and time | parent VmHWM after the graph read; VmRSS when the workers fork, after the graph read; at publication; tree PSS; system peak | all of these; the new sidecar names graph `6cae2d1a…`, 431,902,937 pairs, `max_hops` 5 |
 
@@ -1357,7 +1376,8 @@ each moves its callers before anything is removed.
       - the calibration launcher: removed in S0;
       - serving's CUDA allocator counters, which `PLAN_B04_PRODUCTIONISATION.md` §7.3 excludes.
 
-      **M2.1's capacity acceptance is complete with Mode C as measurement's reading.** M2.1 owes
+      **M2.1's capacity acceptance needs no measurement reading other than Mode C's** (S10 has not run;
+      nothing here is accepted). M2.1 owes
       no Mode A or B reading on a real checkpoint, and none is wanted until a runnable subject is
       named (BACKLOG 19.18). Since the owner's clarification of 2026-10-12 none will be: Modes A
       and B were deleted by the retirement assessment's R2 (2026-10-12).
@@ -1466,7 +1486,10 @@ each moves its callers before anything is removed.
 
 **Review and delivery.** Three review batches: S0–S5, the removal and the shared base; S6–S8,
 the entry points; S9–S10, removal of the path forms, pins and capacity. M2.1 ends as one pull
-request, as M1 did.
+request, as M1 did. As delivered: S0 (`45d9dea..3433bf8`) and S1–S5 (`e3eefee..6f16373`) were
+reviewed apart, S7 (Mode C only) on its own (`3d53c9b..7327798`), and the S6/S8 batch
+(`8421b8c..cddad9d`) awaits review; S9's code and S10's tools are to be reviewed together, and S10's
+evidence follows its run.
 
 **What M2.1 does not change.**
 - **M2.1 adds no checkpoint schema or provenance gate,** so no checkpoint is refused for what it
@@ -1689,7 +1712,7 @@ The rest of resume — the overwrite guard — is M3a's.
   - Serving keeps only `kg` today (`src/inference/pipeline.py:532` at `90a668f`), and all four
     after M2.1's S6. Measurement's runs without Mode A keep them since S7
     (`MeasurementInputs.bound`); runs that include Mode A discarded them
-    (`measure_scorer.py:128` at `90a668f`) until R2 deleted those runs (2026-10-12).
+    (`measure_scorer.py:128` at `90a668f`) until the retirement's R2 deleted those runs (2026-10-12).
   - A missing `training_input_digests`, or a missing role, refuses.
 - **The comparison lives in the slot `verify_fingerprint` deferred** (`fingerprint.py:168-176`),
   so there is one model↔graph comparator.
@@ -1753,7 +1776,7 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
     applies it, so the stream training draws from (negatives, shuffling, dropout) starts from
     the seed as before, whatever construction consumed. In `train_model`'s own entry, not a
     wrapper. It does not promise bit-identical GPU training or a restored random state on
-    resume. Acceptance: `tests/unit/test_training_seed.py`. The rest of M3a is not implemented.
+    resume. Tested on CPU by `tests/unit/test_training_seed.py`. The rest of M3a is not implemented.
 - **Device.** `auto` without CUDA refuses, as measurement's does (§5.2). Today training turns it
   into CPU silently (`train_model.py:688-691`).
 - **Resume, what M2 leaves.** A write-time guard in `ModelCheckpoint` refuses to overwrite the
@@ -1881,7 +1904,7 @@ own plan defines.
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
 | Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; R10's evidence and labels (§5.4) | M2, M4 |
-| Ledger | v2, per item 14 | M4 |
+| Ledger | item 14's ledger v2 (`PLAN_TEST_RESULTS.md` §5), which takes the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`) | M4 |
 | `InferenceResult`, `DiagnoseResponse`, serving state | One structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect | M3c |
 
 ### 5.2 Required versus displayed

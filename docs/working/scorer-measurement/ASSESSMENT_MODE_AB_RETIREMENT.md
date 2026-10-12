@@ -1,6 +1,7 @@
 # Retiring measurement Modes A and B — assessment
 
-**Status: inventory and plan only (2026-10-10).** Nothing here changes code, deletes a function,
+**Status at first writing: inventory and plan only (2026-10-10).** Current state: R1 implemented and
+code-reviewed; R2 and §8 item 8 implemented, awaiting code review (below; §9.1, §9.2). Nothing here changes code, deletes a function,
 adds a compatibility layer or a parallel pipeline, or cancels a decision. Every change to an
 existing decision is a **proposal** for the owner; changes to the institution's documents are the
 institution's. Sections 8 and 9 list what the owner has to decide, and the two questions only the
@@ -20,8 +21,8 @@ changes. R2 and everything after it were to wait for the institution's answers (
 that wait is superseded by the owner's clarification of 2026-10-12 (next paragraph), so R2 no
 longer waits for the institution. R2 was implemented on 2026-10-12 and awaits code review (§9.2). S7 for Mode C only, which the owner chose
 to run (§8 item 11), was implemented on 2026-10-11 and code-reviewed with no P1 or P2 (2026-10-12,
-`3d53c9b..7327798`) as its declared C-only scope: Modes A and B are not migrated, and M2.1 is not
-complete.
+`3d53c9b..7327798`) as its declared C-only scope: Modes A and B were not migrated (R2 has since deleted them, awaiting
+code review), and M2.1 is not complete.
 
 **Owner's clarification (2026-10-12).** The owner reported on 2026-10-12 that the institution had
 already authorised the retirement of the old pipeline: the new pipeline governs, and the old one,
@@ -143,7 +144,7 @@ unchanged. Three items touch A/B:
 | The unpack in `load_legacy_mode_a_inputs` (`measure_scorer.py:226`) | Mechanical, as S4 required ("callers only unpack", plan `:952-954`) | Yes | Deleted with the function |
 | `map_location="cpu"` for graph tensors (`file_storage.py:86`, `:95-97`) | Applies to every caller | No | No change |
 
-### 1.3 What in the planned S6–S10 is A/B-specific: **deferred** pending this assessment
+### 1.3 What in the planned S6–S10 is A/B-specific: **deferred** pending this assessment (2026-10-10); never built, Modes A and B retired by R2 (2026-10-12)
 
 | Planned text (`PLAN_PROVENANCE_CONTRACT.md` at `f581f9e`) | Content | Status |
 |---|---|---|
@@ -186,7 +187,9 @@ on it.
 ## 2. Components: what each is, who uses it, and the proposed disposition
 
 Dispositions: **Retire** (goes with A/B); **Keep** (live, unchanged); **Keep in C form** (shared,
-stays, with A-only wording or parameters removed); **Owner** (needs a decision in §8).
+stays, with A-only wording or parameters removed); **Owner** (needs a decision in §8). Dispositions are as proposed on 2026-10-10: the owner's
+decisions of 2026-10-12 (§8 items 1, 5, 8 and 9) settled every **Owner** row, and R2 (§9.2,
+awaiting code review) carried out the **Retire** rows.
 
 ### 2.1 The CLI surface (`scripts/measure_scorer.py`)
 
@@ -805,8 +808,8 @@ that comparison as a false premise).
 |---|---|---|---|
 | **R0** | This assessment; owner decisions (§8) | No | Owner decisions recorded (§8). R1 does not wait for the institution |
 | **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2** (as first written): the institution's answers to §8 items 4 and 7 recorded and, if item 7 were (b), the Trainer-only CUDA comparison run. Superseded by the owner's clarification of 2026-10-12, which closed both: R2 waits for no institutional answer and no CUDA comparison |
-| **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1). **Implemented 2026-10-12, with §8 items 5 and 9 (§9.2)** | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen (chosen by the owner on 2026-10-12: removed in R2, §8 item 5) |
-| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided. Superseded by the owner's decisions of 2026-10-12: items 5 and 9 land in R2, so R3 is item 8 alone (refuse non-integer and boolean ids), a separate change after R2. **Implemented 2026-10-12** (§8 item 8) | Yes (small) | Their own tests |
+| **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1). **Implemented 2026-10-12, with §8 items 5 and 9 (§9.2); awaiting code review** | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen (chosen by the owner on 2026-10-12: removed in R2, §8 item 5) |
+| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided. Superseded by the owner's decisions of 2026-10-12: items 5 and 9 land in R2, so R3 is item 8 alone (refuse non-integer and boolean ids), a separate change after R2. **Implemented 2026-10-12** (§8 item 8), awaiting code review | Yes (small) | Their own tests |
 | — | **M2.1 S7** then runs on Mode C alone. By the owner's choice it ran after R1 instead (§8 item 11, 2026-10-11); S7's Mode A items stay unbuilt | — | — |
 
 **What waits for the institution.** R1 is tests only and adds coverage whichever way the
@@ -832,7 +835,8 @@ instead (2026-10-12, §9.2). S9's deletion of the measurement path forms and its
 which the plan's S9 held for "the Mode A/B decision", now follow R2 rather than an open decision.
 M2.1 is not complete: S9 and S10 remain, and the S6/S8
 batch (`8421b8c..cddad9d`) still awaits code review (the review of `cddad9d..3e8e559` covered only
-the narrowing of its claims).
+the narrowing of its claims). R2 (`e210b12`) and item 8 (`06fd0f1`) also await code review; item 8 changed the shared
+`read_samples` that S7 and S8 read through.
 
 **What R1 does not change.** R1 moves and adds tests. It does not change the Trainer's scoring
 semantics, the negative-sampling policy or the order in which training applies its seed; each of
@@ -906,7 +910,7 @@ test files:
 | Mode C: ties by descending id; an unstable sort (`measurement.py:145-150`) | the 40-way tie test, every case |
 | Mode C: MRR on ranks truncated at 20; hits@k off by one; MRR as 1/mean rank (`metrics.py:132-135`) | the exact-metric tests |
 | Mode C: masked mean dropped in `run_mode_c` (`measurement.py:1310`) | the padding and pool-routing tests |
-| Ranking: the bool clause of `_require_integer_ids` dropped (`measurement.py:61`) | the new dtype test (and the original it replaces) |
+| Ranking: the bool clause of `_require_integer_ids` dropped (`measurement.py:61`) | the new dtype test (and the original it replaces, which R2 deleted with `to_global_ids`; at `06fd0f1` only the dtype test's `torch.bool` case catches it) |
 
 Not caught, and not gate items: dropping only the patient-side normalisation (scaling a row by a
 positive number cannot change its ranking); ties by input order through `run_mode_c` (above).
@@ -1044,6 +1048,16 @@ manifest fields and the two removed `sampler_evidence` entries; metrics, counts 
 are equal, and the ranks files are byte-identical. import-linter: 4 contracts kept. `ruff --select F` on the changed production
 files: clean. The CLI runs end to end on the fixture's writer-shaped checkpoint; `--modes C` and
 `--seed 1` are argparse errors.
+
+**Re-verified at `06fd0f1` (2026-10-12; CPU, development container; evidence for the code review,
+not an acceptance).** R1's gate mutations (§9.1) re-run at `06fd0f1`, after R2: every row caught
+(22 variants); the patient-side normalisation alone is not caught, as §9.1 states; the bool clause
+is now caught only by `test_measurement_ranking.py`'s `torch.bool` case, and MRR truncated at 20
+only by `test_measurement_mode_c.py`'s past-twenty test. Full suite 2657 passed, 15 skipped (2645
+plus item 8's 12). The report comparison was reproduced independently on two supplied workspaces
+(the fixture's and a 60-phenotype, 40-disease, 30-sample one) at `a535ae2` (`--modes C`), `e210b12`
+and `06fd0f1`: only the 13 manifest fields and the two `sampler_evidence` entries differ, and the
+ranks files are byte-identical; the generated case was not reproduced.
 
 **Wording** (§2.10) rewritten in the kept files: `src/inference/scoring.py`,
 `src/inference/pipeline.py` and `src/models/gnn/shepherd_gnn.py` (the builder's shared use), `src/utils/fingerprint.py`,
