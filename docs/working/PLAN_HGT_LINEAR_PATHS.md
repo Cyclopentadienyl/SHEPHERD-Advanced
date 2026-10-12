@@ -2,6 +2,8 @@
 
 **Status (2026-10-11): proposal, not implemented.** It splits BACKLOG item 20 into its two problems, confirms where each is reached on the formal model build path, and proposes one minimal fix for each, at the one place every entry point builds and runs HGT. Problem 1's fix needs only the owner's approval. Problem 2's fix also needs a GB10 run to choose its value. Nothing here is a workaround in an experiment script, a PyG rewrite or a second GNN backend.
 
+**Reviewed (2026-10-12, `290c03a..1d0b5a6`): one P2, applied in this revision.** The kernel a run used must not be inferred from its compile setting ("compiled means loop"); Edit 2 now records the requested policy, the compile setting and the observed kernel separately, and is reduced to a bounded GB10 comparison first and the simplest sufficient policy after it. The reviewer accepted Edit 1's direction.
+
 **Evidence.** CPU only (4 vCPU), torch 2.10.0, torch_geometric 2.8.0.post1, pyg_lib 0.8.0. Three independent read-only investigations (two investigators and an adversarial verifier, 2026-10-11) ran probes against the formal build path; their scripts stay in the session scratch and are not evidence of record. GPU behaviour is stated as unknown wherever it is.
 
 **Citations.** This repository at the commit that adds this file; torch_geometric as installed (`torch_geometric/nn/dense/linear.py`, `torch_geometric/nn/conv/hgt_conv.py`).
@@ -88,7 +90,7 @@ In `HeteroGNNLayer`, HGT branch only:
 
 ### 1.8 Tests that would pin Edit 1 (`tests/unit/test_hgt_node_type_order.py`)
 
-Each test spies on `pyg_lib.ops.grouped_matmul`, so none passes without the grouped branch actually running, and skips where it is unavailable.
+Every test spies on `pyg_lib.ops.grouped_matmul`. The cases meant to exercise the grouped branch (flag `True`, or ten node types under PyG's default) require the spy to fire, so none of them passes without the branch running; the cases under `False`, or under PyG's default with fewer than ten node types, require it not to fire. All skip where grouped matmul is unavailable.
 
 1. The conv's two linears and `metadata[0]` share one order (the construction check).
 2. With production metadata and `rev_*` edges, the layer's output does not depend on the input dict's order, under PyG's default and under `False`.
@@ -106,7 +108,7 @@ With the flag at `None`, `HeteroLinear` (HGT's `k_rel` and `v_rel`) times `pyg_l
 
 - only the no-grad forward is timed, segment_matmul first and cold, three runs (one when `PYTEST_CURRENT_TEST` is set), no margin;
 - the choice lives in a plain attribute (`_timing_cache`), per instance and per process; it is not in the `state_dict`, the checkpoint, `runtime.json` or the measurement manifest;
-- under `torch.compile`, or without pyg_lib, PyG takes the loop.
+- without pyg_lib PyG takes the loop. Under compilation the choice depends on whether that forward is being captured by the compiler (`is_compiling()`, `linear.py:302`, `:314-315`), not on whether the model carries a compile wrapper: a wrapper whose graph falls back to eager, or an eager sub-region inside a compiled model, can still run segment_matmul. This project's `--compile` sets `suppress_errors` (`scripts/train_model.py:784`), which allows exactly that fallback, and `observe_torch_compile_wrapper` already says that "wrapped" does not mean a compiled graph ran (`src/evaluation/measurement.py:290-300`).
 
 ### 2.2 What it does on the formal path
 
@@ -115,27 +117,27 @@ With the flag at `None`, `HeteroLinear` (HGT's `k_rel` and `v_rel`) times `pyg_l
 - **Numbers.** On CPU at production width the two paths were bitwise equal; at fixture width they differed by up to 4.8e-7 (outputs) and 1.2e-7 (gradients), with rankings unchanged. On GPU this is unknown.
 - **Speed.** The timing cannot see the backward pass, where the loop is much slower: about 35× on the `k_rel` operation alone at 150k rows, and a production-shaped CPU training step of 2.99 s on the loop against 1.30 s with segment_matmul. A noisy choice of the loop at process start slows that instance for the whole run. The heuristic also spends about 8 s timing on the first full-graph serving forward.
 
-### 2.3 Proposed fix (Edit 2)
+### 2.3 Proposed fix (Edit 2), in two steps
 
-Pin the path inside `HeteroGNNLayer`, scoped to the HGT call, so it does not depend on timing or on the process-global flag outside that call:
+**Step 1 — a bounded GB10 comparison before any policy is fixed.** On the designated subject, compare today's heuristic, all loop (`use_segment_matmul=False`), all segment_matmul (`True`, with Edit 1 in place) and, only if those two differ materially, relation linears on segment_matmul with node linears on the loop. For each: per-step training time over a fixed number of batches, peak memory, the kernel each relation linear actually ran (spied), output and gradient differences against the loop, and ranking agreement on the full-graph serving forward. CPU numbers do not decide the GB10 default.
 
-- around the conv call: save the flag, set it to `False`, restore it in a `finally`. This also keeps Problem 1's grouped branch out of reach;
-- when pyg_lib's segment_matmul is available, a forward pre-hook on `k_rel` and `v_rel` sets the flag to `True`, and a forward hook registered with `always_call=True` restores it, so an exception inside the call cannot leave it set;
-- without pyg_lib, PyG already loops deterministically: warn as today and record `loop`. Model construction is never blocked (the project's policy for optional native extensions).
+**Step 2 — the simplest sufficient shared policy.** If one fixed setting meets correctness and performance, it is applied at the one place HGT runs, `HeteroGNNLayer`, scoped to the conv call by a single save-and-restore in a `finally`, with no per-module hooks. Only if the relation and node linears genuinely need different paths is that split designed, inside the same layer. No PyG fork and no second backend.
 
-**No new configuration field.** `create_model_from_config`, `build_index` and Mode A build their configuration by hand, so a selectable field would be silently ignored by some builders. Instead the path **observed** is recorded: the relation and node matmul paths, whether the model is compiled (compiled means loop), and the torch_geometric and pyg_lib versions, in training's `runtime.json`, in the measurement manifest beside `torch_compile_wrapped`, and in the serving log at precompute.
+**The requested policy is explicit and recorded.** It is a model-configuration field (in `ShepherdGNNConfig`), so it is saved with the checkpoint's `model_config` and read back by `build_shepherd_model`. The builders that copy the configuration by hand (`create_model_from_config` in `scripts/train_model.py`, and `scripts/build_index.py`) are fixed to carry it: that wiring gap is a defect to repair, not a reason to do without the field. Mode A is being retired and is not accommodated.
 
-**The value is chosen on the GB10.** On CPU, segment_matmul for `k_rel`/`v_rel` is the path the heuristic usually picks, is bitwise equal to the loop at production width, and avoids the loop's training cost. Before it is fixed, the GB10 shows which path today's default picks there (dump each instance's `_timing_cache` after a training step and after the serving forward) and whether segment_matmul runs and is fast there. If it fails or is slower, the hooks are dropped and the scoped `False` is the single pinned setting.
+**Three facts, recorded separately and never inferred from one another:** the requested policy (the configuration field); the compile setting and whether the model carries a compile wrapper; and the kernel each relation linear was observed to run in that execution. A compile wrapper does not mean the loop ran (§2.1); a control experiment in the review (torch 2.10.0, PyG 2.8.0.post1, a compiler-disabled `HeteroLinear.forward` under a `torch.compile` wrapper) observed segment_matmul. Where nothing was observed the kernel is recorded as unknown; where one execution ran different paths it is recorded per instance, not as a single value. They are written to training's `runtime.json`, the measurement manifest and the serving log at precompute, with the torch_geometric and pyg_lib versions. The observation is a spy on the two kernels, not a compiler-tracing framework.
 
-**Limitation.** The flag is process-global during each scoped call. Nothing runs HGT forwards from several threads at once today (serving precomputes once; training and measurement are single-threaded); if that changes, this is revisited.
+Without pyg_lib PyG loops deterministically: warn as today and record the loop observed. Model construction is never blocked (the project's policy for optional native extensions).
+
+**Limitation.** A scoped flag is process-global for the duration of the call. Nothing runs HGT forwards from several threads at once today (serving precomputes once; training and measurement are single-threaded); this is not a defect seen, and it is revisited if that changes.
 
 ### 2.4 Tests that would pin Edit 2 (`tests/unit/test_hgt_kernel_path.py`)
 
 1. With `HeteroLinear._update_timing_cache` patched to raise, an HGT forward and backward still run: timing never happens.
-2. `k_rel`/`v_rel` call only the pinned kernel, and `grouped_matmul` never runs.
-3. The global flag is unchanged after a forward, whatever it was before (`True`, `None`, `False`), including after an exception injected inside `k_rel`.
-4. The pinned model is bitwise equal to the same pin applied by hand (catches hooks that do not fire).
-5. The observed path is recorded in `runtime.json` and in the measurement manifest (and is `None` for GAT).
+2. Under the configured policy the relation linears call only the kernel it names, and `grouped_matmul` runs only if the policy says so.
+3. The global flag is unchanged after a forward, whatever it was before (`True`, `None`, `False`), including after an exception raised inside the conv.
+4. The policy is saved in `model_config`, read back by `build_shepherd_model` and carried by every builder; an unknown value is refused.
+5. The recording classifies three cases correctly, from the kernels observed: eager; a normal compile; and an eager sub-region or fallback under a compile wrapper. With no observation it records unknown.
 
 ---
 
@@ -144,9 +146,9 @@ Pin the path inside `HeteroGNNLayer`, scoped to the HGT call, so it does not dep
 **Numerical.**
 - Edit 1, PyG's default, before against after: `torch.equal` on outputs and all gradients for a training batch, the full graph through `build_shepherd_model`, and `build_index`. Done on CPU (all equal); repeat on the GB10 under `torch.use_deterministic_algorithms(True)`, since CUDA scatter is not bitwise run to run without it.
 - Edit 1, flag `True` against `False`: `assert_close`, including a ten-type case where the spy shows the grouped branch ran.
-- Edit 2: the tests of §2.4; on the GB10, the subject's pinned result against today's default (max abs difference and top-k agreement), and two same-seed pinned runs bitwise equal under deterministic algorithms.
+- Edit 2: the tests of §2.4; on the GB10, Step 1's output, gradient and ranking comparisons, and two same-seed runs under the chosen policy bitwise equal under deterministic algorithms.
 
-**Performance.** CPU, done: production-shaped training step 1.30 s (segment_matmul for the relation linears, loop for the node linears) against 2.99 s (all loop). GB10: per-step wall time over 30 batches for today's heuristic, the proposed pin and the all-loop pin, plus the full-graph serving forward; proposed acceptance, the pin within noise of the heuristic's median.
+**Performance.** CPU, done: production-shaped training step 1.30 s (segment_matmul for the relation linears, loop for the node linears) against 2.99 s (all loop). GB10: Step 1's time and peak-memory measurements; the policy chosen from them is the simplest one within noise of the best measured.
 
 **Then.** Edit 2 is an inference-path change, so the B04 readings are re-taken or assessed as `scorer-measurement/PLAN_B04_PRODUCTIONISATION.md:840` (§7.1.1, item 5) requires. Edit 1 changes no number on today's graphs and needs no re-take.
 
@@ -155,5 +157,5 @@ Pin the path inside `HeteroGNNLayer`, scoped to the HGT call, so it does not dep
 ## 4. What the owner decides
 
 1. Approve Edit 1 (correctness, bitwise neutral today, no GPU dependency). It can land on its own.
-2. Approve Edit 2's approach and the GB10 run that chooses its value; Edit 2 lands after that run.
+2. Approve the bounded GB10 comparison of Edit 2's Step 1. The policy is chosen from its results, and Edit 2 lands after that.
 3. Whether to report the zip at `linear.py:447` upstream.
