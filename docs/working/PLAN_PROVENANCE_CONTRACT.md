@@ -8,11 +8,15 @@ of `0708789` found one P2; the incremental review of `7e1af96` found it closed a
 the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
 `90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at
 `3433bf8`; S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`;
-S6 and S8 are implemented (2026-10-11) and await code review; S7 is implemented for Mode C only
-(2026-10-11) and awaits code review, while measurement runs that include Mode A are not migrated,
-pending the Mode A/B retirement, so M2.1 is not complete while they are neither migrated nor
-retired; M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and awaits code
-review; the rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+S6 and S8 are implemented (2026-10-11); their batch (`8421b8c..cddad9d`) awaits code review, and the
+later increment that narrowed their claims (`cddad9d..3e8e559`) was reviewed with no P1 or P2
+(2026-10-12), which is not a review of that batch. S7 is implemented for Mode C only (2026-10-11)
+and code-reviewed with no P1 or P2 at `7327798` (2026-10-12), as that declared scope, not as every
+mode migrated. M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and
+code-reviewed with no P1 or P2 at `290c03a` (2026-10-12). M2.1 is not complete: measurement runs
+that include Mode A are neither migrated nor retired yet, and since the owner's clarification of
+2026-10-12 they are to be deleted by the Mode A/B retirement's R2, not migrated; R2 is not
+implemented. The rest of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -577,8 +581,11 @@ checked the map and this breakdown, and a second check verified this text agains
 **Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
 left as written. S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at `3433bf8`;
 S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`; S6 and S8
-are implemented (2026-10-11) and await code review; S7 is implemented for Mode C only
-(2026-10-11) and awaits code review, and measurement runs that include Mode A are not migrated;
+are implemented (2026-10-11) and their batch awaits code review (the later increment that narrowed
+their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for Mode C only
+(2026-10-11) and code-reviewed with no P1 or P2 at `7327798` (2026-10-12) as that declared scope,
+and measurement runs that include Mode A are not migrated: since the owner's clarification of
+2026-10-12 they are to be deleted by the Mode A/B retirement's R2, which is not implemented;
 nothing else here is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
@@ -663,6 +670,19 @@ nothing else here is implemented.
   - a reader's result is never handed back to a path verifier to be read again, and the path and
     read forms are not kept as two permanent options;
   - S9 removes the migration interfaces, and only S10 concludes on capacity, for its subject.
+- **The code review at `1d0b5a6`** (2026-10-12) found no P1 or P2 in the increment that narrowed
+  S6/S8's claims (`cddad9d..3e8e559`), in S7 for Mode C only (`3d53c9b..7327798`), accepted as the
+  declared C-only scope and not as every mode migrated, and in M3a's seed ordering
+  (`7327798..290c03a`). The first is a text increment, not a review of the S6/S8 batch
+  (`8421b8c..cddad9d`), which still awaits code review. The same review found no P1 or P2 in the
+  retirement's R1 (`3e8e559..3d53c9b`), which is not part of this plan. M2.1 is not complete.
+- **The owner's clarification of 2026-10-12.** The owner reported on 2026-10-12 that the
+  institution had already authorised retiring the old pipeline's Mode A/B comparison tools, and
+  that the AMP question the owner and the institution want answered is a training study, not the
+  scoring comparison the differential recorded. The retirement assessment's §8 items 4 and 7
+  therefore no longer hold R2 back: S7's Mode A/B items will never be built, runs that include
+  Mode A are to be deleted by R2 rather than migrated, and S9's measurement part follows R2. R2 is
+  not implemented.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -937,7 +957,8 @@ each moves its callers before anything is removed.
    - **Item 7a's entry point is recorded as a backlog item.** Its runner is new code built on
      `compare_trainer_against_mode_a`. It records, beside its result, the digests of the bytes it
      read (through M2.1's readers), the software revision and the deployment host. History stays
-     in git.
+     in git. Superseded by the owner's clarification of 2026-10-12: 7a is cancelled, so this runner
+     will not be written (BACKLOG item 7a).
    - **`scripts/evaluate_model.py` and its pin test** go by decision 6, which lists the text
      that changes with them.
 1. **S1 — the primitive.** `read_once`, `FileRead` and `ReadIdentity`; no caller changes.
@@ -1113,6 +1134,10 @@ each moves its callers before anything is removed.
      mode-agnostic items stand. If S7 runs for Mode C before the retirement is decided, it states
      that Modes A and B are not migrated, M2.1 is not reported complete while they are neither
      migrated nor retired, and no new read path is built for them (the S1–S5 code review).
+     **Superseded by the owner's clarification of 2026-10-12:** the owner reported that the
+     institution had already authorised retiring the old pipeline's Mode A/B tools, so these
+     Mode A/B items will never be built; Modes A and B are to be deleted by the retirement
+     assessment's R2 instead of migrated. R2 is not implemented.
    - **Before any model is built or output written:**
      - `resolve_cohort` first;
      - then one read each of: the manifest; the graph tensors; the cohort's samples (default
@@ -1147,7 +1172,10 @@ each moves its callers before anything is removed.
        path) is migrated. Runs that include Mode A (`A`, `A,B`, `A,B,C`) are **not migrated**,
        pending the Mode A/B retirement: they keep `load_legacy_mode_a_inputs`, the checkpoint
        loaded by path and `artifact_digests`, and the Mode C manifest of an `A,B,C` run records
-       no `kg`. M2.1 is not complete while they are neither migrated nor retired. The Mode A
+       no `kg`. M2.1 is not complete while they are neither migrated nor retired. Since the owner's
+       clarification of 2026-10-12 they will not be migrated: they are to be deleted by the
+       retirement assessment's R2, which no longer waits for the institution and is not
+       implemented. The Mode A
        bullets above are not built, no new read path is built for Modes A or B, and there is no
        Mode C-specific entry point: the change is in `scripts/measure_scorer.py`.
      - `read_measurement_inputs` runs right after the device is resolved and the modes parsed:
@@ -1167,7 +1195,8 @@ each moves its callers before anything is removed.
        the semantics digest and the ledger record are unchanged, because `kg` is not in
        `SEMANTIC_ARTIFACT_ROLES`. `build_manifest` takes the record as `digests=`; omitting it
        keeps the path form, which only runs that include Mode A still use, and it goes with
-       their migration or retirement and with S9. The bound map is kept
+       their migration or retirement (since the owner's clarification of 2026-10-12, their
+       retirement in R2) and with S9. The bound map is kept
        (`MeasurementInputs.bound`), the opening for M2.4.
      - **Behaviour changes for C-only runs:** cohort refusals (an absolute or traversing split, a
        wrong kind, a missing file, sibling or manifest) come before any file is opened and before
@@ -1177,7 +1206,9 @@ each moves its callers before anything is removed.
        ranking, the seed and the manifest's other fields are unchanged.
      - The `file_sha256` re-export and its `_file_sha256` alias stay, uncalled by a C-only run
        (S9's). S9's deletion of the path forms and its static pin over `measure_scorer.py` wait
-       for the Mode A/B decision, because runs that include Mode A still use them.
+       for the Mode A/B decision, because runs that include Mode A still use them. Since the
+       owner's clarification of 2026-10-12 that decision is no longer open: the deletion and the
+       pin follow R2, which deletes those runs and is not implemented.
      - Acceptance: `tests/unit/test_measurement_reads_once.py`. The Mode C unit fixture
        (`tests/unit/test_measurement_mode_c.py`) now reads through `read_measurement_inputs`, and
        `tests/integration/test_measure_scorer_run.py` pins the `kg` role.
@@ -1227,10 +1258,12 @@ each moves its callers before anything is removed.
        run in `tests/integration/test_train_model_run.py`. The path-form poisoning is a fixture,
        `tests/fixtures/path_forms.py`, for S9 to reuse.
 9. **S9 — remove the path forms, pin the contract, move the remaining callers.**
-   - **Waits for the Mode A/B decision where measurement is concerned** (S7, as implemented):
+   - **Follows R2 where measurement is concerned** (S7, as implemented; until the owner's
+     clarification of 2026-10-12 this waited for the Mode A/B decision):
      measurement runs that include Mode A still call `artifact_digests`, `verify_graph_artifacts`,
      `verify_generated_cohorts` and `compute_input_digests`, so the deletion below and the static
-     pin over `measure_scorer.py` follow their migration or retirement.
+     pin over `measure_scorer.py` follow their deletion in the retirement assessment's R2 (not
+     implemented).
    - **Deleted:** the verifiers' path forms. `compute_input_digests` goes once no caller records
      through it.
    - **Tests that import what goes:**
@@ -1313,7 +1346,8 @@ each moves its callers before anything is removed.
 
       **M2.1's capacity acceptance is complete with Mode C as measurement's reading.** M2.1 owes
       no Mode A or B reading on a real checkpoint, and none is wanted until a runnable subject is
-      named (BACKLOG 19.18).
+      named (BACKLOG 19.18). Since the owner's clarification of 2026-10-12 none will be: Modes A
+      and B are to be deleted by the retirement assessment's R2 (not implemented).
     - **Why training stops before its first epoch:** an epoch with the default checkpoint
       directory writes `last.pt` beside the designated checkpoint (`checkpoint_paths.py:98-100`,
       `callbacks.py:271-274`), and M2.1 does not change the training loop. No step limit exists,
@@ -1504,7 +1538,7 @@ new dependency or measurement fact appears.
        `tests/fixtures/synthetic_workspace.py:109` (`:164-223`);
        `tests/unit/test_measurement_mode_a.py:546` (`:508-519`);
        `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:92` (`:111, 201, 205`); and
-       `measure_scorer.py:203` (`:164-223`), which was to go with `load_legacy_mode_a_inputs` in S7 and now goes when Modes A and B are migrated or retired (S7 was implemented for Mode C only).
+       `measure_scorer.py:203` (`:164-223`), which was to go with `load_legacy_mode_a_inputs` in S7 and now goes when Modes A and B are migrated or retired (S7 was implemented for Mode C only); since the owner's clarification of 2026-10-12, when R2 deletes them.
      - In today's numbering, re-anchored to `7dab728`: `src/evaluation/measurement.py:250-251`
        (`:324`, `:116`, which are `:299`, `:91` there); and BACKLOG §3.1 (`BACKLOG.md:346`,
        `:163-173`, which is `:138-148` there).
@@ -1694,7 +1728,8 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 - **The seed is applied before the data loaders and the model are built.** Today it is applied
   in `Trainer.__init__` (`trainer.py:255-257`), after the loaders (`train_model.py:748`) and the
   model (`train_model.py:751`), so the recorded seed does not govern initialisation.
-  - **Implemented ahead of the rest of M3a (2026-10-11), awaiting code review.** `train()`
+  - **Implemented ahead of the rest of M3a (2026-10-11); code-reviewed with no P1 or P2 at
+    `290c03a` (2026-10-12).** `train()`
     applies the seed with the Trainer's own rule (`apply_seed` in `src/training/trainer.py`:
     Python's `random`, NumPy and torch, every CUDA device included) before it builds the loaders
     and the model, so the same seed gives the same initial weights. `Trainer.__init__` still

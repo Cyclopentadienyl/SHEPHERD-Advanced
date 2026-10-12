@@ -386,7 +386,9 @@ have either forbidden the first or invited the second. `make lint-imports` repor
 4 contracts kept.
 
 **Neither proposal needs CUDA**, and no CPU test here may be represented as a
-substitute for the institutional CUDA evidence required by items 7a and 5a.
+substitute for the institutional CUDA evidence required by items 7a and 5a. (Item 7a
+has since been cancelled, superseded by the owner's clarification of 2026-10-12; item
+5a's requirement is unaffected.)
 
 ---
 

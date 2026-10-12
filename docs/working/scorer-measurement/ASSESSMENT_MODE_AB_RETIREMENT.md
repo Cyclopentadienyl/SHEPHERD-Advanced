@@ -4,16 +4,44 @@
 adds a compatibility layer or a parallel pipeline, or cancels a decision. Every change to an
 existing decision is a **proposal** for the owner; changes to the institution's documents are the
 institution's. Sections 8 and 9 list what the owner has to decide, and the two questions only the
-institution can answer (§8 items 4 and 7), on which the retirement is conditional.
+institution could answer (§8 items 4 and 7), on which the retirement was conditional. Both are
+closed by the owner's clarification of 2026-10-12, item 4 for engineering (below, and §8 items 4
+and 7).
 
 **Reviewed (2026-10-10, `6f16373..9de4f30`): no P1 or P2; accepted as a conditional retirement
 plan.** That is not acceptance that Modes A and B are retired, that the moved tests exist, or that
 the institution has agreed to narrow B-0 or to give up the AMP evidence. R1's acceptance is its
 own: the moved tests, which import no Mode A, must catch the mutations §9 names.
 
-**R1 approved by the owner (2026-10-11) and implemented (2026-10-11), awaiting code review**
+**R1 approved by the owner (2026-10-11), implemented (2026-10-11) and code-reviewed with no P1 or
+P2 (2026-10-12, `3e8e559..3d53c9b`)**
 (§9.1). Tests only: nothing in Modes A or B, and no class-1 test, is deleted, and no production code
-changes. R2 and everything after it still wait for the institution's answers (§8 items 4 and 7), except S7 for Mode C only, which the owner chose to run now (§8 item 11) and which was implemented the same day.
+changes. R2 and everything after it were to wait for the institution's answers (§8 items 4 and 7);
+that wait is superseded by the owner's clarification of 2026-10-12 (next paragraph), so R2 no
+longer waits for the institution. R2 is not implemented. S7 for Mode C only, which the owner chose
+to run (§8 item 11), was implemented on 2026-10-11 and code-reviewed with no P1 or P2 (2026-10-12,
+`3d53c9b..7327798`) as its declared C-only scope: Modes A and B are not migrated, and M2.1 is not
+complete.
+
+**Owner's clarification (2026-10-12).** The owner reported on 2026-10-12 that the institution had
+already authorised the retirement of the old pipeline: the new pipeline governs, and the old one,
+Modes A and B and their comparison tools included, may be modified or rewritten entirely. That
+closes §8 item 4 for engineering. Policy Gate 1 stays, and its committed comparison deliverable is
+kept, now comparing the currently served ranking (Mode D, B-0.5's served behaviour) with the
+planned new GNN ranking (Mode C); retiring the tools cancels no evaluation duty. On AMP, what the
+owner and the institution want to know is whether a model *trained* with AMP is worse (the
+accuracy or quality lost against the large training-time saving some GNN architectures get): a
+training study, not the same-checkpoint scoring comparison with autocast switched that the
+differential reports. That closes §8 item 7; the training study is recorded separately as bounded
+research (BACKLOG item 21) and is not an M2 or R2 prerequisite. The owner's principle: no parallel
+pipeline or fork is kept for compatibility with old-pipeline artifacts; compatibility aligns with
+the new pipeline. The basis of the retirement is current use, policy and the live tests R1 already
+moved, not a claim that Modes A and B never had scientific use. Text below that was conditional on
+items 4 and 7 is kept and marked as superseded by the owner's clarification of 2026-10-12.
+
+**Owner's decisions (2026-10-12).** R2 starts now, together with §8 item 5 (the measurement-only
+manifest fields and the measurement seed are removed) and item 9 (`--modes` is removed); item 8 is
+decided as refuse, a separate change after R2 (§8 items 1, 5, 8 and 9). R2 is not implemented yet.
 
 **Base.** The inventory read `f581f9e`'s tree (M2.1 S5) through `git show f581f9e:<path>`. The
 S1–S5 corrections from the internal review were then uncommitted in the working tree; they are not
@@ -124,6 +152,10 @@ unchanged. Three items touch A/B:
 | S10 `:1124-1127`, `:1131-1133` (second half) | Mode A/B "not applicable" rows; "until a runnable subject is named (BACKLOG 19.18)" | A/B-specific text; nothing to build |
 | BACKLOG 19.18 (`BACKLOG.md:708`) and the clauses that cite it (`:674`, `:681-687`) | The legacy builder's deferred read | Entirely A/B-specific |
 
+The deferred rows above will not be built: S7 ran for Mode C only (§8 item 11), and with §8 items 4
+and 7 closed by the owner's clarification of 2026-10-12, Modes A and B are to be retired in R2 (not
+implemented) instead of migrated. R2 rewrites the S10 text and closes 19.18 (§1.4, §4).
+
 Everything else in S6–S10 is mode-agnostic: S6 (serving), S7's one read of manifest, tensors,
 samples and checkpoint with verification and one digest map, S8 (training), S9 (path forms and
 pins), S10's Mode C measurement row.
@@ -142,7 +174,9 @@ pins), S10's Mode C measurement row.
 
 **Ordering.** If retirement lands **before S7**, S7's Mode A work is never built. If it lands
 after, S7 builds Mode A plumbing (a new builder signature, A/B regression tests) that retirement
-then deletes. **Recommendation: decide this assessment before S7 starts.** S6 and S8 do not depend
+then deletes. **Recommendation: decide this assessment before S7 starts.** (S7 ran for Mode C only
+on 2026-10-11, §8 item 11; with §8 items 4 and 7 closed by the owner's clarification of 2026-10-12,
+its Mode A work will not be built, §1.3.) S6 and S8 do not depend
 on it.
 
 ---
@@ -269,9 +303,11 @@ is reclassified to match.
   no padded batch, so it did not test the masked mean.
 - **Proposed: Retire, after its Trainer-value coverage moves to the Trainer's own tests** (§5,
   §6) **and after the institution answers §8 item 7 on the AMP evidence it carries** (under (b),
-  once the Trainer-only CUDA comparison has replaced it). With Mode A gone there is one copy, so
-  "two copies agree" has nothing to compare; what remains necessary is that the one copy is
-  right, which is a Trainer test.
+  once the Trainer-only CUDA comparison has replaced it). The item-7 condition is superseded by
+  the owner's clarification of 2026-10-12: the institution's AMP question is a training study, not
+  this scoring comparison (§8 item 7); the Trainer-value coverage moved in R1 (§9.1). With Mode A
+  gone there is one copy, so "two copies agree" has nothing to compare; what remains necessary is
+  that the one copy is right, which is a Trainer test.
 - **Related:** `Trainer._EvaluationPass.predictions` and `.ground_truths` (`trainer.py:615-633`)
   exist for this comparison; the migrated Trainer test reads them, so they keep a reader. The
   Trainer's behaviour is not changed; only the `_EvaluationPass` docstring (`:623-626`) is
@@ -381,9 +417,9 @@ a full external mode or a bounded test, and what is lost without it.
 |---|---|---|---|---|---|
 | **A→B: encoder scope** (subgraph vs full-graph encoder, same candidates) | How much of the subgraph-vs-full gap comes from the encoder | No named user. It would have informed the choice of Test mode, which is made | **Research only** | A full mode on a checkpoint the current writer produces does not exist (Mode A cannot build one; B requires A) | An attribution number nobody has asked for. Re-derivable from history at a fixed revision if a research item ever names a user and a deliverable |
 | **B→C: candidate scope** (subgraph candidates vs every disease, same encoder) | How much comes from the candidate universe | Same | **Research only** | Same: B needs A | Same |
-| **The ladder as B-0's report** (README `:9-18`) | "Measure before changing the scorer" | Policy Gate 1 needs a "B-0 measurement report" before **B-1** (`DISEASE_SCORER_POLICY.md:285`, `:289`). The policy names no mode, never mentions A, B, calibration, 7a or item 9, and its revisit conditions name only C and E′ (`:316-318`). It does, however, call B-0 "approved for implementation" (`:289`) and refers to "the agreed B-0 scope" (`:318`). That scope is not recorded in the repository. The repository's only definition of B-0 includes Mode A (B-0.2) and Modes B and C (B-0.3) (README `:30-36`), and item 7b, the institutional measurement of B-0.2/B-0.3, is owned by "both" (`BACKLOG.md:667`) | Gate 1 is **institutional** and stays. Whether its agreed scope includes A/B is **unconfirmed; the institution must say**. Dropping A/B would narrow an approved, co-owned work item, which is a proposal to the institution, not an engineering decision | If the agreed scope includes A/B: full modes, and Mode A cannot build any checkpoint the current writer produces (19.18). Otherwise: none | Unknown until the institution confirms its agreed B-0 scope (§8 item 4) |
+| **The ladder as B-0's report** (README `:9-18`) | "Measure before changing the scorer" | Policy Gate 1 needs a "B-0 measurement report" before **B-1** (`DISEASE_SCORER_POLICY.md:285`, `:289`). The policy names no mode, never mentions A, B, calibration, 7a or item 9, and its revisit conditions name only C and E′ (`:316-318`). It does, however, call B-0 "approved for implementation" (`:289`) and refers to "the agreed B-0 scope" (`:318`). That scope is not recorded in the repository. The repository's only definition of B-0 includes Mode A (B-0.2) and Modes B and C (B-0.3) (README `:30-36`), and item 7b, the institutional measurement of B-0.2/B-0.3, is owned by "both" (`BACKLOG.md:667`) | Gate 1 is **institutional** and stays. Whether its agreed scope includes A/B was **unconfirmed; the institution had to say**: dropping A/B would narrow an approved, co-owned work item, which was a proposal to the institution, not an engineering decision. Closed by the owner's clarification of 2026-10-12, which reports that the institution had already authorised retiring the old pipeline (§8 item 4) | If the agreed scope includes A/B: full modes, and Mode A cannot build any checkpoint the current writer produces (19.18). Otherwise: none | Unknown until the institution confirmed its agreed B-0 scope (§8 item 4); superseded by the owner's clarification of 2026-10-12: nothing Gate 1 needs is lost, since its comparison of the currently served ranking (Mode D) with Mode C is kept |
 | **Differential calibration** (1d / 7a) | Do the Trainer's validation and Mode A's copy agree? | Its only consumers are gates on Mode A itself (§4) | Historical acceptance for a harness being retired | The live part (Trainer ranking values) is a bounded Trainer test (§5) | Nothing live for engineering, **once** the Trainer test exists; the AMP evidence it carries is the next row's question (§8 item 7). Without the Trainer test, the Trainer's ranking values are unprotected |
-| **7a's AMP-on leg** (does fp16 reorder validation?) | Whether CUDA autocast reorders the Trainer's validation ranking | The institution's experimenters own the question ("run it both ways if they wish"; the criterion is theirs, `BACKLOG.md:491-505`); no recorded engineering decision consumes the number | The institution's to decide | If wanted, it is the Trainer with `use_amp` on vs off on CUDA — Mode A is fp32 and equal to the Trainer on CPU, so it adds nothing. The CPU Trainer tests of §5 cannot cover it: `use_amp` is off on CPU (`BACKLOG.md:443-446`, `:465-469`) | The per-sample AMP evidence that engineering recorded as already in place for the institution's experimenters (no runner has yet produced it on institutional hardware, §2.5): `DifferentialResult`'s resolved `amp_enabled`/`amp_dtype`, `bit_exact_contract`, the disagreeing-sample count and rate, the affected rows with both rankings, and the MRR gap (`BACKLOG.md:499-505`; `differential.py:79-82`). Whether it is still wanted is the institution's call (§8 item 7) |
+| **7a's AMP-on leg** (does fp16 reorder validation?) | Whether CUDA autocast reorders the Trainer's validation ranking | The institution's experimenters own the question ("run it both ways if they wish"; the criterion is theirs, `BACKLOG.md:491-505`); no recorded engineering decision consumes the number | The institution's to decide | If wanted, it is the Trainer with `use_amp` on vs off on CUDA — Mode A is fp32 and equal to the Trainer on CPU, so it adds nothing. The CPU Trainer tests of §5 cannot cover it: `use_amp` is off on CPU (`BACKLOG.md:443-446`, `:465-469`) | The per-sample AMP evidence that engineering recorded as already in place for the institution's experimenters (no runner has yet produced it on institutional hardware, §2.5): `DifferentialResult`'s resolved `amp_enabled`/`amp_dtype`, `bit_exact_contract`, the disagreeing-sample count and rate, the affected rows with both rankings, and the MRR gap (`BACKLOG.md:499-505`; `differential.py:79-82`). Whether it was still wanted was the institution's call (§8 item 7); superseded by the owner's clarification of 2026-10-12: the institution's AMP question is whether an AMP-trained model is worse (a training study, BACKLOG item 21), not this scoring comparison, so this evidence is no longer a precondition for deleting the differential or Modes A and B |
 | **Mode A as "the control"** (`measure_scorer.py:12-17`; `BACKLOG.md:375` rejected dropping it because it "discards the control the whole ladder is built around") | — | The ladder is no longer an open requirement | **Historical** | — | The reason fails with the ladder |
 | **The predictions file**, **legacy MRR** | Diffing against the frozen evaluator | Nothing reads either; the evaluator is deleted | **Historical** | — | Nothing |
 | **`--num-workers`/seed as measurement semantics** | A/B's candidate universe depends on worker streams | A/B only | **Historical** for measurement; the same PyTorch property holds in training (§5) | Training's property, if kept, is a data_loader test | Nothing for measurement. Whether the seed stays as run identity is §8 item 5 |
@@ -398,7 +434,8 @@ and the core's former use is not a reason to keep the old entry point.
 made are research questions without a user, a decision or a deliverable. Two questions are not
 engineering's to close: whether the institution's agreed B-0 scope still includes A/B (§8 item 4),
 and whether it still wants the AMP evidence the differential supplies (§8 item 7). The proposal
-below is conditional on those answers. The live protection A/B carry incidentally is listed in
+below was conditional on those answers; both are closed by the owner's clarification of 2026-10-12
+(§8 items 4 and 7). The live protection A/B carry incidentally is listed in
 §5–§7 and moves to the real use points before anything is deleted.
 **Nothing is proposed for keeping as a "research tool"**; if a research item later names a user
 and a deliverable, it starts from Mode C's code and the fixed-revision history.
@@ -412,13 +449,13 @@ existing decision are **proposals**; institutional items are not engineering's t
 
 | Gate or constraint | Where | Originally protected | Still needed? | Proposed | Affects |
 |---|---|---|---|---|---|
-| **Policy Gate 1: "B-0 measurement report" before B-1** | `DISEASE_SCORER_POLICY.md:285`, `:289` | The live clinical system against an unmeasured scorer change (`:265-266`) | **Yes — institutional** | **Keep.** Ask the institution to confirm "the agreed B-0 scope" (`:318`), which is not in the repository and may include A/B; propose that the report be defined without A/B, keeping the measurement of the deployed scorer (B-0.5 / Mode D) (§8 item 4) | B-1; whether R2 may proceed (§9) |
+| **Policy Gate 1: "B-0 measurement report" before B-1** | `DISEASE_SCORER_POLICY.md:285`, `:289` | The live clinical system against an unmeasured scorer change (`:265-266`) | **Yes — institutional** | **Keep.** Ask the institution to confirm "the agreed B-0 scope" (`:318`), which is not in the repository and may include A/B; propose that the report be defined without A/B, keeping the measurement of the deployed scorer (B-0.5 / Mode D) (§8 item 4). The ask is superseded by the owner's clarification of 2026-10-12: the owner reported that the institution had already authorised retiring the old pipeline, so item 4 is closed for engineering; the gate and its committed comparison deliverable stay, now the currently served ranking (Mode D / B-0.5) against the planned new GNN ranking (Mode C) | B-1 (R2 no longer waits on it, §9) |
 | Policy: SP code "demoted, not removed … required for B-0's comparison modes" | `:256`, `:262-264` | SP for the modes that consume it (D, E′) — not A/B, which are cosine-only | Yes, institutional | **Keep**; unaffected | SP subsystem |
 | Institution: "the legacy measurement path is being kept removable" | `task-scope/README.md:40-42` | Maintainability | Yes | **Keep**; it supports this retirement | — |
-| Institution: AMP-on criterion is theirs | `BACKLOG.md:491-505` | Who judges 7a's AMP leg | Yes, as stated | **Keep** the criterion. Retiring the differential withdraws the evidence engineering recorded as in place for it (`:499-505`), so that is put to the institution (§8 item 7) | §8 item 7 |
-| **Item 7a** (engineering differential run, institutional hardware) | `BACKLOG.md:666`; `:476-479` | Mode A's agreement with the Trainer under CUDA/AMP | **No** as a certification of a harness being retired. (Its status line is also stale: "blocked on 1d", but 1d is done, `:653`; no checkpoint is designated for it) | **Cancel (proposal), conditional on §8 items 4 and 7**: if the institution keeps A/B in the agreed B-0 scope, 7b keeps its dependency on 7a and 7a stands. Otherwise its AMP-off leg (two copies agree) is superseded by the Trainer-value tests (§5). Its AMP-on leg cannot be covered by those CPU tests, because `use_amp` is off on CPU (`:443-446`, `:465-469`); if the institution wants it, it becomes a Trainer-only item: the same validation pass, `use_amp` on vs off, on CUDA (§8 item 7) | item 9, 7b; the printed note `measure_scorer.py:714-716` |
-| **Item 7b** (institutional measurement B-0.2/B-0.3 ← 7a) | `BACKLOG.md:667`; README `:34` ("institutional run inherits B-0.2's acceptance") | A→B→C numbers not used before the harness was accepted | Not for any recorded engineering decision: the institutional Mode C run is item 14's (Test, Mode C), which does not depend on 7a/7b (`BACKLOG.md:669`). Its A/B part also has an unlisted blocker: CLI Mode A cannot build a real checkpoint (19.18). Whether Gate 1 needs it is open (§3, §8 item 4) | **Rewrite (proposal; 7b is co-owned with the institution, owner "both", `:667`, so the institution must agree, together with §8 item 4)**: drop A/B and the 7a dependency only if the institution accepts §8 item 4. 7b's other preconditions do not lapse: item 6 (the institution's choice of authoritative checkpoint), deployment CUDA verification and Mode C peak memory on institutional CUDA (PLAN_B03 row below) carry over to whatever takes 7b's remainder, a Mode C run under item 14 or a B-0.5 measurement. Items 2 and 3 are already done (`:656`, `:657`) | 8b |
-| **Item 8b** (← 7b) | `BACKLOG.md:676` | B-0.5's institutional run | Depends on B-0.5, not on A/B | **Rewrite** its dependency on 7b (proposal; co-owned with the institution, owner "both", `:676`; conditional on §8 item 4, like 7b). 8a, 6, exact artifacts and the production-path prerequisites stay | B-0.5 |
+| Institution: AMP-on criterion is theirs | `BACKLOG.md:491-505` | Who judges 7a's AMP leg | Yes, as stated | **Keep** the criterion. Retiring the differential withdraws the evidence engineering recorded as in place for it (`:499-505`), so that was put to the institution (§8 item 7); closed by the owner's clarification of 2026-10-12: the institution's AMP question is whether an AMP-trained model is worse (a training study), not this scoring evidence | §8 item 7 |
+| **Item 7a** (engineering differential run, institutional hardware) | `BACKLOG.md:666`; `:476-479` | Mode A's agreement with the Trainer under CUDA/AMP | **No** as a certification of a harness being retired. (Its status line is also stale: "blocked on 1d", but 1d is done, `:653`; no checkpoint is designated for it) | **Cancel.** Superseded by the owner's clarification of 2026-10-12, which closed §8 items 4 and 7: the AMP-off leg is superseded by R1's Trainer-value tests (§5, §9.1), and the AMP-on leg is not the institution's AMP question, which is a training study (BACKLOG item 21). As first proposed, conditional on §8 items 4 and 7: if the institution keeps A/B in the agreed B-0 scope, 7b keeps its dependency on 7a and 7a stands. Otherwise its AMP-off leg (two copies agree) is superseded by the Trainer-value tests (§5). Its AMP-on leg cannot be covered by those CPU tests, because `use_amp` is off on CPU (`:443-446`, `:465-469`); if the institution wants it, it becomes a Trainer-only item: the same validation pass, `use_amp` on vs off, on CUDA (§8 item 7) | item 9, 7b; the printed note `measure_scorer.py:714-716` |
+| **Item 7b** (institutional measurement B-0.2/B-0.3 ← 7a) | `BACKLOG.md:667`; README `:34` ("institutional run inherits B-0.2's acceptance") | A→B→C numbers not used before the harness was accepted | Not for any recorded engineering decision: the institutional Mode C run is item 14's (Test, Mode C), which does not depend on 7a/7b (`BACKLOG.md:669`). Its A/B part also has an unlisted blocker: CLI Mode A cannot build a real checkpoint (19.18). Whether Gate 1 needs it was open (§3, §8 item 4), and is closed by the owner's clarification of 2026-10-12 | **Rewrite**: drop A/B and the 7a dependency, keeping Policy Gate 1's comparison deliverable (the currently served ranking, Mode D / B-0.5, against Mode C). (7b is co-owned with the institution, owner "both", `:667`; the rewrite was proposed only if the institution accepted §8 item 4, a condition superseded by the owner's clarification of 2026-10-12, which reports the institution's existing authorisation.) 7b's other preconditions do not lapse: item 6 (the institution's choice of authoritative checkpoint), deployment CUDA verification and Mode C peak memory on institutional CUDA (PLAN_B03 row below) carry over to whatever takes 7b's remainder, a Mode C run under item 14 or a B-0.5 measurement. Items 2 and 3 are already done (`:656`, `:657`) | 8b |
+| **Item 8b** (← 7b) | `BACKLOG.md:676` | B-0.5's institutional run | Depends on B-0.5, not on A/B | **Rewrite** its dependency on 7b: 7b is dropped from it, since 7b carried 7a and the A/B measurement and B-0.5 needs neither; the rewritten 7b takes its served ranking from B-0.5 instead (co-owned with the institution, owner "both", `:676`; proposed conditional on §8 item 4, like 7b, a condition superseded by the owner's clarification of 2026-10-12). 8a, 6, exact artifacts and the production-path prerequisites stay | B-0.5 |
 | **Item 9** (rename ~70 refs, rewrite the checklist, delete the oracle-only surface; gated on "1d passed review incl. its institutional CUDA run") | `BACKLOG.md:677`; `:804-807`; §5.0 `:843-847`; README `:77-80` | That the harness is never left without an acceptance | **No**: the gate requires a test *of* Mode A before deleting Mode A. Once Mode A goes, there is no harness acceptance to protect; Mode C's acceptance is direct (§7) | **Replace** item 9 by the retirement change (§9); the deletion gate's precondition becomes "the migrated tests are in place" | item 9 steps 6–8 |
 | README "What is actually oracle-only" table | README `:95-104` | Separating Trainer-shaped behaviour from oracle-only code | Its facts stay true; its scope ("only `build_legacy_mode_a_model` and the parity assertions") is overtaken | **Rewrite** for the retirement scope | — |
 | README: `legacy_truncation_k`/`legacy_tie_policy` "renamed, not deleted" | README `:121-124` | Describing semantics the differential kept | **No** once the differential goes; the Trainer's `[:20]` is a literal in Trainer code | **Rewrite**; §8 item 5 | ledger fields |
@@ -437,7 +474,7 @@ existing decision are **proposals**; institutional items are not engineering's t
 | `masked_mean_pool`: "mirrors `Trainer._compute_model_outputs` operation for operation … behaviour to preserve, not to improve" | `src/inference/scoring.py:168-177` | Mode A as a faithful control of the Trainer | The Mode A reason: **no**. Mode C refuses an empty phenotype list before pooling (`measurement.py:1207-1212`). A mirror-the-Trainer reason remains because the migrated Trainer test takes its expected values from this function (§5.1 G1–G3) | **Rewrite** the reason to name that test (proposal); behaviour unchanged | G1–G3; B-1's pool unification (`BACKLOG.md:669`) |
 | PLAN_B02 "no conclusion until institutional Mode A calibration succeeds" | `PLAN_B02_shipped.md:109-110`, `:371-372` | B-0.2's parity acceptance | No; the file is "History, not authority" (`:1-4`) | **Leave as history** | — |
 | `read_samples`' three-field default, "would change Modes A and B" | plan `:698-702`; `file_storage.py:126-130` | A/B semantics | The reason lapses; the interface is harmless | **Rewrite** the reason (§1.4) | S8 unchanged |
-| S7's Mode A block; A/B regression tests | plan `:1022-1039` | Mode A on the shared read | No | **Cancel** (deferred now, §1.3) | S7 |
+| S7's Mode A block; A/B regression tests | plan `:1022-1039` | Mode A on the shared read | No | **Cancel** (deferred now, §1.3; superseded by the owner's clarification of 2026-10-12: S7 ran for Mode C only, and its Mode A items will not be built, since Modes A and B are to be retired in R2) | S7 |
 | S10's A/B "not applicable" rows | plan `:1124-1133` | Recording why A/B were not measured | No | **Rewrite** to one line | S10 |
 | Item 14 phase 1: "`measure_scorer` in all its modes" moves onto the resolver | `PLAN_TEST_RESULTS.md:737-748` | Moving every mode | Only C remains | **Rewrite**: Mode C | item 14 (smaller) |
 | BACKLOG 19.18 | `BACKLOG.md:708` | The deferred legacy builder | No | **Close** as "removed by …", as 19.19 was | — |
@@ -624,18 +661,30 @@ that comparison as a false premise).
    `run_mode_a`/`run_modes_ab` and their A/B-only helpers, the differential calibration and its
    tests — after the moved tests are in place. **Recommended, conditional on items 4 and 7.** If
    the institution requires A/B content in the B-0 report (item 4), this scope is reopened; if it
-   chooses item 7 (b), that comparison runs before the differential is deleted.
+   chooses item 7 (b), that comparison runs before the differential is deleted. Both conditions are
+   superseded by the owner's clarification of 2026-10-12, which closed items 4 and 7: the scope no
+   longer waits for the institution, and no comparison runs first. The moved tests are in place (R1,
+   §9.1); R2 is not implemented.
+   **Decided by the owner (2026-10-12): R2 starts now**, together with items 5 and 9 below, under
+   the owner's principle (header): no compatibility flag, no read branch for older records and no
+   parallel pipeline is kept for old-pipeline artifacts.
 2. **The research comparisons (A→B, B→C)** are retired with no replacement as research tools. If a
    research item later names a user and a deliverable, it builds on Mode C's code and the
    fixed-revision history; nothing is kept as a standing research directory. **Recommended,
    subject to item 4**: if the institution's agreed B-0 scope includes A/B, these comparisons are
-   B-0 measurements, not research, and are reopened with item 1.
+   B-0 measurements, not research, and are reopened with item 1. That condition is superseded by
+   the owner's clarification of 2026-10-12, which closed item 4. The basis of retiring them is
+   current use, policy and the live tests R1 moved, not a claim that they never had scientific use.
 3. **Backlog rows** (proposals; each lands only if the retirement goes ahead, i.e. after the
-   institution's answers to items 4 and 7, §9): cancel 7a; rewrite 7b without A/B and without
+   institution's answers to items 4 and 7, §9; those answers are no longer awaited, by the owner's
+   clarification of 2026-10-12): cancel 7a (superseded); rewrite 7b without A/B and without
    7a; rewrite 8b's dependency; replace item 9 with the retirement change; close 19.18; rewrite
    BACKLOG §3.1's "drop Mode A — Rejected" as superseded; re-point D3's third boundary (§4). 7b and 8b are co-owned with the
-   institution (`BACKLOG.md:667`, `:676`): their rewrites go to the institution with items 4 and 7
-   and depend on its answers, and 7b's item-6, deployment-CUDA and institutional Mode C peak-memory
+   institution (`BACKLOG.md:667`, `:676`): their rewrites were to go to the institution with items 4
+   and 7 and depend on its answers (superseded by the owner's clarification of 2026-10-12: they no
+   longer wait on an institutional answer, and 7b keeps Policy Gate 1's comparison deliverable, the
+   currently served ranking against Mode C), and 7b's item-6, deployment-CUDA and institutional
+   Mode C peak-memory
    preconditions carry over to whatever replaces it.
 4. **Policy Gate 1 (institutional).** Its "B-0 measurement report" names no mode, but the policy
    refers to "the agreed B-0 scope" (`DISEASE_SCORER_POLICY.md:318`; B-0 "approved for
@@ -652,6 +701,13 @@ that comparison as a false premise).
    (`EVALUATION_COHORTS.md:505-509`, MyGene2 "Not an acceptance gate"; test-validity conditions 5
    and 6, `:647-648`). The gate
    itself stays; engineering does not cancel it. **This one needs the institution.**
+   **Closed for engineering by the owner's clarification of 2026-10-12, superseding the ask above.**
+   The owner reported on 2026-10-12 that the institution had already authorised retiring the old
+   pipeline: the new pipeline governs, and the old one, Modes A and B and their comparison tools
+   included, may be modified or rewritten entirely. No requirement to keep an old
+   intermediate-difference tool waits on the institution. Gate 1 itself stays, and its committed
+   comparison deliverable is kept: the currently served ranking (Mode D, B-0.5's served behaviour)
+   against the planned new GNN ranking (Mode C). Retiring the tools cancels no evaluation duty.
 5. **Manifest fields and the seed.** `legacy_truncation_k`, `legacy_tie_policy`, the
    loader/sampler fields Mode C does not use (all of `measure_scorer.py:355-363` except
    `batch_size` at `:361`), `build_loader_config` (§2.1), Mode C's `sampler_evidence` entries
@@ -668,6 +724,12 @@ that comparison as a false premise).
    semantics. **The seed: owner's choice**; if kept, its review condition is item 14's ledger v2.
    This is the measurement CLI's seed only. Training's seed keeps its use whatever is chosen
    here, and its ordering defect is M3a's (§5.3).
+   **Decided by the owner (2026-10-12): remove all of it in R2**, the seed included: the
+   `legacy_*` fields, the loader/sampler fields other than `batch_size`, `build_loader_config`,
+   Mode C's `sampler_evidence` entries `max_subgraph_nodes` and `negative_sampling`, `--seed`, the
+   three seed fields, the ledger's null-seed refusal and `validate_measurement_seed`. No
+   compatibility flag and no reader for records written before; the evidence files already
+   committed stay as they are. Training's and data generation's seeds are not touched.
 6. **`read_samples`' default.** Keep the three-field default and `training_fields=True`, rewording
    the reason, or always carry five fields. **Recommended: keep the interface** (no S1–S5 change);
    only the reason is reworded.
@@ -681,15 +743,32 @@ that comparison as a false premise).
    same per-sample quantities. Mode A adds nothing to that comparison, and a CPU test cannot stand
    in for it. **This one needs the institution**, like item 4. If they choose (b), that
    comparison runs before the differential is deleted.
+   **Closed by the owner's clarification of 2026-10-12, superseding the proposal above.** What the
+   owner and the institution want to know is whether a model *trained* with AMP is worse: the
+   accuracy or quality lost against the large training-time saving some GNN architectures get.
+   That is a training study, not the same-checkpoint scoring comparison with autocast switched
+   that the differential's AMP report, 7a's AMP leg and options (a) and (b) above are about. The
+   scoring-AMP evidence is therefore no longer a precondition for deleting the differential or
+   Modes A and B, and no Trainer-only CUDA comparison runs first. The AMP training study is
+   recorded separately as bounded research (BACKLOG item 21); it is not an M2 or R2 prerequisite.
 8. **Mode C input decisions** found while inventorying: refuse non-integer and boolean ids (today
    silently truncated), and give a missing embedding key a named refusal. **Recommended: refuse**;
    each is a small Mode C change with its test.
+   **Decided by the owner (2026-10-12): refuse non-integer and boolean ids** at the shared
+   read/validation boundary, before the ids are converted with `long()`, with tests at the Mode C
+   entry; no Mode C-only cleaner and no deduplication or exclusion policy. A separate change after
+   R2. The missing embedding key's named refusal was not asked and stays open.
 9. **The `--modes` option.** Remove it (and edit S10's command line, plan `:1120`), or keep it
    accepting only `C`. **Recommended: remove**, rather than keep a compatibility flag; the
    measurement CLI then measures Mode C.
+   **Decided by the owner (2026-10-12): remove it in R2**; the measurement CLI measures Mode C, and
+   S10's command line is edited.
 10. **Out of scope, surfaced for scheduling:** validation always uses five negatives, which no
     document tracks; the Trainer gaps of §5.3. Training's `--seed` not fixing the initial weights
-    is already M3a's and is not asked again (§5.3).
+    is already M3a's and is not asked again (§5.3); it is fixed and was code-reviewed with no P1 or
+    P2 (2026-10-12, `7327798..290c03a`). The AMP training study that the owner's clarification of
+    2026-10-12 named in place of item 7's scoring question is outside the retirement too: it is
+    BACKLOG item 21, bounded research, not an M2 or R2 prerequisite.
 11. **S7's timing if the institution's answer (items 4, 7) is slow:** hold S7, or run S7 for Mode C
     only and leave Mode A on its current reads until the answer. S7's Mode A items stay deferred
     either way (§1.3). A Mode C-only S7 states that Modes A and B are not migrated; M2.1 is not
@@ -698,6 +777,9 @@ that comparison as a false premise).
     **Decided by the owner (2026-10-11): run S7 for Mode C now**, on the same entry point and the
     shared readers, with Modes A and B not migrated. Implemented the same day (plan S7, "As
     implemented"); runs that include Mode A keep their own reads until R2 or a migration.
+    Code-reviewed with no P1 or P2 (2026-10-12, `3d53c9b..7327798`) as the declared C-only scope.
+    "Or a migration" is superseded by the owner's clarification of 2026-10-12: with items 4 and 7
+    closed, S7's Mode A items will not be built, and those reads go with R2. M2.1 is not complete.
 
 ---
 
@@ -711,23 +793,35 @@ that comparison as a false premise).
 | Step | Change | Production code? | Gate before the next |
 |---|---|---|---|
 | **R0** | This assessment; owner decisions (§8) | No | Owner decisions recorded (§8). R1 does not wait for the institution |
-| **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2:** the institution's answers to §8 items 4 and 7 are recorded and, if item 7 is (b), the Trainer-only CUDA comparison has run |
-| **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1) | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen |
-| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided | Yes (small) | Their own tests |
+| **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2** (as first written): the institution's answers to §8 items 4 and 7 recorded and, if item 7 were (b), the Trainer-only CUDA comparison run. Superseded by the owner's clarification of 2026-10-12, which closed both: R2 waits for no institutional answer and no CUDA comparison |
+| **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1) | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen (chosen by the owner on 2026-10-12: removed in R2, §8 item 5) |
+| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided. Superseded by the owner's decisions of 2026-10-12: items 5 and 9 land in R2, so R3 is item 8 alone (refuse non-integer and boolean ids), a separate change after R2 | Yes (small) | Their own tests |
 | — | **M2.1 S7** then runs on Mode C alone. By the owner's choice it ran after R1 instead (§8 item 11, 2026-10-11); S7's Mode A items stay unbuilt | — | — |
 
 **What waits for the institution.** R1 is tests only and adds coverage whichever way the
 institution answers, so it can go ahead once the owner approves. R2's A/B deletions and the
-7a/7b/8b BACKLOG rewrites wait for the institution's answers to §8 item 4 (the agreed B-0 scope)
-and item 7 (the AMP evidence). If item 7 is answered (b), the Trainer-only CUDA comparison runs
-before the differential is deleted.
+7a/7b/8b BACKLOG rewrites were to wait for the institution's answers to §8 item 4 (the agreed B-0
+scope) and item 7 (the AMP evidence), with the Trainer-only CUDA comparison run before the
+differential's deletion if item 7 were answered (b). **Superseded by the owner's clarification
+of 2026-10-12:** the owner reported that the institution had already authorised retiring the old
+pipeline (item 4), and the institution's AMP question is a training study, not the scoring
+comparison (item 7). Nothing in R2 or in those rewrites waits for the institution any more. R2 is
+not implemented, and Policy Gate 1 stays, with its comparison of the currently served ranking
+(Mode D / B-0.5) against the planned new GNN ranking (Mode C).
 
 **Relation to M2.1:** R1–R2 before S7. S6 (serving) and S8 (training) proceed independently. S9's
 pin list follows R1 (§1.4). If the institution's answer is slow, the owner chooses between holding
 S7 and running S7 for Mode C only, with Mode A left on its current reads until the answer (§8 item
 11). Either way S7's Mode A items stay unbuilt; building them in the meantime is the cost this
 ordering avoids, and a Mode C-only S7 does not make M2.1 complete. The owner chose the Mode C-only
-S7 on 2026-10-11, after R1 (§8 item 11).
+S7 on 2026-10-11, after R1 (§8 item 11), and it was code-reviewed with no P1 or P2 on 2026-10-12
+(`3d53c9b..7327798`) as its declared C-only scope. With §8 items 4 and 7 closed by the owner's
+clarification of 2026-10-12, S7's Mode A items will not be built: R2 is to retire Modes A and B
+instead. S9's deletion of the measurement path forms and its static pin over `measure_scorer.py`,
+which the plan's S9 held for "the Mode A/B decision", now follow R2 rather than an open decision.
+M2.1 is not complete: until R2 lands, runs that include Mode A keep their own reads, and the S6/S8
+batch (`8421b8c..cddad9d`) still awaits code review (the review of `cddad9d..3e8e559` covered only
+the narrowing of its claims).
 
 **What R1 does not change.** R1 moves and adds tests. It does not change the Trainer's scoring
 semantics, the negative-sampling policy or the order in which training applies its seed; each of
@@ -744,6 +838,7 @@ institutional run, and the 4-worker Mode A subprocess every `make check` runs
 Approved by the owner on 2026-10-11 as a bounded step: move and strengthen the live tests only,
 with no change to scoring, ranking, the top-20 window, negative sampling or the seed, and no A/B
 deletion. Tests only; `src/`, `scripts/`, `tests/fixtures/` and the `Makefile` are unchanged.
+Code-reviewed on 2026-10-12 (`3e8e559..3d53c9b`) with no P1 or P2.
 
 **New test modules** (none imports a Mode A/B name at module level):
 

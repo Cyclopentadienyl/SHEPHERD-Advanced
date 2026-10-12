@@ -25,9 +25,23 @@ incidental protection of live training, validation and Mode C behaviour moves to
 real use points, and only once the institution has answered its two questions (the
 agreed B-0 scope and the AMP evidence, its §8 items 4 and 7). Nothing below is
 changed by it until the owner and the institution decide. Its first step, R1 (tests
-only), is implemented (2026-10-11): the live guarantees Modes A and B used to protect
-incidentally now have their own tests at the real use points, and Modes A and B are
-unchanged.
+only), is implemented (2026-10-11) and code-reviewed with no P1 or P2 (2026-10-12): the
+live guarantees Modes A and B used to protect incidentally now have their own tests at
+the real use points, and Modes A and B are unchanged.
+
+**Owner's clarification (2026-10-12), superseding the conditions above.** The owner
+reported on 2026-10-12 that the institution had already authorised retiring the old
+pipeline, Modes A and B and the ladder's comparison tools included; the new pipeline
+governs. The institution's AMP question is whether a model *trained* with AMP is worse,
+a training study recorded separately (`../BACKLOG.md` item 21), not the scoring
+comparison that the differential's AMP report and item 7a's AMP leg make. Both of the
+assessment's institutional questions are therefore closed, and its next step, R2
+(deleting Modes A and B), waits for neither. R2 is not implemented, so nothing below
+has changed yet. Item 7a is cancelled, and 7b drops A/B and its 7a dependency. Policy
+Gate 1 stays, and so does its committed comparison: the B-0 measurement report is to
+compare the currently served ranking (Mode D, B-0.5) with the planned new GNN ranking
+(Mode C). The ladder above and the checklist below stay as history until R2 rewrites
+this README.
 
 **C→D does not isolate one difference, and this table should not be read as
 though it does.** It changes the candidate construction *and* the scorer at once,
@@ -42,8 +56,8 @@ designed or implemented in B-0.3.
 | Stage | Scope | Status |
 |---|---|---|
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
-| B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | implementation complete, **acceptance redefined**: bit-parity with the frozen evaluator is unexecutable, and the replacement is a same-batch differential test against the trainer's own validation pass. See `../BACKLOG.md` §3.1. **The replacement is built and passing on CPU** (`src/evaluation/differential.py`); the institutional CUDA run is item 7a. `scripts/calibrate_mode_a.py`, the *old* launcher, was removed with the frozen evaluator in contract M2.1's S0, by the owner's rule of 2026-10-09 and decision of 2026-10-10 ([`../PLAN_PROVENANCE_CONTRACT.md`](../PLAN_PROVENANCE_CONTRACT.md) M2.1, decisions 3 and 6) |
-| B-0.3 | Modes B and C | implementation complete; institutional run inherits B-0.2's acceptance. Plan: [`PLAN_B03.md`](PLAN_B03.md) |
+| B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | implementation complete, **acceptance redefined**: bit-parity with the frozen evaluator is unexecutable, and the replacement is a same-batch differential test against the trainer's own validation pass. See `../BACKLOG.md` §3.1. **The replacement is built and passing on CPU** (`src/evaluation/differential.py`); the institutional CUDA run was item 7a, cancelled by the owner's clarification of 2026-10-12. `scripts/calibrate_mode_a.py`, the *old* launcher, was removed with the frozen evaluator in contract M2.1's S0, by the owner's rule of 2026-10-09 and decision of 2026-10-10 ([`../PLAN_PROVENANCE_CONTRACT.md`](../PLAN_PROVENANCE_CONTRACT.md) M2.1, decisions 3 and 6) |
+| B-0.3 | Modes B and C | implementation complete; institutional run inherits B-0.2's acceptance (superseded by the owner's clarification of 2026-10-12: Modes A and B are to be retired, and 7b, rewritten without them and without 7a, keeps Gate 1's comparison of the served ranking with Mode C). Plan: [`PLAN_B03.md`](PLAN_B03.md) |
 | B-0.4 | vectorised SP lookup | **measurement complete and reviewed.** Approach A selected for the primary GB10 platform (`PLAN_B04.md` §12.5): 8-33x faster on the caller production ships, 0 of 60 measurements over the provisional budget, at a cost of 3.44 GB permanent residence. **Production adoption is not cleared** — it waits on §13's integrated memory and reload gate, which needs A wired into production code and therefore its own plan and review. **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) |
 | B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
 
@@ -98,6 +112,12 @@ A test asserts that agreement so it is not mistaken for a result.
 > 19.18); the differential calibration is untouched. The
 > corrected boundary is below; the corrected checklist is written at step 7 of that
 > order, not now.
+>
+> **Superseded by the owner's clarification of 2026-10-12:** item 7a, the institutional CUDA run
+> this banner and step 5 wait for, is cancelled, and item 9 is replaced by the retirement's
+> R2, whose deletion gate is the migrated tests being in place (R1;
+> [`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md) §4, §9). R2 is not
+> implemented; until it rewrites this section, the section stays suspended.
 
 ### What is actually oracle-only
 
@@ -128,8 +148,9 @@ recorded here so the correction is not lost when the checklist is rewritten:
   changed. This bullet concluded
   that it is rewritten, not deleted; that is reversed by the owner's rule of
   2026-10-09, that it is removed if nothing necessary uses it (contract M2.1,
-  decision 3). Nothing did, and it was deleted: item 7a's runner is new code built
-  on `compare_trainer_against_mode_a`.
+  decision 3). Nothing did, and it was deleted: item 7a's runner was to be new code
+  built on `compare_trainer_against_mode_a`, and 7a is now cancelled (superseded by the
+  owner's clarification of 2026-10-12).
 - **`MeasurementManifest.legacy_truncation_k` / `legacy_tie_policy` describe
   surviving semantics.** They are renamed, not deleted. `model_construction`'s
   docstring ("Mode A mirrors the oracle deliberately") becomes false at the same

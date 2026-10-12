@@ -17,6 +17,23 @@ model are built, so it fixes the initial weights (M3a's seed ordering, implement
 rest of M3a; plan M3a). Where the text below calls the initial weights not fixed, it describes
 `edf7a41`. The other open points stand.
 
+**Since this report (2026-10-12): the owner's clarification.** The owner reported on 2026-10-12
+that the institution had already authorised retiring the old pipeline, Modes A and B included;
+the new pipeline governs. Policy Gate 1 stays, and its comparison deliverable is kept, now
+comparing the currently served ranking (Mode D, B-0.5's served behaviour) with the planned GNN
+ranking (Mode C). On AMP, what the owner and the institution want to know is whether an
+AMP-*trained* model is worse: any loss of accuracy or quality, against the large training-time
+saving some GNN architectures get. That is the training-time question this report studies in §4
+(§4.5, and §4.6's first experiment), recorded as bounded research in [BACKLOG item 21](BACKLOG.md)
+(pilot first; the acceptable quality loss not yet given), not as a prerequisite of M2 or of the
+Mode A/B retirement. It is not the same-checkpoint scoring comparison with autocast switched (the
+differential's AMP report, item 7a's AMP leg, the retirement assessment's §8 item 7 and its
+options), so that scoring evidence is no longer needed before the differential or Modes A and B
+are deleted. The assessment's §8 items 4 and 7 are closed. Where the text below treats the
+institution's B-0 scope, or which AMP question it wants answered, as unrecorded or open (§2,
+§3.5, §4.6, §5 points 1 and 6 and the reviewer's recommendations 1 and 6), it describes the state
+before this clarification.
+
 **Citations.**
 - This repository: `path:line` at `edf7a41`.
 - The original SHEPHERD code: `upstream:path:line` at `e95433a` of
@@ -184,7 +201,11 @@ is still `0.7·((cos+1)/2) + 0.3·SP` (`docs/DISEASE_SCORER_POLICY.md:123`).
 - **Paper fidelity gives no reason to keep A→B and B→C (inference).** They answer a question the
   paper itself did not ask.
 - **The question to the institution is still needed.** "The agreed B-0 scope" remains unrecorded, so
-  the assessment's question to the institution (its §8 item 4) still stands.
+  the assessment's question to the institution (its §8 item 4) still stands. *Superseded by the
+  owner's clarification of 2026-10-12:* the owner reported that the institution had already
+  authorised retiring the old pipeline, Modes A and B included, so §8 item 4 is closed. Gate 1
+  stays; its deliverable now compares the served ranking (Mode D) with the planned GNN ranking
+  (Mode C).
 - **Nothing in the assessment changes** until the owner decides, and this document does not clear
   or change Gate 1.
 
@@ -509,6 +530,12 @@ automatically satisfy the smaller one, and neither study is required merely for 
 stays a switch … run it both ways if they wish", `docs/working/BACKLOG.md:491-497`) sits in the
 context of item 7a's evaluation-time leg. `TrainerConfig.use_amp` controls both training and
 validation autocast, so whether the institution also meant training-time AMP is not recorded.
+*Superseded by the owner's clarification of 2026-10-12:* what the owner and the institution want
+to know is whether an AMP-trained model is worse, which is the training-time experiment above.
+The evaluation-time evidence (the differential's AMP report, option (b)) is no longer a
+precondition for deleting the differential or Modes A and B, and the assessment's §8 item 7 is
+closed. The training-time study is bounded research (BACKLOG item 21), not a prerequisite of M2
+or of the retirement.
 
 **Upstream precedent.** The released upstream code trains in fp32: its hyperparameters contain
 `'precision': 16`, but no trainer is passed it, and Lightning 1.4.5 defaults to 32. What precision

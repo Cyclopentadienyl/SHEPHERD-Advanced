@@ -208,7 +208,10 @@ Same shape as B-0.2, and the same refusal to overclaim:
   absence is impossible and fatal, exactly as in Mode A;
 - **no authoritative comparison between modes is claimed from a CPU synthetic
   run.** A→B→C on institutional CUDA hardware is a separate acceptance gate, as
-  Mode A's parity is.
+  Mode A's parity is. *Superseded by the owner's clarification of 2026-10-12:* the
+  owner reported that the institution had already authorised retiring Modes A and
+  B, so A→B→C is not run; end-to-end Mode C peak memory on institutional CUDA
+  (§1) remains an institutional acceptance measurement.
 
 ---
 
