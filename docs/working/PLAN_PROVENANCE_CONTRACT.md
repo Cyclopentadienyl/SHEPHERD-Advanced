@@ -22,7 +22,8 @@ retirement's R2 (2026-10-12; code-reviewed with no P1 or P2 in
 that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
 complete: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
 and S10's tools, kept outside the repository, passed their re-review with no P1 or P2 (draft 3, 2026-10-12),
-but S10 is not run, so capacity is not accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md)): acceptance 1's mechanical part is met at
+the after commit and every reading is explained, awaiting review, so capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -598,8 +599,8 @@ their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for M
 and measurement runs that include Mode A were not migrated: since the owner's clarification of
 2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12; code-reviewed with no P1
 or P2 in `1d0b5a6..06fd0f1`, 2026-10-12); S9 is implemented (2026-10-12) and code-reviewed with no P1
-or P2 at `f481882` (2026-10-12; its "As implemented" note below); S10 has not run (its tools,
-outside the repository, passed their re-review with no P1 or P2 on 2026-10-12), and nothing else here
+or P2 at `f481882` (2026-10-12; its "As implemented" note below); S10 ran on 2026-10-12 with its re-reviewed
+tools, its evidence awaiting review, and nothing else here
 is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
@@ -755,6 +756,10 @@ is implemented.
   and the comparison unchanged): no P1 or P2; the pre-read P2 is closed. The tools may be used for
   S10's measurement. This is not acceptance of S10's capacity, of M2.1 or of M2. The "after"
   commit is then fixed at `343e90e` (S10).
+- **S10 ran on the homelab (2026-10-12)**, at `90a668f` and `343e90e` in one boot, with draft 3 of
+  the tools: the evidence and the explanation of every reading are in
+  [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md), awaiting review. Not acceptance of S10's capacity, of M2.1
+  or of M2.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -830,6 +835,10 @@ How they parse:
   - 48 MB for the designated checkpoint;
   - a JSON file's bytes and its decoded text coexist, so `kg.json` (209,928,843 bytes on the
     subject, decision 7) is likely the largest new transient, at serving and in the SP producer.
+    **S10 showed this premise wrong (2026-10-12):** at `90a668f` `load_json` already held the
+    bytes and the decoded text together (a text-mode `json.load` reads the whole file and decodes
+    it while the bytes are alive), so `kg.json`'s transient is not new. The new transients are
+    the whole-file buffers of the two tensor files and the checkpoint ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md), §4.3).
 
   These are expectations to explain the readings with (S10), not bounds.
 
@@ -1502,8 +1511,8 @@ each moves its callers before anything is removed.
       - the calibration launcher: removed in S0;
       - serving's CUDA allocator counters, which `PLAN_B04_PRODUCTIONISATION.md` §7.3 excludes.
 
-      **M2.1's capacity acceptance needs no measurement reading other than Mode C's** (S10 has not run;
-      nothing here is accepted). M2.1 owes
+      **M2.1's capacity acceptance needs no measurement reading other than Mode C's** (S10 ran on
+      2026-10-12; nothing here is accepted until its evidence is reviewed). M2.1 owes
       no Mode A or B reading on a real checkpoint, and none is wanted until a runnable subject is
       named (BACKLOG 19.18). Since the owner's clarification of 2026-10-12 none will be: Modes A
       and B were deleted by the retirement assessment's R2 (2026-10-12).
@@ -1622,6 +1631,14 @@ each moves its callers before anything is removed.
       before, after, difference and explanation of each reading. The run's scratch (server logs,
       the measurement report with paths, ranks, configurations and the SP table) is not
       evidence and stays on the homelab.
+      - **As run (2026-10-12):** [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md). Acceptance 1's mechanical
+        part is met at the after commit (51 checks PASS). Comparability: 60 PASS and 1 UNKNOWN,
+        the service state, because the homelab has no `shepherd` user unit; the owner's statement
+        of 2026-10-13 that the backends were closed supplements it, and the exit status 2 is
+        kept. Acceptance 2 and 3 are explained there; acceptance 4 is not triggered. One question
+        is the owner's: whether the serving reload's +0.022 to +0.033 GB resident rise, inferred
+        to be allocator-level and measured for one reload only, needs a separate diagnostic run
+        before acceptance. Awaiting review; not accepted.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.

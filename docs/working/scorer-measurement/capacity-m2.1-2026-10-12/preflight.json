@@ -1,0 +1,21 @@
+{
+  "keys": [
+    "config",
+    "data_fingerprint",
+    "epoch",
+    "logs",
+    "optimizer_state_dict",
+    "scheduler_state_dict",
+    "state_dict",
+    "training_input_digests"
+  ],
+  "roles": [
+    "edge_indices",
+    "node_features",
+    "num_nodes",
+    "split_manifest",
+    "train_samples",
+    "val_samples"
+  ],
+  "sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79"
+}

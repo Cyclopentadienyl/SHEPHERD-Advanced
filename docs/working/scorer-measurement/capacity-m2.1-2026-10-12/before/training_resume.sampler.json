@@ -1,0 +1,49 @@
+{
+  "command_program": "python",
+  "exit_code": 0,
+  "killed_by_signal": null,
+  "notes": {
+    "hwm": "the root's exact VmHWM at its boundaries is the probe's reading",
+    "process_group": "the command ran in its own session; the sampler ended that group",
+    "sampled_peak": "sampled every 0.2 s; a shorter excursion can be missed",
+    "swap": "serving's rules: R0 precondition = no rise during R0; increase = sampled peak less R0's median",
+    "system_in_use": "MemTotal - MemAvailable, whole machine, every process"
+  },
+  "oom_kills_on_machine": 0,
+  "process_group": {
+    "left_after_root_exit": 0,
+    "own_session": true,
+    "root_reaped": true,
+    "signals_sent_to_group": [],
+    "stop_signals_received": [],
+    "survivors_after_cleanup": 0
+  },
+  "r0": {
+    "measurement_precondition_met": true,
+    "mem_total_bytes": 130659745792,
+    "page_cache_median_bytes": 18873274368.0,
+    "samples": 50,
+    "seconds": 10.0,
+    "swap_in_use_first_bytes": 0,
+    "swap_in_use_median_bytes": 0.0,
+    "swap_in_use_peak_bytes": 0,
+    "swap_largest_rise_bytes": 0,
+    "swap_net_change_bytes": 0,
+    "system_in_use_median_bytes": 10950782976.0
+  },
+  "sample_interval_seconds": 0.2,
+  "sampled_peaks": {
+    "root_vm_hwm_last_seen_bytes": 1966858240,
+    "root_vm_rss_bytes": 1966858240,
+    "system_in_use_less_r0_bytes": 1938329600.0,
+    "tree_processes_max": 1,
+    "tree_pss_bytes": 1957606400,
+    "tree_vm_rss_bytes": 1966858240
+  },
+  "sampler_error": null,
+  "sampler_sha256": "1ae557ad304dbb184b54e4c4f305d75936ed319b0f2f75849dcd377167dfa1cc",
+  "samples": 33,
+  "schema": "shepherd.s10_sampler_readings/draft-2",
+  "swap_increase_bytes": 0.0,
+  "wall_seconds": 7.311
+}

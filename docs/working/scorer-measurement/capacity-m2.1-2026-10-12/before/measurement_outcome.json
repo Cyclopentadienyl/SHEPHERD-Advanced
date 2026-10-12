@@ -1,0 +1,17 @@
+{
+  "artifact_digests": {
+    "checkpoint": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79",
+    "edge_indices": "381a5673a152893ea219edb1ba18af9649ce0bb6436f472a742b87b45aa1342c",
+    "node_features": "15a36a88aaf4f5095aea2213f8f146af434dca5cd79245900cbe1485033c4b6d",
+    "num_nodes": "0069942cf4a6f67fa56bfc16709ea20da51ea49aa6b4a3a97fad372ad98c424a",
+    "samples": "27a28f3a0ea67985ea056bbcc0f50d00635f4e2c06f83f42a8268a9c958ad48d",
+    "split_manifest": "131cdf81cfa20ab8b44609be78473d6dce3f3a18d4436fafd589c6221ddcf664"
+  },
+  "cuda_executed": true,
+  "cuda_version": "13.0",
+  "device": "cuda",
+  "mode": "C",
+  "n_ranked": 15000,
+  "software_revision": "90a668f1334dfe6f73637dd8f11659ea906b9e1d",
+  "torch_version": "2.10.0+cu130"
+}

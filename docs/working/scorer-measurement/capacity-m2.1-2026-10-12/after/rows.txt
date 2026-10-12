@@ -1,0 +1,5 @@
+serving exit=0
+measurement exit=0
+training_fresh exit=0
+training_resume exit=0
+sp exit=0

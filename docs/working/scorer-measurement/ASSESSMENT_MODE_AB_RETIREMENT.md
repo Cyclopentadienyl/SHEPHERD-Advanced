@@ -835,7 +835,7 @@ instead (2026-10-12, §9.2). S9's deletion of the measurement path forms and its
 which the plan's S9 held for "the Mode A/B decision", now follow R2 rather than an open decision.
 M2.1 is not complete: S10 remains. S9 is implemented and was code-reviewed with no P1 or P2 on 2026-10-12
 (`02a6954..f481882`); the S10 tools delivered with it (kept outside the repository) had three P2 in
-that review, fixed and re-reviewed with no P1 or P2 (draft 3, 2026-10-12), and S10 has not run. The S6/S8
+that review, fixed and re-reviewed with no P1 or P2 (draft 3, 2026-10-12), and S10 ran on 2026-10-12 (its evidence awaiting review). The S6/S8
 batch (`8421b8c..cddad9d`) was code-reviewed with no P1 or P2 on 2026-10-12 (the earlier review of `cddad9d..3e8e559` covered only
 the narrowing of its claims). R2 (`e210b12`) and item 8 (`06fd0f1`) were code-reviewed with no P1 or P2 on 2026-10-12 (`1d0b5a6..06fd0f1`); item 8 changed the shared
 `read_samples` that S7 and S8 read through.

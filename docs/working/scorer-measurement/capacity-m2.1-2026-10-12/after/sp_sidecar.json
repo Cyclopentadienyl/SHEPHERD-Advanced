@@ -1,0 +1,12 @@
+{
+  "build_id": "238c45d336013390c025f4aa6993e2ae",
+  "kg_digest": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+  "kg_total_edges": 617773,
+  "kg_total_nodes": 57239,
+  "max_hops": 5,
+  "num_diseases": 32109,
+  "num_genes": 5236,
+  "num_pairs": 431902937,
+  "num_phenotypes": 19894,
+  "schema_version": 1
+}
