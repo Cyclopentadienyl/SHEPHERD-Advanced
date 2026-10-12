@@ -121,6 +121,30 @@ class HeteroGNNLayer(nn.Module):
                 metadata=metadata,
                 heads=num_heads,
             )
+            # **The conv's input is passed in the conv's own node-type order**
+            # (BACKLOG item 20 (a); docs/working/PLAN_HGT_LINEAR_PATHS.md §1).
+            # PyG's grouped branch of `HeteroDictLinear` builds its inputs in its
+            # layers' order and stores the outputs under the input dict's keys,
+            # so a caller whose order differs gets one node type's projection
+            # under another's name, silently more often than not. Callers do
+            # differ: the training loader puts its seed types first, and from
+            # the second layer on the types that received no messages come last.
+            # Both linears share the order the conv was built in; checked here
+            # so a PyG change that split them fails at construction instead.
+            self._hgt_node_order: Tuple[str, ...] = tuple(self.conv.kqv_lin.lins)
+            if self._hgt_node_order != tuple(self.conv.out_lin.lins):
+                raise RuntimeError(
+                    "HGTConv's input and output linears are built in different "
+                    f"node-type orders ({list(self._hgt_node_order)} vs "
+                    f"{list(self.conv.out_lin.lins)}); the input could not be "
+                    "aligned with both"
+                )
+            # The edges likewise go in the conv's edge-type order (§1.7 of the
+            # plan): its relation linears are built `is_sorted=True` and cut
+            # their input by edge-type index in the order the edges arrive, so
+            # another order gives wrong outputs silently on both kernel paths.
+            # Every formal caller passes the graph's own order today.
+            self._hgt_edge_order: Tuple[EdgeType, ...] = tuple(self.conv.edge_types_map)
         else:
             # GAT or SAGE: per-edge-type convolutions wrapped in HeteroConv
             conv_dict = {}
@@ -178,8 +202,20 @@ class HeteroGNNLayer(nn.Module):
         # This increases VRAM usage — use smaller batch sizes with HGT.
         if self.conv_type == "hgt":
             with torch.amp.autocast(device_type="cuda", enabled=False):
-                x_float = {k: v.float() for k, v in x_dict.items()}
-                out_dict = self.conv(x_float, edge_index_dict)
+                # In the conv's node-type order (see __init__). A type the conv
+                # does not know is left out, as its per-type path ignores it, and
+                # is carried through by the loop below.
+                x_float = {
+                    nt: x_dict[nt].float() for nt in self._hgt_node_order if nt in x_dict
+                }
+                # In the conv's edge-type order (see __init__). An edge type the
+                # conv does not know stays in, last, so the conv still refuses it.
+                edges = {
+                    et: edge_index_dict[et]
+                    for et in self._hgt_edge_order if et in edge_index_dict
+                }
+                edges.update(edge_index_dict)
+                out_dict = self.conv(x_float, edges)
         else:
             out_dict = self.conv(x_dict, edge_index_dict)
 

@@ -1,6 +1,6 @@
 # HGT's linear paths: two PyG problems, one minimal fix each
 
-**Status (2026-10-11): proposal, not implemented.** It splits BACKLOG item 20 into its two problems, confirms where each is reached on the formal model build path, and proposes one minimal fix for each, at the one place every entry point builds and runs HGT. Problem 1's fix needs only the owner's approval. Problem 2's fix also needs a GB10 run to choose its value. Nothing here is a workaround in an experiment script, a PyG rewrite or a second GNN backend.
+**Status (2026-10-11): proposal. Edit 1 approved by the owner on 2026-10-12 to land on its own and implemented the same day (§1.6–§1.8), awaiting code review; Edit 2 waits for its GB10 comparison (§2.3, §4).** It splits BACKLOG item 20 into its two problems, confirms where each is reached on the formal model build path, and proposes one minimal fix for each, at the one place every entry point builds and runs HGT. Problem 1's fix needs only the owner's approval. Problem 2's fix also needs a GB10 run to choose its value. Nothing here is a workaround in an experiment script, a PyG rewrite or a second GNN backend.
 
 **Reviewed (2026-10-12, `290c03a..1d0b5a6`): one P2, applied in this revision.** The kernel a run used must not be inferred from its compile setting ("compiled means loop"); Edit 2 now records the requested policy, the compile setting and the observed kernel separately, and is reduced to a bounded GB10 comparison first and the simplest sufficient policy after it. The reviewer accepted Edit 1's direction.
 
@@ -75,6 +75,8 @@ It is **silent more often than it raises**. Each wrong output is a correct proje
 
 ### 1.6 Proposed fix (Edit 1)
 
+**Implemented (2026-10-12)** as proposed below, together with §1.7's edge order, which was checked and found equally neutral.
+
 In `HeteroGNNLayer`, HGT branch only:
 
 - `__init__`: record `self._hgt_node_order = tuple(self.conv.kqv_lin.lins)`, and raise unless it equals `tuple(self.conv.out_lin.lins)`. A later PyG change in how the two linears are ordered then fails at construction instead of silently.
@@ -88,7 +90,11 @@ In `HeteroGNNLayer`, HGT branch only:
 
 `k_rel` and `v_rel` are built with `is_sorted=True` (`hgt_conv.py:81-84`). If the edge dict passed to the forward is in a different order from `metadata[1]`, HGT gives wrong outputs silently on both paths (0.245 in a probe). The formal paths take their metadata edges from the same dict they forward with, so it is not triggered today. The implementation of Edit 1 checks whether reordering `edge_index_dict` to the conv's edge order is equally neutral, and adds it with a test if so; that is not yet verified.
 
+**Checked and added with Edit 1 (2026-10-12).** Both kernel paths of `HeteroLinear` cut their input by `type_ptr`, so an edge order other than `metadata[1]`'s is wrong on either. The training loader builds its edge dict by iterating the graph's own `edge_index_dict`, keeping empty types (`src/kg/data_loader.py`, `_build_subgraph_edges_vectorized` and `_build_subgraph_edges_legacy`), and serving and `build_index` forward the graph's own dict, so on every formal path the reorder is the identity: forward outputs and every gradient were `torch.equal` before and after Edit 1 as implemented, in eval and train mode, for a loader batch and the full fixture graph (CPU). `HeteroGNNLayer` passes the conv its edges in the conv's edge-type order (`HGTConv.edge_types_map`); an edge type the conv does not know is kept, last, so the conv still refuses it with the `KeyError` it raised before.
+
 ### 1.8 Tests that would pin Edit 1 (`tests/unit/test_hgt_node_type_order.py`)
+
+**As implemented (2026-10-12):** the five below, plus §1.7's edge order (the reverse of the conv's order gives `torch.equal` outputs and gradients under `False` and `True`) and an unknown edge type still refused. Removing the node reorder fails the grouped-branch, ten-type and formal-path tests; removing the edge reorder fails the edge-order test; dropping unknown edge types fails the refusal test.
 
 Every test spies on `pyg_lib.ops.grouped_matmul`. The cases meant to exercise the grouped branch (flag `True`, or ten node types under PyG's default) require the spy to fire, so none of them passes without the branch running; the cases under `False`, or under PyG's default with fewer than ten node types, require it not to fire. All skip where grouped matmul is unavailable.
 
@@ -156,6 +162,6 @@ Without pyg_lib PyG loops deterministically: warn as today and record the loop o
 
 ## 4. What the owner decides
 
-1. Approve Edit 1 (correctness, bitwise neutral today, no GPU dependency). It can land on its own.
+1. Approve Edit 1 (correctness, bitwise neutral today, no GPU dependency). It can land on its own. **Decided by the owner (2026-10-12): Edit 1 first, on its own; implemented the same day.** Edit 2 waits for item 2's comparison.
 2. Approve the bounded GB10 comparison of Edit 2's Step 1. The policy is chosen from its results, and Edit 2 lands after that.
 3. Whether to report the zip at `linear.py:447` upstream.
