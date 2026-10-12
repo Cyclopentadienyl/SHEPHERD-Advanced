@@ -42,7 +42,8 @@ items 4 and 7 is kept and marked as superseded by the owner's clarification of 2
 **Owner's decisions (2026-10-12).** R2 starts now, together with §8 item 5 (the measurement-only
 manifest fields and the measurement seed are removed) and item 9 (`--modes` is removed); item 8 is
 decided as refuse, a separate change after R2 (§8 items 1, 5, 8 and 9). **R2 was implemented the
-same day, with items 5 and 9, and awaits code review (§9.2).** Item 8 is not implemented yet.
+same day, with items 5 and 9, and awaits code review (§9.2).** Item 8 was implemented after it,
+also on 2026-10-12, and awaits code review (§8 item 8).
 
 **Base.** The inventory read `f581f9e`'s tree (M2.1 S5) through `git show f581f9e:<path>`. The
 S1–S5 corrections from the internal review were then uncommitted in the working tree; they are not
@@ -759,6 +760,15 @@ that comparison as a false premise).
    read/validation boundary, before the ids are converted with `long()`, with tests at the Mode C
    entry; no Mode C-only cleaner and no deduplication or exclusion policy. A separate change after
    R2. The missing embedding key's named refusal was not asked and stays open.
+   **Implemented (2026-10-12), awaiting code review.** `read_samples`, the reader measurement,
+   training, the cohort verifiers and the audits share, refuses a `disease_id`, a `phenotype_ids`
+   entry or, with the training fields, a `candidate_disease_ids` or `gene_ids` entry that is not a
+   JSON integer (a float, a boolean, a string), and a list field that is not a list, naming the
+   file, the patient and the field, before any caller converts the ids. Range stays with Mode C's
+   `_assert_ids_in_range` and the training loader. Tests at the Mode C entry point
+   (`tests/unit/test_measurement_integer_ids.py`): eight bad values are refused before a model is
+   built or anything written, an integer cohort still measures, and the training fields are
+   refused by the same reader; without the refusal the eight cases and the training cases fail.
 9. **The `--modes` option.** Remove it (and edit S10's command line, plan `:1120`), or keep it
    accepting only `C`. **Recommended: remove**, rather than keep a compatibility flag; the
    measurement CLI then measures Mode C.
@@ -796,7 +806,7 @@ that comparison as a false premise).
 | **R0** | This assessment; owner decisions (§8) | No | Owner decisions recorded (§8). R1 does not wait for the institution |
 | **R1** | Move class-3 tests to their use points (§6.1): the Trainer value test (G1–G4, including the wide-cohort case), data_loader tests (G5–G8), the shared-ranking dtype test, the Mode C fixture rewrite, Mode C unit tests, the `--modes C` CLI subprocess test; move class-2 tests out of A-named files; add §7's Mode C tests that need no code decision | No (tests only) | Mutation checks: the reversed sort, the dropped masked mean, the dropped normalisation and a wrong top-20 window (`pred_indices[-20:]`) on rows wider than 20 are each caught by the Trainer test; emptying the truth from the seeds (`data_loader.py:936`) is caught by the G8 test; the Mode C value tests catch a broken tie rule and a wrong metric. **Before R2** (as first written): the institution's answers to §8 items 4 and 7 recorded and, if item 7 were (b), the Trainer-only CUDA comparison run. Superseded by the owner's clarification of 2026-10-12, which closed both: R2 waits for no institutional answer and no CUDA comparison |
 | **R2** | Delete §2's "Retire" rows and §6.2's class-1 tests; drop the fixture's legacy keys so Mode C tests run on writer-shaped checkpoints; rewrite the CLI's texts, `build_manifest`'s defaults, `_assert_cohort_is_intact`'s wording, the import contract's reason, the scorer README and BACKLOG rows (§4, D3 included), plan S7/S10/19.18 (§1.3–§1.4), and the A/B wording left in kept files (§2.10). `build_loader_config` changes in this step with `--num-workers` (§2.1). **Implemented 2026-10-12, with §8 items 5 and 9 (§9.2)** | Yes (deletions, wording) | Full suites; import-linter; no Mode C manifest or ledger behaviour changes except §8 item 5 if chosen (chosen by the owner on 2026-10-12: removed in R2, §8 item 5) |
-| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided. Superseded by the owner's decisions of 2026-10-12: items 5 and 9 land in R2, so R3 is item 8 alone (refuse non-integer and boolean ids), a separate change after R2 | Yes (small) | Their own tests |
+| **R3** | §8 item 5 (the parts not already landed in R2 with `--num-workers` and `build_loader_config`, §2.1), items 8 and 9, as decided. Superseded by the owner's decisions of 2026-10-12: items 5 and 9 land in R2, so R3 is item 8 alone (refuse non-integer and boolean ids), a separate change after R2. **Implemented 2026-10-12** (§8 item 8) | Yes (small) | Their own tests |
 | — | **M2.1 S7** then runs on Mode C alone. By the owner's choice it ran after R1 instead (§8 item 11, 2026-10-11); S7's Mode A items stay unbuilt | — | — |
 
 **What waits for the institution.** R1 is tests only and adds coverage whichever way the

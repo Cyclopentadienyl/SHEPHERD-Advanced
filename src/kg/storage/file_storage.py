@@ -202,4 +202,44 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
             ]
     except (KeyError, TypeError, AttributeError) as exc:
         raise _unparseable(path, "a samples file (a list of sample rows)", exc) from exc
+    _refuse_non_integer_ids(path, samples)
     return SamplesRead(samples, identity)
+
+
+def _refuse_non_integer_ids(path: Path, samples: List[Any]) -> None:
+    """Every id a sample row carries must be a JSON integer; anything else is
+    refused under the file's name and the patient's.
+
+    **Refused, not converted.** Each caller turns these ids into an index tensor
+    (`torch.tensor(..., dtype=torch.long)` or the like), which truncates `3.7` to
+    `3` and reads `true` as `1`: the converted id names a node the file did not,
+    and the run scores a plausible patient who is not this one. A boolean is
+    refused although Python counts it as an `int`. Checked here because measurement,
+    training, the cohort verifiers and the audits all read samples through this
+    function, so the check comes before any of them converts. It says nothing
+    about range, which needs the graph: Mode C's `_assert_ids_in_range` and the
+    training loader's truth check (D3) stay where they are.
+    """
+    def refuse(index: int, sample: Any, field: str, value: Any, what: str) -> None:
+        raise ValueError(
+            f"{path}: sample {index} (patient {sample.patient_id!r}) has {field} "
+            f"{value!r}, which is not {what}. Ids are refused rather than converted: "
+            "a float or a boolean turned into an index names a different node"
+        )
+
+    def is_id(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    for index, sample in enumerate(samples):
+        if not is_id(sample.disease_id):
+            refuse(index, sample, "disease_id", sample.disease_id, "an integer id")
+        lists = {"phenotype_ids": sample.phenotype_ids}
+        for field in ("candidate_disease_ids", "gene_ids"):
+            if getattr(sample, field) is not None:
+                lists[field] = getattr(sample, field)
+        for field, values in lists.items():
+            if not isinstance(values, list):
+                refuse(index, sample, field, values, "a list of integer ids")
+            for value in values:
+                if not is_id(value):
+                    refuse(index, sample, field, value, "an integer id")
