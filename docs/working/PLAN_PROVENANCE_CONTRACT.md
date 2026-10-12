@@ -21,8 +21,8 @@ retirement's R2 (2026-10-12; code-reviewed with no P1 or P2 in
 `1d0b5a6..06fd0f1`, 2026-10-12), so since R2 every measurement run takes S7's reads;
 that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
 complete: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
-but S10's tools, delivered with it and kept outside the repository, had three P2 in that review and await
-re-review, and S10 is not run, so capacity is not accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+and S10's tools, kept outside the repository, passed their re-review with no P1 or P2 (draft 3, 2026-10-12),
+but S10 is not run, so capacity is not accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -598,8 +598,8 @@ their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for M
 and measurement runs that include Mode A were not migrated: since the owner's clarification of
 2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12; code-reviewed with no P1
 or P2 in `1d0b5a6..06fd0f1`, 2026-10-12); S9 is implemented (2026-10-12) and code-reviewed with no P1
-or P2 at `f481882` (2026-10-12; its "As implemented" note below); S10 has not run, its tools
-(outside the repository) had three P2 in that review and await re-review, and nothing else here
+or P2 at `f481882` (2026-10-12; its "As implemented" note below); S10 has not run (its tools,
+outside the repository, passed their re-review with no P1 or P2 on 2026-10-12), and nothing else here
 is implemented.
 
 **Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
@@ -735,7 +735,7 @@ is implemented.
     declared acceptance conditions; the sampler stops only its direct child, so SP workers can be
     left running; and the driver can reuse an old output directory, so a failed run mixes with an
     earlier run's evidence. The tools were fixed afterwards, outside the repository (S10, "The
-    tools"), and await re-review;
+    tools"), and await re-review (since passed, draft 3; below);
   - **S10's plan amendments** (`f481882..c1b8a12`): no new P1 or P2. The plan is acceptable; the
     tools do not yet meet all its requirements.
 
@@ -750,6 +750,11 @@ is implemented.
   found one more P2 in the tools: a warm pre-read that failed did not stop its row, which then ran
   and was recorded as a warm reading. Fixed the same day (S10, "The tools"); the fixed driver and
   its tests await a narrow re-review. S10 has not run, and M2.1 and M2 are not complete.
+- **The incremental review of draft 3 at `343e90e`** (2026-10-12), read-only, of `3c9563f..343e90e`
+  (docs only) and of the tools' draft 3 (the driver and its tests changed; the probe, the sampler
+  and the comparison unchanged): no P1 or P2; the pre-read P2 is closed. The tools may be used for
+  S10's measurement. This is not acceptance of S10's capacity, of M2.1 or of M2. The "after"
+  commit is then fixed at `343e90e` (S10).
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1393,7 +1398,8 @@ each moves its callers before anything is removed.
      `src/kg/storage/file_storage.py:9-16`.
    - **As implemented (2026-10-12); code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12).**
      That review covered the product code (554 targeted CPU tests passed; import-linter 4 kept).
-     S10's tools, delivered with it, had three P2 and await re-review (S10, "The tools").
+     S10's tools, delivered with it, had three P2; their fixes passed re-review on 2026-10-12 (S10,
+     "The tools").
      - **Deleted:** `verify_graph_artifacts`, `verify_graph_source`, `verify_generated_cohorts`,
        `compute_input_digests`, and the `file_sha256` re-export in `scripts/measure_scorer.py`
        (the plan allowed either; its pins became pins of its absence). Their reasoning moved into
@@ -1456,9 +1462,12 @@ each moves its callers before anything is removed.
         measured code after the run. Its full SHA is written here and in the evidence before the
         run, and `git diff <after> <the M2.1 pull request's head> -- src scripts` must be empty.
         On 2026-10-12 the reviews of the S6/S8 batch, of `1d0b5a6..06fd0f1` and of S9's code
-        (`02a6954..f481882`) closed with no P1 or P2; S10's tools had three P2 in that last review
-        and await re-review, so the
-        "after" commit is fixed once that re-review closes.
+        (`02a6954..f481882`) closed with no P1 or P2; S10's tools had three P2 in that last review,
+        and their fixes (draft 3) passed re-review with no P1 or P2 the same day. **The "after"
+        commit is `343e90e993d0a5129cd547b95276b7e2b8b12fa9`:** its `src` and `scripts` are those of S9's commit `f481882`, since
+        every commit after it is docs only and no review asked for a code fix, and it is the head
+        the reviewer cleared for the measurement. Dependencies are equal at `90a668f` and at it. The
+        M2.1 pull request's head must have the same `src` and `scripts`.
       - **It runs before M2.3 and M2.4 refuse.** The subject records no `kg` role (its training
         roles at `43d47c5` are the samples, the tensors and the manifest), so once M2.3 refuses a
         resume parent missing a role and M2.4 refuses serving and measurement on one, the
@@ -1564,7 +1573,11 @@ each moves its callers before anything is removed.
         evidence. The plan as amended (`f481882..c1b8a12`) was reviewed with no P1 or P2.
       - **The fixes (2026-10-12, outside the repository).** The reviewer's re-review at `3c9563f`
         closed the three P2 and found one more, a failed pre-read that did not stop its row; that
-        fix and its tests await a narrow re-review. An
+        fix and its tests (draft 3) were re-reviewed at `343e90e` with no P1 or P2 (2026-10-12).
+        The reviewed draft 3, by SHA-256: `s10_probe.py` `04458fd77a96b6728eda66cfbae6a3f42700953de08cf556e660258c61d02a0b`,
+        `s10_sampler.py` `1ae557ad304dbb184b54e4c4f305d75936ed319b0f2f75849dcd377167dfa1cc`, `s10_run_matrix.sh`
+        `6eaeffcf52a1c2192c1339deaa62d0f24eb2191ebe6a32ec3f170976ee1e2afe`, `s10_compare.py` `7fbb86d59151d60cfe481ae97cbc287d98bb70607e53b1d1f64d4d1f39b3578f`,
+        `test_s10_tools.py` `63916d48c68c6bcd3a4e2cbc5801db59025ff145792c4bb76a5d54662f35f897`. An
         internal adversarial review and a re-check of its findings followed; every P2 they
         confirmed is fixed in the tools delivered, and what they left is listed in the
         instructions:
@@ -1685,7 +1698,7 @@ request, as M1 did. As delivered: S0 (`45d9dea..3433bf8`) and S1–S5 (`e3eefee.
 reviewed apart, S7 (Mode C only) on its own (`3d53c9b..7327798`), and the S6/S8 batch
 (`8421b8c..cddad9d`) on its own (no P1 or P2, 2026-10-12). S9's code (`02a6954..f481882`) and S10's
 tools were reviewed together and judged apart (2026-10-12): S9 with no P1 or P2; S10's tools with
-three P2, awaiting re-review. S10's
+three P2, whose fixes passed re-review (draft 3, 2026-10-12). S10's
 evidence follows its run.
 
 **What M2.1 does not change.**
