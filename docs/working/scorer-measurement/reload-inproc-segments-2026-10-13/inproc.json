@@ -1,0 +1,2929 @@
+{
+  "checks": [
+    {
+      "accepted": 5,
+      "after": "startup",
+      "planned": 5
+    },
+    {
+      "accepted": 5,
+      "after": "reload_1",
+      "planned": 5
+    },
+    {
+      "accepted": 5,
+      "after": "reload_2",
+      "planned": 5
+    },
+    {
+      "accepted": 5,
+      "after": "reload_3",
+      "planned": 5
+    }
+  ],
+  "child_environment": {
+    "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+    "FLASHATTN_FORCE_DISABLE": null,
+    "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+    "PYTORCH_CUDA_ALLOC_CONF": null,
+    "SHEPHERD_ALLOC_SOURCE": "preset",
+    "allocator_controls": []
+  },
+  "child_exit_status": 0,
+  "child_timed_out": false,
+  "code": {
+    "commit": "343e90e993d0a5129cd547b95276b7e2b8b12fa9",
+    "tracked_files_modified": false
+  },
+  "completed": true,
+  "environment": {
+    "boot_id": "3a550de4-d4b2-4551-a39a-4767a9fb1dd2",
+    "driver": "580.178.04",
+    "kernel": "7.0.0-1019-nvidia",
+    "python": "3.12.3",
+    "uptime_seconds": 27420.4,
+    "venv_distributions_sha256": "a117e53efdcf4ebf00aea51756eb4198d81f7b430f94c558d491fcd48ab76980",
+    "venv_python_sha256": "c86f21d0da9290ece2d7d49a3f7ed52aed59cb029abdf0ea25c79634f6cbe960"
+  },
+  "final": {
+    "after_gc": {
+      "collected": 84,
+      "liveness": {
+        "generation_0": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_1": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_2": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        }
+      },
+      "point": {
+        "Pss_bytes": 6693616640,
+        "RssAnon_bytes": 6243205120,
+        "RssFile_bytes": 412704768,
+        "RssShmem_bytes": 50794496,
+        "VmHWM_bytes": 28501413888,
+        "VmRSS_bytes": 6706704384,
+        "anon": {
+          "classes": {
+            "gt_1GiB": {
+              "count": 6,
+              "rss": 4000305152
+            },
+            "heap": {
+              "count": 1,
+              "rss": 699813888
+            },
+            "le_1GiB": {
+              "count": 9,
+              "rss": 269484032
+            },
+            "le_1MiB": {
+              "count": 232,
+              "rss": 49139712
+            },
+            "le_256MiB": {
+              "count": 12,
+              "rss": 689909760
+            },
+            "le_64MiB": {
+              "count": 44,
+              "rss": 439316480
+            },
+            "le_8MiB": {
+              "count": 91,
+              "rss": 64720896
+            }
+          },
+          "largest": [
+            {
+              "rss": 3455258624,
+              "size": 3460300800
+            },
+            {
+              "rss": 699813888,
+              "size": 764280832
+            },
+            {
+              "rss": 431939584,
+              "size": 2147483648
+            },
+            {
+              "rss": 269484032,
+              "size": 269484032
+            },
+            {
+              "rss": 113106944,
+              "size": 2147483648
+            },
+            {
+              "rss": 85749760,
+              "size": 88219648
+            },
+            {
+              "rss": 67129344,
+              "size": 67244032
+            },
+            {
+              "rss": 67129344,
+              "size": 67244032
+            }
+          ]
+        },
+        "cuda_driver_free_bytes": 87716614144,
+        "mallinfo2": {
+          "arena": 767119360,
+          "fordblks": 79631904,
+          "fsmblks": 0,
+          "hblkhd": 6946816,
+          "hblks": 4,
+          "keepcost": 29442944,
+          "ordblks": 3759,
+          "smblks": 0,
+          "uordblks": 687487456,
+          "usmblks": 0
+        },
+        "name": "after_gc",
+        "seconds": 510.429
+      },
+      "referrers": {
+        "generation_0": {},
+        "generation_1": {},
+        "generation_2": {}
+      }
+    },
+    "after_trim": {
+      "mallinfo2_after": {
+        "arena": 737677312,
+        "fordblks": 50179616,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 896,
+        "ordblks": 3747,
+        "smblks": 0,
+        "uordblks": 687497696,
+        "usmblks": 0
+      },
+      "mallinfo2_before": {
+        "arena": 767119360,
+        "fordblks": 79631904,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3759,
+        "smblks": 0,
+        "uordblks": 687487456,
+        "usmblks": 0
+      },
+      "malloc_trim_returned": 1,
+      "point": {
+        "Pss_bytes": 6621568000,
+        "RssAnon_bytes": 6171156480,
+        "RssFile_bytes": 412704768,
+        "RssShmem_bytes": 50794496,
+        "VmHWM_bytes": 28501413888,
+        "VmRSS_bytes": 6634655744,
+        "anon": {
+          "classes": {
+            "gt_1GiB": {
+              "count": 6,
+              "rss": 4000305152
+            },
+            "heap": {
+              "count": 1,
+              "rss": 627765248
+            },
+            "le_1GiB": {
+              "count": 9,
+              "rss": 269484032
+            },
+            "le_1MiB": {
+              "count": 232,
+              "rss": 49139712
+            },
+            "le_256MiB": {
+              "count": 12,
+              "rss": 689909760
+            },
+            "le_64MiB": {
+              "count": 44,
+              "rss": 439316480
+            },
+            "le_8MiB": {
+              "count": 91,
+              "rss": 64720896
+            }
+          },
+          "largest": [
+            {
+              "rss": 3455258624,
+              "size": 3460300800
+            },
+            {
+              "rss": 627765248,
+              "size": 734838784
+            },
+            {
+              "rss": 431939584,
+              "size": 2147483648
+            },
+            {
+              "rss": 269484032,
+              "size": 269484032
+            },
+            {
+              "rss": 113106944,
+              "size": 2147483648
+            },
+            {
+              "rss": 85749760,
+              "size": 88219648
+            },
+            {
+              "rss": 67129344,
+              "size": 67244032
+            },
+            {
+              "rss": 67129344,
+              "size": 67244032
+            }
+          ]
+        },
+        "cuda_driver_free_bytes": 87782551552,
+        "mallinfo2": {
+          "arena": 737677312,
+          "fordblks": 50189856,
+          "fsmblks": 0,
+          "hblkhd": 6946816,
+          "hblks": 4,
+          "keepcost": 896,
+          "ordblks": 3759,
+          "smblks": 0,
+          "uordblks": 687487456,
+          "usmblks": 0
+        },
+        "name": "after_trim",
+        "seconds": 510.574
+      }
+    },
+    "before_intervention": {
+      "liveness": {
+        "generation_0": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_1": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_2": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        }
+      },
+      "point": {
+        "Pss_bytes": 6693616640,
+        "RssAnon_bytes": 6243205120,
+        "RssFile_bytes": 412704768,
+        "RssShmem_bytes": 50794496,
+        "VmHWM_bytes": 28501413888,
+        "VmRSS_bytes": 6706704384,
+        "anon": {
+          "classes": {
+            "gt_1GiB": {
+              "count": 6,
+              "rss": 4000305152
+            },
+            "heap": {
+              "count": 1,
+              "rss": 699813888
+            },
+            "le_1GiB": {
+              "count": 9,
+              "rss": 269484032
+            },
+            "le_1MiB": {
+              "count": 232,
+              "rss": 49139712
+            },
+            "le_256MiB": {
+              "count": 12,
+              "rss": 689909760
+            },
+            "le_64MiB": {
+              "count": 44,
+              "rss": 439316480
+            },
+            "le_8MiB": {
+              "count": 91,
+              "rss": 64720896
+            }
+          },
+          "largest": [
+            {
+              "rss": 3455258624,
+              "size": 3460300800
+            },
+            {
+              "rss": 699813888,
+              "size": 764280832
+            },
+            {
+              "rss": 431939584,
+              "size": 2147483648
+            },
+            {
+              "rss": 269484032,
+              "size": 269484032
+            },
+            {
+              "rss": 113106944,
+              "size": 2147483648
+            },
+            {
+              "rss": 85749760,
+              "size": 88219648
+            },
+            {
+              "rss": 67129344,
+              "size": 67244032
+            },
+            {
+              "rss": 67129344,
+              "size": 67244032
+            }
+          ]
+        },
+        "cuda_driver_free_bytes": 87724146688,
+        "mallinfo2": {
+          "arena": 767119360,
+          "fordblks": 79629040,
+          "fsmblks": 0,
+          "hblkhd": 6946816,
+          "hblks": 4,
+          "keepcost": 29442944,
+          "ordblks": 3758,
+          "smblks": 0,
+          "uordblks": 687490320,
+          "usmblks": 0
+        },
+        "name": "before_intervention",
+        "seconds": 509.555
+      }
+    }
+  },
+  "liveness": {
+    "after_reload_1": {
+      "generation_0": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      }
+    },
+    "after_reload_2": {
+      "generation_0": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      },
+      "generation_1": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      }
+    },
+    "after_reload_3": {
+      "generation_0": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      },
+      "generation_1": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      },
+      "generation_2": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      }
+    }
+  },
+  "not_a_reading": "a phase-2 diagnostic; no HTTP, no 200 requests",
+  "points": [
+    {
+      "Pss_bytes": 6426782720,
+      "RssAnon_bytes": 5976371200,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23766048768,
+      "VmRSS_bytes": 6439870464,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4000956416
+          },
+          "heap": {
+            "count": 1,
+            "rss": 611676160
+          },
+          "le_1GiB": {
+            "count": 3,
+            "rss": 269430784
+          },
+          "le_1MiB": {
+            "count": 226,
+            "rss": 32796672
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 331485184
+          },
+          "le_64MiB": {
+            "count": 50,
+            "rss": 628695040
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 611676160,
+            "size": 676016128
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269430784,
+            "size": 269484032
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 113684480,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 53661696,
+            "size": 54525952
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 88039972864,
+      "mallinfo2": {
+        "arena": 678854656,
+        "fordblks": 3228976,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 606928,
+        "ordblks": 334,
+        "smblks": 0,
+        "uordblks": 675625680,
+        "usmblks": 0
+      },
+      "name": "after_startup_checks",
+      "seconds": 127.557
+    },
+    {
+      "Pss_bytes": 6426782720,
+      "RssAnon_bytes": 5976371200,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23766048768,
+      "VmRSS_bytes": 6439870464,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4000956416
+          },
+          "heap": {
+            "count": 1,
+            "rss": 611676160
+          },
+          "le_1GiB": {
+            "count": 3,
+            "rss": 269430784
+          },
+          "le_1MiB": {
+            "count": 226,
+            "rss": 32796672
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 331485184
+          },
+          "le_64MiB": {
+            "count": 50,
+            "rss": 628695040
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 611676160,
+            "size": 676016128
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269430784,
+            "size": 269484032
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 113684480,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 53661696,
+            "size": 54525952
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 88039972864,
+      "mallinfo2": {
+        "arena": 678854656,
+        "fordblks": 3228640,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 606928,
+        "ordblks": 334,
+        "smblks": 0,
+        "uordblks": 675626016,
+        "usmblks": 0
+      },
+      "name": "before_reload_1",
+      "seconds": 127.67
+    },
+    {
+      "Pss_bytes": 6775315456,
+      "RssAnon_bytes": 6324903936,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 6788403200,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4115107840
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 6,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 226,
+            "rss": 42913792
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689905664
+          },
+          "le_64MiB": {
+            "count": 43,
+            "rss": 439091200
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 60592128
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 227835904,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87076016128,
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 57794016,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29440304,
+        "ordblks": 2839,
+        "smblks": 0,
+        "uordblks": 687497760,
+        "usmblks": 0
+      },
+      "name": "after_reload_1",
+      "seconds": 207.358
+    },
+    {
+      "Pss_bytes": 6714391552,
+      "RssAnon_bytes": 6263980032,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 6727479296,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4054183936
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 6,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 226,
+            "rss": 42913792
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689905664
+          },
+          "le_64MiB": {
+            "count": 43,
+            "rss": 439091200
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 60592128
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 166912000,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87668518912,
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 57811440,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29440304,
+        "ordblks": 2836,
+        "smblks": 0,
+        "uordblks": 687480336,
+        "usmblks": 0
+      },
+      "name": "after_checks_1",
+      "seconds": 255.308
+    },
+    {
+      "Pss_bytes": 6714391552,
+      "RssAnon_bytes": 6263980032,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 6727479296,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4054183936
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 6,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 226,
+            "rss": 42913792
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689905664
+          },
+          "le_64MiB": {
+            "count": 43,
+            "rss": 439091200
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 60592128
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 166912000,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87668518912,
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 57811440,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29440304,
+        "ordblks": 2836,
+        "smblks": 0,
+        "uordblks": 687480336,
+        "usmblks": 0
+      },
+      "name": "before_reload_2",
+      "seconds": 255.428
+    },
+    {
+      "Pss_bytes": 6805048320,
+      "RssAnon_bytes": 6354636800,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 6818136064,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4132212736
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 235,
+            "rss": 44257280
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 152879104
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 675246080
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 60624896
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 245014528,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87091564544,
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 74335904,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3034,
+        "smblks": 0,
+        "uordblks": 687507808,
+        "usmblks": 0
+      },
+      "name": "after_reload_2",
+      "seconds": 339.008
+    },
+    {
+      "Pss_bytes": 6748343296,
+      "RssAnon_bytes": 6297931776,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 6761431040,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4075479040
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 235,
+            "rss": 44257280
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 152879104
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 675274752
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 60624896
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 188280832,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87609647104,
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 74352512,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3021,
+        "smblks": 0,
+        "uordblks": 687491200,
+        "usmblks": 0
+      },
+      "name": "after_checks_2",
+      "seconds": 382.253
+    },
+    {
+      "Pss_bytes": 6748343296,
+      "RssAnon_bytes": 6297931776,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 6761431040,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4075479040
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 235,
+            "rss": 44257280
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 152879104
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 675274752
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 60624896
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 188280832,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87609647104,
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 74352512,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3021,
+        "smblks": 0,
+        "uordblks": 687491200,
+        "usmblks": 0
+      },
+      "name": "before_reload_3",
+      "seconds": 382.386
+    },
+    {
+      "Pss_bytes": 7170386944,
+      "RssAnon_bytes": 6719975424,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28501413888,
+      "VmRSS_bytes": 7183474688,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4477075456
+          },
+          "heap": {
+            "count": 1,
+            "rss": 699813888
+          },
+          "le_1GiB": {
+            "count": 9,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 232,
+            "rss": 49139712
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689909760
+          },
+          "le_64MiB": {
+            "count": 44,
+            "rss": 439316480
+          },
+          "le_8MiB": {
+            "count": 91,
+            "rss": 64720896
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 863879168,
+            "size": 2147483648
+          },
+          {
+            "rss": 699813888,
+            "size": 764280832
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 157937664,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 86892167168,
+      "mallinfo2": {
+        "arena": 767119360,
+        "fordblks": 79612432,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3771,
+        "smblks": 0,
+        "uordblks": 687506928,
+        "usmblks": 0
+      },
+      "name": "after_reload_3",
+      "seconds": 465.597
+    },
+    {
+      "Pss_bytes": 6693616640,
+      "RssAnon_bytes": 6243205120,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28501413888,
+      "VmRSS_bytes": 6706704384,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4000305152
+          },
+          "heap": {
+            "count": 1,
+            "rss": 699813888
+          },
+          "le_1GiB": {
+            "count": 9,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 232,
+            "rss": 49139712
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689909760
+          },
+          "le_64MiB": {
+            "count": 44,
+            "rss": 439316480
+          },
+          "le_8MiB": {
+            "count": 91,
+            "rss": 64720896
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 699813888,
+            "size": 764280832
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 113106944,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87724146688,
+      "mallinfo2": {
+        "arena": 767119360,
+        "fordblks": 79629040,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3758,
+        "smblks": 0,
+        "uordblks": 687490320,
+        "usmblks": 0
+      },
+      "name": "after_checks_3",
+      "seconds": 509.422
+    }
+  ],
+  "preconditions": {
+    "gpu_compute_apps": 0,
+    "preread": [
+      "edge_indices.pt",
+      "kg.json",
+      "kg.provenance.json",
+      "node_features.pt",
+      "num_nodes.json",
+      "shortest_paths.meta.json",
+      "shortest_paths.pt",
+      "split_manifest.json",
+      "train_samples.json",
+      "val_samples.json",
+      "checkpoint"
+    ],
+    "shepherd_servers_running": 0
+  },
+  "reload_diag_sha256": "2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff",
+  "reloads": [
+    {
+      "index": 1,
+      "success": true,
+      "wall_seconds": 79.578
+    },
+    {
+      "index": 2,
+      "success": true,
+      "wall_seconds": 83.466
+    },
+    {
+      "index": 3,
+      "success": true,
+      "wall_seconds": 83.083
+    }
+  ],
+  "schema": "shepherd.s10_reload_inproc/draft-3",
+  "segments": [
+    {
+      "Pss_bytes": 2169838592,
+      "RssAnon_bytes": 1758486528,
+      "RssFile_bytes": 380145664,
+      "RssShmem_bytes": 44236800,
+      "VmHWM_bytes": 2182868992,
+      "VmRSS_bytes": 2182868992,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 3,
+            "rss": 0
+          },
+          "heap": {
+            "count": 1,
+            "rss": 255012864
+          },
+          "le_1GiB": {
+            "count": 4,
+            "rss": 409731072
+          },
+          "le_1MiB": {
+            "count": 211,
+            "rss": 32374784
+          },
+          "le_256MiB": {
+            "count": 3,
+            "rss": 331399168
+          },
+          "le_64MiB": {
+            "count": 36,
+            "rss": 628662272
+          },
+          "le_8MiB": {
+            "count": 89,
+            "rss": 70811648
+          }
+        },
+        "largest": [
+          {
+            "rss": 269418496,
+            "size": 269484032
+          },
+          {
+            "rss": 255012864,
+            "size": 257044480
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 140312576,
+            "size": 1073741824
+          },
+          {
+            "rss": 85663744,
+            "size": 88219648
+          },
+          {
+            "rss": 53661696,
+            "size": 54525952
+          },
+          {
+            "rss": 44384256,
+            "size": 45088768
+          },
+          {
+            "rss": 44384256,
+            "size": 45088768
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 99579535360,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 257990656,
+        "fordblks": 1259104,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 37952,
+        "ordblks": 1365,
+        "smblks": 0,
+        "uordblks": 256731552,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 11.683,
+      "stage": "startup"
+    },
+    {
+      "Pss_bytes": 2588928000,
+      "RssAnon_bytes": 2143940608,
+      "RssFile_bytes": 407285760,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 2602020864,
+      "VmRSS_bytes": 2602020864,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 3,
+            "rss": 0
+          },
+          "heap": {
+            "count": 1,
+            "rss": 609533952
+          },
+          "le_1GiB": {
+            "count": 4,
+            "rss": 440143872
+          },
+          "le_1MiB": {
+            "count": 225,
+            "rss": 32755712
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 331485184
+          },
+          "le_64MiB": {
+            "count": 50,
+            "rss": 628690944
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 609533952,
+            "size": 673775616
+          },
+          {
+            "rss": 269422592,
+            "size": 269484032
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 170721280,
+            "size": 1073741824
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 53661696,
+            "size": 54525952
+          },
+          {
+            "rss": 44384256,
+            "size": 45088768
+          },
+          {
+            "rss": 44384256,
+            "size": 45088768
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 91623395328,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 676614144,
+        "fordblks": 2637856,
+        "fsmblks": 32,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 63568,
+        "ordblks": 376,
+        "smblks": 1,
+        "uordblks": 673976288,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 14.222,
+      "stage": "startup"
+    },
+    {
+      "Pss_bytes": 2590377984,
+      "RssAnon_bytes": 2145390592,
+      "RssFile_bytes": 407285760,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 2603470848,
+      "VmRSS_bytes": 2603470848,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 3,
+            "rss": 0
+          },
+          "heap": {
+            "count": 1,
+            "rss": 610983936
+          },
+          "le_1GiB": {
+            "count": 4,
+            "rss": 440143872
+          },
+          "le_1MiB": {
+            "count": 225,
+            "rss": 32755712
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 331485184
+          },
+          "le_64MiB": {
+            "count": 50,
+            "rss": 628690944
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 610983936,
+            "size": 675221504
+          },
+          {
+            "rss": 269422592,
+            "size": 269484032
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 170721280,
+            "size": 1073741824
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 53661696,
+            "size": 54525952
+          },
+          {
+            "rss": 44384256,
+            "size": 45088768
+          },
+          {
+            "rss": 44384256,
+            "size": 45088768
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 91623395328,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 678060032,
+        "fordblks": 2600048,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 29312,
+        "ordblks": 377,
+        "smblks": 0,
+        "uordblks": 675459984,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 14.31,
+      "stage": "startup"
+    },
+    {
+      "Pss_bytes": 6485330944,
+      "RssAnon_bytes": 6038372352,
+      "RssFile_bytes": 409251840,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23766048768,
+      "VmRSS_bytes": 6498418688,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4063432704
+          },
+          "heap": {
+            "count": 1,
+            "rss": 611229696
+          },
+          "le_1GiB": {
+            "count": 3,
+            "rss": 269426688
+          },
+          "le_1MiB": {
+            "count": 226,
+            "rss": 32776192
+          },
+          "le_256MiB": {
+            "count": 4,
+            "rss": 331485184
+          },
+          "le_64MiB": {
+            "count": 50,
+            "rss": 628690944
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 611229696,
+            "size": 675508224
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269426688,
+            "size": 269484032
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 176160768,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 53661696,
+            "size": 54525952
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87553974272,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 678346752,
+        "fordblks": 2789376,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 99024,
+        "ordblks": 350,
+        "smblks": 0,
+        "uordblks": 675557376,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 82.998,
+      "stage": "startup"
+    },
+    {
+      "Pss_bytes": 7298808832,
+      "RssAnon_bytes": 6848397312,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23766048768,
+      "VmRSS_bytes": 7311896576,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4138897408
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 3,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 216,
+            "rss": 32591872
+          },
+          "le_256MiB": {
+            "count": 13,
+            "rss": 935641088
+          },
+          "le_64MiB": {
+            "count": 52,
+            "rss": 693157888
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 251625472,
+            "size": 2147483648
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87115792384,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 40733792,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 29440304,
+        "ordblks": 1464,
+        "smblks": 0,
+        "uordblks": 704557984,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 137.636,
+      "stage": "reload_1"
+    },
+    {
+      "Pss_bytes": 7295663104,
+      "RssAnon_bytes": 6845251584,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23766048768,
+      "VmRSS_bytes": 7308750848,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4135751680
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 3,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 216,
+            "rss": 32591872
+          },
+          "le_256MiB": {
+            "count": 13,
+            "rss": 935641088
+          },
+          "le_64MiB": {
+            "count": 52,
+            "rss": 693157888
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 248479744,
+            "size": 2147483648
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87059468288,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 40722816,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 29440304,
+        "ordblks": 1409,
+        "smblks": 0,
+        "uordblks": 704568960,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 138.815,
+      "stage": "reload_1"
+    },
+    {
+      "Pss_bytes": 7295663104,
+      "RssAnon_bytes": 6845251584,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23766048768,
+      "VmRSS_bytes": 7308750848,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4135751680
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 3,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 216,
+            "rss": 32591872
+          },
+          "le_256MiB": {
+            "count": 13,
+            "rss": 935641088
+          },
+          "le_64MiB": {
+            "count": 52,
+            "rss": 693157888
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 248479744,
+            "size": 2147483648
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87059210240,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 39242672,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 29440304,
+        "ordblks": 1409,
+        "smblks": 0,
+        "uordblks": 706049104,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 138.944,
+      "stage": "reload_1"
+    },
+    {
+      "Pss_bytes": 11184901120,
+      "RssAnon_bytes": 10734489600,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 11197988864,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 8,
+            "rss": 8024989696
+          },
+          "heap": {
+            "count": 1,
+            "rss": 677294080
+          },
+          "le_1GiB": {
+            "count": 4,
+            "rss": 269484032
+          },
+          "le_1MiB": {
+            "count": 216,
+            "rss": 32591872
+          },
+          "le_256MiB": {
+            "count": 13,
+            "rss": 935641088
+          },
+          "le_64MiB": {
+            "count": 52,
+            "rss": 693157888
+          },
+          "le_8MiB": {
+            "count": 90,
+            "rss": 70815744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 677294080,
+            "size": 742453248
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 250445824,
+            "size": 2147483648
+          },
+          {
+            "rss": 245735424,
+            "size": 249569280
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 82664230912,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 745291776,
+        "fordblks": 39238448,
+        "fsmblks": 0,
+        "hblkhd": 18739200,
+        "hblks": 8,
+        "keepcost": 29440304,
+        "ordblks": 1399,
+        "smblks": 0,
+        "uordblks": 706053328,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 206.306,
+      "stage": "reload_1"
+    },
+    {
+      "Pss_bytes": 7325162496,
+      "RssAnon_bytes": 6874750976,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 7338250240,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4159500288
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 7,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34656256
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689913856
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 642736128
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 272228352,
+            "size": 2147483648
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87042363392,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 45491200,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3332,
+        "smblks": 0,
+        "uordblks": 716352512,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 265.506,
+      "stage": "reload_2"
+    },
+    {
+      "Pss_bytes": 7321631744,
+      "RssAnon_bytes": 6871220224,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 7334719488,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4155969536
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 7,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34656256
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689913856
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 642736128
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 268697600,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 86979416064,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 45479392,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3263,
+        "smblks": 0,
+        "uordblks": 716364320,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 266.811,
+      "stage": "reload_2"
+    },
+    {
+      "Pss_bytes": 7321631744,
+      "RssAnon_bytes": 6871220224,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28470018048,
+      "VmRSS_bytes": 7334719488,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4155969536
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 7,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34656256
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689913856
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 642736128
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 268697600,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 86979416064,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 43999248,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3264,
+        "smblks": 0,
+        "uordblks": 717844464,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 267.224,
+      "stage": "reload_2"
+    },
+    {
+      "Pss_bytes": 11640773632,
+      "RssAnon_bytes": 11190362112,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 11653861376,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 8,
+            "rss": 8475107328
+          },
+          "heap": {
+            "count": 1,
+            "rss": 694210560
+          },
+          "le_1GiB": {
+            "count": 8,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34656256
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689913856
+          },
+          "le_64MiB": {
+            "count": 47,
+            "rss": 642740224
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 863879168,
+            "size": 2147483648
+          },
+          {
+            "rss": 694210560,
+            "size": 759005184
+          },
+          {
+            "rss": 432013312,
+            "size": 2583691264
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 268697600,
+            "size": 2147483648
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 82242052096,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 761843712,
+        "fordblks": 43993248,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29441648,
+        "ordblks": 3259,
+        "smblks": 0,
+        "uordblks": 717850464,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 337.898,
+      "stage": "reload_2"
+    },
+    {
+      "Pss_bytes": 7353404416,
+      "RssAnon_bytes": 6902992896,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 7366492160,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4182188032
+          },
+          "heap": {
+            "count": 1,
+            "rss": 699813888
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34689024
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689909760
+          },
+          "le_64MiB": {
+            "count": 48,
+            "rss": 642658304
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 699813888,
+            "size": 764280832
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 294989824,
+            "size": 2147483648
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 86999588864,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 767119360,
+        "fordblks": 50762496,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3795,
+        "smblks": 0,
+        "uordblks": 716356864,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 393.242,
+      "stage": "reload_3"
+    },
+    {
+      "Pss_bytes": 7327263744,
+      "RssAnon_bytes": 6876852224,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 7340351488,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4156047360
+          },
+          "heap": {
+            "count": 1,
+            "rss": 699813888
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34689024
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689909760
+          },
+          "le_64MiB": {
+            "count": 48,
+            "rss": 642658304
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 699813888,
+            "size": 764280832
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 268849152,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87019917312,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 767119360,
+        "fordblks": 50758784,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3741,
+        "smblks": 0,
+        "uordblks": 716360576,
+        "usmblks": 0
+      },
+      "method": "_precompute_node_embeddings",
+      "seconds": 394.534,
+      "stage": "reload_3"
+    },
+    {
+      "Pss_bytes": 7327263744,
+      "RssAnon_bytes": 6876852224,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28495941632,
+      "VmRSS_bytes": 7340351488,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 6,
+            "rss": 4156047360
+          },
+          "heap": {
+            "count": 1,
+            "rss": 699813888
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34689024
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689909760
+          },
+          "le_64MiB": {
+            "count": 48,
+            "rss": 642658304
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 699813888,
+            "size": 764280832
+          },
+          {
+            "rss": 431939584,
+            "size": 2147483648
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 268849152,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          },
+          {
+            "rss": 67129344,
+            "size": 67244032
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 87019917312,
+      "edge": "enter",
+      "mallinfo2": {
+        "arena": 767119360,
+        "fordblks": 49278640,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3742,
+        "smblks": 0,
+        "uordblks": 717840720,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 395.013,
+      "stage": "reload_3"
+    },
+    {
+      "Pss_bytes": 11646434304,
+      "RssAnon_bytes": 11196022784,
+      "RssFile_bytes": 412704768,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28501413888,
+      "VmRSS_bytes": 11659522048,
+      "anon": {
+        "classes": {
+          "gt_1GiB": {
+            "count": 7,
+            "rss": 8475217920
+          },
+          "heap": {
+            "count": 1,
+            "rss": 699813888
+          },
+          "le_1GiB": {
+            "count": 10,
+            "rss": 564690944
+          },
+          "le_1MiB": {
+            "count": 218,
+            "rss": 34689024
+          },
+          "le_256MiB": {
+            "count": 12,
+            "rss": 689909760
+          },
+          "le_64MiB": {
+            "count": 48,
+            "rss": 642658304
+          },
+          "le_8MiB": {
+            "count": 88,
+            "rss": 58527744
+          }
+        },
+        "largest": [
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 3455258624,
+            "size": 3460300800
+          },
+          {
+            "rss": 1295851520,
+            "size": 2147483648
+          },
+          {
+            "rss": 699813888,
+            "size": 764280832
+          },
+          {
+            "rss": 295206912,
+            "size": 299892736
+          },
+          {
+            "rss": 269484032,
+            "size": 269484032
+          },
+          {
+            "rss": 268849152,
+            "size": 2147483648
+          },
+          {
+            "rss": 85749760,
+            "size": 88219648
+          }
+        ]
+      },
+      "cuda_driver_free_bytes": 82392162304,
+      "edge": "exit",
+      "mallinfo2": {
+        "arena": 767119360,
+        "fordblks": 49272640,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 29442944,
+        "ordblks": 3737,
+        "smblks": 0,
+        "uordblks": 717846720,
+        "usmblks": 0
+      },
+      "method": "_load_shortest_paths",
+      "seconds": 464.508,
+      "stage": "reload_3"
+    }
+  ],
+  "serving_script_sha256": "d097cf974e0ba05d552af06395f2e72baec3206edc8d9c3a0b5d30b79ea3d322",
+  "settings": {
+    "checks": 5,
+    "reloads": 3,
+    "seed": 20260930
+  },
+  "sizes": {
+    "generation_0": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    },
+    "generation_1": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    },
+    "generation_2": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    },
+    "generation_3": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    }
+  },
+  "startup_seconds": 83.111,
+  "subject": {
+    "checkpoint_sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79",
+    "graph_sha256": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+    "sp_table_sha256": "dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027"
+  },
+  "tool_sha256": "406a7b527f8d54ff24583b164e1fa0a758f7da2aef8df00763446f25a24a3741",
+  "wall_seconds": 524.023
+}

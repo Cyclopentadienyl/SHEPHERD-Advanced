@@ -351,6 +351,13 @@ first-reload difference (+32.6 MB) and then moved by −5.0 and +7.6 MB: neither
 growth under the rules, so ambiguous. Acceptance 2 stays open; the runbook's second phase
 locates the growth common to both commits first. Choices 1 and 3 were not taken.
 
+**The reload-memory investigation ended on 2026-10-13** (the owner's decision; [`reload-inproc-segments-2026-10-13/`](../reload-inproc-segments-2026-10-13/README.md)):
+The PyTorch wheel in use is confirmed to contain mimalloc purge defects that upstream has since fixed; they are a strong candidate cause of the observed memory retention; the attribution of all of the increase is not established. It is not a confirmed root
+cause, nothing is fixed, and other factors are not excluded; no change is made to the pipeline.
+The growth common to both commits and M2.1's ~30 MB difference are recorded apart, and this
+directory's capacity readings are judged on their own; acceptance 2 is decided by the owner
+separately.
+
 1. **Accept it uninvestigated.** Acceptance 2 calls a rise "an observation to investigate" and
    says "an investigation uses a separate diagnostic run"; choosing this is the owner's decision to
    accept the rise without one, recorded as such in the plan, with the source not located and the

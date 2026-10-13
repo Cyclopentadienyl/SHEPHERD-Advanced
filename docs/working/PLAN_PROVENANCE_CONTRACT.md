@@ -1697,6 +1697,14 @@ each moves its callers before anything is removed.
           about 70 MB. Cause not located. Next, by the reviewer's instruction: a read-only
           check of the embedding and SP build steps, then at most one run of the same tool with
           readings around those two methods.
+        - **The supplementary run and the conclusion (2026-10-13):** [`reload-inproc-segments-2026-10-13/`](scorer-measurement/reload-inproc-segments-2026-10-13/README.md).
+          The run with segments did not repeat the steady growth; the reviewer found that the
+          wheel's `libc10.so` allocates CPU memory through mimalloc 2.2.4 with two purge
+          defects since fixed upstream. The owner ended the investigation: the PyTorch wheel in use is confirmed to contain mimalloc purge defects that upstream has since fixed; they are a strong candidate cause of the observed memory retention; the attribution of all of the increase is not established.
+          No causal control, no pipeline change, no `MIMALLOC_*` setting, no new tool; the
+          dependency limitation is BACKLOG item 22. The common growth and M2.1's ~30 MB
+          difference are recorded apart; acceptance 2 is the owner's separate decision, and S10's
+          capacity is judged on its own readings and limits.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.

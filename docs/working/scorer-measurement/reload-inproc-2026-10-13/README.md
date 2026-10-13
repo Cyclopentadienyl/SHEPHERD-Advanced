@@ -66,6 +66,9 @@ it arises. `collected = 0` says nothing about cycles at other moments.
 
 ## 4. Next
 
+**Superseded (2026-10-13):** the supplementary run and the investigation's conclusion are in
+[`reload-inproc-segments-2026-10-13/`](../reload-inproc-segments-2026-10-13/README.md). What follows is the instruction as it stood.
+
 The reviewer's convergence instruction (2026-10-13): first a read-only check of the two build
 steps of the pipeline that are the likeliest places, `_precompute_node_embeddings` and
 `_load_shortest_paths` with `build_sp_index` (the SP distance tensor is 431.9 MB, the same order
