@@ -995,8 +995,9 @@ sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`
 2. **否則為這個工作區重建這一對**：執行 `scripts/compute_shortest_paths.py`，它會把
    距離表與 sidecar 一起發佈，並綁定到這個工作區的圖。**不要手寫 sidecar，也不要用
    表內最大距離回推 `max_hops`**——那個數字證明不了天花板。
-3. 在那之前，要嘛保留正在服務的部署，要嘛移除距離表、改以不含最短路徑的方式服務，
-   並明確知道評分模式已經改變。
+3. 在那之前，要嘛保留正在服務的部署，要嘛改以不含最短路徑的方式服務：把
+   `shortest_paths.pt` **與** `shortest_paths.meta.json` 成對移出工作區並保留，再重新
+   載入。只留下 sidecar 會被當成「一對中的一邊」而拒絕。評分模式會因此改變。
 
 原本用來替缺 sidecar 的表補上 bound 的 `SHEPHERD_SP_HOP_BOUND`，已隨 M2.5 **退役**：
 這類表在讀取任何 bound 之前就會被拒絕，因此這個變數不再被讀取。請從服務環境中移除它。

@@ -36,9 +36,10 @@ a strong candidate cause, attribution not established, and accepted S10's capaci
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. M2.2–M2.6 are implemented (2026-10-13; their sections in §4, "As implemented"); the
-reviewer's code review of `810d344..0aabfc3` (2026-10-13) found three P2 and no P1, fixed with the
-reviewer's two recommendations and awaiting re-review; not accepted on the homelab. The rest of
-M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+reviewer's code review of `810d344..0aabfc3` (2026-10-13) found three P2 and no P1, and its
+re-review of the fixes (`0aabfc3..26fe84c`, 2026-10-13) closed all three with no new P1 or P2, so
+M2's acceptance on the homelab is next; M2 is not complete. M2.1's acceptance stands as recorded.
+The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.

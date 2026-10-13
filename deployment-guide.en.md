@@ -485,8 +485,10 @@ pairing protocol, is refused at load.
    together, bound to this workspace's graph. **Do not write a sidecar by hand,
    and do not infer `max_hops` from the largest distance in the table** — that
    number cannot establish the ceiling.
-3. Until then, either keep the deployment that is serving, or remove the table to
-   serve without shortest paths, knowing that the scoring mode changes.
+3. Until then, either keep the deployment that is serving, or serve without
+   shortest paths: move `shortest_paths.pt` **and** `shortest_paths.meta.json` out
+   of the workspace together, keep them, then reload. A sidecar left behind alone
+   is refused as one side of a pair. The scoring mode changes.
 
 `SHEPHERD_SP_HOP_BOUND`, which used to supply the bound for a table without a
 sidecar, is **retired** with M2.5: such a table is refused before any bound is
