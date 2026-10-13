@@ -391,13 +391,20 @@ def test_kg_json_republished_after_its_check_leaves_the_run_on_what_was_checked(
 
 
 def test_a_republication_before_the_run_is_read_and_recorded(cli, ws, other):
-    """Fired before either read, the run reads and records B."""
+    """Fired before either read, the run reads and records B.
+
+    The checkpoint is one trained on the republished graph: a checkpoint that
+    records A's tensors is refused against B (M2.4), which is not this test's
+    subject."""
     target, manifest_path = ws.data_dir / "node_features.pt", ws.data_dir / "split_manifest.json"
     data = (other / "node_features.pt").read_bytes()
     replace_file(target, data, "rename")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["artifacts"]["node_features"] = hashlib.sha256(data).hexdigest()
     replace_file(manifest_path, json.dumps(manifest).encode("utf-8"), "rename")
+    contents = torch.load(ws.checkpoint, map_location="cpu", weights_only=True)
+    contents["training_input_digests"]["node_features"] = hashlib.sha256(data).hexdigest()
+    torch.save(contents, ws.checkpoint)
 
     assert _main(cli, ws) == 0
 

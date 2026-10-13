@@ -45,6 +45,7 @@ from src.inference.pipeline import (  # noqa: E402
     PipelineConfig,
 )
 from src.kg.graph import KnowledgeGraph  # noqa: E402
+from tests.fixtures.generated_workspace import graph_record  # noqa: E402
 from tests.fixtures.synthetic_workspace import (  # noqa: E402
     FEATURE_DIM,
     HIDDEN_DIM,
@@ -65,6 +66,8 @@ def _checkpoint_for_another_graph(data_dir, path):
 
     Everything about it is well formed: it loads, its configuration matches its
     weights, and it would serve its own graph. It does not build over this one.
+    It records this workspace's graph roles, so the build is what refuses it, not
+    the training record (M2.4, whose refusals `test_training_record.py` shows).
     """
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
 
@@ -83,6 +86,7 @@ def _checkpoint_for_another_graph(data_dir, path):
             "metadata": metadata,
             "in_channels_dict": in_channels,
             "epoch": 1,
+            "training_input_digests": graph_record(data_dir),
         },
         path,
     )

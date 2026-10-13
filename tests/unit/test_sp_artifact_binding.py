@@ -451,17 +451,20 @@ def loader_pipeline(tmp_path, *, graph_digest=None):
 
 class TestTheLoaderEnforcesTheBinding:
 
-    def test_a_legacy_pair_serves_and_is_reported_unrecorded(self, tmp_path):
-        """Refusing these would break every deployment for a claim they never
-        made. Serving them while calling the provenance *verified* would be
-        worse — so it is neither."""
+    def test_a_legacy_pair_is_refused(self, tmp_path):
+        """Contract M2.5. A legacy pair used to be served and reported
+        unrecorded, so as not to break deployments for a claim they never made;
+        it records no graph, and the shortest-path term is part of the ranking,
+        so it is refused and rebuilt (decision 2)."""
         publish_legacy(tmp_path)
         pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
 
-        pipeline._load_shortest_paths(Path(tmp_path))
+        with pytest.raises(SPArtifactError, match="carries no source binding"):
+            pipeline._load_shortest_paths(Path(tmp_path))
 
-        assert pipeline._sp_ready is True
-        assert pipeline._sp_kg_binding == "unrecorded"
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+        assert pipeline._sp_kg_binding is None
 
     def test_a_bound_pair_over_the_graph_it_names_serves(self, tmp_path):
         publish(tmp_path, kg_digest=DIGEST_A)

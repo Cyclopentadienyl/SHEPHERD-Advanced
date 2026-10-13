@@ -24,8 +24,9 @@ it only in that it is degenerate — no rank from this workspace is evidence abo
 the scorer.
 
 The checkpoint is written in the shape the training writer produces (weights,
-config, epoch, logs): there is no `metadata` or `in_channels_dict` key, so every
-test built on it builds the model the way production does.
+config, epoch, logs, and the graph roles of `training_input_digests`): there is
+no `metadata` or `in_channels_dict` key, so every test built on it builds the
+model the way production does.
 
 Module: tests/fixtures/synthetic_workspace.py
 """
@@ -137,7 +138,7 @@ def build_workspace(
     # generated one is, so the workspace has to carry the manifest that binds them.
     # Writing a bare `kg.json` and two small generated cohorts beside them is what
     # a real deployment holds; the measurement paths under test read neither.
-    from tests.fixtures.generated_workspace import write_generated_workspace
+    from tests.fixtures.generated_workspace import graph_record, write_generated_workspace
 
     (data_dir / "kg.json").write_text(json.dumps({"synthetic": True}))
     write_generated_workspace(
@@ -160,6 +161,9 @@ def build_workspace(
             "config": {"hidden_dim": HIDDEN_DIM, "num_layers": 2, "num_heads": 2},
             "epoch": 1,
             "logs": {"val_mrr": 0.0},
+            # The graph roles training records (M2.2), so serving and
+            # measurement accept it for this workspace (M2.4).
+            "training_input_digests": graph_record(data_dir),
         },
         checkpoint_path,
     )

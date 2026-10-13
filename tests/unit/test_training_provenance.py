@@ -15,7 +15,7 @@ whenever a byte moved would stop being a compatibility check.
 no comparison against a current workspace, no registry, no locking and no
 transactional loading — `verify_fingerprint` still checks structure alone and says
 so. Since contract M2.1's S8 every recorded digest is that of the bytes a reader
-parsed (`read_training_inputs`, `resolve_resume_checkpoint`), so the record and
+parsed (`read_training_inputs`, `read_resume_parent`), so the record and
 the inputs trained on come from the same reads; the entry-point acceptance for
 that is `tests/unit/test_training_reads.py`.
 
@@ -246,102 +246,93 @@ def test_the_record_refuses_a_role_with_no_read(tmp_path):
 # ---------------------------------------------------------------------------
 # The resume parent, which is an input too
 # ---------------------------------------------------------------------------
-class _RecordingTrainer:
-    """Records what `restore_checkpoint` was handed, and nothing else.
+def _inputs(data_dir: Path):
+    from scripts.train_model import read_training_inputs
 
-    A real `Trainer` would bring a model, an optimizer and a config along for a
-    decision that touches none of them."""
-
-    device = torch.device("cpu")
-
-    def __init__(self):
-        self.restored = []
-
-    def restore_checkpoint(self, checkpoint):
-        self.restored.append(checkpoint)
+    return read_training_inputs(data_dir)
 
 
-def test_no_resume_requested_reads_nothing_and_records_nothing():
+def _parent(path: Path, data_dir: Path, **contents) -> Path:
+    """A checkpoint that records `data_dir`'s workspace roles, as a run over it
+    would (`training_input_digests`, the production builder)."""
+    from scripts.train_model import training_input_digests
+
+    torch.save({"training_input_digests": training_input_digests(_inputs(data_dir)),
+                **contents}, path)
+    return path
+
+
+def test_no_resume_requested_reads_nothing_and_records_nothing(tmp_path):
     """The production decision, not a helper's response to an argument.
 
     These tests exist because an earlier version built the role map from a path
     or `None` and assumed `train()` chose correctly. That assumption is what the
     earlier mirrored-role-map defect was made of.
     """
-    from scripts.train_model import resolve_resume_checkpoint
+    from scripts.train_model import read_resume_parent
 
-    trainer = _RecordingTrainer()
+    inputs = _inputs(_workspace(tmp_path / "ws"))
 
-    assert resolve_resume_checkpoint(trainer, None) is None
-    assert resolve_resume_checkpoint(trainer, "") is None
-    assert trainer.restored == []
-
-
-def test_a_requested_but_missing_parent_warns_restores_nothing_and_records_nothing(tmp_path):
-    """`train()` continues after the warning (refusing is M2.3's), so the run did
-    not consume the parent, and the record omits it rather than holding a role
-    with no digest."""
-    from scripts.train_model import resolve_resume_checkpoint
-
-    trainer = _RecordingTrainer()
-    absent = tmp_path / "not_here.pt"
-
-    assert resolve_resume_checkpoint(trainer, str(absent)) is None
-    assert trainer.restored == [], "a missing parent must not be restored"
+    assert read_resume_parent(None, inputs, "cpu") is None
+    assert read_resume_parent("", inputs, "cpu") is None
 
 
-def test_the_parent_restored_and_the_identity_returned_come_from_one_read(tmp_path):
-    """The returned identity **is** that of the bytes the trainer restored from,
-    and the parent is opened once, so this function cannot return a parent other
-    than the one it restored without being edited; that `train` records this
-    return value is shown at the entry point (`test_training_reads.py`)."""
-    from scripts.train_model import resolve_resume_checkpoint
+def test_a_requested_but_missing_parent_is_refused(tmp_path):
+    """M2.3: the run does not train from scratch instead, as it did when this
+    only warned."""
+    from scripts.train_model import read_resume_parent
+
+    inputs = _inputs(_workspace(tmp_path / "ws"))
+
+    with pytest.raises(FileNotFoundError, match="does not train from scratch"):
+        read_resume_parent(str(tmp_path / "not_here.pt"), inputs, "cpu")
+
+
+def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_path):
+    """The returned dict and identity **are** those of the one read, which
+    `train` restores from and records; that it does is shown at the entry point
+    (`test_training_reads.py`)."""
+    from scripts.train_model import read_resume_parent
     from tests.fixtures.opens import count_opens
 
-    trainer = _RecordingTrainer()
-    parent = tmp_path / "parent.pt"
+    data_dir = _workspace(tmp_path / "ws")
     saved = {"state_dict": {"w": torch.arange(4.0)}, "epoch": 7}
-    torch.save(saved, parent)
+    parent = _parent(tmp_path / "parent.pt", data_dir, **saved)
+    inputs = _inputs(data_dir)
 
     with count_opens() as opens:
-        returned = resolve_resume_checkpoint(trainer, str(parent))
+        returned = read_resume_parent(str(parent), inputs, "cpu")
 
     assert opens.opens(parent) == 1
-    assert returned.sha256 == _sha256(parent)
-    assert len(trainer.restored) == 1
-    assert trainer.restored[0]["epoch"] == 7
-    assert torch.equal(trainer.restored[0]["state_dict"]["w"], saved["state_dict"]["w"])
+    assert returned.identity.sha256 == _sha256(parent)
+    assert returned.checkpoint["epoch"] == 7
+    assert torch.equal(returned.checkpoint["state_dict"]["w"], saved["state_dict"]["w"])
 
 
 def test_the_decision_feeds_the_record_end_to_end(tmp_path):
     """The two halves joined: a real decision, then the record built from it."""
-    from scripts.train_model import resolve_resume_checkpoint
+    from scripts.train_model import read_resume_parent
 
     data_dir = _workspace(tmp_path / "ws")
-    parent = tmp_path / "parent.pt"
-    torch.save({"state_dict": {}}, parent)
-    trainer = _RecordingTrainer()
+    parent = _parent(tmp_path / "parent.pt", data_dir, state_dict={})
 
-    restored = resolve_resume_checkpoint(trainer, str(parent))
-    assert _training_record(data_dir, parent=restored)["resume_checkpoint"] == _sha256(parent)
-
-    unrestored = resolve_resume_checkpoint(trainer, str(tmp_path / "gone.pt"))
-    assert "resume_checkpoint" not in _training_record(data_dir, parent=unrestored)
+    restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+    record = _training_record(data_dir, parent=restored.identity)
+    assert record["resume_checkpoint"] == _sha256(parent)
 
 
 def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
     """The case the field exists for: identical workspace files, different
     parents. Without the parent role these two runs carried the same record."""
-    from scripts.train_model import resolve_resume_checkpoint
+    from scripts.train_model import read_resume_parent
 
     data_dir = _workspace(tmp_path / "ws")
-    first, second = tmp_path / "a.pt", tmp_path / "b.pt"
-    torch.save({"state_dict": {"w": torch.zeros(1)}}, first)
-    torch.save({"state_dict": {"w": torch.ones(1)}}, second)
+    first = _parent(tmp_path / "a.pt", data_dir, state_dict={"w": torch.zeros(1)})
+    second = _parent(tmp_path / "b.pt", data_dir, state_dict={"w": torch.ones(1)})
 
     def record_for(parent):
-        restored = resolve_resume_checkpoint(_RecordingTrainer(), str(parent))
-        return _training_record(data_dir, parent=restored)
+        restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+        return _training_record(data_dir, parent=restored.identity)
 
     a, b = record_for(first), record_for(second)
 

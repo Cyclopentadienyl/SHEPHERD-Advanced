@@ -283,6 +283,20 @@ def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
     return data_dir / "kg.json"
 
 
+def record_training_graph(ckpt_path: Path, data_dir: Path) -> None:
+    """Give a hand-written checkpoint the graph roles training records (M2.2).
+
+    These checkpoints are trained in the test over the tensors `bind_workspace`
+    then writes, so they are this workspace's; serving refuses any checkpoint
+    whose record does not name the workspace's graph (M2.4).
+    """
+    from tests.fixtures.generated_workspace import graph_record
+
+    contents = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    contents["training_input_digests"] = graph_record(data_dir)
+    torch.save(contents, ckpt_path)
+
+
 class TestCheckpointBridge:
     """Verify the train → save checkpoint → load → inference chain."""
 
@@ -334,6 +348,7 @@ class TestCheckpointBridge:
         kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
         # --- Load fresh pipeline from disk (production path) ---
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
@@ -409,6 +424,7 @@ class TestCheckpointBridge:
         data_dir = tmp_path / "encode_graph_data"
         kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
@@ -553,6 +569,7 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
@@ -595,6 +612,7 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
@@ -628,6 +646,7 @@ class TestShortestPathIntegration:
 
         eta_value = 0.6
         config = PipelineConfig(eta=eta_value)
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
@@ -669,6 +688,7 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
@@ -703,6 +723,7 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),

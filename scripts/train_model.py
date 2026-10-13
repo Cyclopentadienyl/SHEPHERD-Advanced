@@ -112,6 +112,7 @@ from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
 if TYPE_CHECKING:
     from src.kg.artifacts import ManifestRead
     from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
+    from src.utils.checkpoint_io import CheckpointRead
     from src.utils.fingerprint import ReadIdentity
 
 # Configure logging
@@ -479,30 +480,38 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
     return TrainingInputs(manifest, graph, samples, with_validation, bound)
 
 
-def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optional[ReadIdentity]:
-    """Read and restore a parent checkpoint if one was asked for and is there, and
-    return the identity of **the bytes that were restored**.
+def read_resume_parent(
+    requested: Optional[str], inputs: TrainingInputs, device: str,
+) -> Optional["CheckpointRead"]:
+    """Read the resume parent once and refuse it unless it was trained on this
+    run's inputs (contract M2.3). Returns `None` when nothing was requested.
 
-    Returns `None` when nothing was requested, and `None` when a path was
-    requested but does not exist — in that case the run warns and continues, so it
-    did not consume the parent and must not record it. (Refusing a missing parent
-    is M2.3's.) A file that vanishes between that check and the read raises; it
-    is never recorded as `None`.
+    **At the top of the run**, beside the workspace checks: `train()` calls this
+    right after `read_training_inputs`, before the run directories,
+    `config.yaml`, `runtime.json`, the model or any checkpoint exist, so a refused
+    parent leaves none of them behind and nothing is restored.
 
-    **Reading, restoring and returning the identity are one operation on
-    purpose** (contract M2.1, S8). The parent is read once, with this site's own
-    options (`map_location` the trainer's device, `weights_only=False`), the
-    trainer restores from the dict that read parsed, and the identity returned is
-    that read's. The identity returned therefore cannot describe bytes other than
-    those restored; `train()` records it from its one binding site.
+    - **A requested parent that does not exist refuses.** The run does not train
+      from scratch instead.
+    - **Read once** (M2.1), with this site's options (`map_location` the run's
+      device, `weights_only=False`). The trainer restores from this read's dict
+      and the record's `resume_checkpoint` is this read's identity, so the state
+      restored and the digest recorded cannot come from two reads.
+    - **The parent must record every one of this run's workspace roles with the
+      same digest, and no other** (`verify_training_record`, the comparator
+      serving and measurement use; the role set is its argument). The graph
+      roles (`kg`, `node_features`, `edge_indices`, `num_nodes`) are decision 1
+      applied to the parent. The data roles (`split_manifest`, `train_samples`,
+      and `val_samples` when this run validates) are the owner's decision of
+      2026-10-06: resume continues training on the same data. A parent with no
+      record (from before the contract), a role missing on either side (a
+      parent that validated, resumed by a run whose parsed `val_samples` are
+      empty, among them) or a different digest refuses. That is a product
+      restriction, not a verdict on the parent.
 
-    **Extracted so the decision itself is testable.** Its outcomes used to be
-    reachable only by running `train()`.
-
-    One further property comes free, and it matters. `train()` binds the parent
-    in exactly one place, from this call. Building the digest map above that line
-    makes the name undefined, which is an `F821` that the lint gate in
-    `tests/unit/test_training_provenance.py` already fails on.
+    The parent's own `resume_checkpoint` is its lineage, not a workspace input,
+    and is not compared: every link in a resume chain read the same files, so a
+    checkpoint's record covers its history.
     """
     from src.utils.checkpoint_io import read_checkpoint
 
@@ -511,18 +520,51 @@ def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optiona
 
     resume_path = Path(requested)
     if not resume_path.exists():
-        logger.warning(f"Checkpoint not found: {resume_path}")
-        return None
+        raise FileNotFoundError(
+            f"The resume parent {resume_path} does not exist. It was requested, so "
+            "the run does not train from scratch instead; name an existing "
+            "checkpoint, or start a new run without --resume."
+        )
 
-    # Named before the read, so a parent that does not load or restore fails
-    # after a line that says which file it was.
-    logger.info(f"Resuming from checkpoint: {resume_path}")
-    parent = read_checkpoint(resume_path, map_location=trainer.device, weights_only=False)
-    trainer.restore_checkpoint(parent.checkpoint)
-    logger.info(
-        f"Resumed from checkpoint: {resume_path} (sha256 {parent.identity.sha256[:12]})"
+    # Named before the read, so a parent that does not load fails after a line
+    # that says which file it was.
+    logger.info(f"Reading the resume parent: {resume_path}")
+    parent = read_checkpoint(resume_path, map_location=device, weights_only=False)
+    check_resume_parent(
+        parent.checkpoint, inputs, recorded_by=f"The resume parent {resume_path}"
     )
-    return parent.identity
+    logger.info(
+        f"Resume parent accepted: {resume_path} (sha256 {parent.identity.sha256[:12]})"
+    )
+    return parent
+
+
+def check_resume_parent(
+    checkpoint: Any, inputs: TrainingInputs, *, recorded_by: str,
+    compared_with: str = "this run",
+) -> None:
+    """M2.3's rule, on a checkpoint already read: it must record every one of
+    the workspace roles a run over `inputs` records, with the same digests, and
+    no other workspace role. Raises `TrainingRecordMismatch`.
+
+    One function, so the inventory (`audit_checkpoint_family.py --inventory`,
+    M2.6) applies the rule `train` applies rather than a copy of it. The
+    parent's own `resume_checkpoint` is its lineage and is not compared.
+    """
+    from src.utils.fingerprint import verify_training_record
+
+    current = training_input_digests(inputs)
+    record = (
+        checkpoint.get("training_input_digests") if isinstance(checkpoint, dict) else None
+    )
+    recorded = set(record) - {"resume_checkpoint"} if isinstance(record, dict) else set()
+    verify_training_record(
+        checkpoint,
+        current,
+        sorted(set(current) | recorded),
+        recorded_by=recorded_by,
+        compared_with=compared_with,
+    )
 
 
 def training_input_digests(
@@ -541,11 +583,11 @@ def training_input_digests(
     validation split is empty trains without it, and recording the role anyway
     would claim an input the run's results do not rest on.
 
-    `parent` is the checkpoint actually restored. A resumed run restores model
-    weights, optimizer, scheduler, scaler and training state from it, so two runs
-    over identical workspace files but different parents produce materially
-    different results. **One role, not a lineage**: the parent's own provenance
-    lives in the parent.
+    `parent` is the identity of the checkpoint restored (`read_resume_parent`'s
+    read). A resumed run restores model weights, optimizer, scheduler, scaler and
+    training state from it, so two runs over identical workspace files but
+    different parents produce materially different results. **One role, not a
+    lineage**: the parent's own provenance lives in the parent.
 
     **The manifest says how the workspace was cut, which the sample digests
     cannot.** Two byte-different sample files could have been split at the
@@ -719,10 +761,10 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # **One read per workspace input, and the check compares those reads**
     # (contract M2.1, S8). The graph tensors and samples verified here are the
     # ones trained on and recorded; `kg.json` is only identified (decision 1).
-    # The resume parent is not checked here: it is read later, where it is
-    # restored, after the run directories and `config.yaml` exist, and a
-    # requested parent that is missing still warns and trains from scratch
-    # (refusing it is M2.3's).
+    # The resume parent is read and checked here too (contract M2.3): a missing
+    # parent, one from before the contract, or one trained on other graph or
+    # sample files is refused before anything below exists, and the trainer
+    # later restores from this one read.
     #
     # No rollback and no transactional writing: the refusal simply moves ahead of
     # the side effects.
@@ -734,6 +776,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
         return {}
 
     inputs = read_training_inputs(data_dir)
+    parent = read_resume_parent(config.resume_from, inputs, device)
 
     # Create output directories
     output_dir = Path(config.output_dir)
@@ -862,16 +905,21 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # attribute here is not enough on its own.
     from src.utils.fingerprint import compute_fingerprint
 
-    # Resume if specified. One binding site, from one call: see
-    # `resolve_resume_checkpoint` for why that placement is load-bearing.
-    parent = resolve_resume_checkpoint(trainer, config.resume_from)
+    # Restore from the parent read and checked at the top (contract M2.3); the
+    # trainer reads nothing.
+    if parent is not None:
+        trainer.restore_checkpoint(parent.checkpoint)
+        logger.info(
+            f"Resumed from checkpoint: {parent.identity.path} "
+            f"(sha256 {parent.identity.sha256[:12]})"
+        )
 
-    # **After the resume decision, not before it.** A first version attached the
-    # digests above this block, where the parent cannot exist yet; a resumed
-    # run would then have recorded every current file and stayed silent about the
-    # parent checkpoint whose weights, optimizer, scheduler, scaler and training
-    # state it restored. Two runs over identical workspace files with different
-    # parents would have carried identical digests.
+    # **The parent is in the record.** A first version attached the digests
+    # before the resume decision; a resumed run then recorded every current file
+    # and stayed silent about the parent checkpoint whose weights, optimizer,
+    # scheduler, scaler and training state it restored. Two runs over identical
+    # workspace files with different parents would have carried identical
+    # digests.
     #
     # Both attributes are read by name in `ModelCheckpoint._save_checkpoint`, and
     # nothing reads them before `trainer.train()` below, so attaching them here
@@ -880,7 +928,9 @@ def train(config: TrainConfig) -> Dict[str, float]:
 
     # Only the roles this run consumed, and only from the reads: the inputs read
     # and verified at the top, and the parent restored above.
-    trainer.training_input_digests = training_input_digests(inputs, parent=parent)
+    trainer.training_input_digests = training_input_digests(
+        inputs, parent=parent.identity if parent is not None else None
+    )
 
     # Train
     logger.info("Starting training...")

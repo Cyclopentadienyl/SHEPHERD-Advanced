@@ -13,6 +13,12 @@ and the workspace inventories in `docs/` do not list the sidecar, so a real
 documentation produces. Refusing it would replace a correct score with a
 different one. So a missing sidecar still assumes 5 — and says that it did.
 
+*Superseded twice:* a missing sidecar then needed the bound stated
+(`sp_hop_bound`), and since contract M2.5 a table without a sidecar is refused
+outright: it records no binding to the graph. The tables below are therefore
+published bound, as the producer publishes them, over a graph whose digest the
+loader holds.
+
 Module: tests/unit/test_sp_hop_bound.py
 """
 from __future__ import annotations
@@ -22,6 +28,26 @@ import json
 import pytest
 
 torch = pytest.importorskip("torch")
+
+
+#: The graph every table below is bound to, and the digest each loader holds
+#: for the graph it serves. An unbound table is refused (contract M2.5).
+GRAPH_DIGEST = "c" * 64
+BUILD_ID = "0123456789abcdef" * 2
+
+
+def _bind(payload, sidecar):
+    """A table and sidecar as the producer publishes them: both halves carry
+    the build id and the sidecar names the graph. Only a sidecar written as an
+    object can carry it; a malformed one is left as the test wrote it."""
+    from src.inference.sp_artifact import SP_SCHEMA_VERSION, TENSOR_BUILD_ID_KEY
+
+    if not isinstance(sidecar, dict):
+        return payload, sidecar
+    if isinstance(payload, dict):
+        payload = {**payload, TENSOR_BUILD_ID_KEY: BUILD_ID}
+    return payload, {**sidecar, "schema_version": SP_SCHEMA_VERSION,
+                     "build_id": BUILD_ID, "kg_digest": GRAPH_DIGEST}
 
 
 def _config(**kwargs):
@@ -44,15 +70,16 @@ def _loader(tmp_path, *, distances, sidecar):
     data_dir = tmp_path / "ws"
     data_dir.mkdir(parents=True, exist_ok=True)
     n = len(distances)
-    torch.save(
+    table, sidecar = _bind(
         {
             "phenotype_idx": torch.arange(n, dtype=torch.int64),
             "target_idx": torch.arange(n, dtype=torch.int64),
             "target_type": torch.zeros(n, dtype=torch.int64),
             "distance": torch.tensor(distances, dtype=torch.int8),
         },
-        data_dir / "shortest_paths.pt",
+        sidecar,
     )
+    torch.save(table, data_dir / "shortest_paths.pt")
     if sidecar is not None:
         path = data_dir / "shortest_paths.meta.json"
         path.write_text(sidecar if isinstance(sidecar, str) else json.dumps(sidecar))
@@ -64,10 +91,9 @@ def _loader(tmp_path, *, distances, sidecar):
     pipeline._sp_max_hops = 5
     pipeline._sp_hop_bound_source = None
     pipeline._sp_kg_binding = None
-    # Mirrors a pipeline whose graph came from a verified workspace. These
-    # tables are published without a binding, so nothing is compared against it;
-    # the artifact-binding tests set it deliberately.
-    pipeline._graph_kg_digest = None
+    # Mirrors a pipeline whose graph came from a verified workspace, the graph
+    # these tables are bound to.
+    pipeline._graph_kg_digest = GRAPH_DIGEST
     return pipeline, data_dir
 
 
@@ -125,70 +151,30 @@ class TestAPresentSidecarIsBinding:
         assert pipeline._sp_lookup.unreachable_distance == 4.0
 
 
-class TestAMissingSidecarNeedsTheBoundStated:
-    """A recorded guess is still a guess.
+class TestATableWithoutASidecarIsRefused:
+    """No sidecar, no binding: refused, whatever bound is configured (M2.5).
 
-    A previous revision assumed the producer's default of 5 here and recorded
-    that it had assumed. Recording does not stop it changing an answer: the
-    producer's CLI accepts 1..127, so a legitimate 3-hop table is inside the
-    supported range, and read against 5 it reorders candidates. The floor check
-    cannot see that — the observed maximum is 3 either way.
+    A previous revision served such a table when the bound was stated
+    (`sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND` on the service) and kept it off
+    otherwise. Since contract M2.5 it records no graph and is refused before the
+    bound is resolved, so the configured bound no longer reaches a served table.
     """
 
-    def test_without_a_stated_bound_shortest_paths_stay_off(self, tmp_path):
+    @pytest.mark.parametrize("bound", [None, 3, 5])
+    def test_it_is_refused_and_nothing_is_published(self, tmp_path, bound):
         pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
-        pipeline.config = _config(sp_hop_bound=None)
+        pipeline.config = _config(sp_hop_bound=bound)
 
-        pipeline._load_shortest_paths(data_dir)
+        with pytest.raises(ValueError, match="carries no source binding"):
+            pipeline._load_shortest_paths(data_dir)
 
         assert pipeline._sp_ready is False
         assert pipeline._sp_lookup is None
 
-    def test_the_workspace_itself_is_not_refused(self, tmp_path):
-        """SP off is the state an absent table already produces. The tensors are
-        sound; what is declined is scoring against a ceiling nobody chose."""
-        pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
-        pipeline.config = _config(sp_hop_bound=None)
-
-        pipeline._load_shortest_paths(data_dir)  # returns, does not raise
-
-    def test_a_stated_bound_is_used_and_recorded_as_stated(self, tmp_path):
-        pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
-        pipeline.config = _config(sp_hop_bound=3)
-
-        pipeline._load_shortest_paths(data_dir)
-
-        assert pipeline._sp_ready is True
-        assert pipeline._sp_max_hops == 3
-        assert pipeline._sp_hop_bound_source == "configured"
-        assert pipeline._sp_lookup.unreachable_distance == 4.0
-
-    @pytest.mark.parametrize("bound,fragment", [
-        (True, "not an integer"),
-        ("3", "not an integer"),
-        (0, r"outside the \[1, 127\]"),
-        (128, r"outside the \[1, 127\]"),
-    ], ids=["bool", "string", "zero", "above-producer-range"])
-    def test_a_stated_bound_is_held_to_the_same_domain(self, tmp_path, bound, fragment):
-        """Stated is not trusted. The sidecar's rules are the configuration's."""
-        pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
-        pipeline.config = _config(sp_hop_bound=bound)
-
-        with pytest.raises(ValueError, match=fragment):
-            pipeline._load_shortest_paths(data_dir)
-
-    def test_a_stated_bound_below_the_table_is_refused(self, tmp_path):
-        """And it is not exempt from the one check that can contradict it."""
-        pipeline, data_dir = _loader(tmp_path, distances=[1, 5], sidecar=None)
-        pipeline.config = _config(sp_hop_bound=3)
-
-        with pytest.raises(ValueError, match="records a distance of 5"):
-            pipeline._load_shortest_paths(data_dir)
-
     def test_the_sidecar_wins_over_the_configured_bound(self, tmp_path):
-        """The file describes the artifact; the setting is for when no file does.
-        Without this, a stale configuration would quietly override a table that
-        came with its own answer."""
+        """The file describes the artifact; the setting was for when no file
+        does. A stale configuration must not override a table that came with its
+        own answer, and a served table now always has one."""
         pipeline, data_dir = _loader(
             tmp_path, distances=[1, 2, 3], sidecar={"max_hops": 3}
         )
@@ -380,11 +366,12 @@ class TestTheLoaderRefusesAPresentButUnusableTable:
 
         data_dir = tmp_path / "ws"
         data_dir.mkdir(parents=True, exist_ok=True)
+        payload, sidecar = _bind(payload, {"max_hops": 5})
         if isinstance(payload, bytes):
             (data_dir / "shortest_paths.pt").write_bytes(payload)
         else:
             torch.save(payload, data_dir / "shortest_paths.pt")
-        (data_dir / "shortest_paths.meta.json").write_text(json.dumps({"max_hops": 5}))
+        (data_dir / "shortest_paths.meta.json").write_text(json.dumps(sidecar))
 
         pipeline = DiagnosisPipeline.__new__(DiagnosisPipeline)
         pipeline.config = _config()
@@ -393,7 +380,7 @@ class TestTheLoaderRefusesAPresentButUnusableTable:
         pipeline._sp_max_hops = 5
         pipeline._sp_hop_bound_source = None
         pipeline._sp_kg_binding = None
-        pipeline._graph_kg_digest = None
+        pipeline._graph_kg_digest = GRAPH_DIGEST
         return pipeline, data_dir
 
     def test_an_unreadable_artifact_is_refused_rather_than_ignored(self, tmp_path):

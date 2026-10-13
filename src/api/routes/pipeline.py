@@ -51,11 +51,10 @@ class PipelineStatusResponse(BaseModel):
     #: "sidecar" or "assumed" — whether a file declared the hop bound or the
     #: loader fell back to the producer's default. The two score differently.
     sp_hop_bound_source: Optional[str] = None
-    #: "verified" — the table names the graph being served and the two agree;
-    #: "unrecorded" — published before the pairing protocol, so where it came
-    #: from was never written down. **Never absent while shortest paths are on**,
-    #: because a surface that cannot tell those apart will show an unchecked
-    #: table as a checked one.
+    #: "verified" — the table names the graph being served and the two agree.
+    #: A table published before the pairing protocol ("unrecorded") is refused
+    #: at load since contract M2.5, so it is never served. **Never absent while
+    #: shortest paths are on.**
     sp_kg_binding: Optional[str] = None
     kg_nodes: int = 0
     kg_edges: int = 0

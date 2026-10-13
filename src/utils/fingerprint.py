@@ -36,7 +36,12 @@ home there.
 When a checkpoint is saved during training, the fingerprint of the
 graph data used is embedded in the checkpoint. At inference load time,
 the current graph data's fingerprint is compared against the saved one.
-Mismatches produce a WARNING (not a hard error) so operators can decide.
+Mismatches produce a WARNING (not a hard error) so operators can decide: the
+fingerprint is a diagnostic, never identity.
+
+**Identity is `verify_training_record`'s** (contract M2.4): the one comparator
+between a checkpoint's `training_input_digests` and the digests a consumer holds
+for the same roles. It raises; it does not warn.
 
 Usage:
     from src.utils.fingerprint import compute_fingerprint, verify_fingerprint
@@ -57,7 +62,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +150,79 @@ def file_sha256(path: Union[str, Path]) -> Optional[str]:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+
+class TrainingRecordMismatch(ValueError):
+    """A checkpoint's training record does not name the inputs it is compared
+    with, or records none."""
+
+
+def verify_training_record(
+    checkpoint: Mapping[str, Any],
+    current: Mapping[str, str],
+    roles: Iterable[str],
+    *,
+    recorded_by: str,
+    compared_with: str,
+) -> None:
+    """Refuse unless `checkpoint` records, for every role in `roles`, the digest
+    `current` holds for it (contract M2.4).
+
+    **The one model-to-graph comparator.** Serving and measurement compare the
+    four graph roles with the workspace they verified, and the deployment probe
+    asserts through this function; resume compares its parent with the run over
+    the graph and data roles (M2.3). The set of roles is the argument and the
+    rule is the same for every caller.
+
+    **Present on both sides and equal, or refused.** A checkpoint with no
+    `training_input_digests` (one from before the contract), a role it does not
+    record, a role `current` does not hold and a different digest are each
+    refused by name, so an empty record cannot pass vacuously. `current` comes
+    from the caller's reads; nothing here opens a file.
+
+    Args:
+        checkpoint: the checkpoint as read.
+        current: role -> SHA-256 the consumer holds for the inputs in front of it.
+        roles: the roles compared; must not be empty.
+        recorded_by: names the checkpoint in a refusal ("checkpoint <path>").
+        compared_with: names `current` in a refusal ("the workspace <path>").
+
+    Raises:
+        TrainingRecordMismatch: any role is missing on either side or differs.
+    """
+    roles = tuple(roles)
+    if not roles:
+        raise ValueError("no roles to compare; an empty comparison passes anything")
+    record = (
+        checkpoint.get("training_input_digests")
+        if isinstance(checkpoint, Mapping) else None
+    )
+    if not isinstance(record, Mapping) or not record:
+        raise TrainingRecordMismatch(
+            f"{recorded_by} records no training_input_digests, so the inputs it was "
+            f"trained on cannot be compared with {compared_with}. A checkpoint from "
+            "before the provenance contract is not used; retrain it."
+        )
+    problems: List[str] = []
+    for role in roles:
+        recorded, held = record.get(role), current.get(role)
+        if not recorded:
+            problems.append(f"{role} is not recorded")
+        elif not held:
+            problems.append(f"{role} is recorded and {compared_with} has none")
+        elif recorded != held:
+            problems.append(
+                f"{role} differs (recorded {str(recorded)[:12]}..., "
+                f"{compared_with} has {str(held)[:12]}...)"
+            )
+    if problems:
+        raise TrainingRecordMismatch(
+            f"{recorded_by} does not match {compared_with}: "
+            + "; ".join(problems)
+            + ". Its record names the bytes it was trained on, and these are not "
+            "they."
+        )
+
+
 def compute_fingerprint(
     graph_data: Dict[str, Any],
     kg_total_nodes: Optional[int] = None,
@@ -210,12 +288,8 @@ def verify_fingerprint(
     **This checks structure only, and does not look at
     `training_input_digests`.** An empty warning list therefore means "the graph is
     structurally compatible", never "this checkpoint was trained on these files".
-    The digests are captured so the question *can* be answered later; comparing
-    them against a current workspace needs decisions this function does not yet
-    have — which path stands for each semantic role, and how a relocated
-    workspace, an absent input or a checkpoint predating the field should read.
-    That comparison is deliberately deferred rather than half-built here, and the
-    absence of a digest map means only "not recorded".
+    That question is `verify_training_record`'s, which compares the digests by
+    role and refuses; this stays a diagnostic beside it.
 
     Args:
         checkpoint: loaded checkpoint dict (may or may not have "data_fingerprint")

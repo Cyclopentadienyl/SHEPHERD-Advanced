@@ -140,7 +140,7 @@ class TestTrainingRefusesBeforeItActs:
         train_model = self._forbid(
             monkeypatch,
             ["create_dataloaders", "create_model_from_config", "Trainer",
-             "resolve_resume_checkpoint"],
+             "read_resume_parent"],
         )
         root = _workspace(tmp_path / "ws")
         other = _workspace(tmp_path / "other")

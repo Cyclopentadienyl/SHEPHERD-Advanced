@@ -996,6 +996,12 @@ class Trainer:
 
         if data_fingerprint is not None:
             checkpoint["data_fingerprint"] = data_fingerprint
+        # The record of the inputs this run consumed, as `ModelCheckpoint` embeds
+        # it, so a checkpoint from either writer can be served, measured or
+        # resumed (contract M2.4, M2.3); set by the training script.
+        digests = getattr(self, "training_input_digests", None)
+        if digests is not None:
+            checkpoint["training_input_digests"] = digests
 
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()

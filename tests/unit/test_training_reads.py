@@ -5,9 +5,10 @@ Contract M2.1, S8. Before the run directories, `config.yaml` and `runtime.json`,
 `train` reads the manifest, the graph tensors and both sample files once each
 (`read_training_inputs`, `training_fields=True`) and verifies from those reads,
 with the `kg.json` identification check (decision 1). The resume parent is read
-once with `read_checkpoint` and the trainer restores from the dict that read
-parsed. `training_input_digests` is built only from the reads. The acceptance
-shown here, at the real entry point (`train`, with `Trainer.train` stubbed):
+once with `read_checkpoint`, at the top since M2.3 (`test_resume_parent.py`),
+and the trainer restores from the dict that read parsed. `training_input_digests`
+is built only from the reads. The acceptance shown here, at the real entry point
+(`train`, with `Trainer.train` stubbed):
 
 - each input is opened once, and the record equals the digests of the files;
 - a graph tensor, a sample file or the parent replaced after its read, by
@@ -24,8 +25,8 @@ shown here, at the real entry point (`train`, with `Trainer.train` stubbed):
 - a workspace with no validation samples records none; an unrelated split is
   never opened; an empty training split is refused before anything is written;
 - training trains on both optional sample fields (`training_fields=True`);
-- a parent that does not parse leaves no checkpoint and no metrics, after a
-  line that names it;
+- a parent that does not parse leaves no run artifact (it is read at the top
+  since M2.3), after a line that names it;
 - the path forms are gone, not kept beside the read forms.
 
 Module: tests/unit/test_training_reads.py
@@ -135,7 +136,7 @@ def parents(train_model, captured, workspace, tmp_path):
 def _forbid_stages(monkeypatch, train_model):
     """Each stage after the preflight fails if it is reached."""
     for name in ("create_dataloaders", "create_model_from_config", "Trainer",
-                 "resolve_resume_checkpoint"):
+                 "read_resume_parent"):
         def sentinel(*args, _name=name, **kwargs):
             raise AssertionError(f"{_name} ran after a refusal")
 
@@ -417,10 +418,10 @@ def test_an_unrelated_split_is_never_opened(train_model, captured, workspace, tm
 def test_a_parent_that_does_not_parse_leaves_no_checkpoint_and_no_metrics(
     train_model, captured, workspace, tmp_path, caplog
 ):
-    """The parent is read where it is restored (its move to the top is M2.3's), so
-    the run directories and `config.yaml` exist by then; what a failed read must
-    not leave is anything that looks like a result. The failure follows a line
-    that names the file, since torch's own message does not."""
+    """The parent is read at the top of the run (contract M2.3), so a failed read
+    leaves no run directory, `config.yaml` or checkpoint, let alone anything that
+    looks like a result. The failure follows a line that names the file, since
+    torch's own message does not."""
     import logging
 
     junk = tmp_path / "junk.pt"
@@ -431,11 +432,10 @@ def test_a_parent_that_does_not_parse_leaves_no_checkpoint_and_no_metrics(
         with pytest.raises(Exception):  # noqa: B017 — torch's own unpickling error
             train_model.train(_config(train_model, workspace, run, resume_from=str(junk)))
 
-    assert f"Resuming from checkpoint: {junk}" in caplog.text
+    assert f"Reading the resume parent: {junk}" in caplog.text
 
     assert "trainer" not in captured, "training started after a failed parent read"
-    assert not (run / "outputs" / "final_metrics.json").exists()
-    assert not list((run / "checkpoints").glob("*.pt"))
+    assert _run_artifacts(run) == []
 
 
 # ---------------------------------------------------------------------------

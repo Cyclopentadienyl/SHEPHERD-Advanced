@@ -6,6 +6,11 @@ config at all, so `PipelineConfig.sp_hop_bound` could only ever be set by
 writing Python. The loader tests did not catch it because they assigned
 `pipeline.config` directly — testing the function and not the wiring.
 
+**Since contract M2.5 the bound no longer reaches a served table.** It existed
+for a table with no sidecar, and such a table records no binding to the graph
+and is refused before the bound is resolved. The setting is still read and
+still reaches the factory; whether to remove it is the owner's decision.
+
 Module: tests/unit/test_hop_bound_reaches_the_service.py
 """
 from __future__ import annotations
@@ -110,11 +115,12 @@ class TestItReachesTheFactory:
         assert seen["config"].sp_hop_bound is None
 
 
-class TestTheLoaderAcceptsWhatTheServiceSupplies:
-    """End to end in the sense that matters: a bound set the way a deployment
-    sets it, reaching a table with no sidecar."""
+class TestTheLoaderRefusesWhatTheBoundWasFor:
+    """End to end: a bound set the way a deployment sets it, reaching a table
+    with no sidecar. It used to turn shortest paths back on; since M2.5 the
+    table is refused, because it records no graph."""
 
-    def test_a_service_supplied_bound_turns_shortest_paths_back_on(
+    def test_a_service_supplied_bound_does_not_serve_an_unbound_table(
         self, monkeypatch, tmp_path
     ):
         torch = pytest.importorskip("torch")
@@ -145,8 +151,8 @@ class TestTheLoaderAcceptsWhatTheServiceSupplies:
         pipeline._sp_kg_binding = None
         pipeline._graph_kg_digest = None
 
-        pipeline._load_shortest_paths(data_dir)
+        with pytest.raises(ValueError, match="carries no source binding"):
+            pipeline._load_shortest_paths(data_dir)
 
-        assert pipeline._sp_ready is True
-        assert pipeline._sp_max_hops == 3
-        assert pipeline._sp_hop_bound_source == "configured"
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None

@@ -867,30 +867,26 @@ def phase_training(
         return None
 
     def _provenance() -> Tuple[str, Dict[str, Any]]:
+        from src.kg.artifacts import GRAPH_ARTIFACTS
         from src.utils.checkpoint_io import read_checkpoint
+        from src.utils.fingerprint import verify_training_record
 
         checkpoint = read_checkpoint(
             selected["path"], map_location="cpu", weights_only=False
         ).checkpoint
         digests, _, _ = verify_workspace(sound)
-        recorded = checkpoint.get("training_input_digests")
-        assert recorded is not None, "the checkpoint records no training inputs"
-        # **The roles must be present, not merely consistent.** Comparing only
-        # the roles that happen to appear would pass against a checkpoint that
-        # recorded an empty map -- the vacuous version of this check. `kg` is
-        # deliberately not among them: training never opens kg.json, so the run
-        # did not consume it.
-        required = {"node_features", "edge_indices", "num_nodes"}
-        assert required <= set(recorded), (
-            f"the checkpoint omits the graph roles it read: "
-            f"{sorted(required - set(recorded))}"
+        # **Through the consumers' own comparator** (contract M2.4), not a
+        # second comparison here: the four graph roles, `kg` the manifest-bound
+        # source graph, present on both sides and equal, or it raises.
+        verify_training_record(
+            checkpoint,
+            digests,
+            tuple(GRAPH_ARTIFACTS),
+            recorded_by=f"checkpoint {selected['path'].name}",
+            compared_with="the workspace it was trained on",
         )
-        mismatched = sorted(
-            role for role in required if recorded[role] != digests[role]
-        )
-        assert not mismatched, f"the checkpoint names other bytes for {mismatched}"
         return "the checkpoint names the workspace it was trained on", {
-            "recorded_roles": sorted(recorded),
+            "recorded_roles": sorted(checkpoint["training_input_digests"]),
         }
 
     report.run(

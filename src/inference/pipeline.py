@@ -51,7 +51,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
-from src.kg.artifacts import read_split_manifest, verify_graph_source_read
+from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest, verify_graph_source_read
 from src.kg.storage.file_storage import read_graph_artifacts
 from src.utils.checkpoint_io import read_checkpoint
 from src.kg.phenotype_normalisation import normalise_phenotypes
@@ -437,7 +437,8 @@ class DiagnosisPipeline:
         #: whatever `kg.json` happens to sit beside it — otherwise the binding
         #: could be bypassed by deleting a file.
         self._graph_kg_digest: Optional[str] = None
-        #: "unrecorded" | "verified", once a table has been accepted.
+        #: "verified" once a table has been accepted; an unrecorded binding is
+        #: refused (contract M2.5), so nothing else is published.
         self._sp_kg_binding: Optional[str] = None
         self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
@@ -797,15 +798,20 @@ class DiagnosisPipeline:
                 "no verified workspace digest exists to compare against. The "
                 "shortest-path term is part of the ranking, so an unverifiable "
                 "binding is refused rather than assumed. Build the pipeline from "
-                "a workspace, or use a table published without a binding."
+                "a workspace; a table published without a binding is refused "
+                "too (contract M2.5)."
             )
         if binding_state == "unrecorded":
-            logger.warning(
-                "%s carries no source binding — it predates the pairing "
-                "protocol. Which graph it was computed from is **unrecorded**, "
-                "not verified. Rebuild it with scripts/compute_shortest_paths.py "
-                "to record one.",
-                sp_path,
+            # **Refused, no longer served with a warning** (contract M2.5,
+            # decision 2). A table that predates the pairing protocol never
+            # recorded which graph its node indices are positions in, and the
+            # shortest-path term is part of the ranking.
+            raise SPArtifactError(
+                f"{sp_path} carries no source binding: it predates the pairing "
+                "protocol, so which graph it was computed from is unrecorded. "
+                "An unrecorded table is not served. Rebuild it with "
+                "scripts/compute_shortest_paths.py to record one, or remove it "
+                "to serve without shortest paths."
             )
 
         # **A table with no rows is the absent case, not a ready one.** D5 took
@@ -992,10 +998,37 @@ class DiagnosisPipeline:
                 "writes."
             )
 
+        # **Was this model trained on this workspace's graph?** (contract M2.4.)
+        # The checkpoint's recorded `kg`, `node_features`, `edge_indices` and
+        # `num_nodes` against the four digests the workspace check verified from
+        # this build's reads. A checkpoint from before the contract, one missing
+        # a role, or one from a same-shaped other graph is refused before any
+        # model is built; the structural fingerprint below cannot tell them apart.
+        #
+        # A graph supplied in memory has no verified workspace and nothing to
+        # compare with: that caller makes no persisted-workspace claim, as with
+        # the shortest-path binding (`_graph_kg_digest`). The service always
+        # builds from a workspace.
+        from src.utils.fingerprint import (
+            TrainingRecordMismatch,
+            verify_fingerprint,
+            verify_training_record,
+        )
+        if self._bound_digests is not None:
+            try:
+                verify_training_record(
+                    checkpoint,
+                    self._bound_digests,
+                    tuple(GRAPH_ARTIFACTS),
+                    recorded_by=f"Checkpoint {ckpt_path}",
+                    compared_with="this workspace's graph",
+                )
+            except TrainingRecordMismatch as exc:
+                raise PipelineBuildError(str(exc)) from exc
+
         # Verify data fingerprint compatibility (KG version check). Pipeline
         # business, not construction: it decides what an operator is warned
-        # about, and the measurement harness records its own manifest instead.
-        from src.utils.fingerprint import verify_fingerprint
+        # about. A diagnostic beside the comparison above, never identity.
         fp_warnings = verify_fingerprint(
             checkpoint,
             self._graph_data,
@@ -1901,9 +1934,8 @@ class DiagnosisPipeline:
             "eta_effective": effective_eta,
             "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
             "sp_hop_bound_source": self._sp_hop_bound_source if self._sp_ready else None,
-            # **"unrecorded" is not "verified".** Reported so a surface cannot
-            # present a table whose source was never recorded as one that was
-            # checked.
+            # Reported so a surface can show that the table was checked; an
+            # unrecorded binding is refused at load (contract M2.5).
             "sp_kg_binding": self._sp_kg_binding if self._sp_ready else None,
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,

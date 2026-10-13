@@ -67,7 +67,8 @@ MODEL_CONSTRUCTION = "production (build_shepherd_model)"
 
 class MeasurementInputs(NamedTuple):
     """What a run read once each: the workspace files it checked, and the
-    checkpoint, which M2.1 does not check (contract M2.1, S7).
+    checkpoint, whose recorded graph roles were compared with `bound` (contract
+    M2.1, S7; M2.4).
 
     Carried whole from `read_measurement_inputs` to `measurement_input_digests`,
     so the tensors and samples Mode C scores, the checkpoint its model is built
@@ -86,7 +87,7 @@ class MeasurementInputs(NamedTuple):
     #: The digest the run's one manifest reading binds for each of the four
     #: graph roles, `kg` included, as `verify_graph_reads` returned it after
     #: comparing the three tensors read with it. Kept, not discarded: it is the
-    #: `kg` role (M2.1 decision 2) and the opening for M2.4's comparison.
+    #: `kg` role (M2.1 decision 2) and what M2.4 compares the checkpoint with.
     bound: Dict[str, str]
 
 
@@ -128,12 +129,20 @@ def read_measurement_inputs(
     default and what this run passed before); `encode_full_graph` moves them.
     The checkpoint keeps this site's options: `map_location` the run's device,
     `weights_only=True`. It is read after the workspace checks, so a refused
-    workspace reads no checkpoint; M2.1 checks nothing about it.
+    workspace reads no checkpoint, and its recorded graph roles are compared
+    with `bound` (`verify_training_record`, contract M2.4): a checkpoint from
+    before the contract, or from a same-shaped other graph, is refused here.
     """
     from src.evaluation.cohort import verify_cohort_reads
-    from src.kg.artifacts import check_unparsed_kg_json, read_split_manifest, verify_graph_reads
+    from src.kg.artifacts import (
+        GRAPH_ARTIFACTS,
+        check_unparsed_kg_json,
+        read_split_manifest,
+        verify_graph_reads,
+    )
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
     from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.fingerprint import verify_training_record
 
     # Stat only.
     cohort = resolve_cohort(data_dir, split, cohort_kind)
@@ -160,6 +169,17 @@ def read_measurement_inputs(
     del checked
 
     read = read_checkpoint(checkpoint, map_location=device, weights_only=True)
+    # **The model scored must have been trained on this graph** (contract M2.4):
+    # the checkpoint's recorded graph roles against `bound`, whose `kg` is the
+    # manifest-bound source graph and whose tensor digests equal this run's
+    # reads. Before any model is built or any output written; a refusal raises.
+    verify_training_record(
+        read.checkpoint,
+        bound,
+        tuple(GRAPH_ARTIFACTS),
+        recorded_by=f"checkpoint {read.identity.path}",
+        compared_with=f"the workspace {data_dir}",
+    )
     logger.info(
         "Read %d %s samples; checkpoint %s (sha256 %s)",
         len(samples.samples), split, read.identity.path, read.identity.sha256[:12],
