@@ -9,11 +9,12 @@ FAIL, 0 UNKNOWN). Comparability: 60 checks PASS and 1 is UNKNOWN, the service st
 comparison's single verdict, which covers both, is "NOT judged: data missing" (exit status 2),
 kept as recorded; the owner's statement below supplements the UNKNOWN and does not turn it into a
 pass. Acceptance 2 and 3 are explained below, including the changes other than M2.1 on the
-measured paths (§4.6); the serving reload's small resident rise is explained by inference and was
-not investigated. Acceptance 4 is not triggered (no shortfall). **Awaiting the reviewer's review:
-S10's capacity is not accepted until that review closes, and this is not acceptance of M2.1 or
-M2.** One question is the owner's (§6.1): whether that reload rise needs a separate diagnostic
-run before acceptance.
+measured paths (§4.6), except one: the serving reload's small resident rise (R3 +0.023 / +0.031 /
++0.028 GB) is not located. Allocator retention is a candidate explanation; no diagnostic run was
+made, and one reload per process cannot show whether it accumulates. Acceptance 4 is not
+triggered (no shortfall). **S10's capacity is not accepted, and this is not acceptance of M2.1 or
+M2.** The reviewer's evidence review (2026-10-13) found the readings consistent and recommends a
+limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner decides (§6.1).
 
 ## 1. What was run
 
@@ -40,10 +41,13 @@ run before acceptance.
 training roles are the two sample files, the two tensors, `num_nodes` and the split manifest (no
 `kg`), as S10 expected.
 
-**The page cache at R0 was not the same.** In every sampled row R0's page cache was about 10.8 GB
-larger at the after commit (median 18.9 GB at `90a668f`, 29.7 GB at `343e90e`): about one SP
-table more, plausibly the before run's own scratch publication still cached. The pre-read
-procedure was the same; the system figures exclude reclaimable cache. Recorded, not attributed.
+**The page cache at R0 was not the same.** In every sampled row R0's page cache was larger at the
+after commit, by 10.843, 10.830, 10.815 and 10.815 GB (measurement, training fresh, training
+resume, SP; medians about 18.9 GB at `90a668f` and 29.7 GB at `343e90e`): about one SP table more,
+plausibly the before run's own scratch publication still cached. The pre-read procedure and list
+were the same; the system figures exclude reclaimable cache. Recorded as a limit on
+comparability, not attributed: no speed-up is credited to the code for it, and it is not a reason
+to rerun or to drop the cache (the warm decision stands).
 The whole-machine R0 baselines differ by up to 0.5 GB between the runs (serving 10.70–10.99 GB
 before, 11.08–11.51 GB after); the system figures are taken less their own R0.
 
@@ -93,7 +97,12 @@ judged" (exit status 2).
   `weights_only=True` on the CPU); the measured entry points call the same reader code with other
   `torch.load` options: measurement on CUDA with `weights_only=True`, training on CUDA with
   `weights_only=False`, serving on the CPU with `weights_only=False`. For those, release rests on
-  the reader's code (the buffer is a local of `read_checkpoint`), not on a check.
+  the reader's code (the buffer is a local of `read_checkpoint`), not on a check — except that the
+  reviewer ran the existing release check on the real checkpoint with serving's options
+  (`map_location="cpu"`, `weights_only=False`) on 2026-10-13: it passes, one read, digest
+  `33a7b39a…`. Measurement's and training's CUDA loads are not covered by a check. A release
+  check answers only whether a reader's raw bytes outlive it; it says nothing about other objects
+  a caller keeps, or about pages the allocator keeps after a free.
 - **Wall times** are not acceptance quantities. Every row ran faster at the after commit: the
   measurement and training rows by 1.2–2.9 s, mostly before the first boundary; the SP producer by
   20.1 s, 3.3 s before the graph-read boundary and about 18.5 s in the BFS, whose code is
@@ -151,14 +160,15 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
 - **Fresh: unchanged.** VmHWM equals VmRSS at `Trainer.__init__`'s return at both commits, so the
   new reads' transients (whole-file buffers of up to 29.3 MB at `343e90e`) come before the
   loaders and the model and set no peak.
-- **Resume: +0.047 GB at the peak, resident equal. This is one transient copy of the checkpoint**
-  (47,931,987 B; VmHWM at the replaced `train` is 47,325,184 B higher at the after commit, and its
+- **Resume: +0.047 GB at the peak, resident equal: the size of one transient copy of the
+  checkpoint** (47,931,987 B; VmHWM at the replaced `train` is 47,325,184 B higher at the after commit, and its
   rise from `Trainer.__init__`'s return is 48,939,008 B against 1,998,848 B, 46,940,160 B more). At `343e90e`
   `read_checkpoint` holds the file's bytes while `torch.load(BytesIO)` parses them; at `90a668f`
   `torch.load` read the records from the file by path. The buffer is released on return: VmRSS
-  is equal, and the release rests on the reader's code (§3). This is the plan's "about one
-  transient copy" per file, "48 MB for the designated checkpoint" (Memory section): +2.4% of the
-  row's peak, no resident cost.
+  is equal, and the release rests on the reader's code (§3). The rise matches that buffer's size
+  and the reader change; it is consistent with, not a proof of, exactly one copy. It is the
+  plan's "about one transient copy" per file, "48 MB for the designated checkpoint" (Memory
+  section): +2.4% of the row's peak, no resident cost.
 - **The system figures** are whole-machine and sampled (26–42 samples a row): resume's +0.063 GB
   includes the checkpoint's transient; fresh's +0.049 GB, with the process figures equal, is
   reported and not attributed.
@@ -185,7 +195,9 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
   shape (read, decode, release the bytes, parse, release the text). The transient is the same at
   both commits: at least twice the file's size (the bytes and the text, about 0.42 GB) for ASCII
   text, and 3, 4 or 6 times it if the text holds any non-ASCII, BMP or astral character, since
-  `save_json` writes `ensure_ascii=False`. The plan's Memory section is corrected accordingly.
+  `save_json` writes `ensure_ascii=False`. This is read from the code (and a CPU check of the
+  same pattern), not a measurement of each decoder allocation. The plan's Memory section is
+  corrected accordingly.
 - **The later decreases come from code identical at both commits** (the BFS, the conversion to
   tensors, publication), apart from three more modules imported before publication at `343e90e`
   (`src/inference/pipeline.py`'s imports): a sub-MB rise in the opposite direction. The peak (−0.107 GB, matched by the tree's Pss) and the resident figure
@@ -234,22 +246,25 @@ Figures are GB (10^9 B) as printed by the comparison; after − before.
   `num_nodes`, the two tensors and the checkpoint are each read once and parsed from that read;
   the SP table is loaded by path at both. The new transients are the same three whole-file
   buffers as at startup.
-- **Not a kept buffer:** for `kg.json`, the manifest, `num_nodes` and the two tensors, by their
-  release checks, which run with serving's options; for the checkpoint, which serving reads on the
-  CPU with `weights_only=False`, by the reader's code (§3). **By inference, not a larger live
-  set:** the same build code leaves R1 and R2 unchanged at startup, and within each repeat the
-  offset is the same at the reload's peak and after the swap — the drop from peak to after is
-  21.660–21.661 GB at both commits — so it is taken before the peak and stays.
-- **What it is, inferred and not investigated:** memory the C allocator keeps after the reload's
-  transient buffers are freed (for example a freed buffer's region kept in the heap, or a raised
-  trim threshold), rather than a Python object. Which buffer, and why the same reads leave no such
-  offset at startup, the code does not settle. **No diagnostic run was made.**
+- **Three questions, kept apart** (the reviewer's framing): (a) do a reader's raw bytes or its
+  `BytesIO` outlive the reader; (b) does the service keep other Python objects, graph data,
+  tensor storage or the old pipeline; (c) does the allocator keep resident pages after objects
+  are freed.
+- **(a): no raw-buffer retention found in the readers measured.** The release checks cover
+  `kg.json`, the manifest, `num_nodes` and the two tensors with serving's options, and the
+  reviewer's check covers the real checkpoint with serving's options (§3).
+- **(b) and (c) are not answered.** The offset is about the same at the reload's peak and after
+  the swap (the drop from peak to after is 21.660–21.661 GB at both commits) and absent at startup
+  (R1, R2). Pages kept by the allocator would give that shape, but so would an object alive across
+  both points; neither is excluded.
+- **The source is not located.** Allocator retention is a candidate explanation, not a finding.
+  **No diagnostic run was made.**
 - **Not measured:** each server process does one reload, so whether the offset recurs or
   accumulates over several reloads in one process is unknown. The 0.4% holds for one reload.
-- **Assessment (acceptance 2):** an added resident cost of about 0.03 GB after a reload; no kept
-  buffer; by inference, no larger live set. It does not by itself call for a reader rewrite, and
-  acceptance 4 rules out `malloc_trim` and the like. Whether "an observation to investigate"
-  needs the diagnostic run before acceptance is the owner's decision (§6.1).
+- **Assessment (acceptance 2), not closed:** an added resident cost of about 0.03 GB after one
+  reload, source not located. It does not by itself call for a reader rewrite, and acceptance 4
+  rules out `malloc_trim` and the like. Whether it is investigated before acceptance is the
+  owner's decision (§6.1).
 - The R4 system figure is whole-machine noise (mean −0.001 GB). R3's wall time was 1.8–14 s shorter
   at the after commit; the code explains at most about 0.5 s of it; not investigated.
 
@@ -305,32 +320,52 @@ what is said here:
 | Row | Resident after the reads (2) | Peaks (3) |
 |---|---|---|
 | Measurement | −0.022 GB at entry; converges by exit | +0.003 GB; CUDA equal; the entry peak's −0.095 GB is a phase move |
-| Training | fresh < 1 MB; resume +0.1 MB | fresh unchanged; resume +0.047 GB = one transient copy of the checkpoint, as planned |
+| Training | fresh < 1 MB; resume +0.1 MB | fresh unchanged; resume +0.047 GB, the size of one transient copy of the checkpoint, as planned |
 | SP producer | +0.05 MB at the fork | −0.107 GB, identical code; no kg.json transient added (premise corrected) |
 | Serving R1, R2 | −1 to −5 MB | −0.6 to −2 MB |
-| Serving reload R3, R4 | **+0.023 to +0.031 GB** (inferred allocator-level; one reload) | +0.022 to +0.033 GB, the same offset |
+| Serving reload R3, R4 | **+0.023 / +0.031 / +0.028 GB** (R3; source not located; one reload per process) | +0.022 to +0.033 GB at the reload's peak (R4), about the same offset |
 
 **Acceptance 4:** no row failed to complete, no OOM kill, no swap increase. Nothing was added to
 make RSS fall.
 
 ### 6.1 Open for the owner
 
-The serving reload's +0.03 GB is explained in kind (allocator-level, not a kept buffer, not a
-larger live set) but by inference. Two choices:
+The serving reload's resident rise (R3 +0.023 / +0.031 / +0.028 GB) has no raw-buffer retention
+behind it in the readers measured, but its source is not located (§4.5). Three choices:
 
-1. **Record it as explained by inference and assessed, without the investigation acceptance 2
-   calls for** (a rise "is an observation to investigate"; "an investigation uses a separate
-   diagnostic run"). That is the owner's decision to accept the rise uninvestigated, recorded as
-   such in the plan, with the attribution marked as inferred and the accumulation over repeated
-   reloads as unmeasured; or
-2. **Run a separate diagnostic** before acceptance, never a reported run: at both commits, startup
-   and three reloads in one server process, with `strace -e trace=mmap,munmap,mremap,brk`
-   matching anonymous mappings of the page-rounded sizes just above the three files (29,308,567 /
-   19,772,821 / 47,931,987 bytes plus headers), glibc `mallinfo2()` at the reader boundaries to
-   catch heap placements, and a control with
-   `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=4194304`, at both commits. It would
-   name the allocation and show whether the offset accumulates. It needs the homelab for about an
-   hour and a small instrument outside the repository.
+1. **Accept it uninvestigated.** Acceptance 2 calls a rise "an observation to investigate" and
+   says "an investigation uses a separate diagnostic run"; choosing this is the owner's decision to
+   accept the rise without one, recorded as such in the plan, with the source not located and the
+   accumulation unmeasured.
+2. **A limited diagnostic of consecutive reloads (the reviewer's recommendation, 2026-10-13).**
+   It answers one question: does the 23–31 MB difference keep growing over several successful
+   reloads in one process, and does the service stay healthy. Never a reported run, and not a
+   rerun of the capacity matrix (no training, Mode C or SP producer):
+   - one diagnostic at each commit, with the same workspace, checkpoint, service settings and
+     normal allocator;
+   - the same request history before the reloads as the reported readings (the 200 requests), or
+     first evidence that a shorter history still reproduces the difference;
+   - one server process per commit, reloaded three times in a row through the existing HTTP
+     reload route (not three restarts with one reload each);
+   - at fixed waits, RSS and, where available, anonymous memory and Pss after startup, after the
+     requests and before and after each reload; each reload's success, readiness and diagnosis
+     checked; both the step increments and the process's accumulated total reported;
+   - its results kept apart as diagnostic evidence; S10's files, `SHA256SUMS` and `compare.txt`
+     unchanged;
+   - no `strace`, `mallinfo2`, `GLIBC_TUNABLES`, allocator change, `malloc_trim`, `gc.collect`,
+     `empty_cache` or second model loader in this phase; a small driver, if needed, only combines
+     the existing launcher, HTTP routes and readings, with its scope, source and SHA-256 fixed and
+     reviewed before the run.
+
+   Reading it: a small first difference that then levels off, with no growth in step with the
+   reloads, supports accepting a bounded cost for this subject and three reloads, the source
+   still not located; three reloads do not show that a long-running service never accumulates.
+   Growth at every reload, or a health or availability problem, leads to a second phase that
+   locates it (Python allocations and tensor lifetimes, then the native allocator). An ambiguous
+   result is not written up as accumulation excluded; a bounded extension is decided then.
+3. **The allocator tracing first** (`strace` of `mmap`/`munmap`/`mremap`/`brk`, `mallinfo2()`, a
+   `GLIBC_TUNABLES` control). Deeper, and not guaranteed to name a buffer; the reviewer advises it
+   only as a second phase after choice 2.
 
 Other observations, optional and not needed for acceptance: the measurement row's −0.022 GB and
 +0.015 GB; the SP row's −0.29 GB and −0.107 GB (decreases in identical code); the serving
@@ -357,7 +392,10 @@ baseline's 1–2 MB and R2's 54–59 MB fall during requests (equal at both comm
 ## 8. Files
 
 `before/` and `after/` (25 files each), `preflight.json` and `compare.txt` are as the owner sent
-them (archive `s10-evidence-2.tar.gz`, SHA-256
+them. The two `driver.log` files were missing from the first commit (`cfaa28a`) because the
+repository ignores `*.log`; the reviewer found it from a clean tree (2026-10-13), and they were
+added explicitly, unchanged, so that a clean checkout passes `SHA256SUMS` and reproduces
+`compare.txt` (archive `s10-evidence-2.tar.gz`, SHA-256
 `e58ef65993a0cbd89729f152d0a8d72fe1339a161b441f5507cfa178aa540279`); `SHA256SUMS` lists each
 file. The run's scratch (server logs, the measurement report with paths, ranks, configurations
 and the SP table) stayed on the homelab. Running `s10_compare.py` on these two directories with

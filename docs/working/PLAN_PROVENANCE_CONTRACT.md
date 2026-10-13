@@ -24,9 +24,10 @@ complete: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02
 and S10's tools, kept outside the repository, passed their re-review with no P1 or P2 (draft 3, 2026-10-12),
 and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md)): every acceptance 1 check passes at
 the after commit; comparability has 1 UNKNOWN (the service state, supplemented by the owner's statement; the
-comparison's exit status 2 kept); acceptance 2 and 3 are explained, the serving reload's +0.022 to +0.033 GB
-resident rise by inference, and the owner is to decide whether a diagnostic run comes first; awaiting review,
-so capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+comparison's exit status 2 kept); acceptance 2 and 3 are explained except the serving reload's resident rise (R3
++0.023 to +0.031 GB), whose source is not located; the reviewer's evidence review (2026-10-13) recommends a
+limited diagnostic of consecutive reloads before acceptance 2 is closed, and the owner decides; capacity is not
+yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -1638,10 +1639,13 @@ each moves its callers before anything is removed.
         passes at the after commit (51 PASS). Comparability: 60 PASS and 1 UNKNOWN,
         the service state, because the homelab has no `shepherd` user unit; the owner's statement
         of 2026-10-13 that the backends were closed supplements it, and the exit status 2 is
-        kept. Acceptance 2 and 3 are explained there; acceptance 4 is not triggered. One question
-        is the owner's: whether the serving reload's +0.022 to +0.033 GB resident rise, inferred
-        to be allocator-level and measured for one reload only, needs a separate diagnostic run
-        before acceptance. Awaiting review; not accepted.
+        kept. Acceptance 2 and 3 are explained there, except the serving reload's resident rise
+        (R3 +0.023 to +0.031 GB): no raw-buffer retention in the readers measured, source not
+        located, allocator retention a candidate, one reload per process. Acceptance 4 is not
+        triggered. The reviewer's evidence review (2026-10-13) found no P1, one P2 (two
+        `driver.log` files missing from the commit, since added) and recommends a limited
+        diagnostic of consecutive reloads before acceptance 2 is closed; the owner decides. Not
+        accepted.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.
