@@ -1,0 +1,444 @@
+{
+  "checks": [
+    {
+      "accepted": 5,
+      "after": "startup",
+      "planned": 5
+    },
+    {
+      "accepted": 5,
+      "after": "reload_1",
+      "planned": 5
+    },
+    {
+      "accepted": 5,
+      "after": "reload_2",
+      "planned": 5
+    },
+    {
+      "accepted": 5,
+      "after": "reload_3",
+      "planned": 5
+    }
+  ],
+  "child_environment": {
+    "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+    "FLASHATTN_FORCE_DISABLE": null,
+    "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+    "PYTORCH_CUDA_ALLOC_CONF": null,
+    "SHEPHERD_ALLOC_SOURCE": "preset",
+    "allocator_controls": []
+  },
+  "child_exit_status": 0,
+  "child_timed_out": false,
+  "code": {
+    "commit": "343e90e993d0a5129cd547b95276b7e2b8b12fa9",
+    "tracked_files_modified": false
+  },
+  "completed": true,
+  "environment": {
+    "boot_id": "3a550de4-d4b2-4551-a39a-4767a9fb1dd2",
+    "driver": "580.178.04",
+    "kernel": "7.0.0-1019-nvidia",
+    "python": "3.12.3",
+    "uptime_seconds": 22975.2,
+    "venv_distributions_sha256": "a117e53efdcf4ebf00aea51756eb4198d81f7b430f94c558d491fcd48ab76980",
+    "venv_python_sha256": "c86f21d0da9290ece2d7d49a3f7ed52aed59cb029abdf0ea25c79634f6cbe960"
+  },
+  "final": {
+    "after_gc": {
+      "collected": 0,
+      "liveness": {
+        "generation_0": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_1": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_2": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        }
+      },
+      "point": {
+        "Pss_bytes": 7630498816,
+        "RssAnon_bytes": 7180095488,
+        "RssFile_bytes": 412708864,
+        "RssShmem_bytes": 50794496,
+        "VmHWM_bytes": 28498096128,
+        "VmRSS_bytes": 7643598848,
+        "name": "after_gc",
+        "seconds": 500.952
+      },
+      "referrers": {
+        "generation_0": {},
+        "generation_1": {},
+        "generation_2": {}
+      }
+    },
+    "after_trim": {
+      "mallinfo2_after": {
+        "arena": 728862720,
+        "fordblks": 41382560,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 2336,
+        "ordblks": 3705,
+        "smblks": 0,
+        "uordblks": 687480160,
+        "usmblks": 0
+      },
+      "mallinfo2_before": {
+        "arena": 764100608,
+        "fordblks": 76620448,
+        "fsmblks": 0,
+        "hblkhd": 6946816,
+        "hblks": 4,
+        "keepcost": 35240224,
+        "ordblks": 3705,
+        "smblks": 0,
+        "uordblks": 687480160,
+        "usmblks": 0
+      },
+      "malloc_trim_returned": 1,
+      "point": {
+        "Pss_bytes": 7561554944,
+        "RssAnon_bytes": 7111147520,
+        "RssFile_bytes": 412708864,
+        "RssShmem_bytes": 50794496,
+        "VmHWM_bytes": 28498096128,
+        "VmRSS_bytes": 7574650880,
+        "name": "after_trim",
+        "seconds": 501.013
+      }
+    },
+    "before_intervention": {
+      "liveness": {
+        "generation_0": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_1": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        },
+        "generation_2": {
+          "embedding": false,
+          "graph_tensor": false,
+          "kg": false,
+          "model": false,
+          "pipeline": false,
+          "sp_distance": false,
+          "sp_keys": false,
+          "sp_lookup": false
+        }
+      },
+      "point": {
+        "Pss_bytes": 7631531008,
+        "RssAnon_bytes": 7181127680,
+        "RssFile_bytes": 412708864,
+        "RssShmem_bytes": 50794496,
+        "VmHWM_bytes": 28498096128,
+        "VmRSS_bytes": 7644631040,
+        "name": "before_intervention",
+        "seconds": 500.246
+      }
+    }
+  },
+  "liveness": {
+    "after_reload_1": {
+      "generation_0": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      }
+    },
+    "after_reload_2": {
+      "generation_0": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      },
+      "generation_1": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      }
+    },
+    "after_reload_3": {
+      "generation_0": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      },
+      "generation_1": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      },
+      "generation_2": {
+        "embedding": false,
+        "graph_tensor": false,
+        "kg": false,
+        "model": false,
+        "pipeline": false,
+        "sp_distance": false,
+        "sp_keys": false,
+        "sp_lookup": false
+      }
+    }
+  },
+  "not_a_reading": "a phase-2 diagnostic; no HTTP, no 200 requests",
+  "points": [
+    {
+      "Pss_bytes": 6426614784,
+      "RssAnon_bytes": 5976211456,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23765590016,
+      "VmRSS_bytes": 6439714816,
+      "name": "after_startup_checks",
+      "seconds": 124.825
+    },
+    {
+      "Pss_bytes": 6426614784,
+      "RssAnon_bytes": 5976211456,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23765590016,
+      "VmRSS_bytes": 6439714816,
+      "name": "before_reload_1",
+      "seconds": 124.861
+    },
+    {
+      "Pss_bytes": 6779976704,
+      "RssAnon_bytes": 6329573376,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28472950784,
+      "VmRSS_bytes": 6793076736,
+      "name": "after_reload_1",
+      "seconds": 205.948
+    },
+    {
+      "Pss_bytes": 6718020608,
+      "RssAnon_bytes": 6267617280,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28472950784,
+      "VmRSS_bytes": 6731120640,
+      "name": "after_checks_1",
+      "seconds": 248.486
+    },
+    {
+      "Pss_bytes": 6718020608,
+      "RssAnon_bytes": 6267617280,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28472950784,
+      "VmRSS_bytes": 6731120640,
+      "name": "before_reload_2",
+      "seconds": 248.526
+    },
+    {
+      "Pss_bytes": 7240281088,
+      "RssAnon_bytes": 6789877760,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28498096128,
+      "VmRSS_bytes": 7253381120,
+      "name": "after_reload_2",
+      "seconds": 331.277
+    },
+    {
+      "Pss_bytes": 7183535104,
+      "RssAnon_bytes": 6733131776,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28498096128,
+      "VmRSS_bytes": 7196635136,
+      "name": "after_checks_2",
+      "seconds": 375.712
+    },
+    {
+      "Pss_bytes": 7183535104,
+      "RssAnon_bytes": 6733131776,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28498096128,
+      "VmRSS_bytes": 7196635136,
+      "name": "before_reload_3",
+      "seconds": 375.761
+    },
+    {
+      "Pss_bytes": 7677201408,
+      "RssAnon_bytes": 7226798080,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28498096128,
+      "VmRSS_bytes": 7690301440,
+      "name": "after_reload_3",
+      "seconds": 458.268
+    },
+    {
+      "Pss_bytes": 7631531008,
+      "RssAnon_bytes": 7181127680,
+      "RssFile_bytes": 412708864,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28498096128,
+      "VmRSS_bytes": 7644631040,
+      "name": "after_checks_3",
+      "seconds": 500.196
+    }
+  ],
+  "preconditions": {
+    "gpu_compute_apps": 0,
+    "preread": [
+      "edge_indices.pt",
+      "kg.json",
+      "kg.provenance.json",
+      "node_features.pt",
+      "num_nodes.json",
+      "shortest_paths.meta.json",
+      "shortest_paths.pt",
+      "split_manifest.json",
+      "train_samples.json",
+      "val_samples.json",
+      "checkpoint"
+    ],
+    "shepherd_servers_running": 0
+  },
+  "reload_diag_sha256": "2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff",
+  "reloads": [
+    {
+      "index": 1,
+      "success": true,
+      "wall_seconds": 81.054
+    },
+    {
+      "index": 2,
+      "success": true,
+      "wall_seconds": 82.714
+    },
+    {
+      "index": 3,
+      "success": true,
+      "wall_seconds": 82.461
+    }
+  ],
+  "schema": "shepherd.s10_reload_inproc/draft-1",
+  "serving_script_sha256": "d097cf974e0ba05d552af06395f2e72baec3206edc8d9c3a0b5d30b79ea3d322",
+  "settings": {
+    "checks": 5,
+    "reloads": 3,
+    "seed": 20260930
+  },
+  "sizes": {
+    "generation_0": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    },
+    "generation_1": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    },
+    "generation_2": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    },
+    "generation_3": {
+      "embedding": 32879616,
+      "graph_tensor": 16439808,
+      "kg": null,
+      "model": null,
+      "pipeline": null,
+      "sp_distance": 431902937,
+      "sp_keys": 3455223496,
+      "sp_lookup": null
+    }
+  },
+  "startup_seconds": 80.978,
+  "subject": {
+    "checkpoint_sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79",
+    "graph_sha256": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+    "sp_table_sha256": "dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027"
+  },
+  "tool_sha256": "9b79576809c04395b0bbf67180ff1cb93aa1da20db8d5ab5ab7152a8b61f000d",
+  "wall_seconds": 513.99
+}

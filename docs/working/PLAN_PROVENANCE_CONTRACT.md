@@ -1691,6 +1691,12 @@ each moves its callers before anything is removed.
           first, M2.1's difference separately; a read-only reading of the reload path finds no
           cache that keeps the old pipeline, and any in-process diagnostic is proposed with its
           hypothesis, observations, runs and stopping rule and reviewed before it runs.
+        - **Second phase, in process (2026-10-13):** [`reload-inproc-2026-10-13/`](scorer-measurement/reload-inproc-2026-10-13/README.md). The growth
+          recurs without HTTP (+1.2 GB after three reloads at `343e90e`); every watched object
+          of the earlier pipelines was already freed; a full collection and a trim return
+          about 70 MB. Cause not located. Next, by the reviewer's instruction: a read-only
+          check of the embedding and SP build steps, then at most one run of the same tool with
+          readings around those two methods.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.
