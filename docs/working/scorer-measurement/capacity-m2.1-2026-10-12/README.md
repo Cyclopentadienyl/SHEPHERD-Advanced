@@ -10,13 +10,14 @@ comparison's single verdict, which covers both, is "NOT judged: data missing" (e
 kept as recorded; the owner's statement below supplements the UNKNOWN and does not turn it into a
 pass. Acceptance 2 and 3 are explained below, including the changes other than M2.1 on the
 measured paths (§4.6), except one: the serving reload's small resident rise (R3 +0.023 / +0.031 /
-+0.028 GB) is not located. Allocator retention is a candidate explanation; no diagnostic run was
-made, and one reload per process cannot show whether it accumulates. Acceptance 4 is not
-triggered (no shortfall). **S10's capacity is not accepted, and this is not acceptance of M2.1 or
++0.028 GB) is not located. Allocator retention is a candidate explanation; one reload per process
+cannot show whether it accumulates, and the later diagnostic of three reloads (below) is what reads
+that. Acceptance 4 is not triggered (no shortfall). **S10's capacity is not accepted, and this is not acceptance of M2.1 or
 M2.** The reviewer's evidence review (2026-10-13) found the readings consistent and recommends a
 limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it
-(2026-10-13, §6.1). Its driver was reviewed with no P1 or P2; its revised reading rules await the
-reviewer's check; it has not run.
+(2026-10-13, §6.1). It ran on 2026-10-13 ([`reload-diag-2026-10-13/`](../reload-diag-2026-10-13/README.md)): each process grew by
+about 0.4–0.5 GB at every reload at both commits, before M2.1 as after it, so a bounded cost is
+not supported and acceptance 2 stays open; the difference between the commits is ambiguous.
 
 ## 1. What was run
 
@@ -341,9 +342,14 @@ are kept outside the repository like S10's tools. The driver only combines
 HTTP client, VmHWM reset and stop, S10's pre-read, and reads of `/proc`. Its runbook fixes the
 reading rules, with bands taken from S10's readings. The reviewer's review of draft 5
 (2026-10-13) found no P1 or P2 in the driver and two P2 in those rules, fixed in the runbook
-only; the revised rules await the reviewer's check, and the diagnostic has not run. Its results
-will go in a directory of their own; this directory's files, `SHA256SUMS` and `compare.txt` do
-not change. Choices 1 and 3 were not taken.
+only and checked before the run. **It ran on 2026-10-13**; its evidence and readings are in
+[`reload-diag-2026-10-13/`](../reload-diag-2026-10-13/README.md), and this directory's files, `SHA256SUMS` and `compare.txt` did not
+change. Each process grew at every reload, by about +410 to +470 MB per cycle and +1.2 GB after
+three reloads, at `90a668f` as at `343e90e` (rule 4): present before M2.1, so not attributable
+to it, and no bounded cost is supported. The difference between the commits reproduced the
+first-reload difference (+32.6 MB) and then moved by −5.0 and +7.6 MB: neither a plateau nor
+growth under the rules, so ambiguous. Acceptance 2 stays open; the runbook's second phase
+locates the growth common to both commits first. Choices 1 and 3 were not taken.
 
 1. **Accept it uninvestigated.** Acceptance 2 calls a rise "an observation to investigate" and
    says "an investigation uses a separate diagnostic run"; choosing this is the owner's decision to

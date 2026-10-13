@@ -26,9 +26,10 @@ and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacit
 the after commit; comparability has 1 UNKNOWN (the service state, supplemented by the owner's statement; the
 comparison's exit status 2 kept); acceptance 2 and 3 are explained except the serving reload's resident rise (R3
 +0.023 to +0.031 GB), whose source is not located; the reviewer's evidence review (2026-10-13) recommends a
-limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it (2026-10-13), its
-driver was reviewed with no P1 or P2, its revised reading rules await the reviewer's check, and it has not run;
-capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it (2026-10-13), and it
+ran on 2026-10-13 ([`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md)): each process grew by about 0.4–0.5 GB
+at every reload at both commits, before M2.1 as after it, and the difference between the commits is ambiguous, so
+acceptance 2 stays open and its second phase is next; capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -773,6 +774,9 @@ is implemented.
 - **The review of `40fcf0b..7b026c9` and of the diagnostic's draft 5** (2026-10-13), read-only:
   no P1; no P1 or P2 in the tool or the documents; two P2 in the runbook's reading rules, fixed in
   the runbook only (tool and tests unchanged). Not acceptance of anything.
+- **The diagnostic ran on the homelab (2026-10-13)**, at both commits in one boot, and the
+  reviewer reviewed its results the same day: [`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md). Not acceptance
+  of S10's capacity, of M2.1 or of M2.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1669,14 +1673,24 @@ each moves its callers before anything is removed.
         two P2 in the runbook's reading rules: a bounded cost needs each process to level off on
         its own, not only the difference to stay flat; and a difference already present before
         any reload does not confirm the reproduction. Both were fixed in the runbook only, and
-        the revised rules await the reviewer's check before the run. The bands (6 and 11 MB;
+        the revised rules were checked before the run. The bands (6 and 11 MB;
         the first reload's difference within +16 to +38 MB, the baseline within -11 to +5 MB)
-        are observation bands declared from S10's readings, not confidence intervals. It has
-        not run. Its results are kept apart from S10's evidence. A difference that does not
+        are observation bands declared from S10's readings, not confidence intervals. Its
+        results are kept apart from S10's evidence. A difference that does not
         grow, with each process levelling off on its own, supports
         accepting a bounded cost for this subject and three reloads, the source still not
         located; growth with the reloads, or a failed reload, readiness or diagnosis, or an
         OOM kill or swap rise, leads to a second phase that locates it.
+        - **As run (2026-10-13):** [`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md). Healthy at both commits
+          (6 reloads and 430 diagnoses accepted, no OOM kill, no swap). Each process grew at
+          every reload, by about +410 to +470 MB per cycle and +1.2 GB after three reloads, at
+          `90a668f` as at `343e90e` (rule 4): present before M2.1, not attributable to it, and
+          no bounded cost is supported. The difference between the commits reproduced the
+          first reload's (+32.6 MB), then moved by −5.0 and +7.6 MB: ambiguous (rule 6).
+          Acceptance 2 stays open. Next, the second phase: the growth common to both commits
+          first, M2.1's difference separately; a read-only reading of the reload path finds no
+          cache that keeps the old pipeline, and any in-process diagnostic is proposed with its
+          hypothesis, observations, runs and stopping rule and reviewed before it runs.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.
