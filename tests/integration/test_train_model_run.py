@@ -107,7 +107,8 @@ def test_a_short_run_completes_and_records_its_allocator(tmp_path):
                             map_location="cpu", weights_only=False)
     files = {"train_samples": "train_samples.json", "val_samples": "val_samples.json",
              "node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
-             "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json"}
+             "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json",
+             "kg": "kg.json"}
     assert checkpoint["training_input_digests"] == {
         role: hashlib.sha256((data_dir / name).read_bytes()).hexdigest()
         for role, name in files.items()

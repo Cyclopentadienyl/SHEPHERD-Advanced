@@ -149,13 +149,35 @@ def test_the_recorded_roles_are_the_semantic_inputs_a_run_consumes(tmp_path):
 
     assert set(digests) == {
         "train_samples", "val_samples", "node_features", "edge_indices", "num_nodes",
-        "split_manifest",
+        "split_manifest", "kg",
     }
     files = {"train_samples": "train_samples.json", "val_samples": "val_samples.json",
              "node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
-             "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json"}
+             "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json",
+             "kg": "kg.json"}
     for role, name in files.items():
         assert digests[role] == _sha256(data_dir / name), role
+
+
+def test_the_kg_role_is_the_source_graph_the_manifest_binds(tmp_path, monkeypatch):
+    """Contract M2.2: training records the manifest-bound `kg` digest, taken from
+    the manifest reading that verified the tensors, and does not parse kg.json
+    to get it."""
+    import json as _json
+
+    from scripts.train_model import read_training_inputs, training_input_digests
+    from src.kg import graph as graph_module
+
+    data_dir = _workspace(tmp_path / "ws")
+    bound = _json.loads((data_dir / "split_manifest.json").read_text())["artifacts"]["kg"]
+
+    def no_parse(*args, **kwargs):
+        raise AssertionError("training parsed kg.json")
+
+    monkeypatch.setattr(graph_module.KnowledgeGraph, "read_json", no_parse)
+    monkeypatch.setattr(graph_module.KnowledgeGraph, "load_json", no_parse)
+    inputs = read_training_inputs(data_dir)
+    assert training_input_digests(inputs)["kg"] == bound == inputs.bound["kg"]
 
 
 def test_the_manifest_is_recorded_as_a_training_input(tmp_path):

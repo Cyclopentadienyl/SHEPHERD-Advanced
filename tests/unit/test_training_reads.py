@@ -54,6 +54,9 @@ RECORDED = {
     "edge_indices": "edge_indices.pt",
     "num_nodes": "num_nodes.json",
     "split_manifest": "split_manifest.json",
+    # contract M2.2: the manifest-bound source graph, which the run verified
+    # kg.json against on disk, so its digest equals the file's
+    "kg": "kg.json",
 }
 
 

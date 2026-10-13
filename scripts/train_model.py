@@ -418,6 +418,11 @@ class TrainingInputs(NamedTuple):
     #: samples parsed. A run without them trains without validation and must
     #: not record the file as an input its results rest on.
     with_validation: bool
+    #: The digest the manifest this run read binds for each of the four graph
+    #: roles, as `verify_graph_reads` returned it after checking the tensors
+    #: against it. `kg` is the source graph the tensors were exported from;
+    #: training records it without parsing `kg.json` (contract M2.2).
+    bound: Dict[str, str]
 
 
 def read_training_inputs(data_dir: Path) -> TrainingInputs:
@@ -455,7 +460,7 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
         for split in TRAINING_SPLITS
     }
 
-    verify_graph_reads(manifest, graph.reads)
+    bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
     verify_cohort_reads(manifest, samples)
 
@@ -471,7 +476,7 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
         f"{len(samples['val'].samples)} val samples; "
         f"node counts: {graph.graph_data['num_nodes_dict']}"
     )
-    return TrainingInputs(manifest, graph, samples, with_validation)
+    return TrainingInputs(manifest, graph, samples, with_validation, bound)
 
 
 def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optional[ReadIdentity]:
@@ -547,9 +552,12 @@ def training_input_digests(
     disease level or at the sample level, and nothing in their digests
     distinguishes those regimes.
 
-    The role set is unchanged from before M2.1. `kg` is not among them yet:
-    training does not parse `kg.json`, and recording the manifest-bound source
-    graph is M2.2's.
+    **`kg` is the manifest-bound source graph (contract M2.2).** Training does
+    not parse `kg.json`; its `kg` role is the digest the manifest it read binds,
+    against which the tensors it parsed were verified (`verify_graph_reads`).
+    That is the transitive claim the manifest makes: these tensors are that
+    graph's export. It is the one value here that is not a read's identity, and
+    it comes from the same manifest reading as `split_manifest`.
     Nothing globs the directory, so an unrelated split appearing beside these
     files does not change the record of a run that never read it.
     """
@@ -571,7 +579,14 @@ def training_input_digests(
             f"no read of {', '.join(missing)}, so there is no digest to record; a "
             "training record names only bytes a reader parsed"
         )
-    return {role: read.sha256 for role, read in reads.items()}
+    digests = {role: read.sha256 for role, read in reads.items()}
+    if not inputs.bound.get("kg"):
+        raise ValueError(
+            "the manifest this run read binds no kg digest, so the source graph "
+            "of these tensors cannot be recorded"
+        )
+    digests["kg"] = inputs.bound["kg"]
+    return digests
 
 
 def create_dataloaders(
