@@ -26,8 +26,8 @@ and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacit
 the after commit; comparability has 1 UNKNOWN (the service state, supplemented by the owner's statement; the
 comparison's exit status 2 kept); acceptance 2 and 3 are explained except the serving reload's resident rise (R3
 +0.023 to +0.031 GB), whose source is not located; the reviewer's evidence review (2026-10-13) recommends a
-limited diagnostic of consecutive reloads before acceptance 2 is closed, and the owner decides; capacity is not
-yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it (2026-10-13), its
+driver awaits review and it has not run; capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -764,6 +764,11 @@ is implemented.
   the tools: the evidence and the explanation of every reading are in
   [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md), awaiting review. Not acceptance of S10's capacity, of M2.1
   or of M2.
+- **The evidence review of `e0cfb68..968d5e4`** (2026-10-13), read-only: no P1; one P2, the two
+  `driver.log` files missing from the commit (the repository ignores `*.log`), added at
+  `40fcf0b` and checked from a clean tree; the reload's causal wording narrowed. It recommends a
+  limited diagnostic of consecutive reloads before acceptance 2 is closed, which the owner chose
+  the same day (S10, "As run"). Not acceptance of S10's capacity, of M2.1 or of M2.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1644,8 +1649,27 @@ each moves its callers before anything is removed.
         located, allocator retention a candidate, one reload per process. Acceptance 4 is not
         triggered. The reviewer's evidence review (2026-10-13) found no P1, one P2 (two
         `driver.log` files missing from the commit, since added) and recommends a limited
-        diagnostic of consecutive reloads before acceptance 2 is closed; the owner decides. Not
-        accepted.
+        diagnostic of consecutive reloads before acceptance 2 is closed. Not accepted.
+      - **The reload diagnostic (the owner's choice, 2026-10-13; the evidence README §6.1).**
+        It answers one question: does the reload's resident difference keep growing over
+        three successful reloads in one server process, and does the service stay healthy.
+        One diagnostic per commit (`90a668f`, `343e90e`), back to back in one boot, after
+        S10's pre-read, with the same workspace, checkpoint and settings: the same 200
+        requests first, then three reloads in a row through the HTTP route, each followed by a
+        readiness check and diagnosis requests; RSS, anonymous memory and Pss at fixed points,
+        with the OOM-kill counter and swap. No `strace`, `mallinfo2`, allocator change,
+        `malloc_trim`, `gc.collect`, `empty_cache` or second loader. Its driver,
+        `s10_reload_diag.py` (SHA-256 `2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff`),
+        and its tests `test_s10_reload_diag.py` (`16f523b5b433719f4d0ac3b97717dcabdcaa66f856da9bf7cd528c277fc5931b`), are kept outside the
+        repository; after four internal review rounds (the last two with no P1 or P2; draft 5
+        carries the last round's P3 fixes) they await the reviewer's review, with the reading
+        rules in their runbook, whose bands come from S10's noise (6 and 11 MB; the first
+        reload's difference within +16 to +38 MB) and are for the reviewer to confirm before
+        the run. It has not run. Its
+        results are kept apart from S10's evidence. A difference that does not grow supports
+        accepting a bounded cost for this subject and three reloads, the source still not
+        located; growth with the reloads, or a failed reload, readiness or diagnosis, or an
+        OOM kill or swap rise, leads to a second phase that locates it.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.

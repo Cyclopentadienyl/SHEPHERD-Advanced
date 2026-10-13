@@ -14,7 +14,8 @@ measured paths (§4.6), except one: the serving reload's small resident rise (R3
 made, and one reload per process cannot show whether it accumulates. Acceptance 4 is not
 triggered (no shortfall). **S10's capacity is not accepted, and this is not acceptance of M2.1 or
 M2.** The reviewer's evidence review (2026-10-13) found the readings consistent and recommends a
-limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner decides (§6.1).
+limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it
+(2026-10-13, §6.1). Its driver awaits the reviewer's review; it has not run.
 
 ## 1. What was run
 
@@ -332,6 +333,15 @@ make RSS fall.
 
 The serving reload's resident rise (R3 +0.023 / +0.031 / +0.028 GB) has no raw-buffer retention
 behind it in the readers measured, but its source is not located (§4.5). Three choices:
+
+**Chosen (the owner, 2026-10-13): choice 2.** Its driver, `s10_reload_diag.py` (SHA-256 `2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff`) and its tests `test_s10_reload_diag.py` (`16f523b5b433719f4d0ac3b97717dcabdcaa66f856da9bf7cd528c277fc5931b`),
+are kept outside the repository like S10's tools. The driver only combines
+`measure_served_pipeline.py`'s own launcher, child environment, readiness rule, seeded workload,
+HTTP client, VmHWM reset and stop, S10's pre-read, and reads of `/proc`. Its runbook fixes the
+reading rules, with bands taken from S10's noise for the reviewer to confirm. It awaits the
+reviewer's review, and the diagnostic has not run. Its results will go in a directory of their
+own; this directory's files, `SHA256SUMS` and `compare.txt` do not change. Choices 1 and 3 were
+not taken.
 
 1. **Accept it uninvestigated.** Acceptance 2 calls a rise "an observation to investigate" and
    says "an investigation uses a separate diagnostic run"; choosing this is the owner's decision to
