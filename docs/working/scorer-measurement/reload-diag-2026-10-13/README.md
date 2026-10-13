@@ -86,6 +86,11 @@ reloads say nothing about a longer service.
 
 ## 5. Next
 
+**Later (2026-10-13):** the second phase and the investigation's conclusion are in
+[`reload-inproc-segments-2026-10-13/`](../reload-inproc-segments-2026-10-13/README.md), and acceptance 2 was
+closed with the remaining uncertainty explicit ([`capacity-m2.1-2026-10-12/` §6.2](../capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13)). What follows is the plan
+as it stood.
+
 The runbook's second phase: locate the per-reload growth common to both commits first, and treat
 M2.1's difference separately. A read-only reading of the reload path (`src/api/routes/pipeline.py`
 `reload_pipeline` builds a candidate, then `publish_pipeline` in `src/api/main.py` replaces the

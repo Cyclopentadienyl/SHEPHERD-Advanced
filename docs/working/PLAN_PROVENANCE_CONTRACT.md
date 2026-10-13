@@ -19,8 +19,10 @@ code-reviewed with no P1 or P2 (`7327798..290c03a`, 2026-10-12). Measurement run
 were not migrated; since the owner's clarification of 2026-10-12 they were deleted by the Mode A/B
 retirement's R2 (2026-10-12; code-reviewed with no P1 or P2 in
 `1d0b5a6..06fd0f1`, 2026-10-12), so since R2 every measurement run takes S7's reads;
-that measurement-wide state rests on R2 and is not covered by S7's C-only review. M2.1 is not
-complete: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
+that measurement-wide state rests on R2 and is not covered by S7's C-only review. **M2.1's technical
+work is complete (2026-10-13)**: the owner accepted S10's capacity on its designated subject, with the
+remaining uncertainty explicitly accepted, on the reviewer's recommendation ([the capacity README §6.2](scorer-measurement/capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13));
+this is not a merge, and M2 is not complete. The record that led there: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
 and S10's tools, kept outside the repository, passed their re-review with no P1 or P2 (draft 3, 2026-10-12),
 and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md)): every acceptance 1 check passes at
 the after commit; comparability has 1 UNKNOWN (the service state, supplemented by the owner's statement; the
@@ -29,7 +31,8 @@ comparison's exit status 2 kept); acceptance 2 and 3 are explained except the se
 limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it (2026-10-13), and it
 ran on 2026-10-13 ([`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md)): each process grew by about 0.4–0.5 GB
 at every reload at both commits, before M2.1 as after it, and the difference between the commits is ambiguous, so
-acceptance 2 stays open and its second phase is next; capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+the owner ended the reload-memory investigation (2026-10-13) with the wheel's bundled mimalloc purge defects as
+a strong candidate cause, attribution not established, and accepted S10's capacity with that uncertainty explicit. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -777,6 +780,11 @@ is implemented.
 - **The diagnostic ran on the homelab (2026-10-13)**, at both commits in one boot, and the
   reviewer reviewed its results the same day: [`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md). Not acceptance
   of S10's capacity, of M2.1 or of M2.
+- **The reviewer's closing review (2026-10-13)**, read-only: recommends accepting S10's capacity on
+  its designated subject with the remaining uncertainty explicit, and closing M2.1's technical
+  work; `src/`, `scripts/` and `tests/` at `6e17360` identical to `343e90e`; the evidence's
+  `SHA256SUMS` pass from a clean copy. **Adopted by the owner on 2026-10-13** ([the capacity README §6.2](scorer-measurement/capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13)).
+  Not a merge; M2 is not complete.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1705,6 +1713,13 @@ each moves its callers before anything is removed.
           dependency limitation is BACKLOG item 22. The common growth and M2.1's ~30 MB
           difference are recorded apart; acceptance 2 is the owner's separate decision, and S10's
           capacity is judged on its own readings and limits.
+        - **Accepted (the owner, 2026-10-13)**, on the reviewer's recommendation: S10's capacity on
+          its designated subject, with the remaining uncertainty explicitly accepted; acceptance 2
+          closed with the reviewer's wording; the scope (the GB10, the recorded environment, the
+          warm policy, this subject, the five-row matrix; training read only to its preparation
+          boundary) and the known limitations (the unattributed ~30 MB, the common retention as
+          BACKLOG item 22, the comparability UNKNOWN with exit status 2) are in [the capacity README §6.2](scorer-measurement/capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13).
+          M2.1's technical work is complete; not merged; M2 is not complete.
     - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
       for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
       encoded embeddings. Acceptance 3 explains peaks against this list.

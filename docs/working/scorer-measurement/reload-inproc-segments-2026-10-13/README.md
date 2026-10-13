@@ -98,9 +98,11 @@ account for all of the retention.
   limitation, to be revisited only when a PyTorch wheel is shown, in its `libc10.so`, to carry both
   upstream fixes. No change to SHEPHERD's pipeline is made for it.
 - **M2.1's ~30 MB difference at the reload** (phase 1: reproduced at reload 1, then ambiguous):
-  S10's acceptance 2, decided separately by the owner.
+  S10's acceptance 2, decided separately by the owner and closed on 2026-10-13 with the remaining
+  uncertainty explicit ([`capacity-m2.1-2026-10-12/` §6.2](../capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13)).
 - **S10's capacity:** judged on its own readings and limits
-  ([`capacity-m2.1-2026-10-12/`](../capacity-m2.1-2026-10-12/README.md)); not accepted here.
+  ([`capacity-m2.1-2026-10-12/`](../capacity-m2.1-2026-10-12/README.md)); accepted by the owner on
+  2026-10-13 on its designated subject, not by this run.
 
 ## 5. Files
 

@@ -4,6 +4,10 @@ Contract M2.1 step S10 ([`PLAN_PROVENANCE_CONTRACT.md`](../../PLAN_PROVENANCE_CO
 10). This directory holds the evidence of the one reported run at each commit, byte for byte as
 the owner sent it, and this explanation.
 
+**Accepted (the owner, 2026-10-13)** on this subject, with the remaining uncertainty explicitly
+accepted; M2.1's technical work is complete; not merged, and M2 is not complete (§6.2). The status
+as first recorded follows.
+
 **Status.** The run is complete. Every acceptance 1 check passes at the after commit (51 PASS, 0
 FAIL, 0 UNKNOWN). Comparability: 60 checks PASS and 1 is UNKNOWN, the service state, so the
 comparison's single verdict, which covers both, is "NOT judged: data missing" (exit status 2),
@@ -355,8 +359,8 @@ locates the growth common to both commits first. Choices 1 and 3 were not taken.
 The PyTorch wheel in use is confirmed to contain mimalloc purge defects that upstream has since fixed; they are a strong candidate cause of the observed memory retention; the attribution of all of the increase is not established. It is not a confirmed root
 cause, nothing is fixed, and other factors are not excluded; no change is made to the pipeline.
 The growth common to both commits and M2.1's ~30 MB difference are recorded apart, and this
-directory's capacity readings are judged on their own; acceptance 2 is decided by the owner
-separately.
+directory's capacity readings are judged on their own; acceptance 2 was decided by the owner
+separately, and closed on 2026-10-13 (§6.2).
 
 1. **Accept it uninvestigated.** Acceptance 2 calls a rise "an observation to investigate" and
    says "an investigation uses a separate diagnostic run"; choosing this is the owner's decision to
@@ -395,6 +399,45 @@ separately.
 Other observations, optional and not needed for acceptance: the measurement row's −0.022 GB and
 +0.015 GB; the SP row's −0.29 GB and −0.107 GB (decreases in identical code); the serving
 baseline's 1–2 MB and R2's 54–59 MB fall during requests (equal at both commits); the wall times.
+
+### 6.2 Acceptance (2026-10-13)
+
+**The owner accepted S10's capacity on its designated subject on 2026-10-13**, adopting the
+reviewer's recommendation of the same day, by explicitly accepting the uncertainty that remains
+after the investigation. This is an engineering decision, not a pass derived from the reading
+rules: the comparison's verdict ("NOT judged", exit status 2, with the service-state UNKNOWN that
+the owner's statement supplements) is kept as recorded, and the reload diagnostic's rules 4 and 6
+stand as read, with no band changed afterwards.
+
+Acceptance 2 is closed with the reviewer's wording: the cross-commit comparison and independent
+diagnostics are complete. In S10's reported run the serving R3 difference was +0.023 to +0.031 GB;
+over consecutive reloads the difference between the commits remains ambiguous, its source not
+fully located, neither shown to keep growing nor shown to level off or be bounded over a longer
+service. The memory retention common to both commits was present before M2.1; the wheel in use is
+confirmed to contain mimalloc purge-scheduling defects fixed upstream, but no causal control has
+shown that they explain all of the retention or the ~30 MB difference between the commits. On the
+functional, capacity and release checks completed, the remaining uncertainty is accepted for the
+designated subject, and no further diagnostic is a condition for closing M2.1.
+
+That the common retention was present before M2.1 rules out M2.1 as its first cause; it does not
+rule out that M2.1's changes affect allocation timing or the amount kept. The ~30 MB difference is
+not "normal variation", not "all mimalloc" and not "unrelated to M2.1": it is unattributed.
+
+**Scope of the acceptance:** the GB10, the software environment recorded in the evidence, the warm
+pre-read policy, `hpo_2026_0929_5a` / `model-02-0.1813.pt`, and the five-row matrix. Training's
+reading stops at its read and preparation boundary; it is not a full-training capacity or a model
+quality acceptance. It does not extend to larger cohorts, other deployments, concurrency or an
+unbounded number of reloads.
+
+**Known limitations, with no further work in M2.1:** the unattributed ~30 MB difference at the
+reload; the per-reload retention common to both commits (BACKLOG item 22, a dependency limitation,
+[`reload-inproc-segments-2026-10-13/`](../reload-inproc-segments-2026-10-13/README.md)); the
+comparability UNKNOWN with exit status 2.
+
+With S10 accepted, **M2.1's technical work is complete** (S0–S9 implemented and code-reviewed,
+S10's tools reviewed, S10 accepted). This is not a merge, and M2 is not complete: M2.2–M2.6 remain.
+The delivery check of 2026-10-13: `src/`, `scripts/` and `tests/` at `520fc90` are identical to the
+measured `343e90e`, and every evidence directory's `SHA256SUMS` passes from a clean `git archive`.
 
 ## 7. The evidence's limits
 
