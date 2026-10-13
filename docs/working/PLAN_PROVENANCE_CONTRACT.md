@@ -2109,6 +2109,27 @@ This follows decision 2.
 - a fresh build → train → resume → serve passes;
 - the inventory runs on the homelab.
 
+*How it is run (the owner's decision, 2026-10-13):* through the deployment probe, extended and
+nothing else (`scripts/probe_deployment.py --m2-acceptance --device cuda`), every check from the
+production entry point that makes it -- the trainer, the measurement CLI, the serving build, the
+shortest-path producer and the inventory -- never from the comparator alone.
+- **Demo part (phase M, after B–E):** the successes first (a resume that trains on and names its
+  parent; measurement; serving the resumed model with a shortest-path table the loader verifies),
+  then the five resume refusals, each leaving no run directory and nothing changed, and serving
+  and measurement refusing a checkpoint over a workspace that is valid on its own and the same
+  shape; then the inventory. Faults are injected only into copies under the work directory.
+- **Real-data part (phase R):** on `hpo_2026_0929_5a`, read and never written: the workspace and
+  its table's binding check out; the settings (a `config.yaml`) carry the architecture recorded by
+  `model-02-0.1813.pt`; one epoch from scratch and one resumed, every output under the work
+  directory; measurement and serving of the new checkpoint, SP verified, a diagnosis; the
+  inventory refuses `model-02` for its missing record and passes the new model; the workspace is
+  unchanged. The short-trained model shows the pipeline and its checks work; it is not a serving
+  model, which the established training and evaluation choose.
+- **Accounting:** CUDA is required and the run stops after A2 without it; the report lists, per
+  part, every required probe and any not run, skipped or failed; the acceptance is complete only
+  when both parts are. The work directory is kept, with the tested commit, the device, the
+  artifacts' digests and each probe's result.
+
 ### M3 — producers record what consumers need, and consumers check it
 
 Three changes, each complete. M3a can proceed in parallel with M3b and M3c.

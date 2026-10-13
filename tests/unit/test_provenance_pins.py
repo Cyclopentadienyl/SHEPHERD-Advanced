@@ -58,7 +58,7 @@ _NOT_INPUT = ("not a provenance input: {what}; nothing recorded or compared is t
               "Permanent, no home")
 _IN_MEMORY = "a digest of {what} in memory, not of a file. Permanent, no home"
 _PROBE = ("owner: the deployment probe's own evidence (scripts/probe_deployment.py, M1's "
-          "acceptance and M2.4's D2). ")
+          "acceptance, M2.4's D2 and M2's acceptance). ")
 
 #: (file, enclosing function, primitive) -> (number of calls, use and owner).
 ALLOWED = {
@@ -169,6 +169,23 @@ ALLOWED = {
     ("scripts/probe_deployment.py", "phase_download._download", "file_sha256"):
         (1, _PROBE + "The published ontology file against the digest its loader took "
             "while parsing it"),
+    # --- The deployment probe's M2 acceptance: its own outputs, read back ---
+    ("scripts/probe_deployment.py", "_measurement_facts", "json.loads"):
+        (1, _PROBE + "Reads back the measurement report this probe had the measurement "
+            "entry point write, to check what it names; not an input"),
+    ("scripts/probe_deployment.py", "_measurement_facts", "file_sha256"):
+        (1, _PROBE + "The digest of that report, as evidence; nothing parses it after"),
+    ("scripts/probe_deployment.py", "phase_m2_demo._inventory", "json.loads"):
+        (1, _PROBE + "Reads back the inventory report this probe had the audit write"),
+    ("scripts/probe_deployment.py", "phase_m2_demo._inventory", "file_sha256"):
+        (1, _PROBE + "The digest of that report, as evidence"),
+    ("scripts/probe_deployment.py", "phase_m2_real._inventory", "json.loads"):
+        (2, _PROBE + "Reads back the two inventory reports this probe had the audit write"),
+    ("scripts/probe_deployment.py", "phase_m2_real._inventory", "file_sha256"):
+        (2, _PROBE + "The digests of those two reports, as evidence"),
+    ("scripts/probe_deployment.py", "_training_settings", "read_once"):
+        (1, _PROBE + "Phase R's training settings, parsed from the bytes of one read whose "
+            "digest the report gives"),
 }
 
 _MODULES = ("hashlib", "json", "torch")
