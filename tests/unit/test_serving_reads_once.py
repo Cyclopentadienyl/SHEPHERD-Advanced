@@ -58,8 +58,7 @@ def api(monkeypatch):
     for field in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
         monkeypatch.setattr(api_main.app_state, field, None, raising=False)
     monkeypatch.setattr(api_main.app_state, "is_ready", False, raising=False)
-    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH",
-                 "SHEPHERD_SP_HOP_BOUND"):
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     return api_main

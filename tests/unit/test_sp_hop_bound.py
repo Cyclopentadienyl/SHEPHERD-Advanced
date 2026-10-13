@@ -15,9 +15,9 @@ different one. So a missing sidecar still assumes 5 — and says that it did.
 
 *Superseded twice:* a missing sidecar then needed the bound stated
 (`sp_hop_bound`), and since contract M2.5 a table without a sidecar is refused
-outright: it records no binding to the graph. The tables below are therefore
-published bound, as the producer publishes them, over a graph whose digest the
-loader holds.
+outright: it records no binding to the graph, and the configured bound is retired.
+The tables below are therefore published bound, as the producer publishes them,
+over a graph whose digest the loader holds.
 
 Module: tests/unit/test_sp_hop_bound.py
 """
@@ -152,38 +152,23 @@ class TestAPresentSidecarIsBinding:
 
 
 class TestATableWithoutASidecarIsRefused:
-    """No sidecar, no binding: refused, whatever bound is configured (M2.5).
+    """No sidecar, no binding: refused (M2.5).
 
     A previous revision served such a table when the bound was stated
     (`sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND` on the service) and kept it off
-    otherwise. Since contract M2.5 it records no graph and is refused before the
-    bound is resolved, so the configured bound no longer reaches a served table.
+    otherwise. Since contract M2.5 it records no graph and is refused before any
+    bound is read, and the configured bound is retired
+    (`test_hop_bound_reaches_the_service.py`): the bound comes from the sidecar.
     """
 
-    @pytest.mark.parametrize("bound", [None, 3, 5])
-    def test_it_is_refused_and_nothing_is_published(self, tmp_path, bound):
+    def test_it_is_refused_and_nothing_is_published(self, tmp_path):
         pipeline, data_dir = _loader(tmp_path, distances=[1, 2, 3], sidecar=None)
-        pipeline.config = _config(sp_hop_bound=bound)
 
         with pytest.raises(ValueError, match="carries no source binding"):
             pipeline._load_shortest_paths(data_dir)
 
         assert pipeline._sp_ready is False
         assert pipeline._sp_lookup is None
-
-    def test_the_sidecar_wins_over_the_configured_bound(self, tmp_path):
-        """The file describes the artifact; the setting was for when no file
-        does. A stale configuration must not override a table that came with its
-        own answer, and a served table now always has one."""
-        pipeline, data_dir = _loader(
-            tmp_path, distances=[1, 2, 3], sidecar={"max_hops": 3}
-        )
-        pipeline.config = _config(sp_hop_bound=5)
-
-        pipeline._load_shortest_paths(data_dir)
-
-        assert pipeline._sp_max_hops == 3
-        assert pipeline._sp_hop_bound_source == "sidecar"
 
 
 class TestTheRankingThisPrevents:
@@ -303,9 +288,10 @@ class TestTheProvenanceReachesACaller:
     without reading the service's logs.
     """
 
-    @pytest.mark.parametrize("source", ["sidecar", "configured"])
-    def test_it_survives_get_pipeline_config_and_the_status_response(self, source):
+    def test_it_survives_get_pipeline_config_and_the_status_response(self):
         from src.api.routes.pipeline import _status_of
+
+        source = "sidecar"
 
         status = _status_of(
             {"scoring_mode": "gnn_plus_shortest_path", "sp_max_hops": 3,

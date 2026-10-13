@@ -23,7 +23,6 @@ Module: tests/unit/test_pipeline_reload_availability.py
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -610,14 +609,11 @@ def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path)
     checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "val_mrr": torch.tensor(0.5)}
     torch.save(checkpoint, checkpoint_path)
 
-    graph_data = {
-        "x_dict": torch.load(data_dir / "node_features.pt", weights_only=False),
-        "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=False),
-        "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
-    }
+    # From the workspace: a checkpoint is loaded only over a graph verified from
+    # one (contract M2.4).
     pipeline = DiagnosisPipeline(
-        kg=KnowledgeGraph(),
-        graph_data=graph_data,
+        graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+        data_dir=str(data_dir),
         checkpoint_path=str(checkpoint_path),
         device="cpu",
     )

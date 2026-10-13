@@ -48,8 +48,9 @@ class PipelineStatusResponse(BaseModel):
     eta_configured: float = 0.7
     eta_effective: float = 0.0
     sp_max_hops: Optional[int] = None
-    #: "sidecar" or "assumed" — whether a file declared the hop bound or the
-    #: loader fell back to the producer's default. The two score differently.
+    #: "sidecar": where the hop bound in effect was read. The only source since
+    #: the configured bound was retired (contract M2.5); kept so a status reader
+    #: sees where the ceiling every shortest-path score uses came from.
     sp_hop_bound_source: Optional[str] = None
     #: "verified" — the table names the graph being served and the two agree.
     #: A table published before the pairing protocol ("unrecorded") is refused

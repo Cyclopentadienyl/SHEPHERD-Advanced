@@ -913,6 +913,13 @@ def train(config: TrainConfig) -> Dict[str, float]:
             f"Resumed from checkpoint: {parent.identity.path} "
             f"(sha256 {parent.identity.sha256[:12]})"
         )
+    # **Only the identity outlives the restore.** The model, optimizer,
+    # scheduler and scaler hold what they took from the parent; the read itself
+    # would otherwise keep every source tensor it parsed, on the run's device,
+    # alive until training returns. Nothing is cleared: what the optimizer
+    # adopted stays with the optimizer.
+    parent_identity = parent.identity if parent is not None else None
+    del parent
 
     # **The parent is in the record.** A first version attached the digests
     # before the resume decision; a resumed run then recorded every current file
@@ -928,9 +935,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
 
     # Only the roles this run consumed, and only from the reads: the inputs read
     # and verified at the top, and the parent restored above.
-    trainer.training_input_digests = training_input_digests(
-        inputs, parent=parent.identity if parent is not None else None
-    )
+    trainer.training_input_digests = training_input_digests(inputs, parent=parent_identity)
 
     # Train
     logger.info("Starting training...")

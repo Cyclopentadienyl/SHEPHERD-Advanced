@@ -167,18 +167,6 @@ class PipelineConfig:
     # If False, pipeline raises at init when both signals are not available.
     sp_optional: bool = True
 
-    # The hop bound for a shortest-path table whose sidecar is absent.
-    #
-    # **Supplied, never assumed.** `max_hops` sets the unreachable sentinel, and
-    # a wrong one reorders candidates rather than merely mis-scoring them: a
-    # legitimate 3-hop table read against 5 flips a pair whose distances are
-    # [1, unreachable] and [3, 3]. The producer's CLI accepts 1..127, so a
-    # non-5-hop artifact is inside the supported range and losing its sidecar in
-    # a copy is an ordinary accident. Nothing the loader can measure tells the
-    # two apart — the recorded distances bound the ceiling from below and never
-    # from above — so the operator states it or shortest-path scoring stays off.
-    sp_hop_bound: Optional[int] = None
-
     ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
 
     # Output control
@@ -409,7 +397,8 @@ class DiagnosisPipeline:
         #: The four digests the manifest binds (`kg`, `node_features`,
         #: `edge_indices`, `num_nodes`), each compared with the read it names,
         #: once the workspace has been verified. Kept whole for M2.4's
-        #: comparison with the checkpoint; None for in-memory graph data.
+        #: comparison with the checkpoint; None for in-memory graph data, over
+        #: which no checkpoint is loaded.
         self._bound_digests: Optional[Dict[str, str]] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
@@ -424,9 +413,9 @@ class DiagnosisPipeline:
         # be written against. When `_sp_ready` is False the pipeline degrades to
         # pure GNN scoring (eta=1.0).
         self._sp_max_hops: int = 5
-        #: Where `_sp_max_hops` came from — "sidecar" when a file declared it,
-        #: "assumed" when none was there. Published, because a log line is not a
-        #: surface anyone watches and the two states score differently.
+        #: Where `_sp_max_hops` came from: "sidecar", the only source since the
+        #: configured bound was retired (contract M2.5). Published, so a status
+        #: reader can see where the ceiling every SP score uses was read.
         self._sp_hop_bound_source: Optional[str] = None
         #: SHA-256 of the bytes this pipeline's graph was parsed from, as the
         #: manifest binds it, once the workspace has been verified. **None for a
@@ -544,7 +533,9 @@ class DiagnosisPipeline:
             #
             # Only for the file-backed path. A caller supplying `graph_data`
             # directly makes no claim about a persisted workspace, so there is no
-            # manifest for it to match and nothing to verify.
+            # manifest for it to match and nothing to verify -- and, for that
+            # reason, no checkpoint is loaded over it (M2.4,
+            # `_load_model_from_checkpoint`); a model handed in is the caller's.
             # **The graph's identity is required here, not optional.** Verifying
             # only that `data_dir` is internally consistent leaves the `kg`
             # object bound to nothing: a caller can still pair workspace B's
@@ -858,47 +849,19 @@ class DiagnosisPipeline:
         # deployment that cannot establish it should not pay for a sort it is
         # about to discard.
         meta_path = sidecar_path(sp_path)
-        if sidecar is not None:
-            # **The same parsed object the binding was checked against.** Reading
-            # the file a second time for the bound would let a publication that
-            # completes in between hand this one version and the pairing check
-            # another.
-            max_hops = validate_hop_bound(sidecar.meta.get("max_hops"), str(meta_path))
-            hop_bound_source = "sidecar"
-        elif self.config.sp_hop_bound is not None:
-            # **Configuration is the cheap recovery a missing sidecar needs**: the
-            # producer has no metadata-only mode and re-running the BFS is the
-            # heaviest offline job this project has.
-            max_hops = validate_hop_bound(
-                self.config.sp_hop_bound, "config.sp_hop_bound"
-            )
-            hop_bound_source = "configured"
-        else:
-            # **No sidecar and nothing stated: shortest-path scoring stays off.**
-            #
-            # A previous revision assumed the producer's default of 5 here and
-            # merely recorded that it had assumed. Recording a guess does not
-            # stop it: a legitimate 3-hop table read against 5 reorders
-            # candidates, and no check on the tensors can see it because the
-            # observed maximum is 3 either way. The producer accepts 1..127, so
-            # that table is inside the supported range rather than hypothetical.
-            #
-            # This is not a refusal of the workspace. The tensors are sound and
-            # the pipeline serves without shortest paths — the state an absent
-            # table already produces — and one configuration value turns it back
-            # on. What is refused is scoring against a ceiling nobody chose.
-            logger.error(
-                "%s has no %s and config.sp_hop_bound is unset, so the hop "
-                "bound this table was built to is unknown. It sets the "
-                "unreachable sentinel every shortest-path score is measured "
-                "against and cannot be recovered from the tensors, which bound "
-                "it from below only. Shortest-path scoring is off; set "
-                "SHEPHERD_SP_HOP_BOUND to the value the table was built with, "
-                "or rebuild it with scripts/compute_shortest_paths.py to "
-                "restore the sidecar.",
-                sp_path, meta_path.name,
-            )
-            return
+        # **From the sidecar alone** (contract M2.5). A table that reaches here
+        # has one: without it the table records no binding and was refused
+        # above. The configured bound that once stood in for a missing sidecar
+        # (`sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND`) is retired with it, since it
+        # could no longer reach a served table; nothing measurable on the
+        # tensors can stand in either, as they bound the ceiling from below only.
+        #
+        # **The same parsed object the binding was checked against.** Reading
+        # the file a second time for the bound would let a publication that
+        # completes in between hand this one version and the pairing check
+        # another.
+        max_hops = validate_hop_bound(sidecar.meta.get("max_hops"), str(meta_path))
+        hop_bound_source = "sidecar"
 
         # **The value rules, which are the half that needed the bound.** The
         # producer's `target_type` encoding, and distances inside `1 .. max_hops`.
@@ -962,14 +925,29 @@ class DiagnosisPipeline:
         - ModelCheckpoint callback format: key "state_dict"
 
         Raises:
-            PipelineBuildError: if the checkpoint is missing, cannot be read, is
-                not a training checkpoint, or does not build a model over this
-                graph. A missing checkpoint and one that did not build used to
-                return None, and the pipeline went on without its model.
+            PipelineBuildError: if the graph was not verified from a workspace,
+                or the checkpoint is missing, cannot be read, is not a training
+                checkpoint, was not trained on this graph (M2.4), or does not
+                build a model over it. A missing checkpoint and one that did not
+                build used to return None, and the pipeline went on without its
+                model.
         """
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
         ckpt_path = Path(checkpoint_path)
+        # **A checkpoint is used only over a graph verified from a workspace**
+        # (contract M2.4). Its record can be compared only with the digests the
+        # workspace check took from this build's reads; a graph supplied in
+        # memory (`graph_data=`) has none, so nothing shows the model was trained
+        # on it, and that is a refusal, not an exemption. Before the checkpoint
+        # is opened.
+        if self._bound_digests is None:
+            raise PipelineBuildError(
+                f"Checkpoint {ckpt_path} is loaded only over a graph verified "
+                "from a workspace, and this pipeline's graph was supplied in "
+                "memory: nothing shows the checkpoint was trained on it. Build "
+                "the pipeline from the workspace (graph= and data_dir=)."
+            )
         if not ckpt_path.exists():
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path} does not exist. It was requested, so no "
@@ -1004,27 +982,21 @@ class DiagnosisPipeline:
         # this build's reads. A checkpoint from before the contract, one missing
         # a role, or one from a same-shaped other graph is refused before any
         # model is built; the structural fingerprint below cannot tell them apart.
-        #
-        # A graph supplied in memory has no verified workspace and nothing to
-        # compare with: that caller makes no persisted-workspace claim, as with
-        # the shortest-path binding (`_graph_kg_digest`). The service always
-        # builds from a workspace.
         from src.utils.fingerprint import (
             TrainingRecordMismatch,
             verify_fingerprint,
             verify_training_record,
         )
-        if self._bound_digests is not None:
-            try:
-                verify_training_record(
-                    checkpoint,
-                    self._bound_digests,
-                    tuple(GRAPH_ARTIFACTS),
-                    recorded_by=f"Checkpoint {ckpt_path}",
-                    compared_with="this workspace's graph",
-                )
-            except TrainingRecordMismatch as exc:
-                raise PipelineBuildError(str(exc)) from exc
+        try:
+            verify_training_record(
+                checkpoint,
+                self._bound_digests,
+                tuple(GRAPH_ARTIFACTS),
+                recorded_by=f"Checkpoint {ckpt_path}",
+                compared_with="this workspace's graph",
+            )
+        except TrainingRecordMismatch as exc:
+            raise PipelineBuildError(str(exc)) from exc
 
         # Verify data fingerprint compatibility (KG version check). Pipeline
         # business, not construction: it decides what an operator is warned

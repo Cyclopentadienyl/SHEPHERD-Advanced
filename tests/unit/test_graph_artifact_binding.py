@@ -262,39 +262,35 @@ class TestTheClinicalPathIsAGraphConsumer:
 
     def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
         """A caller supplying the graph directly is not pointing at a persisted
-        workspace, so there is no manifest for it to match and nothing to verify.
-        Refusing there would block a legitimate embedded use.
+        workspace, so there is no manifest for it to match and its files are not
+        read -- and, for the same reason, no checkpoint is loaded over that graph
+        (contract M2.4): nothing shows the checkpoint was trained on it.
 
-        **Both are passed on purpose.** With `data_dir` omitted the check is
-        skipped for a second reason -- there is no directory -- and a version that
-        verified regardless would pass this test anyway. Supplying a `data_dir`
-        that *would* fail is what isolates the seam: the graph is already in hand,
-        so the files are never read and their state is irrelevant.
-
-        **Shown by what is opened, not by what is stubbed.** Since M2.1's S6 the
-        workspace read and its check are one step inside the pipeline, so the
-        assertion is that no workspace file is opened while the model is still
-        built over the data supplied.
+        **Both are passed on purpose.** Supplying a `data_dir` that *would* fail
+        the workspace check isolates the seam: the files are never read, and the
+        refusal is the checkpoint's, not the workspace's. The real loader runs
+        here, so the refusal is shown where the checkpoint would be read.
         """
+        import src.inference.pipeline as pipeline
+        from src.inference.pipeline import PipelineBuildError
         from tests.fixtures.opens import count_opens
 
-        reached: list = []
-        pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
         other = _workspace(tmp_path / "other")
         (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
+        (root / "ckpt.pt").write_bytes(b"weights")
 
         with count_opens() as opens:
-            pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(),
-                graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
-                data_dir=str(root),
-                checkpoint_path=str(root / "ckpt.pt"),
-            )
+            with pytest.raises(PipelineBuildError, match="supplied in memory"):
+                pipeline.DiagnosisPipeline(
+                    kg=KnowledgeGraph(),
+                    graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
+                    data_dir=str(root),
+                    checkpoint_path=str(root / "ckpt.pt"),
+                )
 
-        assert reached == ["model"], "the model is built over the data supplied"
         assert not [path for path in root.iterdir() if opens.opens(path)], (
-            "a workspace file was opened for in-memory graph data"
+            "a workspace file, or the checkpoint, was opened for in-memory graph data"
         )
 
 

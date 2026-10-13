@@ -123,6 +123,44 @@ def test_a_parent_trained_on_these_inputs_resumes_and_is_recorded(
     assert trainer.training_input_digests["resume_checkpoint"] == _sha(parent)
 
 
+def test_the_parent_read_is_released_before_training(
+    train_model, captured, monkeypatch, ws, tmp_path
+):
+    """The review's P2-2. The read made at the top of the run used to stay bound
+    until training returned, keeping every source weight it parsed alive beside
+    the model's own copies. By the time `Trainer.train` runs, none of the
+    parent's model weights is reachable; what was restored is unchanged."""
+    import weakref
+
+    import src.utils.checkpoint_io as checkpoint_io
+    from src.training import trainer as trainer_module
+
+    parent = _parent_of(train_model, captured, ws, tmp_path / "parent.pt", tmp_path / "seed")
+    real, refs, seen = checkpoint_io.read_checkpoint, [], {}
+
+    def recording(path, **kwargs):
+        read = real(path, **kwargs)
+        if Path(path) == parent:
+            refs.extend(weakref.ref(t) for t in read.checkpoint["model_state_dict"].values())
+        return read
+
+    def train(self):
+        seen["alive"] = sum(ref() is not None for ref in refs)
+        seen["trainer"] = self
+        return {"val_loss": 1.0}
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", recording)
+    monkeypatch.setattr(trainer_module.Trainer, "train", train)
+
+    train_model.train(_config(train_model, ws, tmp_path / "run", resume_from=str(parent)))
+
+    assert refs, "the parent's weights were not observed"
+    assert seen["alive"] == 0, f"{seen['alive']} of {len(refs)} parent weights still alive"
+    trainer = seen["trainer"]
+    assert trainer.state.epoch == 7, "the parent's state was restored"
+    assert trainer.training_input_digests["resume_checkpoint"] == _sha(parent)
+
+
 def test_a_grandchild_resumes_too(train_model, captured, ws, tmp_path):
     """A parent that was itself resumed records `resume_checkpoint`; that is its
     lineage, not a workspace input, and does not stop its own child."""

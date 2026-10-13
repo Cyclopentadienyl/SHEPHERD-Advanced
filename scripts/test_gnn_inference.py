@@ -26,6 +26,7 @@ import logging
 import sys
 import tempfile
 from pathlib import Path
+from typing import Dict, Optional
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -176,12 +177,19 @@ def train_minimal_model(
     checkpoint_path: Path,
     hidden_dim: int = 64,
     num_epochs: int = 5,
+    graph_record: Optional[Dict[str, str]] = None,
 ) -> ShepherdGNN:
     """
     Train a minimal GNN model for a few epochs and save a checkpoint.
 
     This uses a simplified training loop (no DataLoader, just direct forward
     pass + contrastive-style loss) to produce a trained checkpoint quickly.
+
+    `graph_record` is what this loop consumed: the four graph roles of the
+    workspace whose tensors it trained on, as `verify_graph_reads` returned them.
+    It is the checkpoint's `training_input_digests`, so serving accepts it over
+    that workspace and no other (contract M2.4). It trains on no samples, so it
+    records none.
     """
     # Build metadata from graph_data — matches scripts/train_model.py and
     # pipeline._load_model_from_checkpoint. Includes rev_* reverse edges.
@@ -259,6 +267,8 @@ def train_minimal_model(
             "use_ortholog_gate": False,
         },
     }
+    if graph_record is not None:
+        checkpoint["training_input_digests"] = dict(graph_record)
     torch.save(checkpoint, checkpoint_path)
     logger.info(f"Checkpoint saved to {checkpoint_path}")
 
@@ -300,16 +310,22 @@ def test_gnn_inference():
         kg_path = build_workspace(kg, data_dir, hidden_dim=hidden_dim)
         # Read back through the shared reader, so training uses the workspace's
         # bytes, loaded as every consumer loads them.
+        from src.kg.artifacts import read_split_manifest, verify_graph_reads
         from src.kg.storage.file_storage import read_graph_artifacts
 
-        graph_data = read_graph_artifacts(data_dir).graph_data
+        graph_read = read_graph_artifacts(data_dir)
+        graph_data = graph_read.graph_data
+        # The graph roles of the tensors trained on, checked against the
+        # workspace's manifest: what the checkpoint records (M2.2, M2.4).
+        graph_record = verify_graph_reads(read_split_manifest(data_dir), graph_read.reads)
         logger.info(f"  Node types: {list(graph_data['x_dict'].keys())}")
         logger.info(f"  Edge types: {len(graph_data['edge_index_dict'])}")
 
         # --- Step 3: Train model ---
         logger.info("\n[Step 3] Training minimal GNN model...")
         model = train_minimal_model(
-            graph_data, kg, ckpt_path, hidden_dim=hidden_dim, num_epochs=10
+            graph_data, kg, ckpt_path, hidden_dim=hidden_dim, num_epochs=10,
+            graph_record=graph_record,
         )
 
         # --- Step 4: Test path-only pipeline (baseline) ---
@@ -433,30 +449,28 @@ def test_gnn_inference():
             logger.error(f"  FAIL: {e}")
             failed += 1
 
-        # --- Step 7: Test with pre-loaded graph_data ---
-        logger.info("\n[Step 7] Testing with pre-loaded graph_data...")
-        gnn_pipeline_2 = DiagnosisPipeline(
-            kg=kg,
-            checkpoint_path=str(ckpt_path),
-            graph_data=graph_data,
-            device="cpu",
-        )
+        # --- Step 7: A checkpoint over pre-loaded graph_data is refused ---
+        # Contract M2.4: a checkpoint is loaded only over a graph verified from a
+        # workspace, and a graph handed in memory has no such verification.
+        logger.info("\n[Step 7] A checkpoint over pre-loaded graph_data is refused...")
+        from src.inference.pipeline import PipelineBuildError
 
         try:
-            assert gnn_pipeline_2._gnn_ready, "GNN should be ready with pre-loaded graph_data"
-            result_2 = gnn_pipeline_2.run(
-                patient_input=patient, top_k=5, include_explanations=False
+            DiagnosisPipeline(
+                kg=kg,
+                checkpoint_path=str(ckpt_path),
+                graph_data=graph_data,
+                device="cpu",
             )
-            assert len(result_2.candidates) > 0
-            # Scores should match the data_dir version
-            for c1, c2 in zip(gnn_result.candidates, result_2.candidates):
-                assert abs(c1.gnn_score - c2.gnn_score) < 1e-5, (
-                    f"Scores should match: {c1.gnn_score} != {c2.gnn_score}"
-                )
-            logger.info("  PASS: Pre-loaded graph_data produces matching results")
-            passed += 1
-        except AssertionError as e:
-            logger.error(f"  FAIL: {e}")
+        except PipelineBuildError as e:
+            if "supplied in memory" in str(e):
+                logger.info("  PASS: refused, the graph was not verified from a workspace")
+                passed += 1
+            else:
+                logger.error(f"  FAIL: refused for another reason: {e}")
+                failed += 1
+        else:
+            logger.error("  FAIL: a checkpoint was loaded over an unverified graph")
             failed += 1
 
         # --- Step 8: Test get_pipeline_config ---

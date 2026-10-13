@@ -429,35 +429,6 @@ class PipelineBundle(NamedTuple):
     checkpoint_path: Optional[str]
 
 
-#: The environment variable that supplies a hop bound for a shortest-path table
-#: whose sidecar is absent. Named beside the other `SHEPHERD_*` settings because
-#: it is read the same way and at the same moment as they are.
-SP_HOP_BOUND_ENV = "SHEPHERD_SP_HOP_BOUND"
-
-
-def _configured_hop_bound() -> Optional[int]:
-    """The deployment's hop bound, or None when it stated none.
-
-    **Refused here rather than coerced.** An unparsable value is a deployment
-    that meant to set the bound and did not, and silently treating it as unset
-    would put the service back into the state the loader refuses — serving
-    without shortest paths while the operator believes they configured them.
-    The domain itself belongs to `validate_hop_bound`, which the loader applies;
-    this only establishes that an integer was written.
-    """
-    raw = os.environ.get(SP_HOP_BOUND_ENV)
-    if raw is None or raw.strip() == "":
-        return None
-    try:
-        return int(raw.strip())
-    except ValueError:
-        raise ValueError(
-            f"{SP_HOP_BOUND_ENV}={raw!r} is not an integer. It is the hop bound "
-            "for a shortest-path table whose sidecar is missing, and a bound "
-            "that cannot be read is not a bound."
-        ) from None
-
-
 def build_pipeline(
     kg_path: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
@@ -536,7 +507,7 @@ def build_pipeline(
 
     try:
         from src.kg.graph import KnowledgeGraph
-        from src.inference.pipeline import PipelineConfig, create_diagnosis_pipeline
+        from src.inference.pipeline import create_diagnosis_pipeline
 
         # Step 1: Load knowledge graph
         kg_file = Path(kg_path)
@@ -564,14 +535,12 @@ def build_pipeline(
         # identifiers. The pipeline refuses that composition, and because this
         # function publishes nothing, a refused one cannot leave a graph visible
         # as though it had been accepted.
-        # **The hop bound a workspace without its sidecar needs.** The loader
-        # refuses to guess it, and tells the operator to supply it — so there has
-        # to be a way to, from the surface a deployment is actually started with.
-        # This function is that surface for both entry points, and the factory
-        # has always accepted a config; nothing was passing one.
+        # The hop bound comes from the shortest-path table's sidecar alone: the
+        # configured bound for a table without one (`SHEPHERD_SP_HOP_BOUND`) was
+        # retired with contract M2.5, which refuses such a table before any bound
+        # is read.
         pipeline = create_diagnosis_pipeline(
             graph=graph,
-            config=PipelineConfig(sp_hop_bound=_configured_hop_bound()),
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
