@@ -15,7 +15,8 @@ made, and one reload per process cannot show whether it accumulates. Acceptance 
 triggered (no shortfall). **S10's capacity is not accepted, and this is not acceptance of M2.1 or
 M2.** The reviewer's evidence review (2026-10-13) found the readings consistent and recommends a
 limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it
-(2026-10-13, §6.1). Its driver awaits the reviewer's review; it has not run.
+(2026-10-13, §6.1). Its driver was reviewed with no P1 or P2; its revised reading rules await the
+reviewer's check; it has not run.
 
 ## 1. What was run
 
@@ -338,10 +339,11 @@ behind it in the readers measured, but its source is not located (§4.5). Three 
 are kept outside the repository like S10's tools. The driver only combines
 `measure_served_pipeline.py`'s own launcher, child environment, readiness rule, seeded workload,
 HTTP client, VmHWM reset and stop, S10's pre-read, and reads of `/proc`. Its runbook fixes the
-reading rules, with bands taken from S10's noise for the reviewer to confirm. It awaits the
-reviewer's review, and the diagnostic has not run. Its results will go in a directory of their
-own; this directory's files, `SHA256SUMS` and `compare.txt` do not change. Choices 1 and 3 were
-not taken.
+reading rules, with bands taken from S10's readings. The reviewer's review of draft 5
+(2026-10-13) found no P1 or P2 in the driver and two P2 in those rules, fixed in the runbook
+only; the revised rules await the reviewer's check, and the diagnostic has not run. Its results
+will go in a directory of their own; this directory's files, `SHA256SUMS` and `compare.txt` do
+not change. Choices 1 and 3 were not taken.
 
 1. **Accept it uninvestigated.** Acceptance 2 calls a rise "an observation to investigate" and
    says "an investigation uses a separate diagnostic run"; choosing this is the owner's decision to

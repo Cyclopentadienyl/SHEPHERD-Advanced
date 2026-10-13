@@ -27,7 +27,8 @@ the after commit; comparability has 1 UNKNOWN (the service state, supplemented b
 comparison's exit status 2 kept); acceptance 2 and 3 are explained except the serving reload's resident rise (R3
 +0.023 to +0.031 GB), whose source is not located; the reviewer's evidence review (2026-10-13) recommends a
 limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it (2026-10-13), its
-driver awaits review and it has not run; capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+driver was reviewed with no P1 or P2, its revised reading rules await the reviewer's check, and it has not run;
+capacity is not yet accepted. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. The rest
@@ -769,6 +770,9 @@ is implemented.
   `40fcf0b` and checked from a clean tree; the reload's causal wording narrowed. It recommends a
   limited diagnostic of consecutive reloads before acceptance 2 is closed, which the owner chose
   the same day (S10, "As run"). Not acceptance of S10's capacity, of M2.1 or of M2.
+- **The review of `40fcf0b..7b026c9` and of the diagnostic's draft 5** (2026-10-13), read-only:
+  no P1; no P1 or P2 in the tool or the documents; two P2 in the runbook's reading rules, fixed in
+  the runbook only (tool and tests unchanged). Not acceptance of anything.
 - **Approval of this plan is not approval of any implementation.**
 
 **What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
@@ -1661,12 +1665,15 @@ each moves its callers before anything is removed.
         `malloc_trim`, `gc.collect`, `empty_cache` or second loader. Its driver,
         `s10_reload_diag.py` (SHA-256 `2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff`),
         and its tests `test_s10_reload_diag.py` (`16f523b5b433719f4d0ac3b97717dcabdcaa66f856da9bf7cd528c277fc5931b`), are kept outside the
-        repository; after four internal review rounds (the last two with no P1 or P2; draft 5
-        carries the last round's P3 fixes) they await the reviewer's review, with the reading
-        rules in their runbook, whose bands come from S10's noise (6 and 11 MB; the first
-        reload's difference within +16 to +38 MB) and are for the reviewer to confirm before
-        the run. It has not run. Its
-        results are kept apart from S10's evidence. A difference that does not grow supports
+        repository. The reviewer's review of draft 5 (2026-10-13) found no P1 or P2 in them and
+        two P2 in the runbook's reading rules: a bounded cost needs each process to level off on
+        its own, not only the difference to stay flat; and a difference already present before
+        any reload does not confirm the reproduction. Both were fixed in the runbook only, and
+        the revised rules await the reviewer's check before the run. The bands (6 and 11 MB;
+        the first reload's difference within +16 to +38 MB, the baseline within -11 to +5 MB)
+        are observation bands declared from S10's readings, not confidence intervals. It has
+        not run. Its results are kept apart from S10's evidence. A difference that does not
+        grow, with each process levelling off on its own, supports
         accepting a bounded cost for this subject and three reloads, the source still not
         located; growth with the reloads, or a failed reload, readiness or diagnosis, or an
         OOM kill or swap rise, leads to a second phase that locates it.
