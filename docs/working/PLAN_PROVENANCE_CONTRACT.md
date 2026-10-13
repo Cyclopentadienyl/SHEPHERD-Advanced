@@ -35,8 +35,10 @@ the owner ended the reload-memory investigation (2026-10-13) with the wheel's bu
 a strong candidate cause, attribution not established, and accepted S10's capacity with that uncertainty explicit. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
-homelab. M2.2–M2.6 are implemented (2026-10-13; their sections in §4, "As implemented"),
-not yet code-reviewed and not accepted on the homelab. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+homelab. M2.2–M2.6 are implemented (2026-10-13; their sections in §4, "As implemented"); the
+reviewer's code review of `810d344..0aabfc3` (2026-10-13) found three P2 and no P1, fixed with the
+reviewer's two recommendations and awaiting re-review; not accepted on the homelab. The rest of
+M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2022,8 +2024,10 @@ any run artifact: a missing parent raises `FileNotFoundError`; the parent is rea
 `training_input_digests(inputs)` through `verify_training_record`, over the union of this run's
 roles and the parent's recorded workspace roles, so a role on one side only refuses. The parent's
 own `resume_checkpoint` is its lineage and is not compared. `train` restores from that read's dict
-and records its identity. `Trainer.save_checkpoint` embeds `training_input_digests` as
-`ModelCheckpoint` does, so a checkpoint from either writer can be resumed.
+and records its identity; only that identity outlives the restore, so the parent's source tensors
+are not held through training (the review's P2-2). `Trainer.save_checkpoint` embeds
+`training_input_digests` as `ModelCheckpoint` does, so a checkpoint from either writer can be
+resumed.
 
 #### M2.4 — the consumers: serving and measurement
 
@@ -2048,9 +2052,10 @@ and records its identity. `Trainer.save_checkpoint` embeds `training_input_diges
 with the same digest; a missing record or an empty role set refuses. Serving calls it in
 `_load_model_from_checkpoint` before the model is built (raised as `PipelineBuildError`),
 measurement in `read_measurement_inputs` right after the checkpoint read, and the probe's D2
-through it. **For the owner:** a pipeline whose graph is supplied in memory (`graph_data=`) has
-no verified workspace and is not compared, as the SP binding already treats it; the service always
-builds from a workspace.
+through it. **A checkpoint is loaded only over a graph verified from a workspace:** a pipeline whose
+graph is supplied in memory (`graph_data=`) refuses one before opening it, whatever it records (the
+review's P2-1 and the reviewer's recommendation B, 2026-10-13); a model handed in built is the
+caller's. The callers that paired a checkpoint with an in-memory graph moved to the workspace path.
 
 #### M2.5 — SP
 
@@ -2058,10 +2063,12 @@ An unrecorded SP binding refuses. This ends the legacy "serves with a warning" s
 decision 2.
 
 *As implemented (2026-10-13):* `_load_shortest_paths` raises `SPArtifactError` for an unrecorded
-binding, before the empty-table decision. **For the owner:** a table without a sidecar records no
-binding, so the configured hop bound (`PipelineConfig.sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND`),
-which existed for such tables, no longer reaches a served table; it is still read and passed to
-the pipeline, and whether to remove it is open.
+binding, before the empty-table decision. A table without a sidecar records no binding, so the
+configured hop bound (`PipelineConfig.sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND`), which existed for
+such tables, could no longer reach a served table; it is **retired** (the reviewer's
+recommendation A, 2026-10-13): the variable is not read, the field and the configured fallback are
+gone, and the bound comes from the sidecar alone. The producer's `--max-hops`, the sidecar's
+`max_hops` and `validate_hop_bound` stay. The deployment guides now rebuild a bound pair instead.
 
 #### M2.6 — inventory before deployment
 
@@ -2072,10 +2079,14 @@ A read-only listing of every checkpoint, SP table and workspace that M2 would re
 - Old artifacts are archived, not deleted.
 
 *As implemented (2026-10-13):* `scripts/audit_checkpoint_family.py --inventory <workspaces>` lists,
-per workspace, the graph check, the training inputs, the shortest-path table (from its sidecar; the
-tensor is not loaded) and, for every checkpoint in it, the serving and measurement verdict (M2.4)
-and the resume verdict (M2.3), each with the refusal's reason, calling the consumers' own
-functions. It writes only its report, with names relative to the inventoried directory.
+per workspace, the graph check, the training inputs, the shortest-path table and every checkpoint
+in it, each with the refusal's reason, calling the consumers' own functions. It writes only its
+report, with names relative to the inventoried directory. After the review's P2-3: the table's
+**source binding** is judged from its sidecar, and whether the table would be **served** is
+`refused` where the binding refuses it and otherwise `not judged`, never accepted, since the tensor
+is not loaded. A checkpoint is read once with `read_checkpoint` (CPU, the safe loader), its digest
+recorded from that read, and its two verdicts are M2's source-contract checks only (`m2_contract`:
+`serve_and_measure`, M2.4; `resume`, M2.3), not whether its weights build or a device suffices.
 
 **Consequence.** No existing checkpoint records the `kg` role, so every one of them is refused
 after M2, as a model to serve or measure and as a parent to resume, and the model is retrained.

@@ -472,48 +472,44 @@ So the system **does not guess for you**.
 
 ### Order of recovery
 
-> **Since contract M2.5 (2026-10-13)** a table must carry its source binding
-> (`schema_version`, `build_id`, `kg_digest`), which only its sidecar records. A
-> table without a sidecar, or with one written before the pairing protocol, is
-> refused at load whatever `SHEPHERD_SP_HOP_BOUND` says, so step 2 below no longer
-> serves it: recover the published sidecar (step 1) or regenerate (step 3).
+**A table is served only with the sidecar it was published with.** Since contract
+M2.5 (2026-10-13) the sidecar must carry the table's source binding
+(`schema_version`, `build_id`, `kg_digest`), and its `max_hops` is the only source
+of the hop bound. A table without a sidecar, or with one written before the
+pairing protocol, is refused at load.
 
-1. **Recover the original sidecar first**, then keep and move the two files
-   together. When a sidecar is present its value wins and
-   `SHEPHERD_SP_HOP_BOUND` is ignored.
-2. **No sidecar, but the original setting is known** (from a build log, say) —
-   only then set `SHEPHERD_SP_HOP_BOUND=5`. **Do not set 5 everywhere by default,
-   and do not infer it from the largest distance in the table** — that number
-   cannot establish the ceiling.
-3. **Original setting unknown: regenerate** (`scripts/compute_shortest_paths.py`).
-   If you run on pure GNN in the meantime, know that the scoring mode has changed.
-4. Set the variable, **restart the backend**, then check the status below.
+1. **Recover the sidecar published with the table**, then keep and move the two
+   files together.
+2. **Otherwise rebuild the pair for this workspace** with
+   `scripts/compute_shortest_paths.py`, which publishes the table and its sidecar
+   together, bound to this workspace's graph. **Do not write a sidecar by hand,
+   and do not infer `max_hops` from the largest distance in the table** — that
+   number cannot establish the ceiling.
+3. Until then, either keep the deployment that is serving, or remove the table to
+   serve without shortest paths, knowing that the scoring mode changes.
 
-### The environment variable
+`SHEPHERD_SP_HOP_BOUND`, which used to supply the bound for a table without a
+sidecar, is **retired** with M2.5: such a table is refused before any bound is
+read, so the variable is no longer read. Remove it from the service environment.
 
-```bash
-# Only when the original build's max_hops is known
-export SHEPHERD_SP_HOP_BOUND=5
-```
+### A missing, unbound or invalid sidecar
 
-- Valid values are **integers in 1..127** (the same range the generator validates)
-  and must **not be below the largest distance observed in the table** — below it
-  the refusal fires, because the unreachable cost would land beneath real distances.
-- A value that cannot be parsed as an integer is **refused, not ignored**, so
-  "I thought I set it" cannot happen silently.
-- This is a **process-level** setting: it must be present in the environment that
-  starts the backend, and the backend must be restarted to pick it up.
-  **Exporting it in another shell does not change a running process.**
-- When loading a different workspace (via `/api/v1/pipeline/reload`), confirm the
-  bound still applies to the new table.
+When a table is present and its sidecar is **missing, unbound, or invalid** (not a
+JSON object, `max_hops` not an integer or outside 1..127, or below the distances
+in the table), the candidate pipeline is **refused** rather than falling back to a
+guess:
 
-### What happens with no sidecar and no setting
+- The service has **no** usable pipeline yet (cold start) → `/api/v1/diagnose`
+  returns **503** and no candidate diseases.
+- The service **has** a pipeline running → that reload is refused and the **old
+  pipeline keeps serving**.
 
-Under the default configuration (GNN loaded, `sp_optional=True`) the **service
-does not stop**. It serves pure GNN scoring: `sp_ready=False`,
-`scoring_mode=gnn_only`, effective eta 1.0. **Scores and rankings differ from a
-run with shortest paths enabled** — a deliberate trade: better one signal fewer
-than scoring against a ceiling nobody chose.
+### No table at all
+
+With no `shortest_paths.pt` (and no sidecar) under the default configuration (GNN
+loaded, `sp_optional=True`) the **service does not stop**. It serves pure GNN
+scoring: `sp_ready=False`, `scoring_mode=gnn_only`, effective eta 1.0. **Scores and
+rankings differ from a run with shortest paths enabled.**
 
 > **Exception**: a deployment that has deliberately set `sp_optional=False` gets
 > **no pipeline** when SP is unavailable: the build is refused
@@ -521,17 +517,6 @@ than scoring against a ceiling nobody chose.
 > and a reload is refused with the previous pipeline still serving. This is not
 > "always falls back to pure GNN". The API build path uses the default
 > `sp_optional=True`.
-
-### A corrupt or invalid sidecar
-
-When the sidecar is **present but invalid** (not a JSON object, `max_hops` not an
-integer or outside 1..127, or below the distances in the table), the candidate
-pipeline is **refused** rather than falling back to a guess:
-
-- The service has **no** usable pipeline yet (cold start) → `/api/v1/diagnose`
-  returns **503** and no candidate diseases.
-- The service **has** a pipeline running → that reload is refused and the **old
-  pipeline keeps serving**.
 
 ### Checking the result
 
@@ -541,14 +526,11 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 
 | Field | Expected |
 |---|---|
-| `sp_ready` | `true` when enabled; `false` when the bound is missing |
-| `sp_max_hops` | the ceiling actually in effect |
-| `sp_hop_bound_source` | `sidecar` (read from the file) or `configured` (from the variable) |
+| `sp_ready` | `true` when enabled; `false` when no table is present |
+| `sp_max_hops` | the ceiling in effect, read from the sidecar |
+| `sp_hop_bound_source` | `sidecar` (the only source since the configured bound was retired) |
+| `sp_kg_binding` | `verified` |
 | `scoring_mode` | `gnn_plus_shortest_path` when enabled; `gnn_only` when SP is off and the GNN is fine |
-
-That is what `sp_hop_bound_source` exists for: **"read" and "stated" are
-different strengths of evidence**, and the status endpoint should be able to tell
-them apart rather than sending an operator to the logs.
 
 ---
 

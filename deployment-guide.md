@@ -986,34 +986,20 @@ nvidia-smi  # GPU利用率應該>80%
 
 ### 優先順序
 
-> **自 contract M2.5 起（2026-10-13）**，距離表必須帶有來源綁定（`schema_version`、
-> `build_id`、`kg_digest`），而只有 sidecar 會記錄它。沒有 sidecar、或 sidecar 寫於
-> 配對協定之前的距離表，無論 `SHEPHERD_SP_HOP_BOUND` 如何設定都會在載入時被拒絕，
-> 因此下面第 2 步已無法讓它上線：請找回發佈時的 sidecar（第 1 步）或重新生成（第 3 步）。
+**距離表只會連同發佈時的 sidecar 一起上線。** 自 contract M2.5 起（2026-10-13），
+sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`kg_digest`），而
+它的 `max_hops` 是 hop bound 唯一的來源。沒有 sidecar、或 sidecar 寫於配對協定之前
+的距離表，會在載入時被拒絕。
 
-1. **優先找回與距離表匹配的原始 sidecar**，之後兩個檔案一起保存、搬移。有 sidecar
-   時它的值優先，`SHEPHERD_SP_HOP_BOUND` 會被忽略。
-2. **找不到 sidecar，但能確認原始設定**（例如從 build log 確認確實是 5-hop）才設定
-   `SHEPHERD_SP_HOP_BOUND=5`。**不要所有部署一律填 5，也不要用表內最大距離回推**
-   ——那個數字證明不了天花板。
-3. **完全不知道原始設定就重新生成**（`scripts/compute_shortest_paths.py`）。若暫時
-   以純 GNN 運行，必須明確知道評分模式已經改變。
-4. 設定環境變數後**重啟後端**，再用下面的狀態檢查確認。
+1. **優先找回與距離表一起發佈的 sidecar**，之後兩個檔案一起保存、搬移。
+2. **否則為這個工作區重建這一對**：執行 `scripts/compute_shortest_paths.py`，它會把
+   距離表與 sidecar 一起發佈，並綁定到這個工作區的圖。**不要手寫 sidecar，也不要用
+   表內最大距離回推 `max_hops`**——那個數字證明不了天花板。
+3. 在那之前，要嘛保留正在服務的部署，要嘛移除距離表、改以不含最短路徑的方式服務，
+   並明確知道評分模式已經改變。
 
-### 環境變數
-
-```bash
-# 只在確知原始 build 的 max_hops 時才設定
-export SHEPHERD_SP_HOP_BOUND=5
-```
-
-- 有效值為 **1..127 的整數**（生成腳本自己驗證的同一個範圍），且**不得低於表內觀察
-  到的最大距離**——低於就會被拒絕，因為不可達代價會落在真實距離之下。
-- 無法解析成整數的值會**被拒絕而非忽略**，避免「以為設好了、其實沒有」。
-- 這是**行程層級**的設定：必須設在啟動後端的那個環境裡，並重啟後端才會生效。
-  **在另一個終端機 export 不會改變已在執行的行程。**
-- 換載不同工作區時（透過 `/api/v1/pipeline/reload`），必須確認這個 bound 對新的表
-  仍然適用。
+原本用來替缺 sidecar 的表補上 bound 的 `SHEPHERD_SP_HOP_BOUND`，已隨 M2.5 **退役**：
+這類表在讀取任何 bound 之前就會被拒絕，因此這個變數不再被讀取。請從服務環境中移除它。
 
 ### 表與圖對不上的時候
 
@@ -1039,27 +1025,28 @@ export SHEPHERD_SP_HOP_BOUND=5
 被**拒絕**而不是被假定成立；未帶綁定的表則如上所述同樣被拒絕。請改用工作區建立。
 
 
-### 缺 sidecar 又沒設定時會發生什麼
+### 缺少、未綁定或不合法的 sidecar
 
-在預設配置（GNN 已載入、`sp_optional=True`）下，**服務不會停止**，而是改為純 GNN
-評分：`sp_ready=False`、`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與
-啟用最短路徑時不同**，這是刻意的取捨——寧可少一個訊號，也不拿沒人選過的天花板評分。
+距離表存在，而它的 sidecar **缺少、未帶綁定、或不合法**（不是 JSON 物件、`max_hops`
+不是整數或超出 1..127、或低於表內距離）時，候選 pipeline 會被**拒絕**，而不是退回
+猜測：
+
+- 服務**尚無**可用 pipeline（冷啟動）→ `/api/v1/diagnose` 回 **503**，不會回傳任何
+  候選疾病。
+- 服務**已有**正在運行的 pipeline → 該次 reload 被拒絕，**舊 pipeline 繼續服務**。
+
+### 完全沒有距離表時
+
+沒有 `shortest_paths.pt`（也沒有 sidecar）時，在預設配置（GNN 已載入、
+`sp_optional=True`）下**服務不會停止**，而是改為純 GNN 評分：`sp_ready=False`、
+`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與啟用最短路徑時不同。**
 
 > **例外：** 若部署刻意設定了 `sp_optional=False`，SP 不可用時**不會建出 pipeline**：
 > 建置被拒絕（`PipelineBuildError`），啟動時不發布任何 pipeline、`/diagnose` 回 503；
 > reload 則被拒絕，原本的 pipeline 繼續服務。這不是「一律退回純 GNN」。目前 API 的
 > 建置路徑使用預設值 `sp_optional=True`。
 
-### 損壞或不合法的 sidecar
-
-sidecar **存在但不合法**（不是 JSON 物件、`max_hops` 不是整數或超出 1..127、或低於
-表內距離）時，候選 pipeline 會被**拒絕**，而不是退回猜測：
-
-- 服務**尚無**可用 pipeline（冷啟動）→ `/api/v1/diagnose` 回 **503**，不會回傳任何
-  候選疾病。
-- 服務**已有**正在運行的 pipeline → 該次 reload 被拒絕，**舊 pipeline 繼續服務**。
-
-### 設定後的狀態檢查
+### 狀態檢查
 
 ```bash
 curl -s http://localhost:8000/api/v1/pipeline/status
@@ -1067,13 +1054,11 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 
 | 欄位 | 預期 |
 |---|---|
-| `sp_ready` | 啟用時 `true`；缺 bound 時 `false` |
-| `sp_max_hops` | 實際生效的天花板 |
-| `sp_hop_bound_source` | `sidecar`（讀自檔案）或 `configured`（來自環境變數） |
+| `sp_ready` | 啟用時 `true`；沒有距離表時 `false` |
+| `sp_max_hops` | 實際生效的天花板，讀自 sidecar |
+| `sp_hop_bound_source` | `sidecar`（設定值退役後唯一的來源） |
+| `sp_kg_binding` | `verified` |
 | `scoring_mode` | 啟用時 `gnn_plus_shortest_path`；SP 關閉且 GNN 正常時 `gnn_only` |
-
-`sp_hop_bound_source` 存在的理由就是這個：**「讀來的」和「設定的」是不同強度的證
-據**，狀態端點要能分辨，而不是只能去翻日誌。
 
 ---
 
