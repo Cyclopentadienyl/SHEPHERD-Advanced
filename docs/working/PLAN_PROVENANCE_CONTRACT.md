@@ -35,8 +35,8 @@ the owner ended the reload-memory investigation (2026-10-13) with the wheel's bu
 a strong candidate cause, attribution not established, and accepted S10's capacity with that uncertainty explicit. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
 change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
-homelab. The rest
-of M2–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+homelab. M2.2–M2.6 are implemented (2026-10-13; their sections in §4, "As implemented"),
+not yet code-reviewed and not accepted on the homelab. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -1356,6 +1356,8 @@ each moves its callers before anything is removed.
      - `training_input_digests(inputs, parent=...)` builds the record from the reads only and
        refuses a role with no read, so a `None` digest cannot be recorded. The role set is
        unchanged.
+     - *Since M2.3 (2026-10-13) the parent is read and checked at the top of the run
+       (`read_resume_parent`), and a missing parent refuses; what follows is S8 as implemented.*
      - **The parent is read where it is restored** (`resolve_resume_checkpoint`), with the site's
        own options (`map_location` the trainer's device, `weights_only=False`). That is after the
        run directories, `config.yaml` and `runtime.json` exist and after the model and the
@@ -1955,6 +1957,9 @@ new dependency or measurement fact appears.
   `verify_graph_artifacts` already describes (`artifacts.py:73-75`).
 - **Every other role's digest comes from M2.1's reads.**
 
+*As implemented (2026-10-13):* `TrainingInputs.bound` keeps what `verify_graph_reads` returned, and
+`training_input_digests` records `bound["kg"]`, refusing a manifest that binds none.
+
 #### M2.3 — the resume parent, checked before anything is restored or written
 
 **Today.** The parent is loaded by `trainer.load_checkpoint` (`train_model.py:510`), which
@@ -2011,6 +2016,15 @@ passes M2.4.
 
 The rest of resume — the overwrite guard — is M3a's.
 
+*As implemented (2026-10-13):* `read_resume_parent` runs right after `read_training_inputs`, before
+any run artifact: a missing parent raises `FileNotFoundError`; the parent is read once
+(`read_checkpoint`, the site's options) and `check_resume_parent` compares it with
+`training_input_digests(inputs)` through `verify_training_record`, over the union of this run's
+roles and the parent's recorded workspace roles, so a role on one side only refuses. The parent's
+own `resume_checkpoint` is its lineage and is not compared. `train` restores from that read's dict
+and records its identity. `Trainer.save_checkpoint` embeds `training_input_digests` as
+`ModelCheckpoint` does, so a checkpoint from either writer can be resumed.
+
 #### M2.4 — the consumers: serving and measurement
 
 - **They compare the checkpoint's recorded `kg`, `node_features`, `edge_indices` and `num_nodes`
@@ -2029,10 +2043,25 @@ The rest of resume — the overwrite guard — is M3a's.
     (`probe_deployment.py:812-836`).
 - **A refusal raises (M1)**, so it cannot become a fallback.
 
+*As implemented (2026-10-13):* `verify_training_record` (`src/utils/fingerprint.py`) refuses with
+`TrainingRecordMismatch`, a `ValueError`, unless every role in its argument is recorded and held,
+with the same digest; a missing record or an empty role set refuses. Serving calls it in
+`_load_model_from_checkpoint` before the model is built (raised as `PipelineBuildError`),
+measurement in `read_measurement_inputs` right after the checkpoint read, and the probe's D2
+through it. **For the owner:** a pipeline whose graph is supplied in memory (`graph_data=`) has
+no verified workspace and is not compared, as the SP binding already treats it; the service always
+builds from a workspace.
+
 #### M2.5 — SP
 
 An unrecorded SP binding refuses. This ends the legacy "serves with a warning" state (R4), under
 decision 2.
+
+*As implemented (2026-10-13):* `_load_shortest_paths` raises `SPArtifactError` for an unrecorded
+binding, before the empty-table decision. **For the owner:** a table without a sidecar records no
+binding, so the configured hop bound (`PipelineConfig.sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND`),
+which existed for such tables, no longer reaches a served table; it is still read and passed to
+the pipeline, and whether to remove it is open.
 
 #### M2.6 — inventory before deployment
 
@@ -2041,6 +2070,12 @@ A read-only listing of every checkpoint, SP table and workspace that M2 would re
   probe), not a new tool.
 - It is deployment preparation, not a second execution path.
 - Old artifacts are archived, not deleted.
+
+*As implemented (2026-10-13):* `scripts/audit_checkpoint_family.py --inventory <workspaces>` lists,
+per workspace, the graph check, the training inputs, the shortest-path table (from its sidecar; the
+tensor is not loaded) and, for every checkpoint in it, the serving and measurement verdict (M2.4)
+and the resume verdict (M2.3), each with the refusal's reason, calling the consumers' own
+functions. It writes only its report, with names relative to the inventoried directory.
 
 **Consequence.** No existing checkpoint records the `kg` role, so every one of them is refused
 after M2, as a model to serve or measure and as a parent to resume, and the model is retrained.

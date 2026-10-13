@@ -28,10 +28,28 @@ subject of M3 and carries nothing else.
 the frozen evaluator's loader failed on this family, so a scan that stopped at the
 first unreadable file would destroy the evidence it was run to collect.
 
+**`--inventory`: what contract M2 refuses, before a deployment (M2.6).** Given a
+directory of workspaces (`data/workspaces`), it lists, for each workspace, whether
+its graph and its training inputs pass the consumers' checks, whether its
+shortest-path table would be served, and for every checkpoint in it whether
+serving and measurement (M2.4) and a resume (M2.3) would accept it, each with the
+refusal's reason. The rules are the consumers' own functions, called on reads made
+here, not restated. **Read-only**: it moves, deletes and rewrites nothing; it
+writes only `--output`. What it lists is archived by the owner, not deleted. Only
+names relative to the inventoried directory are recorded.
+
+What it does not do: it does not load the shortest-path tensor (it can be
+gigabytes), so the tensor's half of the pairing is left to the service's loader;
+it opens checkpoints with the safe loader, as M1-M3 does, where serving uses the
+full one, so a checkpoint the safe loader cannot open is listed as not judged.
+
 Usage:
     python scripts/audit_checkpoint_family.py \\
         --checkpoint-dir checkpoints/hgt \\
         --output docs/working/EVIDENCE_M1_M3_checkpoints.json
+
+    python scripts/audit_checkpoint_family.py \\
+        --inventory data/workspaces --output <outside the repository>/inventory.json
 
 Module: scripts/audit_checkpoint_family.py
 """
@@ -300,12 +318,196 @@ def build_report(checkpoint_dir: Path, relationship: str) -> Dict[str, Any]:
     }
 
 
+# =============================================================================
+# --inventory: what contract M2 refuses (M2.6)
+# =============================================================================
+#: Files at a workspace's root that are graph or shortest-path artifacts, not
+#: checkpoints.
+_NOT_CHECKPOINTS = ("node_features.pt", "edge_indices.pt", "shortest_paths.pt")
+
+
+def _scrub(text: str, root: Path) -> str:
+    """A refusal's message with the inventoried directory's location removed."""
+    for form in sorted({str(root.resolve()), str(root)}, key=len, reverse=True):
+        text = text.replace(form + "/", "").replace(form, ".")
+    return text
+
+
+def _judge(check: Any, root: Path) -> Dict[str, Any]:
+    """Run one consumer check: accepted, or refused with its reason."""
+    try:
+        check()
+    except Exception as exc:  # noqa: BLE001 - a refusal is the finding
+        return {"verdict": "refused",
+                "reason": f"{type(exc).__name__}: {_scrub(str(exc), root)}"}
+    return {"verdict": "accepted", "reason": None}
+
+
+def _not_judged(reason: str) -> Dict[str, Any]:
+    return {"verdict": "not judged", "reason": reason}
+
+
+def _graph_check(workspace: Path) -> Dict[str, str]:
+    """The graph check serving and measurement make, from one read of each file:
+    the tensors against the manifest, `kg.json` identified against it. Returns
+    the manifest-bound digests M2.4 compares a checkpoint with."""
+    from src.kg.artifacts import check_unparsed_kg_json, read_split_manifest, verify_graph_reads
+    from src.kg.storage.file_storage import read_graph_artifacts
+
+    manifest = read_split_manifest(workspace)
+    graph = read_graph_artifacts(workspace, map_location="cpu")
+    bound = verify_graph_reads(manifest, graph.reads)
+    check_unparsed_kg_json(workspace, manifest)
+    return dict(bound)
+
+
+def _shortest_paths(workspace: Path, kg_digest: Optional[str], root: Path) -> Dict[str, Any]:
+    """Whether the table would be served, from its sidecar only (M2.5)."""
+    from src.inference.sp_artifact import (
+        TENSOR_BUILD_ID_KEY,
+        declares_binding,
+        kg_binding_state,
+        read_binding,
+        read_sidecar,
+        sidecar_path,
+    )
+    from src.inference.sp_index import SPArtifactError
+
+    table = workspace / "shortest_paths.pt"
+    has_sidecar = sidecar_path(table).exists()
+    if not table.exists() and not has_sidecar:
+        return {"verdict": "absent", "reason": None}
+    if kg_digest is None:
+        return _not_judged("the workspace's graph is refused")
+
+    def check() -> None:
+        if not table.exists():
+            raise SPArtifactError("the sidecar is here and the table is not")
+        sidecar = read_sidecar(table)
+        meta = sidecar.meta if sidecar else None
+        # The tensor is not loaded. Where the sidecar declares a binding, the
+        # tensor's build id is taken as present, and the pairing of the two is
+        # the service loader's check, not this one.
+        keys = (TENSOR_BUILD_ID_KEY,) if declares_binding(meta, ()) else ()
+        binding = read_binding(meta, keys, source=table.name)
+        if kg_binding_state(binding, kg_digest, source=table.name) == "unrecorded":
+            raise SPArtifactError(
+                f"{table.name} carries no source binding, so the graph it was "
+                "computed from is unrecorded (contract M2.5)"
+            )
+
+    verdict = _judge(check, root)
+    verdict["tensor_checked"] = False
+    return verdict
+
+
+def _checkpoint_verdicts(
+    path: Path, root: Path, bound: Optional[Dict[str, str]], inputs: Any,
+) -> Dict[str, Any]:
+    import torch
+
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.utils.fingerprint import verify_training_record
+
+    name = path.relative_to(root).as_posix()
+    try:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception as exc:  # noqa: BLE001 - an unreadable checkpoint is data
+        reason = f"the safe loader cannot open it ({type(exc).__name__})"
+        return {"serve_and_measure": _not_judged(reason), "resume": _not_judged(reason)}
+
+    if bound is None:
+        serve = _not_judged("the workspace's graph is refused")
+    else:
+        serve = _judge(lambda: verify_training_record(
+            checkpoint, bound, tuple(GRAPH_ARTIFACTS),
+            recorded_by=f"checkpoint {name}", compared_with="this workspace's graph",
+        ), root)
+    if inputs is None:
+        resume = _not_judged("training refuses this workspace")
+    else:
+        from scripts.train_model import check_resume_parent
+
+        resume = _judge(lambda: check_resume_parent(
+            checkpoint, inputs, recorded_by=f"checkpoint {name}",
+            compared_with="a run over this workspace",
+        ), root)
+    return {"serve_and_measure": serve, "resume": resume}
+
+
+def inventory_workspace(workspace: Path, root: Path) -> Dict[str, Any]:
+    """One workspace: its graph, its training inputs, its table, its checkpoints."""
+    from scripts.train_model import read_training_inputs
+
+    found: Dict[str, Any] = {}
+
+    def graph() -> None:
+        found["bound"] = _graph_check(workspace)
+
+    def training() -> None:
+        found["inputs"] = read_training_inputs(workspace)
+
+    entry: Dict[str, Any] = {"graph": _judge(graph, root)}
+    entry["training"] = _judge(training, root)
+    bound, inputs = found.get("bound"), found.get("inputs")
+    entry["shortest_paths"] = _shortest_paths(
+        workspace, bound["kg"] if bound else None, root
+    )
+    checkpoints = sorted(
+        path for path in workspace.rglob("*.pt")
+        if not (path.parent == workspace and path.name in _NOT_CHECKPOINTS)
+    )
+    entry["checkpoints"] = {
+        path.relative_to(root).as_posix(): _checkpoint_verdicts(path, root, bound, inputs)
+        for path in checkpoints
+    }
+    return entry
+
+
+def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
+    workspaces = sorted(path for path in root.iterdir() if path.is_dir())
+    if not workspaces:
+        raise SystemExit(f"{root} holds no workspace directories")
+    listing = {path.name: inventory_workspace(path, root) for path in workspaces}
+
+    counts: Counter = Counter()
+    for entry in listing.values():
+        for part in ("graph", "training", "shortest_paths"):
+            counts[f"{part}:{entry[part]['verdict']}"] += 1
+        for verdicts in entry["checkpoints"].values():
+            for use, verdict in verdicts.items():
+                counts[f"checkpoint {use}:{verdict['verdict']}"] += 1
+    return {
+        "fact": "M2.6 inventory",
+        "what_this_shows": (
+            "for each workspace, whether contract M2 accepts its graph, its training "
+            "inputs, its shortest-path table and each checkpoint in it, and why not"
+        ),
+        "read_only": (
+            "nothing was moved, deleted or rewritten; refused artifacts are archived "
+            "by the owner, not deleted"
+        ),
+        "not_checked": [
+            "the shortest-path tensor's half of the pairing (the tensor is not loaded)",
+            "checkpoints the safe loader cannot open (listed as not judged)",
+        ],
+        "counts": dict(sorted(counts.items())),
+        "workspaces": listing,
+        "runtime": _runtime_facts(),
+        "deployment_relationship": relationship,
+    }
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="M1-M3 checkpoint family evidence")
-    parser.add_argument("--checkpoint-dir", type=Path, required=True,
-                        help="One directory of *.pt checkpoints. Not searched recursively: "
-                             "an architecture family is one directory, and mixing two "
-                             "would make the counts describe no family in particular.")
+    subject = parser.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--checkpoint-dir", type=Path,
+                         help="One directory of *.pt checkpoints. Not searched recursively: "
+                              "an architecture family is one directory, and mixing two "
+                              "would make the counts describe no family in particular.")
+    subject.add_argument("--inventory", type=Path,
+                         help="A directory of workspaces: list what contract M2 refuses "
+                              "in each, and why (M2.6). Read-only.")
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the evidence JSON is written")
     parser.add_argument("--overwrite", action="store_true",
@@ -325,18 +527,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args(argv)
 
-    if not args.checkpoint_dir.is_dir():
-        raise SystemExit(f"not a directory: {args.checkpoint_dir}")
+    subject = args.inventory or args.checkpoint_dir
+    if not subject.is_dir():
+        raise SystemExit(f"not a directory: {subject}")
     if args.output.exists() and not args.overwrite:
         raise SystemExit(
             f"{args.output} exists. Pass --overwrite to replace it, or write "
             "elsewhere — an evidence file that was silently replaced is not evidence."
         )
 
-    report = build_report(args.checkpoint_dir, args.deployment_relationship)
+    if args.inventory:
+        report = build_inventory(args.inventory, args.deployment_relationship)
+    else:
+        report = build_report(args.checkpoint_dir, args.deployment_relationship)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
 
+    if args.inventory:
+        logger.info("%s -> %s", report["counts"], args.output)
+        return 0
     summary = report["summary"]
     logger.info(
         "%d checkpoints, %d loaded, %d unreadable -> %s",

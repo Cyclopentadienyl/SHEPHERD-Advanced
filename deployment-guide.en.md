@@ -472,6 +472,12 @@ So the system **does not guess for you**.
 
 ### Order of recovery
 
+> **Since contract M2.5 (2026-10-13)** a table must carry its source binding
+> (`schema_version`, `build_id`, `kg_digest`), which only its sidecar records. A
+> table without a sidecar, or with one written before the pairing protocol, is
+> refused at load whatever `SHEPHERD_SP_HOP_BOUND` says, so step 2 below no longer
+> serves it: recover the published sidecar (step 1) or regenerate (step 3).
+
 1. **Recover the original sidecar first**, then keep and move the two files
    together. When a sidecar is present its value wins and
    `SHEPHERD_SP_HOP_BOUND` is ignored.
@@ -560,18 +566,18 @@ from that, and all three are deployment problems rather than data problems:
 | *"computed from a different graph"* | The table belongs to another workspace's `kg.json`. Its node indices point at different nodes | Use the table built from *this* workspace, or rebuild it here |
 | *"One side of a pair is not a pair"* | One file declares the protocol and the other does not — a table published without its sidecar, or the reverse | Re-run the generator; the pair is published together or not at all |
 
-**A table built before this existed still loads.** It carries no binding, so the
-service reports its provenance as `unrecorded` rather than verified, logs one
-warning, and serves. Rebuilding records one.
+**A table built before this existed is refused** (since contract M2.5,
+2026-10-13; it used to load with a warning and be reported `unrecorded`). It
+carries no binding, so nothing says which graph its node indices belong to.
+Rebuild it with `scripts/compute_shortest_paths.py`, or remove it to serve without
+shortest paths.
 
 `GET /api/v1/pipeline/status` reports `sp_kg_binding`: `verified` when the table
-names the graph being served, `unrecorded` for a table older than the protocol.
-**It is never absent while shortest paths are on** — if it says `unrecorded`, no
-check confirmed where that table came from.
+names the graph being served. **It is never absent while shortest paths are on.**
 
 **Building from a graph held in memory rather than from a workspace** cannot
 check a binding at all, and a table that declares one is refused rather than
-assumed. Build from a workspace, or use a table published without a binding.
+assumed; a table without one is refused as above. Build from a workspace.
 
 ## 4.4 The build provenance record (`kg.provenance.json`)
 
