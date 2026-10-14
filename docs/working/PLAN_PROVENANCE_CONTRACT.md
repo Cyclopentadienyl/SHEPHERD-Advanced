@@ -37,9 +37,13 @@ change to the shared reader `read_samples` made after S1–S5's review, are code
 (`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
 homelab. M2.2–M2.6 are implemented (2026-10-13; their sections in §4, "As implemented"); the
 reviewer's code review of `810d344..0aabfc3` (2026-10-13) found three P2 and no P1, and its
-re-review of the fixes (`0aabfc3..26fe84c`, 2026-10-13) closed all three with no new P1 or P2, so
-M2's acceptance on the homelab is next; M2 is not complete. M2.1's acceptance stands as recorded.
-The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+re-review of the fixes (`0aabfc3..26fe84c`, 2026-10-13) closed all three with no new P1 or P2.
+**M2's acceptance ran on the GB10 at `82d7573` (2026-10-14) and passed**, demo and real data, as the
+reviewer's review of the evidence found ([evidence](m2-acceptance-2026-10-14/README.md)): a
+functional acceptance of the contract, not a capacity reading (the probe ran under the native
+allocator, not the saved `cuda_async`) and not a measure of model quality; M2 is not merged. The
+probe's allocator start-up is fixed since and awaits review and a minimal backend check on the
+GB10. M2.1's acceptance stands as recorded. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2135,7 +2139,22 @@ shortest-path producer and the inventory -- never from the comparator alone.
   no input and no existing file, and is created, never replaced.
 - **Review (2026-10-13):** the reviewer's review of `26fe84c..a0fcc4a` found two P2 in the probe and
   none in the product code: the report path could overwrite an input or an earlier result, and M3
-  measured the parent instead of the resumed model. Both are fixed; awaiting re-review.
+  measured the parent instead of the resumed model. Both were fixed in `82d7573`, the commit run.
+
+*As run (2026-10-14, at `82d7573`):* 62 of 62 probes passed and the acceptance was complete in both
+parts ([evidence](m2-acceptance-2026-10-14/README.md)); the reviewer recomputed the digests of the
+real checkpoints and reports and found it passed. Limits recorded there: R8 compares listing, size
+and modification time; the probe ran the trainer as a module and so skipped `train_model.py`'s
+start-up allocator rule, the runs recording no allocator variable while the saved preset was
+`cuda_async`, so the run used the native backend and its memory (about 104 GB attributed to the
+probe by `nvidia-smi` during R3; about 3.84 GB of swap in use afterwards; no continuous trace) is no
+capacity reading; the short-trained model is not a serving model.
+- **The allocator follow-up (2026-10-14):** the probe, when it is the program, applies the shared
+  rule (`allocator_env(..., inherit=True)`, as `train_model._apply_allocator`) before anything
+  imports torch, keeping an explicit override under either variable name, and the report records
+  the variables, their source and the backend torch reports (`allocator`). Importing the module
+  changes nothing. Its review and a minimal check of the backend in a new process on the GB10
+  follow; the two epochs are not rerun for this start-up change.
 
 ### M3 — producers record what consumers need, and consumers check it
 

@@ -293,5 +293,5 @@ def test_a_report_target_that_appears_during_the_run_is_not_overwritten(
     assert report_path.read_text() == "written during the run"
     out = capsys.readouterr()
     assert "is not replaced" in out.err
-    start = out.out.index('{\n  "environment"')        # the payload, sorted keys
+    start = out.out.index("\n{\n") + 1           # the payload's opening line
     assert json.loads(out.out[start:])["m2_acceptance"]["complete"] is False

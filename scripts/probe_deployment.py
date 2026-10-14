@@ -70,6 +70,9 @@ Contract M2's acceptance (`--m2-acceptance`):
     the workspace and the reference are unchanged by listing, size and
     modification time, not by content digest (R8).
     The report stays inside --work-dir and replaces no existing file.
+    Run as a program, the probe applies the project's allocator rule before
+    torch is imported, as train_model.py does, and the report records the
+    allocator variables, their source and the backend torch reports.
     The report's `m2_acceptance` says, per part, whether every required probe
     ran and passed; a missing, skipped or failed one leaves it incomplete, and
     the exit status is non-zero until both parts are complete.
@@ -92,6 +95,59 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 REPORT_SCHEMA_VERSION = 1
+
+#: How this process's CUDA allocator was chosen, set by `_apply_allocator` when
+#: this file is the program and before anything imports torch. Empty when
+#: `main()` runs in a process that did not set it (a test, say).
+ALLOCATOR: Dict[str, Any] = {}
+
+
+def _apply_allocator() -> Dict[str, Any]:
+    """The training entry point's allocator rule, applied before torch exists.
+
+    `train_model.py` applies it only as a program (`__main__`), and the probe
+    runs the trainer as a module, so a probe run used PyTorch's default backend
+    whatever the saved preset said (M2's acceptance at `82d7573`, 2026-10-14).
+    **The same shared rule** (`allocator_env(..., inherit=True)`, as
+    `train_model._apply_allocator`): an allocator already in the environment --
+    an explicit one, under either variable name, or a backend's preset -- is
+    kept; otherwise the saved preset applies. Only the probe's own start-up
+    calls this, so importing the module changes no caller's environment.
+    """
+    import os
+
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV, allocator_env, load_runtime_settings
+
+    torch_first = "torch" in sys.modules
+    inherited = "PYTORCH_ALLOC_CONF" in os.environ or "PYTORCH_CUDA_ALLOC_CONF" in os.environ
+    resolved = allocator_env(os.environ, load_runtime_settings(), inherit=True)
+    for key in ("PYTORCH_ALLOC_CONF", ALLOC_SOURCE_ENV):
+        if key in resolved:
+            os.environ[key] = resolved[key]
+    if not inherited:
+        source = "saved preset"
+    elif os.environ.get(ALLOC_SOURCE_ENV) == "preset":
+        source = "inherited from the backend (preset)"
+    else:
+        source = "environment (explicit)"
+    return {"source": source, "torch_imported_before": torch_first}
+
+
+def _allocator_record(backend: Optional[str]) -> Dict[str, Any]:
+    """The allocator variables in effect, where they came from, and the backend
+    torch reports (None when no CUDA device was resolved)."""
+    import os
+
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV
+
+    return {
+        "PYTORCH_ALLOC_CONF": os.environ.get("PYTORCH_ALLOC_CONF"),
+        "PYTORCH_CUDA_ALLOC_CONF": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
+        ALLOC_SOURCE_ENV: os.environ.get(ALLOC_SOURCE_ENV),
+        "source": ALLOCATOR.get("source", "not applied (main() called in process)"),
+        "torch_imported_before": ALLOCATOR.get("torch_imported_before"),
+        "backend": backend,
+    }
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("probe")
@@ -343,6 +399,8 @@ def phase_environment(
                 "total_memory_gb": round(
                     torch.cuda.get_device_properties(0).total_memory / 1e9, 1
                 ),
+                # What this process actually runs, not what a marker claims.
+                "allocator_backend": torch.cuda.get_allocator_backend(),
             }
         else:
             collected = {"resolved_device": resolved}
@@ -2477,6 +2535,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "tested_commit": _tested_commit(),
+        "allocator": _allocator_record(environment.get("allocator_backend")),
         "environment": environment,
         "settings": {
             "device": device,
@@ -2557,4 +2616,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    # Before main(): the environment phase is the first thing to import torch.
+    ALLOCATOR.update(_apply_allocator())
     sys.exit(main())
