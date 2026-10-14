@@ -67,7 +67,9 @@ Contract M2's acceptance (`--m2-acceptance`):
     reference's architecture (R2); one epoch from scratch (R3) and one resumed
     (R4); measurement (R5) and serving with the table verified, and a diagnosis
     (R6); the inventory refuses the reference and passes the new model (R7);
-    the workspace and the reference were not written (R8).
+    the workspace and the reference are unchanged by listing, size and
+    modification time, not by content digest (R8).
+    The report stays inside --work-dir and replaces no existing file.
     The report's `m2_acceptance` says, per part, whether every required probe
     ran and passed; a missing, skipped or failed one leaves it incomplete, and
     the exit status is non-zero until both parts are complete.
@@ -1387,6 +1389,7 @@ def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str) -> Dic
     assert digests.get("kg") == kg_digest, "the measurement records another source graph"
     return {
         "report_sha256": file_sha256(output),
+        "checkpoint_sha256": checkpoint_sha,
         "n_ranked": result.get("n_ranked"),
         "authoritative_metrics": result.get("authoritative_metrics"),
     }
@@ -1498,12 +1501,16 @@ def phase_m2_demo(
                _resumed)
 
     def _measured() -> Tuple[str, Dict[str, Any]]:
+        # **The resumed model, never its parent in its place**: the flow this
+        # part claims is build, train, resume, then measure and serve that model.
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
         output = m2 / "measured" / "measurement.json"
-        assert _measure(checkpoint, sound, output, device) == 0, "the measurement failed"
-        return "the checkpoint was measured over its own workspace", _measurement_facts(
-            output, _read_run_checkpoint(checkpoint)["sha256"], verify_workspace(sound)[0]["kg"])
+        assert _measure(state["child"], sound, output, device) == 0, "the measurement failed"
+        return "the resumed checkpoint was measured over its own workspace", _measurement_facts(
+            output, _read_run_checkpoint(state["child"])["sha256"],
+            verify_workspace(sound)[0]["kg"])
 
-    report.run("M3", "m2", "CONTROL: measurement accepts a checkpoint over its own graph",
+    report.run("M3", "m2", "CONTROL: measurement accepts the resumed checkpoint over its graph",
                _measured)
 
     def _served_with_sp() -> Tuple[str, Dict[str, Any]]:
@@ -1919,11 +1926,13 @@ def phase_m2_real(
         assert (reference.stat().st_size, reference.stat().st_mtime_ns) == reference_before, (
             "the reference checkpoint changed"
         )
-        return "the real workspace and the reference are as they were", {
+        return "the same files and directories, sizes and modification times", {
             "entries_checked": len(after),
+            "compared": "listing, size and modification time; not content digests",
         }
 
-    report.run("R8", "real", "the real workspace and the old model were not written",
+    report.run("R8", "real",
+               "the real workspace and the old model are unchanged by listing, size and mtime",
                _untouched)
 
 
@@ -2388,6 +2397,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         work = args.work_dir.resolve()
         if work == args.real_workspace.resolve() or args.real_workspace.resolve() in work.parents:
             parser.error("--work-dir must not be inside --real-workspace, which is never written")
+    if args.m2_acceptance and args.report is not None:
+        # **The acceptance writes under its work directory and nowhere else**, its
+        # report included, and replaces nothing: the report cannot be an input or
+        # an earlier result. The final write refuses an existing file as well,
+        # for one that appears during the run.
+        report = args.report.resolve()
+        if args.work_dir.resolve() not in report.parents:
+            parser.error("with --m2-acceptance, --report must be inside --work-dir")
+        if report.exists():
+            parser.error("--report names an existing file; the acceptance replaces nothing")
+        inputs = [args.real_config, args.real_reference_checkpoint]
+        if any(path is not None and report == path.resolve() for path in inputs) or (
+            args.real_workspace is not None and args.real_workspace.resolve() in report.parents
+        ):
+            parser.error("--report must not be an input of the acceptance")
     return args
 
 
@@ -2481,7 +2505,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         ],
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
+    encoded = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False)
+    if args.m2_acceptance:
+        # **Created, never replaced** (mode "x"): a file the run produced at this
+        # path, or one put there while it ran, is not overwritten. The report
+        # goes to standard output instead, so its evidence is not lost either.
+        try:
+            with open(report_path, "x", encoding="utf-8") as handle:
+                handle.write(encoded)
+        except FileExistsError:
+            print(f"\n{report_path} exists and is not replaced; the report follows on "
+                  "standard output. The acceptance did not write its report.",
+                  file=sys.stderr)
+            print(encoded)
+            return 3
+    else:
+        report_path.write_text(encoded)
 
     print("\n" + "=" * 66)
     print(

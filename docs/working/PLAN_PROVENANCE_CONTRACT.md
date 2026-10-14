@@ -2123,12 +2123,19 @@ shortest-path producer and the inventory -- never from the comparator alone.
   `model-02-0.1813.pt`; one epoch from scratch and one resumed, every output under the work
   directory; measurement and serving of the new checkpoint, SP verified, a diagnosis; the
   inventory refuses `model-02` for its missing record and passes the new model; the workspace is
-  unchanged. The short-trained model shows the pipeline and its checks work; it is not a serving
-  model, which the established training and evaluation choose.
+  unchanged by file listing, size and modification time (not by content digest). The settings are
+  the workspace's own `train_outputs/config.yaml`, whose six architecture fields, with
+  TrainConfig's defaults, match `model-02`'s record (the reviewer's check, 2026-10-13). The
+  short-trained model shows the pipeline and its checks work; it is not a serving model, which the
+  established training and evaluation choose.
 - **Accounting:** CUDA is required and the run stops after A2 without it; the report lists, per
   part, every required probe and any not run, skipped or failed; the acceptance is complete only
   when both parts are. The work directory is kept, with the tested commit, the device, the
-  artifacts' digests and each probe's result.
+  artifacts' digests and each probe's result. The report must be inside the work directory, can be
+  no input and no existing file, and is created, never replaced.
+- **Review (2026-10-13):** the reviewer's review of `26fe84c..a0fcc4a` found two P2 in the probe and
+  none in the product code: the report path could overwrite an input or an earlier result, and M3
+  measured the parent instead of the resumed model. Both are fixed; awaiting re-review.
 
 ### M3 — producers record what consumers need, and consumers check it
 

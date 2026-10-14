@@ -59,6 +59,15 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
     )
     refused = tmp_path / "m2" / "refused"
     assert not refused.exists() or not any(refused.iterdir()), "a refused run left a directory"
+    # The review's P2-2: M3 measures the checkpoint M2 resumed into, never its
+    # parent in its place -- read from the measurement's own manifest.
+    import json
+
+    facts = {p.probe_id: p.facts for p in report.probes}
+    measured = json.loads((tmp_path / "m2" / "measured" / "measurement.json").read_text())
+    child = facts["M2"]["child_sha256"]
+    assert measured["manifest"]["artifact_digests"]["checkpoint"] == child
+    assert facts["M3"]["checkpoint_sha256"] == child != facts["M2"]["parent_sha256"]
 
 
 def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
@@ -206,7 +215,8 @@ def test_without_cuda_the_acceptance_stops_after_the_device_check(tmp_path):
     if torch.cuda.is_available():
         pytest.skip("this host has CUDA; the case is a host without it")
     probe = _probe()
-    work, report_path = tmp_path / "work", tmp_path / "report.json"
+    work = tmp_path / "work"
+    report_path = work / "m2_report.json"
 
     assert probe.main(["--work-dir", str(work), "--report", str(report_path),
                        "--m2-acceptance", "--device", "cuda"]) == 1
@@ -221,3 +231,67 @@ def test_without_cuda_the_acceptance_stops_after_the_device_check(tmp_path):
     assert acceptance["real_data"] == {"requested": False, "complete": False}
     assert report["tested_commit"]["commit"]
     assert work.is_dir(), "the acceptance keeps its work directory"
+
+
+def test_the_report_cannot_be_an_input_an_earlier_result_or_outside_the_work_dir(tmp_path):
+    """The review's P2-1, before any work: the report of an acceptance stays
+    inside its work directory, is no input and replaces no existing file."""
+    probe = _probe()
+    real = tmp_path / "workspaces" / "ws"
+    (real / "checkpoints").mkdir(parents=True)
+    reference = real / "checkpoints" / "model.pt"
+    reference.write_bytes(b"reference")
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    work = tmp_path / "work"
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "report.json").write_text("earlier")
+    acceptance = ["--m2-acceptance", "--device", "cuda", "--real-workspace", str(real),
+                  "--real-config", str(config), "--real-reference-checkpoint", str(reference)]
+
+    for report, work_dir in (
+        (reference, work), (config, work), (real / "report.json", work),
+        (tmp_path / "beside.json", work),                      # outside the work dir
+        (earlier / "report.json", earlier),                    # an earlier result
+    ):
+        with pytest.raises(SystemExit):
+            probe.parse_args(["--work-dir", str(work_dir), "--report", str(report),
+                              *acceptance])
+    assert reference.read_bytes() == b"reference" and config.read_text() == "{}"
+    assert (earlier / "report.json").read_text() == "earlier"
+
+    args = probe.parse_args(["--work-dir", str(work), "--report", str(work / "m2.json"),
+                             *acceptance])
+    assert args.report == work / "m2.json"
+
+
+def test_a_report_target_that_appears_during_the_run_is_not_overwritten(
+    tmp_path, monkeypatch, capsys
+):
+    """The final write creates and never replaces: a file at the report's path
+    when the run ends -- here put there while it ran -- keeps its bytes, the run
+    fails, and the report goes to standard output instead."""
+    import json
+
+    probe = _probe()
+    work = tmp_path / "work"
+    report_path = work / "m2_report.json"
+    real_environment = probe.phase_environment
+
+    def environment_that_also_writes_the_target(report, device, **kwargs):
+        report_path.write_text("written during the run")
+        facts = real_environment(report, device, **kwargs)
+        facts.pop("resolved_device", None)       # no CUDA: the acceptance stops after A
+        return facts
+
+    monkeypatch.setattr(probe, "phase_environment", environment_that_also_writes_the_target)
+
+    assert probe.main(["--work-dir", str(work), "--report", str(report_path),
+                       "--m2-acceptance", "--device", "cuda"]) == 3
+
+    assert report_path.read_text() == "written during the run"
+    out = capsys.readouterr()
+    assert "is not replaced" in out.err
+    start = out.out.index('{\n  "environment"')        # the payload, sorted keys
+    assert json.loads(out.out[start:])["m2_acceptance"]["complete"] is False
