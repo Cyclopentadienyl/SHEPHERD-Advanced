@@ -43,7 +43,7 @@ reviewer's review of the evidence found ([evidence](m2-acceptance-2026-10-14/REA
 functional acceptance of the contract, not a capacity reading (the probe ran under the native
 allocator, not the saved `cuda_async`) and not a measure of model quality. **M2's technical work is
 complete and its acceptance, within the scope agreed, is complete** (the owner, 2026-10-14, on the
-reviewer's recommendation); M2 is not merged, and a pull request carries this branch to `main`. The
+reviewer's recommendation); the owner merged it into `main` on 2026-10-14 (#121, `9fe5113`). The
 probe's allocator start-up was fixed since (`b8a43c8`), reviewed with no P1 or P2 and confirmed on
 the GB10: its demo phases ran under `cudaMallocAsync`, as torch reported (2026-10-14). M2.1's
 acceptance stands as recorded. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;

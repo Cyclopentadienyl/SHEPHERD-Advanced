@@ -5,7 +5,8 @@ Contract M2.1 step S10 ([`PLAN_PROVENANCE_CONTRACT.md`](../../PLAN_PROVENANCE_CO
 the owner sent it, and this explanation.
 
 **Accepted (the owner, 2026-10-13)** on this subject, with the remaining uncertainty explicitly
-accepted; M2.1's technical work is complete; not merged, and M2 is not complete (§6.2). The status
+accepted; M2.1's technical work is complete (§6.2), merged into `main` with M2 on 2026-10-14 (#121,
+`9fe5113`). The status
 as first recorded follows.
 
 **Status.** The run is complete. Every acceptance 1 check passes at the after commit (51 PASS, 0
