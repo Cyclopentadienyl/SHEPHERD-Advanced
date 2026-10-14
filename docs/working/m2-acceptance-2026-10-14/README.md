@@ -3,7 +3,8 @@
 **Passed**, as the reviewer's review of the evidence found (2026-10-14): M2's source contract, on
 the demo workspace and on real data, through the production entry points, at `82d7573`. It is a
 functional acceptance of the contract. It is not a capacity reading under the deployment's
-`cuda_async` allocator (§3), not a measure of model quality, and not a merge.
+`cuda_async` allocator (§3), not a measure of model quality, and not a merge. The probe's allocator
+start-up was fixed afterwards and confirmed on the GB10 at `b8a43c8` (§6).
 
 ## 1. The run
 
@@ -74,11 +75,12 @@ of the five reports the probe cites, and the two inventory verdicts above.
 
 ## 4. Follow-up
 
-- The probe now applies the shared allocator rule before torch is imported and records the
-  backend torch reports (see the plan's "Acceptance for M2"); a review and a minimal check of the
-  backend in a new process on the GB10 follow. Rerunning the two epochs is not required for that
-  start-up change.
-- The homelab checkout is to be restored by the owner (before the run: `main`, `90a668f`).
+- **The allocator start-up, fixed and confirmed (§6).** The probe applies the shared allocator rule
+  before torch is imported and records the backend torch reports (`b8a43c8`, reviewed with no P1 or
+  P2); a run of its existing demo phases at that commit on the GB10 used `cudaMallocAsync`. The two
+  epochs were not rerun for that start-up change.
+- **The homelab checkout is restored** to `main`, `90a668f`, as before the run (the owner's report,
+  checked by the reviewer; the follow-up's own before and after records are in §6).
 
 ## 5. Files
 
@@ -99,3 +101,31 @@ manifests carry local paths. Cited by digest: the real initial and resumed check
 `cd5638f95551560876a1f5789ebc184370b8d91b3659b0acbd6123c9d8c09485`, the demo child `e0e7e3e7…` and
 the demo measurement `3621b0f134485702b256297196cb4ebdfd55195adee9663139ac36abaf1ff64b`. No model
 weights, tensors, sample lists or per-case ranks are in the repository.
+
+## 6. The allocator follow-up on the GB10, at `b8a43c8` (2026-10-14)
+
+A separate run, at a separate commit; §1–§5 and their files describe `82d7573` and are unchanged.
+
+| | |
+|---|---|
+| Commit | `b8a43c80e3dbb683d349e24987474872e219aea9`, no tracked file modified |
+| Command | `scripts/probe_deployment.py --device cuda --epochs 1 --keep` with a new work directory outside the repository: the existing phases A–E on the demo workspace only, no `--m2-acceptance`, nothing real read |
+| Saved settings | `allocator_preset` `cuda_async`, `torch_compile` false; no allocator variable in the shell |
+| Outcome | 42 passed, 0 failed, 0 errors, 0 skipped; exit 0. `resolved_device` cuda (NVIDIA GB10, torch 2.10.0+cu130) |
+| Allocator | `PYTORCH_ALLOC_CONF` `backend:cudaMallocAsync`, `SHEPHERD_ALLOC_SOURCE` `preset`, source `saved preset`, set before torch was first imported; the backend torch reports, in the report's `allocator` and in A2, `cudaMallocAsync` |
+| Checkout | `main`, `90a668f` before and after |
+
+The demo training's `runtime.json` still reads `allocator_source: not applied (imported as a module)`:
+that is `train_model.py`'s own start-up, which does not run when the trainer is imported. The same
+file records the allocator variables the probe set, and the backend query shows they took effect.
+
+What this shows and does not: the probe's entry point now runs CUDA under the saved allocator, and
+a small demo trains, serves and reloads under it. It says nothing about a full HGT training's
+memory under `cudaMallocAsync`, capacity, model quality or a clinical test; S10 is not redone.
+
+Files, under `allocator-b8a43c8/`, as the owner's package holds them (archive
+`m2-backend-b8a43c8-evidence-2026-10-14.tar.gz`, SHA-256
+`de66d254fc7f46bd3402d72e6912304f568dc8d7f83f661ab26239fd0ee83bc8`, whose own `SHA256SUMS` passed,
+14 of 14), listed in that directory's `SHA256SUMS`: `backend_report.json` (the probe's report, no
+paths), `exit.txt`, `checkout-before.txt`, `checkout-restored.txt` and
+`runtime-settings-before.json`. The training logs and outputs stay in the package.

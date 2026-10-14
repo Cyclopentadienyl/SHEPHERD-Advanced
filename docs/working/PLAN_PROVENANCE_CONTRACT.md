@@ -42,8 +42,9 @@ re-review of the fixes (`0aabfc3..26fe84c`, 2026-10-13) closed all three with no
 reviewer's review of the evidence found ([evidence](m2-acceptance-2026-10-14/README.md)): a
 functional acceptance of the contract, not a capacity reading (the probe ran under the native
 allocator, not the saved `cuda_async`) and not a measure of model quality; M2 is not merged. The
-probe's allocator start-up is fixed since and awaits review and a minimal backend check on the
-GB10. M2.1's acceptance stands as recorded. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+probe's allocator start-up was fixed since (`b8a43c8`), reviewed with no P1 or P2 and confirmed on
+the GB10: its demo phases ran under `cudaMallocAsync`, as torch reported (2026-10-14). M2.1's
+acceptance stands as recorded. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2153,8 +2154,11 @@ capacity reading; the short-trained model is not a serving model.
   rule (`allocator_env(..., inherit=True)`, as `train_model._apply_allocator`) before anything
   imports torch, keeping an explicit override under either variable name, and the report records
   the variables, their source and the backend torch reports (`allocator`). Importing the module
-  changes nothing. Its review and a minimal check of the backend in a new process on the GB10
-  follow; the two epochs are not rerun for this start-up change.
+  changes nothing. *Done (2026-10-14):* reviewed with no P1 or P2 (`82d7573..b8a43c8`), and at
+  `b8a43c8` the probe's existing demo phases on the GB10 passed (42 of 42) with the allocator set
+  from the saved preset before torch's first import and the backend torch reports `cudaMallocAsync`
+  ([evidence](m2-acceptance-2026-10-14/README.md#6-the-allocator-follow-up-on-the-gb10-at-b8a43c8-2026-10-14)).
+  The two epochs were not rerun; nothing here is a reading of a full HGT training's memory.
 
 ### M3 — producers record what consumers need, and consumers check it
 
