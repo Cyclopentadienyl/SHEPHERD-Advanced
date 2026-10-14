@@ -770,16 +770,12 @@ def diagnosis_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 #: Hops the diagnosis loader expands each batch's subgraph by.
 #:
-#: **A constant with two readers, not a literal with two writers.** The manifest
-#: this project writes records `subgraph_hops` because Mode A's candidate universe
-#: *is* the expanded subgraph, so the number is part of what was measured rather
-#: than a tuning knob. `scripts/measure_scorer.build_manifest` used to write its
-#: own `2` beside this one; the manifest was then accurate only because two
-#: independent literals happened to agree, and editing one of them would have made
-#: it describe a run that never happened without anything failing.
+#: Validation ranks each batch's subgraph diseases, so this number is part of what
+#: `val_mrr` measures rather than a tuning knob; `tests/unit/test_diagnosis_loader.py`
+#: pins the default expansion.
 #:
 #: Not a `DataLoaderConfig` field: nothing varies it, and adding a knob nobody
-#: turns is a wider change than removing a duplicated literal.
+#: turns is a wider change than naming the constant.
 DIAGNOSIS_SUBGRAPH_HOPS = 2
 
 
@@ -975,8 +971,9 @@ class DiagnosisDataLoader:
 
         Two independent boundaries remain downstream and are deliberate, not
         redundant: `DiagnosisLoss` refuses a malformed target for any caller that
-        bypasses this loader, and `to_global_ids` refuses one at the measurement
-        harness's own boundary. Three small local checks, no shared validator.
+        bypasses this loader, and Mode C's `_assert_ids_in_range` refuses a truth
+        outside the graph's diseases at the measurement's own boundary. Three
+        small local checks, no shared validator.
 
         Never clamps. Clamping a ground truth silently scores a different
         disease.

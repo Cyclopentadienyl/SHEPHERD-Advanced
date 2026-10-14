@@ -1,11 +1,53 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1
-or P2 at `ed4872a`, and accepted on the homelab GPU at `7714459`; the reviewer re-checked that
-evidence with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab").
-M2–M5 are not implemented.** Facts about the code are cited at
-`627ed08`, before M1; the code was unchanged at `463a0df`. §1 records decisions already made; §4
-is the order of work.
+**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
+at `ed4872a`, and accepted on the homelab GB10 at `7714459` (evidence recorded by SHA-256 below; the
+files are archived on the homelab, not in the repository); the reviewer re-checked that evidence
+with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab"). M2.1's work
+plan was reviewed and revised with the owner's decisions of 2026-10-09 and 2026-10-10. The re-review
+of `0708789` found one P2; the incremental review of `7e1af96` found it closed and no new P1 or P2;
+the review of the decision record at `45d9dea` found no P1 or P2 (§4, "M2.1 — the work, at
+`90a668f`"). M2.1's S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2
+(`45d9dea..3433bf8`); S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 (`e3eefee..6f16373`);
+S6 and S8 are implemented (2026-10-11); their batch (`8421b8c..cddad9d`) is code-reviewed with no P1 or P2
+(2026-10-12), and the
+later increment that narrowed their claims (`cddad9d..3e8e559`) was reviewed with no P1 or P2
+(2026-10-12), which is not a review of that batch. S7 is implemented for Mode C only (2026-10-11)
+and code-reviewed with no P1 or P2 (`3d53c9b..7327798`, 2026-10-12), as that declared scope, not as every
+mode migrated. M3a's seed ordering is implemented ahead of the rest of M3a (2026-10-11) and
+code-reviewed with no P1 or P2 (`7327798..290c03a`, 2026-10-12). Measurement runs that include Mode A
+were not migrated; since the owner's clarification of 2026-10-12 they were deleted by the Mode A/B
+retirement's R2 (2026-10-12; code-reviewed with no P1 or P2 in
+`1d0b5a6..06fd0f1`, 2026-10-12), so since R2 every measurement run takes S7's reads;
+that measurement-wide state rests on R2 and is not covered by S7's C-only review. **M2.1's technical
+work is complete (2026-10-13)**: the owner accepted S10's capacity on its designated subject, with the
+remaining uncertainty explicitly accepted, on the reviewer's recommendation ([the capacity README §6.2](scorer-measurement/capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13));
+this is not a merge, and M2 is not complete. The record that led there: S9 is implemented (2026-10-12) and code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12),
+and S10's tools, kept outside the repository, passed their re-review with no P1 or P2 (draft 3, 2026-10-12),
+and S10 ran on 2026-10-12 at both commits ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md)): every acceptance 1 check passes at
+the after commit; comparability has 1 UNKNOWN (the service state, supplemented by the owner's statement; the
+comparison's exit status 2 kept); acceptance 2 and 3 are explained except the serving reload's resident rise (R3
++0.023 to +0.031 GB), whose source is not located; the reviewer's evidence review (2026-10-13) recommends a
+limited diagnostic of consecutive reloads before acceptance 2 is closed; the owner chose it (2026-10-13), and it
+ran on 2026-10-13 ([`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md)): each process grew by about 0.4–0.5 GB
+at every reload at both commits, before M2.1 as after it, and the difference between the commits is ambiguous, so
+the owner ended the reload-memory investigation (2026-10-13) with the wheel's bundled mimalloc purge defects as
+a strong candidate cause, attribution not established, and accepted S10's capacity with that uncertainty explicit. R2 (`e210b12`) and item 8 (`06fd0f1`), the latter a
+change to the shared reader `read_samples` made after S1–S5's review, are code-reviewed with no P1 or P2
+(`1d0b5a6..06fd0f1`, 2026-10-12), as is the S6/S8 batch (above); none of these reviews accepts anything on the
+homelab. M2.2–M2.6 are implemented (2026-10-13; their sections in §4, "As implemented"); the
+reviewer's code review of `810d344..0aabfc3` (2026-10-13) found three P2 and no P1, and its
+re-review of the fixes (`0aabfc3..26fe84c`, 2026-10-13) closed all three with no new P1 or P2.
+**M2's acceptance ran on the GB10 at `82d7573` (2026-10-14) and passed**, demo and real data, as the
+reviewer's review of the evidence found ([evidence](m2-acceptance-2026-10-14/README.md)): a
+functional acceptance of the contract, not a capacity reading (the probe ran under the native
+allocator, not the saved `cuda_async`) and not a measure of model quality. **M2's technical work is
+complete and its acceptance, within the scope agreed, is complete** (the owner, 2026-10-14, on the
+reviewer's recommendation); M2 is not merged, and a pull request carries this branch to `main`. The
+probe's allocator start-up was fixed since (`b8a43c8`), reviewed with no P1 or P2 and confirmed on
+the GB10: its demo phases ran under `cudaMallocAsync`, as torch reported (2026-10-14). M2.1's
+acceptance stands as recorded. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
 - **The resume parent is checked in M2**, before any state is restored (§4, M2.3). Left to M3a,
@@ -83,6 +125,10 @@ Being unable to verify the pairing is reason enough.
    - A digest that a record states as an input, or that a check compares, is taken from the
      same buffer the step parsed. Hashing the path again at another moment identifies whatever
      the path holds by then, not what was read (§4, M2.1).
+   - This applies to the inputs a step parses. `kg.json`, where a step does not parse it, may
+     be identified, without being recorded, by one refusing check against the step's manifest
+     reading (§4, M2.1 decision 1; the owner, 2026-10-09). This is not a verification API for
+     consumers that parse their inputs.
 2. **Each producer records, in the record it already writes:**
    - the inputs it consumed, by role and digest;
    - the parameters actually in effect: resolved, not requested. A request that did not take
@@ -485,7 +531,13 @@ bytes read says nothing about what was read.
   manifest's inputs.
   - `compute_input_digests` stops being used to record a consumed input.
   - `file_sha256` stays only for identifying a file nobody is about to parse: the search in
-    `find_checkpoint` (`src/evaluation/sidecar.py:366-383`) and the M2.6 inventory.
+    `find_checkpoint` (`src/evaluation/sidecar.py:366-383`) and, in the M2.6 inventory, the
+    files it does not parse.
+  - **Amended 2026-10-09** (§4, "M2.1 — the work"):
+    - an inventory that reads a checkpoint's `training_input_digests` parses that checkpoint, so
+      its digest comes from that read;
+    - by the owner's decision, the allowance also covers one refusing check: `kg.json`, before a
+      run that does not parse it, compared with the run's one manifest reading.
 - **The copies collapse onto the shared reader.** This is not a separate project: the binding
   needs one reader per kind of file.
   - The callers moved: training's `load_graph_data` and `load_samples`
@@ -499,7 +551,10 @@ bytes read says nothing about what was read.
   digest are kept, and the raw buffer is released. Wrappers such as `BytesIO` may add copies of
   their own, so "one transient copy per file" is an expectation to measure, not a bound (see
   the acceptance below).
-- **Two stated exceptions.**
+  - **Amended 2026-10-09 after review:** that the buffer is released is shown by release checks
+    on the readers (§4, M2.1's S2–S4), never inferred from resident memory. The allocator may
+    keep a freed buffer's pages resident, and live parsed objects may pin them.
+- **Three stated exceptions** (the third decided by the owner, 2026-10-09).
   - **The SP table at serving.** Its identity is the `build_id` inside the tensor it loads,
     checked against the sidecar (`pipeline.py:727`). So the identity checked already comes from
     the bytes loaded, and the table gets no file digest. Copying a multi-gigabyte table into
@@ -516,6 +571,9 @@ bytes read says nothing about what was read.
     manifest's binding for the tensors it did parse, and that manifest is itself read once. It
     is displayed as the manifest-bound source graph, never as a file training loaded. Serving,
     which does parse `kg.json`, checks its own read.
+  - **Measurement's `kg` role**, decided by the owner on 2026-10-09. Measurement does not parse
+    `kg.json` either; every mode computes from the tensors. Its role is the manifest-bound source
+    graph, as training's, never a file measurement read.
 
 **Precedent.** The KG build already does this for the ontologies: it records the digest the
 loader took from the handle it parsed, because hashing the path afterwards recorded a
@@ -538,17 +596,1379 @@ replacement (`scripts/build_knowledge_graph.py:330-336`).
 - **The record maps are built only from the readers' results.** A test pins this, so that
   bringing back a path-hashing call at a producer fails it.
 - **Capacity.** Peak memory is measured at each entry point on the homelab's largest workspace
-  and checkpoint. A shortfall is fixed in the reader. A CPU fallback is not a remedy.
+  and checkpoint (measurement: Mode C, §4 S10). A shortfall is fixed in the reader. A CPU
+  fallback is not a remedy.
+  - **Amended 2026-10-10 by the owner** (§4, M2.1 decision 7): it is measured on S10's
+    designated subject, and the acceptance is limited to that subject. It does not claim to
+    cover all of the largest inputs (another workspace has larger sample files) or every
+    deployment.
+
+#### M2.1 — the work, at `90a668f` (2026-10-08; revised 2026-10-09; decisions 2026-10-10)
+
+This is how M2.1 would be built. It was mapped against the code at `90a668f`, the merge of M1,
+by independent readers of each entry point and of the shared readers. A completeness critic then
+checked the map and this breakdown, and a second check verified this text against the code.
+**Citations in this subsection are current at `90a668f`**; those above, taken at `627ed08`, are
+left as written. S0 is implemented (2026-10-10) and code-reviewed with no P1 or P2 at `3433bf8`;
+S1–S5 are implemented (2026-10-10) and code-reviewed with no P1 or P2 at `6f16373`; S6 and S8
+are implemented (2026-10-11) and their batch is code-reviewed with no P1 or P2 at
+`cddad9d` (2026-10-12; the later increment that narrowed
+their claims was reviewed with no P1 or P2, 2026-10-12); S7 is implemented for Mode C only
+(2026-10-11) and code-reviewed with no P1 or P2 at `7327798` (2026-10-12) as that declared scope,
+and measurement runs that include Mode A were not migrated: since the owner's clarification of
+2026-10-12 they were deleted by the Mode A/B retirement's R2 (2026-10-12; code-reviewed with no P1
+or P2 in `1d0b5a6..06fd0f1`, 2026-10-12); S9 is implemented (2026-10-12) and code-reviewed with no P1
+or P2 at `f481882` (2026-10-12; its "As implemented" note below); S10 ran on 2026-10-12 with its re-reviewed
+tools, its evidence awaiting review, and nothing else here
+is implemented.
+
+**Revisions of 2026-10-09 and 2026-10-10.** They follow the reviewer's plan review of `4ecd2c2`
+(one P2, no P1) and its two later reviews, and the owner's decisions of 2026-10-09 and
+2026-10-10, recorded under "Decisions" below.
+- **The P2:** S10 asked for capacity readings of measurement Modes A and B, which cannot run on
+  the designated checkpoint: its writer writes neither key Mode A indexes
+  (`src/training/callbacks.py:296-327`), and S10's pre-flight lists its keys. S10 is now an
+  executable matrix.
+- **The calibration launcher:** checked as the owner asked, and found to have no necessary user.
+  It is removed in a new step, S0.
+- **The re-review of `0708789`** closed that P2 and found one more: S10 inferred a kept buffer
+  from resident memory. Release is now shown by checks on the readers (S2–S4), and S10 compares
+  and explains resident memory instead. Its non-blocking notes are applied: S0's claim is limited
+  to the checkpoints checked, S0 ends with a final search for present-tense references, the
+  measuring tools are bounded, and question 6 listed what each option changed. The re-review
+  accepted S0, M2.1 decisions 1–5 as recorded, the three exceptions, the M2.4 and BACKLOG
+  relations, and the republish rule with its SP binding supplement. On question 6 it recommended
+  (a), removing `scripts/evaluate_model.py` with its pin test, which the owner chose
+  (decision 6).
+- **The incremental review of `7e1af96`** (2026-10-10) closed the re-review's P2 and found no new P1
+  or P2. It accepted the plan as revised by then, at plan level, which is not acceptance of the
+  readers, the release check, the measuring tools or any reading, none of which exists yet. Its
+  notes for the release check's implementation are in S2. The text changed since, for decisions 6
+  and 7 below, was reviewed next: S0's additions (decision 3 lists them), the amended "Capacity"
+  rule, the memory sizes, and S10's subject, pre-flight and acceptance heading.
+- **The review of the decision record** (`7e1af96..45d9dea`, 2026-10-10) found no P1 or P2. It
+  accepted decisions 6 and 7 and the S0 and S10 text they bring, at plan level. That is not
+  acceptance of S0's change, the readers, the release check, the measuring tools or any reading.
+  Its notes for S0's review: the old launcher, the evaluator and the pin test are deleted; their
+  surviving callers are moved; history no longer serves as a current deletion gate; and item 7a
+  reuses the differential core rather than a second evaluation engine. "Frozen" binds only the
+  file S0 deletes; it is no reason for a new reader, a fallback, or a new entry point shaped
+  around the retired evaluator.
+- **The owner's decisions of 2026-10-10** settle the last two choices: `scripts/evaluate_model.py`
+  is removed with its pin test in S0, and S10's capacity acceptance is limited to its designated
+  subject (decisions 6 and 7 below). Neither is asked again unless a new dependency or
+  measurement fact appears.
+- **The code review of S0** (`45d9dea..3433bf8`, 2026-10-10) found no P1 or P2 and accepted S0 at
+  code-review level. Its two non-blocking notes are applied: `build_legacy_mode_a_model`'s
+  docstring now says only that S0 did not change how it builds the model and that replacing or
+  deleting it follows BACKLOG item 9's verification; and the worker-stream test's loader has a
+  finite `timeout`, so a hung worker fails rather than stalls. Its focus for S1–S5: bytes and
+  digest from the same source; the real reader's buffer lifecycle; no identity made up when a
+  read fails; and no new branch, metadata, schema or fallback for `build_legacy_mode_a_model`.
+- **S1–S5 as implemented (2026-10-10),** in `eecd803`, `2faaaa4`, `350cfee`, `e4cf737` and
+  `f581f9e`, then corrected after an internal adversarial review: five lenses, each finding
+  checked by a skeptic, and a completeness critic over the code map. It found no defect in what
+  the readers parse or record. The corrections:
+  - `verify_graph_reads` refused a missing tensor role but accepted a role given as `None`; it
+    now refuses both;
+  - the read forms raised a bare `AttributeError` on a manifest whose `artifacts`, `realised` or
+    `allocation` is not an object; they now refuse naming the manifest, and so do the path forms,
+    which share those checks;
+  - some refusals did not name the file they were about; they do now;
+  - `verify_cohort_reads` reported its scope in the generator's order where the path form keeps
+    the caller's; both keep the caller's;
+  - the test double's wrapper could stay installed in a module first imported while it was
+    active; it now goes inert when the test's patches are undone;
+  - tests were added where an option, a refusal or a check was claimed but not shown;
+  - text that claimed more than the code or the check does was narrowed (the release check's
+    limits, the open counter's, `GraphRead`'s pairing), and text S4 made false was corrected.
+
+  The decisions S1–S5 took within the plan are recorded under their steps: the open counter in
+  S1, the read forms' names and the `kg` pairing in S5. Neither changes a requirement.
+- **The code review of S1–S5** (`e3eefee..6f16373`, 2026-10-10) found no P1 or P2 and accepted
+  S1–S5 as the shared base for the entry-point migrations, which are reviewed in batches. That is
+  not acceptance of S6–S10, not a claim that any existing checkpoint meets M2's provenance
+  contract, and not the homelab capacity acceptance. It confirmed four limits the text already
+  states: `GraphRead` keeps the graph and its identity together by convention, not by
+  enforcement, so an entry point passes it whole; several files read in turn are not an atomic
+  snapshot, so what is guaranteed is that the bytes parsed are the bytes recorded, with the
+  manifest refusing a mismatch; the release check shows the raw read buffer is dropped, not that
+  decoded text, tensor storage, the allocator or resident memory fall back, which S10 measures
+  at the real entry points; and `read_graph_artifacts` still omits a missing file from its result,
+  so a reader's result is not a verified workspace until `verify_graph_reads` has accepted it.
+  Its focus for the migrations:
+  - S6–S8 show at the real entry points that the manifest is read once; that the checkpoint
+    record takes only the reader's result; that the graph and its identity are never re-paired;
+    that a failure publishes nothing and leaves no success artifact; and that no path-form digest
+    flows back into a record;
+  - a reader's result is never handed back to a path verifier to be read again, and the path and
+    read forms are not kept as two permanent options;
+  - S9 removes the migration interfaces, and only S10 concludes on capacity, for its subject.
+- **The code review at `1d0b5a6`** (2026-10-12) found no P1 or P2 in the increment that narrowed
+  S6/S8's claims (`cddad9d..3e8e559`), in S7 for Mode C only (`3d53c9b..7327798`), reviewed as the
+  declared C-only scope (code-review level) and not as every mode migrated, and in M3a's seed ordering
+  (`7327798..290c03a`). The first is a text increment, not a review of the S6/S8 batch
+  (`8421b8c..cddad9d`), which then still awaited code review (since code-reviewed with no P1 or P2,
+  2026-10-12; below). The same review found no P1 or P2 in the
+  retirement's R1 (`3e8e559..3d53c9b`), which is not part of this plan. M2.1 is not complete.
+- **The owner's clarification of 2026-10-12.** The owner reported on 2026-10-12 that the
+  institution had already authorised retiring the old pipeline's Mode A/B comparison tools, and
+  that the AMP question the owner and the institution want answered is a training study, not the
+  scoring comparison the differential recorded. The retirement assessment's §8 items 4 and 7
+  therefore no longer hold the retirement's R2 back: S7's Mode A/B items will never be built, runs that include
+  Mode A are to be deleted by R2 rather than migrated, and S9's measurement part follows R2. R2 was
+  implemented the same day (then awaiting code review; since code-reviewed with no P1 or P2 in
+  `1d0b5a6..06fd0f1`, 2026-10-12): runs that include Mode A are deleted, and
+  `measure_scorer.py` no longer calls a path form.
+- **The reviewer's convergence instruction (2026-10-12), adopted by the owner.** Finish S9 and S10
+  to close M2.1, then M2.2–M2.6, so the contract is enforced: producer and consumer delivered
+  together, with a formal way to produce acceptable new models (`train_model.py` →
+  `ModelCheckpoint`) and the deployment inventory. HGT (BACKLOG item 20), AMP (item 21), item 14 and
+  M3 stay independent. No new framework, registry, signing or second reader; a capacity shortfall
+  is fixed in the real reader, never by a CPU fallback, a second reader, `malloc_trim`, forced
+  collection or `empty_cache`. Each status here says which of planned, implemented, code-reviewed
+  (with its range) and accepted in the designated environment it is, and one never stands for
+  another. Code review version for that round: `06fd0f1`; awaiting code review: the S6/S8 batch
+  (`8421b8c..cddad9d`) and `1d0b5a6..06fd0f1` (HGT P2 `418b37e`, the record `84d69fb`, HGT Edit 1
+  `8eae614`, telemetry `a535ae2`, R2 `e210b12`, item 8 `06fd0f1`). Both have since been
+  code-reviewed with no P1 or P2 (2026-10-12; the next bullet).
+- **The code review at `c1b8a12`** (2026-10-12), read-only, judged five ranges apart, with
+  targeted CPU tests in an isolated copy. Each is a code review of its range, not an acceptance:
+  - **the S6/S8 batch** (`8421b8c..cddad9d`; serving and training read each recorded input once):
+    no new P1 or P2; 212 targeted CPU tests passed. The reviewer notes that M2.3's parent checks
+    are not in this range: the resume parent is still read where it is restored, and a missing
+    requested parent still warns and the run trains from scratch; both stay with M2.3;
+  - **HGT, telemetry, R2 and item 8** (`1d0b5a6..06fd0f1`, six commits): no new P1 or P2; 179
+    targeted CPU tests passed, 1 skipped. The commits: the HGT proposal states the kernel as
+    observed, not inferred (`418b37e`), so the earlier P2 on that proposal can be closed; the
+    record of the owner's clarification of 2026-10-12 (`84d69fb`); HGT Edit 1 (`8eae614`), at CPU
+    code-review level only, not a GB10 performance or CUDA numeric acceptance; the dashboard's
+    telemetry off (`a535ae2`, Gradio's `analytics_enabled=False`), which does not mean the project
+    never makes other network requests; R2 (`e210b12`), Modes A and B deleted with the retirement
+    assessment's §8 items 5 and 9 (ledger schema 2); and item 8 (`06fd0f1`), `read_samples`
+    refusing non-integer and boolean ids;
+  - **the status wording** (`06fd0f1..02a6954`; planned, implemented, reviewed, accepted): no new
+    P1 or P2;
+  - **S9** (`02a6954..f481882`): no new P1 or P2 in the product code; 554 targeted CPU tests
+    passed, and import-linter reported 4 kept. S10's tools, delivered with it and kept outside the
+    repository as planned, had three P2: the comparison prints "met" for evidence that fails the
+    declared acceptance conditions; the sampler stops only its direct child, so SP workers can be
+    left running; and the driver can reuse an old output directory, so a failed run mixes with an
+    earlier run's evidence. The tools were fixed afterwards, outside the repository (S10, "The
+    tools"), and await re-review (since passed, draft 3; below);
+  - **S10's plan amendments** (`f481882..c1b8a12`): no new P1 or P2. The plan is acceptable; the
+    tools do not yet meet all its requirements.
+
+  The whole suite at `c1b8a12`, in an isolated copy: 2615 passed, 9 skipped and 1 failed, only
+  because a `git archive` copy has no git metadata; with temporary metadata that test and the docs
+  index passed (61 passed). **What this round does not establish:** S10's tools are not passed;
+  S10 has not run and capacity is not accepted; M2.1 is not complete (S10 is outstanding), and
+  neither is M2; nothing is accepted on the homelab. HGT Edit 2, the AMP study and item 14 are not
+  part of it.
+- **The re-review at `3c9563f`** (2026-10-12), read-only, of `c1b8a12..3c9563f` (docs only) and of
+  S10's fixed tools: no new P1 or P2 in the documents; the three P2 on the tools are closed. It
+  found one more P2 in the tools: a warm pre-read that failed did not stop its row, which then ran
+  and was recorded as a warm reading. Fixed the same day (S10, "The tools"); the fixed driver and
+  its tests await a narrow re-review. S10 has not run, and M2.1 and M2 are not complete.
+- **The incremental review of draft 3 at `343e90e`** (2026-10-12), read-only, of `3c9563f..343e90e`
+  (docs only) and of the tools' draft 3 (the driver and its tests changed; the probe, the sampler
+  and the comparison unchanged): no P1 or P2; the pre-read P2 is closed. The tools may be used for
+  S10's measurement. This is not acceptance of S10's capacity, of M2.1 or of M2. The "after"
+  commit is then fixed at `343e90e` (S10).
+- **S10 ran on the homelab (2026-10-12)**, at `90a668f` and `343e90e` in one boot, with draft 3 of
+  the tools: the evidence and the explanation of every reading are in
+  [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md), awaiting review. Not acceptance of S10's capacity, of M2.1
+  or of M2.
+- **The evidence review of `e0cfb68..968d5e4`** (2026-10-13), read-only: no P1; one P2, the two
+  `driver.log` files missing from the commit (the repository ignores `*.log`), added at
+  `40fcf0b` and checked from a clean tree; the reload's causal wording narrowed. It recommends a
+  limited diagnostic of consecutive reloads before acceptance 2 is closed, which the owner chose
+  the same day (S10, "As run"). Not acceptance of S10's capacity, of M2.1 or of M2.
+- **The review of `40fcf0b..7b026c9` and of the diagnostic's draft 5** (2026-10-13), read-only:
+  no P1; no P1 or P2 in the tool or the documents; two P2 in the runbook's reading rules, fixed in
+  the runbook only (tool and tests unchanged). Not acceptance of anything.
+- **The diagnostic ran on the homelab (2026-10-13)**, at both commits in one boot, and the
+  reviewer reviewed its results the same day: [`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md). Not acceptance
+  of S10's capacity, of M2.1 or of M2.
+- **The reviewer's closing review (2026-10-13)**, read-only: recommends accepting S10's capacity on
+  its designated subject with the remaining uncertainty explicit, and closing M2.1's technical
+  work; `src/`, `scripts/` and `tests/` at `6e17360` identical to `343e90e`; the evidence's
+  `SHA256SUMS` pass from a clean copy. **Adopted by the owner on 2026-10-13** ([the capacity README §6.2](scorer-measurement/capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13)).
+  Not a merge; M2 is not complete.
+- **Approval of this plan is not approval of any implementation.**
+
+**What the code does today.** None of M2.1's four entry points hashes and parses a recorded input
+from one read. The pattern does exist elsewhere:
+- the KG build records the digest the ontology loader took from the handle it parsed
+  (`src/ontology/loader.py:242-264`), the precedent above;
+- the SP-reachability audit hashes the sidecar bytes it parsed (`audit_sp_reachability.py:544`).
+
+At the entry points:
+- **Training reads each input it consumes three or four times.** `kg.json`, which it only
+  verifies, is read once, at `artifacts.py:113`.
+  - **The checks:** `train_model.py:716-717`. They go to:
+    - `artifacts.py:100`, the manifest, and `:113`, each graph file, hashed;
+    - `cohort.py:275`, the manifest again, `:286`, each sample file, hashed, and `:294`, each
+      sample file, parsed through `file_storage.py:100`.
+  - **The writes:** the run directories, `config.yaml` and `runtime.json` (`:731-744`).
+  - **The parse training uses:** `train_model.py:418`, `:424`, `:430` and `:455`.
+  - **The record hash:** taken last, after the model is built and any parent is restored
+    (`:854-860`, through `fingerprint.py:103`).
+
+  The manifest is parsed separately by each verifier and hashed a third time for the record, so
+  the record describes neither parse.
+- **Serving** parses `kg.json` at `src/api/main.py:545`, then hashes it by path (`artifacts.py:113`,
+  `:386`). It reads the tensors again (`src/inference/pipeline.py:609-655`) and loads the
+  checkpoint at `:973`.
+- **Measurement** verifies and hashes once per mode, after it has parsed (`measure_scorer.py:370`,
+  through `:102-155`).
+- **The SP producer** hashes `kg.json` at `compute_shortest_paths.py:458` and reads it a second
+  time, to parse it, at `:461`.
+
+**The primitive.**
+- `read_once(path) -> FileRead(path, data, sha256)` goes in `src/utils/fingerprint.py`, beside
+  `file_sha256` (`:55-82`). `ReadIdentity(path, sha256)` carries no bytes.
+- **One open and one full read,** with the SHA-256 taken over that same bytes object. The read
+  is alone on its line (S1), because S2's release check filters on it.
+- **It never returns `None`,** as `file_sha256` does (`:79-80`). A missing path raises, so a file
+  deleted between two reads is refused instead of recorded as `None`.
+- **No retry, no fallback, no device handling.**
+- **Layers** (`.import-linter.ini`): it lives in `src.utils` and imports only the standard
+  library. `src.kg`, `src.evaluation`, `src.inference`, `src.training` and the scripts may all
+  import it.
+
+**The readers.** Each returns what it parsed and a `ReadIdentity`, never the bytes:
+- `read_graph_artifacts(data_dir, *, map_location="cpu") -> GraphArtifactsRead(graph_data,
+  reads)` and `read_samples(data_dir, split, *, training_fields=False) -> SamplesRead(samples,
+  identity)`, in `src/kg/storage/file_storage.py`;
+- `read_split_manifest(data_dir) -> ManifestRead(manifest, identity)`, in `src/kg/artifacts.py`.
+  It keeps today's refusals of an absent or old-schema manifest;
+- `KnowledgeGraph.read_json(path) -> GraphRead(kg, identity)`, in `src/kg/graph.py`.
+  `load_json` delegates to it, for callers that record nothing;
+- `read_checkpoint(path, *, map_location, weights_only) -> CheckpointRead(checkpoint,
+  identity)`, in a new `src/utils/checkpoint_io.py` with a lazy torch import. It does not go in
+  `checkpoint_paths.py`, which promises no torch (`checkpoint_paths.py:14`).
+
+How they parse:
+- **JSON:** decoded as UTF-8 and parsed with `json.loads`.
+  - `kg.json`, the sample files and the manifest are written as UTF-8 (`graph.py:806`,
+    `sample_generator.py:334`, `:343`).
+  - `num_nodes.json` is written in the locale default (`graph.py:647-648`), but `json.dump`'s
+    default `ensure_ascii` makes it ASCII, which decodes the same way.
+  - Today's `read_text()` uses the locale default (`file_storage.py:56`, `:100`).
+- **Torch files:** `torch.load(BytesIO(data), ...)`.
+  - **Graph tensors** are read with `weights_only=True` and `map_location="cpu"` everywhere.
+    Serving passes `"cpu"` today (`src/inference/pipeline.py:621-623`, `:634-636`); training and
+    measurement pass none (`train_model.py:418`, `:424`; `file_storage.py:50`, `:53`), which is
+    equivalent for CPU-saved exports.
+  - **Checkpoints** keep each site's current `map_location` and `weights_only`.
+- **Memory:** one file at a time, with each buffer released before the next read (shown by S2's
+  release check, which runs at each `read_once` call a reader makes and after the reader returns;
+  not by RSS). Each file costs about one transient copy of its size while it is parsed:
+  - about 29 MB of tensor payload for `node_features.pt`, computed from the recorded shapes (the
+    subject's file is 29,308,567 bytes, decision 7);
+  - 48 MB for the designated checkpoint;
+  - a JSON file's bytes and its decoded text coexist, so `kg.json` (209,928,843 bytes on the
+    subject, decision 7) is likely the largest new transient, at serving and in the SP producer.
+    **S10 showed this premise wrong (2026-10-12):** at `90a668f` `load_json` already held the
+    bytes and the decoded text together (a text-mode `json.load` reads the whole file and decodes
+    it while the bytes are alive), so `kg.json`'s transient is not new. The new transients are
+    the whole-file buffers of the two tensor files and the checkpoint ([evidence](scorer-measurement/capacity-m2.1-2026-10-12/README.md), §4.3).
+
+  These are expectations to explain the readings with (S10), not bounds.
+
+**Two constraints the plan above does not mention.**
+- **`read_samples`' new fields are opt-in** (`training_fields=True`). Measurement's samples carry
+  three fields (`src/kg/storage/file_storage.py:94-100`), as the frozen evaluator's did
+  (`scripts/evaluate_model.py:185-191` at `7dab728`), and `gene_ids` become subgraph seeds
+  (`src/kg/data_loader.py:675-676`, `:947-950`). Adding them by default would have changed
+  measurement's Modes A and B. Since the retirement's R2 (2026-10-12) the reason is that training
+  passes its two extra fields explicitly and measurement (Mode C) reads neither; the interface is
+  kept (retirement assessment §8 item 6).
+- **The test fixtures must become parseable.** `tests/fixtures/generated_workspace.py:102` writes
+  placeholder bytes for the graph files. Today's path-hashing verifiers accept them; a parsing
+  reader would reject them.
+
+**The graph object and its identity travel together.** At serving, `DiagnosisPipeline` takes a
+`GraphRead` (the graph and the identity of the bytes it was parsed from) whenever it uses a
+workspace. It does not take the graph and an identity as two separate arguments.
+- With two arguments, a caller could pair an in-memory graph with another file's identity, and
+  the SP binding would then be reported against bytes the graph was never parsed from
+  (`src/inference/pipeline.py:532`, `:788-790`).
+- A caller with an in-memory graph uses the `graph_data` seam, which makes no workspace claim.
+
+**Boundaries the review set.** These hold for every step:
+- **One buffer, one parse.** Hashing and parsing the same buffer makes the digest and the parse
+  agree. It is not an operating-system snapshot of several files. Consistency across files comes
+  from comparing each role with the one manifest reading, and no snapshot is claimed.
+- **Replacing a path already read is not a refusal.** If every input the run uses has been read
+  as A, replacing a path afterwards leaves the run using and recording A. Nothing is read again
+  to force a refusal.
+- **Training's extra fields are passed explicitly.** Training calls `read_samples(...,
+  training_fields=True)`, and its tests use cases that carry both `candidate_disease_ids` and
+  `gene_ids`, not only the flag. This is the existing difference between what training and
+  measurement consume, not a fallback.
+- **No retired evaluator is restored, no checkpoint field is added, and no fallback is added**
+  to complete M2.1.
+
+**The steps.** Each is one reviewable change. They are ordered smallest and safest first, and
+each moves its callers before anything is removed.
+
+0. **S0 — remove the retired calibration launcher and the frozen evaluator.** The owner's rule
+   for the launcher (decision 3, 2026-10-09): it is removed if nothing necessary uses it, and
+   migrated minimally only if it must stay, so that it does not stay behind as a dead island.
+   `scripts/evaluate_model.py`, which the launcher's removal leaves with no runner, goes with it
+   by the owner's separate decision (decision 6, 2026-10-10). The check, at `4ecd2c2`:
+   - **Who depends on `scripts/calibrate_mode_a.py`.**
+     - There is no CI. No Makefile target, launcher, deploy script or systemd unit names it.
+     - No module under `src/` and no other script imports or runs it.
+     - No runbook or deployment guide instructs running it. The documents that name it:
+       - as a planned flow, the draft `PLAN_TEST_RESULTS.md:745` and `:766` (dropped below);
+       - `scorer-measurement/README.md:33` (marked SUPERSEDED), `:53-55` (present tense, updated
+         below) and `:103-105` (the decision amended below);
+       - as history, `PLAN_B03.md:23`, `:103-105` and `:253-255`, and
+         `PLAN_CONFIGURABILITY_AND_PROVENANCE.md:235`;
+       - BACKLOG 7a, 19.19 and §5.0's file table.
+     - Only its own tests import it:
+       - `tests/integration/test_seeding_bootstrap.py`;
+       - in `tests/integration/test_legacy_equivalence.py`: the launcher fixture (`:41-73`); the
+         tests that read it, including the verdict-schema and `compare()` digest tests, which
+         import it at `:223`, `:243` and `:263` (`:79-272`); and the split-default test
+         (`:431-449`, import at `:440`);
+       - a seed-check class in `tests/unit/test_measurement_mode_a.py:890-939`;
+       - one entry in `tests/unit/test_split_caveat.py:39`.
+   - **It cannot run on the checkpoints checked, or on any the current writer produces.**
+     - Its harness call reaches `build_legacy_mode_a_model`, which indexes `metadata` and
+       `in_channels_dict` and raises `KeyError` without them (`measure_scorer.py:251-252`). Its
+       oracle, `scripts/evaluate_model.py`, falls back to three node types, two edge types and
+       width 256, and so builds a structurally wrong model (BACKLOG §3.1).
+     - The current writer, `ModelCheckpoint._save_checkpoint` (`src/training/callbacks.py:296-327`),
+       writes neither key. The scanned family, 15 checkpoints (BACKLOG M1;
+       `EVIDENCE_M1_M3_hgt.json`, `EVIDENCE_M1_M3_gat.json`), carries neither. The designated
+       checkpoint came from the same writer, and the reviewer reports it carries neither (plan
+       review of `4ecd2c2`); S10's pre-flight records its keys.
+     - Its tests pass only because the fixture writes those keys
+       (`tests/fixtures/synthetic_workspace.py:159-160`).
+     - Not checked: no historical audit was run (BACKLOG M1, §6), and the homelab's other
+       checkpoint files were compared by digest only (`PLAN_B04_PRODUCTIONISATION.md` §7.1.1).
+       S0 does not rest on them: it removes the launcher because §3.1.2 retired the parity it
+       runs, not because no checkpoint could carry the keys.
+   - **What it does is either covered or unwanted:**
+     - its comparison is replaced by `compare_trainer_against_mode_a`
+       (`src/evaluation/differential.py:373-546`);
+     - its subprocess seeding exists only for the frozen evaluator;
+     - its `auto` device falls back to CPU with only a warning, recording `cuda_executed=false`
+       (`calibrate_mode_a.py:164-172`), against the no-fallback rule; `measure_scorer.py`'s
+       `auto` refuses without CUDA;
+     - its before/after digest bracket exists because two processes read the files separately,
+       which one read per input removes.
+   - **Removing it takes away only the fixture-level parity with the frozen evaluator,** which
+     BACKLOG §3.1.2 retired as an acceptance. Mode A stays pinned by its unit tests, and the
+     adopted acceptance, `tests/unit/test_differential_calibration.py`, is unchanged.
+
+   **What S0 changes:**
+   - **Deleted:** `scripts/calibrate_mode_a.py` and `tests/integration/test_seeding_bootstrap.py`;
+     and, by decision 6, `scripts/evaluate_model.py` and `tests/unit/test_frozen_evaluator.py`.
+   - **Tests:**
+     - in `test_legacy_equivalence.py`, the launcher fixture (`:41-73`) and the tests at
+       `:79-272` go. Their measurement-only assertions move onto a direct `measure_scorer` run
+       with `--num-workers 4` and `--predictions-output`, which keeps those two paths covered end
+       to end. The split-default test (`:431-449`) keeps only its `measure_scorer` half;
+     - `test_measurement_mode_a.py:890-939` goes;
+     - `test_split_caveat.py` keeps only `measure_scorer` as an entry point.
+     - **Kept from the deleted tests, found in S0's review:** three assertions guarded live code,
+       not the launcher, and stay on the surviving entry point. `test_seeding_bootstrap.py`'s
+       worker half (negatives drawn in worker processes follow the parent seed, and the worker
+       count is part of the stream) moves to `tests/unit/test_measurement_mode_a.py`, without
+       the launcher's bootstrap; so does the seed validator's acceptance of both ends of its
+       domain. `test_legacy_equivalence.py` checks that the manifest's artifact digests are the
+       digests of the files the command was given, hashing each file itself; the launcher's
+       verdict had compared them only with its own call to `artifact_digests`.
+   - **Text the launcher's removal makes false.** The launcher
+     was the only thing that compared Mode A with the frozen evaluator; after S0 nothing does.
+     Text that names the launcher in the present tense, says that an artifact, a stream or a
+     default exists for that comparison, or lists "calibration" as an entry point, is reworded to
+     the rule it keeps and the reason that remains. Nothing it describes changes for that reason:
+     the predictions shape, the legacy order, `--num-workers 4` and the default mode stay.
+     - **Code:** `measure_scorer.py:14-16`, `:24-33`, `:96-98`, `:405-410`, `:415`, `:434-436`,
+       `:658-661`, `:682` (a log line) and `:705-706` (printed text);
+       `src/evaluation/measurement.py:8-9`, `:159-161`, `:167-169`, `:176-177`, `:255-259`,
+       `:678-692`, `:706-708` and `:948-950`; `src/evaluation/cohort.py:232-234`;
+       `scripts/audit_split_overlap.py:112-114`;
+     - **Tests:** `test_legacy_equivalence.py`'s module docstring (`:1-25`), `:278-285` (that
+       test's name and docstring) and `:316`; `tests/unit/test_measurement_mode_a.py:543-549`;
+       `tests/unit/test_measurement_modes_bc.py:131`, `:154-155`;
+       `tests/unit/test_measurement_ranking.py:125-128`, `:138`;
+       `tests/fixtures/synthetic_workspace.py:110`; `tests/unit/test_split_caveat.py:4-5`;
+     - **Docs:** `scorer-measurement/README.md:33`, `:53-55`; `EVALUATION_COHORTS.md:473`,
+       `:918-919`, `:930-933`; BACKLOG M9's "on both entry points" (`:565-566`).
+       `PLAN_TEST_RESULTS.md:745` drops the launcher, and `:763-775` goes: the oracle's named
+       exception closes with the evaluator (decision 6), and the staging design after it existed
+       so the launcher and `test_legacy_equivalence.py` could drive the oracle on supplied
+       cohorts. The line citations into `test_legacy_equivalence.py` at `:749-751` are
+       updated.
+
+     Left as history: `PLAN_B03.md:23`, `:103-105` and `:253-255`,
+     `PLAN_CONFIGURABILITY_AND_PROVENANCE.md:235`,
+     the past-tense notes in `src/evaluation/caveats.py:5-6` and `src/utils/fingerprint.py:64-68`,
+     and `tests/unit/test_split_caveat.py:17`, which is past tense.
+   - **Lifecycle statements that tie surviving code to the frozen evaluator.** §3.1.2 retired
+     the parity they wait for, so each is dropped or tied to item 9:
+     - `legacy_ranking`'s "deletion date" (`src/evaluation/measurement.py:179-182`) is dropped:
+       the trainer makes the same sort (`scorer-measurement/README.md:90`);
+     - `src/evaluation/measurement.py:1044-1045` is dropped: the clamp and the A/B traversal are
+       retained (`scorer-measurement/README.md:71-74`, `:89`);
+     - `measure_scorer.py:5-6` loses its condition, and `:235-237` is tied to item 9.
+
+     S0 deletes the evaluator (decision 6), so it also rewords the statements in code S7 later
+     rewrites that tie a function's lifetime to the evaluator: in `load_legacy_mode_a_inputs`'
+     docstring, `measure_scorer.py:205-217`, with its count at `:222` ("those five");
+     `build_legacy_mode_a_model`'s `:240`; the dispatch comment `:561-565`;
+     `test_legacy_equivalence.py:337-343`; and the paragraph in `src/kg/storage/__init__.py:35-37`.
+     What these say of `build_legacy_mode_a_model` is tied to item 9; what they say of
+     `load_legacy_mode_a_inputs` is tied to its deletion in S7, not to item 9. S7 then deletes
+     `load_legacy_mode_a_inputs` (`:202-227`), with its docstring and that paragraph, and rewrites
+     the test and the comment for the shared read. As implemented (2026-10-11), S7 covers Mode C
+     only: the function, its docstring and that paragraph stay, reworded to say that runs which
+     include Mode A are not migrated (S7, "As implemented").
+   - **A final search before S0 lands.** The repository is searched again, case-insensitively, for
+     `calibrate_mode_a`, "launcher", "calibration", "frozen evaluator", "frozen oracle" and
+     "oracle", and for `evaluate_model` and "evaluator", which find text that names the
+     evaluator without those words. A hit is reworded, or recorded as history, in S0's change
+     only if S0 makes it false, that is, if it:
+     - names the calibration launcher in the present tense;
+     - says that something exists for the comparison of Mode A with the frozen evaluator, or
+       that the comparison still runs;
+     - ties the lifetime of surviving code to that parity;
+     - or cites `scripts/evaluate_model.py` without a fixed revision, or names it as a live file.
+
+     The other hits stay: the application launcher (`scripts/launch/`), the differential
+     calibration, Mode A's retained semantics, and item 9's surface, such as
+     `src/evaluation/measurement.py:557-559`, which `scorer-measurement/README.md:106-109` leaves to
+     item 9's rename. Hits in code S7 rewrites belong to S7, except those that S0's lists or
+     decision 6's name: S0 changes those first, even inside a function S7 later rewrites, such as
+     `measure_scorer.py:203`, `:205-217`, `:222`, `:234-237`, `:240`, `:561-565`, `:658-661` and
+     `:682`. The lists above and decision 6's, with its two further corrections, are the hits S0
+     changes as found at `0708789`. The search is what makes them complete.
+   - **Decisions amended when S0 lands** (amended in S0's change, 2026-10-10), each with the
+     owner's rule and date:
+     - `scorer-measurement/README.md:103-105` ("rewritten, not deleted") is reversed;
+     - **the deletion gate gains one exception,** in BACKLOG §5 ("Item 9 waits for everything")
+       and its restatement in §5.0 (`:835-837`), in `scorer-measurement/README.md:78-79` and its
+       removal order's step 5 (`:122`), and in item 9's row. The exception: the oracle-parity
+       tests in `test_legacy_equivalence.py`, which the README counts as oracle-only (`:95-97`),
+       go with the launcher before 1d's institutional run, and so, by decision 6, do
+       `scripts/evaluate_model.py` and its pin test. The oracle-parity tests check the
+       frozen-evaluator parity that §3.1.2 retired as an acceptance; `scripts/evaluate_model.py`
+       is that parity's reference, and its pin test keeps the reference's bytes unchanged. The
+       launcher could not run that parity on the
+       scanned family, or on a checkpoint the current writer produces (S0's check above). The
+       adopted acceptance, the differential calibration, is untouched;
+     - `scorer-measurement/README.md:95-97` drops `scripts/evaluate_model.py`, and stops listing
+       `test_legacy_equivalence.py` as a whole: after S0 its remaining tests are the
+       `measure_scorer` ladder, Mode C and `--split` tests, not oracle parity, so step 8 does not
+       delete them. Step 8 (`:125`) notes what went with S0;
+     - BACKLOG §5.0's file table drops the launcher.
+
+     S0's change updates every document listed here in the same change. Until it lands, the gate
+     stands as written.
+   - **Item 7a's entry point is recorded as a backlog item.** Its runner is new code built on
+     `compare_trainer_against_mode_a`. It records, beside its result, the digests of the bytes it
+     read (through M2.1's readers), the software revision and the deployment host. History stays
+     in git. Superseded by the owner's clarification of 2026-10-12: 7a is cancelled, so this runner
+     will not be written (BACKLOG item 7a).
+   - **`scripts/evaluate_model.py` and its pin test** go by decision 6, which lists the text
+     that changes with them.
+1. **S1 — the primitive.** `read_once`, `FileRead` and `ReadIdentity`; no caller changes.
+   `read_once` opens the file on one line and reads it with `handle.read()` on a line that does
+   nothing else. The digest, and anything else its `ReadIdentity` keeps, is made on other lines,
+   because S2's release check filters on the read's line.
+   - **Tests:** the digest is the digest of the bytes returned; the file is opened once; a
+     missing file raises; replacing the file afterwards, by atomic rename or in-place rewrite,
+     changes neither the bytes nor the digest returned; with `tracemalloc` filtered on the read's
+     line (`all_frames=True`), a kept `ReadIdentity` holds no live allocation from it.
+2. **S2 — test infrastructure.** No production change.
+   - **Parseable fixtures:** each workspace's `kg.json`, `num_nodes.json` and tensors are real
+     files whose content differs per workspace. Tests that verify only digests gain
+     `importorskip("torch")`.
+   - **Training samples** that carry both `candidate_disease_ids` and `gene_ids`.
+   - **The replacement double** (`tests/fixtures/replacement.py`): it wraps `read_once` and
+     replaces a target file once, right after a named read returns. It does so by atomic rename
+     (a new inode) or by in-place rewrite (the same inode). It can also republish a manifest that
+     binds the replacement.
+   - **An open counter per path,** for the "read once" assertions. *As implemented:* it landed
+     with S1, whose own test needs it (`tests/fixtures/opens.py`). It sees opens through Python's
+     io and os layers, so not an open made inside a C extension; torch readers are held to the
+     hashed buffer by the release check's tracked-`BytesIO` rule instead.
+   - **A release check** (`tests/fixtures/release.py`), on fixture-sized files on CPU, through the
+     same `read_once` wrapper as the replacement double.
+     - **When it runs:** on entry to each `read_once` call a reader makes, covering the reads
+       before it, and again after the reader returns. Each time:
+       - a `tracemalloc` snapshot holds no live allocation whose traceback runs through an
+         earlier `read_once` read. This catches the raw buffer whoever holds it: a local still
+         bound inside a reader of several files (`read_graph_artifacts` reads three,
+         `file_storage.py:48-56`, and a loop that rebinds one name still holds the previous
+         buffer during the next read), the return value, a closure or long-lived state. `bytes`
+         cannot be weakly referenced, so the buffer is checked through its allocation;
+       - a weak reference to each earlier `BytesIO` wrapper is dead.
+     - **Its settings let it see the buffer.**
+       - `tracemalloc` keeps enough frames to reach `read_once`. The filter names `read_once`'s
+         file and the line of its read, and matches it in any frame (`all_frames=True`); the
+         default matches only the most recent frame.
+       - `read_once` opens the file on an earlier line and reads it with `handle.read()` on a line
+         that does nothing else. The digest, and anything else a `ReadIdentity` keeps, is made on
+         other lines, so a correct reader's identities never match the filter.
+       - The `BytesIO` weak references come from replacing the reader module's `BytesIO` with a
+         tracking subclass. For each torch file a reader reads, the check requires at least one
+         tracked `BytesIO`, so a reader that builds its wrapper some other way fails instead of
+         passing unseen.
+     - **It is shown to fail.** A self-test, on the real `read_once` and a non-empty file,
+       requires the check to fail on a reader that keeps the bytes on a module global, in a
+       closure, on its result or across its next read. It must also fail on a reader that keeps
+       a `BytesIO` holding its own copy of the bytes (as after `getbuffer()`), which only the weak
+       reference catches; a `BytesIO` that still shares the bytes is caught through them.
+     - **What it does not see:** a copy the reader makes into another object, such as a
+       `bytearray` or the decoded text of a JSON file, and torch's tensor storages. Those are
+       parsed results or copies, not the raw buffer; the readers' results are listed in S10's
+       readings, and S10 explains peaks against them. Nor does it see a buffer kept between its
+       parse and the reader's return, since it checks at the next read and after the return
+       (found in S1–S5's review); that the readers drop the bytes before parsing is their code,
+       not something the check shows.
+     - **What its implementation's review checks** (the reviewer, 2026-10-10): that it is wired
+       to each real reader, that tracing starts before the first read, that the self-test's
+       negative controls do fail, and that the wrapper itself keeps no strong reference to a
+       buffer.
+
+     It is a test, not a capacity reading, and it never runs inside S10's measured runs.
+3. **S3 — `read_json` and the SP producer.** `compute_shortest_paths.py` records the digest of
+   the `kg.json` bytes it traversed, from its one read. The end-of-run comparison (`:472-479`)
+   stays a warning, as the plan above says. `read_json` passes S2's release check.
+4. **S4 — the shared readers.** The other four readers above (`read_json` is S3's). Callers only
+   unpack the new return values; no recorded digest changes yet. Each reader passes S2's release
+   check, and its result carries a `ReadIdentity`, never a `FileRead`.
+5. **S5 — the verifiers compare reader results with one manifest reading.**
+   - `verify_graph_artifacts` and `verify_graph_source` take a `ManifestRead` and the readers'
+     identities.
+   - `verify_generated_cohorts` takes the `ManifestRead` and the `SamplesRead`s. It compares each
+     sample file's digest with the manifest, recomputes the disease sets against `realised`,
+     compares `realised` with `allocation.allocated`, and, when both cohorts are in scope, checks
+     both the manifest's `disjoint` claim and the measured disjointness (`cohort.py:216-331`),
+     all from the samples already parsed.
+   - None of them does I/O, and each names the file and the manifest in a refusal.
+   - `verify_graph_artifacts` keeps returning the manifest-bound map for all four graph roles, as
+     it does today (`artifacts.py:138`). That is the opening for M2.2's `kg` and M2.4's
+     comparison.
+   - **The `kg.json` identification check** (M2.1 decision 1) is one narrow helper. It hashes the
+     file and compares it with the run's one `ManifestRead`; it never reads the manifest itself.
+     It is used only before runs that do not parse `kg.json`, and it is not offered as a second
+     verification API to consumers that parse their inputs.
+   - **The old path forms are a migration aid only.** They remain until S9, for callers not yet
+     moved, and S9 deletes them.
+   - **As implemented (2026-10-10).**
+     - The read forms are named apart from the path forms, rather than overloading them by
+       argument type, so that S9 can delete the path forms and pin their absence by name:
+       `verify_graph_reads` and `verify_graph_source_read` (`src/kg/artifacts.py`),
+       `verify_cohort_reads` (`src/evaluation/cohort.py`), and the identification helper
+       `check_unparsed_kg_json`.
+     - `verify_graph_reads` returns the manifest's `kg` digest and compares it only when `kg` is
+       among the reads. Each entry point therefore pairs it with `verify_graph_source_read`
+       (serving) or `check_unparsed_kg_json` (training, measurement), and S6–S8's tests replace
+       `kg.json` alone and expect a refusal.
+     - A refusal about a file names the file and the manifest. One about the manifest itself, or
+       about the caller's scope, names the manifest or the scope. `check_unparsed_kg_json` is the
+       one read form that opens a file: `kg.json`, to hash it.
+6. **S6 — serving.**
+   - `build_pipeline` reads `kg.json` with `read_json` and passes the `GraphRead`.
+   - The pipeline reads the manifest, the graph tensors and the checkpoint once each, and
+     verifies from those reads. After verification nothing is hashed again by path.
+   - It keeps all four bound digests, the opening for M2.4. Today only `bound["kg"]` is kept
+     (`src/inference/pipeline.py:532`).
+   - **The model is built from the final read.** `read_checkpoint`'s parsed object and digest are
+     what the build uses and what M2.4 will check, never the data from a selection scan
+     (M2.1 decision 4).
+   - `_load_graph_data` (`src/inference/pipeline.py:609-655`) is deleted, collapsing onto
+     `file_storage`, and so is the reader copy in `scripts/test_gnn_inference.py:170-182`.
+   - **Callers that build the graph apart from its identity move to `read_json`:**
+     - `scripts/test_gnn_inference.py:360-366`;
+     - the `bind_workspace` sites in `tests/integration/test_pipeline.py`;
+     - `tests/unit/test_pipeline_fails_closed.py:248`, `:275` and `:426`.
+
+     The archived `loadcheck.py` is left as evidence of its own commit.
+   - The SP table stays the stated exception (`src/inference/pipeline.py:745`, its `build_id`
+     check at `:787`).
+   - **Behaviour change, accepted by the reviewer:** serving checks the `kg.json` it parsed. So
+     `data_dir/kg.json` is no longer read when `SHEPHERD_KG_PATH` names another file holding the
+     bound bytes, as `artifacts.py:369-373` already allows. A reload still derives `kg_path` from
+     `data_dir` (`src/api/routes/pipeline.py:389`). That is a choice of which file to load, not
+     a second verification rule.
+   - **Acceptance for this step:**
+     - an external `kg.json` that matches the manifest, with `data_dir/kg.json` absent or
+       different: startup is decided by the external file;
+     - an external `kg.json` that does not match, or any tensor that does not match: refused;
+     - a reload of the same deployment still uses `data_dir/kg.json`. A refused reload keeps the
+       pipeline already serving, and readiness does not change;
+     - the `GraphRead` and its identity arrive together, and nothing is hashed by path after
+       verification;
+     - graph tensors keep `map_location="cpu"` and `weights_only=True` at serving.
+   - **Tests updated:**
+     - the graph-binding and reload-availability tests change with the new read order;
+     - junk-byte cases become another workspace's valid file;
+     - the `load_json` stubs (`tests/unit/test_pipeline_fails_closed.py:309`,
+       `tests/unit/test_hop_bound_reaches_the_service.py:75`) are replaced by the real reader.
+   - **As implemented (2026-10-11).**
+     - `DiagnosisPipeline` and `create_diagnosis_pipeline` take `graph=` (the `GraphRead`) in
+       place of `kg_path`, which is removed with no alias. `graph=` and the in-memory `kg=` are
+       exclusive, so a graph and an identity cannot be given apart. The pipeline keeps all four
+       bound digests (`_bound_digests`), the graph's identity (`_graph_identity`) and the
+       checkpoint's (`_checkpoint_identity`), for M2.4 and S9's dynamic pin; none is published,
+       since the served identity is M3c's.
+     - **The checkpoint is read after the graph check**, inside `_load_model_from_checkpoint`,
+       with this site's own options (`map_location="cpu"`, `weights_only=False`). M2.1 checks
+       nothing about the checkpoint, so the pipeline reads none for a refused workspace. When a
+       reload selects a checkpoint itself (no `checkpoint_path`), the route's selection-time reads
+       (M2.1 decision 4; BACKLOG 19.1 and 19.2) still come before that refusal.
+     - **The shared readers name a file that was read but does not parse** (`f3136d3`). Serving
+       and training are the entry points M2.1 moves to parse before they compare (measurement
+       already parsed first, so its refusals of a junk file named nothing either and now name the
+       file too); without this, a junk tensor or JSON file failed with the parser's message,
+       which names nothing, where the path check used to name it. Two refinements came with the
+       internal review: a memory shortfall while loading tensors is passed through unchanged,
+       not reported as an unparseable file (in the three forms the reader recognises:
+       `MemoryError`, the CPU allocator's `RuntimeError` and `torch.OutOfMemoryError`), and a
+       JSON file that parses but holds entries that are not sample rows (an object with keys,
+       `null`, a number) is refused under its name. An empty object or string still parses as
+       zero samples; the manifest's digest comparison refuses that for a generated cohort, and
+       training refuses an empty training split.
+     - Text S6 made false is corrected with it: the `file_storage` copy lists, `graph.py`'s
+       export docstring, `artifacts.py`'s provenance note, `EVALUATION_COHORTS.md`'s binding
+       paragraph and BACKLOG 19.20's citation. `test_kg_provenance.py`'s serving pin, missing
+       from the list above, now runs the pipeline's own sequence.
+     - Acceptance tests (CPU, development container; not a homelab acceptance, which is S10's):
+       `tests/unit/test_serving_reads_once.py`.
+7. **S7 — measurement.**
+   - **Mode A/B-specific items deferred (owner, 2026-10-10)** pending the Mode A/B retirement
+     assessment (`scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`, §1.3): "Mode A uses the
+     run's single read", the C-only test's rewrite around Mode A, and "Modes A and B keep their
+     shared-read regression tests". No A/B-specific compatibility design is added meanwhile. The
+     mode-agnostic items stand. If S7 runs for Mode C before the retirement is decided, it states
+     that Modes A and B are not migrated, M2.1 is not reported complete while they are neither
+     migrated nor retired, and no new read path is built for them (the S1–S5 code review).
+     **Superseded by the owner's clarification of 2026-10-12:** the owner reported that the
+     institution had already authorised retiring the old pipeline's Mode A/B tools, so these
+     Mode A/B items will never be built; Modes A and B are to be deleted by the retirement
+     assessment's R2 instead of migrated. R2 deleted them (2026-10-12).
+   - **Before any model is built or output written:**
+     - `resolve_cohort` first;
+     - then one read each of: the manifest; the graph tensors; the cohort's samples (default
+       fields); for a generated cohort, the other generated split's samples, for its binding and
+       the disjointness check; and the checkpoint;
+     - then verification from those reads, with the `kg.json` identification check (M2.1
+       decision 1).
+   - **One digest map** feeds every mode's manifest, replacing the per-mode `artifact_digests`
+     (`measure_scorer.py:102-155`). The verifier's bound map is kept instead of discarded
+     (`:128`). The manifest's `kg` role is the manifest-bound source graph (M2.1 decision 2).
+   - **Mode A uses the run's single read.** *Never built; retired by the retirement's R2 (2026-10-12).*
+     - `load_legacy_mode_a_inputs` is deleted, and its docstring (`:203-224`, whose lifecycle
+       paragraph is `:205-208`) with it. It
+       already delegates to `file_storage` (`:225-227`), so Mode A reads the same files.
+     - `build_legacy_mode_a_model` takes the checkpoint dict from that read instead of loading
+       the path (`:248`). Its behaviour is otherwise unchanged. It remains item 9's oracle-only
+       surface (BACKLOG item 19), and it still cannot run on a checkpoint the current writer
+       produces.
+     - `build_legacy_mode_a_model`'s `:240` already names item 9 (S0). The paragraph in
+       `src/kg/storage/__init__.py:35-37`, reworded in S0, is removed with
+       `load_legacy_mode_a_inputs`.
+     - The test that proves a C-only run never reaches the loader is rewritten to prove it never
+       builds Mode A's model. Its docstring (`test_legacy_equivalence.py:337-343`) and the dispatch
+       comment (`measure_scorer.py:561-565`), which S0 stopped tying to the frozen evaluator, are
+       rewritten to match.
+   - **What runs where:** on the designated checkpoint only Mode C runs, and only Mode C is to be bound,
+     measured and accepted on it (S10). Modes A and B keep their shared-read regression tests on the
+     executable fixtures (never written; Modes A and B were deleted by the retirement's
+     R2, 2026-10-12). Fixture numbers are never offered as capacity readings.
+   - **As implemented (2026-10-11), for Mode C only.**
+     - **Scope, under the owner's boundary of 2026-10-11** (the retirement assessment's §8
+       item 11: run S7 for Mode C now). A run without Mode A (`--modes C`, the formal Test's
+       path) is migrated. Runs that include Mode A (`A`, `A,B`, `A,B,C`) are **not migrated**,
+       pending the Mode A/B retirement: they keep `load_legacy_mode_a_inputs`, the checkpoint
+       loaded by path and `artifact_digests`, and the Mode C manifest of an `A,B,C` run records
+       no `kg`. M2.1 is not complete while they are neither migrated nor retired. Since the owner's
+       clarification of 2026-10-12 they will not be migrated: they are to be deleted by the
+       retirement assessment's R2, which deleted them on 2026-10-12. The Mode A
+       bullets above are not built, no new read path is built for Modes A or B, and there is no
+       Mode C-specific entry point: the change is in `scripts/measure_scorer.py`.
+     - `read_measurement_inputs` runs right after the device is resolved and the modes parsed:
+       `resolve_cohort` first (stat only; for a generated cohort the sibling split too); one read
+       each of the manifest (both cohort kinds, for the graph binding), the graph tensors
+       (`map_location="cpu"`, as before), the cohort's samples (default fields) and, for a
+       generated cohort, the sibling split (checked, not consumed, and released before the
+       checkpoint read); then `verify_graph_reads`, `check_unparsed_kg_json` and, for a generated
+       cohort, `verify_cohort_reads` over both splits; then the checkpoint (`read_checkpoint`,
+       `map_location` the run's device, `weights_only=True`, as before). **The checkpoint is read
+       after the workspace checks**, as S6 does and unlike the order listed above: M2.1 checks
+       nothing about it, so a refused workspace reads no checkpoint. All of it precedes any
+       model build and any output.
+     - `measurement_input_digests` builds the record only from those reads: `checkpoint`,
+       `samples`, the three tensors, `split_manifest` for a generated cohort only, and `kg`, the
+       verifier's bound digest (decision 2). `kg` is **a new role in the measurement record**;
+       the semantics digest and the ledger record are unchanged, because `kg` is not in
+       `SEMANTIC_ARTIFACT_ROLES`. `build_manifest` takes the record as `digests=`; omitting it
+       keeps the path form, which only runs that include Mode A still use, and it goes with
+       their migration or retirement (since the owner's clarification of 2026-10-12, their
+       retirement in R2) and with S9. The retirement's R2 removed the fallback: `digests` is required. The bound
+       map is kept
+       (`MeasurementInputs.bound`), the opening for M2.4.
+     - **Behaviour changes for C-only runs:** cohort refusals (an absolute or traversing split, a
+       wrong kind, a missing file, sibling or manifest) come before any file is opened and before
+       the model is built and encoded; an absolute split used to open a file outside the
+       workspace first. A missing split's message is `resolve_cohort`'s ("does not exist")
+       rather than the reader's listing of what exists, as in S8. The record gains `kg`. Scoring,
+       ranking, the seed and the manifest's other fields are unchanged.
+     - The `file_sha256` re-export and its `_file_sha256` alias stay, uncalled by a C-only run
+       (S9's). S9's deletion of the path forms and its static pin over `measure_scorer.py` wait
+       for the Mode A/B decision, because runs that include Mode A still use them. Since the
+       owner's clarification of 2026-10-12 that decision is no longer open: the deletion and the
+       pin follow R2, which deleted those runs on 2026-10-12.
+     - Acceptance tests (CPU, development container; not a homelab acceptance, which is S10's):
+       `tests/unit/test_measurement_reads_once.py`. The Mode C unit fixture
+       (`tests/unit/test_measurement_mode_c.py`) now reads through `read_measurement_inputs`, and
+       `tests/integration/test_measure_scorer_run.py` pins the `kg` role.
+     - **The retirement's R2 (2026-10-12), code-reviewed with no P1 or P2 (`1d0b5a6..06fd0f1`, 2026-10-12).** Modes A and B are deleted, with the runs that
+       include Mode A, `load_legacy_mode_a_inputs`, the checkpoint loaded by path,
+       `artifact_digests` and `--modes`, so every measurement run is the path above and records
+       `kg`. With them went the manifest's loader, sampler and seed fields, `--seed` and
+       `--num-workers` (the retirement assessment's §8 items 5 and 9). `measure_scorer.py` binds
+       no path form at import; it keeps the `file_sha256` re-export, which is S9's.
+     - **Found, not changed:** a checkpoint that does not parse is refused with torch's own
+       error, which names no file, as before S7 (`read_checkpoint` passes torch's errors through
+       by design). Naming it would change the exception a C-only run raises; for the owner to
+       schedule.
+8. **S8 — training.**
+   - **Before the run directories, `config.yaml` and `runtime.json`:** one read of the manifest,
+     the graph tensors and both sample files (`training_fields=True`), then verification from
+     those reads, with the `kg.json` identification check (M2.1 decision 1). `with_validation` is
+     computed there from the parsed validation samples, which is the opening for M2.3.
+   - `load_graph_data` and `load_samples` (`train_model.py:398-470`) are deleted, collapsing onto
+     `file_storage`.
+   - `Trainer.load_checkpoint(path)` becomes `restore_checkpoint(checkpoint)` over a dict already
+     read. The resume parent is read once with `read_checkpoint`, and its digest is its role.
+   - `training_input_digests` is built only from the reads. The role set is unchanged until M2.2
+     adds `kg`, and a `None` digest can no longer be recorded.
+   - `TrainerProtocol.load_checkpoint` (`src/core/protocols.py`) follows.
+   - **As implemented (2026-10-11).**
+     - `read_training_inputs(data_dir)` reads the manifest, the graph tensors and both sample
+       files once each and verifies from those reads, with the identification check; it returns
+       one `TrainingInputs` value that is carried whole to the record, so the data trained on
+       and the digests recorded cannot be paired from different reads. It first calls
+       `resolve_cohort` for both splits, which only stats, so a missing split keeps today's
+       message. The empty-train refusal moved there, after verification and before anything is
+       written.
+     - `training_input_digests(inputs, parent=...)` builds the record from the reads only and
+       refuses a role with no read, so a `None` digest cannot be recorded. The role set is
+       unchanged.
+     - *Since M2.3 (2026-10-13) the parent is read and checked at the top of the run
+       (`read_resume_parent`), and a missing parent refuses; what follows is S8 as implemented.*
+     - **The parent is read where it is restored** (`resolve_resume_checkpoint`), with the site's
+       own options (`map_location` the trainer's device, `weights_only=False`). That is after the
+       run directories, `config.yaml` and `runtime.json` exist and after the model and the
+       Trainer are built, so only the workspace checks above precede the first run artifact.
+       Moving that read to the top, with its checks, is M2.3's. A requested parent that is missing
+       still warns and the run trains from scratch (M2.3 refuses it); one that vanishes after that
+       check raises. **Not done in S8, and not to be read into it:** M2.3's parent checks and
+       their placement, and M2.4's comparison of the model with the data it is served or resumed
+       on. S8 makes the digests recorded those of the bytes parsed; it does not make the parent
+       match the workspace.
+     - `Trainer.restore_checkpoint(checkpoint)` replaces `load_checkpoint(path)` with no alias,
+       and `TrainerProtocol` follows; `trainer.py` loads nothing itself any more. The seed is not
+       moved (M3a).
+     - The reader imports sit inside the functions that use them: `train_model.py` applies the
+       allocator before importing torch, so module-level imports after it each add an E402.
+     - Acceptance tests (CPU, development container; not a homelab acceptance, which is S10's):
+       `tests/unit/test_training_reads.py`; the record checked at the end of a real
+       run in `tests/integration/test_train_model_run.py`. The path-form poisoning is a fixture,
+       `tests/fixtures/path_forms.py`, for S9 to reuse.
+9. **S9 — remove the path forms, pin the contract, move the remaining callers.**
+   - **Follows the retirement's R2 where measurement is concerned** (S7, as implemented; until the owner's
+     clarification of 2026-10-12 this waited for the Mode A/B decision):
+     measurement runs that include Mode A still call `artifact_digests`, `verify_graph_artifacts`,
+     `verify_generated_cohorts` and `compute_input_digests`, so the deletion below and the static
+     pin over `measure_scorer.py` follow their deletion in the retirement assessment's R2. R2 deleted
+     them on 2026-10-12: `measure_scorer.py` calls none of the four and binds none at import, so
+     for measurement only the `file_sha256` re-export is left for S9. The path forms' remaining
+     callers are outside measurement.
+   - **Deleted:** the verifiers' path forms. `compute_input_digests` goes once no caller records
+     through it.
+   - **Tests that import what goes:**
+     - `tests/unit/test_training_provenance.py` imports `compute_input_digests` at module level;
+     - it and `tests/unit/test_measure_scorer_cli.py`'s
+       `test_artifact_digests_identify_content_not_paths` (moved there from
+       `test_measurement_mode_a.py` by the retirement's R1; renamed
+       `test_the_file_sha256_reexport_identifies_content_not_paths` by the retirement's R2, when
+       `artifact_digests` went) pin the `file_sha256` re-export in `scripts/measure_scorer.py`.
+
+     Those tests move with the removal. The re-export is either kept, with its reason, or removed
+     with its pins.
+   - **Callers moved:** `probe_deployment.py`; `audit_generator_fidelity.py`, including its
+     `kg.json` parse and its separate manifest read; and `audit_split_overlap.py`.
+   - **A static pin** covers `src/**`, the entry-point scripts (`train_model.py`,
+     `measure_scorer.py`, `compute_shortest_paths.py`) and the scripts moved here. It fails on
+     any path hash, `torch.load` or JSON load of a known input outside the readers and an
+     allowlist that states each entry's reason:
+     - the stated exceptions;
+     - the SP producer's end-of-run comparison (`compute_shortest_paths.py:472-479`), a warning
+       that records nothing;
+     - `find_checkpoint` and the evaluation ledger (BACKLOG items 18 and 19);
+     - the selection-time checkpoint reads (M2.1 decision 4; BACKLOG item 19);
+     - the `kg.json` identification helper, `check_unparsed_kg_json` (M2.1 decision 1);
+     - the provenance status readers, which M3b moves onto M2.1's reads: `artifacts.py:278` and
+       `:291`, and `src/kg/provenance.py:381`, which hashes the record before `:398` parses it
+       through `:275`;
+     - the provenance and workspace writers, which are M3b's (`src/kg/provenance.py:233`,
+       `src/kg/workspace.py:297-300`).
+
+     Outside the pin: `build_index.py`, and item 19's scripts outside the pin's scope
+     (`record_evaluation.py`, `measure_served_pipeline.py`, `audit_split_feasibility.py`,
+     `audit_checkpoint_family.py`, `benchmark_sp_lookup.py`, `audit_sp_reachability.py`,
+     `build_knowledge_graph.py`, `migrate_checkpoints.py`). Item 19's sites under `src/**` are
+     allowlisted above.
+   - **A dynamic pin** runs each entry point with `compute_input_digests` and every path hash at a
+     recording site returning a poison digest.
+     - The `kg.json` identification helper gets the true digest, so each run completes and writes
+       its record.
+     - No poison may reach a record: `training_input_digests`, the measurement manifest, the SP
+       sidecar or the pipeline's bound digests.
+   - **The last batch is checked at the entry points and the remaining call sites,** not only
+     through the shared functions' own tests.
+   - Docs and docstrings that name removed functions are updated, including the copy lists that
+     S6 and S8 shorten: `src/kg/storage/__init__.py:10-30` and
+     `src/kg/storage/file_storage.py:9-16`.
+   - **As implemented (2026-10-12); code-reviewed with no P1 or P2 (`02a6954..f481882`, 2026-10-12).**
+     That review covered the product code (554 targeted CPU tests passed; import-linter 4 kept).
+     S10's tools, delivered with it, had three P2; their fixes passed re-review on 2026-10-12 (S10,
+     "The tools").
+     - **Deleted:** `verify_graph_artifacts`, `verify_graph_source`, `verify_generated_cohorts`,
+       `compute_input_digests`, and the `file_sha256` re-export in `scripts/measure_scorer.py`
+       (the plan allowed either; its pins became pins of its absence). Their reasoning moved into
+       the read forms' docstrings (`verify_graph_reads`, `verify_graph_source_read`,
+       `verify_cohort_reads`).
+     - **Callers moved onto the readers,** each input read once and its record taken from that
+       read: `audit_split_overlap.py` (`resolve_cohort`, one manifest read, one `read_samples` per
+       split, `verify_cohort_reads`); `audit_generator_fidelity.py` (the manifest, `kg.json`, the
+       tensors and both cohorts read once and checked with `verify_graph_source_read` and
+       `verify_cohort_reads`; `phenotype.hpoa`, which the plan did not name, is read once with
+       `read_once` and its rows counted from those bytes as they stream, so its recorded digest is
+       the read's); `probe_deployment.py` (a script-local `verify_workspace` composing the shared
+       readers as serving and training compose them, returning the read identities that C1's
+       listing now reports; D2 reads the checkpoint with `read_checkpoint`). No composition helper
+       was added to `src/`; the tests' own composition is `tests/fixtures/workspace_reads.py`.
+     - **The fidelity audit parses the tensors** to check the workspace binding it reports, as
+       every graph consumer does; it measures nothing from them, and so now imports torch.
+     - **Static pin:** `tests/unit/test_provenance_pins.py` scans `src/**`, the three entry points
+       and the three moved scripts. It counts every reference to `file_sha256`, `read_once`,
+       `hashlib.*`, `torch.load`, `json.load(s)` and `load_json`, whether called, passed as a
+       value, re-exported or imported under another name, and fails on any site outside its
+       `ALLOWED` list and on any stale entry. `ALLOWED` stays in the test and names more sites than
+       the allowlist above (the readers themselves, the ontology loader and resolver, the SP
+       sidecar read, in-memory digests, configuration and UI loads, and the probe's identification
+       sites), each with its use and owner. The removed names may appear nowhere in scope, and
+       nothing in scope may bind `hashlib.file_digest`, which the poison replaces.
+     - **Dynamic pin:** the poison now sits on `hashlib.file_digest`, so it also reaches a
+       `file_sha256` bound at import; a self-test checks that it reaches `file_sha256` and spares
+       the files named in `true_digest_for`. Serving uses the shared fixture, the SP producer has a
+       poison pin (the sidecar records the bytes traversed; the end-of-run comparison only warns),
+       and the moved scripts each have one.
+     - **`KnowledgeGraph.read_json`** now refuses a `kg.json` that is not UTF-8 JSON describing a
+       graph with a `ValueError` naming the file, as the workspace readers refuse theirs; the
+       fidelity audit and the probe refuse a missing `kg.json` naming it and the manifest.
+     - **Behaviour changes:** a non-JSON sample file is refused by the reader ("could not be
+       parsed", naming the file) rather than by a digest mismatch, as S6 and S8 already did; a
+       non-generated training split under a supplied evaluation cohort gets `resolve_cohort`'s
+       refusal; the probe's C2 and C4 expect "is not the graph" for `kg`, since it checks
+       `kg.json` as serving does.
+     - Acceptance tests (CPU, development container; not a homelab acceptance):
+       `test_provenance_pins.py`, `test_probe_workspace_phase.py`, the poison pins in
+       `test_evidence_scripts.py`, `test_audit_generator_fidelity.py` and
+       `test_sp_artifact_binding.py`, and the moved read-form tests. The static pin run against the
+       code before S9 fails, and so do the new audit poison pins.
+10. **S10 — capacity on the homelab, an executable matrix.**
+    - **The subject:** workspace `data/workspaces/hpo_2026_0929_5a` (`$WS` below), checkpoint
+      `$WS/checkpoints/hgt/model-02-0.1813.pt` (47,931,987 bytes), SP table `shortest_paths.pt`
+      (10,797,575,893 bytes), on the GB10 with CUDA. It is M1's and N1's subject. **By the owner's
+      decision (2026-10-10, decision 7), S10's capacity acceptance is limited to this subject.** It
+      does not claim to cover all of the largest inputs, other workspaces or checkpoints, or any
+      other deployment. It has the largest graph files, SP table and checkpoint in the homelab's
+      `data/workspaces`, but not the largest sample files (decision 7).
+    - **Before and after:** the same matrix runs at `90a668f` and at the M2.1 head, in the same
+      checkout, venv and boot. The 2026-09-30 readings (23.77 GB VmHWM at ready, 28.45 GB over a
+      reload; `ecf17cd`, `scorer-measurement/PLAN_B04_PRODUCTIONISATION.md:1199`, `:1202`) predate
+      M1 and are context only.
+      - **The "after" commit, fixed (2026-10-12).** It is the commit that completes S9 once the
+        code reviews of the S6/S8 batch, of `1d0b5a6..06fd0f1` (R2 and item 8 among them) and of
+        S9 with S10's tools have closed, with any review fixes on it, so that no review can change
+        measured code after the run. Its full SHA is written here and in the evidence before the
+        run, and `git diff <after> <the M2.1 pull request's head> -- src scripts` must be empty.
+        On 2026-10-12 the reviews of the S6/S8 batch, of `1d0b5a6..06fd0f1` and of S9's code
+        (`02a6954..f481882`) closed with no P1 or P2; S10's tools had three P2 in that last review,
+        and their fixes (draft 3) passed re-review with no P1 or P2 the same day. **The "after"
+        commit is `343e90e993d0a5129cd547b95276b7e2b8b12fa9`:** its `src` and `scripts` are those of S9's commit `f481882`, since
+        every commit after it is docs only and no review asked for a code fix, and it is the head
+        the reviewer cleared for the measurement. Dependencies are equal at `90a668f` and at it. The
+        M2.1 pull request's head must have the same `src` and `scripts`.
+      - **It runs before M2.3 and M2.4 refuse.** The subject records no `kg` role (its training
+        roles at `43d47c5` are the samples, the tensors and the manifest), so once M2.3 refuses a
+        resume parent missing a role and M2.4 refuses serving and measurement on one, the
+        training `--resume`, serving and measurement rows would refuse (M2.3, M2.4, and "every
+        existing checkpoint is refused" under M2's consequences). If those land first, S10 still
+        runs at the fixed commit, from a detached checkout, and the evidence says so. Nothing is
+        added to the subject's checkpoint to make it pass.
+      - **Not only M2.1 changed between the two commits** on the measured paths: M3a's seed
+        ordering (`290c03a`, training), HGT Edit 1 (`8eae614`, every HGT forward), the dashboard's
+        telemetry off (`a535ae2`, the served process mounts it), R2 (`e210b12`, the measurement
+        CLI) and item 8 (`06fd0f1`, the sample reader). Acceptance 2 and 3 account for them.
+        Dependencies are equal at both commits.
+    - **Pre-flight, once and read-only:** load the designated checkpoint with
+      `weights_only=True`, the way Mode C does (`read_checkpoint` in `read_measurement_inputs`),
+      and list its keys.
+      - Expected: it loads. No Mode C run on this file is recorded yet; serving loaded it with
+        `weights_only=False` (`src/inference/pipeline.py:973`). The earlier expectation that it
+        carries neither `metadata` nor `in_channels_dict` supported only Mode A's "not
+        applicable" row, which went with Mode A in the retirement's R2 (2026-10-12).
+      - If it does not load, the reading records that Mode C cannot run on this file. No
+        `weights_only=False` or other fallback is added.
+
+    | Entry point | Command (key arguments) | What runs on the subject | Readings | Compared |
+    |---|---|---|---|---|
+    | Serving | `measure_served_pipeline.py --workspace $WS --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --output <evidence>/served_readings.json --repeats 3 --seed 20260930` (an aggregate with no paths). It applies its own environment; its SHA-256 must be equal at both commits | launch to ready, 200 serial `/diagnose` requests, then one reload, each asserting `gnn_plus_shortest_path` | R1: VmHWM and VmRSS at ready, system peak less R0. R4: VmHWM over the reload. R2, R3: VmRSS after | all of these, with equal subject digests, allocator reading and `readings_complete` |
+    | Measurement | `measure_scorer.py --checkpoint $WS/checkpoints/hgt/model-02-0.1813.pt --data-dir $WS --split val --cohort-kind generated --device cuda --output <scratch>/measurement.json`, plus `--modes C` at `90a668f` only, where `--modes` defaults to `A` and Mode A cannot run on this checkpoint; the retirement's R2 removed the option (2026-10-12), so the "after" commit takes none | **Mode C only** | final VmHWM; VmRSS at the entry and exit of `run_mode_c`; CUDA max allocated and reserved; system peak | the totals, since the phases move between commits; VmRSS at `run_mode_c` entry, compared and explained (acceptance 2) |
+    | Training | `train_model.py --data-dir $WS --device cuda --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42 --output-dir <scratch> --checkpoint-dir <scratch>` (the subject's flags, `scorer-measurement/subject-hgt-2026-09-29/commands.txt`), with `Trainer.train` replaced by a reading; once without and once with `--resume $WS/checkpoints/hgt/model-02-0.1813.pt` | the checks, reads, model, `Trainer` and resume read; no epoch and no checkpoint written | VmHWM and VmRSS at `Trainer.__init__` and at the replaced `train`; CUDA max allocated; system peak | all of these; VmRSS at the replaced `train`, compared and explained (acceptance 2) |
+    | SP producer | `compute_shortest_paths.py --kg-path …/kg.json --output-dir <scratch> --max-hops 5 --workers 15` | a full run, about 15 minutes. The published pair in the workspace stays untouched, checked by size and time | parent VmHWM after the graph read; VmRSS when the workers fork, after the graph read; at publication; tree PSS; system peak | all of these; the new sidecar names graph `6cae2d1a…`, 431,902,937 pairs, `max_hops` 5 |
+
+    - **Not applicable, recorded as such:**
+      - Modes A and B: deleted by the Mode A/B retirement's R2 (2026-10-12); the CLI has no `--modes`;
+      - the calibration launcher: removed in S0;
+      - serving's CUDA allocator counters, which `PLAN_B04_PRODUCTIONISATION.md` §7.3 excludes.
+
+      **M2.1's capacity acceptance needs no measurement reading other than Mode C's** (S10 ran on
+      2026-10-12; nothing here is accepted until its evidence is reviewed). M2.1 owes
+      no Mode A or B reading on a real checkpoint, and none is wanted until a runnable subject is
+      named (BACKLOG 19.18). Since the owner's clarification of 2026-10-12 none will be: Modes A
+      and B were deleted by the retirement assessment's R2 (2026-10-12).
+    - **Why training stops before its first epoch:** an epoch with the default checkpoint
+      directory writes `last.pt` beside the designated checkpoint (`checkpoint_paths.py:98-100`,
+      `callbacks.py:271-274`), and M2.1 does not change the training loop. No step limit exists,
+      only `--epochs` (`train_model.py:283-287`).
+    - **Pinned for comparability:**
+      - the allocator: measurement, training and the SP producer run with the saved preset's
+        value set explicitly, since `measure_scorer.py` and `compute_shortest_paths.py` apply none
+        (`src/config/runtime_presets.py:29-35`); serving applies its own;
+      - the kernel, driver, Python and torch versions, and the venv;
+      - a quiet machine, with the service stopped;
+      - the page-cache state: `PAGE_CACHE=warm`, by the owner's decision through the reviewer
+        (2026-10-12), which replaces "warm by default, or dropped before each row if the owner
+        chooses it":
+        - both commits use the same pre-read file set, order and tools: every `.pt` and `.json`
+          file in the workspace, in byte order of the name (a symlinked file followed), then the
+          checkpoint, listed in the evidence's `preread.txt`;
+        - the same pre-read runs before each measured row, and R0 is taken after it;
+        - the environment record and the report say this is a capacity comparison after a
+          pre-read, not a cold start;
+        - there is no drop control and no extra matrix;
+      - the byte size and SHA-256 of every input: `kg.json`, the tensors, `num_nodes.json`, the
+        sample files, the manifest, the SP pair and the checkpoint;
+      - the sampler and the probe, with SHA-256 equal at both commits, and the sampling interval:
+        0.2 s, as `measure_served_pipeline.py` (`:86`).
+    - **The tools:** a `/proc` sampler outside the measured process and a probe inside it, kept
+      outside the repository like M1's acceptance client. Their digests are recorded with the
+      readings. They are acceptance instruments, not a second pipeline:
+      - the probe runs inside the real entry point, only records, and stops at the stated
+        boundary. It never rebuilds the reads, the verification or the model;
+      - the same instrumentation runs at both commits. Each hook runs once, holds no large object
+        and reads none of the run's inputs again: no hook opens a subject file, and a hook's only
+        file read is the process's own `/proc/self/status`. This binds the hooks inside the
+        process; the outside sampler reads the `/proc` entries it samples;
+      - CUDA readings synchronise, and reset the peak counters, at the same points at both
+        commits; whether torch's peak counters work under the saved `cudaMallocAsync` preset is
+        confirmed on the GB10, and if they do not, the probe records the error and the row goes
+        on;
+      - **the boundaries,** which exist by name at both commits: `run_mode_c` entry and exit;
+        `Trainer.__init__`'s return, and `Trainer.train`, which the probe replaces by a reading
+        and a stop (the only function it replaces); in the SP producer, after the graph read, the
+        first worker fork (`os.register_at_fork`), and the start and end of `publish_sp_artifact`;
+        and the end of the process. The probe observes them with `sys.monitoring` on those named
+        code objects, running the entry point in its own process as `__main__`. Besides
+        `/proc/self/status`, its only reads are its own source, for its digest, and the entry
+        script it runs;
+      - **a boundary's peak is the maximum over the probe's readings,** because VmHWM as read was
+        not monotonic in the dry runs (a later reading was lower), and the interpreter's shutdown
+        after the last boundary is reported apart: it moved the root's high-water mark by up to
+        0.12 GB, in either direction, between identical runs;
+      - outputs, logs and the SP publication go to named scratch paths. Nothing is written to the
+        designated checkpoint or the workspace;
+      - a system or process-tree peak from 0.2 s sampling is labelled a sampled peak. It does not
+        guarantee that every transient was caught.
+
+      The tools' full source and SHA-256 are sent with the measurement instructions, for review
+      before any run. They are a sampler, a probe, a matrix driver that runs the rows the same way
+      at both commits (it adds `--modes C` only where the CLI has the option), a comparison, and
+      the tools' own tests. Drafts were dry-run on CPU, without serving, at `90a668f`, `06fd0f1`
+      and `f481882`; a dry run is not a reading.
+      - **The review of 2026-10-12** (with S9's code, `02a6954..f481882`) found three P2 in those
+        drafts: the comparison printed "met" for evidence that fails the declared conditions; the
+        sampler stopped only its direct child, so SP workers could be left running; the driver
+        could reuse an old output directory, so a failed run could mix with an earlier run's
+        evidence. The plan as amended (`f481882..c1b8a12`) was reviewed with no P1 or P2.
+      - **The fixes (2026-10-12, outside the repository).** The reviewer's re-review at `3c9563f`
+        closed the three P2 and found one more, a failed pre-read that did not stop its row; that
+        fix and its tests (draft 3) were re-reviewed at `343e90e` with no P1 or P2 (2026-10-12).
+        The reviewed draft 3, by SHA-256: `s10_probe.py` `04458fd77a96b6728eda66cfbae6a3f42700953de08cf556e660258c61d02a0b`,
+        `s10_sampler.py` `1ae557ad304dbb184b54e4c4f305d75936ed319b0f2f75849dcd377167dfa1cc`, `s10_run_matrix.sh`
+        `6eaeffcf52a1c2192c1339deaa62d0f24eb2191ebe6a32ec3f170976ee1e2afe`, `s10_compare.py` `7fbb86d59151d60cfe481ae97cbc287d98bb70607e53b1d1f64d4d1f39b3578f`,
+        `test_s10_tools.py` `63916d48c68c6bcd3a4e2cbc5801db59025ff145792c4bb76a5d54662f35f897`. An
+        internal adversarial review and a re-check of its findings followed; every P2 they
+        confirmed is fixed in the tools delivered, and what they left is listed in the
+        instructions:
+        - the comparison judges each condition as an explicit check over the evidence files,
+          PASS, FAIL or UNKNOWN (a missing file or field, named, never read as zero); a definite
+          failure is not hidden by missing data in the same check; its one verdict says "met"
+          only when every check passes, with exit status 0, 1 or 2. It checks acceptance 1 at the
+          after commit (this run's rows each once with exit 0, every boundary, training's stop
+          with `--resume` only on the resume row and CUDA initialised, scratch with no epoch
+          output, Mode C with `cuda_executed`, the SP sidecar, serving complete with no OOM kill
+          or swap increase in any phase of any repeat, no sampled row stopped, killed or leaving a
+          process, serving's R0 swap precondition and increase rule for every sampled row, the
+          workspace unchanged, the subject by digest and by the sizes above, readings written by
+          the recorded tools) and comparability (the same row checks on the before run; inputs,
+          tools, pre-read list, environment, boot and the matrix's own settings equal and the
+          plan's; the rows' explicit allocator the same as serving's, and serving's allocator
+          reported and equal; the service stopped and no GPU process; each commit's `--modes`
+          form). Its output names the reference values and one evidence digest per directory.
+          Acceptance 2 and 3 stay a person's explanation;
+        - the sampler starts the measured command in a session and process group of its own and
+          ends that group however the row ends: a stop signal (SIGINT, SIGTERM, SIGHUP, SIGQUIT)
+          is forwarded to the group, a second one or one outliving 30 s becomes SIGKILL, workers
+          left after the root exits are recorded and stopped, every wait is bounded, and the root
+          is reaped last, after which nothing is sent to its group id. It signals nothing outside
+          the group it created;
+        - the driver refuses, before it creates or measures anything, an evidence or scratch
+          directory that exists and is not empty, a scratch directory inside the evidence one (other
+          than its default) or the reverse, a wrong HEAD and modified tracked files; it claims both
+          directories, deletes nothing, records the matrix's settings, and stops before the next row
+          when a stop arrives between rows; one pre-read step serves every row, and a pre-read that
+          fails stops the run before that row's command starts, recorded in `rows.txt` as not run
+          (exit status 4); a rerun uses a new directory;
+        - tests: a complete passing control and single negative controls for the comparison; the
+          stop signals, a second signal during the cleanup, a root exiting before its workers, a
+          root outliving SIGKILL, an error in the sampler's own readings, a signal before and
+          while the command starts, nohup, and serving's swap rules, with real forked workers; the
+          directory refusals; a good pre-read and a failed one before serving, before a sampled row
+          and without serving. Dry-run again, without serving, at `90a668f` and `c1b8a12`.
+    - **The evidence** goes under `docs/working/scorer-measurement/` beside the 2026-09-30 readings,
+      as aggregates with no paths or host names: the environment, the tools' and inputs'
+      SHA-256, the pre-flight, each row's sampler and probe readings, and a README with the
+      before, after, difference and explanation of each reading. The run's scratch (server logs,
+      the measurement report with paths, ranks, configurations and the SP table) is not
+      evidence and stays on the homelab.
+      - **As run (2026-10-12):** [`capacity-m2.1-2026-10-12/`](scorer-measurement/capacity-m2.1-2026-10-12/README.md). Every acceptance 1 check
+        passes at the after commit (51 PASS). Comparability: 60 PASS and 1 UNKNOWN,
+        the service state, because the homelab has no `shepherd` user unit; the owner's statement
+        of 2026-10-13 that the backends were closed supplements it, and the exit status 2 is
+        kept. Acceptance 2 and 3 are explained there, except the serving reload's resident rise
+        (R3 +0.023 to +0.031 GB): no raw-buffer retention in the readers measured, source not
+        located, allocator retention a candidate, one reload per process. Acceptance 4 is not
+        triggered. The reviewer's evidence review (2026-10-13) found no P1, one P2 (two
+        `driver.log` files missing from the commit, since added) and recommends a limited
+        diagnostic of consecutive reloads before acceptance 2 is closed. Not accepted.
+      - **The reload diagnostic (the owner's choice, 2026-10-13; the evidence README §6.1).**
+        It answers one question: does the reload's resident difference keep growing over
+        three successful reloads in one server process, and does the service stay healthy.
+        One diagnostic per commit (`90a668f`, `343e90e`), back to back in one boot, after
+        S10's pre-read, with the same workspace, checkpoint and settings: the same 200
+        requests first, then three reloads in a row through the HTTP route, each followed by a
+        readiness check and diagnosis requests; RSS, anonymous memory and Pss at fixed points,
+        with the OOM-kill counter and swap. No `strace`, `mallinfo2`, allocator change,
+        `malloc_trim`, `gc.collect`, `empty_cache` or second loader. Its driver,
+        `s10_reload_diag.py` (SHA-256 `2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff`),
+        and its tests `test_s10_reload_diag.py` (`16f523b5b433719f4d0ac3b97717dcabdcaa66f856da9bf7cd528c277fc5931b`), are kept outside the
+        repository. The reviewer's review of draft 5 (2026-10-13) found no P1 or P2 in them and
+        two P2 in the runbook's reading rules: a bounded cost needs each process to level off on
+        its own, not only the difference to stay flat; and a difference already present before
+        any reload does not confirm the reproduction. Both were fixed in the runbook only, and
+        the revised rules were checked before the run. The bands (6 and 11 MB;
+        the first reload's difference within +16 to +38 MB, the baseline within -11 to +5 MB)
+        are observation bands declared from S10's readings, not confidence intervals. Its
+        results are kept apart from S10's evidence. A difference that does not
+        grow, with each process levelling off on its own, supports
+        accepting a bounded cost for this subject and three reloads, the source still not
+        located; growth with the reloads, or a failed reload, readiness or diagnosis, or an
+        OOM kill or swap rise, leads to a second phase that locates it.
+        - **As run (2026-10-13):** [`reload-diag-2026-10-13/`](scorer-measurement/reload-diag-2026-10-13/README.md). Healthy at both commits
+          (6 reloads and 430 diagnoses accepted, no OOM kill, no swap). Each process grew at
+          every reload, by about +410 to +470 MB per cycle and +1.2 GB after three reloads, at
+          `90a668f` as at `343e90e` (rule 4): present before M2.1, not attributable to it, and
+          no bounded cost is supported. The difference between the commits reproduced the
+          first reload's (+32.6 MB), then moved by −5.0 and +7.6 MB: ambiguous (rule 6).
+          Acceptance 2 stays open. Next, the second phase: the growth common to both commits
+          first, M2.1's difference separately; a read-only reading of the reload path finds no
+          cache that keeps the old pipeline, and any in-process diagnostic is proposed with its
+          hypothesis, observations, runs and stopping rule and reviewed before it runs.
+        - **Second phase, in process (2026-10-13):** [`reload-inproc-2026-10-13/`](scorer-measurement/reload-inproc-2026-10-13/README.md). The growth
+          recurs without HTTP (+1.2 GB after three reloads at `343e90e`); every watched object
+          of the earlier pipelines was already freed; a full collection and a trim return
+          about 70 MB. Cause not located. Next, by the reviewer's instruction: a read-only
+          check of the embedding and SP build steps, then at most one run of the same tool with
+          readings around those two methods.
+        - **The supplementary run and the conclusion (2026-10-13):** [`reload-inproc-segments-2026-10-13/`](scorer-measurement/reload-inproc-segments-2026-10-13/README.md).
+          The run with segments did not repeat the steady growth; the reviewer found that the
+          wheel's `libc10.so` allocates CPU memory through mimalloc 2.2.4 with two purge
+          defects since fixed upstream. The owner ended the investigation: the PyTorch wheel in use is confirmed to contain mimalloc purge defects that upstream has since fixed; they are a strong candidate cause of the observed memory retention; the attribution of all of the increase is not established.
+          No causal control, no pipeline change, no `MIMALLOC_*` setting, no new tool; the
+          dependency limitation is BACKLOG item 22. The common growth and M2.1's ~30 MB
+          difference are recorded apart; acceptance 2 is the owner's separate decision, and S10's
+          capacity is judged on its own readings and limits.
+        - **Accepted (the owner, 2026-10-13)**, on the reviewer's recommendation: S10's capacity on
+          its designated subject, with the remaining uncertainty explicitly accepted; acceptance 2
+          closed with the reviewer's wording; the scope (the GB10, the recorded environment, the
+          warm policy, this subject, the five-row matrix; training read only to its preparation
+          boundary) and the known limitations (the unattributed ~30 MB, the common retention as
+          BACKLOG item 22, the comparability UNKNOWN with exit status 2) are in [the capacity README §6.2](scorer-measurement/capacity-m2.1-2026-10-12/README.md#62-acceptance-2026-10-13).
+          M2.1's technical work is complete; not merged; M2 is not complete.
+    - **Each reading lists the objects alive in each phase** beside its numbers: for measurement,
+      for example, the graph tensors, the parsed samples, the checkpoint dict, the model and the
+      encoded embeddings. Acceptance 3 explains peaks against this list.
+    - **Acceptance, on this subject only (decision 7):**
+      1. **Every run completes at the head** on the real subject, by the same procedure as at
+         `90a668f`, with no swap increase and no OOM kill. That means:
+         - serving's `readings_complete`;
+         - Mode C exits 0 with `cuda_executed`;
+         - the training readings, without and with `--resume`;
+         - the SP producer publishes into scratch with the expected sidecar, and the workspace
+           pair is unchanged.
+      2. **Resident memory after the reads is compared between the two commits and explained.**
+         - A rise is an observation to investigate, not by itself proof that a buffer was kept.
+           The allocator may keep freed pages resident, live parsed objects may pin them, and the
+           new reads change the size and order of transient allocations.
+         - A buffer kept after its parse is ruled out by the readers' release checks (S2–S4), not
+           by RSS.
+         - An investigation uses a separate diagnostic run, never a run whose readings are
+           reported, so the diagnosis does not disturb the capacity readings. `tracemalloc` in
+           that run shows live Python allocations, such as a kept buffer or decoded text. It does
+           not see torch's tensor storages, which are accounted for from their shapes and dtypes
+           (as above, "Memory") or with torch's profiler, nor pages the allocator keeps after a
+           free, which only `/proc` shows.
+         - An added resident cost is explained and assessed even when no buffer is kept. It does
+           not by itself require the reader to be rewritten.
+      3. **Each change in a peak is explained** against the recorded file sizes and the objects
+         alive in that phase. "About one transient copy" guides the explanation; it is not a
+         bound.
+      4. **A shortfall** (a run that does not complete, an OOM kill or a swap increase) **is fixed
+         in the reader,** never with a CPU fallback. Nothing is added only to make RSS fall: no
+         `malloc_trim`, forced collection, `empty_cache` or second read path.
+    - **The evidence's limits:** `measure_served_pipeline.py` hashes the subject by path before
+      the service starts (`:1219-1223`), so its readings name the files designated, not the bytes
+      the service read (BACKLOG item 19).
+    - **Time:** serving takes about 1 h 37 min per commit; the SP producer about 15 minutes a
+      run; Mode C and training's setup take minutes.
+
+**How the acceptance above is shown.**
+- **Read and record agree (item 1).** The replacement double fires after each read, by rename and
+  by in-place rewrite, at each entry point on the inputs that entry point reads. Each run uses
+  and records the bytes it read, or refuses; it never reads A and records B. The inputs:
+  - training: a graph tensor, a sample file, the resume parent (S8);
+  - measurement: a graph tensor, the cohort's sample file, the checkpoint (S7);
+  - serving: `kg.json` as the API loads it, a graph tensor, the checkpoint (S6);
+  - the SP producer: `kg.json` (S3).
+
+  **Which outcome is right depends on what was read:**
+  - replacing a path already read leaves the run using and recording A;
+  - replacing a file not yet read, with bytes that disagree with the manifest already read, is
+    refused (item 2);
+  - **a republish** (a file replaced together with a manifest that binds the replacement):
+    - fired after both the manifest and the replaced file have been read (for `kg.json` in
+      training and measurement, after its identification check), the run uses and records A;
+    - fired after one of the two has been read and before the other, it is refused;
+    - fired before either is read, the run reads and records B. At serving, where the workspace
+      holds an SP pair whose sidecar records its graph, a `kg.json` republished this way is also
+      refused by the sidecar's `kg_digest` (`src/inference/pipeline.py:788-790`), unless the
+      pair is republished with it;
+    - at serving, the API reads `kg.json` before the pipeline reads the manifest, so a `kg.json`
+      republish between those two reads is refused ("is not the graph").
+
+    This is a rule for the roles the manifest binds. It is not an atomic transaction over a
+    multi-file publication, and it is not the model↔graph check, which is M2.4's.
+- **A replacement after the manifest read is refused (item 2).** The double fires on the
+  manifest's read and replaces a sample file or a tensor. The refusal names the file, and nothing
+  is written or published (S5–S8).
+- **Records come only from readers (item 3):** the static and dynamic pins (S9).
+- **Capacity (item 4):** S10, on Mode C for measurement. That each buffer is released is shown
+  by the readers' release checks (S2–S4); S10's readings are explained, not used to infer it.
+
+**Review and delivery.** Three review batches: S0–S5, the removal and the shared base; S6–S8,
+the entry points; S9–S10, removal of the path forms, pins and capacity. M2.1 ends as one pull
+request, as M1 did. As delivered: S0 (`45d9dea..3433bf8`) and S1–S5 (`e3eefee..6f16373`) were
+reviewed apart, S7 (Mode C only) on its own (`3d53c9b..7327798`), and the S6/S8 batch
+(`8421b8c..cddad9d`) on its own (no P1 or P2, 2026-10-12). S9's code (`02a6954..f481882`) and S10's
+tools were reviewed together and judged apart (2026-10-12): S9 with no P1 or P2; S10's tools with
+three P2, whose fixes passed re-review (draft 3, 2026-10-12). S10's
+evidence follows its run.
+
+**What M2.1 does not change.**
+- **M2.1 adds no checkpoint schema or provenance gate,** so no checkpoint is refused for what it
+  records. Refusals of old checkpoints come with M2.3 and M2.4. This does not promise that every
+  mixed or replaced workspace that happened to pass before still passes.
+- **M2.1 claims its four entry points and their records,** not consumed-byte provenance across
+  the repository. The rest is BACKLOG item 19.
+- Not in M2.1: M2.2's `kg` role, M2.3's parent checks and their placement, M2.4's comparator,
+  M2.5 and M2.6.
+- **Also unchanged:**
+  - path-reasoning-only serving, which parses `kg.json` without verifying it (B-2's question);
+  - the KG build record and the ontology loader;
+  - the SP producer still does not check its `kg.json` against the workspace it publishes into
+    (§4, "Not prerequisites");
+  - resume from `last.pt` overwriting its parent, which is M3a's;
+  - the served identity, which is M3c's.
+
+**Decisions — the owner, 2026-10-09, after the reviewer's advice.**
+1. **`kg.json` where it is not parsed (training, measurement): an identification check is kept,
+   not recorded.**
+   - It compares the file with the run's one manifest reading (S5).
+   - The role recorded stays the manifest-bound source graph.
+   - The check shows only that the file on disk matched at that moment. It does not mean the run
+     consumed `kg.json`, and it does not promise the file will load at serving later.
+   - It extends the plan's allowance for "a file nobody is about to parse" to this one refusing
+     check. §2 rule 1 now says that its "or that a check compares" applies to the inputs a step
+     parses. It is not generalised into a verification API for consumers.
+2. **Measurement's `kg` role is the manifest-bound source graph,** as training's. Every mode
+   computes from the tensors, never from a graph object. The stated exceptions above, M2.3,
+   M2.4 and §5.1 are updated to say so, and the role is never presented as a graph that
+   measurement read.
+3. **The calibration launcher: by the owner's rule, it is removed if nothing necessary uses it**
+   (migrated minimally only if it must stay; no dead islands). S0's check found no necessary user,
+   and the reviewer accepted S0 in the re-review of `0708789` (2026-10-09). The incremental review
+   of `7e1af96` (2026-10-10, no P1 or P2) accepted S0 as revised by then, at plan level: its opening
+   (the owner's rule stated for the launcher only, with the evaluator left to question 6), its claim
+   limited to the checkpoints checked, the wider list of text it rewords, the lifecycle statements
+   it drops or ties to item 9, the hand-off to S7, the final search, and the gate's documents
+   (§5.0's restatement added). That is not acceptance of S0's change. S0's additions for decision 6,
+   made since (the evaluator in its opening and deletions, the evaluator and its pin test in the
+   gate exception, the statements it now rewords before S7, and the corrections that go with
+   them), were accepted at plan level in the review of `45d9dea` (2026-10-10). The rule is the
+   launcher's; the frozen evaluator is decision 6. The question of the launcher's digest
+   bracket (BACKLOG 19.19) lapses with the launcher's removal.
+4. **Checkpoint reads that only select or list stay outside M2.1** (BACKLOG item 19):
+   - the reload route's candidate scoring (`src/api/routes/pipeline.py:328`);
+   - its second load of the chosen file for the reported metric (`:363`);
+   - the training console's list (`src/api/services/training_manager.py:464`);
+   - the conv-type classification in `migrate_checkpoints.py:50`.
+
+   The build, and later M2.4, use the final `read_checkpoint`'s object and digest. M2.1 does not
+   claim that the score selected, the metric shown and the model served are the same; that is
+   M3c's. No candidate is cached to close it.
+5. **Audit and evidence writers are follow-ups, each recorded** (BACKLOG items 18 and 19, with
+   the relation each does not guarantee and its home).
+   - The ledger fix (item 18) binds the expected digest to the read that is appended to, so a
+     stale read is detected.
+   - It does not close the check-then-replace window, and no support for several writers is
+     claimed.
+   - No lock, job runner or new ledger is added.
+
+**Decisions — the owner, 2026-10-10, after the reviewer's view.** Neither is asked again unless a
+new dependency or measurement fact appears.
+
+6. **`scripts/evaluate_model.py` is removed with its pin test in S0.** The reviewer recommended
+   this in the re-review of `0708789` and the incremental review of `7e1af96`.
+   - **Why it can go.** After S0 nothing runs it: the launcher was its only runner, and
+     `tests/unit/test_frozen_evaluator.py` only pins its bytes and fails if a module under `src`
+     imports it. Its own banner is already false and pinned: it says the file is "kept only so
+     the new harness can be calibrated against it", and to delete it "together with
+     `legacy_ranking` and the `LEGACY_TRUNCATION_K` path" (`evaluate_model.py:3-6`, `:19-24`).
+     §3.1.2 retired that calibration, and the trainer shares `legacy_ranking`'s sort
+     (`scorer-measurement/README.md:90`).
+   - **The gate.** It exists so the harness is never left without an acceptance, and this file
+     accepts nothing once the launcher goes. S0's gate exception names it and its pin test: in
+     BACKLOG §5, §5.0 and item 9's row, and in `scorer-measurement/README.md:78-79`, `:95-97`,
+     `:122` and `:125`.
+   - **Historical citations name a fixed revision, `7dab728`.** `62b8103` only added the 25-line
+     banner, so today's file is 25 lines further on.
+     - Already in `7dab728`'s numbering: `src/evaluation/measurement.py:157` (`:295`), `:166`
+       (`:505-519`), `:249` (`:513`) and `:702` (`:508-519`);
+       `tests/fixtures/synthetic_workspace.py:109` (`:164-223`);
+       `tests/unit/test_measurement_mode_a.py:546` (`:508-519`);
+       `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:92` (`:111, 201, 205`); and
+       `measure_scorer.py:203` (`:164-223`), which was to go with `load_legacy_mode_a_inputs` in S7 and went with it in the retirement's R2 (2026-10-12; S7 was implemented for Mode C only).
+     - In today's numbering, re-anchored to `7dab728`: `src/evaluation/measurement.py:250-251`
+       (`:324`, `:116`, which are `:299`, `:91` there); and BACKLOG §3.1 (`BACKLOG.md:346`,
+       `:163-173`, which is `:138-148` there).
+     - `scorer-measurement/PLAN_B02_shipped.md`, a "History, not authority" plan, cites the file
+       in `7dab728`'s numbering throughout (for example `:22`, `:95`, `:214`, `:248`, `:261`). Its
+       history note gains one sentence: those citations are at `7dab728`.
+     - This plan's constraint on `read_samples`' fields is already re-anchored, to `:185-191` at
+       `7dab728`, and rested on Modes A and B (above, "Two constraints"; since the retirement's R2, on training passing its two fields explicitly).
+     - By name only, named at `7dab728`: `measure_scorer.py:234` and `:420-422`, and
+       `scorer-measurement/README.md:93`.
+   - **Text that names it as a live file** becomes history or is removed:
+     `src/kg/storage/__init__.py:13-14`, with its counts at `:22-23` and `:28`;
+     `src/kg/storage/file_storage.py:9-16`; `src/utils/logger.py:11-17`;
+     `scripts/audit_checkpoint_family.py:9-10` and `:26-27`, and
+     `tests/unit/test_evidence_scripts.py:108-109`, which repeats `:26-27`;
+     `tests/unit/test_measurement_mode_a.py:434-435`; `tests/fixtures/synthetic_workspace.py:5-8`,
+     whose first sentence becomes "The dataloader seeds nothing";
+     `results-review/SPEC_4_DEPLOYMENT_SECURITY.md:91-93`; `PLAN_TEST_RESULTS.md:162-164`, `:291`
+     and `:293`.
+   - **The exceptions it held are closed:** `EVALUATION_COHORTS.md:974-979`, BACKLOG item 11i,
+     `PLAN_PHENOTYPE_NORMALISATION.md:312` (which says it "retires with the frozen evaluator";
+     the oracle clause goes with its citation, and that row, "Two readers ... neither checks", and
+     `:523`, "the two named exceptions (§5)", then name one exception,
+     `measure_served_pipeline.py`) and `PLAN_TEST_RESULTS.md:763-766`.
+   - **Two further corrections in S0's change:**
+     - `src/evaluation/measurement.py:1112-1113` cites `evaluate_model.py:285, 366`, which match
+       no version of the file. The `compute_all` call is at `:318` at `7dab728`;
+     - `src/inference/scoring.py:4-7`, `tests/unit/test_scoring_primitives.py:10-11` and
+       `results-review/SPEC_1_RESULTS_REVIEW.md:332-336` stop saying the frozen evaluator is still
+       to be migrated onto the shared primitives ("is migrated later in B-0", "does not yet", and
+       "evaluator migration" as remaining B-0 scope). It was never migrated, and S0 deletes it.
+   - **Nothing else is removed with it.** Item 9 keeps the rename and the rest of the
+     oracle-only surface, which still runs on fixtures: `build_legacy_mode_a_model` and the
+     parity assertions in `test_measurement_mode_a.py`. Code that the measurement CLI or a valid
+     test still calls is not deleted because its name says "legacy". The frozen file is not
+     edited before it goes, and item 7a's runner need not exist first.
+     *Superseded by the Mode A/B retirement (the owner, 2026-10-12):* item 9 was replaced by the
+     retirement's R2, which deleted `build_legacy_mode_a_model`, the parity assertions and the rest
+     of Modes A and B (2026-10-12) because nothing current used them, not because a name says
+     "legacy"; the rule in the sentence before stands.
+   - Not chosen: keeping it as a pinned historical file until item 9's last step.
+7. **S10's capacity acceptance is limited to its designated subject:** workspace
+   `hpo_2026_0929_5a` with checkpoint `model-02-0.1813.pt` (S10). It does not claim to cover all
+   of the largest inputs, other workspaces or checkpoints, or any other deployment. M2.1's
+   "Capacity" rule is amended to say so.
+   - **The reviewer added** that any future guarantee for larger cohorts would need its own
+     capacity scenario. M2.1 plans none.
+   - **The facts behind it,** from the reviewer's read-only inventory of the homelab's
+     `data/workspaces` on 2026-10-10 (file sizes only; nothing loaded, hashed or run):
+     - the subject has the largest `kg.json` (209,928,843 bytes), `node_features.pt` (29,308,567),
+       `edge_indices.pt` (19,772,821) and SP table (10,797,575,893), and the largest of the 21
+       `.pt` files under the workspaces' `checkpoints` and `train_outputs` directories
+       (47,931,987);
+     - its sample files are not the largest: `hpo_2026_0623_v2_orpha` has the largest
+       `train_samples.json` (16,306,773 against 12,867,342) and `val_samples.json` (2,444,868
+       against 2,364,974);
+     - so no workspace is largest in every kind of input.
+   - **The inventory's limits:** it covered that directory only, not the whole machine, downloads,
+     external disks or archives; and the largest file is not necessarily the largest peak at
+     every entry point, since parsed shapes and lifetimes shape the readings.
 
 #### M2.2 — the producer records the graph it consumed
 
 **Change:**
 - **`training_input_digests` gains `kg`**, beside the three tensors and the manifest
-  (`train_model.py:551-574`).
+  (`train_model.py:551-574` at `90a668f`; since S8, the builder `training_input_digests` over
+  the run's reads).
 - **Training does not parse `kg.json`.** Its `kg` role is the digest bound by the manifest the
   run read, against which the tensors it parsed were verified. This is the transitive claim
   `verify_graph_artifacts` already describes (`artifacts.py:73-75`).
 - **Every other role's digest comes from M2.1's reads.**
+
+*As implemented (2026-10-13):* `TrainingInputs.bound` keeps what `verify_graph_reads` returned, and
+`training_input_digests` records `bound["kg"]`, refusing a manifest that binds none.
 
 #### M2.3 — the resume parent, checked before anything is restored or written
 
@@ -566,9 +1986,9 @@ passes M2.4.
 - **The parent is read once (M2.1).** The digest of those bytes is its `resume_checkpoint` role.
 - **The parent must carry `training_input_digests` with every workspace role.** A missing record
   or role refuses. So no checkpoint from before the contract can be resumed (decision 2).
-- **The parent's graph roles must equal what this run read:** `kg`, `node_features`,
-  `edge_indices` and `num_nodes`. This one is not optional: it is decision 1 applied to the
-  parent.
+- **The parent's graph roles must equal this run's:** `kg`, the manifest-bound source graph,
+  and `node_features`, `edge_indices` and `num_nodes` as this run read them. This one is not
+  optional: it is decision 1 applied to the parent.
 - **Decided by the owner, 2026-10-06 (§8, question 3): its data roles must equal too.**
   - These are `split_manifest`, `train_samples` and `val_samples`.
   - The set of roles must be the same as well, so a parent that ran validation, resumed by a run
@@ -586,13 +2006,13 @@ passes M2.4.
   - **It gates data, not settings.** M3a records the settings in effect; it does not require a
     resumed run's settings to equal its parent's.
 - **Whether this run validates is decided here, from the samples already parsed.** It validates
-  exactly when the parsed `val_samples` are not empty, which is the condition
-  `create_dataloaders` applies (`train_model.py:606-624`). Today that is only known after the
-  loaders are built (`:748`, `:857`), by which time the run has written its directories.
+  exactly when the parsed `val_samples` are not empty. S8 already decides it there
+  (`read_training_inputs`, `with_validation`), before the run writes its directories.
 - **The comparison is M2.4's comparator** over a wider set of roles. It is one function, and the
   set of roles is its argument.
-- **`Trainer.load_checkpoint` restores from the dict already read and checked.** It no longer
-  reads the path a second time (`trainer.py:1009-1016`).
+- **The trainer restores from the dict already read and checked.** S8 made the restore read
+  nothing (`Trainer.restore_checkpoint`, over `read_checkpoint`'s result); M2.3 moves that read
+  to the top and puts its checks before the restore.
 
 **Why the same data rather than a lineage walk.**
 - By induction, every checkpoint in a resume chain then read the same sample files. Each link
@@ -606,12 +2026,27 @@ passes M2.4.
 
 The rest of resume — the overwrite guard — is M3a's.
 
+*As implemented (2026-10-13):* `read_resume_parent` runs right after `read_training_inputs`, before
+any run artifact: a missing parent raises `FileNotFoundError`; the parent is read once
+(`read_checkpoint`, the site's options) and `check_resume_parent` compares it with
+`training_input_digests(inputs)` through `verify_training_record`, over the union of this run's
+roles and the parent's recorded workspace roles, so a role on one side only refuses. The parent's
+own `resume_checkpoint` is its lineage and is not compared. `train` restores from that read's dict
+and records its identity; only that identity outlives the restore, so the parent's source tensors
+are not held through training (the review's P2-2). `Trainer.save_checkpoint` embeds
+`training_input_digests` as `ModelCheckpoint` does, so a checkpoint from either writer can be
+resumed.
+
 #### M2.4 — the consumers: serving and measurement
 
 - **They compare the checkpoint's recorded `kg`, `node_features`, `edge_indices` and `num_nodes`
-  digests with the workspace's**, taken from M2.1's reads.
-  - Serving keeps them already (`pipeline.py:501`); measurement discards them today
-    (`measure_scorer.py:128`).
+  digests with the workspace's.** For serving these are taken from M2.1's reads. For
+  measurement, `kg` is the manifest-bound source graph (M2.1's stated exceptions, amended
+  2026-10-09), and the other three roles come from M2.1's reads.
+  - Serving keeps only `kg` today (`src/inference/pipeline.py:532` at `90a668f`), and all four
+    after M2.1's S6. Measurement's runs without Mode A keep them since S7
+    (`MeasurementInputs.bound`); runs that include Mode A discarded them
+    (`measure_scorer.py:128` at `90a668f`) until the retirement's R2 deleted those runs (2026-10-12).
   - A missing `training_input_digests`, or a missing role, refuses.
 - **The comparison lives in the slot `verify_fingerprint` deferred** (`fingerprint.py:168-176`),
   so there is one model↔graph comparator.
@@ -620,10 +2055,28 @@ The rest of resume — the overwrite guard — is M3a's.
     (`probe_deployment.py:812-836`).
 - **A refusal raises (M1)**, so it cannot become a fallback.
 
+*As implemented (2026-10-13):* `verify_training_record` (`src/utils/fingerprint.py`) refuses with
+`TrainingRecordMismatch`, a `ValueError`, unless every role in its argument is recorded and held,
+with the same digest; a missing record or an empty role set refuses. Serving calls it in
+`_load_model_from_checkpoint` before the model is built (raised as `PipelineBuildError`),
+measurement in `read_measurement_inputs` right after the checkpoint read, and the probe's D2
+through it. **A checkpoint is loaded only over a graph verified from a workspace:** a pipeline whose
+graph is supplied in memory (`graph_data=`) refuses one before opening it, whatever it records (the
+review's P2-1 and the reviewer's recommendation B, 2026-10-13); a model handed in built is the
+caller's. The callers that paired a checkpoint with an in-memory graph moved to the workspace path.
+
 #### M2.5 — SP
 
 An unrecorded SP binding refuses. This ends the legacy "serves with a warning" state (R4), under
 decision 2.
+
+*As implemented (2026-10-13):* `_load_shortest_paths` raises `SPArtifactError` for an unrecorded
+binding, before the empty-table decision. A table without a sidecar records no binding, so the
+configured hop bound (`PipelineConfig.sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND`), which existed for
+such tables, could no longer reach a served table; it is **retired** (the reviewer's
+recommendation A, 2026-10-13): the variable is not read, the field and the configured fallback are
+gone, and the bound comes from the sidecar alone. The producer's `--max-hops`, the sidecar's
+`max_hops` and `validate_hop_bound` stay. The deployment guides now rebuild a bound pair instead.
 
 #### M2.6 — inventory before deployment
 
@@ -632,6 +2085,16 @@ A read-only listing of every checkpoint, SP table and workspace that M2 would re
   probe), not a new tool.
 - It is deployment preparation, not a second execution path.
 - Old artifacts are archived, not deleted.
+
+*As implemented (2026-10-13):* `scripts/audit_checkpoint_family.py --inventory <workspaces>` lists,
+per workspace, the graph check, the training inputs, the shortest-path table and every checkpoint
+in it, each with the refusal's reason, calling the consumers' own functions. It writes only its
+report, with names relative to the inventoried directory. After the review's P2-3: the table's
+**source binding** is judged from its sidecar, and whether the table would be **served** is
+`refused` where the binding refuses it and otherwise `not judged`, never accepted, since the tensor
+is not loaded. A checkpoint is read once with `read_checkpoint` (CPU, the safe loader), its digest
+recorded from that read, and its two verdicts are M2's source-contract checks only (`m2_contract`:
+`serve_and_measure`, M2.4; `resume`, M2.3), not whether its weights build or a device suffices.
 
 **Consequence.** No existing checkpoint records the `kg` role, so every one of them is refused
 after M2, as a model to serve or measure and as a parent to resume, and the model is retrained.
@@ -653,6 +2116,52 @@ This follows decision 2.
 - a fresh build → train → resume → serve passes;
 - the inventory runs on the homelab.
 
+*How it is run (the owner's decision, 2026-10-13):* through the deployment probe, extended and
+nothing else (`scripts/probe_deployment.py --m2-acceptance --device cuda`), every check from the
+production entry point that makes it -- the trainer, the measurement CLI, the serving build, the
+shortest-path producer and the inventory -- never from the comparator alone.
+- **Demo part (phase M, after B–E):** the successes first (a resume that trains on and names its
+  parent; measurement; serving the resumed model with a shortest-path table the loader verifies),
+  then the five resume refusals, each leaving no run directory and nothing changed, and serving
+  and measurement refusing a checkpoint over a workspace that is valid on its own and the same
+  shape; then the inventory. Faults are injected only into copies under the work directory.
+- **Real-data part (phase R):** on `hpo_2026_0929_5a`, read and never written: the workspace and
+  its table's binding check out; the settings (a `config.yaml`) carry the architecture recorded by
+  `model-02-0.1813.pt`; one epoch from scratch and one resumed, every output under the work
+  directory; measurement and serving of the new checkpoint, SP verified, a diagnosis; the
+  inventory refuses `model-02` for its missing record and passes the new model; the workspace is
+  unchanged by file listing, size and modification time (not by content digest). The settings are
+  the workspace's own `train_outputs/config.yaml`, whose six architecture fields, with
+  TrainConfig's defaults, match `model-02`'s record (the reviewer's check, 2026-10-13). The
+  short-trained model shows the pipeline and its checks work; it is not a serving model, which the
+  established training and evaluation choose.
+- **Accounting:** CUDA is required and the run stops after A2 without it; the report lists, per
+  part, every required probe and any not run, skipped or failed; the acceptance is complete only
+  when both parts are. The work directory is kept, with the tested commit, the device, the
+  artifacts' digests and each probe's result. The report must be inside the work directory, can be
+  no input and no existing file, and is created, never replaced.
+- **Review (2026-10-13):** the reviewer's review of `26fe84c..a0fcc4a` found two P2 in the probe and
+  none in the product code: the report path could overwrite an input or an earlier result, and M3
+  measured the parent instead of the resumed model. Both were fixed in `82d7573`, the commit run.
+
+*As run (2026-10-14, at `82d7573`):* 62 of 62 probes passed and the acceptance was complete in both
+parts ([evidence](m2-acceptance-2026-10-14/README.md)); the reviewer recomputed the digests of the
+real checkpoints and reports and found it passed. Limits recorded there: R8 compares listing, size
+and modification time; the probe ran the trainer as a module and so skipped `train_model.py`'s
+start-up allocator rule, the runs recording no allocator variable while the saved preset was
+`cuda_async`, so the run used the native backend and its memory (about 104 GB attributed to the
+probe by `nvidia-smi` during R3; about 3.84 GB of swap in use afterwards; no continuous trace) is no
+capacity reading; the short-trained model is not a serving model.
+- **The allocator follow-up (2026-10-14):** the probe, when it is the program, applies the shared
+  rule (`allocator_env(..., inherit=True)`, as `train_model._apply_allocator`) before anything
+  imports torch, keeping an explicit override under either variable name, and the report records
+  the variables, their source and the backend torch reports (`allocator`). Importing the module
+  changes nothing. *Done (2026-10-14):* reviewed with no P1 or P2 (`82d7573..b8a43c8`), and at
+  `b8a43c8` the probe's existing demo phases on the GB10 passed (42 of 42) with the allocator set
+  from the saved preset before torch's first import and the backend torch reports `cudaMallocAsync`
+  ([evidence](m2-acceptance-2026-10-14/README.md#6-the-allocator-follow-up-on-the-gb10-at-b8a43c8-2026-10-14)).
+  The two epochs were not rerun; nothing here is a reading of a full HGT training's memory.
+
 ### M3 — producers record what consumers need, and consumers check it
 
 Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
@@ -667,6 +2176,15 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 - **The seed is applied before the data loaders and the model are built.** Today it is applied
   in `Trainer.__init__` (`trainer.py:255-257`), after the loaders (`train_model.py:748`) and the
   model (`train_model.py:751`), so the recorded seed does not govern initialisation.
+  - **Implemented ahead of the rest of M3a (2026-10-11); code-reviewed with no P1 or P2 at
+    `290c03a` (2026-10-12).** `train()`
+    applies the seed with the Trainer's own rule (`apply_seed` in `src/training/trainer.py`:
+    Python's `random`, NumPy and torch, every CUDA device included) before it builds the loaders
+    and the model, so the same seed gives the same initial weights. `Trainer.__init__` still
+    applies it, so the stream training draws from (negatives, shuffling, dropout) starts from
+    the seed as before, whatever construction consumed. In `train_model`'s own entry, not a
+    wrapper. It does not promise bit-identical GPU training or a restored random state on
+    resume. Tested on CPU by `tests/unit/test_training_seed.py`. The rest of M3a is not implemented.
 - **Device.** `auto` without CUDA refuses, as measurement's does (§5.2). Today training turns it
   into CPU silently (`train_model.py:688-691`).
 - **Resume, what M2 leaves.** A write-time guard in `ModelCheckpoint` refuses to overwrite the
@@ -789,12 +2307,12 @@ own plan defines.
 
 | Record | Change | Milestone |
 |---|---|---|
-| Checkpoint (`callbacks.py:296-327`) | `training_input_digests` gains `kg`, and every digest comes from the bytes read; `config` gains the values in effect; new `producer` and `environment` keys | M2, M3a |
+| Checkpoint (`callbacks.py:296-327`) | `training_input_digests` gains `kg`, the manifest-bound source graph (M2.1's stated exceptions); every other digest comes from the bytes read; `config` gains the values in effect; new `producer` and `environment` keys | M2, M3a |
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
-| Measurement manifest and report | Input digests from the bytes read (M2); environment facts; the workspace's graph digests for both cohort kinds; R10's evidence and labels (§5.4) | M2, M4 |
-| Ledger | v2, per item 14 | M4 |
+| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; R10's evidence and labels (§5.4) | M2, M4 |
+| Ledger | item 14's ledger v2 (`PLAN_TEST_RESULTS.md` §5), which takes the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`) | M4 |
 | `InferenceResult`, `DiagnoseResponse`, serving state | One structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect | M3c |
 
 ### 5.2 Required versus displayed
@@ -964,7 +2482,10 @@ evidence.
 - Accounts, keys, signing, an append-only or chained log.
 - A lineage registry, or walking a resume chain through ancestor files (M2.3 makes it
   unnecessary).
-- File locks or a locking service. One read per input (M2.1) makes them unnecessary.
+- File locks or a locking service. M2.1 reads each input once and compares it with one manifest
+  reading, so a mixed read is refused rather than locked out. This is not a snapshot (§4, M2.1,
+  "Boundaries"). The evaluation ledger's check-then-replace window stays open, and the ledger
+  stays single-writer by operational rule (BACKLOG item 18; M2.1 decision 5).
 - A general verification framework. Each check lives at its consumer's entry point.
 - Conformance claims to SLSA, in-toto or PROV.
 - Reading or migrating old-pipeline artifacts (decision 2).

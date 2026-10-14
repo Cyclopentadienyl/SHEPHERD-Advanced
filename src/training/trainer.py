@@ -52,7 +52,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -435,18 +435,18 @@ class Trainer:
         return callbacks
 
     def _set_seed(self, seed: int) -> None:
-        """設置隨機種子"""
-        import random
-        import numpy as np
+        """設置隨機種子
 
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-        # Logged only after every RNG above is seeded successfully — an
-        # out-of-range seed raises in np.random.seed before reaching here.
-        logger.info("Random seed set to %s", seed)
+        The rule is `apply_seed`, at the end of this module. `train_model.train`
+        applies it before the data loaders and the model are built, so the seed
+        fixes the initial weights (contract M3a). Applied again here, it makes
+        the stream training draws from (negatives, shuffling, dropout) start
+        from the seed whatever building the loaders and the model consumed.
+        An out-of-range seed raises inside `apply_seed`, in `np.random.seed`,
+        before anything is logged, as it did when the rule was written out
+        here.
+        """
+        apply_seed(seed)
 
     # =========================================================================
     # Training Loop
@@ -620,9 +620,9 @@ class Trainer:
         of the loop and a tuple would make the call sites unreadable. **Not** a
         public result type, not a protocol, and nothing subclasses it.
 
-        `predictions` and `ground_truths` are carried out of the pass although no
-        caller reads them yet. They are the per-sample artifact item 1d compares
-        against Mode A's `legacy_top_k_local`, and returning them here costs
+        `predictions` and `ground_truths` are carried out of the pass for the
+        Trainer value test (`tests/unit/test_trainer_validation_values.py`), which
+        compares them with rows computed independently; returning them costs
         nothing and changes nothing observable.
         """
 
@@ -885,8 +885,8 @@ class Trainer:
         # **A cohort with no rows is refused rather than scored.** `mean_loss`
         # divides by `max(num_batches, 1)`, so an empty traversal returns
         # `{"loss": 0.0}` — a number about a model, produced without reading a
-        # single patient. `RankingMetrics`, `measurement.py` and
-        # `differential.py` all refuse to invent a value for an empty cohort;
+        # single patient. `RankingMetrics` and `measurement.py` both refuse to
+        # invent a value for an empty cohort;
         # this is the same refusal at the entry point that could still fabricate
         # one. Checked after the traversal rather than before, so a generator
         # that yields nothing is caught as surely as an empty list.
@@ -996,6 +996,12 @@ class Trainer:
 
         if data_fingerprint is not None:
             checkpoint["data_fingerprint"] = data_fingerprint
+        # The record of the inputs this run consumed, as `ModelCheckpoint` embeds
+        # it, so a checkpoint from either writer can be served, measured or
+        # resumed (contract M2.4, M2.3); set by the training script.
+        digests = getattr(self, "training_input_digests", None)
+        if digests is not None:
+            checkpoint["training_input_digests"] = digests
 
         if self.scheduler is not None:
             checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
@@ -1006,15 +1012,16 @@ class Trainer:
         torch.save(checkpoint, filepath)
         logger.info(f"Checkpoint saved to {filepath}")
 
-    def load_checkpoint(self, filepath: Union[str, Path]) -> None:
-        """載入檢查點"""
-        filepath = Path(filepath)
+    def restore_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
+        """Restore model, optimizer, scheduler, scaler and state from a checkpoint
+        that has already been read.
 
-        if not filepath.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {filepath}")
-
-        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
-
+        **Reads nothing** (contract M2.1, S8). The caller reads the parent once,
+        with `src.utils.checkpoint_io.read_checkpoint`, and records that read's
+        identity; restoring from the dict it parsed means the state restored and
+        the digest recorded cannot come from two reads of a file that changed in
+        between. There is no path form beside this one.
+        """
         # Accept both key conventions: Trainer.save_checkpoint() uses
         # "model_state_dict" while ModelCheckpoint callback uses "state_dict".
         model_sd = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
@@ -1041,7 +1048,31 @@ class Trainer:
                 if hasattr(self.state, key):
                     setattr(self.state, key, value)
 
-        logger.info(f"Checkpoint loaded from {filepath}")
+        logger.info(f"Checkpoint restored (epoch {self.state.epoch})")
+
+
+# =============================================================================
+# Seeding
+# =============================================================================
+def apply_seed(seed: int) -> None:
+    """Seed Python's `random`, NumPy and torch, every CUDA device included.
+
+    The one seeding rule training uses: `scripts/train_model.py` applies it
+    before the data loaders and the model are built (contract M3a), and
+    `Trainer.__init__` applies it again through `_set_seed`.
+    """
+    import random
+
+    import numpy as np
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # Logged only after every RNG above is seeded successfully — an
+    # out-of-range seed raises in np.random.seed before reaching here.
+    logger.info("Random seed set to %s", seed)
 
 
 # =============================================================================
@@ -1051,4 +1082,5 @@ __all__ = [
     "TrainerConfig",
     "TrainingState",
     "Trainer",
+    "apply_seed",
 ]

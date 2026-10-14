@@ -6,32 +6,113 @@ The KG is written by `src/kg/builder.py` as files under
 needs it. This is the shared reader those copies are meant to collapse into.
 
 **This is the P1's first callers, not the P1.** The package docstring records the
-whole job: become the single reader of this layout, replacing all seven copies.
-Two of them are migrated here — the measurement harness's Mode C path and the
-legacy Mode A loader that delegates to it — because B-0.3 needed a reader that
-does **not** retire with the frozen evaluator, and adding an eighth copy to get
-one would have been the opposite of the point. `src/inference/pipeline.py`,
-`scripts/train_model.py`, `scripts/evaluate_model.py`, `scripts/build_index.py`
-and `scripts/setup_demo.py` still have their own; migrating them belongs to P1
-and is not smuggled in here.
+whole job: become the single reader of this layout, replacing all six copies.
+The measurement harness was the first migrated here, because B-0.3 needed a
+reader that does **not** retire with the frozen evaluator, and adding another
+copy to get one would have been the opposite of the point. Serving
+(`src/inference/pipeline.py`) and training (`scripts/train_model.py`) moved here
+in contract M2.1's S6 and S8, and `scripts/setup_demo.py` reads through
+training. `scripts/build_index.py` and `scripts/spikes/validate_fast_subgraph.py`
+still have their own; migrating them belongs to P1 and is not smuggled in here.
 
-**No abstraction beyond the two functions below.** No `Storage` Protocol, no
+**No abstraction beyond the two readers below.** No `Storage` Protocol, no
 backend registry, no adapter hierarchy, no migration framework. The package name
 says "backends" plural and that plural is aspirational; the shape a second
 backend needs will be known when there is one.
+
+**Each file is parsed from one read, and its digest comes from that read**
+(contract M2.1). A reader returns what it parsed and a `ReadIdentity`, never the
+bytes; each buffer is released before the next file is read, which the release
+check in `tests/fixtures/release.py` shows. Torch files are parsed through this
+module's own `BytesIO`, which that check replaces to watch the wrapper.
 
 Module: src/kg/storage/file_storage.py
 """
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, NamedTuple, Tuple
 
-__all__ = ["read_graph_artifacts", "read_samples"]
+from src.kg.artifacts import GRAPH_ARTIFACTS
+from src.utils.fingerprint import ReadIdentity
+
+__all__ = ["GraphArtifactsRead", "SamplesRead", "read_graph_artifacts", "read_samples"]
 
 
-def read_graph_artifacts(data_dir: Path) -> Dict[str, Any]:
+class GraphArtifactsRead(NamedTuple):
+    """The graph tensors a consumer loads, and the identity of each file read.
+
+    `reads` is keyed by manifest role (`GRAPH_ARTIFACTS`) and holds exactly the
+    files that were read, so an absent file has neither a key in `graph_data`
+    nor an identity.
+    """
+
+    graph_data: Dict[str, Any]
+    reads: Dict[str, ReadIdentity]
+
+
+class SamplesRead(NamedTuple):
+    """One split's samples, and the identity of the file they were parsed from."""
+
+    samples: List[Any]
+    identity: ReadIdentity
+
+
+def _unparseable(path: Path, what: str, exc: Exception) -> ValueError:
+    """A file that was read but does not parse, refused under its own name.
+
+    **Why the readers say this, not the caller.** An entry point reads, then
+    verifies the digest against the manifest. A file that does not parse fails
+    in the parse, before the comparison that would have named it, and torch's
+    or json's own message (`pop from empty list`, `Expecting value`) names
+    nothing. The cause stays chained for whoever debugs it.
+    """
+    return ValueError(f"{path} could not be parsed as {what} ({type(exc).__name__}: {exc})")
+
+
+def _read_json(path: Path) -> Tuple[Any, ReadIdentity]:
+    """Decoded as UTF-8, as the workspace writers write it; the bytes are released
+    before the text is parsed."""
+    from src.utils.fingerprint import read_once
+
+    read = read_once(path)
+    identity = read.identity
+    try:
+        text = read.data.decode("utf-8")
+        del read
+        parsed = json.loads(text)
+    except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are both ValueErrors
+        raise _unparseable(path, "UTF-8 JSON", exc) from exc
+    return parsed, identity
+
+
+def _read_tensors(path: Path, map_location: Any) -> Tuple[Any, ReadIdentity]:
+    import torch
+
+    from src.utils.fingerprint import read_once
+
+    read = read_once(path)
+    try:
+        tensors = torch.load(BytesIO(read.data), weights_only=True, map_location=map_location)
+    except MemoryError:
+        # Not a property of the file. Converting it would send a capacity
+        # shortfall to whoever reads the message as a corrupt export.
+        raise
+    except RuntimeError as exc:
+        # Neither is torch's own report of a failed allocation: c10's CPU
+        # allocator raises a plain RuntimeError ("DefaultCPUAllocator: can't
+        # allocate memory"), and a device raises `torch.OutOfMemoryError`.
+        if isinstance(exc, torch.OutOfMemoryError) or "can't allocate memory" in str(exc):
+            raise
+        raise _unparseable(path, "a tensor file", exc) from exc
+    except Exception as exc:  # noqa: BLE001 — torch raises a different type for each kind of junk
+        raise _unparseable(path, "a tensor file", exc) from exc
+    return tensors, read.identity
+
+
+def read_graph_artifacts(data_dir: Path, *, map_location: Any = "cpu") -> GraphArtifactsRead:
     """Load `node_features.pt`, `edge_indices.pt` and `num_nodes.json`.
 
     Absent files are omitted rather than defaulted: a caller that needs
@@ -40,24 +121,23 @@ def read_graph_artifacts(data_dir: Path) -> Dict[str, Any]:
     like a graph with no nodes.
 
     `weights_only=True` — these are tensor files, and loading them must not be
-    able to execute code. They re-enter a clinical tool.
+    able to execute code. They re-enter a clinical tool. `map_location="cpu"`,
+    as serving already passes: an export is saved from CPU, so this matches
+    loading with no `map_location` for every export the writer produces.
     """
-    import torch
-
-    artifacts: Dict[str, Any] = {}
-    node_features = data_dir / "node_features.pt"
-    if node_features.exists():
-        artifacts["x_dict"] = torch.load(node_features, weights_only=True)
-    edge_indices = data_dir / "edge_indices.pt"
-    if edge_indices.exists():
-        artifacts["edge_index_dict"] = torch.load(edge_indices, weights_only=True)
-    num_nodes = data_dir / "num_nodes.json"
+    graph_data: Dict[str, Any] = {}
+    reads: Dict[str, ReadIdentity] = {}
+    for role, key in (("node_features", "x_dict"), ("edge_indices", "edge_index_dict")):
+        path = data_dir / GRAPH_ARTIFACTS[role]
+        if path.exists():
+            graph_data[key], reads[role] = _read_tensors(path, map_location)
+    num_nodes = data_dir / GRAPH_ARTIFACTS["num_nodes"]
     if num_nodes.exists():
-        artifacts["num_nodes_dict"] = json.loads(num_nodes.read_text())
-    return artifacts
+        graph_data["num_nodes_dict"], reads["num_nodes"] = _read_json(num_nodes)
+    return GraphArtifactsRead(graph_data, reads)
 
 
-def read_samples(data_dir: Path, split: str) -> List[Any]:
+def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -> SamplesRead:
     """Load `<split>_samples.json` as `DiagnosisSample` objects.
 
     Missing is an error, not an empty cohort: an empty list would flow into a
@@ -71,6 +151,11 @@ def read_samples(data_dir: Path, split: str) -> List[Any]:
     split" — and choosing a substitute here would silently answer a question
     the caller has to answer, since `val` is the checkpoint-selection split
     rather than held-out data.
+
+    **Three fields by default; `training_fields=True` adds the two only
+    training reads,** `candidate_disease_ids` and `gene_ids`. Measurement and
+    the verifiers read the three default fields; training passes its two extra
+    fields explicitly.
     """
     from src.kg.data_loader import DiagnosisSample
 
@@ -91,11 +176,70 @@ def read_samples(data_dir: Path, split: str) -> List[Any]:
         )
         raise FileNotFoundError(f"Samples file not found: {path} — {detail}")
 
-    return [
-        DiagnosisSample(
-            patient_id=entry["patient_id"],
-            phenotype_ids=entry["phenotype_ids"],
-            disease_id=entry["disease_id"],
+    entries, identity = _read_json(path)
+    # A file that is JSON but not a list of sample rows is refused under its
+    # name too: the entry point compares digests only after this parse.
+    try:
+        if training_fields:
+            samples = [
+                DiagnosisSample(
+                    patient_id=entry["patient_id"],
+                    phenotype_ids=entry["phenotype_ids"],
+                    disease_id=entry["disease_id"],
+                    candidate_disease_ids=entry.get("candidate_disease_ids"),
+                    gene_ids=entry.get("gene_ids"),
+                )
+                for entry in entries
+            ]
+        else:
+            samples = [
+                DiagnosisSample(
+                    patient_id=entry["patient_id"],
+                    phenotype_ids=entry["phenotype_ids"],
+                    disease_id=entry["disease_id"],
+                )
+                for entry in entries
+            ]
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise _unparseable(path, "a samples file (a list of sample rows)", exc) from exc
+    _refuse_non_integer_ids(path, samples)
+    return SamplesRead(samples, identity)
+
+
+def _refuse_non_integer_ids(path: Path, samples: List[Any]) -> None:
+    """Every id a sample row carries must be a JSON integer; anything else is
+    refused under the file's name and the patient's.
+
+    **Refused, not converted.** Each caller turns these ids into an index tensor
+    (`torch.tensor(..., dtype=torch.long)` or the like), which truncates `3.7` to
+    `3` and reads `true` as `1`: the converted id names a node the file did not,
+    and the run scores a plausible patient who is not this one. A boolean is
+    refused although Python counts it as an `int`. Checked here because measurement,
+    training, the cohort verifiers and the audits all read samples through this
+    function, so the check comes before any of them converts. It says nothing
+    about range, which needs the graph: Mode C's `_assert_ids_in_range` and the
+    training loader's truth check (D3) stay where they are.
+    """
+    def refuse(index: int, sample: Any, field: str, value: Any, what: str) -> None:
+        raise ValueError(
+            f"{path}: sample {index} (patient {sample.patient_id!r}) has {field} "
+            f"{value!r}, which is not {what}. Ids are refused rather than converted: "
+            "a float or a boolean turned into an index names a different node"
         )
-        for entry in json.loads(path.read_text())
-    ]
+
+    def is_id(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    for index, sample in enumerate(samples):
+        if not is_id(sample.disease_id):
+            refuse(index, sample, "disease_id", sample.disease_id, "an integer id")
+        lists = {"phenotype_ids": sample.phenotype_ids}
+        for field in ("candidate_disease_ids", "gene_ids"):
+            if getattr(sample, field) is not None:
+                lists[field] = getattr(sample, field)
+        for field, values in lists.items():
+            if not isinstance(values, list):
+                refuse(index, sample, field, values, "a list of integer ids")
+            for value in values:
+                if not is_id(value):
+                    refuse(index, sample, field, value, "an integer id")

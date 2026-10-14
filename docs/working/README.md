@@ -26,7 +26,7 @@ document to find what it means.
 | Phase | Status |
 |---|---|
 | [`results-review/`](results-review/) | under review — snapshot repository, results-review UX, deployment security |
-| [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0, the A/B/C/D measurement ladder |
+| [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0: Mode C implemented (the formal Test's measurement), Mode D (B-0.5) not started; Modes A and B retired (R2) |
 | [`task-scope/`](task-scope/) | what the institution's supplied-short-list use case changes. Scope decisions settled; the reserved-interface item is **implemented**, the rest unscheduled |
 | [`scorer-retraining/`](scorer-retraining/) | scoping only — selecting a patient-encoder / score-family / objective bundle, and the checkpoint scorer schema. No gate cleared |
 

@@ -47,7 +47,14 @@ from src.utils.file_modes import create_staging_file
 #: Bumped when a record's shape changes in a way that makes an old file
 #: unreadable under the new rules. A reader that finds a version it does not know
 #: refuses rather than guessing which fields it can trust.
-LEDGER_SCHEMA_VERSION = 1
+#:
+#: **2 since the Mode A/B retirement's R2.** The records keep their shape, but
+#: their semantics digests were computed over a field list R2 shortened (the seeds,
+#: the loader and sampler fields, the two `legacy_*` fields), and version 1 files
+#: hold records of the retired modes. Read under the new rules they would sit
+#: beside new records as though comparable, so a version 1 file is refused like
+#: any other unknown version, and is read with the revision that wrote it.
+LEDGER_SCHEMA_VERSION = 2
 
 #: The conventional file name, beside the checkpoints it describes.
 LEDGER_FILENAME = "evaluations.json"
@@ -58,10 +65,10 @@ LEDGER_FILENAME = "evaluations.json"
 #: that asymmetry.** A missed contradiction leaves two records the reader can
 #: compare; a false one *blocks a legitimate append*, so the rule is to include
 #: anything that could move a metric. An earlier key of
-#: (checkpoint, cohort, mode, tie policy) failed exactly this way: `batch_size` is
-#: documented on the manifest as semantics rather than performance — Mode A's
-#: candidate universe is the batch's subgraph — so two honest runs at different
-#: batch sizes collided and the second was refused as a contradiction.
+#: (checkpoint, cohort, mode, tie policy) failed exactly this way: two honest runs
+#: at different batch sizes collided and the second was refused as a
+#: contradiction, although `batch_size` is the chunk Mode C scores at once and can
+#: move its numbers at floating-point level.
 #:
 #: Explicit rather than "every field", so that adding a non-semantic field later
 #: does not churn every key and silence the contradiction check. That claim is
@@ -70,31 +77,14 @@ LEDGER_FILENAME = "evaluations.json"
 #: ``tests/unit/test_evaluation_sidecar.py`` fails if a new field belongs to
 #: neither. A field cannot be omitted by oversight, only by decision.
 SEMANTIC_MANIFEST_FIELDS: Tuple[str, ...] = (
-    # what was ranked, and against what
+    # what was ranked, against what, and in what chunks
     "mode",
     "cohort_kind",
     "candidate_construction",
-    "negative_sampling_strategy",
-    "num_negative_samples",
-    "subgraph_strategy",
-    "subgraph_hops",
-    "num_neighbors",
-    "max_subgraph_nodes",
-    # how the batches were formed. `num_workers` is semantics, not performance:
-    # PyTorch seeds each worker as base_seed + worker_id, so a different worker
-    # count consumes a different random stream and yields a different candidate
-    # universe — which `measure_scorer`'s own --num-workers help says.
     "batch_size",
-    "shuffle",
-    "num_workers",
-    "python_seed",
-    "numpy_seed",
-    "torch_seed",
     # how scores became numbers
     "score_semantics",
     "model_construction",
-    "legacy_truncation_k",
-    "legacy_tie_policy",
     "canonical_tie_policy_version",
     "metric_schema_version",
     # the numerical regime. `torch_compile_wrapped` is included although `None`
@@ -134,7 +124,9 @@ NON_SEMANTIC_FIELDS: Dict[str, str] = {
     ),
     "artifact_digests": (
         "hashed selectively rather than wholesale: checkpoint and samples are "
-        "already key fields, and the rest are covered by SEMANTIC_ARTIFACT_ROLES"
+        "already key fields, the graph tensors and the allocation are covered by "
+        "SEMANTIC_ARTIFACT_ROLES, and `kg` is the manifest-bound source graph, "
+        "which no mode computes from"
     ),
     "cuda_executed": (
         "implied by `device`, which is in the digest; `_resolve_device` sets the "
@@ -173,7 +165,7 @@ def measurement_semantics_digest(manifest: Dict[str, Any]) -> str:
 
     **What "the same measurement" means here is narrower than bit-determinism.**
     Two records under one digest were produced under identical recorded
-    semantics, seeds included. Whether they were therefore *bound* to agree
+    semantics. Whether they were therefore *bound* to agree
     depends on the regime those fields describe: under `deterministic_algorithms`
     a disagreement is a contradiction, and under a non-deterministic CUDA regime
     it is a finding to investigate. The ledger refuses the second record either
@@ -252,9 +244,7 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
     """One record from one measurement artifact as ``measure_scorer`` writes it.
 
     Reads the manifest rather than taking the fields as arguments, so a record
-    cannot describe a run different from the one whose artifact it came from —
-    the same reason ``build_loader_config``'s output is handed to both the
-    dataloader and the manifest instead of being rebuilt.
+    cannot describe a run different from the one whose artifact it came from.
 
     The cohort's **kind** is derived from the roles the measurement recorded, not
     re-asserted here. A generated cohort carries a ``split_manifest`` role because
@@ -264,28 +254,17 @@ def build_record(report: Dict[str, Any], source_digest: Optional[str]) -> Dict[s
     allocation step is refused at the measurement, not recorded with a null.
     """
     manifest = report["manifest"]
-    # **A run with no usable RNG identity cannot be a ledger record.** Two
-    # unseeded runs consume different worker streams, different negatives and a
-    # different candidate universe while hashing to the same semantics digest, so
-    # the ledger would see one measurement with two answers and refuse the second
-    # as a contradiction.
-    #
-    # The domain is checked as well as presence: `True` is an `int`, so a manifest
-    # could otherwise record a stream's identity as a flag, and a value outside
-    # NumPy's `[0, 2**32 - 1]` is not a seed for this harness even where one of
-    # the three RNGs would take it. `measure_scorer` validates the same way, so
-    # this is a floor for other callers rather than a case the CLI can produce.
-    from src.evaluation.measurement import validate_measurement_seed
-
-    for field in ("python_seed", "numpy_seed", "torch_seed"):
-        value = manifest.get(field)
-        if value is None:
-            raise ValueError(
-                f"this measurement records no {field}, so its random stream has "
-                "no identity and a repeat of it cannot be told apart from a "
-                "materially different run. Re-measure with a stated --seed."
-            )
-        validate_measurement_seed(value, f"the recorded {field}")
+    # **Only the current measurement's manifest is read.** A field outside the two
+    # lists above is one this revision does not record — written by a retired mode
+    # or before the field was removed — and hashing such a manifest under the
+    # current list would drop what told its runs apart. It is refused, not read.
+    unknown = sorted(set(manifest) - set(SEMANTIC_MANIFEST_FIELDS) - set(NON_SEMANTIC_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"this measurement's manifest records {', '.join(unknown)}, which the "
+            "current measurement does not; it was written by an earlier revision or "
+            "a retired mode, and is not read. Re-measure with this revision."
+        )
     digests = manifest["artifact_digests"]
     metrics = dict(report["authoritative_metrics"])
     return {
@@ -326,14 +305,12 @@ def append_record(ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, A
     ledger rebuilt from the same artifacts twice should be the same ledger.
 
     Two records under one key carry differing numbers for a measurement whose
-    recorded semantics are identical, seeds included. The second is refused with
+    recorded semantics are identical. The second is refused with
     the differing names in the message — not because one of them is provably
     wrong, but because the ledger cannot choose between them and neither may stand
     unexamined. Whether the difference is a defect or variation the regime
-    permits is a question for a person: `measurement_semantics_digest` records
-    that a seed controls this harness's streams and not CUDA determinism, so
-    `deterministic_algorithms` and the cuDNN fields inform that investigation
-    rather than settling it.
+    permits is a question for a person: `deterministic_algorithms` and the cuDNN
+    fields inform that investigation rather than settling it.
     """
     key = record_key(record)
     for existing in ledger["records"]:

@@ -62,9 +62,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.kg.artifacts import GRAPH_ARTIFACTS  # noqa: E402
 from src.evaluation.cohort import (  # noqa: E402
+    GENERATED_SPLITS,
     MANIFEST_FILENAME,
-    verify_generated_cohorts,
-    verify_graph_artifacts,
+    resolve_cohort,
+    verify_cohort_reads,
 )
 from src.utils.banding import CAPACITY_BANDS, bucket  # noqa: E402
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
@@ -87,7 +88,7 @@ HPOA_PHENOTYPE_COLUMN = 3
 HPOA_FREQUENCY_COLUMN = 7
 
 
-def generation_config(data_dir: Path) -> Dict[str, Any]:
+def generation_config(manifest: Any) -> Dict[str, Any]:
     """The three parameters that determine `k`.
 
     **`k` is not observable from the samples.** A sample records the phenotypes it
@@ -97,15 +98,17 @@ def generation_config(data_dir: Path) -> Dict[str, Any]:
     source accepted — there is no operator override, because the two could
     disagree and neither the audit nor the operator could tell which was right.
 
-    A workspace without a manifest is refused upstream by ``resolve_cohort``.
+    `manifest` is the run's one reading (`read_split_manifest`, contract M2.1):
+    the rule priced here comes from the same manifest the cohorts and the graph
+    were verified against, not from a second read of the file. A workspace
+    without a manifest is refused upstream by ``resolve_cohort``.
     """
-    manifest = json.loads((data_dir / MANIFEST_FILENAME).read_text())
-    generation = manifest.get("generation", {})
+    generation = manifest.manifest.get("generation", {})
     required = ("min_phenotypes", "max_phenotypes", "phenotype_drop_rate")
     missing = [key for key in required if key not in generation]
     if missing:
         raise SystemExit(
-            f"{data_dir / MANIFEST_FILENAME} has no {', '.join(missing)} in its "
+            f"{manifest.identity.path} has no {', '.join(missing)} in its "
             "generation section, so the retained-phenotype rule this workspace was "
             "built under is unknown"
         )
@@ -347,7 +350,8 @@ def cross_split_section(
 
 
 def frequency_section(
-    kg_edge_weights: List[float], hpoa_path: Optional[Path], hpoa_digest: Optional[str]
+    kg_edge_weights: List[float], hpoa_path: Optional[Path], hpoa_digest: Optional[str],
+    hpoa_bytes: Optional[bytes],
 ) -> Dict[str, Any]:
     """Is there a frequency signal to weight by at all?
 
@@ -401,7 +405,13 @@ def frequency_section(
 
     parse = HPOAnnotationParser.parse_frequency
     total = absent = parsed_below_one = ambiguous = 0
-    with open(hpoa_path, encoding="utf-8") as handle:
+    # The bytes of the one read whose digest the report records (contract M2.1),
+    # decoded as they stream through the same text wrapper `open()` builds, so
+    # lines split exactly as opening the file would split them and no decoded copy
+    # of the whole file is held.
+    import io
+
+    with io.TextIOWrapper(io.BytesIO(hpoa_bytes), encoding="utf-8", newline=None) as handle:
         for line in handle:
             if line.startswith("#"):
                 continue
@@ -475,10 +485,11 @@ def build_report(
     kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
 
     from src.core.types import EdgeType
+    from src.kg.artifacts import read_split_manifest, verify_graph_source_read
     from src.kg.graph import KnowledgeGraph
     from src.kg.sample_generator import build_eligible_disease_profiles
-    from src.kg.storage.file_storage import read_samples
-    from src.utils.fingerprint import file_sha256
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+    from src.utils.fingerprint import read_once
 
     if relationship not in DEPLOYMENT_RELATIONSHIPS:
         raise SystemExit(
@@ -489,10 +500,27 @@ def build_report(
     # **Both cohorts must be this project's own.** This audit characterises *our*
     # generator, so a supplied cohort has nothing here to be measured against —
     # its samples were not produced by the rule whose capacity is being priced.
-    graph_digests = verify_graph_artifacts(data_dir)
-    verify_generated_cohorts(data_dir)
-    config = generation_config(data_dir)
-    kg = KnowledgeGraph.load_json(str(kg_path))
+    #
+    # **One read per file (contract M2.1).** The manifest, `kg.json`, the graph
+    # tensors and both cohorts are each read once, verified from those reads, and
+    # what is measured and recorded below comes from the same reads. The tensors
+    # are not measured; they are read so the workspace binding this report claims
+    # is checked on bytes, as every graph consumer checks it.
+    manifest = read_split_manifest(data_dir)
+    for split in GENERATED_SPLITS:
+        resolve_cohort(data_dir, split)
+    if not kg_path.is_file():
+        raise ValueError(
+            f"{kg_path} does not exist, and {manifest.identity.path} records a kg artifact "
+            "for this workspace"
+        )
+    kg, graph = KnowledgeGraph.read_json(kg_path)
+    tensors = read_graph_artifacts(data_dir)
+    sample_reads = {split: read_samples(data_dir, split) for split in GENERATED_SPLITS}
+    graph_digests = verify_graph_source_read(manifest, graph, tensors.reads)
+    del tensors
+    verify_cohort_reads(manifest, sample_reads)
+    config = generation_config(manifest)
 
     # Eligibility at the *generation* threshold, so the universe priced here is
     # the one the generator drew from rather than a wider one this audit chose.
@@ -506,7 +534,7 @@ def build_report(
     for split in ("train", "val"):
         cohorts[split] = [
             {"phenotype_ids": list(s.phenotype_ids), "disease_id": int(s.disease_id)}
-            for s in read_samples(data_dir, split)
+            for s in sample_reads[split].samples
         ]
         if not cohorts[split]:
             raise SystemExit(
@@ -531,13 +559,21 @@ def build_report(
     if hpoa is not None and not hpoa.exists():
         raise SystemExit(f"{hpoa} does not exist")
     # **A basename is not identity.** The frequency figures are read from this
-    # file, so a report citing them has to say which bytes it read.
-    hpoa_digest = file_sha256(hpoa) if hpoa is not None else None
+    # file, so a report citing them has to say which bytes it read — and they are
+    # parsed from that same read, not from a second open of the path.
+    hpoa_digest = hpoa_bytes = None
+    if hpoa is not None:
+        hpoa_read = read_once(hpoa)
+        hpoa_digest, hpoa_bytes = hpoa_read.sha256, hpoa_read.data
+        del hpoa_read
+    # Counted now, so the bytes are released before the other sections run.
+    frequency = frequency_section(weights, hpoa, hpoa_digest, hpoa_bytes)
+    del hpoa_bytes
 
     artifacts = dict(graph_digests)
-    artifacts["train_samples"] = file_sha256(data_dir / "train_samples.json")
-    artifacts["val_samples"] = file_sha256(data_dir / "val_samples.json")
-    artifacts["split_manifest"] = file_sha256(data_dir / MANIFEST_FILENAME)
+    artifacts["train_samples"] = sample_reads["train"].identity.sha256
+    artifacts["val_samples"] = sample_reads["val"].identity.sha256
+    artifacts["split_manifest"] = manifest.identity.sha256
     if hpoa_digest is not None:
         artifacts["phenotype_hpoa"] = hpoa_digest
 
@@ -559,7 +595,7 @@ def build_report(
         "cross_split_phenotype_sets": cross_split_section(
             cohorts, phenotype_profiles, config
         ),
-        "frequency_signal": frequency_section(weights, hpoa, hpoa_digest),
+        "frequency_signal": frequency,
         "deployment_relationship": relationship,
         "excluded_by_design": [
             "patient ids",

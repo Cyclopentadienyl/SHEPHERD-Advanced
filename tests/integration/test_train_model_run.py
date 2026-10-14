@@ -6,8 +6,10 @@ profiles name phenotypes `d` and `d + 100`, outside the three-phenotype graph
 they are paired with, and data loading stops at an IndexError. This one builds
 the same complete tripartite graph with every sample's ids inside it, and runs
 the script as an operator does -- a subprocess, one short epoch on CPU -- to
-check what a run leaves behind: its exit status, `config.yaml`, and the
-`runtime.json` recording the CUDA allocator it started under.
+check what a run leaves behind: its exit status, `config.yaml`, the
+`runtime.json` recording the CUDA allocator it started under, and the
+checkpoint's record of its inputs, which since contract M2.1's S8 is built only
+from the reads training trained on.
 
 **The expected allocator comes from the same settings file the script reads**,
 resolved by the same rule, so the test holds whatever preset the developer
@@ -47,10 +49,13 @@ def _trainable_workspace(root: Path) -> Path:
     }
 
     def samples(split, ids, per_disease):
+        # Both optional fields training reads (`training_fields=True`).
         return [
             {"patient_id": f"{split}-{d}-{i}",
              "phenotype_ids": list(profiles[d]["phenotype_ids"]),
-             "disease_id": d}
+             "disease_id": d,
+             "gene_ids": list(profiles[d]["gene_ids"]),
+             "candidate_disease_ids": sorted(ids)}
             for d in ids for i in range(per_disease)
         ]
 
@@ -94,3 +99,17 @@ def test_a_short_run_completes_and_records_its_allocator(tmp_path):
         "allocator_source": "saved preset",
     }
     assert f"CUDA allocator: {expected} (saved preset)" in result.stdout + result.stderr
+
+    # The record names the bytes the run read: every role, the file's digest.
+    import hashlib
+
+    checkpoint = torch.load(data_dir / "checkpoints" / "gat" / "last.pt",
+                            map_location="cpu", weights_only=False)
+    files = {"train_samples": "train_samples.json", "val_samples": "val_samples.json",
+             "node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
+             "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json",
+             "kg": "kg.json"}
+    assert checkpoint["training_input_digests"] == {
+        role: hashlib.sha256((data_dir / name).read_bytes()).hexdigest()
+        for role, name in files.items()
+    }

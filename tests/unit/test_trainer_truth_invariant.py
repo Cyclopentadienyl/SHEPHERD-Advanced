@@ -13,8 +13,10 @@ Three boundaries enforce it, each small and local, and this file covers two:
      hole. Covered in `tests/unit/test_data_pipeline.py`.
   2. **`DiagnosisLoss`** — the independent refusal for any caller that bypasses
      that loader. Covered below.
-  3. **`to_global_ids`** — the measurement harness's own boundary. Covered in
-     `tests/unit/test_measurement_ranking.py:52-56`.
+  3. **Mode C's `_assert_ids_in_range`** — the measurement's own boundary: a
+     truth outside the graph's disease nodes is refused before it is ranked.
+     Covered in `tests/unit/test_measurement_mode_c.py`
+     (`test_an_out_of_range_ground_truth_is_refused`).
 
 **Scope of the claim below, stated narrowly on purpose.** These tests establish
 refusal *at the loss*, plus the fact that `_compute_model_outputs` no longer

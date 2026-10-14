@@ -245,9 +245,14 @@ def test_the_benchmark_measures_against_the_declared_bound_not_the_observed_one(
         lambda: {"peak_rss_bytes": None, "current_rss_bytes": None},
     )
 
+    from src.inference.sp_artifact import SP_SCHEMA_VERSION, TENSOR_BUILD_ID_KEY
+
     data_dir = tmp_path / "ws"
     data_dir.mkdir(parents=True, exist_ok=True)
     artifact = data_dir / "shortest_paths.pt"
+    # Published bound, as the producer publishes it: the production loader
+    # refuses a table that records no graph (contract M2.5).
+    build_id, graph_digest = "0123456789abcdef" * 2, "c" * 64
     torch.save(
         {
             "phenotype_idx": torch.tensor([0, 1], dtype=torch.int64),
@@ -255,10 +260,14 @@ def test_the_benchmark_measures_against_the_declared_bound_not_the_observed_one(
             "target_type": torch.tensor([1, 1], dtype=torch.int64),
             # a 5-hop table whose longest recorded path is 1
             "distance": torch.tensor([1, 1], dtype=torch.int8),
+            TENSOR_BUILD_ID_KEY: build_id,
         },
         artifact,
     )
-    (data_dir / "shortest_paths.meta.json").write_text(json.dumps({"max_hops": 5}))
+    (data_dir / "shortest_paths.meta.json").write_text(json.dumps({
+        "max_hops": 5, "schema_version": SP_SCHEMA_VERSION, "build_id": build_id,
+        "kg_digest": graph_digest,
+    }))
 
     pipeline = DiagnosisPipeline.__new__(DiagnosisPipeline)
     pipeline.config = PipelineConfig()
@@ -267,7 +276,7 @@ def test_the_benchmark_measures_against_the_declared_bound_not_the_observed_one(
     pipeline._sp_max_hops = 5
     pipeline._sp_hop_bound_source = None
     pipeline._sp_kg_binding = None
-    pipeline._graph_kg_digest = None
+    pipeline._graph_kg_digest = graph_digest
     pipeline._load_shortest_paths(data_dir)
 
     columns, resolved, _, _, _ = build_artifact_lookup(artifact, 99)

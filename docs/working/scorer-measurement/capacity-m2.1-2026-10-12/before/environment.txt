@@ -1,0 +1,22 @@
+kernel 7.0.0-1019-nvidia
+machine aarch64
+python 3.12.3
+torch 2.10.0+cu130 13.0
+driver 580.178.04, NVIDIA GB10
+venv_python_sha256 c86f21d0da9290ece2d7d49a3f7ed52aed59cb029abdf0ea25c79634f6cbe960
+venv_distributions_sha256 a117e53efdcf4ebf00aea51756eb4198d81f7b430f94c558d491fcd48ab76980
+allocator_explicit PYTORCH_ALLOC_CONF=backend:cudaMallocAsync
+page_cache warm
+page_cache_note a capacity comparison after the pre-read listed in preread.txt, not a cold start
+service_load_state not-found
+service inactive
+gpu_compute_apps 0
+uptime_boot 42616.86 s
+boot_id 88899c2c-179e-4909-9316-162852869bac
+matrix_device cuda
+matrix_serve 1
+matrix_r0_seconds 10
+matrix_sp_workers 15
+matrix_train_flags --conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42
+matrix_kg_for_sp workspace
+measurement_modes_flag --modes C

@@ -429,35 +429,6 @@ class PipelineBundle(NamedTuple):
     checkpoint_path: Optional[str]
 
 
-#: The environment variable that supplies a hop bound for a shortest-path table
-#: whose sidecar is absent. Named beside the other `SHEPHERD_*` settings because
-#: it is read the same way and at the same moment as they are.
-SP_HOP_BOUND_ENV = "SHEPHERD_SP_HOP_BOUND"
-
-
-def _configured_hop_bound() -> Optional[int]:
-    """The deployment's hop bound, or None when it stated none.
-
-    **Refused here rather than coerced.** An unparsable value is a deployment
-    that meant to set the bound and did not, and silently treating it as unset
-    would put the service back into the state the loader refuses — serving
-    without shortest paths while the operator believes they configured them.
-    The domain itself belongs to `validate_hop_bound`, which the loader applies;
-    this only establishes that an integer was written.
-    """
-    raw = os.environ.get(SP_HOP_BOUND_ENV)
-    if raw is None or raw.strip() == "":
-        return None
-    try:
-        return int(raw.strip())
-    except ValueError:
-        raise ValueError(
-            f"{SP_HOP_BOUND_ENV}={raw!r} is not an integer. It is the hop bound "
-            "for a shortest-path table whose sidecar is missing, and a bound "
-            "that cannot be read is not a bound."
-        ) from None
-
-
 def build_pipeline(
     kg_path: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
@@ -474,7 +445,10 @@ def build_pipeline(
     does not exist; raises when a configured pipeline fails to build.
 
     Configuration is read from environment variables if not passed directly:
-        SHEPHERD_KG_PATH: Path to KG JSON file
+        SHEPHERD_KG_PATH: Path to KG JSON file. It may name a file outside
+            ``SHEPHERD_DATA_DIR`` holding the bytes the workspace manifest binds;
+            the graph checked is the one parsed from this file, and
+            ``data_dir/kg.json`` is then not read
         SHEPHERD_CHECKPOINT_PATH: Path to model checkpoint
         SHEPHERD_DATA_DIR: Path to processed graph data directory
         SHEPHERD_DEVICE: Inference device (cpu/cuda)
@@ -533,7 +507,7 @@ def build_pipeline(
 
     try:
         from src.kg.graph import KnowledgeGraph
-        from src.inference.pipeline import PipelineConfig, create_diagnosis_pipeline
+        from src.inference.pipeline import create_diagnosis_pipeline
 
         # Step 1: Load knowledge graph
         kg_file = Path(kg_path)
@@ -542,29 +516,33 @@ def build_pipeline(
             return None
 
         logger.info(f"Loading knowledge graph from {kg_file}...")
-        kg = KnowledgeGraph.load_json(str(kg_file))
+        # **One read, kept whole** (contract M2.1, S6). The graph and the
+        # identity of the bytes it was parsed from travel together into the
+        # pipeline, which checks that identity against the workspace manifest
+        # when it builds a GNN over `data_dir`; a pipeline with no checkpoint
+        # checks nothing (BACKLOG 19.20). Nothing hashes the file again by path.
+        graph = KnowledgeGraph.read_json(kg_file)
+        kg = graph.kg
         logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
 
         # Step 2: Create pipeline (with optional GNN)
         #
-        # **`kg_path` is passed, and the composition is checked here.** These two
-        # settings are resolved independently from the environment, so a
-        # deployment can point them at two different workspaces — each internally
-        # consistent, and together producing embeddings from one graph's tensors
-        # read through the other graph's node identifiers. The pipeline refuses
-        # that composition, and because this function publishes nothing, a
-        # refused one cannot leave a graph visible as though it had been accepted.
-        # **The hop bound a workspace without its sidecar needs.** The loader
-        # refuses to guess it, and tells the operator to supply it — so there has
-        # to be a way to, from the surface a deployment is actually started with.
-        # This function is that surface for both entry points, and the factory
-        # has always accepted a config; nothing was passing one.
+        # **The graph read is passed whole, and the composition is checked
+        # there.** These two settings are resolved independently from the
+        # environment, so a deployment can point them at two different
+        # workspaces — each internally consistent, and together producing
+        # embeddings from one graph's tensors read through the other graph's node
+        # identifiers. The pipeline refuses that composition, and because this
+        # function publishes nothing, a refused one cannot leave a graph visible
+        # as though it had been accepted.
+        # The hop bound comes from the shortest-path table's sidecar alone: the
+        # configured bound for a table without one (`SHEPHERD_SP_HOP_BOUND`) was
+        # retired with contract M2.5, which refuses such a table before any bound
+        # is read.
         pipeline = create_diagnosis_pipeline(
-            kg=kg,
-            config=PipelineConfig(sp_hop_bound=_configured_hop_bound()),
+            graph=graph,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
-            kg_path=str(kg_file),
             device=device,
         )
         # Read the configuration back **before returning**, not after publishing.

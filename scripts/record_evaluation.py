@@ -18,7 +18,7 @@ that did not happen.
 
 Usage:
     python scripts/record_evaluation.py \\
-        --report artifacts/mode_a.json \\
+        --report artifacts/measurement.json \\
         --checkpoint-dir data/workspaces/<ws>/checkpoints
 
     # what does this ledger hold for one set of weights?
@@ -105,6 +105,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"{args.report} is missing {exc}, so it is not a measurement artifact "
             "this can derive a record from"
         ) from exc
+    except ValueError as exc:
+        raise SystemExit(f"{args.report}: {exc}") from exc
 
     # **The ledger has to be beside the weights it describes.** Without this it
     # can be written into any directory, including one holding no checkpoint at

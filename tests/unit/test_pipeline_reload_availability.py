@@ -23,7 +23,6 @@ Module: tests/unit/test_pipeline_reload_availability.py
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -128,15 +127,16 @@ class TestARejectedCandidateCostsNothing:
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
         assert result.success is False
-        assert "is not the kg artifact" in result.message
+        assert "is not the graph" in result.message
         _assert_untouched(api, before)
 
     def test_a_replaced_graph_artifact_is_refused_and_changes_nothing(
         self, monkeypatch, tmp_path
     ):
         api, before = _serving(monkeypatch)
+        other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
         root, _ = _candidate_workspace(monkeypatch, tmp_path)
-        (root / "node_features.pt").write_bytes(b"same shape, another workspace")
+        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
@@ -228,7 +228,8 @@ class TestAFailedReloadReportsWhatIsStillServing:
     ):
         api, _ = _serving(monkeypatch)
         root, _ = _candidate_workspace(monkeypatch, tmp_path)
-        (root / "edge_indices.pt").write_bytes(b"another workspace")
+        other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+        (root / "edge_indices.pt").write_bytes((other / "edge_indices.pt").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
@@ -303,19 +304,22 @@ class TestAnAcceptedCandidateReplacesAllOfIt:
         assert result.status.scoring_mode == CANDIDATE_CONFIG["scoring_mode"]
         assert result.status.current_data_dir == str(root)
 
-    def test_the_graph_is_only_loaded_after_the_workspace_is_accepted(
+    def test_the_model_is_only_built_after_the_workspace_is_accepted(
         self, monkeypatch, tmp_path
     ):
         """The swap is not the only ordering that matters: verification precedes
-        construction, so a refused workspace never reaches the loader."""
+        construction, so a refused workspace never reaches the checkpoint or the
+        model. `other` is built first because each `_candidate_workspace` call
+        installs a fresh recorder, and only the last one installed is live."""
         api, _ = _serving(monkeypatch)
+        other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
         root, reached = _candidate_workspace(monkeypatch, tmp_path)
-        (root / "num_nodes.json").write_bytes(b"another workspace")
+        (root / "num_nodes.json").write_bytes((other / "num_nodes.json").read_bytes())
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
 
         assert result.success is False
-        assert reached == [], "the graph was loaded out of a refused workspace"
+        assert reached == [], "the model was built out of a refused workspace"
 
 
 # --------------------------------------------------------------------------
@@ -360,7 +364,8 @@ def test_a_service_with_no_pipeline_is_not_told_one_is_still_serving(
     import src.api.main as api
 
     root, _ = _candidate_workspace(monkeypatch, tmp_path)
-    (root / "node_features.pt").write_bytes(b"another workspace")
+    other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+    (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
     monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
     monkeypatch.setattr(api.app_state, "kg", None, raising=False)
     monkeypatch.setattr(api.app_state, "_current_data_dir", None, raising=False)
@@ -547,7 +552,8 @@ class TestNothingLeavesThisEndpointUnencodable:
             if case == "bad_conv_type":
                 kwargs["conv_type"] = "nonsense"
             elif case == "bad_workspace":
-                (root / "node_features.pt").write_bytes(b"another workspace")
+                other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
+                (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
                 kwargs["checkpoint_path"] = str(root / "ckpt.pt")
 
         result = _reload(**kwargs)
@@ -603,14 +609,11 @@ def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path)
     checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "val_mrr": torch.tensor(0.5)}
     torch.save(checkpoint, checkpoint_path)
 
-    graph_data = {
-        "x_dict": torch.load(data_dir / "node_features.pt", weights_only=False),
-        "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=False),
-        "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
-    }
+    # From the workspace: a checkpoint is loaded only over a graph verified from
+    # one (contract M2.4).
     pipeline = DiagnosisPipeline(
-        kg=KnowledgeGraph(),
-        graph_data=graph_data,
+        graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+        data_dir=str(data_dir),
         checkpoint_path=str(checkpoint_path),
         device="cpu",
     )

@@ -1,0 +1,297 @@
+"""The deployment probe's M2 acceptance (phases M and R), on CPU.
+
+On the GB10 these run with `--m2-acceptance --device cuda`; here the phase
+functions run on CPU over the demo graph, so the production entry points they
+drive -- the trainer, the measurement CLI, the serving build, the shortest-path
+producer and the inventory -- are exercised end to end, and every probe in each
+phase must pass. Also: the acceptance is complete only when every required probe
+of both parts ran and passed, the CLI cannot turn the acceptance into a CPU run,
+and a snapshot that includes directories sees an empty one left behind.
+
+Module: tests/unit/test_probe_m2_phase.py
+"""
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("torch")
+
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+
+def _probe():
+    spec = importlib.util.spec_from_file_location(
+        "probe_deployment", REPO / "scripts" / "probe_deployment.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+def _statuses(report, prefix):
+    return {p.probe_id: (p.status, p.detail) for p in report.probes
+            if p.probe_id.startswith(prefix)}
+
+
+def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
+    probe = _probe()
+    report = probe.Report()
+    sound = probe.phase_writer(report, tmp_path)
+    checkpoint = probe.phase_training(report, tmp_path, sound, device="cpu", epochs=1)
+    assert checkpoint is not None
+
+    probe.phase_m2_demo(report, tmp_path, sound, checkpoint, device="cpu")
+
+    phase = _statuses(report, "M")
+    assert set(phase) == {p for p in probe.M2_DEMO_REQUIRED if p.startswith("M")}
+    assert {k: v[0] for k, v in phase.items()} == dict.fromkeys(phase, "passed"), (
+        {k: v[1] for k, v in phase.items() if v[0] != "passed"}
+    )
+    refused = tmp_path / "m2" / "refused"
+    assert not refused.exists() or not any(refused.iterdir()), "a refused run left a directory"
+    # The review's P2-2: M3 measures the checkpoint M2 resumed into, never its
+    # parent in its place -- read from the measurement's own manifest.
+    import json
+
+    facts = {p.probe_id: p.facts for p in report.probes}
+    measured = json.loads((tmp_path / "m2" / "measured" / "measurement.json").read_text())
+    child = facts["M2"]["child_sha256"]
+    assert measured["manifest"]["artifact_digests"]["checkpoint"] == child
+    assert facts["M3"]["checkpoint_sha256"] == child != facts["M2"]["parent_sha256"]
+
+
+def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
+    import shutil
+
+    import yaml
+
+    probe = _probe()
+    from src.kg.workspace import write_workspace
+    from src.utils.checkpoint_io import read_checkpoint
+
+    root = tmp_path / "workspaces"
+    real = root / "ws"
+    write_workspace(probe._demo_kg(), real, feature_dim=probe.FEATURE_DIM,
+                    samples=probe._budget())
+    produced = subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "compute_shortest_paths.py"),
+         "--kg-path", str(real / "kg.json"), "--output-dir", str(real),
+         "--max-hops", "5", "--workers", "1"],
+        cwd=REPO, capture_output=True, text=True, timeout=600,
+    )
+    assert produced.returncode == 0, produced.stderr[-2000:]
+    # The reference: a model of this architecture that records nothing, as the
+    # models trained before the contract are.
+    trained = probe._last(probe._train_run(real, tmp_path / "reference_run", "cpu", 1,
+                                           settings=probe._DEMO_TRAINING))
+    contents = read_checkpoint(trained, map_location="cpu", weights_only=False).checkpoint
+    del contents["training_input_digests"]
+    reference = real / "checkpoints" / "gat" / "model-ref.pt"
+    reference.parent.mkdir(parents=True)
+    import torch
+
+    torch.save(contents, reference)
+    shutil.rmtree(tmp_path / "reference_run")
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump(dict(probe._DEMO_TRAINING)))
+
+    report = probe.Report()
+    work = tmp_path / "work"
+    probe.phase_m2_real(report, work, real, config, reference, root, device="cpu")
+
+    phase = _statuses(report, "R")
+    assert set(phase) == set(probe.M2_REAL_REQUIRED)
+    assert {k: v[0] for k, v in phase.items()} == dict.fromkeys(phase, "passed"), (
+        {k: v[1] for k, v in phase.items() if v[0] != "passed"}
+    )
+    facts = {p.probe_id: p.facts for p in report.probes}
+    assert facts["R6"]["sp_kg_binding"] == "verified"
+    assert facts["R7"]["reference_refusal"] == "no record"
+    assert facts["R4"]["child_optimizer_step"] > facts["R4"]["parent_optimizer_step"]
+
+
+def test_an_architecture_other_than_the_reference_s_is_refused(tmp_path):
+    """R2 compares the settings in effect, defaults included, with the reference."""
+    import yaml
+
+    probe = _probe()
+    from src.kg.workspace import write_workspace
+
+    root = tmp_path / "workspaces"
+    real = root / "ws"
+    write_workspace(probe._demo_kg(), real, feature_dim=probe.FEATURE_DIM,
+                    samples=probe._budget())
+    reference = probe._last(probe._train_run(real, real / "run", "cpu", 1,
+                                             settings=probe._DEMO_TRAINING))
+    settings = dict(probe._DEMO_TRAINING)
+    del settings["num_heads"]                    # the default, 8, is not the reference's 4
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump(settings))
+
+    report = probe.Report()
+    probe.phase_m2_real(report, tmp_path / "work", real, config, reference, root, device="cpu")
+
+    r2 = {p.probe_id: p for p in report.probes}["R2"]
+    assert r2.status == "failed" and "num_heads" in r2.detail
+    assert {p.probe_id: p.status for p in report.probes}["R3"] == "failed"
+
+
+def test_the_acceptance_is_complete_only_when_every_required_probe_passed():
+    probe = _probe()
+    report = probe.Report()
+    for probe_id in probe.M2_DEMO_REQUIRED:
+        report.probes.append(probe.Probe(probe_id, "m2", "x", status="passed"))
+    demo_only = probe.m2_acceptance(report, real_requested=False)
+    assert demo_only["demo"]["complete"] and not demo_only["complete"]
+
+    for probe_id in probe.M2_REAL_REQUIRED[:-1]:
+        report.probes.append(probe.Probe(probe_id, "real", "x", status="passed"))
+    report.probes.append(probe.Probe(probe.M2_REAL_REQUIRED[-1], "real", "x", status="skipped"))
+    partial = probe.m2_acceptance(report, real_requested=True)
+    assert partial["real_data"]["not_passed"] == {probe.M2_REAL_REQUIRED[-1]: "skipped"}
+    assert not partial["complete"]
+
+    report.probes = [p for p in report.probes if p.probe_id != "M3"]
+    assert probe.m2_acceptance(report, True)["demo"]["not_passed"]["M3"] == "not run"
+
+
+def test_the_cli_cannot_make_the_acceptance_a_cpu_run_or_write_the_workspace(tmp_path):
+    probe = _probe()
+    real = tmp_path / "workspaces" / "ws"
+    (real / "checkpoints").mkdir(parents=True)
+    reference = real / "checkpoints" / "model.pt"
+    reference.write_bytes(b"x")
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    work = ["--work-dir", str(tmp_path / "work")]
+    real_args = ["--real-workspace", str(real), "--real-config", str(config),
+                 "--real-reference-checkpoint", str(reference)]
+
+    for argv in (
+        [*work, "--m2-acceptance"],                                    # device auto
+        [*work, "--m2-acceptance", "--device", "cpu"],
+        [*work, "--device", "cuda", *real_args],                       # not an acceptance
+        [*work, "--m2-acceptance", "--device", "cuda", "--real-workspace", str(real)],
+        ["--work-dir", str(real / "w"), "--m2-acceptance", "--device", "cuda", *real_args],
+        [*work, "--m2-acceptance", "--device", "cuda", *real_args,
+         "--workspaces-root", str(tmp_path / "workspaces" / "ws" / "checkpoints" / "x")],
+    ):
+        with pytest.raises(SystemExit):
+            probe.parse_args(argv)
+
+    args = probe.parse_args([*work, "--m2-acceptance", "--device", "cuda", *real_args])
+    assert args.workspaces_root == real.parent
+
+
+def test_a_snapshot_with_directories_sees_an_empty_one(tmp_path):
+    probe = _probe()
+    (tmp_path / "a.txt").write_text("a")
+    files_before = probe.snapshot(tmp_path)
+    before = probe.snapshot(tmp_path, include_dirs=True)
+    (tmp_path / "run" / "logs").mkdir(parents=True)
+
+    assert probe.snapshot(tmp_path) == files_before                # files alone: blind
+    with pytest.raises(AssertionError, match="created"):
+        probe.assert_untouched(before, tmp_path, "x", include_dirs=True)
+
+
+def test_without_cuda_the_acceptance_stops_after_the_device_check(tmp_path):
+    """The entry point itself: `--device cuda` on a host with no CUDA fails A2,
+    runs nothing after it on CPU, and reports every required probe as not run."""
+    import json
+
+    import torch
+
+    if torch.cuda.is_available():
+        pytest.skip("this host has CUDA; the case is a host without it")
+    probe = _probe()
+    work = tmp_path / "work"
+    report_path = work / "m2_report.json"
+
+    assert probe.main(["--work-dir", str(work), "--report", str(report_path),
+                       "--m2-acceptance", "--device", "cuda"]) == 1
+
+    report = json.loads(report_path.read_text())
+    ran = {p["id"] for p in report["probes"]}
+    assert not {p for p in ran if p[0] in "BCDEMR"}, sorted(ran)
+    assert {p["id"]: p["status"] for p in report["probes"]}["A2"] == "failed"
+    acceptance = report["m2_acceptance"]
+    assert acceptance["complete"] is False
+    assert acceptance["demo"]["not_passed"]["D1"] == "not run"
+    assert acceptance["real_data"] == {"requested": False, "complete": False}
+    assert report["tested_commit"]["commit"]
+    assert work.is_dir(), "the acceptance keeps its work directory"
+
+
+def test_the_report_cannot_be_an_input_an_earlier_result_or_outside_the_work_dir(tmp_path):
+    """The review's P2-1, before any work: the report of an acceptance stays
+    inside its work directory, is no input and replaces no existing file."""
+    probe = _probe()
+    real = tmp_path / "workspaces" / "ws"
+    (real / "checkpoints").mkdir(parents=True)
+    reference = real / "checkpoints" / "model.pt"
+    reference.write_bytes(b"reference")
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    work = tmp_path / "work"
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "report.json").write_text("earlier")
+    acceptance = ["--m2-acceptance", "--device", "cuda", "--real-workspace", str(real),
+                  "--real-config", str(config), "--real-reference-checkpoint", str(reference)]
+
+    for report, work_dir in (
+        (reference, work), (config, work), (real / "report.json", work),
+        (tmp_path / "beside.json", work),                      # outside the work dir
+        (earlier / "report.json", earlier),                    # an earlier result
+    ):
+        with pytest.raises(SystemExit):
+            probe.parse_args(["--work-dir", str(work_dir), "--report", str(report),
+                              *acceptance])
+    assert reference.read_bytes() == b"reference" and config.read_text() == "{}"
+    assert (earlier / "report.json").read_text() == "earlier"
+
+    args = probe.parse_args(["--work-dir", str(work), "--report", str(work / "m2.json"),
+                             *acceptance])
+    assert args.report == work / "m2.json"
+
+
+def test_a_report_target_that_appears_during_the_run_is_not_overwritten(
+    tmp_path, monkeypatch, capsys
+):
+    """The final write creates and never replaces: a file at the report's path
+    when the run ends -- here put there while it ran -- keeps its bytes, the run
+    fails, and the report goes to standard output instead."""
+    import json
+
+    probe = _probe()
+    work = tmp_path / "work"
+    report_path = work / "m2_report.json"
+    real_environment = probe.phase_environment
+
+    def environment_that_also_writes_the_target(report, device, **kwargs):
+        report_path.write_text("written during the run")
+        facts = real_environment(report, device, **kwargs)
+        facts.pop("resolved_device", None)       # no CUDA: the acceptance stops after A
+        return facts
+
+    monkeypatch.setattr(probe, "phase_environment", environment_that_also_writes_the_target)
+
+    assert probe.main(["--work-dir", str(work), "--report", str(report_path),
+                       "--m2-acceptance", "--device", "cuda"]) == 3
+
+    assert report_path.read_text() == "written during the run"
+    out = capsys.readouterr()
+    assert "is not replaced" in out.err
+    start = out.out.index("\n{\n") + 1           # the payload's opening line
+    assert json.loads(out.out[start:])["m2_acceptance"]["complete"] is False

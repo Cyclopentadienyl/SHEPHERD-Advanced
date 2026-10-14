@@ -36,7 +36,13 @@ relations that a test result depends on.
   - training start's `checkpoint_dir` restriction moves back to step 5, with the listing.
 
 Facts about the code are cited from `main` at `1cab39f`, except where §3 notes the F1–F3 fix on
-this branch. **A bare § number refers to this plan.** Sections of `EVALUATION_COHORTS.md` are
+this branch, and where a note says "since R2" (the Mode A/B retirement's step R2, not the
+contract's relation R2): R2 (2026-10-12) left the measurement CLI with Mode C only, no `--modes`, no
+`--seed` and no `--num-workers`, and removed the seeds, the loader and sampler fields and the two
+`legacy_*` fields from the manifest. R2 also set the ledger file's `schema_version` to 2, so a file
+written before it is refused; the "ledger v2" this plan designs (§5) is a later, different change,
+and takes the next schema number.
+**A bare § number refers to this plan.** Sections of `EVALUATION_COHORTS.md` are
 written "EC §x", and other documents are named.
 
 **Revision 3 (2026-10-02; amended 2026-10-05)** follows the review of revision 2 (`6854265`),
@@ -76,7 +82,7 @@ parallel one:
 - **A second verification round (2026-10-05)** corrected the first round's corrections:
   - **the cohort file is located twice today,** by `resolve_cohort` and by `read_samples`. One
     resolver now locates it, so the digest recorded is that of the samples scored. The frozen
-    oracle is the named exception (§5);
+    oracle was then the named exception (since closed with the oracle, §5);
   - **the checkpoint list is C3 checkpoint inspection,** so it follows D8 rather than being
     display. The Training Console's resume dropdown is a second listing, and it moves onto
     the one listing function;
@@ -88,11 +94,11 @@ parallel one:
   - **D8:** M1 is an explicit setting, checked together with the request's arrival socket and
     the absence of forwarding headers. Stop is per job type;
   - **D3:** B-1 must also settle the served disease clamp and the silent phenotype drop.
-- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging, which now
-  stages a directory the oracle reads as its `--data-dir`. It also corrected the reader list,
-  now limited to measurement and audit readers with the generated-split readers named; the
-  Training Console's resume listing, now a named C3 exception; D4's field count; and the D3
-  citations, now at `1cab39f`.
+- **A third, focused check (2026-10-05)** corrected the frozen oracle's staging design, a
+  directory the oracle would read as its `--data-dir` (since closed with the oracle, §5). It
+  also corrected the reader list, now limited to measurement and audit readers with the
+  generated-split readers named; the Training Console's resume listing, now a named C3
+  exception; D4's field count; and the D3 citations, now at `1cab39f`.
 
 Revision 2 (`6854265`) settled D3 by the scorer policy, made D5 follow the owner's checkbox, and
 reworked D4, D6 and D8.
@@ -136,7 +142,8 @@ question one, and BACKLOG item 14):
 - **The file.** One `evaluations.json` sits beside the checkpoints it describes.
 - **The key.** Each record is keyed by `checkpoint_digest`, `cohort_role`, `cohort_digest` and
   a `measurement_semantics_digest` (`sidecar.py:157-162`). That digest covers every manifest
-  field that can move a number, seeds and the numerical regime included (`sidecar.py:72-115`).
+  field that can move a number, seeds and the numerical regime included (`sidecar.py:72-115`;
+  since R2 the manifest records no seed).
 - **A result stays tied to the weights.** It is bound to the checkpoint's SHA-256, never to its
   file name, so a rename does not lose it.
 - **A contradiction is refused.** A second record with the same key is accepted only if it is
@@ -146,12 +153,14 @@ question one, and BACKLOG item 14):
   identical, for example after the checkpoint has moved and its path in the manifest changed.
 - **A seed is not bit-determinism.** The ledger's own documentation says so: a seed controls
   the harness's random streams, not CUDA's arithmetic, so a refusal is "an instruction to look,
-  not a proof of a defect" (`sidecar.py:174-181`, `:333-336`).
+  not a proof of a defect" (`sidecar.py:174-181`, `:333-336`). Since R2 a measurement records no
+  seed, and the ledger's documentation rests the point on the regime fields alone.
 - **Writing.** It is single-writer: an atomic replace with best-effort stale-write detection,
   and no locking.
 - **Schema.** A file whose `schema_version` is not 1 is refused, with the instruction to read it
   with the revision that wrote it "rather than reinterpreting its fields under new rules"
-  (`sidecar.py:225-230`).
+  (`sidecar.py:225-230`). Since R2 the version is 2, so a file written before R2 is refused the
+  same way (`read_ledger`).
 - **Location.** `find_checkpoint` looks only directly inside the directory it is given. Under
   the per-architecture layout, the ledger therefore sits in `checkpoints/<arch>/`.
 - **Readers.** Nothing reads it except `record_evaluation.py --show`. No API route, UI or
@@ -159,15 +168,13 @@ question one, and BACKLOG item 14):
 
 ### 2.2 The measurement engine, and what each mode measures
 
-`scripts/measure_scorer.py` is the only producer whose output the ledger accepts. The frozen
-`scripts/evaluate_model.py` is not one: its report has no manifest, and its `--split` choices
-are `train`/`val`/`test`.
+`scripts/measure_scorer.py` is the only producer whose output the ledger accepts.
 
 - **How a cohort is given.** It is `<data_dir>/<split>_samples.json` with `--cohort-kind
   supplied`. Even then the workspace's graph artifacts are verified (`measure_scorer.py:122-128`),
   so a test cohort has to sit in a valid generated workspace.
-- **Mode A** cannot run on any checkpoint in the scanned family (`BACKLOG.md`, the M1/M2
-  finding), and Mode B depends on it.
+- **Mode A** could not run on any checkpoint in the scanned family (`BACKLOG.md`, the M1/M2
+  finding), and Mode B depended on it. Both were retired by R2 (2026-10-12); the CLI measures Mode C.
 - **Mode C is the approved disease scorer, measured.** `run_mode_c` (`measurement.py:1227`):
   - pools each patient's phenotype embeddings (masked mean);
   - scores the result by raw cosine against **every disease node in the graph**;
@@ -191,8 +198,8 @@ are `train`/`val`/`test`.
 - **Mode D**, the production path-reachable candidates with the η/SP mixture, measures that
   legacy behaviour. It is for B-0.5's attribution work. It is not built, and its design has an
   unresolved problem (`docs/working/scorer-measurement/PLAN_B03.md`).
-- **Patient-level output.** The rank and prediction side files carry patient `sample_id`s and
-  are written without staging.
+- **Patient-level output.** The rank side file carries patient `sample_id`s and is written
+  without staging (the prediction side file went with Mode A in R2).
 
 ### 2.3 Test cohorts
 
@@ -288,9 +295,9 @@ with the first, although only the newer one will be used. This item adds none:
 
 | Concern | The one path | Not used for it here, and not added alongside |
 |---|---|---|
-| Producing a test number | `measure_scorer.py`, Mode C | `evaluate_model.py`, the frozen oracle; Mode D, which measures the legacy behaviour and is a separate item |
+| Producing a test number | `measure_scorer.py`, Mode C | Mode D, which measures the legacy behaviour and is a separate item |
 | Scoring | one implementation of the pool, the cosine, the candidate universe and the tie rule, shared by Mode C and B-1 (D3). Only the cosine is shared today | a test-only scorer; two pools |
-| Resolving a test cohort | the cohort registry (D6): one resolver locates a cohort's file, and both the digest recorded and the samples scored come from that file (§5) | the loose `<split>_samples.json` supplied path, which today is located twice, by `resolve_cohort` and by `read_samples`. The frozen oracle is the one named exception (§5) |
+| Resolving a test cohort | the cohort registry (D6): one resolver locates a cohort's file, and both the digest recorded and the samples scored come from that file (§5) | the loose `<split>_samples.json` supplied path, which today is located twice, by `resolve_cohort` and by `read_samples` |
 | Recording | ledger v2 | a v1 reader inside v2 code (§5) |
 | Running a job | one job runner, made by reshaping `training_manager`; the Training Console moves onto it | a second process manager, or a runner extracted around the old one |
 | Listing checkpoints | one listing function behind the existing route and the Training Console's resume dropdown, upgraded: by workspace and architecture chosen among those the server lists, with a safe metadata read (§5) | a second listing path |
@@ -402,20 +409,24 @@ so the aim is to make that use visible and comparable, not to forbid it.
 - **Only comparable numbers are ordered together.** Ordering is by one metric over records of
   one cohort version and one **scoring semantics**.
   - **Scoring semantics is narrower than `measurement_semantics_digest`.** That digest also
-    covers the seeds, the batch formation and the numerical regime, `software_revision`
-    included (`sidecar.py:87-92`, `:104-114`). Grouping by it would split the list at every
+    covers the batch formation (and, before R2, the seeds) and the numerical regime,
+    `software_revision` included (`sidecar.py:87-92`, `:104-114`). Grouping by it would split
+    the list at every
     commit, so checkpoints tested at different commits could never be compared.
   - **Scoring semantics is a named list of seven fields,** the ones that say *what* a Mode C
     test computed: `mode`, `cohort_kind`, `candidate_construction`, `score_semantics`,
     `model_construction`, `canonical_tie_policy_version` and `metric_schema_version`.
   - **Four groups are left out:**
-    - the seeds and batch formation (`sidecar.py:87-92`);
+    - the seeds and batch formation (`sidecar.py:87-92`; since R2 only `batch_size` remains);
     - the numerical regime (`:104-114`);
     - the sampler and loader fields. Mode C records these from loader defaults but does not
       use them (`measure_scorer.py:352-358`), so a changed default must not split the group;
     - `legacy_truncation_k` and `legacy_tie_policy`. They are constants on every manifest
       (`measure_scorer.py:364-365`) that only Mode A's legacy ranking reads, so for the same
       reason: they would split every group when the oracle's surface retires.
+
+    Since R2 the manifest carries neither the sampler and loader fields nor the two `legacy_*`
+    fields, so those two exclusions are moot; they stay here as the reason for the list.
 
     The graph needs no field of its own, because a cohort version is bound to one graph
     (D6). The regime is shown on each row, and a row whose regime differs from the rest is
@@ -487,16 +498,18 @@ cuDNN version. The contract's M4 adds those facts to the report (contract §5.3)
   recorded note: who, when and what was found. The note is kept in the report store with that
   key's reports, not in the ledger. It deletes no report, and it does not lift the block.
 - **Across keys, the choice is made visible rather than prevented.** Mode C consumes no
-  randomness, so its seeds, shuffle and worker count do not change what it computes.
+  randomness, so its seeds, shuffle and worker count did not change what it computes; since R2
+  the manifest records none of them.
   - **Batch size and code changes can.** They move numbers at floating-point level: with the
     repository's own pool and cosine, batch size 1 against 32 differs in the seventh decimal.
     A code change can move them further while `model_construction` stays the same.
   - **All of these are key fields** (`sidecar.py:87-92`, `:104`), so a re-run under another
-    seed or batch size, or after any commit, is a new key. Two rules keep that from becoming
-    a way round the block:
-    - **the job runner fixes the inputs a test run has no reason to vary:** the seed, batch
-      size and worker count, and the device, which is the deployment's own with no fallback
-      (§5). Only the deterministic setting is selectable, and it is recorded;
+    batch size (before R2, also another seed), or after any commit, is a new key. Two rules
+    keep that from becoming a way round the block:
+    - **the job runner fixes the inputs a test run has no reason to vary:** the batch size
+      (since R2 the CLI takes no seed and no worker count), and the device, which is the
+      deployment's own with no fallback (§5). Only the deterministic setting is selectable,
+      and it is recorded;
     - **D4's fixed rule** picks one record per checkpoint, and later records in the same
       group are shown beside it with any difference marked.
 - **The way forward is a deterministic re-run.** `deterministic_algorithms`,
@@ -737,18 +750,22 @@ This is one pipeline extended, not a second one.
     resolver returns, and the digest is taken from the same read that parses it (the
     contract's M2.1), so the digest recorded is the digest of the samples scored.
   - **Every measurement and audit reader moves onto it:**
-    - `measure_scorer` in all its modes;
+    - `measure_scorer`, which measures Mode C alone since the Mode A/B retirement's R2
+      (2026-10-12);
     - `scripts/audit_split_overlap.py`, including its direct hash;
     - `scripts/audit_generator_fidelity.py`, including its direct hashes
       (`audit_generator_fidelity.py:538-539`);
-    - `src/evaluation/cohort.py`'s own overlap reader;
-    - `scripts/calibrate_mode_a.py`, which passes `--cohort-kind` through.
+    - `src/evaluation/cohort.py`'s own overlap reader.
 
     A supplied cohort's argument changes from a split name to a registered cohort version.
     The tests that pass `--split test --cohort-kind supplied`, or test `read_samples`'
-    split-name contract, change with it: `tests/integration/test_legacy_equivalence.py`
-    (`:53`, `:290-466`) and `tests/unit/test_measurement_mode_a.py` (its supplied-cohort
-    cases, from `:54`).
+    split-name contract, change with it. Since R2 they are
+    `tests/integration/test_measure_scorer_run.py` (its supplied `test` cohort),
+    `tests/unit/test_measurement_reads_once.py` (its `supplied` fixture),
+    `tests/unit/test_measurement_mode_c.py` (its `world` fixture) and
+    `tests/unit/test_measure_scorer_cli.py` (the `--split` tests); the two files this list named,
+    `tests/integration/test_legacy_equivalence.py` and `tests/unit/test_measurement_mode_a.py`,
+    were deleted by R2.
   - **Readers of generated splits only are not moved onto the resolver,** and are listed so the
     claim is not read as wider.
     - `scripts/train_model.py` locates `train`/`val` twice, as `measure_scorer` does today
@@ -760,19 +777,11 @@ This is one pipeline extended, not a second one.
 
     None of them reads a test cohort. Moving them onto the resolver is a follow-up outside
     this item.
-  - **The frozen oracle is the one named exception.** `scripts/evaluate_model.py` is
-    byte-pinned (`tests/unit/test_frozen_evaluator.py`). It reads `<split>_samples.json` and
-    the graph tensors from its `--data-dir` (`evaluate_model.py:203, 224-234`), and its
-    `--split` accepts only train, val or test (`:443`). `calibrate_mode_a.py` and
-    `tests/integration/test_legacy_equivalence.py` drive it on supplied cohorts. For them:
-    - **a staging directory per run** holds the registered version written as
-      `test_samples.json`, checked against the version's digest;
-    - **beside it** are links to the workspace's `node_features.pt`, `edge_indices.pt` and
-      `num_nodes.json`, checked against the workspace's graph digests;
-    - **the driver** passes that directory as the oracle's `--data-dir`, with `--split test`.
-
-    Nothing else reads the staging directory, and no loose file stays in the workspace. This
-    exception goes when the frozen oracle retires.
+  - **The frozen oracle's named exception is closed.** `scripts/evaluate_model.py` was
+    byte-pinned, so this plan exempted it from the resolver and designed a staging directory for
+    the calibration launcher and `tests/integration/test_legacy_equivalence.py` to drive it on
+    supplied cohorts. The launcher and the oracle were deleted on 2026-10-10 (the contract's
+    M2.1, decisions 3 and 6), so neither the exception nor the staging design is needed.
   - Generated cohorts, the workspace's own splits, stay where they are. The measurement and
     audit readers locate them through the same resolver.
   - The report carries the cohort's label and role, the source case count and the exclusion
@@ -803,7 +812,8 @@ This is one pipeline extended, not a second one.
     describes old-pipeline models, which are archived with it (§4.9 question 4).
 - **Job runner.** `training_manager`'s subprocess core becomes the one job runner, reshaped for
   both jobs rather than extracted around the old one (§4.0).
-  - **A test run's inputs are fixed** (D5): the seed, batch size and worker count, and the
+  - **A test run's inputs are fixed** (D5): the batch size (since R2 there is no seed or worker
+    count to fix), and the
     deployment's device. Only the deterministic setting is selectable.
   - **Stop is per job type.** A training stop cannot stop a test job (D8).
   - Training becomes one job type, and the Training Console moves onto the runner. The runner

@@ -451,17 +451,20 @@ def loader_pipeline(tmp_path, *, graph_digest=None):
 
 class TestTheLoaderEnforcesTheBinding:
 
-    def test_a_legacy_pair_serves_and_is_reported_unrecorded(self, tmp_path):
-        """Refusing these would break every deployment for a claim they never
-        made. Serving them while calling the provenance *verified* would be
-        worse — so it is neither."""
+    def test_a_legacy_pair_is_refused(self, tmp_path):
+        """Contract M2.5. A legacy pair used to be served and reported
+        unrecorded, so as not to break deployments for a claim they never made;
+        it records no graph, and the shortest-path term is part of the ranking,
+        so it is refused and rebuilt (decision 2)."""
         publish_legacy(tmp_path)
         pipeline = loader_pipeline(tmp_path, graph_digest=DIGEST_A)
 
-        pipeline._load_shortest_paths(Path(tmp_path))
+        with pytest.raises(SPArtifactError, match="carries no source binding"):
+            pipeline._load_shortest_paths(Path(tmp_path))
 
-        assert pipeline._sp_ready is True
-        assert pipeline._sp_kg_binding == "unrecorded"
+        assert pipeline._sp_ready is False
+        assert pipeline._sp_lookup is None
+        assert pipeline._sp_kg_binding is None
 
     def test_a_bound_pair_over_the_graph_it_names_serves(self, tmp_path):
         publish(tmp_path, kg_digest=DIGEST_A)
@@ -645,7 +648,7 @@ class TestTheLoaderEnforcesTheBinding:
     def test_the_refusal_does_not_reach_the_graph_verifier(self, tmp_path):
         """**Scope.** A rejected shortest-path table must not stop a consumer
         that never reads it. The check belongs to the SP loader, not to
-        `verify_graph_artifacts`, which is what a graph or training consumer
+        `verify_graph_reads`, which is what a graph or training consumer
         goes through — that is the provenance round's lesson, where a check put
         there blocked model loading over a note that gates nothing.
         """
@@ -653,12 +656,17 @@ class TestTheLoaderEnforcesTheBinding:
 
         from src.kg import artifacts
 
-        source = inspect.getsource(artifacts.verify_graph_artifacts)
-        for name in ("build_id", "kg_binding", "sp_artifact", "shortest_paths"):
-            assert name not in source, (
-                f"verify_graph_artifacts mentions {name}; the SP binding has "
-                "moved into the gate every graph consumer passes through"
-            )
+        # The read forms (contract M2.1, S5) are the gate; the path form went in
+        # S9, and the pin outlived it.
+        for gate in (artifacts.verify_graph_reads,
+                     artifacts.verify_graph_source_read, artifacts.check_unparsed_kg_json,
+                     artifacts.read_split_manifest):
+            source = inspect.getsource(gate)
+            for name in ("build_id", "kg_binding", "sp_artifact", "shortest_paths"):
+                assert name not in source, (
+                    f"{gate.__name__} mentions {name}; the SP binding has "
+                    "moved into the gate every graph consumer passes through"
+                )
 
 
 class TestTheDigestRecordedIsTheOneReadAtLoad:
@@ -739,6 +747,115 @@ class TestTheDigestRecordedIsTheOneReadAtLoad:
         recorded = json.loads((tmp_path / "shortest_paths.meta.json").read_text())
         assert recorded["kg_digest"] == file_sha256(kg_path)
         assert not any("changed while" in r.message for r in caplog.records)
+
+
+class TestTheGraphTraversedIsTheGraphRecorded:
+    """**One read of `kg.json` gives both the graph and the digest** (contract
+    M2.1, S3).
+
+    The producer hashed the path and then loaded it, so a file replaced between
+    the two was traversed as one graph and recorded as another. It now records
+    the digest of the bytes it parsed. Replacing the file after that read, by
+    either kind of replacement, leaves the run on what it read: the graph
+    traversed and the digest recorded are both the original's, and the
+    end-of-run comparison tells the operator the file moved.
+    """
+
+    @staticmethod
+    def _run(module, monkeypatch, kg_path, out_dir, traverse):
+        monkeypatch.setattr(module, "compute_shortest_paths", traverse)
+        monkeypatch.setattr(
+            sys, "argv",
+            ["compute_shortest_paths.py", "--kg-path", str(kg_path),
+             "--output-dir", str(out_dir), "--max-hops", "5"],
+        )
+        return module.main()
+
+    def test_no_path_digest_reaches_the_sidecar(self, tmp_path, monkeypatch, caplog):
+        """S9's dynamic pin for the SP producer: every path hash is poisoned and
+        the sidecar still records the digest of the bytes traversed. The
+        end-of-run comparison hashes the path, sees the poison, and only warns:
+        it records nothing."""
+        import hashlib
+
+        from scripts.setup_demo import build_demo_kg
+        from tests.fixtures.path_forms import POISON, poison_path_forms
+
+        module = producer()
+        kg_path = tmp_path / "kg.json"
+        build_demo_kg().save_json(str(kg_path))
+        read = hashlib.sha256(kg_path.read_bytes()).hexdigest()
+        poison_path_forms(monkeypatch)
+
+        with caplog.at_level("WARNING"):
+            assert self._run(module, monkeypatch, kg_path, tmp_path,
+                             lambda kg, max_hops=5, workers=None: rows()) == 0
+
+        recorded = json.loads((tmp_path / "shortest_paths.meta.json").read_text())
+        assert recorded["kg_digest"] == read
+        assert POISON not in json.dumps(recorded)
+        assert any("changed while the shortest paths" in r.message for r in caplog.records), (
+            "the poisoned comparison should only have warned"
+        )
+
+    @pytest.mark.parametrize("how", ["rename", "rewrite"])
+    def test_a_replacement_after_the_read_leaves_the_run_on_what_it_read(
+        self, tmp_path, monkeypatch, caplog, how
+    ):
+        import hashlib
+
+        from scripts.setup_demo import build_demo_kg
+        from src.core.types import DataSource, Node, NodeID, NodeType
+        from tests.fixtures.replacement import replace_after_read
+
+        module = producer()
+        kg_path = tmp_path / "kg.json"
+        original = build_demo_kg()
+        original.save_json(str(kg_path))
+        read_bytes = kg_path.read_bytes()
+        other = build_demo_kg()
+        other.add_node(Node(id=NodeID(source=DataSource.MONDO, local_id="MONDO:other"),
+                            node_type=NodeType.DISEASE, name="other"))
+        other.save_json(str(tmp_path / "other.json"))
+        record = replace_after_read(
+            monkeypatch, after=kg_path, target=kg_path,
+            data=(tmp_path / "other.json").read_bytes(), how=how,
+        )
+        traversed = []
+
+        def traverse(kg, max_hops=5, workers=None):
+            traversed.append(kg.total_nodes)
+            return rows()
+
+        with caplog.at_level("WARNING"):
+            assert self._run(module, monkeypatch, kg_path, tmp_path, traverse) == 0
+
+        recorded = json.loads((tmp_path / "shortest_paths.meta.json").read_text())
+        assert record.fired == 1
+        assert traversed == [original.total_nodes] != [other.total_nodes]
+        assert recorded["kg_digest"] == hashlib.sha256(read_bytes).hexdigest()
+        assert recorded["kg_total_nodes"] == original.total_nodes
+        assert any("changed while the shortest paths" in r.message for r in caplog.records)
+
+    def test_the_graph_is_read_once_before_the_traversal(self, tmp_path, monkeypatch):
+        """The end-of-run comparison opens it again, after; the parse and the
+        recorded digest share one open."""
+        from scripts.setup_demo import build_demo_kg
+        from tests.fixtures.opens import count_opens
+
+        module = producer()
+        kg_path = tmp_path / "kg.json"
+        build_demo_kg().save_json(str(kg_path))
+        opens_at_traversal = []
+
+        with count_opens() as opens:
+            def traverse(kg, max_hops=5, workers=None):
+                opens_at_traversal.append(opens.opens(kg_path))
+                return rows()
+
+            assert self._run(module, monkeypatch, kg_path, tmp_path, traverse) == 0
+
+        assert opens_at_traversal == [1]
 
 
 class TestItReachesTheServiceResponse:

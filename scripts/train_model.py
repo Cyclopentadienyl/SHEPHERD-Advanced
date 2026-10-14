@@ -53,7 +53,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Tuple
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -97,7 +97,7 @@ ALLOCATOR_SOURCE = _apply_allocator() if __name__ == "__main__" else None
 import torch
 import yaml
 
-from src.training.trainer import Trainer, TrainerConfig
+from src.training.trainer import Trainer, TrainerConfig, apply_seed
 from src.training.loss_functions import LossConfig
 from src.kg.data_loader import (
     DataLoaderConfig,
@@ -107,11 +107,13 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
-from src.evaluation.cohort import (
-    MANIFEST_FILENAME,
-    verify_generated_cohorts,
-    verify_graph_artifacts,
-)
+from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
+
+if TYPE_CHECKING:
+    from src.kg.artifacts import ManifestRead
+    from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
+    from src.utils.checkpoint_io import CheckpointRead
+    from src.utils.fingerprint import ReadIdentity
 
 # Configure logging
 logging.basicConfig(
@@ -395,192 +397,251 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
 # =============================================================================
 # Data Loading
 # =============================================================================
-def load_graph_data(data_dir: Path) -> Dict[str, Any]:
-    """
-    Load knowledge graph data from disk
+#: The generated splits a training run consumes.
+TRAINING_SPLITS = ("train", "val")
 
-    Expected files:
-    - node_features.pt: {node_type: tensor}
-    - edge_indices.pt: {edge_type: tensor}
-    - num_nodes.json: {node_type: count}
-    """
-    logger.info(f"Loading graph data from {data_dir}")
 
-    graph_data = {
-        "x_dict": {},
-        "edge_index_dict": {},
-        "num_nodes_dict": {},
+class TrainingInputs(NamedTuple):
+    """What a training run read from its workspace, once each, and checked.
+
+    The resume parent is not among them: it is read later, where it is restored,
+    and nothing compares it with this workspace yet (M2.3).
+
+    Carried whole from `read_training_inputs` to the record, so the tensors and
+    samples a run trains on and the digests it records come from the same reads
+    and cannot be paired with another read of a file that changed in between.
+    """
+
+    manifest: ManifestRead
+    graph: GraphArtifactsRead
+    samples: Dict[str, SamplesRead]
+    #: Whether the validation split holds samples, decided once from the
+    #: samples parsed. A run without them trains without validation and must
+    #: not record the file as an input its results rest on.
+    with_validation: bool
+    #: The digest the manifest this run read binds for each of the four graph
+    #: roles, as `verify_graph_reads` returned it after checking the tensors
+    #: against it. `kg` is the source graph the tensors were exported from;
+    #: training records it without parsing `kg.json` (contract M2.2).
+    bound: Dict[str, str]
+
+
+def read_training_inputs(data_dir: Path) -> TrainingInputs:
+    """Read the manifest, the graph tensors and both sample files once each, and
+    verify from those reads (contract M2.1, S8).
+
+    **Before anything is written.** `train` calls this ahead of the run
+    directories, `config.yaml` and `runtime.json`: whether this workspace's graph
+    is the export its manifest names, and whether its cohorts are the ones that
+    manifest describes, is knowable from the files alone.
+
+    **The digests compared are those of the bytes parsed.** A file replaced
+    after its read is either the one trained on and recorded, or refused as not
+    what the manifest records; nothing is hashed again by path.
+
+    `kg.json` is not parsed by training, so it gets the identification check
+    (M2.1 decision 1): the file on disk is compared with this run's one manifest
+    reading, and nothing about it is recorded.
+
+    `training_fields=True`: training carries the two optional sample fields
+    measurement does not (`candidate_disease_ids`, `gene_ids`).
+    """
+    from src.kg.artifacts import check_unparsed_kg_json, read_split_manifest, verify_graph_reads
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+
+    # Stat only: a missing split or a workspace generated before the allocation
+    # step is named before anything is read.
+    for split in TRAINING_SPLITS:
+        resolve_cohort(data_dir, split)
+
+    manifest = read_split_manifest(data_dir)
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    samples = {
+        split: read_samples(data_dir, split, training_fields=True)
+        for split in TRAINING_SPLITS
     }
 
-    # Load node features
-    node_features_path = data_dir / "node_features.pt"
-    if node_features_path.exists():
-        graph_data["x_dict"] = torch.load(node_features_path, weights_only=True)
-        logger.info(f"Loaded node features: {list(graph_data['x_dict'].keys())}")
+    bound = verify_graph_reads(manifest, graph.reads)
+    check_unparsed_kg_json(data_dir, manifest)
+    verify_cohort_reads(manifest, samples)
 
-    # Load edge indices
-    edge_indices_path = data_dir / "edge_indices.pt"
-    if edge_indices_path.exists():
-        graph_data["edge_index_dict"] = torch.load(edge_indices_path, weights_only=True)
-        logger.info(f"Loaded edge indices: {len(graph_data['edge_index_dict'])} edge types")
-
-    # Load node counts
-    num_nodes_path = data_dir / "num_nodes.json"
-    if num_nodes_path.exists():
-        with open(num_nodes_path) as f:
-            graph_data["num_nodes_dict"] = json.load(f)
-    else:
-        # Infer from features
-        for node_type, features in graph_data["x_dict"].items():
-            graph_data["num_nodes_dict"][node_type] = features.size(0)
-
-    logger.info(f"Node counts: {graph_data['num_nodes_dict']}")
-
-    return graph_data
-
-
-def load_samples(data_dir: Path, split: str = "train") -> List[DiagnosisSample]:
-    """
-    Load training/validation samples
-
-    Expected file: {split}_samples.json
-    Format: [{"patient_id": str, "phenotype_ids": [int], "disease_id": int}, ...]
-    """
-    samples_path = data_dir / f"{split}_samples.json"
-
-    if not samples_path.exists():
-        logger.warning(f"Samples file not found: {samples_path}")
-        return []
-
-    with open(samples_path) as f:
-        raw_samples = json.load(f)
-
-    samples = [
-        DiagnosisSample(
-            patient_id=s["patient_id"],
-            phenotype_ids=s["phenotype_ids"],
-            disease_id=s["disease_id"],
-            candidate_disease_ids=s.get("candidate_disease_ids"),
-            gene_ids=s.get("gene_ids"),
+    # After verification: an emptied cohort file is refused as not the file the
+    # manifest records, before it is refused as empty.
+    if not samples["train"].samples:
+        raise ValueError(
+            f"No training samples found: {samples['train'].identity.path} is empty"
         )
-        for s in raw_samples
-    ]
+    with_validation = bool(samples["val"].samples)
+    logger.info(
+        f"Read {len(samples['train'].samples)} train and "
+        f"{len(samples['val'].samples)} val samples; "
+        f"node counts: {graph.graph_data['num_nodes_dict']}"
+    )
+    return TrainingInputs(manifest, graph, samples, with_validation, bound)
 
-    logger.info(f"Loaded {len(samples)} {split} samples")
-    return samples
 
+def read_resume_parent(
+    requested: Optional[str], inputs: TrainingInputs, device: str,
+) -> Optional["CheckpointRead"]:
+    """Read the resume parent once and refuse it unless it was trained on this
+    run's inputs (contract M2.3). Returns `None` when nothing was requested.
 
-def resolve_resume_checkpoint(trainer: Any, requested: Optional[str]) -> Optional[Path]:
-    """Load a parent checkpoint if one was asked for and is there, and return the
-    path **that was actually loaded**.
+    **At the top of the run**, beside the workspace checks: `train()` calls this
+    right after `read_training_inputs`, before the run directories,
+    `config.yaml`, `runtime.json`, the model or any checkpoint exist, so a refused
+    parent leaves none of them behind and nothing is restored.
 
-    Returns `None` when nothing was requested, and `None` when a path was
-    requested but does not exist — in that case the run warns and continues, so it
-    did not consume the parent and must not record it.
+    - **A requested parent that does not exist refuses.** The run does not train
+      from scratch instead.
+    - **Read once** (M2.1), with this site's options (`map_location` the run's
+      device, `weights_only=False`). The trainer restores from this read's dict
+      and the record's `resume_checkpoint` is this read's identity, so the state
+      restored and the digest recorded cannot come from two reads.
+    - **The parent must record every one of this run's workspace roles with the
+      same digest, and no other** (`verify_training_record`, the comparator
+      serving and measurement use; the role set is its argument). The graph
+      roles (`kg`, `node_features`, `edge_indices`, `num_nodes`) are decision 1
+      applied to the parent. The data roles (`split_manifest`, `train_samples`,
+      and `val_samples` when this run validates) are the owner's decision of
+      2026-10-06: resume continues training on the same data. A parent with no
+      record (from before the contract), a role missing on either side (a
+      parent that validated, resumed by a run whose parsed `val_samples` are
+      empty, among them) or a different digest refuses. That is a product
+      restriction, not a verdict on the parent.
 
-    **Deciding and loading are one operation on purpose.** Split apart, "which
-    path did we load" and "which path do we record" are two answers that can
-    disagree, and nothing downstream could tell. Here the returned value *is* the
-    argument `load_checkpoint` received, so recording something the run did not
-    load is not a bug that can be introduced without editing this function.
-
-    **Extracted so the decision itself is testable.** Its three outcomes used to
-    be reachable only by running `train()`, so the tests exercised the role
-    builder's response to an argument and assumed the caller supplied it
-    correctly — the same weakness as testing a copy of production instead of
-    production.
-
-    One further property comes free, and it matters. `train()` now binds
-    `resumed_from` in exactly one place, from this call. Constructing the digest
-    map above that line makes `resumed_from` undefined, which is an `F821` that
-    the lint gate in `tests/unit/test_training_provenance.py` already fails on —
-    verified by moving the block and watching it fire. The pre-initialised
-    `resumed_from = None` this replaces left a window where a reordering would
-    have compiled and silently recorded no parent.
+    The parent's own `resume_checkpoint` is its lineage, not a workspace input,
+    and is not compared: every link in a resume chain read the same files, so a
+    checkpoint's record covers its history.
     """
+    from src.utils.checkpoint_io import read_checkpoint
+
     if not requested:
         return None
 
     resume_path = Path(requested)
     if not resume_path.exists():
-        logger.warning(f"Checkpoint not found: {resume_path}")
-        return None
+        raise FileNotFoundError(
+            f"The resume parent {resume_path} does not exist. It was requested, so "
+            "the run does not train from scratch instead; name an existing "
+            "checkpoint, or start a new run without --resume."
+        )
 
-    logger.info(f"Resuming from checkpoint: {resume_path}")
-    trainer.load_checkpoint(resume_path)
-    return resume_path
+    # Named before the read, so a parent that does not load fails after a line
+    # that says which file it was.
+    logger.info(f"Reading the resume parent: {resume_path}")
+    parent = read_checkpoint(resume_path, map_location=device, weights_only=False)
+    check_resume_parent(
+        parent.checkpoint, inputs, recorded_by=f"The resume parent {resume_path}"
+    )
+    logger.info(
+        f"Resume parent accepted: {resume_path} (sha256 {parent.identity.sha256[:12]})"
+    )
+    return parent
 
 
-def training_input_roles(
-    data_dir: Path, *, with_validation: bool,
-    resumed_from: Optional[Path] = None,
-) -> Dict[str, Path]:
-    """The semantic input roles a training run consumes, by role name.
+def check_resume_parent(
+    checkpoint: Any, inputs: TrainingInputs, *, recorded_by: str,
+    compared_with: str = "this run",
+) -> None:
+    """M2.3's rule, on a checkpoint already read: it must record every one of
+    the workspace roles a run over `inputs` records, with the same digests, and
+    no other workspace role. Raises `TrainingRecordMismatch`.
 
-    **Named rather than inlined so the tests can exercise this instead of
-    restating it.** A test that rebuilds the same dict beside the source proves
-    the test and the test's copy agree, which is not the contract anyone cares
-    about — the first version of these tests did exactly that and missed a scope
-    error in the caller.
-
-    `with_validation` is the caller's observation that validation actually ran, not
-    an assumption that a file exists. `create_dataloaders` returns `None` for the
-    validation loader when there are no validation samples, and a run in that state
-    trains without validation — recording the role anyway would claim an input the
-    run's results do not rest on. Note the wording: an existing-but-empty
-    `val_samples.json` *is* opened and parsed before the loader becomes `None`, so
-    the honest statement is that the samples were **not used by a validation
-    pass**, not that the file was never touched.
-
-    `resumed_from` is the parent checkpoint, when one was **actually loaded**. A
-    resumed run restores model weights, optimizer, scheduler, scaler and training
-    state from it, so two runs over identical workspace files but different parents
-    produce materially different results — and a digest map that could not tell
-    them apart would contradict this field's whole claim. `None` covers both "no
-    resume was requested" and "one was requested but the path did not exist", since
-    `train()` warns and continues in the second case: the run did not consume it,
-    and recording the role with a `None` digest would say something different.
-
-    **One role, not a lineage.** The parent's own provenance lives in the parent;
-    nothing here walks it, and there is no registry or parent/child graph.
-
-    Nothing globs the directory. An unrelated split appearing beside these files
-    must not change the record of a run that never read it.
+    One function, so the inventory (`audit_checkpoint_family.py --inventory`,
+    M2.6) applies the rule `train` applies rather than a copy of it. The
+    parent's own `resume_checkpoint` is its lineage and is not compared.
     """
-    roles = {
-        "train_samples": data_dir / "train_samples.json",
-        "node_features": data_dir / "node_features.pt",
-        "edge_indices": data_dir / "edge_indices.pt",
-        "num_nodes": data_dir / "num_nodes.json",
-    }
-    if with_validation:
-        roles["val_samples"] = data_dir / "val_samples.json"
-    if resumed_from is not None:
-        roles["resume_checkpoint"] = Path(resumed_from)
+    from src.utils.fingerprint import verify_training_record
 
-    # **The manifest says how the workspace was cut, which the sample digests
-    # cannot.** Two byte-different sample files could have been split at the
-    # disease level or at the sample level, and nothing in their digests
-    # distinguishes those regimes.
-    #
-    # **Recorded here, verified in `train`.** The manifest is a training input
-    # like any other and its digest belongs in this map — but the *check* that it
-    # describes this workspace belongs at the top of the run, ahead of the
-    # directories and the config file, not at the point where a role map is
-    # assembled two thirds of the way through. Running it here as well would read
-    # both cohorts a second time to re-establish what has already been
-    # established.
-    roles["split_manifest"] = data_dir / MANIFEST_FILENAME
-    return roles
+    current = training_input_digests(inputs)
+    record = (
+        checkpoint.get("training_input_digests") if isinstance(checkpoint, dict) else None
+    )
+    recorded = set(record) - {"resume_checkpoint"} if isinstance(record, dict) else set()
+    verify_training_record(
+        checkpoint,
+        current,
+        sorted(set(current) | recorded),
+        recorded_by=recorded_by,
+        compared_with=compared_with,
+    )
+
+
+def training_input_digests(
+    inputs: TrainingInputs, *, parent: Optional[ReadIdentity] = None,
+) -> Dict[str, str]:
+    """The record of what a training run consumed, by role, built only from the
+    reads (contract M2.1, S8).
+
+    **Only from the readers' results.** Every value is the digest of the bytes a
+    reader parsed: the samples, the three graph tensors, the manifest, and the
+    parent restored. Nothing here hashes a path, so a file replaced after its
+    read cannot change what is recorded, and a digest that was never taken
+    cannot be recorded as `None`.
+
+    `inputs.with_validation` is the observation that validation ran: a run whose
+    validation split is empty trains without it, and recording the role anyway
+    would claim an input the run's results do not rest on.
+
+    `parent` is the identity of the checkpoint restored (`read_resume_parent`'s
+    read). A resumed run restores model weights, optimizer, scheduler, scaler and
+    training state from it, so two runs over identical workspace files but
+    different parents produce materially different results. **One role, not a
+    lineage**: the parent's own provenance lives in the parent.
+
+    **The manifest says how the workspace was cut, which the sample digests
+    cannot.** Two byte-different sample files could have been split at the
+    disease level or at the sample level, and nothing in their digests
+    distinguishes those regimes.
+
+    **`kg` is the manifest-bound source graph (contract M2.2).** Training does
+    not parse `kg.json`; its `kg` role is the digest the manifest it read binds,
+    against which the tensors it parsed were verified (`verify_graph_reads`).
+    That is the transitive claim the manifest makes: these tensors are that
+    graph's export. It is the one value here that is not a read's identity, and
+    it comes from the same manifest reading as `split_manifest`.
+    Nothing globs the directory, so an unrelated split appearing beside these
+    files does not change the record of a run that never read it.
+    """
+    reads: Dict[str, Optional[ReadIdentity]] = {
+        "train_samples": inputs.samples["train"].identity,
+        "node_features": inputs.graph.reads.get("node_features"),
+        "edge_indices": inputs.graph.reads.get("edge_indices"),
+        "num_nodes": inputs.graph.reads.get("num_nodes"),
+    }
+    if inputs.with_validation:
+        reads["val_samples"] = inputs.samples["val"].identity
+    if parent is not None:
+        reads["resume_checkpoint"] = parent
+    reads["split_manifest"] = inputs.manifest.identity
+
+    missing = sorted(role for role, read in reads.items() if read is None)
+    if missing:
+        raise ValueError(
+            f"no read of {', '.join(missing)}, so there is no digest to record; a "
+            "training record names only bytes a reader parsed"
+        )
+    digests = {role: read.sha256 for role, read in reads.items()}
+    if not inputs.bound.get("kg"):
+        raise ValueError(
+            "the manifest this run read binds no kg digest, so the source graph "
+            "of these tensors cannot be recorded"
+        )
+    digests["kg"] = inputs.bound["kg"]
+    return digests
 
 
 def create_dataloaders(
     config: TrainConfig,
     graph_data: Dict[str, Any],
+    train_samples: List[DiagnosisSample],
+    val_samples: Optional[List[DiagnosisSample]],
 ) -> Tuple[DiagnosisDataLoader, Optional[DiagnosisDataLoader]]:
-    """Create training and validation data loaders"""
-    data_dir = Path(config.data_dir)
+    """Create training and validation data loaders over samples already read.
 
+    `val_samples` is `None` when the run trains without validation; that is
+    decided once, in `read_training_inputs`, and not again here.
+    """
     # Data loader config
     dl_config = DataLoaderConfig(
         batch_size=config.batch_size,
@@ -591,20 +652,13 @@ def create_dataloaders(
         num_negative_samples=config.num_negative_samples,
     )
 
-    # Training samples
-    train_samples = load_samples(data_dir, "train")
-    if not train_samples:
-        raise ValueError("No training samples found")
-
     train_loader = create_diagnosis_dataloader(
         samples=train_samples,
         graph_data=graph_data,
         config=dl_config,
     )
 
-    # Validation samples
-    val_samples = load_samples(data_dir, "val")
-    if val_samples:
+    if val_samples is not None:
         val_config = DataLoaderConfig(
             batch_size=config.batch_size,
             num_workers=config.num_workers,
@@ -698,11 +752,19 @@ def train(config: TrainConfig) -> Dict[str, float]:
 
     # **Refuse before the first run artifact exists.** Everything below this line
     # creates or writes something: run directories, `config.yaml`, a checkpoint
-    # directory, then the graph tensors and a model built from them. Whether this
-    # workspace's graph is the export its manifest names, and whether its cohorts
-    # are the ones that manifest describes, is knowable from the files alone — so
-    # it is knowable before any of that. Verifying later left a run that had
-    # already written its configuration and loaded a mixed graph.
+    # directory, then a model built from the graph. Whether this workspace's graph
+    # is the export its manifest names, and whether its cohorts are the ones that
+    # manifest describes, is knowable from the files alone — so it is knowable
+    # before any of that. Verifying later left a run that had already written its
+    # configuration and loaded a mixed graph.
+    #
+    # **One read per workspace input, and the check compares those reads**
+    # (contract M2.1, S8). The graph tensors and samples verified here are the
+    # ones trained on and recorded; `kg.json` is only identified (decision 1).
+    # The resume parent is read and checked here too (contract M2.3): a missing
+    # parent, one from before the contract, or one trained on other graph or
+    # sample files is refused before anything below exists, and the trainer
+    # later restores from this one read.
     #
     # No rollback and no transactional writing: the refusal simply moves ahead of
     # the side effects.
@@ -713,8 +775,8 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info("  python scripts/preprocess_data.py")
         return {}
 
-    verify_graph_artifacts(data_dir)
-    verify_generated_cohorts(data_dir)
+    inputs = read_training_inputs(data_dir)
+    parent = read_resume_parent(config.resume_from, inputs, device)
 
     # Create output directories
     output_dir = Path(config.output_dir)
@@ -743,9 +805,22 @@ def train(config: TrainConfig) -> Dict[str, float]:
     with open(output_dir / "runtime.json", "w") as f:
         json.dump(_allocator_record(), f, indent=2)
 
-    # Load data — verified above, before anything was written.
-    graph_data = load_graph_data(data_dir)
-    train_loader, val_loader = create_dataloaders(config, graph_data)
+    # **The seed governs the initial weights too** (contract M3a). The model
+    # draws its weights when it is built, and the seed used to be applied first in
+    # `Trainer.__init__`, after the loaders and the model, so `--seed` fixed the
+    # training stream but not the weights that stream started from. The Trainer
+    # applies the same seed again, so the stream training draws from is unchanged.
+    if config.seed is not None:
+        apply_seed(config.seed)
+
+    # The data read and verified above, before anything was written.
+    graph_data = inputs.graph.graph_data
+    train_loader, val_loader = create_dataloaders(
+        config,
+        graph_data,
+        inputs.samples["train"].samples,
+        inputs.samples["val"].samples if inputs.with_validation else None,
+    )
 
     # Create model
     model = create_model_from_config(config, graph_data)
@@ -828,36 +903,39 @@ def train(config: TrainConfig) -> Dict[str, float]:
     #
     # Both are read by name in `ModelCheckpoint._save_checkpoint`; setting an
     # attribute here is not enough on its own.
-    from src.utils.fingerprint import compute_fingerprint, compute_input_digests
+    from src.utils.fingerprint import compute_fingerprint
 
-    # Resume if specified. One binding site, from one call: see
-    # `resolve_resume_checkpoint` for why that placement is load-bearing.
-    resumed_from = resolve_resume_checkpoint(trainer, config.resume_from)
+    # Restore from the parent read and checked at the top (contract M2.3); the
+    # trainer reads nothing.
+    if parent is not None:
+        trainer.restore_checkpoint(parent.checkpoint)
+        logger.info(
+            f"Resumed from checkpoint: {parent.identity.path} "
+            f"(sha256 {parent.identity.sha256[:12]})"
+        )
+    # **Only the identity outlives the restore.** The model, optimizer,
+    # scheduler and scaler hold what they took from the parent; the read itself
+    # would otherwise keep every source tensor it parsed, on the run's device,
+    # alive until training returns. Nothing is cleared: what the optimizer
+    # adopted stays with the optimizer.
+    parent_identity = parent.identity if parent is not None else None
+    del parent
 
-    # **After the resume decision, not before it.** A first version attached the
-    # digests above this block, where `resumed_from` cannot exist yet; a resumed
-    # run would then have recorded every current file and stayed silent about the
-    # parent checkpoint whose weights, optimizer, scheduler, scaler and training
-    # state it restored. Two runs over identical workspace files with different
-    # parents would have carried identical digests.
+    # **The parent is in the record.** A first version attached the digests
+    # before the resume decision; a resumed run then recorded every current file
+    # and stayed silent about the parent checkpoint whose weights, optimizer,
+    # scheduler, scaler and training state it restored. Two runs over identical
+    # workspace files with different parents would have carried identical
+    # digests.
     #
     # Both attributes are read by name in `ModelCheckpoint._save_checkpoint`, and
     # nothing reads them before `trainer.train()` below, so attaching them here
     # changes nothing except what they can see.
     trainer.data_fingerprint = compute_fingerprint(graph_data)
 
-    # Only the roles this run consumed. `val_loader is None` is the observation
-    # that validation did not run — `create_dataloaders` returns it that way when
-    # the workspace has no validation samples, and it is what this scope actually
-    # holds. A first version read `val_samples`, which lives in
-    # `create_dataloaders` and is not in scope here at all.
-    trainer.training_input_digests = compute_input_digests(
-        training_input_roles(
-            data_dir,
-            with_validation=val_loader is not None,
-            resumed_from=resumed_from,
-        )
-    )
+    # Only the roles this run consumed, and only from the reads: the inputs read
+    # and verified at the top, and the parent restored above.
+    trainer.training_input_digests = training_input_digests(inputs, parent=parent_identity)
 
     # Train
     logger.info("Starting training...")

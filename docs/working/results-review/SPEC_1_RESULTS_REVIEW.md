@@ -330,10 +330,12 @@ sparse index, are **benchmark candidates, not a chosen implementation**. Measure
 built-in PyTorch approach first; build a custom index only if it loses.
 
 **That work completes the B-1 eager-SP dependency. It does not by itself complete B-0**, whose
-remaining scope is: evaluator migration, modes A–D, full-universe candidate construction, untruncated
+remaining scope is: modes A–D, full-universe candidate construction, untruncated
 MRR and Hits@{1,5,10,20,50,100}, served-configuration manifests and fingerprints, negative-set count
 and composition instrumentation, the paired-cohort/strata/bootstrap protocol, the measurement-output
-schema, and the institutional measurement run.
+schema, and the institutional measurement run. Evaluator migration is no longer part of it: the
+frozen evaluator was never migrated onto the shared primitives, and was deleted on 2026-10-10
+(`docs/working/PLAN_PROVENANCE_CONTRACT.md` M2.1, decision 6).
 
 ---
 

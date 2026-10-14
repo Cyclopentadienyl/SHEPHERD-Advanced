@@ -1,9 +1,8 @@
 """Backlog item 1b — freeze what `Trainer._validate` and `Trainer.evaluate` do.
 
 `_validate` (`trainer.py:615-681`) and `evaluate` (`:773-849`) duplicate the same
-calculation. Item 1c extracts the shared pass and item 1d compares it against the
-Mode A harness. **This file exists so that extraction can be shown to preserve
-behaviour rather than asserted to.**
+calculation. Item 1c extracts the shared pass. **This file exists so that
+extraction can be shown to preserve behaviour rather than asserted to.**
 
 **These are characterization tests, not specifications.** They record what the
 code does today, including things that are arguably wrong — AMP silently
@@ -13,8 +12,8 @@ the point: 1c must not change any of it by accident, and a deliberate change
 should have to edit a test that says what it is changing.
 
 **Scope, bounded on purpose.** No extraction, no `Trainer` redesign, no
-evaluation framework, no differential calibration. One file, and nothing under
-`src/` is touched.
+evaluation framework. One file, and nothing under `src/` is touched. The values
+of the validation ranking are `test_trainer_validation_values.py`'s.
 
 **Each contract group was mutation-checked against a representative defect** —
 not every assertion independently, and the difference matters: a characterization
@@ -309,9 +308,9 @@ def test_an_explicitly_empty_cohort_is_refused_rather_than_replaced():
     Refused rather than scored, because the other outcome was equally silent:
     `mean_loss` divides by `max(num_batches, 1)`, so an empty traversal returns
     `{"loss": 0.0}` — a statement about a model made without reading a patient.
-    `RankingMetrics`, `measurement.py` and `differential.py` all refuse to
-    invent a value for an empty cohort; this is the same refusal at the last
-    entry point that could still produce one.
+    `RankingMetrics` and `measurement.py` both refuse to invent a value for an
+    empty cohort; this is the same refusal at the last entry point that could
+    still produce one.
     """
     trainer = make_trainer([make_batch([0, 1]), make_batch([2, 3])])
 
@@ -356,8 +355,8 @@ def test_a_supplied_cohort_is_still_the_one_evaluated():
 def _capture_metric_inputs(monkeypatch, events: List[str] | None = None):
     """Record what `RankingMetrics.compute_all` is called with, and **when**.
 
-    The prediction lists are local to the entry points, and they are the artifact
-    1d will compare against Mode A's `legacy_top_k_local`. Capturing the call is
+    The prediction lists are local to the entry points, and
+    `test_trainer_validation_values.py` checks their values. Capturing the call is
     the only way to freeze their shape without changing the code under test.
 
     When `events` is supplied the call appends `"metrics"` **from inside**
@@ -423,8 +422,8 @@ def test_amp_disables_itself_on_cpu_whatever_the_config_asks_for():
     """**Frozen as a fact, not endorsed.** `_setup_amp` is
     `config.use_amp and device.type == "cuda"` (`trainer.py:380`), so a CPU run
     requesting float16 silently gets float32 and no scaler. Any measurement taken
-    on CPU is therefore not the deployment numeric context, and 1d's differential
-    calibration has to say which one it ran in.
+    on CPU is therefore not the deployment numeric context: a question about
+    validation under AMP is a CUDA run's to answer.
     """
     trainer = make_trainer([], use_amp=True, amp_dtype="float16")
 

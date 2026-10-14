@@ -36,10 +36,18 @@ Module: src/evaluation/cohort.py
 """
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    FrozenSet,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Tuple,
+)
 
 # `src.kg` writes these files, so it owns their names; importing the map from
 # there keeps the layer order right and gives the writer and the verifier one
@@ -47,9 +55,12 @@ from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Sequence, Tuple
 from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
     MANIFEST_FILENAME,
-    require_manifest_schema,
-    verify_graph_artifacts,
+    ManifestRead,
+    manifest_section,
 )
+
+if TYPE_CHECKING:
+    from src.kg.storage.file_storage import SamplesRead
 
 #: The generator's own split names. Reserved: a supplied cohort using one would be
 #: indistinguishable from a generated one in every artifact downstream.
@@ -213,10 +224,10 @@ class GeneratedCohorts(NamedTuple):
     neither."""
 
 
-def verify_generated_cohorts(
-    data_dir: Path, splits: Sequence[str] = GENERATED_SPLITS
+def verify_cohort_reads(
+    manifest: ManifestRead, samples: Mapping[str, "SamplesRead"]
 ) -> GeneratedCohorts:
-    """Refuse a workspace whose manifest does not describe the files beside it.
+    """Refuse a workspace whose manifest does not describe the cohorts a run read.
 
     **Existence is not binding.** ``resolve_cohort`` establishes that a manifest
     is present, which stops a pre-allocation workspace — but any
@@ -224,16 +235,16 @@ def verify_generated_cohorts(
     training would then proceed on overlapping cohorts under a manifest that
     describes a different cut entirely. This is the check that makes the manifest
     mean something, and it runs at every entry point that consumes generated
-    cohorts, not only in the audit.
+    cohorts, not only in the audits.
 
     **Scoped to what the caller consumes.** A supplied-cohort overlap audit binds
     generated ``train`` and never reads generated ``val``; requiring ``val`` there
     would let a missing or corrupt file block an institutional measurement for a
     reason unrelated to it. Everything that *does* consume both — training,
-    measurement, calibration, the fidelity audit, a generated train/val audit —
-    passes both and gets the disjointness check with them. The returned value
-    names the scope, so the caller's report can describe the gate that actually
-    ran instead of the one it assumed.
+    measurement of a generated cohort, the fidelity audit, a generated train/val
+    audit — passes both and gets the disjointness check with them. The returned
+    value names the scope, so the caller's report can describe the gate that
+    actually ran instead of the one it assumed.
 
     Four things are established, and they prove different facts:
 
@@ -242,94 +253,136 @@ def verify_generated_cohorts(
        phenotypes, genes, patient ids, row order and multiplicity can all change
        while the disease set is preserved.
     2. **The disease sets are the ones it recorded** — recomputed from the
-       records through the reader training uses, against ``realised.*_digest``.
+       records the shared reader (`read_samples`) parsed, against
+       ``realised.*_digest``.
     3. **Its realised sets are what the allocation cut** — internal to the file,
        and what makes "these files are that allocation's cohorts" transitive.
     4. **The cohorts are disjoint** — both the measurement and the manifest's own
        ``disjoint`` claim, and **both only when both cohorts are in scope**. That
        field describes the generated train/val relationship, which a
-       train-versus-supplied overlap does not consume; refusing on it at narrow
-       scope would be the same over-validation this scoping removes, arriving
-       through a claim instead of a file.
+       train-versus-supplied overlap does not consume.
 
-    Reads the sample files in scope, so it costs one pass over the cohorts the
-    caller consumes. Called once per run, before hours of training or minutes of
-    measurement.
+    **Compares, and reads nothing** (contract M2.1). `manifest` is the run's one
+    reading of its manifest and `samples` maps each generated split in scope to
+    what `read_samples` parsed and its identity. Each sample file's digest is the
+    digest of the bytes those samples were parsed from, and the disease sets are
+    recomputed from the same samples, so the check and the run's input cannot
+    describe different bytes. A file replaced after the manifest read is refused
+    by name. Since S9 there is no path form beside it.
+
+    The scope is the splits passed, in the order passed; the disjointness checks
+    run only when both are in scope. The caller has already resolved its cohort
+    (`resolve_cohort`) and read the manifest through `read_split_manifest`, which
+    checked its schema.
 
     Raises:
-        ValueError: naming which of the four failed, and for which split.
+        ValueError: naming which check failed and the manifest, and the samples
+            file when the refusal is about one.
     """
-    from src.kg.disease_allocation import disease_set_digest
-    from src.kg.storage.file_storage import read_samples
-    from src.utils.fingerprint import file_sha256
+    manifest_dict, manifest_path = manifest.manifest, manifest.identity.path
+    scope = tuple(samples)
+    _require_scope(scope)
 
-    scope = tuple(splits)
+    disease_sets: Dict[str, FrozenSet[int]] = {}
+    for split in scope:
+        read = samples[split]
+        _check_samples_digest(manifest_dict, manifest_path, split, read.identity.path,
+                              read.identity.sha256)
+        ids = frozenset(int(sample.disease_id) for sample in read.samples)
+        disease_sets[split] = ids
+        _check_disease_set(manifest_dict, manifest_path, split, read.identity.path, ids)
+
+    both_in_scope = _check_disjointness(
+        manifest_dict, manifest_path, scope, disease_sets,
+        {split: samples[split].identity.path for split in scope},
+    )
+    return GeneratedCohorts(
+        manifest_dict, disease_sets, scope,
+        disjointness_claim_checked=both_in_scope,
+        disjointness_measured=both_in_scope,
+    )
+
+
+def _require_scope(scope: Tuple[str, ...]) -> None:
     unknown = [split for split in scope if split not in GENERATED_SPLITS]
     if unknown or not scope:
         raise ValueError(
             f"verification scope must be a non-empty subset of {GENERATED_SPLITS}, "
             f"got {scope!r}"
         )
-    cohorts = {split: resolve_cohort(data_dir, split) for split in scope}
-    manifest_path = data_dir / MANIFEST_FILENAME
-    manifest = json.loads(manifest_path.read_text())
 
-    require_manifest_schema(manifest, manifest_path)
 
-    artifacts = manifest.get("artifacts", {})
-    realised = manifest.get("realised", {})
-    allocated = manifest.get("allocation", {}).get("allocated", {})
-    disease_sets: Dict[str, FrozenSet[int]] = {}
+def _check_samples_digest(
+    manifest: Dict[str, Any], manifest_path: Path, split: str, path: Path, observed: Any
+) -> None:
+    """Check 1: the file is the bytes the manifest describes."""
+    recorded = manifest_section(manifest, manifest_path, "artifacts").get(f"{split}_samples")
+    if recorded is None:
+        raise ValueError(
+            f"{manifest_path} records no digest for {split}_samples, so nothing "
+            f"says {path} is the cohort it describes. Rebuild the workspace."
+        )
+    if recorded != observed:
+        raise ValueError(
+            f"{path} is not the file {manifest_path} describes "
+            f"({str(recorded)[:12]}... vs {str(observed)[:12]}...). Either the "
+            "samples were replaced after the manifest was written, or the "
+            "manifest came from another workspace."
+        )
 
-    for split, cohort in cohorts.items():
-        recorded = artifacts.get(f"{split}_samples")
-        observed = file_sha256(cohort.samples)
-        if recorded != observed:
-            raise ValueError(
-                f"{cohort.samples} is not the file {manifest_path} describes "
-                f"({str(recorded)[:12]}... vs {str(observed)[:12]}...). Either the "
-                "samples were replaced after the manifest was written, or the "
-                "manifest came from another workspace."
-            )
-        ids = frozenset(int(sample.disease_id) for sample in read_samples(data_dir, split))
-        disease_sets[split] = ids
-        if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
-            raise ValueError(
-                f"the {split} cohort's disease set is not the one {manifest_path} "
-                "records as realised"
-            )
-        if realised.get(f"{split}_digest") != allocated.get(f"{split}_digest"):
-            raise ValueError(
-                f"{manifest_path} contradicts itself: its realised {split} digest "
-                "is not its allocated one, so full coverage did not hold"
-            )
 
-    # **Both disjointness checks are scoped, not just the measurement.** The
-    # manifest's `disjoint` field describes the generated train/val relationship.
-    # A train-versus-supplied overlap audit consumes neither that relationship nor
-    # `val`, so refusing it on that field would block an institutional measurement
-    # on the state of an input it never reads — the same over-validation the
-    # scoping was introduced to remove, arriving through a claim instead of a file.
-    both_in_scope = set(scope) == set(GENERATED_SPLITS)
-    if both_in_scope:
-        if manifest.get("disjoint") is not True:
-            raise ValueError(
-                f"{manifest_path} claims disjoint={manifest.get('disjoint')!r}. "
-                "Disjointness is a contract of the allocation step, so this is a "
-                "broken workspace, not a measurement."
-            )
-        if disease_sets["train"] & disease_sets["val"]:
-            raise ValueError(
-                f"{data_dir} does not hold disease-disjoint cohorts, though "
-                f"{manifest_path} claims it does. Disjointness is a contract of "
-                "the allocation step, so this is a broken workspace, not a "
-                "measurement."
-            )
-    return GeneratedCohorts(
-        manifest, disease_sets, scope,
-        disjointness_claim_checked=both_in_scope,
-        disjointness_measured=both_in_scope,
-    )
+def _check_disease_set(
+    manifest: Dict[str, Any], manifest_path: Path, split: str, path: Path,
+    ids: FrozenSet[int],
+) -> None:
+    """Checks 2 and 3: the disease set is the one recorded, which is the one allocated."""
+    from src.kg.disease_allocation import disease_set_digest
+
+    realised = manifest_section(manifest, manifest_path, "realised")
+    allocated = manifest_section(manifest, manifest_path, "allocation", "allocated")
+    if disease_set_digest(sorted(ids)) != realised.get(f"{split}_digest"):
+        raise ValueError(
+            f"the {split} cohort's disease set ({path}) is not the one "
+            f"{manifest_path} records as realised"
+        )
+    if realised.get(f"{split}_digest") != allocated.get(f"{split}_digest"):
+        raise ValueError(
+            f"{manifest_path} contradicts itself: its realised {split} digest "
+            "is not its allocated one, so full coverage did not hold"
+        )
+
+
+def _check_disjointness(
+    manifest: Dict[str, Any], manifest_path: Path, scope: Tuple[str, ...],
+    disease_sets: Dict[str, FrozenSet[int]], paths: Dict[str, Path],
+) -> bool:
+    """Check 4, when both cohorts are in scope. Returns whether it ran.
+
+    **Both disjointness checks are scoped, not just the measurement.** The
+    manifest's `disjoint` field describes the generated train/val relationship.
+    A train-versus-supplied overlap audit consumes neither that relationship nor
+    `val`, so refusing it on that field would block an institutional measurement
+    on the state of an input it never reads — the same over-validation the
+    scoping was introduced to remove, arriving through a claim instead of a file.
+    """
+    if set(scope) != set(GENERATED_SPLITS):
+        return False
+    if manifest.get("disjoint") is not True:
+        raise ValueError(
+            f"{manifest_path} claims disjoint={manifest.get('disjoint')!r}. "
+            "Disjointness is a contract of the allocation step, so this is a "
+            "broken workspace, not a measurement."
+        )
+    shared = disease_sets["train"] & disease_sets["val"]
+    if shared:
+        raise ValueError(
+            f"{paths['train'].parent} does not hold disease-disjoint cohorts: "
+            f"{paths['train'].name} and {paths['val'].name} share {len(shared)} "
+            f"diseases, though {manifest_path} claims they share none. "
+            "Disjointness is a contract of the allocation step, so this is a "
+            "broken workspace, not a measurement."
+        )
+    return True
 
 
 __all__ = [
@@ -342,7 +395,6 @@ __all__ = [
     "GeneratedCohorts",
     "resolve_cohort",
     "validate_split_name",
-    "verify_generated_cohorts",
-    "verify_graph_artifacts",
+    "verify_cohort_reads",
     "validate_kind",
 ]

@@ -986,29 +986,21 @@ nvidia-smi  # GPU利用率應該>80%
 
 ### 優先順序
 
-1. **優先找回與距離表匹配的原始 sidecar**，之後兩個檔案一起保存、搬移。有 sidecar
-   時它的值優先，`SHEPHERD_SP_HOP_BOUND` 會被忽略。
-2. **找不到 sidecar，但能確認原始設定**（例如從 build log 確認確實是 5-hop）才設定
-   `SHEPHERD_SP_HOP_BOUND=5`。**不要所有部署一律填 5，也不要用表內最大距離回推**
-   ——那個數字證明不了天花板。
-3. **完全不知道原始設定就重新生成**（`scripts/compute_shortest_paths.py`）。若暫時
-   以純 GNN 運行，必須明確知道評分模式已經改變。
-4. 設定環境變數後**重啟後端**，再用下面的狀態檢查確認。
+**距離表只會連同發佈時的 sidecar 一起上線。** 自 contract M2.5 起（2026-10-13），
+sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`kg_digest`），而
+它的 `max_hops` 是 hop bound 唯一的來源。沒有 sidecar、或 sidecar 寫於配對協定之前
+的距離表，會在載入時被拒絕。
 
-### 環境變數
+1. **優先找回與距離表一起發佈的 sidecar**，之後兩個檔案一起保存、搬移。
+2. **否則為這個工作區重建這一對**：執行 `scripts/compute_shortest_paths.py`，它會把
+   距離表與 sidecar 一起發佈，並綁定到這個工作區的圖。**不要手寫 sidecar，也不要用
+   表內最大距離回推 `max_hops`**——那個數字證明不了天花板。
+3. 在那之前，要嘛保留正在服務的部署，要嘛改以不含最短路徑的方式服務：把
+   `shortest_paths.pt` **與** `shortest_paths.meta.json` 成對移出工作區並保留，再重新
+   載入。只留下 sidecar 會被當成「一對中的一邊」而拒絕。評分模式會因此改變。
 
-```bash
-# 只在確知原始 build 的 max_hops 時才設定
-export SHEPHERD_SP_HOP_BOUND=5
-```
-
-- 有效值為 **1..127 的整數**（生成腳本自己驗證的同一個範圍），且**不得低於表內觀察
-  到的最大距離**——低於就會被拒絕，因為不可達代價會落在真實距離之下。
-- 無法解析成整數的值會**被拒絕而非忽略**，避免「以為設好了、其實沒有」。
-- 這是**行程層級**的設定：必須設在啟動後端的那個環境裡，並重啟後端才會生效。
-  **在另一個終端機 export 不會改變已在執行的行程。**
-- 換載不同工作區時（透過 `/api/v1/pipeline/reload`），必須確認這個 bound 對新的表
-  仍然適用。
+原本用來替缺 sidecar 的表補上 bound 的 `SHEPHERD_SP_HOP_BOUND`，已隨 M2.5 **退役**：
+這類表在讀取任何 bound 之前就會被拒絕，因此這個變數不再被讀取。請從服務環境中移除它。
 
 ### 表與圖對不上的時候
 
@@ -1022,39 +1014,40 @@ export SHEPHERD_SP_HOP_BOUND=5
 | *"computed from a different graph"* | 這張表屬於另一個工作區的 `kg.json`，它的節點索引指向的是別的節點 | 改用**這個**工作區建出來的表，或在這裡重新建 |
 | *"One side of a pair is not a pair"* | 一個檔案宣告了協定、另一個沒有——表發布了但 sidecar 沒跟上，或反過來 | 重跑生成腳本;這一對要嘛一起發布,要嘛都不發布 |
 
-**在這個機制之前建的表仍然可以載入。** 它沒有綁定資訊，所以服務會把它的來源回報
-為 `unrecorded`（未記錄）而不是已驗證，記一則警告，然後照常服務。重新建置就會記錄
-下來。
+**在這個機制之前建的表會被拒絕**（自 contract M2.5 起，2026-10-13；以前會帶著警告
+載入並回報為 `unrecorded`）。它沒有綁定資訊，沒有任何紀錄說明它的節點索引屬於哪個
+圖。請用 `scripts/compute_shortest_paths.py` 重新建置，或移除它、改以不含最短路徑的
+方式服務。
 
 `GET /api/v1/pipeline/status` 會回報 `sp_kg_binding`：表確實指向正在服務的那個圖
-時為 `verified`，比這個協定更早的表為 `unrecorded`。**只要最短路徑是開啟的，它就
-不會是空的**——如果它是 `unrecorded`，代表沒有任何檢查確認過那張表從哪裡來。
+時為 `verified`。**只要最短路徑是開啟的，它就不會是空的。**
 
 **用記憶體中的圖（而非工作區）建立管線時**根本無法檢查綁定，此時宣告了綁定的表會
-被**拒絕**而不是被假定成立。請改用工作區建立，或使用未帶綁定的表。
+被**拒絕**而不是被假定成立；未帶綁定的表則如上所述同樣被拒絕。請改用工作區建立。
 
 
-### 缺 sidecar 又沒設定時會發生什麼
+### 缺少、未綁定或不合法的 sidecar
 
-在預設配置（GNN 已載入、`sp_optional=True`）下，**服務不會停止**，而是改為純 GNN
-評分：`sp_ready=False`、`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與
-啟用最短路徑時不同**，這是刻意的取捨——寧可少一個訊號，也不拿沒人選過的天花板評分。
+距離表存在，而它的 sidecar **缺少、未帶綁定、或不合法**（不是 JSON 物件、`max_hops`
+不是整數或超出 1..127、或低於表內距離）時，候選 pipeline 會被**拒絕**，而不是退回
+猜測：
+
+- 服務**尚無**可用 pipeline（冷啟動）→ `/api/v1/diagnose` 回 **503**，不會回傳任何
+  候選疾病。
+- 服務**已有**正在運行的 pipeline → 該次 reload 被拒絕，**舊 pipeline 繼續服務**。
+
+### 完全沒有距離表時
+
+沒有 `shortest_paths.pt`（也沒有 sidecar）時，在預設配置（GNN 已載入、
+`sp_optional=True`）下**服務不會停止**，而是改為純 GNN 評分：`sp_ready=False`、
+`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與啟用最短路徑時不同。**
 
 > **例外：** 若部署刻意設定了 `sp_optional=False`，SP 不可用時**不會建出 pipeline**：
 > 建置被拒絕（`PipelineBuildError`），啟動時不發布任何 pipeline、`/diagnose` 回 503；
 > reload 則被拒絕，原本的 pipeline 繼續服務。這不是「一律退回純 GNN」。目前 API 的
 > 建置路徑使用預設值 `sp_optional=True`。
 
-### 損壞或不合法的 sidecar
-
-sidecar **存在但不合法**（不是 JSON 物件、`max_hops` 不是整數或超出 1..127、或低於
-表內距離）時，候選 pipeline 會被**拒絕**，而不是退回猜測：
-
-- 服務**尚無**可用 pipeline（冷啟動）→ `/api/v1/diagnose` 回 **503**，不會回傳任何
-  候選疾病。
-- 服務**已有**正在運行的 pipeline → 該次 reload 被拒絕，**舊 pipeline 繼續服務**。
-
-### 設定後的狀態檢查
+### 狀態檢查
 
 ```bash
 curl -s http://localhost:8000/api/v1/pipeline/status
@@ -1062,13 +1055,11 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 
 | 欄位 | 預期 |
 |---|---|
-| `sp_ready` | 啟用時 `true`；缺 bound 時 `false` |
-| `sp_max_hops` | 實際生效的天花板 |
-| `sp_hop_bound_source` | `sidecar`（讀自檔案）或 `configured`（來自環境變數） |
+| `sp_ready` | 啟用時 `true`；沒有距離表時 `false` |
+| `sp_max_hops` | 實際生效的天花板，讀自 sidecar |
+| `sp_hop_bound_source` | `sidecar`（設定值退役後唯一的來源） |
+| `sp_kg_binding` | `verified` |
 | `scoring_mode` | 啟用時 `gnn_plus_shortest_path`；SP 關閉且 GNN 正常時 `gnn_only` |
-
-`sp_hop_bound_source` 存在的理由就是這個：**「讀來的」和「設定的」是不同強度的證
-據**，狀態端點要能分辨，而不是只能去翻日誌。
 
 ---
 
@@ -1132,12 +1123,13 @@ workspace 目錄本身無法進入**（此時連 `Path.is_file()` 都會拋例�
 在」會據實回報，不會被講成「紀錄不在」。manifest 這一項尤其要分清楚——manifest 讀不到的意思是
 **「無從得知是否曾宣告過來源紀錄」**，不是**「從未宣告過」**，而只有後者才能推得
 「這個 workspace 建於 provenance 之前」。要不要因為 manifest 壞掉而拒絕整個
-workspace，仍然是 `verify_graph_artifacts()` 的職責。
+workspace，仍然是各入口自己的 workspace 檢查（`read_split_manifest` 與
+`verify_graph_reads`，比對該入口實際讀到的檔案）的職責。
 
-> **修正紀錄**：本節的早期版本讓 `verify_graph_artifacts()` 在來源紀錄損壞時直接拋
-> 例外。那個函數被 `verify_graph_source()` 呼叫，而後者在 `DiagnosisPipeline`
-> 載入張量前執行——結果是「一張便條不見了」會讓模型無法初始化，冷啟動時 `/diagnose`
-> 回 503，而張量本身完好無損。已改為回報而非拒絕。
+> **修正紀錄**：本節的早期版本讓圖驗證函數（當時的 `verify_graph_artifacts()`，現已
+> 移除）在來源紀錄損壞時直接拋例外。serving 在載入張量前執行那項檢查——結果是「一張便條
+> 不見了」會讓模型無法初始化，冷啟動時 `/diagnose` 回 503，而張量本身完好無損。已改為
+> 回報而非拒絕。
 
 ### 舊 workspace
 

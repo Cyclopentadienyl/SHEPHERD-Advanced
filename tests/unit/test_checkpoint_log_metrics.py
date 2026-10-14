@@ -16,7 +16,6 @@ fails this file instead of silently emptying the display again. One step is
 copied rather than run: `_run_evaluation_pass` needs a model and data, so its
 `RankingMetrics().compute_all(...)` call, with default k values, is repeated here.
 """
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -140,13 +139,11 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     checkpoint["logs"] = logs
     torch.save(checkpoint, checkpoint_path)
 
+    # From the workspace, as the service builds it: a checkpoint is loaded only
+    # over a graph verified from one (contract M2.4).
     pipeline = DiagnosisPipeline(
-        kg=KnowledgeGraph(),
-        graph_data={
-            "x_dict": torch.load(data_dir / "node_features.pt", weights_only=False),
-            "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=False),
-            "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
-        },
+        graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+        data_dir=str(data_dir),
         checkpoint_path=str(checkpoint_path),
         device="cpu",
     )

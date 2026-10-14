@@ -55,7 +55,7 @@ written. Nothing here is recalled.
 | F3 | `ShepherdGNN` constructs **no task head**, and the deployed checkpoint passes a strict `load_state_dict`, so it carries no task-head parameters | `DISEASE_SCORER_POLICY.md:3.2, 3.3` |
 | F4 | **No gene-targeted ranking objective is active in the current training path.** The link-prediction and ortholog losses are gated on `positive_triples` / `negative_triples` / `ortholog_pairs`, and **no dataset, collate function or trainer in `src/` produces those keys** — the three names occur only inside `loss_functions.py`. `gene_ids` is not consumed by a loss either. Gene representations **may still receive indirect gradients** through heterogeneous message passing and the supervised disease objective; no current evidence establishes that their geometry is calibrated for patient-to-gene ranking | `training/loss_functions.py:513-584`; absence verified across `src/` |
 | F5 | `DiagnosisSample.gene_ids` is collated into batches and read at `data_loader.py:929-930`, but **no loss consumes it** | `kg/data_loader.py:614,675,741-765,929` |
-| F6 | A **dormant supplied-candidate mechanism already exists** in the training dataloader: `DiagnosisSample.candidate_disease_ids` plus `include_all_candidates`. `file_storage.read_samples` does not read the field, so it is dead on the measurement path | `kg/data_loader.py:613,656-669`; `kg/storage/file_storage.py:72-79` |
+| F6 | A **dormant supplied-candidate mechanism already exists** in the training dataloader: `DiagnosisSample.candidate_disease_ids` plus `include_all_candidates`. `file_storage.read_samples` reads the field only with `training_fields=True`, which measurement does not pass, so it is dead on the measurement path | `kg/data_loader.py:613,656-669`; `kg/storage/file_storage.py:152-171` |
 | F7 | `cosine_score_matrix(patient_matrix, candidate_matrix)` is **candidate-agnostic**, and `sp_mean_distances` already takes a sequence of targets | `inference/scoring.py:193,240` |
 | F8 | The approved disease score is **raw cosine, explicitly interim**, because it reflects what the deployed checkpoint's training objective optimised — not the paper's Eq 18. Changing it requires the paper-parity retraining track, which is outside work item B | `DISEASE_SCORER_POLICY.md:1` statement 2 |
 
@@ -114,7 +114,10 @@ registry, a reservation framework, or implementing gene scoring now.
 
 ### Q2 — Does this scenario change the legacy-removal plan?
 
-**Position: no, and the checklist in `../scorer-measurement/README.md` stands.**
+**Position: no, and the checklist in `../scorer-measurement/README.md` stands.** *Since
+2026-10-12 the legacy path is gone:* the Mode A/B retirement's R2 deleted it, and that checklist
+was replaced by the retirement's record in the same README (the checklist is in git at
+`a535ae2`). The position stands, since `cosine_score_matrix` was kept.
 
 The legacy candidate set is **answer-seeded** — a 2-hop subgraph grown from the
 ground truth plus sampled negatives — so the answer is guaranteed present. A
@@ -122,7 +125,7 @@ clinician's short list carries no such guarantee and is known at inference time.
 They are opposites in the property that matters.
 
 Nor does legacy own the capability. Scoring a restricted candidate set lives in
-`cosine_score_matrix` (F7), which the checklist already retains. A shorter
+`cosine_score_matrix` (F7), which the checklist already retained, and which R2 kept. A shorter
 candidate list needs **less** machinery than Mode C's full universe, not more.
 
 ### Q3 — Supplied candidate universe: an input field, or a clinician-selectable scoring mode?
@@ -318,7 +321,9 @@ schedule it at all is an institutional roadmap decision, not this document's.
 ## 5. What this changes in B-0
 
 **The implemented A/B/C work: nothing.** The legacy-removal checklist is
-unamended — review accepted Q2 as written. B-0.4 proceeds as planned.
+unamended — review accepted Q2 as written. B-0.4 proceeds as planned. *(Since
+2026-10-12 Modes A and B are retired and the checklist is replaced by the
+retirement's record; Mode C is unchanged.)*
 
 **B-0.5 gains one output-contract requirement**, from Q4: if the offline SP
 analysis is to be claimed as available, the institutional run must persist the

@@ -7,8 +7,12 @@ score an offline evaluation reports were computed by two separate
 implementations of the same formulas. Two implementations drift; when they
 drift, the evaluation stops describing the thing being evaluated.
 
-**That condition is not yet ended.** The pipeline composes the primitives;
-`scripts/evaluate_model.py` does not yet. These tests cover the migrated half.
+**The evaluator's copy ended with its deletion, not by migration**:
+`scripts/evaluate_model.py` was never migrated and is deleted (its code is at
+`7dab728`). The pipeline and the measurement harness compose these primitives.
+The cosine is shared; the pool is still two deliberate implementations
+(`pool_patient_embeddings`, `masked_mean_pool`), bound by
+`test_masked_pool_and_served_pool_agree_on_one_unpadded_patient`.
 
 Three properties worth testing, and they are different:
 
@@ -882,9 +886,10 @@ def test_masked_pool_all_true_equals_a_plain_mean():
 
 def test_masked_pool_all_false_is_a_zero_vector():
     """Behaviour preserved, not endorsed. The trainer clamps the denominator to
-    one, so an empty row yields zeros rather than raising or producing NaN. Mode A
-    exists to reproduce the legacy control, and changing this would move it off
-    that control."""
+    one, so an empty row yields zeros rather than raising or producing NaN. The
+    Trainer value tests take their expected rows from this function
+    (`test_trainer_validation_values.py`), so it keeps the Trainer's formula;
+    Mode C refuses a patient with no phenotypes before pooling."""
     emb = torch.randn(2, 4, 5)
 
     got = masked_mean_pool(emb, torch.zeros(2, 4, dtype=torch.bool))
@@ -992,7 +997,7 @@ def test_cosine_matrix_rejects_wrong_rank(patients, candidates):
 # --- Accelerator coverage -------------------------------------------------
 # CUDA is a hard requirement of every deployment, so these are the configurations
 # that actually run in the hospital. They cannot be exercised in this
-# environment; institutional calibration verifies the deployed device and dtype.
+# environment; the deployment's own verification covers the device and dtype.
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
 def test_batched_primitives_on_cuda():
     device = torch.device("cuda")

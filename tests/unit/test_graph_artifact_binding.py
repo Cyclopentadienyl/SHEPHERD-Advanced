@@ -15,7 +15,9 @@ it and passes.
 no allocation and is never subject to the generated splits' disjointness, but it
 is scored against those same tensors. Had graph binding lived inside the
 generated-cohort verifier, generated validation would have been protected while
-institutional evaluation went on consuming a mixed workspace.
+institutional evaluation went on consuming a mixed workspace. Measurement's
+supplied-cohort case is pinned at its entry point, from the reads it scores
+(`test_measurement_reads_once.py`).
 
 Module: tests/unit/test_graph_artifact_binding.py
 """
@@ -28,19 +30,13 @@ import pytest
 
 from src.core.types import DataSource, NodeType
 from src.kg.graph import Edge, KnowledgeGraph, Node, NodeID
-from src.evaluation.cohort import (
-    GRAPH_ARTIFACTS,
-    verify_generated_cohorts,
-    verify_graph_artifacts,
-)
-from tests.fixtures.generated_workspace import (
-    one_sample_per_disease,
-    profiles_for,
-    write_generated_workspace,
-)
+from src.evaluation.cohort import GRAPH_ARTIFACTS
+from src.kg.artifacts import read_split_manifest, verify_graph_reads
+from tests.fixtures.generated_workspace import write_generated_workspace
+from tests.fixtures.workspace_reads import verify_workspace_reads
 
 
-def _workspace(root: Path, *, supplied=False):
+def _workspace(root: Path):
     # A real, loadable `kg.json` — the API path opens it before the pipeline is
     # built, so a stand-in byte string would fail there for the wrong reason.
     # Written before the manifest, which binds these bytes.
@@ -50,10 +46,6 @@ def _workspace(root: Path, *, supplied=False):
                      node_type=NodeType.DISEASE, name=root.name))
     kg.save_json(str(root / "kg.json"))
     write_generated_workspace(root, train_ids=[0, 1, 2], val_ids=[3])
-    if supplied:
-        (root / "institutional_acceptance_samples.json").write_text(
-            json.dumps(one_sample_per_disease("inst", [0], profiles_for([0])))
-        )
     return root
 
 
@@ -65,31 +57,38 @@ def test_the_recorded_digests_are_the_exact_exported_bytes(tmp_path):
 
     for role, filename in GRAPH_ARTIFACTS.items():
         assert manifest["artifacts"][role] == file_sha256(root / filename)
-    assert verify_graph_artifacts(root) == {
-        role: manifest["artifacts"][role] for role in GRAPH_ARTIFACTS
-    }
+    bound, _ = verify_workspace_reads(root)
+    assert bound == {role: manifest["artifacts"][role] for role in GRAPH_ARTIFACTS}
 
 
 @pytest.mark.parametrize("role", sorted(GRAPH_ARTIFACTS))
 def test_replacing_any_single_graph_artifact_is_refused(tmp_path, role):
     """A same-shaped artifact from another workspace passes structural
-    fingerprinting. Only the recorded bytes catch it."""
+    fingerprinting. Only the recorded bytes catch it. Another workspace's valid
+    file, not junk: the checks parse before they compare (contract M2.1), so
+    junk is refused by the reader instead."""
     root = _workspace(tmp_path / "ws")
-    (root / GRAPH_ARTIFACTS[role]).write_bytes(b"same shape, another workspace")
+    other = _workspace(tmp_path / "other")
+    (root / GRAPH_ARTIFACTS[role]).write_bytes((other / GRAPH_ARTIFACTS[role]).read_bytes())
 
-    with pytest.raises(ValueError, match=f"is not the {role} artifact"):
-        verify_graph_artifacts(root)
+    with pytest.raises(ValueError, match="is not the graph" if role == "kg"
+                       else f"is not the {role} artifact"):
+        verify_workspace_reads(root)
 
 
 class TestTrainingRefusesBeforeItActs:
     """The refusal has to precede the side effects, not merely exist.
 
-    ``training_input_roles`` used to carry the verification, and a test calling it
+    A role-map helper used to carry the verification, and a test calling it
     directly proved only that the helper *can* reject. By the time `train` reached
     it, the run directories existed, `config.yaml` was written, the graph tensors
     were loaded, dataloaders and a model were built, a Trainer was constructed and
     a resume checkpoint may have been loaded. Whether the workspace is sound is
     knowable from the files alone, so it is knowable before any of that.
+
+    Since contract M2.1's S8 the files are read once (`read_training_inputs`):
+    those reads parse the graph tensors and the samples, and the check compares
+    them before the dataloaders, the model, the Trainer and any run artifact.
     """
 
     @staticmethod
@@ -115,25 +114,37 @@ class TestTrainingRefusesBeforeItActs:
     @pytest.mark.parametrize(
         "break_it,expected",
         [
-            (lambda root: (root / "node_features.pt").write_bytes(b"another ws"),
-             "is not the node_features artifact"),
-            (lambda root: (root / "train_samples.json").write_text("[]"),
-             "is not the file"),
-            (lambda root: (root / "split_manifest.json").unlink(),
-             "Rebuild it with"),
+            # Another workspace's valid file: refused by digest, naming it.
+            (lambda root, other: (root / "node_features.pt").write_bytes(
+                (other / "node_features.pt").read_bytes()),
+             "node_features.pt is not the node_features artifact"),
+            # Junk: refused by the reader that could not parse it, naming it.
+            (lambda root, other: (root / "node_features.pt").write_bytes(b"another ws"),
+             "node_features.pt could not be parsed"),
+            (lambda root, other: (root / "train_samples.json").write_text("[]"),
+             "train_samples.json is not the file"),
+            (lambda root, other: (root / "kg.json").write_bytes(
+                (other / "kg.json").read_bytes()),
+             "kg.json is not the kg artifact"),
+            (lambda root, other: (root / "val_samples.json").unlink(),
+             "val_samples.json does not exist"),
+            (lambda root, other: (root / "split_manifest.json").unlink(),
+             "(?i)rebuild it with"),
         ],
-        ids=["mixed-graph", "replaced-cohort", "no-manifest"],
+        ids=["mixed-graph", "junk-graph", "replaced-cohort", "crossed-kg",
+             "missing-val", "no-manifest"],
     )
     def test_no_stage_and_no_run_artifact_is_reached(
         self, monkeypatch, tmp_path, break_it, expected
     ):
         train_model = self._forbid(
             monkeypatch,
-            ["load_graph_data", "create_dataloaders", "create_model_from_config",
-             "resolve_resume_checkpoint"],
+            ["create_dataloaders", "create_model_from_config", "Trainer",
+             "read_resume_parent"],
         )
         root = _workspace(tmp_path / "ws")
-        break_it(root)
+        other = _workspace(tmp_path / "other")
+        break_it(root, other)
 
         with pytest.raises(ValueError, match=expected):
             train_model.train(self._config(train_model, root, tmp_path))
@@ -144,11 +155,12 @@ class TestTrainingRefusesBeforeItActs:
 
     def test_a_sound_workspace_reaches_the_next_stage(self, monkeypatch, tmp_path):
         """The refusal must be about the workspace, not about the ordering itself:
-        an unbroken workspace passes the preflight and goes on to load the graph."""
-        train_model = self._forbid(monkeypatch, ["load_graph_data"])
+        an unbroken workspace passes the preflight and goes on to build its
+        dataloaders."""
+        train_model = self._forbid(monkeypatch, ["create_dataloaders"])
         root = _workspace(tmp_path / "ws")
 
-        with pytest.raises(AssertionError, match="load_graph_data ran"):
+        with pytest.raises(AssertionError, match="create_dataloaders ran"):
             train_model.train(self._config(train_model, root, tmp_path))
 
 
@@ -163,26 +175,25 @@ class TestTheClinicalPathIsAGraphConsumer:
 
     @staticmethod
     def _pipeline_module(monkeypatch, reached):
-        """Records whether the graph was loaded, and stands in for the rest of
+        """Records whether the model was built, and stands in for the rest of
         the model build.
 
         **The stand-ins are what let a build past the binding check finish.**
-        These workspaces carry placeholder bytes, not a graph and a checkpoint a
-        model can be built from. A requested model that cannot be built is
-        refused (`PipelineBuildError`, M1), so without them every case that
-        passes the binding check would end in that refusal instead of in what it
-        is about.
+        These workspaces carry a placeholder checkpoint, and a one-node
+        `kg.json` beside the shared fixture's tensors, which were exported from
+        another graph: nothing here is a graph and a checkpoint a model can be
+        built from. A requested model that cannot be built is refused
+        (`PipelineBuildError`, M1), so without them every case that passes the
+        binding check would end in that refusal instead of in what it is about.
         """
         import src.inference.pipeline as pipeline
 
-        def _graph_loaded(self, *args, **kwargs):
-            reached.append("_load_graph_data")
-            return {"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}}
+        def _model_built(self, checkpoint_path, device):
+            reached.append("model")
+            return object()
 
-        monkeypatch.setattr(pipeline.DiagnosisPipeline, "_load_graph_data", _graph_loaded)
         monkeypatch.setattr(
-            pipeline.DiagnosisPipeline, "_load_model_from_checkpoint",
-            lambda self, checkpoint_path, device: object(),
+            pipeline.DiagnosisPipeline, "_load_model_from_checkpoint", _model_built,
         )
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
@@ -192,24 +203,24 @@ class TestTheClinicalPathIsAGraphConsumer:
         )
         return pipeline
 
-    def test_a_mixed_workspace_is_refused_before_the_graph_is_loaded(
+    def test_a_mixed_workspace_is_refused_before_the_model_is_built(
         self, monkeypatch, tmp_path
     ):
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
-        (root / "node_features.pt").write_bytes(b"same shape, another workspace")
+        other = _workspace(tmp_path / "other")
+        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
 
         with pytest.raises(ValueError, match="is not the node_features artifact"):
             pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(), data_dir=str(root),
-                kg_path=str(root / "kg.json"),
+                graph=KnowledgeGraph.read_json(root / "kg.json"), data_dir=str(root),
                 checkpoint_path=str(root / "ckpt.pt"),
             )
 
-        assert reached == [], "graph loading was reached after a digest mismatch"
+        assert reached == [], "the model was built after a digest mismatch"
 
-    def test_a_sound_workspace_goes_on_to_load_the_graph(self, monkeypatch, tmp_path):
+    def test_a_sound_workspace_goes_on_to_build_the_model(self, monkeypatch, tmp_path):
         """The refusal is about the workspace, not about the ordering itself."""
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
@@ -217,91 +228,70 @@ class TestTheClinicalPathIsAGraphConsumer:
         (root / "ckpt.pt").write_bytes(b"weights")
 
         pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(), data_dir=str(root),
-            kg_path=str(root / "kg.json"),
+            graph=KnowledgeGraph.read_json(root / "kg.json"), data_dir=str(root),
             checkpoint_path=str(root / "ckpt.pt"),
         )
 
-        assert reached == ["_load_graph_data"]
+        assert reached == ["model"]
 
-    def test_a_file_backed_pipeline_without_a_kg_path_is_refused(
+    def test_a_file_backed_pipeline_without_a_graph_read_is_refused(
         self, monkeypatch, tmp_path
     ):
         """An optional check is no check for the caller who omits it, and that
         caller is the one it exists for.
 
-        `verify_graph_artifacts` alone proves only that `data_dir` is consistent
+        `verify_graph_reads` alone proves only that `data_dir` is consistent
         with itself; the `kg` object stays bound to nothing, so workspace B's
         graph can still be paired with workspace A's tensors. Nothing legitimate
         is lost by requiring it: a graph built in memory belongs on the
-        `graph_data` seam, and a graph loaded from disk has a path to state.
+        `graph_data` seam, and a graph loaded from disk passes the `GraphRead`
+        `KnowledgeGraph.read_json` returned.
         """
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
         (root / "ckpt.pt").write_bytes(b"weights")
 
-        with pytest.raises(ValueError, match="requires kg_path"):
+        with pytest.raises(ValueError, match="requires graph="):
             pipeline.DiagnosisPipeline(
                 kg=KnowledgeGraph(), data_dir=str(root),
                 checkpoint_path=str(root / "ckpt.pt"),
             )
 
-        assert reached == [], "graph loading was reached without a source binding"
+        assert reached == [], "the model was built without a source binding"
 
     def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
         """A caller supplying the graph directly is not pointing at a persisted
-        workspace, so there is no manifest for it to match and nothing to verify.
-        Refusing there would block a legitimate embedded use.
+        workspace, so there is no manifest for it to match and its files are not
+        read -- and, for the same reason, no checkpoint is loaded over that graph
+        (contract M2.4): nothing shows the checkpoint was trained on it.
 
-        **Both are passed on purpose.** With `data_dir` omitted the check is
-        skipped for a second reason -- there is no directory -- and a version that
-        verified regardless would pass this test anyway. Supplying a `data_dir`
-        that *would* fail is what isolates the seam: the graph is already in hand,
-        so the files are never read and their state is irrelevant.
+        **Both are passed on purpose.** Supplying a `data_dir` that *would* fail
+        the workspace check isolates the seam: the files are never read, and the
+        refusal is the checkpoint's, not the workspace's. The real loader runs
+        here, so the refusal is shown where the checkpoint would be read.
         """
-        reached: list = []
-        pipeline = self._pipeline_module(monkeypatch, reached)
+        import src.inference.pipeline as pipeline
+        from src.inference.pipeline import PipelineBuildError
+        from tests.fixtures.opens import count_opens
+
         root = _workspace(tmp_path / "ws")
-        (root / "node_features.pt").write_bytes(b"would fail verification")
+        other = _workspace(tmp_path / "other")
+        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
+        (root / "ckpt.pt").write_bytes(b"weights")
 
-        pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(),
-            graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
-            data_dir=str(root),
-            checkpoint_path=str(root / "ckpt.pt"),
+        with count_opens() as opens:
+            with pytest.raises(PipelineBuildError, match="supplied in memory"):
+                pipeline.DiagnosisPipeline(
+                    kg=KnowledgeGraph(),
+                    graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
+                    data_dir=str(root),
+                    checkpoint_path=str(root / "ckpt.pt"),
+                )
+
+        assert not [path for path in root.iterdir() if opens.opens(path)], (
+            "a workspace file, or the checkpoint, was opened for in-memory graph data"
         )
-
-        assert reached == [], "the file-backed loader is not used for in-memory data"
-
-
-def test_a_supplied_cohort_measurement_also_refuses_a_mixed_graph_workspace(tmp_path):
-    """The case that would have been missed by putting graph binding inside the
-    generated-cohort verifier: this path never touches a generated cohort."""
-    from scripts.measure_scorer import artifact_digests
-
-    root = _workspace(tmp_path / "ws", supplied=True)
-    (root / "edge_indices.pt").write_bytes(b"from another workspace")
-
-    with pytest.raises(ValueError, match="is not the edge_indices artifact"):
-        artifact_digests(root / "ckpt.pt", root, "institutional_acceptance", "supplied")
-
-
-def test_a_valid_supplied_cohort_needs_no_place_in_the_split_manifest(tmp_path):
-    """It was never cut from this disease universe. It is identified by its own
-    digest and is not subject to the generated splits' disjointness."""
-    from scripts.measure_scorer import artifact_digests
-
-    root = _workspace(tmp_path / "ws", supplied=True)
-    (root / "ckpt.pt").write_bytes(b"weights")
-    digests = artifact_digests(
-        root / "ckpt.pt", root, "institutional_acceptance", "supplied"
-    )
-
-    manifest = json.loads((root / "split_manifest.json").read_text())
-    assert "institutional_acceptance" not in json.dumps(manifest)
-    assert "split_manifest" not in digests, "a supplied cohort carries no allocation"
-    assert digests["samples"] is not None
 
 
 def test_a_pre_migration_manifest_is_refused_with_a_rebuild_instruction(tmp_path):
@@ -315,9 +305,9 @@ def test_a_pre_migration_manifest_is_refused_with_a_rebuild_instruction(tmp_path
         manifest["artifacts"].pop(role)
     (root / "split_manifest.json").write_text(json.dumps(manifest))
 
-    for check in (verify_graph_artifacts, verify_generated_cohorts):
-        with pytest.raises(ValueError, match="Rebuild it with"):
-            check(root)
+    # The one place a persisted manifest is read: every consumer goes through it.
+    with pytest.raises(ValueError, match="Rebuild it with"):
+        read_split_manifest(root)
 
 
 def test_a_manifest_at_the_current_schema_missing_a_graph_role_is_refused(tmp_path):
@@ -328,14 +318,16 @@ def test_a_manifest_at_the_current_schema_missing_a_graph_role_is_refused(tmp_pa
     manifest["artifacts"]["node_features"] = None
     (root / "split_manifest.json").write_text(json.dumps(manifest))
 
+    from src.kg.storage.file_storage import read_graph_artifacts
+
     with pytest.raises(ValueError, match="records no digest for node_features"):
-        verify_graph_artifacts(root)
+        verify_graph_reads(read_split_manifest(root), read_graph_artifacts(root).reads)
 
 
 class TestTheCompositionMustNotCrossWorkspaces:
     """Two internally valid workspaces, paired.
 
-    `verify_graph_artifacts` proves a workspace is consistent with itself. It
+    `verify_graph_reads` proves a workspace is consistent with itself. It
     cannot see a caller that takes one workspace's `kg.json` and another's
     tensors -- which is exactly what the API allowed, since `SHEPHERD_KG_PATH` and
     `SHEPHERD_DATA_DIR` are resolved independently. Embedding rows then come from
@@ -360,19 +352,17 @@ class TestTheCompositionMustNotCrossWorkspaces:
 
         with pytest.raises(ValueError, match="is not the graph"):
             pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(), data_dir=str(a),
-                kg_path=str(b / "kg.json"), checkpoint_path=str(a / "ckpt.pt"),
+                graph=KnowledgeGraph.read_json(b / "kg.json"), data_dir=str(a),
+                checkpoint_path=str(a / "ckpt.pt"),
             )
 
-        assert reached == [], "graph loading was reached on a crossed pair"
+        assert reached == [], "the model was built on a crossed pair"
 
     def test_each_workspace_is_valid_on_its_own(self, tmp_path):
         """Otherwise the test above would prove only that one of them is broken."""
-        from src.kg.artifacts import verify_graph_artifacts as verify
-
         a, b = self._two_workspaces(tmp_path)
-        assert set(verify(a)) == set(GRAPH_ARTIFACTS)
-        assert set(verify(b)) == set(GRAPH_ARTIFACTS)
+        assert set(verify_workspace_reads(a)[0]) == set(GRAPH_ARTIFACTS)
+        assert set(verify_workspace_reads(b)[0]) == set(GRAPH_ARTIFACTS)
 
     def test_a_matching_pair_proceeds(self, monkeypatch, tmp_path):
         reached: list = []
@@ -382,16 +372,17 @@ class TestTheCompositionMustNotCrossWorkspaces:
         a, _ = self._two_workspaces(tmp_path)
 
         pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(), data_dir=str(a),
-            kg_path=str(a / "kg.json"), checkpoint_path=str(a / "ckpt.pt"),
+            graph=KnowledgeGraph.read_json(a / "kg.json"), data_dir=str(a),
+            checkpoint_path=str(a / "ckpt.pt"),
         )
 
-        assert reached == ["_load_graph_data"]
+        assert reached == ["model"]
 
     def test_the_bound_graph_may_live_at_another_path(self, monkeypatch, tmp_path):
         """A path is not an identity in this project; the bytes are. Requiring
-        `kg_path` to *be* `data_dir/kg.json` would also close the crossing, and
-        would break a deployment that mounts or copies the file elsewhere."""
+        the graph's file to *be* `data_dir/kg.json` would also close the
+        crossing, and would break a deployment that mounts or copies the file
+        elsewhere."""
         reached: list = []
         pipeline = TestTheClinicalPathIsAGraphConsumer._pipeline_module(
             monkeypatch, reached
@@ -401,11 +392,11 @@ class TestTheCompositionMustNotCrossWorkspaces:
         elsewhere.write_bytes((a / "kg.json").read_bytes())
 
         pipeline.DiagnosisPipeline(
-            kg=KnowledgeGraph(), data_dir=str(a),
-            kg_path=str(elsewhere), checkpoint_path=str(a / "ckpt.pt"),
+            graph=KnowledgeGraph.read_json(elsewhere), data_dir=str(a),
+            checkpoint_path=str(a / "ckpt.pt"),
         )
 
-        assert reached == ["_load_graph_data"]
+        assert reached == ["model"]
 
     def test_a_late_initialization_failure_publishes_nothing(
         self, monkeypatch, tmp_path

@@ -14,8 +14,10 @@ whenever a byte moved would stop being a compatibility check.
 **Scope, and what these tests deliberately do not cover.** Capture only. There is
 no comparison against a current workspace, no registry, no locking and no
 transactional loading — `verify_fingerprint` still checks structure alone and says
-so. The digest is taken at a different instant from any load, which is documented
-as a limitation rather than engineered around.
+so. Since contract M2.1's S8 every recorded digest is that of the bytes a reader
+parsed (`read_training_inputs`, `read_resume_parent`), so the record and
+the inputs trained on come from the same reads; the entry-point acceptance for
+that is `tests/unit/test_training_reads.py`.
 
 Module: tests/unit/test_training_provenance.py
 """
@@ -31,7 +33,6 @@ torch = pytest.importorskip("torch")
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
 from src.utils.fingerprint import (  # noqa: E402
     compute_fingerprint,
-    compute_input_digests,
     file_sha256,
     verify_fingerprint,
 )
@@ -40,39 +41,40 @@ from src.utils.fingerprint import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # The digest primitives
 # ---------------------------------------------------------------------------
-def test_a_missing_file_is_recorded_as_absent_rather_than_raised(tmp_path):
-    """A role a run did not consume and a file that is genuinely gone read the
-    same way, and neither stops a training run to report itself."""
+def test_file_sha256_returns_none_for_an_absent_file(tmp_path):
+    """`file_sha256` identifies a file nobody is about to parse, and an absent
+    file answers `None` rather than raising. Training does not record through it
+    since contract M2.1's S8: its record is built from the reads it parsed."""
     assert file_sha256(tmp_path / "never_written.json") is None
 
 
-def test_digests_are_keyed_by_role_and_follow_content_not_name(tmp_path):
+def test_digests_follow_content_not_name(tmp_path):
     """Two files with different names and identical bytes share a digest; the same
     name with different bytes does not. That is the whole claim: same digest means
-    the same bytes were consumed."""
+    the same bytes."""
+    import hashlib
+
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"
     first.write_text('{"x": 1}')
     second.write_text('{"x": 1}')
 
-    same = compute_input_digests({"one": first, "two": second})
-    assert same["one"] == same["two"]
+    assert file_sha256(first) == file_sha256(second)
+    assert file_sha256(first) == hashlib.sha256(b'{"x": 1}').hexdigest()
 
     second.write_text('{"x": 2}')
-    assert compute_input_digests({"two": second})["two"] != same["two"]
+    assert file_sha256(second) != file_sha256(first)
 
 
 def test_the_shared_contract_lives_below_the_scripts_that_use_it():
     """`file_sha256` was defined in `scripts/measure_scorer.py` and imported from
     there by two other scripts and a test — an entry point serving as a library,
     and the SP benchmark in particular had no business depending on the scorer
-    measurement to get a hash function.
+    measurement to get a hash function. It lives in `src.utils.fingerprint`, and
+    since contract M2.1's S9 the measurement script no longer re-exports it."""
+    import scripts.measure_scorer as measure_scorer
 
-    The re-export is asserted too, because those callers must keep working.
-    """
-    from scripts.measure_scorer import file_sha256 as reexported
-
-    assert reexported is file_sha256
+    assert not hasattr(measure_scorer, "file_sha256")
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +90,7 @@ def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
 
     **Everything is written before the manifest**, because the manifest binds the
     bytes on disk — the graph export as well as the cohorts. Writing a tensor
-    afterwards produces exactly the mixed workspace `verify_graph_artifacts`
+    afterwards produces exactly the mixed workspace `verify_graph_reads`
     exists to refuse, which is the right behaviour and the wrong fixture.
     """
     from tests.fixtures.generated_workspace import (
@@ -119,173 +121,220 @@ def _workspace(tmp_path, *, train_ids=(0, 1), val_ids=(2,), extra_split=None,
     return tmp_path
 
 
-def _training_roles(data_dir: Path, *, with_val: bool):
-    """**The production function, not a copy of it.**
+def _training_record(data_dir: Path, *, parent=None):
+    """**The production functions, not a copy of them.**
 
-    A first version of this file rebuilt the same dict here. That proves the test
+    A first version of this file rebuilt the role map here. That proves the test
     agrees with the test, and it is how the caller's use of an out-of-scope name
     survived a full green run: every assertion below passed while
-    `scripts/train_model.py` would have raised `NameError`. The mirror is gone.
+    `scripts/train_model.py` would have raised `NameError`. The mirror is gone:
+    this reads the workspace as `train` does and builds the record as `train`
+    does.
     """
-    from scripts.train_model import training_input_roles
+    from scripts.train_model import read_training_inputs, training_input_digests
 
-    return training_input_roles(data_dir, with_validation=with_val)
+    return training_input_digests(read_training_inputs(data_dir), parent=parent)
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def test_the_recorded_roles_are_the_semantic_inputs_a_run_consumes(tmp_path):
     data_dir = _workspace(tmp_path / "ws")
 
-    digests = compute_input_digests(_training_roles(data_dir, with_val=True))
+    digests = _training_record(data_dir)
 
     assert set(digests) == {
         "train_samples", "val_samples", "node_features", "edge_indices", "num_nodes",
-        "split_manifest",
+        "split_manifest", "kg",
     }
-    assert all(value is not None for value in digests.values())
+    files = {"train_samples": "train_samples.json", "val_samples": "val_samples.json",
+             "node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
+             "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json",
+             "kg": "kg.json"}
+    for role, name in files.items():
+        assert digests[role] == _sha256(data_dir / name), role
+
+
+def test_the_kg_role_is_the_source_graph_the_manifest_binds(tmp_path, monkeypatch):
+    """Contract M2.2: training records the manifest-bound `kg` digest, taken from
+    the manifest reading that verified the tensors, and does not parse kg.json
+    to get it."""
+    import json as _json
+
+    from scripts.train_model import read_training_inputs, training_input_digests
+    from src.kg import graph as graph_module
+
+    data_dir = _workspace(tmp_path / "ws")
+    bound = _json.loads((data_dir / "split_manifest.json").read_text())["artifacts"]["kg"]
+
+    def no_parse(*args, **kwargs):
+        raise AssertionError("training parsed kg.json")
+
+    monkeypatch.setattr(graph_module.KnowledgeGraph, "read_json", no_parse)
+    monkeypatch.setattr(graph_module.KnowledgeGraph, "load_json", no_parse)
+    inputs = read_training_inputs(data_dir)
+    assert training_input_digests(inputs)["kg"] == bound == inputs.bound["kg"]
 
 
 def test_the_manifest_is_recorded_as_a_training_input(tmp_path):
-    """Its digest belongs in the role map. Whether it *describes* this workspace
-    is checked at the top of `train`, ahead of the run directories and the config
-    file -- see tests/unit/test_graph_artifact_binding.py, which owns that
-    ordering. Running the check here as well would read both cohorts a second
-    time to re-establish what has already been established."""
+    """Its digest belongs in the record, and it is the digest of the one reading
+    the checks compared against. Whether it *describes* this workspace is checked
+    at the top of `train`, ahead of the run directories and the config file --
+    see tests/unit/test_graph_artifact_binding.py, which owns that ordering."""
+    from scripts.train_model import read_training_inputs, training_input_digests
+
     data_dir = _workspace(tmp_path / "ws")
 
-    roles = _training_roles(data_dir, with_val=True)
+    inputs = read_training_inputs(data_dir)
 
-    assert roles["split_manifest"] == data_dir / "split_manifest.json"
+    assert training_input_digests(inputs)["split_manifest"] == inputs.manifest.identity.sha256
+    assert inputs.manifest.identity.sha256 == _sha256(data_dir / "split_manifest.json")
 
-def test_an_unrelated_split_beside_the_inputs_is_not_recorded(tmp_path):
+
+def test_an_unrelated_split_beside_the_inputs_is_not_recorded_or_opened(tmp_path):
     """Nothing globs the data directory. A `test_samples.json` appearing next to
     these files must not change the record of a run that never opened it —
     otherwise the artifact describes the directory rather than the run."""
-    data_dir = _workspace(
-        tmp_path / "ws", extra_split="test",
-    )
+    from tests.fixtures.opens import count_opens
 
-    digests = compute_input_digests(_training_roles(data_dir, with_val=True))
+    data_dir = _workspace(tmp_path / "ws", extra_split="test")
+
+    with count_opens() as opens:
+        digests = _training_record(data_dir)
 
     assert "test_samples" not in digests
+    assert opens.opens(data_dir / "test_samples.json") == 0
     assert (data_dir / "test_samples.json").exists(), "the file must really be there"
 
 
 def test_a_run_without_validation_does_not_claim_a_validation_input(tmp_path):
-    """`scripts/train_model.py` loads val conditionally and trains without it when
-    absent, so recording the role unconditionally would claim an input the run's
-    results do not rest on.
+    """A workspace whose validation split is empty trains without validation, so
+    recording the role would claim an input the run's results do not rest on.
 
-    Worded carefully: an existing-but-empty `val_samples.json` **is** opened and
-    parsed before the loader becomes `None`. The claim is that the samples were
-    not used by a validation pass, not that the file was never touched — and the
-    file is not added to the role map merely because it was probed."""
+    Worded carefully: the empty `val_samples.json` **is** read, verified and
+    parsed. The claim is that its samples were not used by a validation pass,
+    not that the file was never touched."""
+    from scripts.train_model import read_training_inputs
+
+    data_dir = _workspace(tmp_path / "ws", val_ids=())
+
+    inputs = read_training_inputs(data_dir)
+
+    assert inputs.with_validation is False
+    assert "val_samples" not in _training_record(data_dir)
+
+
+def test_the_record_refuses_a_role_with_no_read(tmp_path):
+    """A digest that was never taken cannot be recorded as `None`: the record
+    names only bytes a reader parsed."""
+    from scripts.train_model import read_training_inputs, training_input_digests
+
     data_dir = _workspace(tmp_path / "ws")
+    inputs = read_training_inputs(data_dir)
+    reads = dict(inputs.graph.reads)
+    del reads["num_nodes"]
+    unread = inputs._replace(graph=inputs.graph._replace(reads=reads))
 
-    digests = compute_input_digests(_training_roles(data_dir, with_val=False))
-
-    assert "val_samples" not in digests
+    with pytest.raises(ValueError, match="no read of num_nodes"):
+        training_input_digests(unread)
 
 
 # ---------------------------------------------------------------------------
 # The resume parent, which is an input too
 # ---------------------------------------------------------------------------
-class _RecordingTrainer:
-    """Records what `load_checkpoint` was handed, and nothing else.
+def _inputs(data_dir: Path):
+    from scripts.train_model import read_training_inputs
 
-    A real `Trainer` would bring a model, an optimizer and a config along for a
-    decision that touches none of them."""
-
-    def __init__(self):
-        self.loaded = []
-
-    def load_checkpoint(self, path):
-        self.loaded.append(path)
+    return read_training_inputs(data_dir)
 
 
-def test_no_resume_requested_loads_nothing_and_records_nothing():
+def _parent(path: Path, data_dir: Path, **contents) -> Path:
+    """A checkpoint that records `data_dir`'s workspace roles, as a run over it
+    would (`training_input_digests`, the production builder)."""
+    from scripts.train_model import training_input_digests
+
+    torch.save({"training_input_digests": training_input_digests(_inputs(data_dir)),
+                **contents}, path)
+    return path
+
+
+def test_no_resume_requested_reads_nothing_and_records_nothing(tmp_path):
     """The production decision, not a helper's response to an argument.
 
-    These three tests exist because the previous version called
-    `training_input_roles` with a path or `None` and assumed `train()` chose
-    correctly. That assumption is what the earlier mirrored-role-map defect was
-    made of, and it would have survived production recording a path it never
-    loaded, or ceasing to load at all.
+    These tests exist because an earlier version built the role map from a path
+    or `None` and assumed `train()` chose correctly. That assumption is what the
+    earlier mirrored-role-map defect was made of.
     """
-    from scripts.train_model import resolve_resume_checkpoint
+    from scripts.train_model import read_resume_parent
 
-    trainer = _RecordingTrainer()
+    inputs = _inputs(_workspace(tmp_path / "ws"))
 
-    assert resolve_resume_checkpoint(trainer, None) is None
-    assert resolve_resume_checkpoint(trainer, "") is None
-    assert trainer.loaded == []
-
-
-def test_a_requested_but_missing_parent_warns_loads_nothing_and_records_nothing(tmp_path):
-    """`train()` continues after the warning, so the run did not consume the
-    parent. Omission and a present role with a `None` digest are different
-    statements: `None` already means "this role's file was absent" for a role that
-    *was* consumed."""
-    from scripts.train_model import resolve_resume_checkpoint
-
-    trainer = _RecordingTrainer()
-    absent = tmp_path / "not_here.pt"
-
-    assert resolve_resume_checkpoint(trainer, str(absent)) is None
-    assert trainer.loaded == [], "a missing parent must not be loaded"
+    assert read_resume_parent(None, inputs, "cpu") is None
+    assert read_resume_parent("", inputs, "cpu") is None
 
 
-def test_an_existing_parent_is_loaded_and_the_loaded_path_is_what_is_returned(tmp_path):
-    """The returned value **is** the argument `load_checkpoint` received, so
-    recording something the run did not load cannot be introduced without editing
-    the function that does both."""
-    from scripts.train_model import resolve_resume_checkpoint
+def test_a_requested_but_missing_parent_is_refused(tmp_path):
+    """M2.3: the run does not train from scratch instead, as it did when this
+    only warned."""
+    from scripts.train_model import read_resume_parent
 
-    trainer = _RecordingTrainer()
-    parent = tmp_path / "parent.pt"
-    torch.save({"state_dict": {}}, parent)
+    inputs = _inputs(_workspace(tmp_path / "ws"))
 
-    returned = resolve_resume_checkpoint(trainer, str(parent))
-
-    assert trainer.loaded == [parent], "the parent must actually be loaded"
-    assert returned == trainer.loaded[0], "the recorded path must be the loaded path"
+    with pytest.raises(FileNotFoundError, match="does not train from scratch"):
+        read_resume_parent(str(tmp_path / "not_here.pt"), inputs, "cpu")
 
 
-def test_the_decision_feeds_the_role_map_end_to_end(tmp_path):
-    """The two halves joined: a real decision, then the role map built from it."""
-    from scripts.train_model import resolve_resume_checkpoint, training_input_roles
+def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_path):
+    """The returned dict and identity **are** those of the one read, which
+    `train` restores from and records; that it does is shown at the entry point
+    (`test_training_reads.py`)."""
+    from scripts.train_model import read_resume_parent
+    from tests.fixtures.opens import count_opens
 
     data_dir = _workspace(tmp_path / "ws")
-    parent = tmp_path / "parent.pt"
-    torch.save({"state_dict": {}}, parent)
-    trainer = _RecordingTrainer()
+    saved = {"state_dict": {"w": torch.arange(4.0)}, "epoch": 7}
+    parent = _parent(tmp_path / "parent.pt", data_dir, **saved)
+    inputs = _inputs(data_dir)
 
-    loaded = resolve_resume_checkpoint(trainer, str(parent))
-    roles = training_input_roles(data_dir, with_validation=False, resumed_from=loaded)
+    with count_opens() as opens:
+        returned = read_resume_parent(str(parent), inputs, "cpu")
 
-    assert roles["resume_checkpoint"] == parent
-    assert compute_input_digests(roles)["resume_checkpoint"] is not None
+    assert opens.opens(parent) == 1
+    assert returned.identity.sha256 == _sha256(parent)
+    assert returned.checkpoint["epoch"] == 7
+    assert torch.equal(returned.checkpoint["state_dict"]["w"], saved["state_dict"]["w"])
 
-    unloaded = resolve_resume_checkpoint(trainer, str(tmp_path / "gone.pt"))
-    assert "resume_checkpoint" not in training_input_roles(
-        data_dir, with_validation=False, resumed_from=unloaded)
+
+def test_the_decision_feeds_the_record_end_to_end(tmp_path):
+    """The two halves joined: a real decision, then the record built from it."""
+    from scripts.train_model import read_resume_parent
+
+    data_dir = _workspace(tmp_path / "ws")
+    parent = _parent(tmp_path / "parent.pt", data_dir, state_dict={})
+
+    restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+    record = _training_record(data_dir, parent=restored.identity)
+    assert record["resume_checkpoint"] == _sha256(parent)
 
 
 def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
     """The case the field exists for: identical workspace files, different
-    parents. Without the parent role these two runs carried the same digest map."""
-    from scripts.train_model import resolve_resume_checkpoint, training_input_roles
+    parents. Without the parent role these two runs carried the same record."""
+    from scripts.train_model import read_resume_parent
 
     data_dir = _workspace(tmp_path / "ws")
-    first, second = tmp_path / "a.pt", tmp_path / "b.pt"
-    torch.save({"state_dict": {"w": torch.zeros(1)}}, first)
-    torch.save({"state_dict": {"w": torch.ones(1)}}, second)
+    first = _parent(tmp_path / "a.pt", data_dir, state_dict={"w": torch.zeros(1)})
+    second = _parent(tmp_path / "b.pt", data_dir, state_dict={"w": torch.ones(1)})
 
-    def digests_for(parent):
-        loaded = resolve_resume_checkpoint(_RecordingTrainer(), str(parent))
-        return compute_input_digests(
-            training_input_roles(data_dir, with_validation=False, resumed_from=loaded))
+    def record_for(parent):
+        restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+        return _training_record(data_dir, parent=restored.identity)
 
-    a, b = digests_for(first), digests_for(second)
+    a, b = record_for(first), record_for(second)
 
     assert a["resume_checkpoint"] != b["resume_checkpoint"]
     assert a["train_samples"] == b["train_samples"], "only the parent differs"
@@ -323,8 +372,8 @@ def test_two_runs_over_different_samples_are_distinguishable_from_provenance(tmp
         "the structural fingerprint must still see these two graphs as the same"
     )
 
-    a = compute_input_digests(_training_roles(first, with_val=True))
-    b = compute_input_digests(_training_roles(second, with_val=True))
+    a = _training_record(first)
+    b = _training_record(second)
 
     assert a["train_samples"] != b["train_samples"]
     assert a["node_features"] == b["node_features"], (
@@ -461,6 +510,9 @@ _F821_CLEAN = (
     "src/inference/sp_index.py",
     "src/inference/sp_artifact.py",
     "src/utils/fingerprint.py",
+    # Contract M2.1, S8: the resume read and its restore moved between these.
+    "src/training/trainer.py",
+    "src/core/protocols.py",
     "tests/unit/test_training_provenance.py",
 )
 

@@ -1,0 +1,71 @@
+{
+  "boundaries_expected": [
+    "trainer_init_return",
+    "replaced_train"
+  ],
+  "boundaries_fired": [
+    "trainer_init_return",
+    "replaced_train"
+  ],
+  "entry": "training",
+  "error": null,
+  "exit_code": 0,
+  "forks_seen": 0,
+  "instrumented_modules": [
+    "src.training.trainer"
+  ],
+  "note": "VmHWM is the kernel's approximate high-water mark and was seen to read lower at a later boundary on one kernel; report the maximum over the readings and the sampler's last-seen value. A CUDA max is since the previous reading (peaks are reset at each reading).",
+  "options": [
+    "--data-dir",
+    "--device",
+    "--conv-type",
+    "--hidden-dim",
+    "--num-layers",
+    "--epochs",
+    "--seed",
+    "--output-dir",
+    "--checkpoint-dir"
+  ],
+  "outcome": "stopped_at_boundary",
+  "probe_sha256": "04458fd77a96b6728eda66cfbae6a3f42700953de08cf556e660258c61d02a0b",
+  "python": "3.12.3",
+  "readings": [
+    {
+      "RssAnon_bytes": 1568575488,
+      "RssFile_bytes": 353161216,
+      "RssShmem_bytes": 44236800,
+      "VmHWM_bytes": 1965973504,
+      "VmRSS_bytes": 1965973504,
+      "VmSwap_bytes": 0,
+      "boundary": "trainer_init_return",
+      "cuda": {
+        "allocated_bytes": 16913716,
+        "max_allocated_bytes_since_last": 16913716,
+        "max_reserved_bytes_since_last": 33554432,
+        "reserved_bytes": 33554432
+      },
+      "pid": 937030,
+      "seconds_since_probe_start": 3.921
+    },
+    {
+      "RssAnon_bytes": 1568587776,
+      "RssFile_bytes": 353161216,
+      "RssShmem_bytes": 44236800,
+      "VmHWM_bytes": 1965985792,
+      "VmRSS_bytes": 1965985792,
+      "VmSwap_bytes": 0,
+      "boundary": "replaced_train",
+      "cuda": {
+        "allocated_bytes": 16913716,
+        "max_allocated_bytes_since_last": 16913716,
+        "max_reserved_bytes_since_last": 33554432,
+        "reserved_bytes": 33554432
+      },
+      "pid": 937030,
+      "seconds_since_probe_start": 3.922
+    }
+  ],
+  "schema": "shepherd.s10_probe_readings/draft-1",
+  "script": "scripts/train_model.py",
+  "vm_hwm_max_over_readings_bytes": 1965985792
+}

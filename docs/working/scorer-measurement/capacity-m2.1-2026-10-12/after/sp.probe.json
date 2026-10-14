@@ -1,0 +1,98 @@
+{
+  "boundaries_expected": [
+    "publication_start",
+    "publication_end",
+    "after_graph_read",
+    "first_fork",
+    "end_of_process"
+  ],
+  "boundaries_fired": [
+    "after_graph_read",
+    "first_fork",
+    "publication_start",
+    "publication_end",
+    "end_of_process"
+  ],
+  "entry": "sp",
+  "error": null,
+  "exit_code": 0,
+  "forks_seen": 15,
+  "instrumented_modules": [
+    "src.inference.sp_artifact"
+  ],
+  "note": "VmHWM is the kernel's approximate high-water mark and was seen to read lower at a later boundary on one kernel; report the maximum over the readings and the sampler's last-seen value. A CUDA max is since the previous reading (peaks are reset at each reading).",
+  "options": [
+    "--kg-path",
+    "--output-dir",
+    "--max-hops",
+    "--workers"
+  ],
+  "outcome": "completed",
+  "probe_sha256": "04458fd77a96b6728eda66cfbae6a3f42700953de08cf556e660258c61d02a0b",
+  "python": "3.12.3",
+  "readings": [
+    {
+      "RssAnon_bytes": 1368784896,
+      "RssFile_bytes": 227328000,
+      "RssShmem_bytes": 0,
+      "VmHWM_bytes": 1600831488,
+      "VmRSS_bytes": 1596112896,
+      "VmSwap_bytes": 0,
+      "boundary": "after_graph_read",
+      "cuda": null,
+      "pid": 937546,
+      "seconds_since_probe_start": 5.536
+    },
+    {
+      "RssAnon_bytes": 1384624128,
+      "RssFile_bytes": 227393536,
+      "RssShmem_bytes": 0,
+      "VmHWM_bytes": 1612017664,
+      "VmRSS_bytes": 1612017664,
+      "VmSwap_bytes": 0,
+      "boundary": "first_fork",
+      "cuda": null,
+      "pid": 937546,
+      "seconds_since_probe_start": 5.87
+    },
+    {
+      "RssAnon_bytes": 12284628992,
+      "RssFile_bytes": 228376576,
+      "RssShmem_bytes": 0,
+      "VmHWM_bytes": 53629292544,
+      "VmRSS_bytes": 12513005568,
+      "VmSwap_bytes": 0,
+      "boundary": "publication_start",
+      "cuda": null,
+      "pid": 937546,
+      "seconds_since_probe_start": 853.219
+    },
+    {
+      "RssAnon_bytes": 12284628992,
+      "RssFile_bytes": 228507648,
+      "RssShmem_bytes": 0,
+      "VmHWM_bytes": 53629292544,
+      "VmRSS_bytes": 12513136640,
+      "VmSwap_bytes": 0,
+      "boundary": "publication_end",
+      "cuda": null,
+      "pid": 937546,
+      "seconds_since_probe_start": 864.763
+    },
+    {
+      "RssAnon_bytes": 794431488,
+      "RssFile_bytes": 228573184,
+      "RssShmem_bytes": 0,
+      "VmHWM_bytes": 53629292544,
+      "VmRSS_bytes": 1023004672,
+      "VmSwap_bytes": 0,
+      "boundary": "end_of_process",
+      "cuda": null,
+      "pid": 937546,
+      "seconds_since_probe_start": 866.473
+    }
+  ],
+  "schema": "shepherd.s10_probe_readings/draft-1",
+  "script": "scripts/compute_shortest_paths.py",
+  "vm_hwm_max_over_readings_bytes": 53629292544
+}

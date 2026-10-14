@@ -1,0 +1,166 @@
+before: commit 90a668f1334dfe6f73637dd8f11659ea906b9e1d, tracked files modified False, healthy (procedure) True, reloads 3, resets confirmed True
+after: commit 343e90e993d0a5129cd547b95276b7e2b8b12fa9, tracked files modified False, healthy (procedure) True, reloads 3, resets confirmed True
+commits: the designated before and after
+
+Health (runbook §4 rule 5):
+  before: OOM kills 0 -> 0 unchanged; swap in use MB at ready 0.000, max 0.000, last 0.000 not rising; server exit status -15 (the tool's SIGTERM); unsuccessful reloads none
+  after: OOM kills 0 -> 0 unchanged; swap in use MB at ready 0.000, max 0.000, last 0.000 not rising; server exit status -15 (the tool's SIGTERM); unsuccessful reloads none
+
+Like for like (runbook §4 rule 0; MISMATCH where the runs differ, UNKNOWN where absent in both):
+  tool_sha256: same: "2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff"
+  serving_script_sha256: same: "d097cf974e0ba05d552af06395f2e72baec3206edc8d9c3a0b5d30b79ea3d322"
+  subject: same: {"checkpoint_sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79", "graph_sha256": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43", "sp_table_sha256": "dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027"}
+  settings: same: {"checks_per_reload": 5, "ready_timeout_seconds": 3600.0, "reloads": 3, "requests": 200, "seed": 20260930, "settle_seconds": 10.0}
+  workload: same: {"phenotype_counts_by_kind": {"maximum": {"max": 100, "median": 100.0, "min": 100, "requests": 50}, "validation": {"max": 15, "median": 15.0, "min": 2, "requests": 150}}, "request_fields": {"include_explanations": true, "include_paths": true, "top_k": 10}, "requests": 200, "seed": 20260930, "val_samples_sha256": "27a28f3a0ea67985ea056bbcc0f50d00635f4e2c06f83f42a8268a9c958ad48d"}
+  preread: same: ["edge_indices.pt", "kg.json", "kg.provenance.json", "node_features.pt", "num_nodes.json", "shortest_paths.meta.json", "shortest_paths.pt", "split_manifest.json", "train_samples.json", "val_samples.json", "checkpoint"]
+  server_environment: same: {"ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive", "FLASHATTN_FORCE_DISABLE": null, "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync", "PYTORCH_CUDA_ALLOC_CONF": null, "SHEPHERD_ALLOC_SOURCE": "preset"}
+  server_allocator_controls: same: []
+  allocator backend: same: "cudaMallocAsync"
+  environment.boot_id: same: "3a550de4-d4b2-4551-a39a-4767a9fb1dd2"
+  environment.kernel: same: "7.0.0-1019-nvidia"
+  environment.python: same: "3.12.3"
+  environment.torch: same: "2.10.0+cu130"
+  environment.torch_cuda: same: "13.0"
+  environment.device: same: "NVIDIA GB10"
+  environment.driver: same: "580.178.04"
+  environment.venv_python_sha256: same: "c86f21d0da9290ece2d7d49a3f7ed52aed59cb029abdf0ea25c79634f6cbe960"
+  environment.venv_distributions_sha256: same: "a117e53efdcf4ebf00aea51756eb4198d81f7b430f94c558d491fcd48ab76980"
+  allocator probe: before ok / after ok
+  environment.uptime_seconds: before 17136.2 / after 19572.62
+  preconditions: before {"gpu_compute_apps": 0, "shepherd_servers_running": 0} / after {"gpu_compute_apps": 0, "shepherd_servers_running": 0}
+
+Points, MB (VmHWM shown only after a confirmed reset; '-' where absent):
+
+| point | VmRSS_bytes before | after | after - before |
+|---|---|---|---|
+| ready | 6504.1 | 6503.5 | -0.6 |
+| after_requests | 6445.7 | 6445.0 | -0.7 |
+| before_reload_1 | 6445.7 | 6445.0 | -0.7 |
+| after_reload_1 | 6787.3 | 6819.9 | +32.6 |
+| after_reload_1_settled | 6787.3 | 6819.9 | +32.6 |
+| after_checks_1 | 6704.5 | 6738.2 | +33.7 |
+| before_reload_2 | 6704.5 | 6738.2 | +33.7 |
+| after_reload_2 | 7247.5 | 7275.1 | +27.6 |
+| after_reload_2_settled | 7247.5 | 7275.1 | +27.6 |
+| after_checks_2 | 7173.8 | 7201.8 | +28.0 |
+| before_reload_3 | 7173.8 | 7201.8 | +28.0 |
+| after_reload_3 | 7660.8 | 7701.0 | +40.2 |
+| after_reload_3_settled | 7660.8 | 7701.0 | +40.2 |
+| after_checks_3 | 7640.5 | 7676.4 | +35.9 |
+
+| point | RssAnon_bytes before | after | after - before |
+|---|---|---|---|
+| ready | 6041.9 | 6041.1 | -0.8 |
+| after_requests | 5980.0 | 5979.1 | -0.9 |
+| before_reload_1 | 5980.0 | 5979.1 | -0.9 |
+| after_reload_1 | 6321.6 | 6354.0 | +32.4 |
+| after_reload_1_settled | 6321.6 | 6354.0 | +32.4 |
+| after_checks_1 | 6238.8 | 6272.3 | +33.5 |
+| before_reload_2 | 6238.8 | 6272.3 | +33.5 |
+| after_reload_2 | 6781.8 | 6809.2 | +27.4 |
+| after_reload_2_settled | 6781.8 | 6809.2 | +27.4 |
+| after_checks_2 | 6708.1 | 6735.9 | +27.8 |
+| before_reload_3 | 6708.1 | 6735.9 | +27.8 |
+| after_reload_3 | 7195.1 | 7235.1 | +40.0 |
+| after_reload_3_settled | 7195.1 | 7235.1 | +40.0 |
+| after_checks_3 | 7174.8 | 7210.5 | +35.7 |
+
+| point | Pss_bytes before | after | after - before |
+|---|---|---|---|
+| ready | 6490.9 | 6490.4 | -0.5 |
+| after_requests | 6432.4 | 6431.8 | -0.5 |
+| before_reload_1 | 6432.4 | 6431.8 | -0.5 |
+| after_reload_1 | 6774.1 | 6806.8 | +32.7 |
+| after_reload_1_settled | 6774.1 | 6806.8 | +32.7 |
+| after_checks_1 | 6691.2 | 6725.0 | +33.9 |
+| before_reload_2 | 6691.2 | 6725.0 | +33.9 |
+| after_reload_2 | 7234.2 | 7261.9 | +27.7 |
+| after_reload_2_settled | 7234.2 | 7261.9 | +27.7 |
+| after_checks_2 | 7160.5 | 7188.6 | +28.1 |
+| before_reload_3 | 7160.5 | 7188.6 | +28.1 |
+| after_reload_3 | 7647.5 | 7687.9 | +40.3 |
+| after_reload_3_settled | 7647.5 | 7687.9 | +40.3 |
+| after_checks_3 | 7627.3 | 7663.2 | +36.0 |
+
+| point | VmHWM_bytes before | after | after - before |
+|---|---|---|---|
+| ready | 23770.8 | 23770.5 | -0.4 |
+| after_requests | 6503.0 | 6502.7 | -0.3 |
+| before_reload_1 | 6445.7 | 6445.0 | -0.7 |
+| after_reload_1 | 28448.0 | 28480.1 | +32.1 |
+| after_reload_1_settled | 28448.0 | 28480.1 | +32.1 |
+| after_checks_1 | 28448.0 | 28480.1 | +32.1 |
+| before_reload_2 | 6704.5 | 6738.2 | +33.7 |
+| after_reload_2 | 28471.9 | 28497.8 | +25.9 |
+| after_reload_2_settled | 28471.9 | 28497.8 | +25.9 |
+| after_checks_2 | 28471.9 | 28497.8 | +25.9 |
+| before_reload_3 | 7173.8 | 7201.8 | +28.0 |
+| after_reload_3 | 28475.6 | 28515.2 | +39.5 |
+| after_reload_3_settled | 28475.6 | 28515.2 | +39.5 |
+| after_checks_3 | 28475.6 | 28515.2 | +39.5 |
+
+The difference D_k = after - before at each reload's response, MB (D_1 is the point of S10's R3; runbook §4 rules 1-3):
+
+VmRSS_bytes: D at after_requests -0.7
+| reload k | D_k | D_k - D_1 | D_k - D_(k-1) | |
+|---|---|---|---|---|
+| 1 | +32.6 | - | - |  |
+| 2 | +27.6 | -5.0 | -5.0 |  |
+| 3 | +40.2 | +7.6 | +12.6 |  |
+
+RssAnon_bytes: D at after_requests -0.9
+| reload k | D_k | D_k - D_1 | D_k - D_(k-1) | |
+|---|---|---|---|---|
+| 1 | +32.4 | - | - |  |
+| 2 | +27.4 | -5.0 | -5.0 |  |
+| 3 | +40.0 | +7.6 | +12.6 |  |
+
+Pss_bytes: D at after_requests -0.5
+| reload k | D_k | D_k - D_1 | D_k - D_(k-1) | |
+|---|---|---|---|---|
+| 1 | +32.7 | - | - |  |
+| 2 | +27.7 | -5.0 | -5.0 |  |
+| 3 | +40.3 | +7.6 | +12.6 |  |
+
+Each commit's own rows, MB (runbook §4 rule 4). step = after_reload_k - after_reload_(k-1) = between + reload_own; reload_own = after_reload_k - before_reload_k; between = before_reload_k - the previous response (the previous reload's settle and checks, the status read and this reset); cumulative = after_reload_k - after_requests; settle_after and checks_after belong to the next row's between; step_after_checks = after_checks_k - after_checks_(k-1):
+
+VmRSS_bytes
+| run | k | step | reload_own | between | cumulative | settle_after | checks_after | step_after_checks |
+|---|---|---|---|---|---|---|---|---|
+| before | 1 | - | +341.7 | +0.0 | +341.7 | +0.0 | -82.9 | - |
+| before | 2 | +460.2 | +543.1 | -82.9 | +801.8 | +0.0 | -73.7 | +469.3 |
+| before | 3 | +413.3 | +487.0 | -73.7 | +1215.2 | +0.0 | -20.3 | +466.7 |
+| after | 1 | - | +375.0 | +0.0 | +375.0 | +0.0 | -81.7 | - |
+| after | 2 | +455.2 | +536.9 | -81.7 | +830.1 | +0.0 | -73.3 | +463.6 |
+| after | 3 | +425.9 | +499.2 | -73.3 | +1256.0 | +0.0 | -24.6 | +474.6 |
+step, after - before, by k: -, -5.0, +12.6
+reload_own, after - before, by k: +33.3, -6.1, +12.2
+between, after - before, by k: +0.0, +1.1, +0.4
+
+RssAnon_bytes
+| run | k | step | reload_own | between | cumulative | settle_after | checks_after | step_after_checks |
+|---|---|---|---|---|---|---|---|---|
+| before | 1 | - | +341.7 | +0.0 | +341.7 | +0.0 | -82.9 | - |
+| before | 2 | +460.2 | +543.1 | -82.9 | +801.8 | +0.0 | -73.7 | +469.3 |
+| before | 3 | +413.3 | +487.0 | -73.7 | +1215.2 | +0.0 | -20.3 | +466.7 |
+| after | 1 | - | +375.0 | +0.0 | +375.0 | +0.0 | -81.7 | - |
+| after | 2 | +455.2 | +536.9 | -81.7 | +830.1 | +0.0 | -73.3 | +463.6 |
+| after | 3 | +425.9 | +499.2 | -73.3 | +1256.0 | +0.0 | -24.6 | +474.6 |
+step, after - before, by k: -, -5.0, +12.6
+reload_own, after - before, by k: +33.3, -6.1, +12.2
+between, after - before, by k: +0.0, +1.1, +0.4
+
+Pss_bytes
+| run | k | step | reload_own | between | cumulative | settle_after | checks_after | step_after_checks |
+|---|---|---|---|---|---|---|---|---|
+| before | 1 | - | +341.7 | +0.0 | +341.7 | +0.0 | -82.9 | - |
+| before | 2 | +460.2 | +543.1 | -82.9 | +801.8 | +0.0 | -73.7 | +469.3 |
+| before | 3 | +413.3 | +487.0 | -73.7 | +1215.2 | +0.0 | -20.3 | +466.7 |
+| after | 1 | - | +375.0 | +0.0 | +375.0 | +0.0 | -81.7 | - |
+| after | 2 | +455.2 | +536.9 | -81.7 | +830.1 | +0.0 | -73.3 | +463.6 |
+| after | 3 | +425.9 | +499.2 | -73.3 | +1256.0 | +0.0 | -24.6 | +474.6 |
+step, after - before, by k: -, -5.0, +12.6
+reload_own, after - before, by k: +33.3, -6.1, +12.2
+between, after - before, by k: +0.0, +1.1, +0.4
+
+Not judged here: the runbook's §4 rules are applied by a person to the lines above. Each commit's own step is read too: a step of 11 MB or more at k = 2 and 3 in either process is growth in that process (§4 rule 4), never a bounded cost.

@@ -1,0 +1,549 @@
+{
+  "allocator": {
+    "backend_reported_by_torch": "cudaMallocAsync",
+    "governing_variable": "PYTORCH_ALLOC_CONF",
+    "present": [
+      "PYTORCH_ALLOC_CONF"
+    ]
+  },
+  "code": {
+    "commit": "343e90e993d0a5129cd547b95276b7e2b8b12fa9",
+    "tracked_files_modified": false
+  },
+  "environment": {
+    "boot_id": "3a550de4-d4b2-4551-a39a-4767a9fb1dd2",
+    "device": "NVIDIA GB10",
+    "driver": "580.178.04",
+    "kernel": "7.0.0-1019-nvidia",
+    "machine": "aarch64",
+    "python": "3.12.3",
+    "torch": "2.10.0+cu130",
+    "torch_cuda": "13.0",
+    "uptime_seconds": 19572.62,
+    "venv_distributions_sha256": "a117e53efdcf4ebf00aea51756eb4198d81f7b430f94c558d491fcd48ab76980",
+    "venv_python_sha256": "c86f21d0da9290ece2d7d49a3f7ed52aed59cb029abdf0ea25c79634f6cbe960"
+  },
+  "healthy": true,
+  "not_a_reading": "a diagnostic of consecutive reloads; S10's readings are elsewhere",
+  "oom_kills_at_end": 0,
+  "oom_kills_at_launch": 0,
+  "points": [
+    {
+      "Pss_bytes": 6490370048,
+      "RssAnon_bytes": 6041079808,
+      "RssFile_bytes": 411660288,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 23770488832,
+      "VmRSS_bytes": 6503534592,
+      "name": "ready",
+      "seconds": 85.849,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24549150720,
+      "vmhwm_since": "start",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 6431830016,
+      "RssAnon_bytes": 5979086848,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 6502744064,
+      "VmRSS_bytes": 6444994560,
+      "name": "after_requests",
+      "seconds": 1746.819,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 23939170304,
+      "vmhwm_since": "requests",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 6431830016,
+      "RssAnon_bytes": 5979086848,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 6444994560,
+      "VmRSS_bytes": 6444994560,
+      "name": "before_reload_1",
+      "seconds": 1747.023,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 23939170304,
+      "vmhwm_since": "reload_1",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 6806781952,
+      "RssAnon_bytes": 6354038784,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28480143360,
+      "VmRSS_bytes": 6819946496,
+      "name": "after_reload_1",
+      "seconds": 1827.54,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24928296960,
+      "vmhwm_since": "reload_1",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 6806781952,
+      "RssAnon_bytes": 6354038784,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28480143360,
+      "VmRSS_bytes": 6819946496,
+      "name": "after_reload_1_settled",
+      "seconds": 1837.584,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24839389184,
+      "vmhwm_since": "reload_1",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 6725033984,
+      "RssAnon_bytes": 6272290816,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28480143360,
+      "VmRSS_bytes": 6738198528,
+      "name": "after_checks_1",
+      "seconds": 1880.633,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24359366656,
+      "vmhwm_since": "reload_1",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 6725033984,
+      "RssAnon_bytes": 6272290816,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 6738198528,
+      "VmRSS_bytes": 6738198528,
+      "name": "before_reload_2",
+      "seconds": 1880.835,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24359620608,
+      "vmhwm_since": "reload_2",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7261945856,
+      "RssAnon_bytes": 6809202688,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28497829888,
+      "VmRSS_bytes": 7275110400,
+      "name": "after_reload_2",
+      "seconds": 1960.813,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 25303511040,
+      "vmhwm_since": "reload_2",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7261945856,
+      "RssAnon_bytes": 6809202688,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28497829888,
+      "VmRSS_bytes": 7275110400,
+      "name": "after_reload_2_settled",
+      "seconds": 1970.865,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 25212461056,
+      "vmhwm_since": "reload_2",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7188631552,
+      "RssAnon_bytes": 6735888384,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28497829888,
+      "VmRSS_bytes": 7201796096,
+      "name": "after_checks_2",
+      "seconds": 2011.79,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24828526592,
+      "vmhwm_since": "reload_2",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7188631552,
+      "RssAnon_bytes": 6735888384,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 7201796096,
+      "VmRSS_bytes": 7201796096,
+      "name": "before_reload_3",
+      "seconds": 2011.849,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 24828526592,
+      "vmhwm_since": "reload_3",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7687856128,
+      "RssAnon_bytes": 7235112960,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28515151872,
+      "VmRSS_bytes": 7701020672,
+      "name": "after_reload_3",
+      "seconds": 2090.552,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 25995423744,
+      "vmhwm_since": "reload_3",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7687856128,
+      "RssAnon_bytes": 7235112960,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28515151872,
+      "VmRSS_bytes": 7701020672,
+      "name": "after_reload_3_settled",
+      "seconds": 2100.605,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 25803997184,
+      "vmhwm_since": "reload_3",
+      "vmhwm_valid": true
+    },
+    {
+      "Pss_bytes": 7663247360,
+      "RssAnon_bytes": 7210504192,
+      "RssFile_bytes": 415113216,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 28515151872,
+      "VmRSS_bytes": 7676411904,
+      "name": "after_checks_3",
+      "seconds": 2146.037,
+      "swap_in_use_bytes": 0,
+      "system_in_use_bytes": 25345159168,
+      "vmhwm_since": "reload_3",
+      "vmhwm_valid": true
+    }
+  ],
+  "preconditions": {
+    "gpu_compute_apps": 0,
+    "preread": [
+      "edge_indices.pt",
+      "kg.json",
+      "kg.provenance.json",
+      "node_features.pt",
+      "num_nodes.json",
+      "shortest_paths.meta.json",
+      "shortest_paths.pt",
+      "split_manifest.json",
+      "train_samples.json",
+      "val_samples.json",
+      "checkpoint"
+    ],
+    "shepherd_servers_running": 0
+  },
+  "reloads": [
+    {
+      "checks": {
+        "accepted": 5,
+        "ended_without_response": false,
+        "failures": {},
+        "planned": 5,
+        "sent": 5
+      },
+      "http_status": 200,
+      "index": 1,
+      "readiness": {
+        "asserted": true,
+        "fingerprint_warning_count": 0,
+        "gnn_ready": true,
+        "has_model": true,
+        "initialized": true,
+        "kg_edges": 617773,
+        "kg_nodes": 57239,
+        "scoring_mode": "gnn_plus_shortest_path",
+        "serving_device": "cuda",
+        "sp_kg_binding": "verified",
+        "sp_max_hops": 5,
+        "sp_ready": true
+      },
+      "serves_named_checkpoint": true,
+      "success": true,
+      "wall_seconds": 80.278
+    },
+    {
+      "checks": {
+        "accepted": 5,
+        "ended_without_response": false,
+        "failures": {},
+        "planned": 5,
+        "sent": 5
+      },
+      "http_status": 200,
+      "index": 2,
+      "readiness": {
+        "asserted": true,
+        "fingerprint_warning_count": 0,
+        "gnn_ready": true,
+        "has_model": true,
+        "initialized": true,
+        "kg_edges": 617773,
+        "kg_nodes": 57239,
+        "scoring_mode": "gnn_plus_shortest_path",
+        "serving_device": "cuda",
+        "sp_kg_binding": "verified",
+        "sp_max_hops": 5,
+        "sp_ready": true
+      },
+      "serves_named_checkpoint": true,
+      "success": true,
+      "wall_seconds": 79.929
+    },
+    {
+      "checks": {
+        "accepted": 5,
+        "ended_without_response": false,
+        "failures": {},
+        "planned": 5,
+        "sent": 5
+      },
+      "http_status": 200,
+      "index": 3,
+      "readiness": {
+        "asserted": true,
+        "fingerprint_warning_count": 0,
+        "gnn_ready": true,
+        "has_model": true,
+        "initialized": true,
+        "kg_edges": 617773,
+        "kg_nodes": 57239,
+        "scoring_mode": "gnn_plus_shortest_path",
+        "serving_device": "cuda",
+        "sp_kg_binding": "verified",
+        "sp_max_hops": 5,
+        "sp_ready": true
+      },
+      "serves_named_checkpoint": true,
+      "success": true,
+      "wall_seconds": 78.653
+    }
+  ],
+  "resets": [
+    {
+      "before": "requests",
+      "status": "confirmed",
+      "tries": 1,
+      "vm_hwm_bytes": 6503534592,
+      "vm_rss_bytes": 6503534592
+    },
+    {
+      "before": "reload_1",
+      "status": "confirmed",
+      "tries": 1,
+      "vm_hwm_bytes": 6444994560,
+      "vm_rss_bytes": 6444994560
+    },
+    {
+      "before": "reload_2",
+      "status": "confirmed",
+      "tries": 1,
+      "vm_hwm_bytes": 6738198528,
+      "vm_rss_bytes": 6738198528
+    },
+    {
+      "before": "reload_3",
+      "status": "confirmed",
+      "tries": 1,
+      "vm_hwm_bytes": 7201796096,
+      "vm_rss_bytes": 7201796096
+    }
+  ],
+  "resets_confirmed": true,
+  "schema": "shepherd.s10_reload_diagnostic/draft-5",
+  "server_allocator_controls": [],
+  "server_environment": {
+    "ATTENTION_ORDER": "cudnn_sdpa,torch_sdpa,naive",
+    "FLASHATTN_FORCE_DISABLE": null,
+    "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+    "PYTORCH_CUDA_ALLOC_CONF": null,
+    "SHEPHERD_ALLOC_SOURCE": "preset"
+  },
+  "server_exit_status": -15,
+  "serving_script_sha256": "d097cf974e0ba05d552af06395f2e72baec3206edc8d9c3a0b5d30b79ea3d322",
+  "settings": {
+    "checks_per_reload": 5,
+    "ready_timeout_seconds": 3600.0,
+    "reloads": 3,
+    "requests": 200,
+    "seed": 20260930,
+    "settle_seconds": 10.0
+  },
+  "start": {
+    "launch_seconds": 85.685,
+    "readiness": {
+      "asserted": true,
+      "fingerprint_warning_count": 0,
+      "gnn_ready": true,
+      "has_model": true,
+      "initialized": true,
+      "kg_edges": 617773,
+      "kg_nodes": 57239,
+      "scoring_mode": "gnn_plus_shortest_path",
+      "serving_device": "cuda",
+      "sp_kg_binding": "verified",
+      "sp_max_hops": 5,
+      "sp_ready": true
+    },
+    "server_is_measured_pid": true,
+    "serves_named_checkpoint": true
+  },
+  "subject": {
+    "checkpoint_sha256": "33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79",
+    "graph_sha256": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+    "sp_table_sha256": "dd506e73f5c3c5203c2270921901d539ce0a6abc6612412c52a2ccb0ad794027"
+  },
+  "summary": {
+    "Pss_bytes": [
+      {
+        "between": 0,
+        "checks_after": -81747968,
+        "cumulative": 374951936,
+        "reload": 1,
+        "reload_own": 374951936,
+        "settle_after": 0,
+        "step": null,
+        "step_after_checks": null,
+        "value": 6806781952
+      },
+      {
+        "between": -81747968,
+        "checks_after": -73314304,
+        "cumulative": 830115840,
+        "reload": 2,
+        "reload_own": 536911872,
+        "settle_after": 0,
+        "step": 455163904,
+        "step_after_checks": 463597568,
+        "value": 7261945856
+      },
+      {
+        "between": -73314304,
+        "checks_after": -24608768,
+        "cumulative": 1256026112,
+        "reload": 3,
+        "reload_own": 499224576,
+        "settle_after": 0,
+        "step": 425910272,
+        "step_after_checks": 474615808,
+        "value": 7687856128
+      }
+    ],
+    "RssAnon_bytes": [
+      {
+        "between": 0,
+        "checks_after": -81747968,
+        "cumulative": 374951936,
+        "reload": 1,
+        "reload_own": 374951936,
+        "settle_after": 0,
+        "step": null,
+        "step_after_checks": null,
+        "value": 6354038784
+      },
+      {
+        "between": -81747968,
+        "checks_after": -73314304,
+        "cumulative": 830115840,
+        "reload": 2,
+        "reload_own": 536911872,
+        "settle_after": 0,
+        "step": 455163904,
+        "step_after_checks": 463597568,
+        "value": 6809202688
+      },
+      {
+        "between": -73314304,
+        "checks_after": -24608768,
+        "cumulative": 1256026112,
+        "reload": 3,
+        "reload_own": 499224576,
+        "settle_after": 0,
+        "step": 425910272,
+        "step_after_checks": 474615808,
+        "value": 7235112960
+      }
+    ],
+    "VmRSS_bytes": [
+      {
+        "between": 0,
+        "checks_after": -81747968,
+        "cumulative": 374951936,
+        "reload": 1,
+        "reload_own": 374951936,
+        "settle_after": 0,
+        "step": null,
+        "step_after_checks": null,
+        "value": 6819946496
+      },
+      {
+        "between": -81747968,
+        "checks_after": -73314304,
+        "cumulative": 830115840,
+        "reload": 2,
+        "reload_own": 536911872,
+        "settle_after": 0,
+        "step": 455163904,
+        "step_after_checks": 463597568,
+        "value": 7275110400
+      },
+      {
+        "between": -73314304,
+        "checks_after": -24608768,
+        "cumulative": 1256026112,
+        "reload": 3,
+        "reload_own": 499224576,
+        "settle_after": 0,
+        "step": 425910272,
+        "step_after_checks": 474615808,
+        "value": 7701020672
+      }
+    ]
+  },
+  "tool_sha256": "2d3cfc397b4867fe2cc876b6a58254967e64bec1f5771b695609ddfc963a41ff",
+  "workload": {
+    "accepted": 200,
+    "ended_without_response": false,
+    "failures": {},
+    "planned": 200,
+    "sent": 200
+  },
+  "workload_description": {
+    "api_phenotype_limit": 100,
+    "hpo_phenotype_nodes": 19894,
+    "phenotype_counts_by_kind": {
+      "maximum": {
+        "max": 100,
+        "median": 100.0,
+        "min": 100,
+        "requests": 50
+      },
+      "validation": {
+        "max": 15,
+        "median": 15.0,
+        "min": 2,
+        "requests": 150
+      }
+    },
+    "request_fields": {
+      "include_explanations": true,
+      "include_paths": true,
+      "top_k": 10
+    },
+    "requests": 200,
+    "rule": "validation: a seeded draw without replacement from val_samples.json, each request sending that sample's phenotypes, mapped from node index to HPO id by the graph's own index. maximum: for each request, a seeded draw of the API's maximum number of unique HPO ids among the graph's phenotype nodes. The two kinds are then shuffled together by the same generator, and the same list is sent in every repeat.",
+    "seed": 20260930,
+    "sent": "serially, one request at a time",
+    "val_samples_count": 15000,
+    "val_samples_sha256": "27a28f3a0ea67985ea056bbcc0f50d00635f4e2c06f83f42a8268a9c958ad48d"
+  }
+}

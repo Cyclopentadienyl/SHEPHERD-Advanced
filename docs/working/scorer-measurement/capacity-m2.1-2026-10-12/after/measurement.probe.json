@@ -1,0 +1,87 @@
+{
+  "boundaries_expected": [
+    "run_mode_c_entry",
+    "run_mode_c_exit",
+    "end_of_process"
+  ],
+  "boundaries_fired": [
+    "run_mode_c_entry",
+    "run_mode_c_exit",
+    "end_of_process"
+  ],
+  "entry": "measurement",
+  "error": null,
+  "exit_code": 0,
+  "forks_seen": 0,
+  "instrumented_modules": [
+    "src.evaluation.measurement"
+  ],
+  "note": "VmHWM is the kernel's approximate high-water mark and was seen to read lower at a later boundary on one kernel; report the maximum over the readings and the sampler's last-seen value. A CUDA max is since the previous reading (peaks are reset at each reading).",
+  "options": [
+    "--checkpoint",
+    "--data-dir",
+    "--split",
+    "--cohort-kind",
+    "--device",
+    "--output"
+  ],
+  "outcome": "completed",
+  "probe_sha256": "04458fd77a96b6728eda66cfbae6a3f42700953de08cf556e660258c61d02a0b",
+  "python": "3.12.3",
+  "readings": [
+    {
+      "RssAnon_bytes": 936755200,
+      "RssFile_bytes": 380035072,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 1369698304,
+      "VmRSS_bytes": 1367584768,
+      "VmSwap_bytes": 0,
+      "boundary": "run_mode_c_entry",
+      "cuda": {
+        "allocated_bytes": 132844272,
+        "max_allocated_bytes_since_last": 6042540912,
+        "max_reserved_bytes_since_last": 7449083904,
+        "reserved_bytes": 7449083904
+      },
+      "pid": 936687,
+      "seconds_since_probe_start": 4.278
+    },
+    {
+      "RssAnon_bytes": 1158901760,
+      "RssFile_bytes": 392564736,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 1602260992,
+      "VmRSS_bytes": 1602260992,
+      "VmSwap_bytes": 0,
+      "boundary": "run_mode_c_exit",
+      "cuda": {
+        "allocated_bytes": 142745184,
+        "max_allocated_bytes_since_last": 195998471,
+        "max_reserved_bytes_since_last": 7449083904,
+        "reserved_bytes": 7449083904
+      },
+      "pid": 936687,
+      "seconds_since_probe_start": 6.274
+    },
+    {
+      "RssAnon_bytes": 1158840320,
+      "RssFile_bytes": 392564736,
+      "RssShmem_bytes": 50794496,
+      "VmHWM_bytes": 1611042816,
+      "VmRSS_bytes": 1602199552,
+      "VmSwap_bytes": 0,
+      "boundary": "end_of_process",
+      "cuda": {
+        "allocated_bytes": 9568256,
+        "max_allocated_bytes_since_last": 142745184,
+        "max_reserved_bytes_since_last": 7449083904,
+        "reserved_bytes": 7449083904
+      },
+      "pid": 936687,
+      "seconds_since_probe_start": 6.371
+    }
+  ],
+  "schema": "shepherd.s10_probe_readings/draft-1",
+  "script": "scripts/measure_scorer.py",
+  "vm_hwm_max_over_readings_bytes": 1611042816
+}

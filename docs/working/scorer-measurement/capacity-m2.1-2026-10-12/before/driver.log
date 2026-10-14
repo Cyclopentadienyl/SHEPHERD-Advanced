@@ -1,0 +1,6 @@
+[15:26:44] serving exit=0
+[15:27:06] measurement exit=0
+[15:27:25] training_fresh exit=0
+[15:27:43] training_resume exit=0
+[15:42:42] sp exit=0
+[15:42:49] done: serving exit=0;measurement exit=0;training_fresh exit=0;training_resume exit=0;sp exit=0;

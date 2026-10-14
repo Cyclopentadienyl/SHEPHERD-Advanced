@@ -76,26 +76,23 @@ from src.evaluation.cohort import (  # noqa: E402
     GENERATED_SPLITS,
     MANIFEST_FILENAME,
     resolve_cohort,
-    verify_generated_cohorts,
+    verify_cohort_reads,
 )
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 
-def disease_ids(data_dir: Path, split: str) -> List[int]:
-    """Every sample's disease id in one split, in file order.
+def disease_ids(read: Any) -> List[int]:
+    """Every sample's disease id in one split, in file order, from its one read.
 
-    Read through `src.kg.storage.file_storage.read_samples`, which is what the
-    training and measurement paths read with — a second parser here could differ
-    from them in exactly the way this evidence exists to rule out. It also refuses
-    a missing split and names the ones that exist, so a workspace without the
-    split asked for produces an error rather than an empty set silently reported
-    as zero overlap.
+    `read` is what `src.kg.storage.file_storage.read_samples` returned — the
+    shared reader training and measurement use (contract M2.1) — so a second
+    parser here cannot differ from them in exactly the way this evidence exists
+    to rule out, and the ids counted come from the bytes whose digest the report
+    records and the verifier compared.
     """
-    from src.kg.storage.file_storage import read_samples
-
-    return [int(sample.disease_id) for sample in read_samples(data_dir, split)]
+    return [int(sample.disease_id) for sample in read.samples]
 
 
 #: Bumped when this report's shape changes. Version 1 is the unversioned shape
@@ -107,11 +104,11 @@ REPORT_SCHEMA_VERSION = 5
 def manifest_verification(
     verified: Any, splits: List[str], evaluation_kind: str, measured: Dict[str, set]
 ) -> Dict[str, Any]:
-    """What ``verify_generated_cohorts`` established, written into the report.
+    """What ``verify_cohort_reads`` established, written into the report.
 
     **The verification itself is not repeated here.** It runs at every entry point
-    that consumes generated cohorts — training, measurement, calibration, this
-    audit — from one definition in ``src/evaluation/cohort.py``. A second copy in
+    that consumes generated cohorts — training, measurement, this audit — from
+    one definition in ``src/evaluation/cohort.py``. A second copy in
     the audit would be free to drift from the one the pipeline actually enforces,
     and would then report a workspace as sound under rules nothing else applies.
 
@@ -176,7 +173,8 @@ def manifest_verification(
 def build_report(
     data_dir: Path, splits: List[str], evaluation_kind: str, relationship: str
 ) -> Dict[str, Any]:
-    from src.utils.fingerprint import file_sha256
+    from src.kg.artifacts import read_split_manifest
+    from src.kg.storage.file_storage import read_samples
 
     train_split, eval_split = splits
     # **Both splits are resolved before anything is read.** The training split is
@@ -192,9 +190,18 @@ def build_report(
     # never opens generated `val`, so a missing or corrupt one there must not
     # block an institutional measurement it has nothing to do with.
     scope = GENERATED_SPLITS if evaluation_kind == "generated" else (train_split,)
-    verified = verify_generated_cohorts(data_dir, scope)
-    train_ids = disease_ids(data_dir, train_split)
-    eval_ids = disease_ids(data_dir, eval_split)
+    for split in scope:
+        resolve_cohort(data_dir, split)
+    # **One read per file (contract M2.1).** The manifest is read once and every
+    # split this audit uses once; the verifier compares those reads, the counts
+    # are taken from them, and the digests recorded are theirs. Nothing is hashed
+    # by path, so a file replaced in between is either counted and recorded as
+    # read or refused as not the file the manifest describes.
+    manifest = read_split_manifest(data_dir)
+    reads = {split: read_samples(data_dir, split) for split in dict.fromkeys((*scope, *splits))}
+    verified = verify_cohort_reads(manifest, {split: reads[split] for split in scope})
+    train_ids = disease_ids(reads[train_split])
+    eval_ids = disease_ids(reads[eval_split])
     train_set, eval_set = set(train_ids), set(eval_ids)
 
     # **An empty split cannot establish the fact this file exists for.** M4 bounds
@@ -223,10 +230,7 @@ def build_report(
             f"{train_split}, which bounds what any {eval_split} metric can be evidence of"
         ),
         "splits": {"training": train_split, "evaluation": eval_split},
-        "digests": {
-            f"{split}_samples": file_sha256(data_dir / f"{split}_samples.json")
-            for split in splits
-        },
+        "digests": {f"{split}_samples": reads[split].identity.sha256 for split in splits},
         "counts": {
             f"{train_split}_samples": len(train_ids),
             f"{train_split}_diseases": len(train_set),

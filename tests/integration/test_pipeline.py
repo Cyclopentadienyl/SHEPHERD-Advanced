@@ -268,8 +268,9 @@ def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
     this one by structure alone.
 
     So the manifest is built *after* the overwrite, over the bytes that are
-    actually there. Returns `kg.json`'s path, which the pipeline needs in order
-    to check that the graph object and the workspace are one composition.
+    actually there. Returns `kg.json`'s path. The caller reads it with
+    `KnowledgeGraph.read_json` and passes the result whole, so the pipeline can
+    check that the graph it serves and the workspace are one composition.
     """
     from tests.fixtures.generated_workspace import write_generated_workspace
 
@@ -280,6 +281,20 @@ def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
     kg.save_json(str(data_dir / "kg.json"))
     write_generated_workspace(data_dir, train_ids=[0, 1], val_ids=[2])
     return data_dir / "kg.json"
+
+
+def record_training_graph(ckpt_path: Path, data_dir: Path) -> None:
+    """Give a hand-written checkpoint the graph roles training records (M2.2).
+
+    These checkpoints are trained in the test over the tensors `bind_workspace`
+    then writes, so they are this workspace's; serving refuses any checkpoint
+    whose record does not name the workspace's graph (M2.4).
+    """
+    from tests.fixtures.generated_workspace import graph_record
+
+    contents = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    contents["training_input_digests"] = graph_record(data_dir)
+    torch.save(contents, ckpt_path)
 
 
 class TestCheckpointBridge:
@@ -333,11 +348,11 @@ class TestCheckpointBridge:
         kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
         # --- Load fresh pipeline from disk (production path) ---
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
 
@@ -383,7 +398,7 @@ class TestCheckpointBridge:
     ):
         """`encode_full_graph` must be the pipeline's own forward, not a lookalike.
 
-        Modes B and C encode offline rather than by constructing a
+        Measurement's Mode C encodes offline rather than by constructing a
         `DiagnosisPipeline`, which would drag in the knowledge-graph object, the
         shortest-path table and the path-finding and explanation machinery they do
         not use. That saving is only safe while the two really are the same three
@@ -409,11 +424,11 @@ class TestCheckpointBridge:
         data_dir = tmp_path / "encode_graph_data"
         kg_path = bind_workspace(medium_kg, graph_data, data_dir)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
         cached = pipeline._node_embeddings
@@ -529,10 +544,9 @@ class TestShortestPathIntegration:
 
         with pytest.raises(ValueError, match="different graph"):
             DiagnosisPipeline(
-                kg=medium_kg,
+                graph=KnowledgeGraph.read_json(kg_path),
                 model=model,
                 data_dir=str(data_dir),
-                kg_path=str(kg_path),
                 device="cpu",
             )
 
@@ -555,11 +569,11 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
         assert pipeline._gnn_ready
@@ -598,11 +612,11 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             device="cpu",
         )
         assert pipeline._gnn_ready
@@ -632,11 +646,11 @@ class TestShortestPathIntegration:
 
         eta_value = 0.6
         config = PipelineConfig(eta=eta_value)
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             config=config,
             device="cpu",
         )
@@ -674,11 +688,11 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             config=PipelineConfig(eta=1.0),
             device="cpu",
         )
@@ -709,11 +723,11 @@ class TestShortestPathIntegration:
             "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
         }, ckpt_path)
 
+        record_training_graph(ckpt_path, data_dir)
         pipeline = DiagnosisPipeline(
-            kg=medium_kg,
+            graph=KnowledgeGraph.read_json(kg_path),
             checkpoint_path=str(ckpt_path),
             data_dir=str(data_dir),
-            kg_path=str(kg_path),
             config=PipelineConfig(eta=0.0),
             device="cpu",
         )

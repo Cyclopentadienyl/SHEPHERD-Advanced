@@ -1,0 +1,29 @@
+Read-only AArch64 disassembly interpretation
+
+mi_arenas_try_purge.part.0
+0x4dde1c: call _mi_clock_now; 0x4dde20 preserves now in x23.
+0x4dde24-2c: load global mi_arenas_purge_expire into x0.
+0x4dde34: force=true bypasses ordinary deadline check.
+0x4dde38-40: cmp x0,0; ccmp x23,x0,#0,ne; b.gt 0x4de11c.
+For nonzero expiry: signed now > expiry branches to the epilogue/return.
+For zero expiry: NZCV=0 makes GT true; also returns.
+Thus ordinary overdue purges are skipped: the pre-acd6f6c direction.
+
+0x4ddef4: loads per-arena expiry.
+0x4ddf00-08: zero or not-yet-due per-arena expiry skips that arena.
+0x4dded0-d8: advance to next arena; reaching the end branches 0x4de0fc.
+0x4de0fc-104: store zero into the global expiry, even if all individual
+arenas were skipped for being not-yet-due: the pre-4e50cec behavior.
+These are verified code paths; no claim is made that their runtime state
+was captured during the original reload runs.
+
+_mi_arena_free
+0x4df41c-430 reads purge_delay and arena_purge_mult and multiplies them.
+0x4df438-448 checks preloading or zero delay. With zero delay it reaches
+0x4df44c-458, which calls mi_arena_purge directly, bypassing the scheduler.
+Positive delay in normal operation branches to 0x4df500, scheduling expiry.
+
+This file describes the existing wheel inspected after the recorded runs.
+Those runs recorded distribution hashes but not this ELF hash at launch.
+No private-symbol call, binary patch, library replacement, or new workload
+was performed.

@@ -19,15 +19,29 @@ It answers "is this checkpoint structurally compatible with the graph in front o
 me?". It cannot answer "which exact inputs produced this checkpoint" — two runs
 over different sample files share it, and sample files do not enter it at all.
 
-*Content digests* (`file_sha256`, `compute_input_digests`) answer the second
-question. They are kept separate rather than folded into the fingerprint, because
+*Content digests* (`read_once`, `file_sha256`) answer the second question. They are
+kept separate rather than folded into the fingerprint, because
 a structural identity that also changed whenever a byte moved would stop being a
 compatibility check.
+
+`read_once` is the content digest of an input that is about to be parsed: it
+returns the bytes and the digest of those same bytes, so what a reader parses and
+what a record names cannot come from two different reads (contract M2.1).
+`file_sha256` identifies a file nobody is about to parse. Within the static
+pin's scope (`src/**`, the entry points and the scripts M2.1's S9 moved), every
+remaining caller is a named exception in `tests/unit/test_provenance_pins.py`;
+BACKLOG item 19's scripts outside that scope still hash by path, each with its
+home there.
 
 When a checkpoint is saved during training, the fingerprint of the
 graph data used is embedded in the checkpoint. At inference load time,
 the current graph data's fingerprint is compared against the saved one.
-Mismatches produce a WARNING (not a hard error) so operators can decide.
+Mismatches produce a WARNING (not a hard error) so operators can decide: the
+fingerprint is a diagnostic, never identity.
+
+**Identity is `verify_training_record`'s** (contract M2.4): the one comparator
+between a checkpoint's `training_input_digests` and the digests a consumer holds
+for the same roles. It raises; it does not warn.
 
 Usage:
     from src.utils.fingerprint import compute_fingerprint, verify_fingerprint
@@ -46,10 +60,64 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReadIdentity:
+    """Which file was read, and the SHA-256 of the bytes that read returned.
+
+    It carries no bytes, so a reader can keep it beside what it parsed and let the
+    raw buffer go.
+    """
+
+    path: Path
+    sha256: str
+
+
+@dataclass(frozen=True)
+class FileRead:
+    """One read of one file: its bytes, and the SHA-256 of exactly those bytes.
+
+    A reader parses `data`, keeps `identity`, and drops this object, so the buffer
+    is released once the parse is done.
+    """
+
+    path: Path
+    data: bytes
+    sha256: str
+
+    @property
+    def identity(self) -> ReadIdentity:
+        return ReadIdentity(path=self.path, sha256=self.sha256)
+
+
+def read_once(path: Union[str, Path]) -> FileRead:
+    """Read a file once and return its bytes with their SHA-256.
+
+    **One open, one full read, and the digest is taken over that same bytes
+    object.** Hashing a path and then loading it reads the file twice, and a file
+    replaced in between is parsed as one thing and recorded as another. Hashing an
+    open handle and then parsing from it survives an atomic rename but not an
+    in-place rewrite, which is how `torch.save` writes; hashing the buffer that is
+    parsed survives both.
+
+    **A missing file raises** (`FileNotFoundError`), unlike `file_sha256`. A file
+    deleted between two reads is then refused instead of recorded as absent.
+
+    No retry, no fallback. The read is alone on its line: the readers' release
+    check (contract M2.1, S2) finds the raw buffer by the allocation that line
+    makes, so nothing a reader keeps may be made on it.
+    """
+    path = Path(path)
+    with path.open("rb") as handle:
+        data = handle.read()
+    sha256 = hashlib.sha256(data).hexdigest()
+    return FileRead(path=path, data=data, sha256=sha256)
 
 
 def file_sha256(path: Union[str, Path]) -> Optional[str]:
@@ -82,25 +150,77 @@ def file_sha256(path: Union[str, Path]) -> Optional[str]:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def compute_input_digests(roles: Mapping[str, Union[str, Path]]) -> Dict[str, Optional[str]]:
-    """Content digests keyed by the **semantic role** each file played.
 
-    Role-keyed and nothing more. This function knows nothing about splits,
-    checkpoints, training or measurement — each caller names the roles *its own
-    run* consumed, and two callers with different roles do not have to agree on a
-    vocabulary or share a schema. That is what keeps a shared digest contract from
-    turning into a shared domain model.
+class TrainingRecordMismatch(ValueError):
+    """A checkpoint's training record does not name the inputs it is compared
+    with, or records none."""
 
-    What it does own is the one decision both callers must not disagree about:
-    a missing file is `None`, uniformly. Two dict comprehensions could drift on
-    that; this cannot.
 
-    Callers should pass **only the roles the run actually consumed**. Hashing every
-    file that happens to sit in a directory records the directory, not the run —
-    an unrelated split appearing beside the inputs would change a record of work
-    that never read it.
+def verify_training_record(
+    checkpoint: Mapping[str, Any],
+    current: Mapping[str, str],
+    roles: Iterable[str],
+    *,
+    recorded_by: str,
+    compared_with: str,
+) -> None:
+    """Refuse unless `checkpoint` records, for every role in `roles`, the digest
+    `current` holds for it (contract M2.4).
+
+    **The one model-to-graph comparator.** Serving and measurement compare the
+    four graph roles with the workspace they verified, and the deployment probe
+    asserts through this function; resume compares its parent with the run over
+    the graph and data roles (M2.3). The set of roles is the argument and the
+    rule is the same for every caller.
+
+    **Present on both sides and equal, or refused.** A checkpoint with no
+    `training_input_digests` (one from before the contract), a role it does not
+    record, a role `current` does not hold and a different digest are each
+    refused by name, so an empty record cannot pass vacuously. `current` comes
+    from the caller's reads; nothing here opens a file.
+
+    Args:
+        checkpoint: the checkpoint as read.
+        current: role -> SHA-256 the consumer holds for the inputs in front of it.
+        roles: the roles compared; must not be empty.
+        recorded_by: names the checkpoint in a refusal ("checkpoint <path>").
+        compared_with: names `current` in a refusal ("the workspace <path>").
+
+    Raises:
+        TrainingRecordMismatch: any role is missing on either side or differs.
     """
-    return {role: file_sha256(path) for role, path in roles.items()}
+    roles = tuple(roles)
+    if not roles:
+        raise ValueError("no roles to compare; an empty comparison passes anything")
+    record = (
+        checkpoint.get("training_input_digests")
+        if isinstance(checkpoint, Mapping) else None
+    )
+    if not isinstance(record, Mapping) or not record:
+        raise TrainingRecordMismatch(
+            f"{recorded_by} records no training_input_digests, so the inputs it was "
+            f"trained on cannot be compared with {compared_with}. A checkpoint from "
+            "before the provenance contract is not used; retrain it."
+        )
+    problems: List[str] = []
+    for role in roles:
+        recorded, held = record.get(role), current.get(role)
+        if not recorded:
+            problems.append(f"{role} is not recorded")
+        elif not held:
+            problems.append(f"{role} is recorded and {compared_with} has none")
+        elif recorded != held:
+            problems.append(
+                f"{role} differs (recorded {str(recorded)[:12]}..., "
+                f"{compared_with} has {str(held)[:12]}...)"
+            )
+    if problems:
+        raise TrainingRecordMismatch(
+            f"{recorded_by} does not match {compared_with}: "
+            + "; ".join(problems)
+            + ". Its record names the bytes it was trained on, and these are not "
+            "they."
+        )
 
 
 def compute_fingerprint(
@@ -168,12 +288,8 @@ def verify_fingerprint(
     **This checks structure only, and does not look at
     `training_input_digests`.** An empty warning list therefore means "the graph is
     structurally compatible", never "this checkpoint was trained on these files".
-    The digests are captured so the question *can* be answered later; comparing
-    them against a current workspace needs decisions this function does not yet
-    have — which path stands for each semantic role, and how a relocated
-    workspace, an absent input or a checkpoint predating the field should read.
-    That comparison is deliberately deferred rather than half-built here, and the
-    absence of a digest map means only "not recorded".
+    That question is `verify_training_record`'s, which compares the digests by
+    role and refuses; this stays a diagnostic beside it.
 
     Args:
         checkpoint: loaded checkpoint dict (may or may not have "data_fingerprint")

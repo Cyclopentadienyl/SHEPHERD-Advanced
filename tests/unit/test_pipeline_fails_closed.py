@@ -45,6 +45,7 @@ from src.inference.pipeline import (  # noqa: E402
     PipelineConfig,
 )
 from src.kg.graph import KnowledgeGraph  # noqa: E402
+from tests.fixtures.generated_workspace import graph_record  # noqa: E402
 from tests.fixtures.synthetic_workspace import (  # noqa: E402
     FEATURE_DIM,
     HIDDEN_DIM,
@@ -65,6 +66,8 @@ def _checkpoint_for_another_graph(data_dir, path):
 
     Everything about it is well formed: it loads, its configuration matches its
     weights, and it would serve its own graph. It does not build over this one.
+    It records this workspace's graph roles, so the build is what refuses it, not
+    the training record (M2.4, whose refusals `test_training_record.py` shows).
     """
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
 
@@ -83,6 +86,7 @@ def _checkpoint_for_another_graph(data_dir, path):
             "metadata": metadata,
             "in_channels_dict": in_channels,
             "epoch": 1,
+            "training_input_digests": graph_record(data_dir),
         },
         path,
     )
@@ -104,7 +108,7 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
 
         pipeline = DiagnosisPipeline(
-            kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+            graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
             checkpoint_path=str(checkpoint), device="cpu",
         )
 
@@ -118,7 +122,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="does not exist"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(absent), device="cpu",
             )
 
@@ -129,7 +133,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="could not be read") as refused:
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(corrupt), device="cpu",
             )
 
@@ -142,7 +146,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="does not build a model"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(other), device="cpu",
             )
 
@@ -160,7 +164,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="no node embeddings"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(checkpoint), device="cpu",
             )
 
@@ -182,7 +186,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="disease"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(checkpoint), device="cpu",
             )
 
@@ -195,7 +199,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="not a training checkpoint"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(not_a_checkpoint), device="cpu",
             )
 
@@ -208,7 +212,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="carries no model weights"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=_graph_data(data_dir),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(tmp_path / "stripped.pt"), device="cpu",
             )
 
@@ -241,26 +245,63 @@ class TestARequestedModelIsBuiltOrRefused:
 
         with pytest.raises(PipelineBuildError, match="sp_optional=False"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(),
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
                 config=PipelineConfig(sp_optional=False),
                 checkpoint_path=str(checkpoint),
                 data_dir=str(data_dir),
-                kg_path=str(data_dir / "kg.json"),
                 device="cpu",
             )
 
     def test_required_shortest_paths_with_no_directory_say_so(self, workspace):
         """With the graph passed in memory there is no table to load and no load
-        message to point at; the refusal names that instead."""
+        message to point at; the refusal names that instead. The model is handed
+        in built: no checkpoint is loaded over an in-memory graph (M2.4)."""
+        from src.models.gnn.shepherd_gnn import build_shepherd_model
+
         data_dir, checkpoint = workspace
+        graph = _graph_data(data_dir)
+        model = build_shepherd_model(
+            torch.load(checkpoint, map_location="cpu", weights_only=False), graph
+        )
 
         with pytest.raises(PipelineBuildError, match="no data_dir was given"):
             DiagnosisPipeline(
                 kg=KnowledgeGraph(),
                 config=PipelineConfig(sp_optional=False),
-                graph_data=_graph_data(data_dir),
-                checkpoint_path=str(checkpoint),
+                graph_data=graph,
+                model=model,
                 device="cpu",
+            )
+
+    @pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "unrecorded"])
+    def test_a_checkpoint_over_an_in_memory_graph_is_refused(
+        self, workspace, monkeypatch, recorded
+    ):
+        """Contract M2.4, the review's P2-1. A graph supplied in memory has no
+        verified workspace, so nothing shows the checkpoint was trained on it.
+        Every feature shifted, the shapes unchanged: whatever the checkpoint
+        records, it is refused before it is opened and nothing is built."""
+        import src.models.gnn.shepherd_gnn as builder
+        import src.utils.checkpoint_io as checkpoint_io
+
+        data_dir, checkpoint = workspace
+        if not recorded:
+            contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
+            del contents["training_input_digests"]
+            torch.save(contents, checkpoint)
+        graph = _graph_data(data_dir)
+        graph["x_dict"] = {k: v + 11.0 for k, v in graph["x_dict"].items()}
+        monkeypatch.setattr(builder, "build_shepherd_model",
+                            lambda *a, **k: pytest.fail("a model was built"))
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint",
+                            lambda *a, **k: pytest.fail("the checkpoint was read"))
+        monkeypatch.setattr(pipeline_module, "read_checkpoint",
+                            lambda *a, **k: pytest.fail("the checkpoint was read"))
+
+        with pytest.raises(PipelineBuildError, match="supplied in memory"):
+            DiagnosisPipeline(
+                kg=KnowledgeGraph(), graph_data=graph,
+                checkpoint_path=str(checkpoint), device="cpu",
             )
 
     def test_optional_shortest_paths_that_are_absent_still_build(self, workspace):
@@ -269,10 +310,9 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
 
         pipeline = DiagnosisPipeline(
-            kg=KnowledgeGraph(),
+            graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
             checkpoint_path=str(checkpoint),
             data_dir=str(data_dir),
-            kg_path=str(data_dir / "kg.json"),
             device="cpu",
         )
 
@@ -294,9 +334,9 @@ class TestARequestedModelIsBuiltOrRefused:
 def api(monkeypatch):
     """App state as a fresh process has it, restored afterwards.
 
-    `kg.json` in the synthetic workspace is a placeholder the manifest binds, so
-    the graph object is stood in for. The digest check reads the file, not the
-    object, and still runs.
+    `kg.json` in the synthetic workspace is a placeholder the manifest binds. The
+    real reader parses it to an empty graph, and the check compares the digest
+    of the bytes it parsed (contract M2.1, S6).
     """
     pytest.importorskip("fastapi")
     import src.api.main as api_main
@@ -305,9 +345,6 @@ def api(monkeypatch):
         monkeypatch.setattr(api_main.app_state, field, None, raising=False)
     monkeypatch.setattr(api_main.app_state, "model_version", "unknown", raising=False)
     monkeypatch.setattr(api_main.app_state, "is_ready", False, raising=False)
-    monkeypatch.setattr(
-        KnowledgeGraph, "load_json", staticmethod(lambda *a, **k: KnowledgeGraph())
-    )
     for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")

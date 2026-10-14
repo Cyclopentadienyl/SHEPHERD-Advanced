@@ -1,0 +1,219 @@
+s10_compare.py sha256 7fbb86d59151d60cfe481ae97cbc287d98bb70607e53b1d1f64d4d1f39b3578f
+reference: before commit 90a668f1334dfe6f73637dd8f11659ea906b9e1d, after commit 343e90e993d0a5129cd547b95276b7e2b8b12fa9
+reference: subject {'checkpoint_sha256': '33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79', 'graph_sha256': '6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43', 'sp_pairs': 431902937, 'sp_max_hops': 5, 'checkpoint_bytes': 47931987, 'sp_table_bytes': 10797575893}; matrix {'train_flags': '--conv-type hgt --hidden-dim 256 --num-layers 4 --epochs 3 --seed 42', 'sp_workers': '15'}
+before directory before: evidence digest 283b7864fb2f5b0783243b3562822a0f2df0ece15d6d80c2ffaeb5a97aef77f7
+after directory after: evidence digest 87e19e7526c61e77ea4f577e0a52797512d10acbf3929f2d409e35066084203d
+
+## acceptance 1 (after)
+PASS    after evidence is from 343e90e993d0
+PASS    rows.txt: this run's five rows, each once, each exit=0
+PASS    measurement: sampled command exited 0
+PASS    measurement: no stop signal, not killed by a signal
+PASS    measurement: the sampler's own readings did not fail
+PASS    measurement: no process of the run left behind
+PASS    measurement: no OOM kill
+PASS    measurement: R0 precondition met (no swap rise during R0)
+PASS    measurement: no swap increase
+PASS    measurement: probe outcome completed
+PASS    measurement: every boundary fired
+PASS    training_fresh: sampled command exited 0
+PASS    training_fresh: no stop signal, not killed by a signal
+PASS    training_fresh: the sampler's own readings did not fail
+PASS    training_fresh: no process of the run left behind
+PASS    training_fresh: no OOM kill
+PASS    training_fresh: R0 precondition met (no swap rise during R0)
+PASS    training_fresh: no swap increase
+PASS    training_fresh: probe outcome stopped_at_boundary
+PASS    training_fresh: every boundary fired
+PASS    training_fresh: ran without --resume
+PASS    training_fresh: ran on CUDA
+PASS    training_resume: sampled command exited 0
+PASS    training_resume: no stop signal, not killed by a signal
+PASS    training_resume: the sampler's own readings did not fail
+PASS    training_resume: no process of the run left behind
+PASS    training_resume: no OOM kill
+PASS    training_resume: R0 precondition met (no swap rise during R0)
+PASS    training_resume: no swap increase
+PASS    training_resume: probe outcome stopped_at_boundary
+PASS    training_resume: every boundary fired
+PASS    training_resume: ran with --resume
+PASS    training_resume: ran on CUDA
+PASS    sp: sampled command exited 0
+PASS    sp: no stop signal, not killed by a signal
+PASS    sp: the sampler's own readings did not fail
+PASS    sp: no process of the run left behind
+PASS    sp: no OOM kill
+PASS    sp: R0 precondition met (no swap rise during R0)
+PASS    sp: no swap increase
+PASS    sp: probe outcome completed
+PASS    sp: every boundary fired
+PASS    measurement: Mode C, cuda_executed, this commit
+PASS    training_fresh: no epoch output, no checkpoint written
+PASS    training_resume: no epoch output, no checkpoint written
+PASS    sp: sidecar names the expected graph, pairs and max_hops
+PASS    sp: a table was published into scratch
+PASS    workspace unchanged by the run
+PASS    every input present; the designated subject
+PASS    readings written by the recorded tools
+PASS    serving: complete, this commit, the recorded inputs, no OOM or swap increase
+
+## comparison: before run
+PASS    before evidence is from 90a668f1334d
+PASS    rows.txt: this run's five rows, each once, each exit=0
+PASS    measurement: sampled command exited 0
+PASS    measurement: no stop signal, not killed by a signal
+PASS    measurement: the sampler's own readings did not fail
+PASS    measurement: no process of the run left behind
+PASS    measurement: no OOM kill
+PASS    measurement: R0 precondition met (no swap rise during R0)
+PASS    measurement: no swap increase
+PASS    measurement: probe outcome completed
+PASS    measurement: every boundary fired
+PASS    training_fresh: sampled command exited 0
+PASS    training_fresh: no stop signal, not killed by a signal
+PASS    training_fresh: the sampler's own readings did not fail
+PASS    training_fresh: no process of the run left behind
+PASS    training_fresh: no OOM kill
+PASS    training_fresh: R0 precondition met (no swap rise during R0)
+PASS    training_fresh: no swap increase
+PASS    training_fresh: probe outcome stopped_at_boundary
+PASS    training_fresh: every boundary fired
+PASS    training_fresh: ran without --resume
+PASS    training_fresh: ran on CUDA
+PASS    training_resume: sampled command exited 0
+PASS    training_resume: no stop signal, not killed by a signal
+PASS    training_resume: the sampler's own readings did not fail
+PASS    training_resume: no process of the run left behind
+PASS    training_resume: no OOM kill
+PASS    training_resume: R0 precondition met (no swap rise during R0)
+PASS    training_resume: no swap increase
+PASS    training_resume: probe outcome stopped_at_boundary
+PASS    training_resume: every boundary fired
+PASS    training_resume: ran with --resume
+PASS    training_resume: ran on CUDA
+PASS    sp: sampled command exited 0
+PASS    sp: no stop signal, not killed by a signal
+PASS    sp: the sampler's own readings did not fail
+PASS    sp: no process of the run left behind
+PASS    sp: no OOM kill
+PASS    sp: R0 precondition met (no swap rise during R0)
+PASS    sp: no swap increase
+PASS    sp: probe outcome completed
+PASS    sp: every boundary fired
+PASS    measurement: Mode C, cuda_executed, this commit
+PASS    training_fresh: no epoch output, no checkpoint written
+PASS    training_resume: no epoch output, no checkpoint written
+PASS    sp: sidecar names the expected graph, pairs and max_hops
+PASS    sp: a table was published into scratch
+PASS    workspace unchanged by the run
+PASS    every input present; the designated subject
+PASS    readings written by the recorded tools
+PASS    serving: complete, this commit, the recorded inputs, no OOM or swap increase
+
+## comparison
+PASS    inputs equal at both commits
+PASS    tools equal at both commits
+PASS    pre-read list equal at both commits
+PASS    the pre-read list covers every input, the checkpoint last
+PASS    environment and matrix settings equal at both commits (same boot)
+PASS    the plan's settings: warm page cache, the explicit allocator, the plan's commands on CUDA
+PASS    the rows' explicit allocator is serving's
+UNKNOWN quiet machine: service stopped, no GPU process -- missing: before/environment.txt: service state (load 'not-found', active 'inactive'); confirm by hand that it was stopped; after/environment.txt: service state (load 'not-found', active 'inactive'); confirm by hand that it was stopped
+PASS    measurement --modes C at 90a668f only
+PASS    serving allocator known and equal at both commits
+
+| row | reading | before | after | after - before |
+|---|---|---|---|---|
+| measurement | VmHWM at run_mode_c_entry | 1.465 GB | 1.370 GB | -0.095 GB |
+| measurement | VmRSS at run_mode_c_entry | 1.389 GB | 1.368 GB | -0.022 GB |
+| measurement | CUDA max allocated up to run_mode_c_entry | 6.043 GB | 6.043 GB | 0 |
+| measurement | CUDA max reserved up to run_mode_c_entry | 7.449 GB | 7.449 GB | 0 |
+| measurement | VmHWM at run_mode_c_exit | 1.600 GB | 1.602 GB | 0.002 GB |
+| measurement | VmRSS at run_mode_c_exit | 1.600 GB | 1.602 GB | 0.002 GB |
+| measurement | CUDA max allocated up to run_mode_c_exit | 0.196 GB | 0.196 GB | 0 |
+| measurement | CUDA max reserved up to run_mode_c_exit | 7.449 GB | 7.449 GB | 0 |
+| measurement | VmHWM at end_of_process | 1.608 GB | 1.611 GB | 0.003 GB |
+| measurement | VmRSS at end_of_process | 1.587 GB | 1.602 GB | 0.015 GB |
+| measurement | CUDA max allocated up to end_of_process | 0.143 GB | 0.143 GB | 0 |
+| measurement | CUDA max reserved up to end_of_process | 7.449 GB | 7.449 GB | 0 |
+| measurement | VmHWM max over the probe's readings | 1.608 GB | 1.611 GB | 0.003 GB |
+| measurement | root VmHWM incl. shutdown (sampler) | 1.608 GB | 1.611 GB | 0.003 GB |
+| measurement | system in use, sampled peak less R0 | 9.233 GB | 9.101 GB | -0.132 GB |
+| measurement | tree Pss, sampled peak | 1.590 GB | 1.595 GB | 0.005 GB |
+| measurement | wall seconds | 9.26 | 8.039 | -1.221 |
+| training_fresh | VmHWM at trainer_init_return | 1.966 GB | 1.966 GB | 53248 |
+| training_fresh | VmRSS at trainer_init_return | 1.966 GB | 1.966 GB | 53248 |
+| training_fresh | CUDA max allocated up to trainer_init_return | 0.017 GB | 0.017 GB | 0 |
+| training_fresh | CUDA max reserved up to trainer_init_return | 0.034 GB | 0.034 GB | 0 |
+| training_fresh | VmHWM at replaced_train | 1.966 GB | 1.966 GB | -225280 |
+| training_fresh | VmRSS at replaced_train | 1.966 GB | 1.966 GB | -225280 |
+| training_fresh | CUDA max allocated up to replaced_train | 0.017 GB | 0.017 GB | 0 |
+| training_fresh | CUDA max reserved up to replaced_train | 0.034 GB | 0.034 GB | 0 |
+| training_fresh | VmHWM max over the probe's readings | 1.966 GB | 1.966 GB | -225280 |
+| training_fresh | root VmHWM incl. shutdown (sampler) | 1.966 GB | 1.965 GB | -901120 |
+| training_fresh | system in use, sampled peak less R0 | 1.828 GB | 1.877 GB | 0.049 GB |
+| training_fresh | tree Pss, sampled peak | 1.957 GB | 1.942 GB | -0.015 GB |
+| training_fresh | wall seconds | 8.414 | 5.524 | -2.8899999999999997 |
+| training_resume | VmHWM at trainer_init_return | 1.966 GB | 1.966 GB | 385024 |
+| training_resume | VmRSS at trainer_init_return | 1.966 GB | 1.966 GB | 385024 |
+| training_resume | CUDA max allocated up to trainer_init_return | 0.017 GB | 0.017 GB | 0 |
+| training_resume | CUDA max reserved up to trainer_init_return | 0.034 GB | 0.034 GB | 0 |
+| training_resume | VmHWM at replaced_train | 1.968 GB | 2.015 GB | 0.047 GB |
+| training_resume | VmRSS at replaced_train | 1.968 GB | 1.968 GB | 98304 |
+| training_resume | CUDA max allocated up to replaced_train | 0.065 GB | 0.065 GB | 0 |
+| training_resume | CUDA max reserved up to replaced_train | 0.067 GB | 0.067 GB | 0 |
+| training_resume | VmHWM max over the probe's readings | 1.968 GB | 2.015 GB | 0.047 GB |
+| training_resume | root VmHWM incl. shutdown (sampler) | 1.967 GB | 2.015 GB | 0.048 GB |
+| training_resume | system in use, sampled peak less R0 | 1.938 GB | 2.001 GB | 0.063 GB |
+| training_resume | tree Pss, sampled peak | 1.958 GB | 1.958 GB | 688128 |
+| training_resume | wall seconds | 7.311 | 5.749 | -1.5620000000000003 |
+| sp | VmHWM at after_graph_read | 1.601 GB | 1.601 GB | 233472 |
+| sp | VmRSS at after_graph_read | 1.596 GB | 1.596 GB | 53248 |
+| sp | VmHWM at first_fork | 1.612 GB | 1.612 GB | 49152 |
+| sp | VmRSS at first_fork | 1.612 GB | 1.612 GB | 49152 |
+| sp | VmHWM at publication_start | 53.737 GB | 53.629 GB | -0.107 GB |
+| sp | VmRSS at publication_start | 12.805 GB | 12.513 GB | -0.292 GB |
+| sp | VmHWM at publication_end | 53.737 GB | 53.629 GB | -0.107 GB |
+| sp | VmRSS at publication_end | 12.805 GB | 12.513 GB | -0.292 GB |
+| sp | VmHWM at end_of_process | 53.737 GB | 53.629 GB | -0.107 GB |
+| sp | VmRSS at end_of_process | 1.314 GB | 1.023 GB | -0.291 GB |
+| sp | VmHWM max over the probe's readings | 53.737 GB | 53.629 GB | -0.107 GB |
+| sp | root VmHWM incl. shutdown (sampler) | 53.737 GB | 53.630 GB | -0.107 GB |
+| sp | system in use, sampled peak less R0 | 53.026 GB | 53.506 GB | 0.480 GB |
+| sp | tree Pss, sampled peak | 53.727 GB | 53.621 GB | -0.106 GB |
+| sp | wall seconds | 887.635 | 867.487 | -20.148000000000025 |
+| serving | repeat 1 R1 vm_hwm_bytes | 23.773 GB | 23.771 GB | -0.002 GB |
+| serving | repeat 1 R1 vm_rss_bytes | 6.505 GB | 6.504 GB | -0.001 GB |
+| serving | repeat 1 R1 system_in_use_sampled_peak_less_r0_bytes | 30.974 GB | 30.726 GB | -0.248 GB |
+| serving | repeat 1 R2 vm_hwm_bytes | 6.505 GB | 6.503 GB | -0.002 GB |
+| serving | repeat 1 R2 vm_rss_after_bytes | 6.447 GB | 6.446 GB | -0.001 GB |
+| serving | repeat 1 R3 vm_rss_after_bytes | 6.793 GB | 6.816 GB | 0.023 GB |
+| serving | repeat 1 R3 wall_seconds | 85.23982334900211 | 76.43730489500012 | -8.802518454001984 |
+| serving | repeat 1 R4 vm_hwm_over_reload_bytes | 28.455 GB | 28.477 GB | 0.022 GB |
+| serving | repeat 1 R4 vm_hwm_increase_bytes | 22.008 GB | 22.031 GB | 0.024 GB |
+| serving | repeat 1 R4 system_in_use_sampled_peak_increase_bytes | 22.118 GB | 21.969 GB | -0.148 GB |
+| serving | repeat 2 R1 vm_hwm_bytes | 23.773 GB | 23.771 GB | -0.001 GB |
+| serving | repeat 2 R1 vm_rss_bytes | 6.506 GB | 6.504 GB | -0.002 GB |
+| serving | repeat 2 R1 system_in_use_sampled_peak_less_r0_bytes | 30.790 GB | 31.106 GB | 0.315 GB |
+| serving | repeat 2 R2 vm_hwm_bytes | 6.505 GB | 6.503 GB | -0.002 GB |
+| serving | repeat 2 R2 vm_rss_after_bytes | 6.447 GB | 6.445 GB | -0.002 GB |
+| serving | repeat 2 R3 vm_rss_after_bytes | 6.789 GB | 6.820 GB | 0.031 GB |
+| serving | repeat 2 R3 wall_seconds | 83.54367627899774 | 81.776784898997 | -1.766891380000743 |
+| serving | repeat 2 R4 vm_hwm_over_reload_bytes | 28.449 GB | 28.481 GB | 0.032 GB |
+| serving | repeat 2 R4 vm_hwm_increase_bytes | 22.002 GB | 22.035 GB | 0.033 GB |
+| serving | repeat 2 R4 system_in_use_sampled_peak_increase_bytes | 21.960 GB | 22.179 GB | 0.219 GB |
+| serving | repeat 3 R1 vm_hwm_bytes | 23.772 GB | 23.772 GB | -618496 |
+| serving | repeat 3 R1 vm_rss_bytes | 6.505 GB | 6.503 GB | -0.002 GB |
+| serving | repeat 3 R1 system_in_use_sampled_peak_less_r0_bytes | 30.820 GB | 30.574 GB | -0.246 GB |
+| serving | repeat 3 R2 vm_hwm_bytes | 6.504 GB | 6.503 GB | -0.001 GB |
+| serving | repeat 3 R2 vm_rss_after_bytes | 6.451 GB | 6.446 GB | -0.005 GB |
+| serving | repeat 3 R3 vm_rss_after_bytes | 6.788 GB | 6.815 GB | 0.028 GB |
+| serving | repeat 3 R3 wall_seconds | 84.25506522499927 | 70.15651613400405 | -14.09854909099522 |
+| serving | repeat 3 R4 vm_hwm_over_reload_bytes | 28.448 GB | 28.475 GB | 0.027 GB |
+| serving | repeat 3 R4 vm_hwm_increase_bytes | 21.997 GB | 22.029 GB | 0.032 GB |
+| serving | repeat 3 R4 system_in_use_sampled_peak_increase_bytes | 22.292 GB | 22.218 GB | -0.074 GB |
+
+S10 mechanical checks (acceptance 1 and comparability): NOT judged: data missing (see the UNKNOWN lines)
+  acceptance 1 at the after commit: 51 PASS, 0 FAIL, 0 UNKNOWN
+  comparability with the before commit: 60 PASS, 0 FAIL, 1 UNKNOWN
+acceptance 2 and 3: explain each difference above; not decided here

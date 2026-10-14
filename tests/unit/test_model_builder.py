@@ -54,11 +54,12 @@ def test_architecture_comes_from_graph_data_not_the_checkpoint(workspace):
     from the wrong source yields a model with fewer conv layers than the
     checkpoint expects.
 
-    **The checkpoint's own `metadata` is corrupted here on purpose.** In the
-    fixture the two sources agree, so a test that merely compared the built model
-    against `graph_data` would pass just as happily if the builder read the
-    checkpoint. Wrecking the field the builder must ignore is the only way to show
-    that it ignores it.
+    **The checkpoint is given a misleading `metadata` on purpose.** The training
+    writer records none, and the fixture's checkpoint, in the writer's shape, has
+    none either; an older checkpoint might. A test that merely compared the built
+    model against `graph_data` could not tell a builder that ignores such a field
+    from one that reads it when present. Planting a wrong one is the only way to
+    show that it is ignored.
     """
     checkpoint, graph_data = workspace
     misleading = {**checkpoint, "metadata": (["disease"], [("disease", "nonsense", "disease")])}

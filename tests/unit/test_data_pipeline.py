@@ -618,8 +618,9 @@ class TestDiseaseTruthRangeInvariant:
     run after `_move_to_device` and force a host-device synchronisation on every
     valid batch.
 
-    The two downstream boundaries — `DiagnosisLoss` and `to_global_ids` — are
-    covered by their own files and are deliberately independent of this one.
+    The two downstream boundaries — `DiagnosisLoss` and Mode C's
+    `_assert_ids_in_range` — are covered by their own files and are deliberately
+    independent of this one.
     """
 
     @staticmethod
@@ -1449,9 +1450,9 @@ class TestBuildPathOrdering:
         # **The writer computed these, and they are the bytes it exported.** The
         # tensors are what a model consumes and used to be bound to nothing; this
         # is the orchestration that closes it, not a helper in isolation.
-        from src.evaluation.cohort import verify_graph_artifacts
         from src.kg.artifacts import GRAPH_ARTIFACTS
+        from tests.fixtures.workspace_reads import verify_workspace_reads
 
         for role, filename in GRAPH_ARTIFACTS.items():
             assert manifest["artifacts"][role] == file_sha256(tmp_dir / filename)
-        assert set(GRAPH_ARTIFACTS) <= set(verify_graph_artifacts(tmp_dir))
+        assert set(GRAPH_ARTIFACTS) <= set(verify_workspace_reads(tmp_dir)[0])
