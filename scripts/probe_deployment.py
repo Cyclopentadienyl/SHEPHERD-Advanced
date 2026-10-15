@@ -1280,6 +1280,9 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     "M5.pre_contract", "M5.other_graph", "M5.other_samples",
     "M5.validated_parent", "M5.missing",
     "M6", "M7", "M8",
+    # Contract M3a on the same runs: M2 above is a real pause and resume; M9
+    # extends the finished child at a fixed rate; M10 refuses to resume it.
+    "M9", "M10",
 )
 M2_REAL_REQUIRED: Tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8")
 
@@ -1345,21 +1348,32 @@ def _workspace_copy(source: Path, target: Path) -> Path:
 def _train_run(
     data_dir: Path, run: Path, device: str, epochs: int, *,
     settings: Dict[str, Any], resume_from: Optional[Path] = None,
+    pause_after: Optional[int] = None, extend_epochs: Optional[int] = None,
 ) -> Path:
     """One run of the production trainer (`train_model.train`) with `run` as its
     run directory (contract M3a-2), so every output -- its checkpoints, logs and
     records -- is inside it and nothing lands in the workspace or anywhere else.
-    Returns the run's checkpoint directory."""
+    Returns the run's checkpoint directory.
+
+    **A run continued from a parent is given operational fields only**
+    (contract M3a-3): it inherits every learning setting from the parent's
+    record, the number of epochs included, and an explicit one would be
+    refused if it differed."""
     from scripts.train_model import TrainConfig, train
     from src.utils.checkpoint_paths import run_checkpoint_dir
 
-    fields = dict(settings)
-    fields.update(
-        data_dir=str(data_dir), run_dir=str(run),
-        num_epochs=epochs, device=device,
-        resume_from=str(resume_from) if resume_from is not None else None,
-    )
-    train(TrainConfig(**fields))
+    if resume_from is not None:
+        fields: Dict[str, Any] = dict(
+            data_dir=str(data_dir), run_dir=str(run), device=device,
+            num_workers=settings.get("num_workers", 0), resume_from=str(resume_from),
+            pause_after_epoch=pause_after, extend_epochs=extend_epochs,
+        )
+        train(TrainConfig(**fields), {k for k, v in fields.items() if v is not None})
+    else:
+        fields = dict(settings)
+        fields.update(data_dir=str(data_dir), run_dir=str(run), num_epochs=epochs,
+                      device=device, pause_after_epoch=pause_after)
+        train(TrainConfig(**fields))
     return run_checkpoint_dir(run)
 
 
@@ -1374,7 +1388,7 @@ def _read_run_checkpoint(path: Path) -> Dict[str, Any]:
     resume is judged by. The weights stay out of every report."""
     from src.utils.checkpoint_io import read_checkpoint
 
-    read = read_checkpoint(path, map_location="cpu", weights_only=False)
+    read = read_checkpoint(path, map_location="cpu", weights_only=True)
     checkpoint = read.checkpoint
     steps = []
     for state in (checkpoint.get("optimizer_state_dict") or {}).get("state", {}).values():
@@ -1385,6 +1399,9 @@ def _read_run_checkpoint(path: Path) -> Dict[str, Any]:
         "record": dict(checkpoint.get("training_input_digests") or {}),
         "optimizer_step": max(steps) if steps else None,
         "weights": checkpoint.get("state_dict") or checkpoint.get("model_state_dict") or {},
+        "progress": checkpoint.get("progress") or {},
+        "rates": [float(g["lr"]) for g in
+                  (checkpoint.get("optimizer_state_dict") or {}).get("param_groups", [])],
     }
 
 
@@ -1550,13 +1567,28 @@ def phase_m2_demo(
                _other_workspace)
 
     def _resumed() -> Tuple[str, Dict[str, Any]]:
-        child = _last(_train_run(sound, m2 / "resume_ok", device, 1,
-                                 settings=_DEMO_TRAINING, resume_from=checkpoint))
-        facts = _assert_resumed(checkpoint, child)
+        # **A real pause and resume** (contract M3a-3): plan two epochs, pause
+        # after one, resume the remaining one.
+        paused = _last(_train_run(sound, m2 / "paused", device, 2,
+                                  settings=_DEMO_TRAINING, pause_after=1))
+        before = _read_run_checkpoint(paused)["progress"]
+        assert before.get("end") == "paused" and before.get("completed_epochs") == 1, (
+            f"the run did not pause after epoch 1: {before.get('end')}")
+        child = _last(_train_run(sound, m2 / "resume_ok", device, 2,
+                                 settings=_DEMO_TRAINING, resume_from=paused))
+        facts = _assert_resumed(paused, child)
+        after = _read_run_checkpoint(child)["progress"]
+        assert after.get("end") == "finished" and after.get("completed_epochs") == 2, (
+            "the resumed run did not finish the planned two epochs")
+        assert after["optimizer_updates"] == 2 * before["optimizer_updates"], (
+            "the resumed run took more than the remaining epoch's updates")
         state["child"] = child
-        return "the resume trained on and names its parent", facts
+        facts.update(paused_end=before["end"], child_end=after["end"],
+                     parent_updates=before["optimizer_updates"],
+                     child_updates=after["optimizer_updates"])
+        return "paused after one of two epochs, resumed only the remaining one", facts
 
-    report.run("M2", "m2", "CONTROL: a resume from a qualifying parent trains and records it",
+    report.run("M2", "m2", "CONTROL: a paused run resumes its remaining epoch and records it",
                _resumed)
 
     def _measured() -> Tuple[str, Dict[str, Any]]:
@@ -1616,7 +1648,7 @@ def phase_m2_demo(
             stripped = m2 / "parents" / "pre_contract.pt"
             stripped.parent.mkdir(parents=True, exist_ok=True)
             contents = read_checkpoint(checkpoint, map_location="cpu",
-                                       weights_only=False).checkpoint
+                                       weights_only=True).checkpoint
             del contents["training_input_digests"]
             torch.save(contents, stripped)
             state["pre_contract"] = stripped
@@ -1767,6 +1799,37 @@ def phase_m2_demo(
 
     report.run("M8", "m2", "the inventory lists the demo checkpoints' M2 verdicts", _inventory)
 
+    def _extended() -> Tuple[str, Dict[str, Any]]:
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        before = _read_run_checkpoint(state["child"])
+        extended = _last(_train_run(sound, m2 / "extended", device, 2, settings=_DEMO_TRAINING,
+                                    resume_from=state["child"], extend_epochs=1))
+        after = _read_run_checkpoint(extended)
+        stage = after["progress"].get("stage") or {}
+        assert after["record"].get("resume_checkpoint") == before["sha256"]
+        assert after["progress"].get("completed_epochs") == 3
+        assert stage.get("kind") == "extension" and stage.get("start_epoch") == 2
+        assert stage.get("schedule", {}).get("lrs") == before["rates"] == after["rates"], (
+            "the extension did not hold the finished run's final rate")
+        assert after["progress"]["scheduler_steps"] == before["progress"]["scheduler_steps"], (
+            "a scheduler stepped during a fixed-rate extension")
+        return "extended by one epoch at the finished run's final rate", {
+            "fixed_rates": after["rates"], "completed_epochs": 3,
+            "optimizer_updates": after["progress"]["optimizer_updates"],
+        }
+
+    report.run("M9", "m2", "CONTROL: a finished run extends at a fixed rate (M3a-4)", _extended)
+
+    def _finished_refused() -> Tuple[str, Dict[str, Any]]:
+        from src.training.run_plan import RunPlanRefused
+
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        return "a finished run is refused for resume, with the reason", _refused_resume(
+            "finished", sound, state["child"], RunPlanRefused, "nothing left to resume")
+
+    report.run("M10", "m2", "resuming a finished run is refused before anything exists",
+               _finished_refused)
+
 
 # =============================================================================
 # Phase R — contract M2's acceptance on real data (--real-workspace)
@@ -1884,7 +1947,8 @@ def phase_m2_real(
             "conv_type": effective["conv_type"],
             "architecture_fields_compared": compared,
             "fields_set_by_this_probe": sorted(
-                ("data_dir", "run_dir", "num_epochs", "device", "resume_from")),
+                ("data_dir", "run_dir", "num_epochs", "device", "resume_from",
+                 "pause_after_epoch")),
         }
 
     report.run("R2", "real", "the training settings carry the reference's architecture",
@@ -1892,31 +1956,36 @@ def phase_m2_real(
 
     def _initial() -> Tuple[str, Dict[str, Any]]:
         assert "settings" in state and "kg" in state, "R1 or R2 did not pass"
-        parent = _last(_train_run(real, runs / "initial", device, 1,
-                                  settings=state["settings"]))
+        # One epoch of a two-epoch plan, paused (contract M3a-3), so R4 has
+        # an unfinished stage to resume.
+        parent = _last(_train_run(real, runs / "initial", device, 2,
+                                  settings=state["settings"], pause_after=1))
         read = _read_run_checkpoint(parent)
+        assert read["progress"].get("end") == "paused", "the initial run did not pause"
         missing = sorted({"kg", "node_features", "edge_indices", "num_nodes",
                           "split_manifest", "train_samples"} - set(read["record"]))
         assert not missing, f"the checkpoint does not record {missing}"
         assert read["record"]["kg"] == state["kg"], "the checkpoint records another graph"
         state["parent"] = parent
-        return "one epoch from scratch, recorded", {
+        return "one epoch of two from scratch, paused, recorded", {
             "sha256": read["sha256"], "recorded_roles": sorted(read["record"]),
             "optimizer_step": read["optimizer_step"],
         }
 
-    report.run("R3", "real", "a short training from scratch completes and records its inputs",
+    report.run("R3", "real", "a short training from scratch pauses and records its inputs",
                _initial)
 
     def _resumed() -> Tuple[str, Dict[str, Any]]:
         assert "parent" in state, "R3 did not pass"
-        child = _last(_train_run(real, runs / "resumed", device, 1,
+        child = _last(_train_run(real, runs / "resumed", device, 2,
                                  settings=state["settings"], resume_from=state["parent"]))
         facts = _assert_resumed(state["parent"], child)
+        progress = _read_run_checkpoint(child)["progress"]
+        assert progress.get("end") == "finished" and progress.get("completed_epochs") == 2
         state["child"] = child
-        return "one more epoch from the new checkpoint, recorded", facts
+        return "the remaining epoch from the paused checkpoint, recorded", facts
 
-    report.run("R4", "real", "a resume from the new checkpoint trains one epoch and names it",
+    report.run("R4", "real", "a resume of the paused run trains its remaining epoch and names it",
                _resumed)
 
     def _measured() -> Tuple[str, Dict[str, Any]]:

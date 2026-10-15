@@ -94,7 +94,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
     # models trained before the contract are.
     trained = probe._last(probe._train_run(real, tmp_path / "reference_run", "cpu", 1,
                                            settings=probe._DEMO_TRAINING))
-    contents = read_checkpoint(trained, map_location="cpu", weights_only=False).checkpoint
+    contents = read_checkpoint(trained, map_location="cpu", weights_only=True).checkpoint
     del contents["training_input_digests"]
     reference = real / "checkpoints" / "gat" / "model-ref.pt"
     reference.parent.mkdir(parents=True)
