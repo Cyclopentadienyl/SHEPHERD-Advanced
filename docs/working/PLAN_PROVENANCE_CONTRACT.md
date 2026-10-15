@@ -52,9 +52,12 @@ with its four review fixes (`26a7268..fbd850d`), and M3a-2, M3a-3 and M3a-4 with
 the console's continue block, the migration tool and the probe (`6143e17` onward; §4, "M3a as
 implemented"). The reviewer's code review of `8876d2b..094b90d` (2026-10-15) found three P2 and
 no P1; its re-review of the fixes (`094b90d..815d763`, 2026-10-15) closed all three and found no
-new P1 or P2. **M3a's code review is passed; its functional acceptance is not**: that is one
-acceptance on the GB10 (§4, "How M3a's acceptance is run"), complete only with its evidence. M3b,
-M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+new P1 or P2. **M3a's functional acceptance, within the scope agreed, is passed (2026-10-15)**, in
+two rounds on the GB10 that the reviewer reviewed: round 01 at `4b1571e` (real data R1–R8) and
+round 02 at `c4a21b5` (demo A–E and M), the product code the same in both (§4, "How M3a's
+acceptance is run"). It is a functional acceptance, not a capacity, model-quality or clinical
+benchmark reading; neither round's report is a complete single run; two P3 are tracked; nothing is
+merged. M3b, M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2486,6 +2489,43 @@ deployment probe and production entry points as M2's, which now carry M3a's chec
   scheduler steps; real data, one epoch, 2500 attempts, 2499 updates, 1 skipped, 2499 scheduler
   steps; both pass. That is a check of the rule on recorded counts, not a rerun of the demo's
   measurement, serving or extension, which round 02 supplies.
+- **Round 02 (2026-10-15, at `c4a21b5`; evidence `/home/user/m3a-acceptance-c4a21b5-02/`,
+  reviewed by the reviewer):** 56 passed, 0 failed, 0 errors, 0 skipped; probe exit 1, log exit 0;
+  `m2_acceptance.demo.complete` true, `m2_acceptance.real_data.requested` false, overall
+  `complete` false, its only reason the real data not requested, as agreed. The tested commit
+  recorded, `tracked_files_modified` false; CUDA, allocator `cudaMallocAsync` from the saved
+  preset, set before torch's first import. What the reviewer checked from the report and the kept
+  checkpoints, without training again:
+  - **M2:** the parent completed one epoch (8 attempts, 7 updates), the child two cumulatively (16
+    attempts, 15 updates): exactly one more epoch; the scaler verified at the restore; the AMP
+    skip no longer misread.
+  - **M3:** `measurement.json`'s digest matches the report, and the checkpoint it records is M2's
+    child.
+  - **M4:** on CUDA, GNN with shortest paths, `sp_kg_binding` verified, `max_hops` 5, diagnosis
+    candidates returned.
+  - **M9:** the parent is M2's child; the extension completed three epochs; both groups' rate
+    `2.0816937636766182e-06`, the parent's last; `scheduler_steps` stayed 15 while
+    `optimizer_updates` went from 15 to 23.
+  - **M10:** resuming the finished run refused, no run directory created, the parent and the
+    workspace unchanged.
+  - Every other probe of the round passed; no required probe hidden behind a failure.
+  - Checkpoints (SHA-256): paused `407538365c9c019a14e1075690ad864d9dccdf3e2cd6baa10e86a75a8045813e`,
+    resume_ok `42a4ee41f75c233195dbe6b086b48f96b5d06debda0d0f469be570aad9d54442`, extended
+    `ed56d77626477377d09b81640dcf1d3ea58687507158664af74a49c06dac8dc9`; every parent digest a
+    child records matches its file.
+- **The two rounds together (the reviewer, 2026-10-15):** `src/` and `scripts/train_model.py` are
+  the same at both commits; what changed between them is the probe's M2 check, its tests and the
+  documents. Round 01 passed real data R1–R8 (its report SHA-256
+  `4410f6b7bcd79ebdddb863ce1cf9ad4fcfc9151d1a473b764e2d1a56202a3397`; its demo checkpoints
+  `15e16fd332660eb90c40cd41f5bf393f8bd425e019f9efa3d75637ce571ea5a7` and
+  `3b032a435ef2a9f6dd0d5f29c279c76a78fb42ed4f2143cd7ea24b808a94b2ad`); round 02 supplied A–E and
+  M, M2, M3, M4, M9 and M10 among them, which round 01's wrong assertion had blocked. Together they
+  meet M3a's functional acceptance as agreed, with no new P1 or P2; no rerun of the real data or
+  another identical round is needed. Both rounds' raw reports are kept as written; neither is
+  rewritten as a complete single run. Not included: capacity, model quality, clinical benchmarks,
+  M3b and M3c. The two non-blocking P3 stay tracked as recorded above. The homelab checkout is
+  restored to what `checkout-before.txt` records (`main` at `9fe5113`) by the round 02 runbook's
+  last step, which the owner carries out.
 - **Not part of it:** moving the workspace's older checkpoints into the run layout. That is the
   owner's, with `scripts/migrate_checkpoints.py` (a plan first, `--apply` to move), and the
   acceptance does not need it: the reference is read by path.
