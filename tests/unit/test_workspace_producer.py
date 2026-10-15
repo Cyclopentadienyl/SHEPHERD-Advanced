@@ -740,7 +740,8 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
                 kg=self._demo_kg(), allocation=allocation,
                 num_train=20, num_val=5, output_dir=workspace,
                 graph_digests={r: "0" * 64 for r in
-                               ("kg", "node_features", "edge_indices", "num_nodes")},
+                               ("kg", "node_features", "edge_indices", "num_nodes",
+                                "provenance")},
                 graph_export=dict(_SOUND_RECIPE),
             )
 
@@ -778,7 +779,8 @@ class TestTheSeedIsProvenanceNotOnlyRandomness:
                 kg=self._demo_kg(), allocation=allocation,
                 num_train=20, num_val=5, output_dir=workspace,
                 graph_digests={r: "0" * 64 for r in
-                               ("kg", "node_features", "edge_indices", "num_nodes")},
+                               ("kg", "node_features", "edge_indices", "num_nodes",
+                                "provenance")},
                 graph_export=dict(_SOUND_RECIPE),
             )
 
@@ -1261,8 +1263,9 @@ class TestTheRecipeIsRequiredWhereItIsRead:
                 ),
                 num_train=20, num_val=5, output_dir=workspace,
                 graph_digests={
-                    role: file_sha256(workspace / filename)
-                    for role, filename in GRAPH_ARTIFACTS.items()
+                    **{role: file_sha256(workspace / filename)
+                       for role, filename in GRAPH_ARTIFACTS.items()},
+                    "provenance": "0" * 64,
                 },
             )
 
@@ -1319,7 +1322,7 @@ class TestARefusalToPersistTouchesNothing:
         kg = self._kg()
         if digests is ...:
             digests = {r: "0" * 64 for r in
-                       ("kg", "node_features", "edge_indices", "num_nodes")}
+                       ("kg", "node_features", "edge_indices", "num_nodes", "provenance")}
         if recipe is ...:
             recipe = dict(_SOUND_RECIPE)
         return generate_training_samples(
@@ -1443,7 +1446,8 @@ class TestARefusalToPersistTouchesNothing:
 
         workspace = tmp_path / "ws"
         self._call(workspace, digests={
-            r: real for r in ("kg", "node_features", "edge_indices", "num_nodes")})
+            r: real for r in ("kg", "node_features", "edge_indices", "num_nodes",
+                              "provenance")})
 
         assert (workspace / "split_manifest.json").is_file()
 
@@ -1462,7 +1466,7 @@ class TestARefusalToPersistTouchesNothing:
         workspace = tmp_path / "ws"
         self._call(workspace, digests={
             r: Tagged("a" * 64) for r in
-            ("kg", "node_features", "edge_indices", "num_nodes")})
+            ("kg", "node_features", "edge_indices", "num_nodes", "provenance")})
 
         import json
         recorded = json.loads((workspace / "split_manifest.json").read_text())

@@ -132,6 +132,12 @@ NON_SEMANTIC_FIELDS: Dict[str, str] = {
         "implied by `device`, which is in the digest; `_resolve_device` sets the "
         "two together, so it cannot vary independently"
     ),
+    "dataset_record": (
+        "what the graph was built from and whether the record is bound to it "
+        "(contract M3b). No mode computes from it, and the graph tensors it "
+        "describes are SEMANTIC_ARTIFACT_ROLES; its digest is bound by the "
+        "split manifest"
+    ),
 }
 
 #: Artifact roles whose bytes change what was measured. The graph tensors and the

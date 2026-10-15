@@ -73,6 +73,15 @@ ALLOWED = {
     ("src/kg/storage/file_storage.py", "_read_tensors", "read_once"): (1, _READER),
     ("src/kg/artifacts.py", "read_split_manifest", "json.loads"): (1, _READER),
     ("src/kg/artifacts.py", "read_split_manifest", "read_once"): (1, _READER),
+    # Contract M3b: the dataset record, moved onto M2.1's reads (BACKLOG 19.14,
+    # 19.15; the old status readers are gone).
+    ("src/kg/artifacts.py", "verify_dataset_record", "json.loads"): (1, _READER),
+    ("src/kg/artifacts.py", "verify_dataset_record", "read_once"): (1, _READER),
+    # Contract M3b: the writers' digests are of the bytes they write (BACKLOG
+    # 19.16, 19.17); every writer that binds a digest writes through this.
+    ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="every byte a writer writes, as it is written (contract "
+                                   "M3b)")),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "json.loads"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
     ("src/utils/checkpoint_io.py", "read_checkpoint", "torch.load"): (1, _READER),
@@ -109,18 +118,6 @@ ALLOWED = {
         (1, "M2.1 decision 4, BACKLOG 19.2: the reported metric's second read (M3c)"),
     ("src/api/services/training_manager.py", "TrainingManager.get_checkpoints", "torch.load"):
         (1, "M2.1 decision 4, BACKLOG 19.3: the training console's checkpoint list"),
-    ("src/kg/artifacts.py", "_workspace_provenance_status", "json.loads"):
-        (1, "BACKLOG 19.14, M3b: provenance status reader, moved onto M2.1's reads by M3b"),
-    ("src/kg/artifacts.py", "_workspace_provenance_status", "file_sha256"):
-        (1, "BACKLOG 19.14, M3b: provenance status reader"),
-    ("src/kg/provenance.py", "_provenance_status", "file_sha256"):
-        (1, "BACKLOG 19.15, M3b: hashes the record before read_provenance parses it"),
-    ("src/kg/provenance.py", "read_provenance", "json.loads"):
-        (1, "BACKLOG 19.15, M3b: the record's parse"),
-    ("src/kg/provenance.py", "write_provenance", "file_sha256"):
-        (1, "BACKLOG 19.16, M3b: the provenance writer's digest of what it wrote"),
-    ("src/kg/workspace.py", "write_workspace", "file_sha256"):
-        (1, "BACKLOG 19.17, M3b: the workspace writer's graph digests"),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),
@@ -136,7 +133,8 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="a disease universe")),
     ("src/kg/sample_generator.py", "_sha256_text", "hashlib.sha256"):
         (1, "the generator's digest of the text it writes, equal to the file's by "
-            "construction; owner: the workspace producer (M3b)"),
+            "construction (the writer's digest of what it wrote, as contract M3b "
+            "requires of every writer). Permanent, no home"),
     # --- Files that are not provenance inputs --------------------------------
     ("src/api/routes/pipeline.py", "get_ui_config", "json.load"):
         (1, _NOT_INPUT.format(what="the UI configuration")),
@@ -162,9 +160,6 @@ ALLOWED = {
     ("scripts/probe_deployment.py", "phase_writer._direct_control", "file_sha256"):
         (1, _PROBE + "A writer control: the digests the writer recorded against the "
             "files it wrote"),
-    ("scripts/probe_deployment.py", "phase_workspace._accepted", "file_sha256"):
-        (1, _PROBE + "Identifies kg.provenance.json, which the workspace check does not "
-            "parse; the listing's other digests come from verify_workspace's reads"),
     ("scripts/probe_deployment.py", "phase_real_build._rebuild_is_the_same_workspace",
      "file_sha256"): (2, _PROBE + "Two builds' files compared with each other (writer "
                           "determinism); neither is consumed"),

@@ -51,7 +51,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
-from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest, verify_graph_source_read
+from src.kg.artifacts import (
+    GRAPH_ARTIFACTS,
+    read_split_manifest,
+    verify_dataset_record,
+    verify_graph_source_read,
+)
 from src.kg.storage.file_storage import read_graph_artifacts
 from src.utils.checkpoint_io import read_checkpoint
 from src.kg.phenotype_normalisation import normalise_phenotypes
@@ -400,6 +405,10 @@ class DiagnosisPipeline:
         #: comparison with the checkpoint; None for in-memory graph data, over
         #: which no checkpoint is loaded.
         self._bound_digests: Optional[Dict[str, str]] = None
+        #: The workspace's dataset record, read once and verified with the graph
+        #: (contract M3b); None when no workspace was verified. Published by
+        #: `get_pipeline_config` with its binding state and origin apart.
+        self._dataset_record: Optional[Any] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
         self._gnn_ready = False
@@ -568,11 +577,17 @@ class DiagnosisPipeline:
             bound = verify_graph_source_read(
                 manifest, self._graph_identity, graph_read.reads
             )
+            # **The dataset record is required** (contract M3b): read once and
+            # refused unless it is the record this manifest reading binds and
+            # names the graph just verified. Before the tensors are adopted and
+            # before the checkpoint is read.
+            dataset_record = verify_dataset_record(manifest, bound["kg"])
             # **All four are kept**, the opening for M2.4's comparison with the
             # checkpoint. The shortest-path binding reads `kg` from them, so it
             # binds to the graph that was verified, not to a file hashed again.
             self._bound_digests = dict(bound)
             self._graph_kg_digest = bound["kg"]
+            self._dataset_record = dataset_record
             # **Only after the check.** The reader omits a file that is absent,
             # and only the check turns that into a refusal.
             self._graph_data = graph_read.graph_data
@@ -1914,6 +1929,12 @@ class DiagnosisPipeline:
             # Reported so a surface can show that the table was checked; an
             # unrecorded binding is refused at load (contract M2.5).
             "sp_kg_binding": self._sp_kg_binding if self._sp_ready else None,
+            # The workspace's dataset record (contract M3b): its binding state
+            # and its origin apart, so a synthetic workspace is never shown as
+            # plainly verified. None when no workspace was verified.
+            "dataset_record": (
+                self._dataset_record.summary() if self._dataset_record is not None else None
+            ),
             "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,

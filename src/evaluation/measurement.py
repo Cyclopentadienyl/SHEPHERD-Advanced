@@ -400,6 +400,15 @@ class MeasurementManifest:
     the `kg` role is not a file it read: measurement never parses `kg.json`, so
     `kg` is the digest the workspace's manifest binds for the source graph (M2.1
     decision 2)."""
+    dataset_record: Dict[str, Any]
+    """The workspace's dataset record as verified (contract M3b): its binding
+    state and its origin, kept apart, the digest of its bytes, the sources it
+    names and what it says it does not establish.
+
+    **A number over a synthetic workspace says so here.** The binding is always
+    `verified` in a manifest that exists, since anything else refuses the run;
+    `origin` is what tells a synthetic acceptance run's number from one over a
+    graph built from real files."""
     cuda_executed: bool
     """Whether this run executed on CUDA. **That is all it claims.**
 

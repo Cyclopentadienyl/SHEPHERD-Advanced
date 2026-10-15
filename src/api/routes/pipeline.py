@@ -56,6 +56,11 @@ class PipelineStatusResponse(BaseModel):
     #: at load since contract M2.5, so it is never served. **Never absent while
     #: shortest paths are on.**
     sp_kg_binding: Optional[str] = None
+    #: The served workspace's dataset record (contract M3b): `binding` (always
+    #: "verified" here; anything else refuses the build) and `origin` ("files"
+    #: or "synthetic") apart, its digest, the sources it names and what it says
+    #: it does not establish. None when no workspace was verified.
+    dataset_record: Optional[Dict[str, Any]] = None
     kg_nodes: int = 0
     kg_edges: int = 0
     has_model: bool = False
@@ -111,13 +116,16 @@ class UIConfigResponse(BaseModel):
 # **The manifest belongs here.** Reload builds a file-backed pipeline, which
 # refuses a workspace whose artifacts nothing records — so a directory without
 # one was always going to be rejected, just later and with a longer story. Listed
-# as required, the operator's file report names the missing piece directly.
+# as required, the operator's file report names the missing piece directly. The
+# dataset record likewise (contract M3b): the build refuses a workspace without
+# it, and whether the one present is the one bound is the build's check.
 REQUIRED_DATA_FILES = [
     "kg.json",
     "node_features.pt",
     "edge_indices.pt",
     "num_nodes.json",
     "split_manifest.json",
+    "kg.provenance.json",
 ]
 OPTIONAL_DATA_FILES = [
     "shortest_paths.pt",
@@ -181,6 +189,7 @@ def _status_of(
         sp_max_hops=config.get("sp_max_hops"),
         sp_hop_bound_source=config.get("sp_hop_bound_source"),
         sp_kg_binding=config.get("sp_kg_binding"),
+        dataset_record=config.get("dataset_record"),
         kg_nodes=config.get("kg_nodes", 0),
         kg_edges=config.get("kg_edges", 0),
         has_model=config.get("has_model", False),

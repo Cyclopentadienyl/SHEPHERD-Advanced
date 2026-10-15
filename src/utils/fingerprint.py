@@ -62,7 +62,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, BinaryIO, Callable, Dict, Iterable, List, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,52 @@ def file_sha256(path: Union[str, Path]) -> Optional[str]:
         return None
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+class DigestingFile:
+    """A binary file being written, and the SHA-256 of every byte written to it.
+
+    **The writer's side of `read_once`** (contract M3b; BACKLOG 19.16, 19.17).
+    A writer that hashes its file by path after writing it records whatever the
+    path holds by then; one that hashes what it serialises records the bytes it
+    wrote, which is what a manifest binding claims. The serialiser writes
+    through this object, and each piece is hashed as it passes, so nothing is
+    held in memory to be hashed later.
+
+    `torch.save` and the JSON writers need only `write` and `flush`.
+    """
+
+    def __init__(self, handle: BinaryIO) -> None:
+        self._handle = handle
+        self._digest = hashlib.sha256()
+
+    def write(self, data: Any) -> int:
+        self._digest.update(data)
+        return self._handle.write(data)
+
+    def flush(self) -> None:
+        self._handle.flush()
+
+    @property
+    def sha256(self) -> str:
+        """The digest of everything written so far."""
+        return self._digest.hexdigest()
+
+
+def write_digested(path: Union[str, Path], serialise: Callable[[DigestingFile], None]) -> str:
+    """Write `path` through `serialise` and return the SHA-256 of exactly the
+    bytes it wrote (contract M3b).
+
+    Opened for binary writing, so no newline translation stands between what
+    was hashed and what is on disk. In place, as the graph writers always wrote:
+    the workspace writer refuses before its first byte, not by replacing files
+    atomically.
+    """
+    path = Path(path)
+    with path.open("wb") as handle:
+        sink = DigestingFile(handle)
+        serialise(sink)
+    return sink.sha256
 
 
 

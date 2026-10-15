@@ -23,7 +23,8 @@ safe loader:
 - **M2 refuses it** (a recorded role that does not match, or no record):
   moved to ``{workspace}/archive/``, keeping its path under ``checkpoints/``.
 - **The check cannot be completed** (the safe loader cannot open the file,
-  the workspace's own graph is refused, the architecture cannot be told):
+  the workspace's own graph or dataset record is refused (contract M3b), the
+  architecture cannot be told):
   *unverifiable*, left where it is and listed. That is not a finding that the
   model is invalid; such a file is still reached by its explicit path.
 
@@ -90,7 +91,7 @@ def classify(workspace: Path) -> List[Dict[str, Any]]:
     checkpoints = workspace / "checkpoints"
     files = sorted(p for p in checkpoints.rglob("*.pt") if p.is_file())
     try:
-        bound = audit._graph_check(workspace)
+        bound = audit._serving_check(workspace)
         graph_refused = None
     except Exception as exc:  # noqa: BLE001 - shown, never moves anything
         bound, graph_refused = None, f"{type(exc).__name__}: {exc}"
@@ -107,7 +108,7 @@ def classify(workspace: Path) -> List[Dict[str, Any]]:
             continue
         entry["sha256"] = read.identity.sha256
         if graph_refused is not None:
-            entry.update(kind="unverifiable", reason=f"the workspace's graph is refused: "
+            entry.update(kind="unverifiable", reason=f"the workspace is refused: "
                                                       f"{graph_refused}")
             entries.append(entry)
             continue

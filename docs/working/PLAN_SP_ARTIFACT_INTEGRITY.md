@@ -275,7 +275,7 @@ is reported as **unrecorded provenance**, never as *verified*.
 | `build_id` present in both and different | The pair was broken by an interrupted or mixed publication | **Refuse.** This is D1's "present but rejected", not "absent" |
 | `build_id` in one file only | Same thing, seen from one side | **Refuse**, with the missing side named. **Not** legacy |
 | Declared but incomplete — a field missing, empty, or of the wrong type | A publication that did not finish, or a hand edit | **Refuse.** Naming the field |
-| `schema_version` not recognised | Written by a newer producer | **Refuse.** Which of its fields still mean what they say is a guess — the same rule `read_provenance` already applies |
+| `schema_version` not recognised | Written by a newer producer | **Refuse.** Which of its fields still mean what they say is a guess — the same rule `read_provenance` already applied (since contract M3b, `validate_record`) |
 
 **Then, and only for a pair that reached "proceed" above**, the KG binding:
 

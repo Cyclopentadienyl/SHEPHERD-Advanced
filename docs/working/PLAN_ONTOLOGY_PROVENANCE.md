@@ -252,6 +252,12 @@ defect this plan exists to fix, reproduced in the fix.
    accepted as that graph's provenance and never quietly degraded to "unknown".
    Reporting it is not the same as refusing to serve; what a consumer does about
    it is that consumer's decision, and inference does not depend on provenance.
+   **Superseded by contract M3b (2026-10-15,
+   [`PLAN_PROVENANCE_CONTRACT.md`](PLAN_PROVENANCE_CONTRACT.md) §4, M3b):**
+   the owner's decision 2 reverses this for the formal pipeline. Training,
+   serving and measurement refuse a workspace whose record is missing,
+   unreadable or does not match (`src.kg.artifacts.verify_dataset_record`); the
+   status reader that only reported is gone.
 3. **Upward — the manifest names the provenance**, when there is a manifest, by
    recording the provenance file's digest as it already records the graph
    artifacts'.
@@ -339,7 +345,7 @@ each one forces.
 | Phase | What | Needs a design decision? |
 |---|---|---|
 | **0** | **DONE.** The `version` promise is refused rather than ignored: only `"latest"` is honoured, at the shared path so all four loaders inherit it, before any cache read or fetch. **`force_download` left alone**; a test class exists so a future tidy-up of "unused flags" cannot take it | **No.** Correcting a misleading API |
-| **1** | **DONE.** `kg.provenance.json` on every build including graph-only, carrying `kg.json`'s digest and bound from the manifest; all four source files by digest with raw `data-version`; parser counters named by the rows and stage they count; reader verification at `workspace_provenance_status` — **not** at `verify_graph_artifacts`, where it was first put and where it would have blocked GNN initialisation over a note that gates nothing (see §5) | Settled as §3.5 proposed |
+| **1** | **DONE.** `kg.provenance.json` on every build including graph-only, carrying `kg.json`'s digest and bound from the manifest; all four source files by digest with raw `data-version`; parser counters named by the rows and stage they count; reader verification at `workspace_provenance_status` — **not** at `verify_graph_artifacts`, where it was first put and where it would have blocked GNN initialisation over a note that gates nothing (see §5). **Superseded by contract M3b (2026-10-15):** the record is required by training, serving and measurement, checked by `verify_dataset_record` after the graph check; `workspace_provenance_status` is removed | Settled as §3.5 proposed |
 | **2** | Explicit selection: a path per ontology on the build CLI, a resolver over configured roots, and a stated **imports policy** (§4.2). **Expanded into [`PLAN_ONTOLOGY_PHASE2.md`](PLAN_ONTOLOGY_PHASE2.md)**, which takes §4.2's measurement and proposes revising §3.3 | Larger than this row assumed — see that document's §3.6 |
 | **3** | Packaging — ontologies travel with a workspace; converges with export/import | **Yes**, and it should come last |
 

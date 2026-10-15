@@ -56,8 +56,10 @@ new P1 or P2. **M3a's functional acceptance, within the scope agreed, is passed 
 two rounds on the GB10 that the reviewer reviewed: round 01 at `4b1571e` (real data R1–R8) and
 round 02 at `c4a21b5` (demo A–E and M), the product code the same in both (§4, "How M3a's
 acceptance is run"). It is a functional acceptance, not a capacity, model-quality or clinical
-benchmark reading; neither round's report is a complete single run; two P3 are tracked; nothing is
-merged. M3b, M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+benchmark reading; neither round's report is a complete single run; two P3 are tracked. The owner
+merged M3a into `main` afterwards (#122, `2049b64`, 2026-10-15).** **M3b is implemented
+(2026-10-15) and not yet reviewed** (§4, "M3b as implemented"); its GB10 acceptance follows the
+review. M3c, M4 and M5 are not implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2682,6 +2684,91 @@ building, is stated here.
     `INCOMPLETE_BY_DESIGN` lists parser versions, builder parameters and imports. Closing that
     gap is the KG record v2 (below).
 
+**M3b as implemented (2026-10-15).** Not yet reviewed. What differs from the text above, or was
+decided while building, is stated here.
+
+- **One check, after the graph check.** `src.kg.artifacts.verify_dataset_record(manifest,
+  kg_digest)` takes the run's one manifest reading and the `kg` digest its graph check returned
+  (`verify_graph_reads` or `verify_graph_source_read`), and reads `kg.provenance.json` beside that
+  manifest once (`read_once`): the digest of the bytes is compared with the manifest's binding
+  (`artifacts.provenance`), the same buffer is decoded and parsed, the record's own rules are
+  applied, and its `kg_digest` is compared with the run's. It returns a `DatasetRecord` (the
+  record, the identity of its bytes, binding `verified`, its origin) or raises
+  `DatasetRecordRefused` carrying the binding state: *unrecorded* (the manifest binds none),
+  *unverifiable* (bound and not here, not readable, or not a record this revision reads),
+  *mismatch* (not the bytes bound, or a record of another graph). A bound `files` record that
+  leaves a role unidentified is refused with its binding *verified* and its origin `files`. A
+  `kg_digest` that is not the one this manifest reading binds is a caller's pairing error
+  (`ValueError`), not a state. The status readers that reported and never refused
+  (`workspace_provenance_status`, `provenance_status`, `read_provenance`, `verify_provenance`) are
+  removed, with their static-pin entries (BACKLOG 19.14, 19.15); no production code called them.
+- **The record's rules in one place** (`src.kg.provenance.validate_record`, `unidentified_roles`,
+  `require_identified`): an object of schema 1 with the required fields; a SHA-256 `kg_digest`; an
+  origin of `files` or `synthetic`; a list of sources, each one `source_entry` would build, no role
+  twice; none for a synthetic origin; `missing_roles`, where present, equal to the roles the sources
+  leave out (every role for a synthetic record); `incomplete_by_design` a list of statements. The
+  writer applies the same rules before it writes (`build_provenance`, `write_provenance`), so a
+  `files` record with an unidentified input, or one that contradicts itself, is never written; the
+  workspace writer runs them before its first byte.
+- **Consumers.** Training (`read_training_inputs`, at the top of the run, before the run directory),
+  measurement (`read_measurement_inputs`, both cohort kinds, before the checkpoint is read) and
+  serving (`DiagnosisPipeline`, before the tensors are adopted and the checkpoint read) call it
+  after their graph check. The inventory (`audit_checkpoint_family.py --inventory`) lists the
+  record's verdict with its binding state and origin as separate fields, and judges no checkpoint
+  servable over a refused record; the one-time move (`migrate_checkpoints.py`) leaves a refused
+  workspace's files in place as unverifiable. The reload route lists `kg.provenance.json` among the
+  required files, as it lists the manifest. Path-only serving, with no checkpoint, verifies no
+  workspace and is unchanged (BACKLOG 19.20).
+- **Shown apart, never as plain verified.** Training logs the record's binding and origin. Serving
+  publishes `dataset_record` in `get_pipeline_config()` and the API's pipeline status (an additive
+  field; the Diagnosis tab is unchanged until M3c's served identity): binding, origin, the digest of
+  its bytes, the sources it names and `incomplete_by_design`. The measurement manifest gains the
+  same summary as `dataset_record` (§5.1); it is outside the measurement's semantics digest, since
+  no mode computes from it (`NON_SEMANTIC_FIELDS`). The checkpoint's record is unchanged (§5.1):
+  the manifest it records binds the record's digest.
+- **The manifest binding is required at write.** `generate_training_samples` refuses a persisting
+  call whose `graph_digests` lack `provenance` (or carry a malformed one) before anything is
+  written, as it refuses an unbound graph role. The schema stays 3: the field was already written
+  by every workspace this writer produced since the record existed; one without it is refused as
+  unrecorded at read, with the instruction to rebuild (decision 2).
+- **The writers' digests are of the bytes written** (BACKLOG 19.16, 19.17). `DigestingFile` and
+  `write_digested` (`src/utils/fingerprint.py`) hash what a serialiser writes as it passes, so
+  nothing is held to be hashed later. `KnowledgeGraph.save_json` returns the digest of `kg.json`'s
+  bytes (encoded in pieces of about a megabyte; the same bytes `json.dump` wrote, measured by a
+  test); `write_graph_data` writes the three tensor files and returns theirs, and
+  `export_graph_data` calls it; `write_provenance` returns the digest of the record's bytes. The
+  workspace writer binds these and hashes no path. One consequence: `torch.save` into a stream
+  names its archive `archive/` rather than after the file, so a tensor file written now differs
+  in bytes from one written before by the same content; every digest is still of the bytes on disk,
+  and two builds by this revision still agree (the probe's F2).
+- **The builder identifies every input, or stops.** An ontology the build parsed with neither the
+  loader's digest of its bytes nor a path stops the build before anything is written; it was
+  recorded as a missing role. The loader always gives both; the fallback that hashes the path for
+  an ontology the loader did not produce, and the annotation files' path digests, are unchanged
+  (BACKLOG 19.13, the KG record v2).
+- **Fixtures.** The generated-workspace fixture writes a synthetic record through the production
+  writer and binds it, so every test workspace is fully bound and synthetic; no test skips the
+  check.
+
+*How M3b's acceptance is run (prepared 2026-10-15; to be confirmed by the reviewer):* through the
+same deployment probe and production entry points (`scripts/probe_deployment.py --m2-acceptance
+--device cuda`), with the inputs, allocator and evidence layout of M3a's acceptance, under a new
+evidence root (`/home/user/m3b-acceptance-20261015-01/`, then `-02`, …). What M3b's part shows:
+- **Demo:** C1, the demo workspace's record verified and synthetic; C5, each way a record can fail
+  to bind refused with the state it establishes (missing → unverifiable; another workspace's
+  record → mismatch; another graph's record rebound → mismatch; the binding removed →
+  unrecorded; a bound file that is not a record → unverifiable; a bound `files` record leaving an
+  input unidentified → refused, binding verified); B22 and B23, the writer refusing a manifest
+  without the binding and a source list leaving an input unidentified; M3 and M4, the measurement
+  manifest and the served configuration showing the record as verified and synthetic; M11,
+  training, serving and measurement each refusing a workspace whose record is missing, with
+  nothing written and the served pipeline unchanged. All are in `M2_DEMO_REQUIRED`.
+- **Real data:** R1, R5 and R6, the real workspace's record verified with origin `files`, every
+  source named with its digest and declared version, in the workspace check, the measurement
+  manifest and the served configuration; F1 for a fresh real build, where run.
+- **Not shown:** that a record names the right releases. The record identifies the bytes a build
+  consumed; whether those are the intended releases is the operator's to read from it.
+
 **M3c — what is served is identified (R8).**
 - **The checkpoint's digest comes from M2.1's read** of the bytes loaded.
 - **One structured field replaces the two version strings.** It replaces
@@ -2767,9 +2854,9 @@ own.
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
-| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; R10's evidence and labels (§5.4) | M2, M4 |
+| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4) | M2, M3b, M4 |
 | Ledger | item 14's ledger v2 (`PLAN_TEST_RESULTS.md` §5), which takes the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`) | M4 |
-| `InferenceResult`, `DiagnoseResponse`, serving state | One structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect | M3c |
+| `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect | M3b, M3c |
 
 ### 5.2 Required versus displayed
 

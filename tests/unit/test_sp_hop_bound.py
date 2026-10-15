@@ -94,6 +94,8 @@ def _loader(tmp_path, *, distances, sidecar):
     # Mirrors a pipeline whose graph came from a verified workspace, the graph
     # these tables are bound to.
     pipeline._graph_kg_digest = GRAPH_DIGEST
+    # The constructor's default: no workspace record was read by this double.
+    pipeline._dataset_record = None
     return pipeline, data_dir
 
 
@@ -367,6 +369,7 @@ class TestTheLoaderRefusesAPresentButUnusableTable:
         pipeline._sp_hop_bound_source = None
         pipeline._sp_kg_binding = None
         pipeline._graph_kg_digest = GRAPH_DIGEST
+        pipeline._dataset_record = None
         return pipeline, data_dir
 
     def test_an_unreadable_artifact_is_refused_rather_than_ignored(self, tmp_path):

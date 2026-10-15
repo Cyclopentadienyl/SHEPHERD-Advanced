@@ -26,6 +26,14 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 
+def _four_sources():
+    """Source entries for every role a real build consumes, as stand-ins."""
+    from src.kg.provenance import SOURCE_ROLES, source_entry
+
+    return [source_entry(role, f"{role}.input", c * 64, None)
+            for role, c in zip(SOURCE_ROLES, "abcd")]
+
+
 def _probe():
     spec = importlib.util.spec_from_file_location(
         "probe_deployment", REPO / "scripts" / "probe_deployment.py")
@@ -85,8 +93,10 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
 
     root = tmp_path / "workspaces"
     real = root / "ws"
+    # A real workspace's record is from files, every input identified (R1,
+    # contract M3b); the stand-in names four files, as a real build would.
     write_workspace(probe._demo_kg(), real, feature_dim=probe.FEATURE_DIM,
-                    samples=probe._budget())
+                    samples=probe._budget(), sources=_four_sources())
     produced = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "compute_shortest_paths.py"),
          "--kg-path", str(real / "kg.json"), "--output-dir", str(real),

@@ -88,6 +88,7 @@ def world(tmp_path_factory):
         return build_manifest(
             args, graph_data, len(samples) if n_samples is None else n_samples, device,
             digests=digests,
+            dataset_record=inputs.dataset_record.summary(),
             model=production_model,
             regime=observe_autocast_regime(device),
         )

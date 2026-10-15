@@ -61,6 +61,18 @@ def _sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def read_provenance(workspace):
+    """The record a build wrote, held to the reader's rules (`validate_record`).
+    These builds are graph-only, so no manifest binds the record; the required
+    check (`verify_dataset_record`, contract M3b) needs one and is exercised
+    where a manifest exists."""
+    import json
+
+    from src.kg.provenance import PROVENANCE_FILENAME, validate_record
+
+    return validate_record(json.loads((workspace / PROVENANCE_FILENAME).read_text()))
+
+
 @pytest.fixture
 def built(tmp_path, monkeypatch):
     """One real build, and the files it consumed."""
@@ -106,7 +118,7 @@ def test_the_build_records_the_four_files_it_read(built):
     """Digests computed here from the fixture bytes, not by the code that wrote
     them — a writer hashing the wrong file would otherwise agree with a test
     hashing it the same wrong way."""
-    from src.kg.provenance import SOURCE_ROLES, read_provenance
+    from src.kg.provenance import SOURCE_ROLES
 
     workspace, files = built
     record = read_provenance(workspace)
@@ -124,7 +136,6 @@ def test_the_declared_version_comes_from_the_file_and_absence_stays_absent(built
     """MONDO declares a release and HPO does not. `Ontology.version` would have
     returned the OBO format version for the second, recording `1.2` as though a
     release had been declared."""
-    from src.kg.provenance import read_provenance
 
     workspace, _ = built
     by_role = {e["role"]: e for e in read_provenance(workspace)["sources"]}
@@ -136,7 +147,6 @@ def test_the_declared_version_comes_from_the_file_and_absence_stays_absent(built
 def test_the_parser_counters_survive_to_the_record(built):
     """They were a log line and reached no artifact. Named for the rows of one
     file at one parsing stage, which is what they count."""
-    from src.kg.provenance import read_provenance
 
     workspace, _ = built
     counters = read_provenance(workspace)["counters"]
@@ -147,12 +157,9 @@ def test_the_parser_counters_survive_to_the_record(built):
 
 
 def test_the_record_names_the_graph_this_build_wrote(built):
-    from src.kg.provenance import verify_provenance
-
     workspace, _ = built
 
-    record = verify_provenance(workspace, _sha256(workspace / "kg.json"))
-    assert record is not None
+    assert read_provenance(workspace)["kg_digest"] == _sha256(workspace / "kg.json")
 
 
 def test_a_graph_only_build_still_produced_one(built):
@@ -196,7 +203,6 @@ def test_named_files_are_what_the_record_and_the_rebuild_command_name(
     import src.ontology.download as download_module
     import src.ontology.settings as settings_module
     from scripts.build_knowledge_graph import build_knowledge_graph
-    from src.kg.provenance import read_provenance
 
     root, cache, chosen, external, workspace = (
         tmp_path / n for n in ("root", "cache", "chosen", "external", "ws")
@@ -261,7 +267,6 @@ def test_each_slot_is_hashed_when_it_loads_not_after_both(tmp_path, monkeypatch)
     is simulated: the HPO load rewrites the MONDO file."""
     import src.ontology.settings as settings_module
     from scripts.build_knowledge_graph import build_knowledge_graph
-    from src.kg.provenance import read_provenance
     from src.ontology.loader import OntologyLoader
 
     monkeypatch.setattr(
