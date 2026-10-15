@@ -100,6 +100,7 @@ import yaml
 from src.training.trainer import Trainer, TrainerConfig, apply_seed
 from src.training.loss_functions import LossConfig
 from src.kg.data_loader import (
+    DIAGNOSIS_SUBGRAPH_HOPS,
     DataLoaderConfig,
     DiagnosisDataLoader,
     DiagnosisDataset,
@@ -678,6 +679,36 @@ def create_dataloaders(
     return train_loader, val_loader
 
 
+def loader_record(loader: DiagnosisDataLoader) -> Dict[str, Any]:
+    """A loader's settings as they take effect (contract M3a-1).
+
+    The subgraph is sampled over `DIAGNOSIS_SUBGRAPH_HOPS` hops, so only that
+    many entries of `num_neighbors` are used; both lists are recorded. The
+    validation loader is built without `num_negative_samples`, so it uses the
+    `DataLoaderConfig` default, and that is what is recorded for it. Values are
+    recorded as they are today, not corrected.
+    """
+    cfg = loader.config
+    return {
+        "batch_size": int(cfg.batch_size),
+        "num_batches": int(len(loader)),
+        "num_samples": int(len(loader.dataset)),
+        "shuffle": bool(cfg.shuffle),
+        "num_workers": int(cfg.num_workers),
+        "pin_memory_requested": bool(cfg.pin_memory),
+        "prefetch_factor": int(cfg.prefetch_factor) if cfg.num_workers > 0 else None,
+        "num_hops": int(DIAGNOSIS_SUBGRAPH_HOPS),
+        "num_neighbors_configured": [int(n) for n in cfg.num_neighbors],
+        "num_neighbors_effective": [int(n) for n in cfg.num_neighbors[:DIAGNOSIS_SUBGRAPH_HOPS]],
+        "max_subgraph_nodes": int(cfg.max_subgraph_nodes),
+        "sampling_strategy": str(cfg.sampling_strategy),
+        "num_negative_samples": int(cfg.num_negative_samples),
+        "negative_sampling_strategy": str(cfg.negative_sampling_strategy),
+        "pipeline_prefetch": int(cfg.pipeline_prefetch),
+        "fast_subgraph_build": bool(cfg.fast_subgraph_build),
+    }
+
+
 # =============================================================================
 # Model Creation
 # =============================================================================
@@ -803,6 +834,14 @@ def train(config: TrainConfig) -> Dict[str, float]:
     inputs = read_training_inputs(data_dir)
     parent = read_resume_parent(config.resume_from, inputs, device)
 
+    # **The code revision and the environment, collected once** (contract
+    # M3a-1), after every refusal above and before anything is written. Both
+    # go into every checkpoint; neither refuses anything.
+    from src.utils.run_environment import code_revision, collect_environment
+
+    producer = code_revision(PROJECT_ROOT)
+    environment = collect_environment(device)
+
     # Create output directories
     output_dir = Path(config.output_dir)
     # Auto-derive an architecture-scoped checkpoint dir
@@ -857,6 +896,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # (reduce-overhead/CUDA-graphs need static shapes). suppress_errors makes a
     # graph break or codegen failure (e.g. the known sm_121 Triton/ptxas crash
     # on GB10) fall back to eager per-graph instead of killing training.
+    compile_installed = False
     if config.compile:
         try:
             # NOTE: `import torch._dynamo as _dynamo` binds `_dynamo`, NOT `torch`.
@@ -866,6 +906,9 @@ def train(config: TrainConfig) -> Dict[str, float]:
             import torch._dynamo as _dynamo
             _dynamo.config.suppress_errors = True
             model.compile()
+            # Installed without raising; whether graphs then ran compiled is not
+            # observed (suppress_errors falls back to eager per graph).
+            compile_installed = True
             logger.info(
                 "torch.compile ENABLED (in-place, dynamic=auto, mode=default). "
                 "Tip: run once with TORCH_LOGS=graph_breaks to count breaks; "
@@ -957,6 +1000,22 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # nothing reads them before `trainer.train()` below, so attaching them here
     # changes nothing except what they can see.
     trainer.data_fingerprint = compute_fingerprint(graph_data)
+
+    # What only this entry point knows, for every checkpoint the trainer writes
+    # (contract M3a-1; read by `build_checkpoint_payload`): the configuration
+    # as requested, the device asked for, compile, the loaders as built, and
+    # the revision and environment collected above.
+    trainer.run_record = {
+        "producer": producer,
+        "environment": environment,
+        "requested": asdict(config),
+        "device_requested": config.device,
+        "compile": {"requested": bool(config.compile), "installed": compile_installed},
+        "loaders": {
+            "train": loader_record(train_loader),
+            "val": loader_record(val_loader) if val_loader is not None else None,
+        },
+    }
 
     # Only the roles this run consumed, and only from the reads: the inputs read
     # and verified at the top, and the parent restored above.

@@ -473,7 +473,8 @@ def test_restore_checkpoint_reads_nothing_and_accepts_both_layouts(
     trainer.state.epoch = 4
     trainer.save_checkpoint(path)
     saved = torch.load(path, weights_only=False)
-    weights = {name: value.clone() for name, value in saved["model_state_dict"].items()}
+    # One layout since M3a-1: both writers write `state_dict`.
+    weights = {name: value.clone() for name, value in saved["state_dict"].items()}
 
     with torch.no_grad():
         for parameter in trainer.model.parameters():
@@ -488,9 +489,10 @@ def test_restore_checkpoint_reads_nothing_and_accepts_both_layouts(
     for name, value in trainer.model.state_dict().items():
         assert torch.equal(value, weights[name])
 
-    callback_layout = dict(saved)
-    callback_layout["state_dict"] = callback_layout.pop("model_state_dict")
-    trainer.restore_checkpoint(callback_layout)
+    # The older trainer layout is still restored.
+    trainer_layout = dict(saved)
+    trainer_layout["model_state_dict"] = trainer_layout.pop("state_dict")
+    trainer.restore_checkpoint(trainer_layout)
     with pytest.raises(KeyError, match="neither 'model_state_dict' nor 'state_dict'"):
         trainer.restore_checkpoint({"optimizer_state_dict": saved["optimizer_state_dict"]})
     assert isinstance(trainer, Trainer)

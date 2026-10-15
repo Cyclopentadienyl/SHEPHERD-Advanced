@@ -77,6 +77,8 @@ ALLOWED = {
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
     ("src/utils/checkpoint_io.py", "read_checkpoint", "torch.load"): (1, _READER),
     ("src/utils/checkpoint_io.py", "read_checkpoint", "read_once"): (1, _READER),
+    ("src/utils/checkpoint_io.py", "write_checkpoint", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the checkpoint bytes about to be written (contract M3a-1)")),
     ("scripts/audit_generator_fidelity.py", "build_report", "read_once"):
         (1, "S9: the fidelity audit reads phenotype.hpoa once and counts its rows from those "
             "bytes; the digest it reports is that read's"),

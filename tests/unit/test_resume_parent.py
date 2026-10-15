@@ -141,7 +141,7 @@ def test_the_parent_read_is_released_before_training(
     def recording(path, **kwargs):
         read = real(path, **kwargs)
         if Path(path) == parent:
-            refs.extend(weakref.ref(t) for t in read.checkpoint["model_state_dict"].values())
+            refs.extend(weakref.ref(t) for t in read.checkpoint["state_dict"].values())
         return read
 
     def train(self):

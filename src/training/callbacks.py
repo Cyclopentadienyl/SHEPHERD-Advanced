@@ -256,13 +256,14 @@ class ModelCheckpoint(Callback):
         should_save = self._should_save(current_value)
 
         if should_save:
-            self._save_checkpoint(trainer, filepath, epoch, logs)
+            digest = self._save_checkpoint(trainer, filepath, epoch, logs)
 
             # 更新最佳模型列表
             self.best_k_models.append({
                 "filepath": filepath,
                 "value": current_value,
                 "epoch": epoch,
+                "sha256": digest,
             })
 
             # 排序並移除多餘的檢查點
@@ -292,42 +293,27 @@ class ModelCheckpoint(Callback):
         filepath: Path,
         epoch: int,
         logs: Dict[str, float],
-    ) -> None:
-        if self.config.save_weights_only:
-            checkpoint = {"state_dict": trainer.model.state_dict()}
-        else:
-            checkpoint = {
-                "epoch": epoch,
-                "state_dict": trainer.model.state_dict(),
-                "optimizer_state_dict": trainer.optimizer.state_dict(),
-                "logs": logs,
-                "config": (
-                    trainer._serialize_config()
-                    if hasattr(trainer, "_serialize_config")
-                    else (trainer.config.__dict__ if hasattr(trainer, "config") else {})
-                ),
-            }
+    ) -> str:
+        """Write the trainer's checkpoint; return the SHA-256 of the bytes written.
 
-            if trainer.scheduler is not None:
-                checkpoint["scheduler_state_dict"] = trainer.scheduler.state_dict()
+        **One payload for both writers** (contract M3a-1): the keys, the
+        provenance (`data_fingerprint`, `training_input_digests`, `producer`,
+        `environment`) and the resume state come from
+        `src.training.checkpoint_payload.build_checkpoint_payload`, which
+        `Trainer.save_checkpoint` calls too, so a new key cannot reach one writer
+        and not the other. Written whole by
+        `src.utils.checkpoint_io.write_checkpoint`: staged, then renamed over
+        the file, so `last.pt` is never seen half-written.
+        """
+        from src.training.checkpoint_payload import build_checkpoint_payload
+        from src.utils.checkpoint_io import write_checkpoint
 
-        # Embed provenance if the trainer carries it (set by the training script).
-        #
-        # **Copied by name, both of them.** This callback does not generalise over
-        # trainer attributes, so a new one serialises nothing until it is named
-        # here. Placed after the weights-only/full branch on purpose: a
-        # weights-only checkpoint is still an artifact somebody will later have to
-        # identify, and the two questions it needs answered — is this structurally
-        # compatible, and which inputs produced it — do not stop mattering because
-        # the optimizer state was left out.
-        if hasattr(trainer, "data_fingerprint") and trainer.data_fingerprint is not None:
-            checkpoint["data_fingerprint"] = trainer.data_fingerprint
-        digests = getattr(trainer, "training_input_digests", None)
-        if digests is not None:
-            checkpoint["training_input_digests"] = digests
-
-        torch.save(checkpoint, filepath)
-        logger.info(f"ModelCheckpoint: saved to {filepath}")
+        checkpoint = build_checkpoint_payload(
+            trainer, epoch=epoch, logs=logs, weights_only=self.config.save_weights_only,
+        )
+        digest = write_checkpoint(checkpoint, filepath)
+        logger.info(f"ModelCheckpoint: saved to {filepath} (sha256 {digest[:12]})")
+        return digest
 
     def _sort_and_prune(self) -> None:
         # 排序

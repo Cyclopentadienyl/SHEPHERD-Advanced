@@ -147,6 +147,13 @@ class TrainingState:
     best_epoch: int = 0
     train_loss_history: List[float] = field(default_factory=list)
     val_metric_history: List[Dict[str, float]] = field(default_factory=list)
+    # Progress counted three ways (contract M3a-1). `global_step` above is the
+    # optimizer attempts; these are the epochs completed, the updates that
+    # actually ran (AMP's GradScaler skips one on non-finite gradients) and
+    # the scheduler steps taken, which follow the updates.
+    completed_epochs: int = 0
+    optimizer_updates: int = 0
+    scheduler_steps: int = 0
 
 
 # =============================================================================
@@ -237,7 +244,11 @@ class Trainer:
         # Optimizer
         self.optimizer = optimizer or self._create_optimizer()
 
-        # Scheduler (created after optimizer)
+        # Scheduler (created after optimizer). `schedule_record` is the schedule
+        # as built, recorded in every checkpoint (contract M3a-1).
+        self.schedule_record: Dict[str, Any] = {
+            "type": "external" if scheduler is not None else self.config.scheduler_type,
+        }
         self.scheduler = scheduler or self._create_scheduler()
 
         # Mixed precision
@@ -251,6 +262,16 @@ class Trainer:
 
         # State
         self.state = TrainingState()
+
+        # The active stage: today always the original schedule, from epoch 0
+        # for `num_epochs` (contract M3a-1; M3a-3 and M3a-4 restore and extend
+        # it). Recorded in every checkpoint.
+        self.stage: Dict[str, Any] = {
+            "kind": "original",
+            "start_epoch": 0,
+            "target_epochs": int(self.config.num_epochs),
+            "schedule": self.schedule_record,
+        }
 
         # Set seed
         if self.config.seed is not None:
@@ -298,6 +319,8 @@ class Trainer:
 
     def _create_scheduler(self) -> Optional[LRScheduler]:
         """創建學習率調度器"""
+        self.schedule_record = {"type": self.config.scheduler_type,
+                                "base_lr": float(self.config.learning_rate)}
         if self.config.scheduler_type == "none":
             return None
 
@@ -318,6 +341,15 @@ class Trainer:
         # Ensure at least 1 step for main scheduler phase
         warmup_steps = min(warmup_steps, max(0, total_steps - 1))
 
+        self.schedule_record.update({
+            "steps_per_epoch": self._steps_per_epoch(),
+            "gradient_accumulation_steps": int(self.config.gradient_accumulation_steps),
+            "total_steps": int(total_steps),
+            "warmup_steps_requested": int(original_warmup),
+            "warmup_ratio": float(self.config.warmup_ratio),
+            "min_lr_ratio": float(self.config.min_lr_ratio),
+        })
+
         if original_warmup > 0 and warmup_steps < original_warmup:
             logger.warning(
                 f"warmup_steps reduced from {original_warmup} to {warmup_steps} "
@@ -329,6 +361,9 @@ class Trainer:
             min_lr_ratio = self.config.min_lr_ratio
             ws = max(1, warmup_steps)
             cs = max(1, total_steps - warmup_steps)
+            # What the curve below uses: at least one warmup step, at least one
+            # decay step.
+            self.schedule_record.update({"warmup_steps_effective": ws, "decay_steps": cs})
 
             def lr_lambda(current_step: int) -> float:
                 if current_step < ws:
@@ -343,6 +378,11 @@ class Trainer:
             return LambdaLR(self.optimizer, lr_lambda)
 
         elif self.config.scheduler_type == "onecycle":
+            self.schedule_record.update({
+                "pct_start": float(self.config.warmup_ratio), "div_factor": 25.0,
+                "final_div_factor": 1 / self.config.min_lr_ratio,
+                "total_steps_scheduled": max(1, total_steps),
+            })
             return OneCycleLR(
                 self.optimizer,
                 max_lr=self.config.learning_rate,
@@ -353,6 +393,10 @@ class Trainer:
             )
 
         elif self.config.scheduler_type == "linear":
+            self.schedule_record.update({
+                "start_factor": 1.0, "end_factor": float(self.config.min_lr_ratio),
+                "total_iters": max(1, total_steps), "warmup_steps_effective": 0,
+            })
             return LinearLR(
                 self.optimizer,
                 start_factor=1.0,
@@ -362,11 +406,17 @@ class Trainer:
 
         return None
 
+    def _steps_per_epoch(self) -> Optional[int]:
+        """Batches per epoch, or `None` for a loader without a length."""
+        try:
+            return int(len(self.train_dataloader))
+        except TypeError:
+            return None
+
     def _estimate_total_steps(self) -> int:
         """估算總訓練步數"""
-        try:
-            steps_per_epoch = len(self.train_dataloader)
-        except TypeError:
+        steps_per_epoch = self._steps_per_epoch()
+        if steps_per_epoch is None:
             # Iterator doesn't have len
             steps_per_epoch = 1000  # Default estimate
 
@@ -389,6 +439,21 @@ class Trainer:
         else:
             self.amp_dtype = torch.float32
             self.scaler = None
+
+    def amp_record(self) -> Dict[str, Any]:
+        """AMP as requested and as it took effect: on only on CUDA, and bf16
+        without a scaler (contract M3a-1)."""
+        return {
+            "requested": bool(self.config.use_amp),
+            "dtype_requested": str(self.config.amp_dtype),
+            "enabled": bool(self.use_amp),
+            "dtype": str(self.amp_dtype).replace("torch.", ""),
+            "grad_scaler": self.scaler is not None,
+        }
+
+    def stage_record(self) -> Dict[str, Any]:
+        """The active stage, as recorded in a checkpoint."""
+        return dict(self.stage)
 
     def _create_default_callbacks(self) -> List[Callback]:
         """創建預設回調"""
@@ -481,6 +546,10 @@ class Trainer:
                 # Combine metrics
                 epoch_metrics = {**train_metrics, **val_metrics}
 
+                # The epoch is complete before the callbacks see it, so a
+                # checkpoint written at its end records it as done.
+                self.state.completed_epochs = epoch + 1
+
                 # Callbacks
                 self.callbacks.on_epoch_end(self, epoch, epoch_metrics)
 
@@ -570,9 +639,13 @@ class Trainer:
                     self.optimizer.step()
                     optimizer_was_run = True
 
+                if optimizer_was_run:
+                    self.state.optimizer_updates += 1
+
                 # Scheduler step (only if optimizer actually updated weights)
                 if self.scheduler is not None and optimizer_was_run:
                     self.scheduler.step()
+                    self.state.scheduler_steps += 1
 
                 # Zero gradients
                 self.optimizer.zero_grad()
@@ -980,37 +1053,30 @@ class Trainer:
 
         return config_dict
 
-    def save_checkpoint(self, filepath: Union[str, Path], data_fingerprint: Optional[Dict[str, Any]] = None) -> None:
-        """Save training checkpoint with optional data fingerprint for KG version tracking."""
-        filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+    def save_checkpoint(
+        self,
+        filepath: Union[str, Path],
+        data_fingerprint: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Write the trainer's checkpoint to `filepath`; return its SHA-256.
 
-        checkpoint = {
-            "epoch": self.state.epoch,
-            "global_step": self.state.global_step,
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "state": self.state.__dict__,
-            "config": self._serialize_config(),
-        }
+        **The same payload `ModelCheckpoint` writes** (contract M3a-1), from
+        `src.training.checkpoint_payload.build_checkpoint_payload`, written whole
+        by `src.utils.checkpoint_io.write_checkpoint`. `data_fingerprint`, when
+        given, replaces the one the training script attached.
+        """
+        from src.training.checkpoint_payload import build_checkpoint_payload
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.run_environment import assert_primitive
 
+        checkpoint = build_checkpoint_payload(self, epoch=self.state.epoch, logs={})
         if data_fingerprint is not None:
+            assert_primitive(data_fingerprint, "data_fingerprint")
             checkpoint["data_fingerprint"] = data_fingerprint
-        # The record of the inputs this run consumed, as `ModelCheckpoint` embeds
-        # it, so a checkpoint from either writer can be served, measured or
-        # resumed (contract M2.4, M2.3); set by the training script.
-        digests = getattr(self, "training_input_digests", None)
-        if digests is not None:
-            checkpoint["training_input_digests"] = digests
 
-        if self.scheduler is not None:
-            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
-
-        if self.scaler is not None:
-            checkpoint["scaler_state_dict"] = self.scaler.state_dict()
-
-        torch.save(checkpoint, filepath)
-        logger.info(f"Checkpoint saved to {filepath}")
+        digest = write_checkpoint(checkpoint, filepath)
+        logger.info(f"Checkpoint saved to {filepath} (sha256 {digest[:12]})")
+        return digest
 
     def restore_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
         """Restore model, optimizer, scheduler, scaler and state from a checkpoint
