@@ -41,11 +41,20 @@ data/workspaces/{name}/
 ├── num_nodes.json           # Node counts per type
 ├── shortest_paths.pt        # Pre-computed SP lookup (Step B)
 ├── shortest_paths.meta.json # SP metadata
-└── checkpoints/             # Model checkpoints trained on THIS KG
-    ├── epoch_010.pt
-    ├── epoch_050_best.pt
-    └── ...
+├── runs/                    # Training runs on THIS KG, one folder per run (M3a-2)
+│   └── {conv_type}/
+│       └── {date-time}_{run name}_{run id}/
+│           ├── config.yaml          # the settings in effect
+│           ├── runtime.json         # the allocator
+│           ├── final_metrics.json   # written when the run ends (not when stopped)
+│           ├── checkpoints/         # last.pt (every epoch), model-<epoch>-<metric>.pt
+│           └── logs/                # train_*.json, progress.json
+└── archive/                 # Old checkpoints contract M2 refuses, moved once by
+                             # scripts/migrate_checkpoints.py
 ```
+
+No run writes into another run's folder, a continued run included: it gets a
+new folder and records its parent by SHA-256.
 
 ### Workspace Lifecycle
 
@@ -56,7 +65,7 @@ data/workspaces/{name}/
    compute_shortest_paths.py → shortest_paths.pt
 
 2. Training (may run many times with different hyperparameters):
-   train_model.py reads from workspace root, writes to checkpoints/
+   train_model.py reads from workspace root, writes to its own runs/{conv}/{run}/
 
 3. Inference (ongoing):
    Pipeline loads kg.json + graph data + chosen checkpoint + SP table
@@ -72,10 +81,10 @@ data/workspaces/{name}/
 | `edge_indices.pt` | Data prep (once) | No | Graph connectivity |
 | `num_nodes.json` | Data prep (once) | No | Node count statistics |
 | `shortest_paths.pt` | Data prep (once) | No | BFS distance lookup |
-| `checkpoints/*.pt` | Every training epoch | **Yes** (new files) | Learned GNN weights |
+| `runs/{conv}/{run}/checkpoints/*.pt` | Every training epoch | **Yes** (new runs) | Learned GNN weights |
 
 The first 5 files are **static** — shared by all training runs within the
-workspace. Only checkpoint files accumulate over time.
+workspace. Only run folders accumulate over time.
 
 ### KG Version Compatibility
 
@@ -111,8 +120,8 @@ models/
     └── README.md
 ```
 
-KG-specific checkpoints now live inside their workspace's `checkpoints/`
-directory, NOT in `models/`.
+KG-specific checkpoints live inside their workspace's `runs/` directory, NOT in
+`models/`.
 
 ### `configs/` — Configuration Files
 
@@ -161,8 +170,10 @@ and checkpoints within that workspace.
 
 ### In Training Console
 
-The **Data Directory** field points to a workspace. The **Checkpoint Directory**
-auto-derives as `{workspace}/checkpoints/` if left blank.
+The **Data Directory** field points to a workspace. Each run gets a new folder
+under `{workspace}/runs/{conv_type}/`, named after the optional **Run name**;
+Status shows it once training starts. **Continue Training** lists the
+architecture's runs, or takes a typed checkpoint path, through one check.
 
 ---
 
@@ -191,5 +202,7 @@ mv data/processed/*.json data/workspaces/legacy/
 mv models/checkpoints/*.pt data/workspaces/legacy/checkpoints/
 ```
 
-The pipeline code reads path parameters (not hardcoded paths), so both old
-and new layouts work — only the default values changed.
+Checkpoints in a workspace's older `checkpoints/` folder are not selected
+automatically (no runtime fallback, decision 9); they stay reachable by explicit
+path. Move them once into the run layout with
+`scripts/migrate_checkpoints.py <workspace>` (it prints a plan) and `--apply`.

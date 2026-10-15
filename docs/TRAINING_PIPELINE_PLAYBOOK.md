@@ -20,7 +20,7 @@
 HPO download  →  build_knowledge_graph  →  compute_shortest_  →  train_model
                                             paths                 (WebUI)
    │                    │                      │                    │
-phenotype.hpoa     kg.json                shortest_paths.pt    checkpoints/*.pt
+phenotype.hpoa     kg.json                shortest_paths.pt    runs/<arch>/<run>/
 genes_to_           node_features.pt                           (fingerprint
  phenotype.txt      edge_indices.pt                             embedded)
                     num_nodes.json
@@ -136,12 +136,44 @@ On Spark's 128 GB unified memory this is comfortable.
 5. Watch for `hits@10` to climb. Milestone reference: 3 epochs → 0.581; the ≥ 80%
    target needs 30+ epochs.
 
-Checkpoints (with the data fingerprint embedded) are saved under
-`$WS/checkpoints/` (`last.pt` + top-K `model-<epoch>-<metric>.pt`).
+**Every run writes into a new folder of its own** (contract M3a-2):
+`$WS/runs/<arch>/<date-time>_<run name>_<id>/`, holding `config.yaml`,
+`runtime.json`, `final_metrics.json`, `checkpoints/` (`last.pt`, written every
+epoch, and the top-K `model-<epoch>-<metric>.pt`) and `logs/`. The optional
+**Run name** field names it; Status shows the folder once training starts. No
+run writes into or prunes another run's folder.
 
-> CLI fallback (no UI): `scripts/train_model.py --config <yaml>` exists, but the
-> Training Console is the intended path — it generates the config and monitors
-> progress, PyG status, resources, and errors (the dedicated error banner).
+**Continue Training** (contract M3a-3, M3a-4): pick a checkpoint from the run
+list or type its path, click **Check checkpoint**, then **Continue Training**.
+What happens is decided by the checkpoint's own record:
+
+- an unfinished run (stopped between epochs, or paused) is resumed with its own
+  settings, shown read-only; only its remaining epochs run;
+- a finished run can be extended by a number of extra epochs at its final
+  learning rate, held fixed;
+- a run that stopped early, a weights-only file or one trained before the M3a
+  record is refused, with the reason.
+
+The child is a new run in its own folder and records its parent by SHA-256. To
+train from a checkpoint with other settings, start a new run: changing settings
+from a parent (a branch) is not available yet.
+
+**Stop** asks first and says how much progress is lost; a stopped run shows
+**STOPPED** and the latest checkpoint it can be continued from.
+
+> CLI (no UI): `scripts/train_model.py --data-dir "$WS" [--run-name NAME]`, or
+> `--config <yaml>`. `--resume <checkpoint>` continues a parent as above,
+> `--extend-epochs N` extends a finished one, `--extend-lr LR` replaces a rate
+> that ended at 0 (and only such a rate), and `--pause-after-epoch N` stops with
+> a resumable checkpoint after N epochs of total progress. `--run-dir` writes into
+> an explicit folder, which must be absent or empty. The old `--output-dir` and
+> `--checkpoint-dir` are gone, and a configuration that still sets `output_dir`,
+> `checkpoint_dir` or `log_dir` is refused.
+>
+> Checkpoints from before this layout (`$WS/checkpoints/`) are not listed or
+> selected automatically; they are still served or measured by explicit path.
+> Move them once with `scripts/migrate_checkpoints.py "$WS"` (a plan) and
+> `--apply`; see the script's description.
 
 ---
 

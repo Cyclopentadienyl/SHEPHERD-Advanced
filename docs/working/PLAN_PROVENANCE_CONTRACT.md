@@ -46,9 +46,12 @@ complete and its acceptance, within the scope agreed, is complete** (the owner, 
 reviewer's recommendation); the owner merged it into `main` on 2026-10-14 (#121, `9fe5113`). The
 probe's allocator start-up was fixed since (`b8a43c8`), reviewed with no P1 or P2 and confirmed on
 the GB10: its demo phases ran under `cudaMallocAsync`, as torch reported (2026-10-14). M2.1's
-acceptance stands as recorded. The rest of M3–M5 is not implemented. M3a's design was revised on
-2026-10-15 after the reviewer's design review and the owner's decisions 8–10 (§1; §4, M3a); the
-revision awaits the reviewer's review.** Facts about the code are cited at `627ed08`, before M1;
+acceptance stands as recorded. M3a's design was revised on 2026-10-15 after the reviewer's design
+review and the owner's decisions 8–10 (§1; §4, M3a). **M3a is implemented (2026-10-15):** M3a-1
+with its four review fixes (`26a7268..fbd850d`), and M3a-2, M3a-3 and M3a-4 with the stop status,
+the console's continue block, the migration tool and the probe (`6143e17` onward; §4, "M3a as
+implemented"). It awaits the reviewer's code review, then one acceptance on the GB10. M3b, M3c,
+M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2402,6 +2405,73 @@ in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
 - **Not claimed:** bit-identical training with and without a pause. Random state and sampling are a
   separate layer, described apart.
 
+**M3a as implemented (2026-10-15).** Awaiting the reviewer's code review; the GB10 acceptance
+follows it. What differs from the text above, or was decided while building, is stated here.
+
+- **M3a-2, run directories.** `src/utils/checkpoint_paths.py` names (`propose_run_dir`) and claims
+  (`claim_run_dir`, by creating `checkpoints/`) a run's directory; the training entry point claims
+  it after its last refusal, the parent's schedule check included, so a refused run leaves nothing.
+  `output_dir`, `checkpoint_dir` and `log_dir` are retired: a configuration file, CLI flag or API
+  request that still sets one is refused, not ignored; `--run-dir` names an explicit directory,
+  which must be absent or empty. The training service names the directory before launching and
+  reads the run's logs from it; the console's two output fields became an optional run name, and
+  Status shows the directory. The listing, the resume source, the reload's automatic selection
+  (latest run, then the existing in-run order), the inventory, `setup_demo` and the probe use the
+  same functions; the old resolvers are removed. The sample generator's guard covers `runs/`.
+  - **`run.json` is not built.** As the text above allows, the listing reads each checkpoint's own
+    record with the safe loader when it is listed; nothing is cached, and a listed file is not
+    shown as verified.
+  - **The one-time move** (`scripts/migrate_checkpoints.py`) follows decision 9: plan first,
+    `--apply` to move; M2's serving comparison passes -> an imported run labelled "M2 record checks
+    pass; no M3 resume state; servability not judged" (in its `imported.json`); refused ->
+    `archive/`; not completable -> left in place as unverifiable. It renames within the workspace,
+    checks each digest after, stops before anything moves when a destination exists, deletes
+    nothing, and lists saved settings that name a moved file.
+- **M3a-3, resume.** One decision before the Trainer, `src/training/run_plan.py`, which the entry
+  point, the training service and the console's preview call.
+  - **One parent field for resume and extend** (`resume_from`, `--resume`): what happens follows
+    the parent's record (unfinished -> resume; finished with `extend_epochs` -> extend; stopped
+    early, weights only, no M3a record -> refused with the reason). This replaces the earlier
+    draft's separate `--extend-from`, after the reviewer's interface recommendation forwarded by the
+    owner (2026-10-15): one continue entry whose action is read from the checkpoint.
+  - **Learning settings** are every `TrainConfig` field outside `OPERATIONAL_FIELDS` (`data_dir`,
+    `config_file`, `run_name`, `run_dir`, `resume_from`, `device`, `num_workers`, `compile`,
+    `pause_after_epoch`, `extend_epochs`, `extend_lr`). They are inherited; one **set explicitly**
+    to another value is refused. Explicit means a configuration file's key or a CLI flag given; the
+    API passes on only the fields a caller set (`exclude_unset`); a library caller that builds
+    `TrainConfig` itself counts a field that differs from its default. Mixed precision that would
+    take effect differently on the requested device is refused as a settings change.
+  - `Trainer.continue_from` replaces `restore_checkpoint`; the rebuilt schedule must equal the
+    recorded one before the scheduler's progress is loaded. Early stopping's best-weights file is
+    read once and accepted only with its recorded SHA-256. A parent's best-k files are ranked but
+    never deleted, and every best-k file is named relative to the run's checkpoint directory.
+  - `last.pt` is written every epoch, with or without validation. `--pause-after-epoch N` records
+    `end: "paused"`. **Random state is not restored:** a continued run seeds from its inherited
+    `seed`, so its remaining epochs draw the stream the first epochs drew. Not bit-identical, as
+    the text above says.
+- **M3a-4, extend.** The fixed rates are decided in the plan from the parent's optimizer record, so
+  the preview shows them; no scheduler is stepped. A rate that ended at 0 is refused until
+  `--extend-lr` is given, which replaces only zero rates and is refused otherwise.
+- **Stop.** An operator's stop is reported as `stopped`, with the latest resumable snapshot from its
+  own record or that none was saved, never as `completed`; a stop no longer runs the final
+  validation, so a stopped run writes no `final_metrics.json`. The console asks before stopping and
+  says what is lost.
+- **Console.** One "Continue Training" block: a listed or a typed checkpoint through one check;
+  the action, the check result and the inherited settings shown read-only before start (Markdown,
+  not disabled inputs); extra epochs offered only for a finished parent; only operational fields
+  sent. "Pause after epoch N" stays CLI and probe only. UX sources consulted: Gradio's docs, W3C
+  WAI, GOV.UK Design System, Carbon, Nielsen Norman Group.
+- **Probe.** Demo M2 is a real pause and resume (plan two, pause after one, resume one); M9 extends
+  the finished child at a fixed rate; M10 refuses to resume it. Real-data R3/R4 pause and resume
+  the same way.
+- **Where the acceptance is tested:** run directories and consumers in
+  `tests/unit/test_checkpoint_paths.py`, `test_training_api.py`, `test_training_console_resume.py`;
+  resume, ends and the paused extension in `tests/unit/test_continue_training.py` (the learning rate
+  at every update, the optimizer step count, the scheduler position, early stopping, best-k, the
+  refusals); the move in `test_migrate_checkpoints.py`; the probe in `test_probe_m2_phase.py`. An
+  update AMP skipped keeps the schedule's position (`test_accumulation_tail.py`) and resume restores
+  the scaler; a pause and resume under AMP runs only on CUDA, in the GB10 acceptance.
+
 **M3b — the dataset record is required (R5).**
 - **Refused:** training, serving and measurement refuse a workspace whose `kg.provenance.json`
   is missing, unreadable or does not match. The manifest's binding to the record becomes
@@ -2514,7 +2584,7 @@ own.
 | Record | Change | Milestone |
 |---|---|---|
 | Checkpoint (`callbacks.py:296-327`) | `training_input_digests` gains `kg`, the manifest-bound source graph (M2.1's stated exceptions); every other digest comes from the bytes read; `config` gains the values in effect; new `producer` and `environment` keys; one payload builder for both writers, with the resume state (M3a-1); written into the run's own directory (M3a-2) | M2, M3a |
-| Run listing (`run.json`), new | A projection of its run's checkpoint records, never an authority (M3a-2) | M3a |
+| Run listing (`run.json`), new | A projection of its run's checkpoint records, never an authority (M3a-2). Not built in M3a: the listing reads each checkpoint's record when listed | Later |
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
