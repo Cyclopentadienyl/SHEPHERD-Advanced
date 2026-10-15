@@ -61,7 +61,13 @@ class TrainingStartRequest(BaseModel):
     batch_size: int = Field(default=32, ge=1, le=2048, description="Batch size")
     conv_type: Literal["gat", "hgt", "sage"] = Field(default="gat", description="GNN convolution type")
     device: str = Field(default="auto", description="Device: auto, cpu, mps, cuda, or cuda:N")
-    resume_from: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
+    resume_from: Optional[str] = Field(
+        default=None,
+        description="Parent checkpoint to continue from: an unfinished stage is resumed with "
+                    "the parent's settings, a finished one extended with extend_epochs")
+    extend_epochs: Optional[int] = Field(
+        default=None, ge=1, description="Extend a finished parent by this many epochs at a "
+                                        "fixed rate")
     seed: int = Field(default=42, ge=0, le=2**32 - 1, description="Random seed")
 
     # Tier 2 — Advanced
@@ -167,6 +173,9 @@ class TrainingStatusResponse(BaseModel):
     error_message: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
     run_dir: Optional[str] = None
+    # How the run stands once its process is not running, from its last
+    # snapshot's record (contract M3a); None when it saved none.
+    outcome: Optional[Dict[str, Any]] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -193,8 +202,13 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     Start a new training run.
 
     Launches scripts/train_model.py as a subprocess with the provided config.
+
+    **Only the fields the caller set** are passed on (contract M3a-3): the
+    defaults are the training script's own, and a run continued from a parent
+    inherits every learning setting the caller did not set, and refuses one it
+    set to another value.
     """
-    config = request.model_dump(exclude_none=True)
+    config = request.model_dump(exclude_unset=True, exclude_none=True)
 
     result = training_manager.start_training(config)
 

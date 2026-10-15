@@ -414,9 +414,11 @@ FIELDS: Tuple[FieldSpec, ...] = (
     # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------
     # The parent is `resume_from`; what happens is decided by its record (src/training/run_plan).
     FieldSpec("extend_epochs", "int", None, "trainer", projects_to="TrainConfig.extend_epochs",
-              valid={"ge": 1}, current_api=None, current_webui="not-exposed",
+              valid={"ge": 1}, current_api={"ge": 1},
+              current_webui="Number in the continue block (not _collect_config)",
               webui_exposed=False, known_divergence=True,
-              divergence_note="CLI (--extend-epochs) until the console's continue block.",
+              divergence_note="Set in the console's continue block, shown only for a finished "
+                              "parent; not a training-form field.",
               description="Extend a finished parent by this many epochs at a fixed rate."),
     FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
               valid={"gt": 0}, current_api=None, current_webui="not-exposed",

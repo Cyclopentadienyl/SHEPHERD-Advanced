@@ -287,6 +287,8 @@ class Trainer:
         # Set at the epoch boundary where `pause_after_epoch` stops the run,
         # before the callbacks write that epoch's checkpoint.
         self.pausing: bool = False
+        # Set when a stop (KeyboardInterrupt) ended `train`.
+        self.interrupted: bool = False
         # The parent's callback state, applied after `on_train_begin` resets it.
         self._pending_callbacks: Optional[Dict[str, Any]] = None
 
@@ -549,6 +551,7 @@ class Trainer:
         logger.info(f"Config: {self.config}")
         self.weights_restored_from = None
         self.pausing = False
+        self.interrupted = False
 
         self.callbacks.on_train_begin(self)
         # A continued run's callback state, after `on_train_begin` reset it.
@@ -598,13 +601,17 @@ class Trainer:
                     break
 
         except KeyboardInterrupt:
+            # A stop (SIGINT) inside an epoch: that epoch's progress is lost;
+            # the last epoch's `last.pt` is the state to continue from.
+            self.interrupted = True
             logger.info("Training interrupted by user")
 
         finally:
             self.callbacks.on_train_end(self)
 
-        # Final evaluation
-        if self.val_dataloader is not None:
+        # Final evaluation, of a run that ended, not of one stopped: a stop
+        # should end promptly, and its run has no final metrics.
+        if self.val_dataloader is not None and not self.interrupted:
             final_metrics = self._validate(self.state.epoch)
         else:
             final_metrics = {}

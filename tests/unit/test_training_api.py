@@ -194,6 +194,40 @@ class TestTrainingManagerStartStop:
         assert result["success"] is False
         assert "No training" in result["error"]
 
+    def test_a_stop_is_reported_as_stopped_with_the_latest_snapshot(self, manager):
+        """Contract M3a: an operator's stop is not a completed stage."""
+        process = MagicMock(pid=7)
+        process.wait.return_value = 0
+        manager._process, manager._status = process, "running"
+
+        result = manager.stop_training()
+
+        assert result == {"success": True, "status": "stopped", "outcome": None}
+        assert manager.get_status()["status"] == "stopped"
+        assert manager.get_status()["outcome"] is None, "no last.pt was saved"
+
+    def test_a_continuation_the_parent_does_not_allow_is_refused_before_launch(self, tmp_path):
+        manager = TrainingManager()
+        parent = tmp_path / "old.pt"
+        import torch
+        torch.save({"state_dict": {}}, parent)   # no M3a record
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training({"resume_from": str(parent)})
+        assert result["success"] is False and "before contract M3a" in result["error"]
+        popen.assert_not_called()
+
+    def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
+        manager = TrainingManager()
+        mock_proc = MagicMock(pid=3)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        preview = {"ok": True, "architecture": "hgt"}
+        with patch.object(manager, "preview_continuation", return_value=preview), \
+                patch("subprocess.Popen", return_value=mock_proc):
+            result = manager.start_training({"data_dir": str(tmp_path / "ws"),
+                                             "resume_from": "p.pt"})
+        assert Path(result["run_dir"]).parent == tmp_path / "ws" / "runs" / "hgt"
+
 
 class TestTrainingManagerMetrics:
     """Test metrics reading from log files."""
@@ -352,6 +386,19 @@ class TestTrainingAPIEndpoints:
         assert resp.status_code == 422
         assert "checkpoint_dir" in resp.text
         popen.assert_not_called()
+
+    def test_only_the_fields_the_caller_set_reach_the_training_process(self):
+        """Defaults are the training script's own; a continued run inherits
+        what the caller did not set (contract M3a-3)."""
+        import yaml
+        mock_proc = MagicMock(pid=4)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        with patch("subprocess.Popen", return_value=mock_proc):
+            resp = self.client.post("/api/v1/training/start",
+                                    json={"num_epochs": 3, "device": "cpu"})
+        written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
+        assert set(written) == {"num_epochs", "device", "run_dir"}
 
     def test_an_empty_retired_location_is_the_old_default(self, sample_config):
         mock_proc = MagicMock(pid=2)

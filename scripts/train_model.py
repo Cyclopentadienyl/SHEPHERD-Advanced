@@ -1170,6 +1170,14 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
     # Train
     logger.info("Starting training...")
     final_metrics = trainer.train()
+    if trainer.interrupted:
+        last = checkpoint_dir / "last.pt"
+        logger.info(
+            "Training stopped. "
+            + (f"The latest resumable checkpoint is {last} (epoch "
+               f"{trainer.state.completed_epochs}); progress after it is lost."
+               if last.is_file() else "No checkpoint was saved, so nothing can be resumed."))
+        return {}
 
     # Log final results
     logger.info("=" * 60)
