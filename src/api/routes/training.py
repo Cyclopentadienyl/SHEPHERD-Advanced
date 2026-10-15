@@ -184,6 +184,15 @@ class TrainingStartRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _validate_extend_needs_a_parent(self) -> "TrainingStartRequest":
+        # Extending continues a parent; without one the training process
+        # refuses (scripts/train_model.py), so the request is refused here,
+        # before a process is started for nothing.
+        if self.extend_epochs is not None and not self.resume_from:
+            raise ValueError("extend_epochs continues a parent; give resume_from.")
+        return self
+
+    @model_validator(mode="after")
     def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":
         if self.resume_from:
             return self
@@ -246,6 +255,8 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     # A continued run's cross-field rules apply to the settings it will use,
     # resolved from its parent by the shared run plan, inside the service.
     result = training_manager.start_training(config, effective_rules=cross_field_errors)
+    # Each field's own type and range apply to every request, a value repeating
+    # the parent's included; omitting a field inherits it.
 
     if not result.get("success"):
         raise HTTPException(

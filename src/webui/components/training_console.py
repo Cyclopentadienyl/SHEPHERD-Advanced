@@ -435,6 +435,30 @@ def _on_continue_selection_changed():
     return gr.update(visible=False, value=None), _CONTINUE_PROMPT
 
 
+def _on_listed_changed(source):
+    """The run list changed. It is the chosen checkpoint only when the source
+    is the run list: a Refresh or a conv_type change repopulates it even while
+    a typed path is the source, and must not clear that path's check."""
+    if source == CONTINUE_FROM_PATH:
+        return gr.update(), gr.update()
+    return _on_continue_selection_changed()
+
+
+def _on_manual_changed(source):
+    """The typed path changed; it is the chosen checkpoint only when the
+    source is the typed path."""
+    if source != CONTINUE_FROM_PATH:
+        return gr.update(), gr.update()
+    return _on_continue_selection_changed()
+
+
+def _on_continue_device_changed():
+    """The device is part of the check (mixed precision takes effect only on
+    CUDA): the last check no longer describes what Continue will do. The Extra
+    epochs entered stay; they belong to the checkpoint, not the device."""
+    return _CONTINUE_PROMPT
+
+
 def _preview_for(parent: str, device: Optional[str], extend_epochs) -> Dict[str, Any]:
     """The service's preview, with Extra epochs only for a finished
     checkpoint: the field is the console's, and for any other checkpoint a
@@ -479,13 +503,18 @@ def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs
     if not parent:
         message = "Select a checkpoint (run list or path) under Continue Training first."
         gr.Warning(message, duration=12)
-        return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, message)
+        return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, message,
+                gr.update(visible=False, value=None))
     preview = _preview_for(parent, device, extend_epochs)
     preview_text = _format_continue_preview(preview, source)
     if not preview.get("ok"):
+        if preview.get("end") == "finished" and not extend_epochs:
+            preview_text += ("\n\nEnter **Extra epochs** below, then click **Continue "
+                             "Training** again.")
         gr.Warning("Cannot continue from this checkpoint; the reason is under Continue "
                    "Training.", duration=12)
-        return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, preview_text)
+        return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, preview_text,
+                _extra_epochs_update(preview))
 
     config: Dict[str, Any] = {
         "data_dir": _strip_display_prefix(data_dir) or DEFAULT_WORKSPACE,
@@ -503,9 +532,10 @@ def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs
             f"**Phase**: {preview['action']}...\n**Run directory**: `{result.get('run_dir')}`",
             *empty,
             gr.update(interactive=False), gr.update(interactive=True), gr.update(interactive=False),
-            preview_text,
+            preview_text, _extra_epochs_update(preview),
         )
-    return (f"Failed: {result.get('error', 'Unknown error')}", *empty, *no_start, preview_text)
+    return (f"Failed: {result.get('error', 'Unknown error')}", *empty, *no_start, preview_text,
+            _extra_epochs_update(preview))
 
 
 def _toggle_continue_source(source):
@@ -1664,7 +1694,7 @@ def create_training_tab() -> None:
         fn=_on_resume,
         inputs=[data_dir, run_name, device, continue_source, checkpoint_dropdown,
                 manual_checkpoint, extend_epochs],
-        outputs=btn_outputs + [continue_preview],
+        outputs=btn_outputs + [continue_preview, extend_epochs],
     )
     continue_source.change(
         fn=_toggle_continue_source,
@@ -1673,13 +1703,15 @@ def create_training_tab() -> None:
     )
     # A changed selection, or source, makes the last check and its Extra
     # epochs stale: both are cleared (contract M3a review of 094b90d, P2-2).
-    # `.change` fires on updates from other events too (Refresh, conv_type).
-    for selection in (continue_source, checkpoint_dropdown, manual_checkpoint):
-        selection.change(
-            fn=_on_continue_selection_changed,
-            inputs=[],
-            outputs=[extend_epochs, continue_preview],
-        )
+    # `.change` fires on updates from other events too (Refresh, conv_type), so
+    # the run list and the typed path clear only when they are the source.
+    continue_source.change(fn=_on_continue_selection_changed, inputs=[],
+                           outputs=[extend_epochs, continue_preview])
+    checkpoint_dropdown.change(fn=_on_listed_changed, inputs=[continue_source],
+                               outputs=[extend_epochs, continue_preview])
+    manual_checkpoint.change(fn=_on_manual_changed, inputs=[continue_source],
+                             outputs=[extend_epochs, continue_preview])
+    device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview])
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
         inputs=[data_dir, conv_type],

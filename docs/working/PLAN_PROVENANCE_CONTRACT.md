@@ -2492,6 +2492,24 @@ What differs from the text above, or was decided while building, is stated here.
     are one function (`routes/training.cross_field_errors`); a new run's request is checked with
     its defaults, a continued run's on the settings the run plan resolves from its parent, inside
     the training service (422). Explicit conflicts are refused as before.
+  - **One verification round after the fixes** (four read-only verifiers, each finding put to a
+    skeptic) confirmed no P1 or P2. Of its P3 findings, these were fixed: a Device change now
+    clears the last check; a Refresh or conv_type change no longer clears a typed path's check
+    (the run list clears only when it is the source); Continue on a finished checkpoint shows
+    Extra epochs and the hint; the API refuses `extend_epochs` without `resume_from` (422); the
+    preview's settings for the cross-field rules are its learning settings only. Left as they
+    are, for the reviewer:
+    - **Continued from a best-k file that is not early stopping's best epoch**, the parent's own
+      file is not ranked in the child's best-k list, which is the one the parent recorded before
+      it was written (it can name a file the parent's run pruned right after). As before
+      `094b90d`; no weights are lost, since foreign files are never deleted and the best weights
+      are named and checked. Continued from the run's last.pt, the ranking is a run never
+      interrupted's. `ModelCheckpoint.restore_foreign` now says so instead of claiming the
+      latter in every case.
+    - **A continuation that repeats the parent's value for a field outside the API's range for a
+      new run** (a CLI-trained `hidden_dim=18`, say) is refused by that field's own range check;
+      omitting the field inherits it. Each field's own type and range apply to every request, as
+      the reviewer asked to keep.
 
 **M3b — the dataset record is required (R5).**
 - **Refused:** training, serving and measurement refuse a workspace whose `kg.provenance.json`

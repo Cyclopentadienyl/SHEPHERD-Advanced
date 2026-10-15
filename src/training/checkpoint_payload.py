@@ -116,7 +116,9 @@ def _callback_state(trainer: "Trainer", epoch: int) -> Dict[str, Any]:
       M3a-3) and the SHA-256 it was written with. `ModelCheckpoint` never prunes that file while early
       stopping counts its epoch as best (contract M3a-1 review, P2-1).
     - **`None`** before any best exists, or when early stopping does not restore
-      weights.
+      weights. Otherwise, `None` means early stopping's best epoch is in no
+      listed best-k file: the writer warns, and `src.utils.run_plan` refuses to
+      continue from such a checkpoint, since its best weights cannot be had.
     """
     early = _find_callback(trainer, "EarlyStopping")
     checkpoint = _find_callback(trainer, "ModelCheckpoint")

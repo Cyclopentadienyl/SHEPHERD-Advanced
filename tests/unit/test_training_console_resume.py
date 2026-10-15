@@ -121,7 +121,7 @@ def test_continue_sends_only_operational_fields_and_never_bypasses_the_check(
     refused = tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None,
                             str(checkpoints["finished"]), None)
     assert started == [], "a refused checkpoint was started"
-    assert "Not started" in refused[0] and "Cannot continue" in refused[-1]
+    assert "Not started" in refused[0] and "Cannot continue" in refused[-2]
 
     tc._on_resume(str(checkpoints["ws"]), "pilot", "cpu", tc.CONTINUE_FROM_LIST,
                   str(checkpoints["paused"]), "", None)
@@ -260,16 +260,61 @@ def test_the_service_still_refuses_extend_epochs_for_an_unfinished_parent(checkp
 
 
 def test_every_selection_change_clears_the_check_and_extra_epochs():
+    """Each component that is part of the check is wired to clear it: the
+    source, the run list and the typed path (each only when it is the source),
+    and the device (the check only)."""
     import gradio as gr
 
     with gr.Blocks() as demo:
         tc.create_training_tab()
     by_id = {block._id: getattr(block, "elem_id", None) for block in demo.blocks.values()}
-    cleared = set()
+    wiring = {}
     for fn in demo.fns.values():
-        if fn.fn is tc._on_continue_selection_changed:
-            assert [getattr(o, "elem_id", None) for o in fn.outputs] == [
-                "extend_epochs", "continue_preview"]
-            cleared |= {(by_id[block], event) for block, event in fn.targets}
-    assert cleared == {("continue_source", "change"), ("checkpoint_dropdown", "change"),
-                       ("manual_checkpoint", "change")}
+        if fn.fn in (tc._on_continue_selection_changed, tc._on_listed_changed,
+                     tc._on_manual_changed, tc._on_continue_device_changed):
+            for block, event in fn.targets:
+                wiring[(by_id[block], event)] = (
+                    fn.fn.__name__, [getattr(o, "elem_id", None) for o in fn.outputs])
+    both = ["extend_epochs", "continue_preview"]
+    assert wiring == {
+        ("continue_source", "change"): ("_on_continue_selection_changed", both),
+        ("checkpoint_dropdown", "change"): ("_on_listed_changed", both),
+        ("manual_checkpoint", "change"): ("_on_manual_changed", both),
+        ("device", "change"): ("_on_continue_device_changed", ["continue_preview"]),
+    }
+
+
+def test_a_refreshed_run_list_does_not_clear_a_typed_paths_check():
+    """A Refresh or a conv_type change repopulates the run list, whose change
+    event fires whatever the source; it clears only when the run list is the
+    source (found by the verification round after the P2-2 fix)."""
+    untouched = tc._on_listed_changed(tc.CONTINUE_FROM_PATH)
+    assert all(update == gr_update() for update in untouched)
+    extend, preview = tc._on_listed_changed(tc.CONTINUE_FROM_LIST)
+    assert extend["value"] is None and preview == tc._CONTINUE_PROMPT
+
+    untouched = tc._on_manual_changed(tc.CONTINUE_FROM_LIST)
+    assert all(update == gr_update() for update in untouched)
+    extend, preview = tc._on_manual_changed(tc.CONTINUE_FROM_PATH)
+    assert extend["value"] is None and preview == tc._CONTINUE_PROMPT
+
+    assert tc._on_continue_device_changed() == tc._CONTINUE_PROMPT
+
+
+def gr_update():
+    import gradio as gr
+
+    return gr.update()
+
+
+def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
+    checkpoints, monkeypatch
+):
+    started = []
+    monkeypatch.setattr(training_manager, "start_training",
+                        lambda config: started.append(config) or {"success": True})
+    result = tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None,
+                           str(checkpoints["finished"]), None)
+    assert started == [] and "Not started" in result[0]
+    assert "Enter **Extra epochs** below" in result[-2]
+    assert result[-1]["visible"] is True

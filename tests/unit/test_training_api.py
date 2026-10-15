@@ -567,6 +567,7 @@ class TestContinuationRulesOnResolvedSettings:
             ({"num_heads": 3}, "hidden_dim (256) must be divisible by num_heads (3)"),
             ({"hidden_dim": 100, "num_heads": 8}, "hidden_dim (100) must be divisible"),
             ({"scheduler_type": "onecycle", "min_lr_ratio": 0.0}, "onecycle"),
+            ({"extend_epochs": 2}, "extend_epochs continues a parent; give resume_from"),
         ):
             resp = client.post("/api/v1/training/start", json=body)
             assert resp.status_code == 422 and fragment in resp.text, (body, resp.text)

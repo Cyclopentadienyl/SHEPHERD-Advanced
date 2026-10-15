@@ -273,9 +273,13 @@ class ModelCheckpoint(Callback):
         self, entries: List[Dict[str, Any]], trainer: Optional["Trainer"] = None
     ) -> None:
         """A parent's best-k entries (contract M3a-3), each with its file
-        resolved to a path. They are ranked with this run's, so the same epochs
-        are kept as in a run never interrupted, but they belong to the run that
-        wrote them: pruning drops them from the list and never deletes them.
+        resolved to a path. They are ranked with this run's, but belong to the
+        run that wrote them: pruning drops them from the list and never deletes
+        them. Continued from the run's last.pt, the same epochs are kept as in a
+        run never interrupted. Continued from a best-k file, the parent's own
+        entry is listed only when it is early stopping's best epoch
+        (`src.utils.run_plan._locate_best_weights`); otherwise that file is not
+        ranked and the list is the one recorded before it was written.
         Early stopping's state is restored first, so its best epoch's file stays
         listed whatever its rank."""
         self.best_k_models = [

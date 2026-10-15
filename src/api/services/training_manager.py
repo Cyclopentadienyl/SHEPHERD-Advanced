@@ -153,7 +153,7 @@ class TrainingManager:
                 requested={k: v for k, v in config.items() if k != "resume_from"})
             if not preview["ok"]:
                 return {"success": False, "error": preview["reason"], "status": self._status}
-            errors = effective_rules(preview["settings"]) if effective_rules else []
+            errors = effective_rules(preview["learning_settings"]) if effective_rules else []
             if errors:
                 return {"success": False, "invalid_settings": True, "status": self._status,
                         "error": "The settings this run would use, its parent's with this "
@@ -552,7 +552,7 @@ class TrainingManager:
         training process reads the parent again, checks it against the
         workspace's data and graph (M2.3) and decides again on those bytes.
         """
-        from src.utils.run_plan import RunPlanRefused, plan_continuation
+        from src.utils.run_plan import OPERATIONAL_FIELDS, RunPlanRefused, plan_continuation
         from src.utils.checkpoint_io import read_checkpoint
 
         path = Path(parent_path)
@@ -600,9 +600,13 @@ class TrainingManager:
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
                 "inherited": plan.inherited, "start_epoch": plan.start_epoch,
                 "end_epoch": plan.end_epoch, "stage": plan.stage,
-                # The whole configuration the run would use, for checks that
-                # need complete settings (the API's cross-field rules).
-                "settings": plan.settings}
+                # The learning settings the run would use (the parent's, with
+                # the request's explicit values), for checks that need them
+                # complete: the API's cross-field rules. Operational fields are
+                # left out: the process takes them from the request or its own
+                # defaults, which this preview does not know.
+                "learning_settings": {k: v for k, v in plan.settings.items()
+                                      if k not in OPERATIONAL_FIELDS}}
 
     # =========================================================================
     # Checkpoint Management
