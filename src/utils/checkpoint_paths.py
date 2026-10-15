@@ -26,6 +26,9 @@ Module: src/utils/checkpoint_paths.py
 from __future__ import annotations
 
 import math
+import re
+import secrets
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 
@@ -181,8 +184,147 @@ def select_auto_checkpoint(
     return selected, arch_dir.name, f"auto: latest-trained architecture '{arch_dir.name}'"
 
 
+# =============================================================================
+# Run directories (contract M3a-2)
+# =============================================================================
+#: Every training run, new or resumed, writes into a directory of its own:
+#: ``{data_dir}/runs/{conv_type}/{date}_{name}_{run_id}/``, holding the run's
+#: ``config.yaml``, ``runtime.json`` and ``final_metrics.json``, its
+#: ``checkpoints/`` and its ``logs/``. Directories are flat, never nested by
+#: lineage: a resumed run records its parent by digest, not by where it sits.
+#: The name is for people; a run is its run id, a checkpoint its SHA-256.
+RUNS_DIRNAME = "runs"
+RUN_CHECKPOINTS_DIRNAME = "checkpoints"
+RUN_LOGS_DIRNAME = "logs"
+#: Six hex digits. A collision is drawn again, never reused.
+_RUN_ID_BYTES = 3
+_RUN_NAME_LIMIT = 40
+
+
+def slugify_run_name(name: Optional[str]) -> str:
+    """A run name as it appears in a directory name: lower case ASCII letters,
+    digits and single hyphens, at most 40 characters; empty for no name."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower()).strip("-")
+    return slug[:_RUN_NAME_LIMIT].strip("-")
+
+
+def runs_root(data_dir: PathLike, conv_type: Optional[str]) -> Path:
+    """``{data_dir}/runs/{conv_type}``: where an architecture's runs live."""
+    return Path(data_dir) / RUNS_DIRNAME / normalize_conv_type(conv_type)
+
+
+def allocate_run_dir(
+    data_dir: PathLike,
+    conv_type: Optional[str],
+    name: Optional[str] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> Path:
+    """Create and return a run directory no run has used.
+
+    **Claimed by creating it** (`mkdir` without `exist_ok`), so two runs started
+    at once cannot be handed the same directory; a run id already taken is drawn
+    again. The caller allocates only after every refusal, since this is the
+    run's first artifact.
+    """
+    root = runs_root(data_dir, conv_type)
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    label = slugify_run_name(name) or "run"
+    for _ in range(100):
+        candidate = root / f"{stamp}_{label}_{secrets.token_hex(_RUN_ID_BYTES)}"
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate
+    raise FileExistsError(f"no unused run directory under {root} after 100 tries")
+
+
+def run_checkpoint_dir(run_dir: PathLike) -> Path:
+    """A run's ``checkpoints/``."""
+    return Path(run_dir) / RUN_CHECKPOINTS_DIRNAME
+
+
+def run_checkpoints(run_dir: PathLike) -> List[Path]:
+    """A run's checkpoint files, by name."""
+    directory = run_checkpoint_dir(run_dir)
+    return sorted(directory.glob("*.pt")) if directory.is_dir() else []
+
+
+def _run_recency(run_dir: Path) -> float:
+    """When the run last wrote a checkpoint (0 for none)."""
+    return max((p.stat().st_mtime for p in run_checkpoints(run_dir)), default=0.0)
+
+
+def list_runs(data_dir: PathLike, conv_type: Optional[str] = None) -> List[Path]:
+    """A workspace's run directories, most recently trained first.
+
+    Every architecture's, or one's. Ordered by the newest checkpoint each holds,
+    then by name, latest first (the name starts with the run's start time), so
+    the order never depends on the filesystem's listing order.
+    """
+    base = Path(data_dir) / RUNS_DIRNAME
+    architectures = ([normalize_conv_type(conv_type)] if conv_type
+                     else list(SUPPORTED_CONV_TYPES))
+    runs: List[Path] = []
+    for architecture in architectures:
+        directory = base / architecture
+        if directory.is_dir():
+            runs.extend(p for p in directory.iterdir() if p.is_dir())
+    return sorted(runs, key=lambda r: (_run_recency(r), r.name), reverse=True)
+
+
+def run_architecture(run_dir: PathLike) -> str:
+    """The architecture a run directory belongs to (its parent's name)."""
+    return Path(run_dir).parent.name
+
+
+def select_run_checkpoint(
+    data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None
+) -> Tuple[Optional[Path], str]:
+    """One architecture's selection: its latest run, then the existing in-run
+    ordering (`select_checkpoint_in_dir`). Runs are not ranked against each
+    other by their metrics: they may differ in every setting."""
+    architecture = normalize_conv_type(conv_type)
+    runs = [r for r in list_runs(data_dir, architecture) if run_checkpoints(r)]
+    if not runs:
+        return None, f"no run of '{architecture}' has a checkpoint"
+    run = runs[0]
+    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn),
+            f"latest run '{run.name}' of '{architecture}'")
+
+
+def select_auto_run_checkpoint(
+    data_dir: PathLike, score_fn: Optional[ScoreFn] = None
+) -> Tuple[Optional[Path], Optional[str], str]:
+    """Auto selection over runs: the most recently trained run of any
+    architecture, then the existing in-run ordering. Returns
+    ``(checkpoint_path, conv_type, reason)``. Only the run layout is searched;
+    checkpoints elsewhere are reached by an explicit path."""
+    runs = [r for r in list_runs(data_dir) if run_checkpoints(r)]
+    if not runs:
+        return None, None, "no run has a checkpoint"
+    run = runs[0]
+    architecture = run_architecture(run)
+    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn),
+            architecture, f"auto: latest run '{run.name}' ({architecture})")
+
+
 __all__ = [
     "RANKING_SCORE_KEYS",
+    "RUNS_DIRNAME",
+    "RUN_CHECKPOINTS_DIRNAME",
+    "RUN_LOGS_DIRNAME",
+    "allocate_run_dir",
+    "list_runs",
+    "run_architecture",
+    "run_checkpoint_dir",
+    "run_checkpoints",
+    "runs_root",
+    "select_auto_run_checkpoint",
+    "select_run_checkpoint",
+    "slugify_run_name",
     "ranking_score_detail",
     "ranking_score_from_logs",
     "normalize_conv_type",

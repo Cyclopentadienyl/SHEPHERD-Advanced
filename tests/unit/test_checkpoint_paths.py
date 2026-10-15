@@ -248,3 +248,79 @@ def test_a_newer_architecture_still_wins_over_the_name(tmp_path, monkeypatch):
     _, architecture, _ = checkpoint_paths.select_auto_checkpoint(base)
 
     assert architecture == "sage"
+
+
+# --------------------------------------------------------------- run directories (M3a-2)
+def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from src.utils import checkpoint_paths as cp
+
+    first = cp.allocate_run_dir(tmp_path, "HGT", "Temp Cosine / Pilot!",
+                                now=datetime(2026, 10, 15, 9, 30, 0))
+    assert first.parent == tmp_path / "runs" / "hgt"
+    assert first.name.startswith("20261015-093000_temp-cosine-pilot_")
+    assert first.is_dir() and not any(first.iterdir())
+
+    second = cp.allocate_run_dir(tmp_path, "hgt")
+    assert second != first and "_run_" in second.name
+
+
+def test_a_colliding_run_id_is_drawn_again_never_reused(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from src.utils import checkpoint_paths as cp
+
+    ids = iter(["aaaaaa", "aaaaaa", "bbbbbb"])
+    monkeypatch.setattr(cp.secrets, "token_hex", lambda n: next(ids))
+    when = datetime(2026, 10, 15, 9, 30, 0)
+
+    a = cp.allocate_run_dir(tmp_path, "gat", "x", now=when)
+    b = cp.allocate_run_dir(tmp_path, "gat", "x", now=when)
+
+    assert a.name.endswith("_aaaaaa") and b.name.endswith("_bbbbbb")
+
+
+def test_runs_list_most_recently_trained_first(tmp_path):
+    root = tmp_path / "runs"
+    _touch(root / "gat" / "20261001-000000_a_111111" / "checkpoints" / "last.pt", 100)
+    _touch(root / "hgt" / "20261002-000000_b_222222" / "checkpoints" / "last.pt", 300)
+    _touch(root / "hgt" / "20261003-000000_c_333333" / "checkpoints" / "last.pt", 200)
+    (root / "sage" / "20261004-000000_empty_444444").mkdir(parents=True)
+
+    from src.utils.checkpoint_paths import list_runs
+
+    names = [r.name for r in list_runs(tmp_path)]
+    assert names[:3] == ["20261002-000000_b_222222", "20261003-000000_c_333333",
+                         "20261001-000000_a_111111"]
+    assert [r.name for r in list_runs(tmp_path, "hgt")] == [
+        "20261002-000000_b_222222", "20261003-000000_c_333333"]
+
+
+def test_selection_is_the_latest_run_then_the_existing_in_run_order(tmp_path):
+    """Runs are not ranked against each other by metric: an older run's higher
+    score does not win."""
+    from src.utils.checkpoint_paths import select_auto_run_checkpoint, select_run_checkpoint
+
+    root = tmp_path / "runs"
+    _touch(root / "hgt" / "20261001-000000_old_111111" / "checkpoints" / "model-40-hi.pt", 100)
+    newer = root / "hgt" / "20261002-000000_new_222222" / "checkpoints"
+    _touch(newer / "model-05-lo.pt", 500)
+    _touch(newer / "model-20-hi.pt", 501)
+    fn = _score_map({"model-40-hi.pt": 0.95, "model-05-lo.pt": 0.30, "model-20-hi.pt": 0.85})
+
+    path, reason = select_run_checkpoint(tmp_path, "hgt", score_fn=fn)
+    assert path == newer / "model-20-hi.pt"
+    assert "20261002-000000_new_222222" in reason
+
+    path, architecture, _ = select_auto_run_checkpoint(tmp_path, score_fn=fn)
+    assert (path, architecture) == (newer / "model-20-hi.pt", "hgt")
+
+
+def test_selection_finds_nothing_outside_the_run_layout(tmp_path):
+    from src.utils.checkpoint_paths import select_auto_run_checkpoint, select_run_checkpoint
+
+    _touch(tmp_path / "checkpoints" / "hgt" / "last.pt", 100)
+
+    assert select_auto_run_checkpoint(tmp_path)[0] is None
+    assert select_run_checkpoint(tmp_path, "hgt")[0] is None
