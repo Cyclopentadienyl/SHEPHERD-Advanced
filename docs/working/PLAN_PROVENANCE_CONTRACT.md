@@ -2416,14 +2416,33 @@ deployment probe and production entry points as M2's, which now carry M3a's chec
   `train_outputs/config.yaml`, `checkpoints/hgt/model-02-0.1813.pt`, given by path); the allocator,
   the saved preset `cuda_async`, applied by the probe before torch's first import and recorded in
   the report. A new work directory and report outside the repository, kept as evidence.
+- **Evidence layout (the reviewer's arrangement, 2026-10-15):** a new evidence root per attempt,
+  `/home/user/m3a-acceptance-20261015-01/` (then `-02`, `-03`, every attempt kept, failed ones
+  included), holding `checkout-before.txt`, `input-sha256.txt`, `console.log`, `exit.txt` and
+  `work/`. `work/` is `--work-dir` and must be absent or empty when the probe starts, so nothing
+  else is put in it first; the report is `work/m3a_report.json`. The real workspace and its table
+  are read in place, not copied; the older checkpoints are not moved first; earlier M2, S10 and
+  diagnostic evidence is not cleared. The checkout is restored afterwards to what
+  `checkout-before.txt` records (`main` at `9fe5113` when the review looked), not to an older
+  example.
 - **What M3a's part shows:** demo M2, a run with mixed precision on CUDA paused after one of two
-  epochs and resumed for the remaining one, its gradient scaler carried (`scaler_continuity`,
-  judged when the scale did not change in the child's run, recorded otherwise); M9, the finished
-  child extended by one epoch at a fixed rate; M10, resuming it refused before anything exists;
+  epochs and resumed for the remaining one, its gradient scaler restored (`scaler_restore`: the
+  scaler's state right after the production `Trainer.continue_from`, before the first update,
+  equal to the parent's `scaler_state_dict` from the same read; the scale and growth tracker at
+  the ends are recorded and not judged, since an overflow and a full growth interval can bring
+  the scale back to where it was); M9, the finished child extended by one epoch at a fixed rate,
+  its scaler checked the same way; M10, resuming it refused before anything exists;
   real-data R3 and R4, one epoch of two paused and its remaining epoch resumed; every run in its
   own run directory under the work directory; M2's refusals and checks as before. The older
   `config.yaml` names `output_dir`, `checkpoint_dir` and `log_dir`; the probe drops them as
   locations (R2 records the fields it sets).
+- **The probe's scaler check, reviewed (2026-10-15):** the first version (`7e1e373`) judged the
+  scaler from its end values and would have refused a correct restore whose scale fell and rose
+  again (the reviewer's P2, reproduced with real `GradScaler`s). It now observes the restore
+  through the production `Trainer.continue_from`, wrapped by the probe for the run's duration;
+  no other loader, Trainer or training mode, AMP unchanged. Tested with the reviewer's
+  counterexample (not refused) and with a restore that leaves the scaler fresh (caught), the
+  latter end to end through the Trainer on the CPU with a real CPU `GradScaler`.
 - **Not part of it:** moving the workspace's older checkpoints into the run layout. That is the
   owner's, with `scripts/migrate_checkpoints.py` (a plan first, `--apply` to move), and the
   acceptance does not need it: the reference is read by path.

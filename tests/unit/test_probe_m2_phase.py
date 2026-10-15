@@ -68,6 +68,10 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
     child = facts["M2"]["child_sha256"]
     assert measured["manifest"]["artifact_digests"]["checkpoint"] == child
     assert facts["M3"]["checkpoint_sha256"] == child != facts["M2"]["parent_sha256"]
+    # On the CPU no mixed precision takes effect, and the report says so for
+    # each continued run; on CUDA the restore is checked (scaler_restore).
+    for probe_id in ("M2", "M9"):
+        assert facts[probe_id]["scaler_restore"].startswith("no gradient scaler")
 
 
 def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
@@ -297,27 +301,116 @@ def test_a_report_target_that_appears_during_the_run_is_not_overwritten(
     assert json.loads(out.out[start:])["m2_acceptance"]["complete"] is False
 
 
-def test_a_resume_under_amp_must_carry_its_gradient_scaler():
-    """Only CUDA runs AMP, so the GB10 acceptance is where this branch runs;
-    its logic is checked here on recorded values (contract M3a-3)."""
-    probe = _probe()
+def _scaler_step(scaler, parameter, optimizer, overflow=False):
+    import torch
+
+    optimizer.zero_grad()
+    loss = parameter.square() * (float("inf") if overflow else 1.0)
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
+
+
+def _side(scaler_state, updates):
     amp = {"enabled": True, "dtype": "float16", "grad_scaler": True}
+    return {"amp": amp, "progress": {"optimizer_updates": updates},
+            "scaler": {k: v for k, v in scaler_state.items() if isinstance(v, (int, float))}}
 
-    def side(updates, scale, tracker):
-        return {"amp": amp, "progress": {"optimizer_updates": updates},
-                "scaler": {"scale": scale, "_growth_tracker": tracker}}
 
-    facts = probe._assert_scaler_continued(side(4, 1024.0, 4), side(8, 1024.0, 8))
-    assert facts["scaler_continuity"] == "verified (scale unchanged)"
-    with pytest.raises(AssertionError, match="restarted"):
-        probe._assert_scaler_continued(side(4, 1024.0, 4), side(8, 1024.0, 4))
-    assert probe._assert_scaler_continued(side(4, 1024.0, 4), side(8, 512.0, 1))[
-        "scaler_continuity"].startswith("not judged")
-    with pytest.raises(AssertionError, match="no state"):
-        probe._assert_scaler_continued(side(4, 1024.0, 4), {**side(8, 1024.0, 8), "scaler": None})
-    with pytest.raises(AssertionError, match="mixed precision"):
-        probe._assert_scaler_continued(side(4, 1024.0, 4), {**side(8, 1024.0, 8),
-                                                            "amp": {"enabled": False}})
+def test_a_correct_restore_is_not_refused_when_the_scale_falls_and_rises_again():
+    """The reviewer's counterexample (review of 7e1e373), with real CPU
+    GradScalers: restored correctly, then an overflow halves the scale and a
+    full growth interval doubles it back, the tracker reset. The end values
+    equal the parent's scale; they are recorded, not judged, and the restore,
+    observed before the first update, is what is checked."""
+    import torch
+
+    probe = _probe()
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=0.01)
+    parent = torch.amp.GradScaler("cpu", init_scale=8.0, growth_interval=4)
+    _scaler_step(parent, parameter, optimizer)
+    parent_state = parent.state_dict()
+
+    child = torch.amp.GradScaler("cpu")
+    child.load_state_dict(parent_state)
+    observed = [{"parent": probe._scaler_numbers(parent_state),
+                 "restored": probe._scaler_numbers(child.state_dict())}]
+    _scaler_step(child, parameter, optimizer, overflow=True)
+    for _ in range(4):
+        _scaler_step(child, parameter, optimizer)
+    end = child.state_dict()
+    assert end["scale"] == parent_state["scale"] and end["_growth_tracker"] == 0
+
+    facts = probe._scaler_restore_facts(_side(parent_state, 1), _side(end, 6), observed)
+    assert facts["scaler_restore"].startswith("verified at restore")
+    assert facts["end_values"] == "recorded, not judged"
+
+
+def test_a_scaler_not_restored_is_caught_at_the_restore():
+    import torch
+
+    probe = _probe()
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=0.01)
+    parent = torch.amp.GradScaler("cpu", init_scale=8.0)
+    _scaler_step(parent, parameter, optimizer)
+    parent_state = parent.state_dict()
+    fresh = torch.amp.GradScaler("cpu", init_scale=8.0)    # the same scale, never loaded
+
+    observed = [{"parent": probe._scaler_numbers(parent_state),
+                 "restored": probe._scaler_numbers(fresh.state_dict())}]
+    with pytest.raises(AssertionError, match="not restored from the parent's state"):
+        probe._scaler_restore_facts(_side(parent_state, 1), _side(parent_state, 2), observed)
+    with pytest.raises(AssertionError, match="observed 0 times"):
+        probe._scaler_restore_facts(_side(parent_state, 1), _side(parent_state, 2), [])
     off = {"amp": {"enabled": False, "grad_scaler": False}, "progress": {}, "scaler": None}
-    assert probe._assert_scaler_continued(off, off) == {"amp_enabled": False,
-                                                        "grad_scaler": False}
+    assert probe._scaler_restore_facts(off, off, [{"parent": None, "restored": None}])[
+        "scaler_restore"].startswith("no gradient scaler")
+
+
+def test_the_probe_observes_the_production_restore_and_catches_an_omitted_one(tmp_path):
+    """End to end on the CPU: a real GradScaler is given to the Trainer (only
+    in this test; on CPU mixed precision takes no effect), the parent pauses,
+    and the probe's own `_train_run` continues it through `Trainer.continue_from`.
+    The restore is verified; a restore that leaves the scaler fresh is caught;
+    and the probe leaves `Trainer.continue_from` as it found it."""
+    from unittest.mock import patch
+
+    import torch
+
+    from src.training.trainer import Trainer
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    probe = _probe()
+    settings = dict(hidden_dim=16, num_layers=1, num_heads=2, num_workers=0, use_amp=False,
+                    batch_size=5, warmup_steps=1, seed=7)
+
+    def cpu_scaler(self):
+        self.use_amp, self.amp_dtype = False, torch.float32
+        self.scaler = torch.amp.GradScaler("cpu", init_scale=8.0)
+
+    original = Trainer.continue_from
+    with patch.object(Trainer, "_setup_amp", cpu_scaler):
+        ws = write_trainable_workspace(tmp_path / "ws")
+        parent = probe._last(probe._train_run(ws, tmp_path / "parent", "cpu", 2,
+                                              settings=settings, pause_after=1))
+        observed = []
+        child = probe._last(probe._train_run(ws, tmp_path / "child", "cpu", 2, settings=settings,
+                                             resume_from=parent, observe=observed))
+        assert Trainer.continue_from is original, "the probe left its observer installed"
+        facts = probe._assert_resumed(parent, child, observed)
+        assert facts["grad_scaler"] is True
+        assert facts["scaler_restore"].startswith("verified at restore")
+
+        def restore_then_forget(self, checkpoint, plan, best_weights=None):
+            original(self, checkpoint, plan, best_weights)
+            self.scaler = torch.amp.GradScaler("cpu", init_scale=8.0)
+
+        with patch.object(Trainer, "continue_from", restore_then_forget):
+            observed = []
+            omitted = probe._last(probe._train_run(ws, tmp_path / "omitted", "cpu", 2,
+                                                   settings=settings, resume_from=parent,
+                                                   observe=observed))
+        with pytest.raises(AssertionError, match="not restored from the parent's state"):
+            probe._assert_resumed(parent, omitted, observed)
