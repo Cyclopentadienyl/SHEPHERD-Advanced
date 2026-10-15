@@ -1224,16 +1224,25 @@ class Trainer:
                     raise RunPlanRefused("The parent records a schedule but no scheduler state.")
                 self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         else:
-            # A fixed-rate stage steps no scheduler; the rates are the
-            # optimizer's, restored above.
+            # A fixed-rate stage steps no scheduler (contract M3a-4). A new
+            # extension sets each group's rate as the plan fixed it (the
+            # restored rate, or `extend_lr` for a rate that ended at 0); a
+            # paused one must hold the rates its stage recorded.
             self.scheduler = None
-            rates = [float(group["lr"]) for group in self.optimizer.param_groups]
-            if stage.get("schedule") is None:
-                stage["schedule"] = self._open_fixed_rate_stage(rates, plan)
-            elif [float(r) for r in stage["schedule"]["lrs"]] != rates:
+            fixed = [float(r) for r in stage["schedule"]["lrs"]]
+            if len(fixed) != len(self.optimizer.param_groups):
                 raise RunPlanRefused(
-                    "The parent's extension records fixed rates "
-                    f"{stage['schedule']['lrs']}, and its optimizer holds {rates}.")
+                    f"The extension fixes {len(fixed)} rates for "
+                    f"{len(self.optimizer.param_groups)} parameter groups.")
+            if plan.mode == "extend":
+                for group, rate in zip(self.optimizer.param_groups, fixed):
+                    group["lr"] = rate
+            else:
+                rates = [float(group["lr"]) for group in self.optimizer.param_groups]
+                if rates != fixed:
+                    raise RunPlanRefused(
+                        f"The parent's extension records fixed rates {fixed}, and its "
+                        f"optimizer holds {rates}.")
 
         state = checkpoint.get("state") or {}
         for key in ("epoch", "global_step", "best_metric", "best_epoch",
@@ -1254,13 +1263,6 @@ class Trainer:
         }
         logger.info(
             f"Continuing ({plan.mode}) from epoch {self.start_epoch} to {self.stage_end()}")
-
-    def _open_fixed_rate_stage(self, rates: List[float], plan: Any) -> Dict[str, Any]:
-        """The schedule of an extension: each group's rate after the restore,
-        held fixed (contract M3a-4)."""
-        from src.training.run_plan import RunPlanRefused
-
-        raise RunPlanRefused("Extending a finished stage is not available in this build.")
 
     def _restore_callbacks(self, pending: Mapping[str, Any]) -> None:
         """Early stopping's and best-k's state, as the parent recorded them.

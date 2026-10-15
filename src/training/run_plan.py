@@ -190,6 +190,8 @@ def plan_continuation(
 
     settings, inherited = _inherit_settings(parent, request, explicit, where)
     _check_amp_takes_effect_alike(parent, settings, device, where)
+    if mode == "resume" and request.get("extend_lr") is not None:
+        raise RunPlanRefused("extend_lr applies only when extending a finished stage.")
 
     if mode == "resume":
         if stage.get("schedule", {}).get("type") == "external":
@@ -203,13 +205,14 @@ def plan_continuation(
         extend_epochs = int(extend_epochs)
         if extend_epochs < 1:
             raise RunPlanRefused(f"extend_epochs must be at least 1 (got {extend_epochs}).")
-        # The fixed rates are the optimizer's after the restore; the entry
-        # point fills them in (`Trainer.continue_from`), they are not guessed.
+        schedule = _fixed_rates(parent, request.get("extend_lr"), where)
         run_stage = {"kind": "extension", "start_epoch": completed,
-                     "target_epochs": extend_epochs, "schedule": None}
+                     "target_epochs": extend_epochs, "schedule": schedule}
         start_epoch, end_epoch = completed, completed + extend_epochs
-        action = (f"Extend training by {extend_epochs} epochs at a fixed rate "
-                  f"(epochs {completed + 1}-{completed + extend_epochs})")
+        rates = ", ".join(f"{r:.3g}" for r in schedule["lrs"])
+        action = (f"Extend training by {extend_epochs} epochs at a fixed rate of {rates} "
+                  f"(epochs {completed + 1}-{completed + extend_epochs}, new target "
+                  f"{completed + extend_epochs})")
 
     pause = request.get("pause_after_epoch")
     if pause is not None and int(pause) <= start_epoch:
@@ -285,6 +288,39 @@ def _check_amp_takes_effect_alike(
             f"{where} trained with mixed precision {'on' if recorded else 'off'} "
             f"({amp.get('dtype')}); on {device} it would be {'on' if here else 'off'}. "
             "Continue it on a device where mixed precision takes effect as it did.")
+
+
+def _fixed_rates(
+    parent: Mapping[str, Any], extend_lr: Optional[float], where: str,
+) -> Dict[str, Any]:
+    """An extension's schedule (contract M3a-4): each parameter group's rate as
+    the parent's optimizer holds it, held fixed. No warmup, no recomputed curve,
+    no cosine past its end, no OneCycle stepped past its total.
+
+    **A zero rate is never replaced by a guess.** A schedule that decayed to 0
+    would extend without training; `extend_lr` replaces a zero rate, and only a
+    zero rate, and the groups it applied to are recorded.
+    """
+    groups = (parent.get("optimizer_state_dict") or {}).get("param_groups") or []
+    if not groups:
+        raise RunPlanRefused(f"{where} records no optimizer rates to extend at.")
+    rates = [float(group["lr"]) for group in groups]
+    zero = [i for i, rate in enumerate(rates) if rate == 0.0]
+    if extend_lr is not None:
+        if not zero:
+            raise RunPlanRefused(
+                f"extend_lr replaces a rate that ended at 0, and none did (the rates are "
+                f"{rates}). Extend without it to continue at those rates.")
+        if not float(extend_lr) > 0:
+            raise RunPlanRefused(f"extend_lr must be above 0 (got {extend_lr}).")
+        rates = [float(extend_lr) if i in zero else rate for i, rate in enumerate(rates)]
+    elif zero:
+        raise RunPlanRefused(
+            f"{where} ended with a rate of 0 in parameter group(s) {zero}; extending at 0 "
+            "would not train them. Give extend_lr for those groups; no rate is guessed.")
+    return {"type": "constant", "lrs": rates,
+            "zero_rate_groups_set": zero if extend_lr is not None else [],
+            "extend_lr": float(extend_lr) if extend_lr is not None else None}
 
 
 def _locate_best_weights(

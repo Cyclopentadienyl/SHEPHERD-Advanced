@@ -393,3 +393,89 @@ def test_a_parents_best_k_file_ranked_out_leaves_the_list_and_stays_on_disk(tmp_
     assert all(_sha(e["path"]) == e["sha256"] for e in entries)
     assert sorted(p.name for p in (tmp_path / "child" / "checkpoints").iterdir()) == [
         "model-03.pt", "model-04.pt"], "the child's own ranked-out file is pruned as before"
+
+
+# ---------------------------------------------------------------------------
+# Extend a finished stage at a fixed rate (contract M3a-4)
+# ---------------------------------------------------------------------------
+def test_an_extension_paused_and_resumed_holds_its_fixed_rate_and_cumulative_progress(
+    train_model, workspace, tmp_path, rates
+):
+    """The plan's acceptance case: an original stage of two epochs finishes;
+    `extend` adds two; the extension pauses after one; resume runs only the
+    remaining one."""
+    _run(train_model, workspace, tmp_path / "original", num_epochs=2)
+    original = _read(tmp_path / "original" / "checkpoints" / "last.pt")
+    assert original["progress"]["end"] == "finished"
+    final_rates = [float(g["lr"]) for g in original["optimizer_state_dict"]["param_groups"]]
+    rates.clear()
+
+    _run(train_model, workspace, tmp_path / "extension", num_epochs=2,
+         resume_from=str(tmp_path / "original" / "checkpoints" / "last.pt"),
+         extend_epochs=2, pause_after_epoch=3)
+    paused = _read(tmp_path / "extension" / "checkpoints" / "last.pt")
+    assert paused["progress"]["end"] == "paused" and paused["progress"]["completed_epochs"] == 3
+    stage = paused["progress"]["stage"]
+    assert stage["kind"] == "extension" and stage["start_epoch"] == 2
+    assert stage["target_epochs"] == 2
+    assert stage["schedule"] == {"type": "constant", "lrs": final_rates,
+                                 "zero_rate_groups_set": [], "extend_lr": None}
+    assert "scheduler_state_dict" not in paused, "a fixed-rate stage steps no scheduler"
+
+    _run(train_model, workspace, tmp_path / "rest", num_epochs=2,
+         resume_from=str(tmp_path / "extension" / "checkpoints" / "last.pt"))
+    done = _read(tmp_path / "rest" / "checkpoints" / "last.pt")
+
+    # Two epochs of two updates each, every one at the original's final rate:
+    # no warmup, no curve replayed, no cosine past its end.
+    assert rates == [final_rates] * 4
+    assert done["progress"]["completed_epochs"] == 4 and done["progress"]["end"] == "finished"
+    assert done["progress"]["optimizer_updates"] == 8 and _adam_step(done) == 8.0
+    assert done["progress"]["scheduler_steps"] == original["progress"]["scheduler_steps"] == 4
+    assert done["progress"]["stage"] == stage
+    assert done["config"]["effective"]["schedule"] == stage["schedule"]
+
+
+def _finished(record, lr):
+    import copy
+
+    record = copy.deepcopy(record)
+    record["progress"]["end"] = "finished"
+    record["progress"]["completed_epochs"] = record["progress"]["stage"]["target_epochs"]
+    for group in record["optimizer_state_dict"]["param_groups"]:
+        group["lr"] = lr
+    return record
+
+
+def test_extending_takes_the_restored_rate_and_says_so(parent):
+    path, record = parent
+    plan = _plan(_finished(record, 2e-5), path, _request(record, extend_epochs=3))
+
+    assert plan.mode == "extend" and (plan.start_epoch, plan.end_epoch) == (4, 7)
+    assert plan.stage["schedule"]["lrs"] == [2e-5, 2e-5]
+    assert plan.action == ("Extend training by 3 epochs at a fixed rate of 2e-05, 2e-05 "
+                           "(epochs 5-7, new target 7)")
+
+
+def test_a_zero_rate_is_replaced_only_by_an_explicit_rate(parent):
+    from src.training.run_plan import RunPlanRefused
+
+    path, record = parent
+    with pytest.raises(RunPlanRefused, match=r"rate of 0 in parameter group\(s\) \[0, 1\]"):
+        _plan(_finished(record, 0.0), path, _request(record, extend_epochs=1))
+
+    plan = _plan(_finished(record, 0.0), path,
+                 _request(record, extend_epochs=1, extend_lr=1e-5), explicit={"extend_lr"})
+    assert plan.stage["schedule"]["lrs"] == [1e-5, 1e-5]
+    assert plan.stage["schedule"]["zero_rate_groups_set"] == [0, 1]
+
+    with pytest.raises(RunPlanRefused, match="none did"):
+        _plan(_finished(record, 2e-5), path, _request(record, extend_epochs=1, extend_lr=1e-5))
+    with pytest.raises(RunPlanRefused, match="only when extending"):
+        _plan(record, path, _request(record, extend_lr=1e-5))
+
+
+def test_extend_without_a_parent_is_refused(train_model, workspace, tmp_path):
+    with pytest.raises(ValueError, match="give resume_from"):
+        _run(train_model, workspace, tmp_path / "run", extend_epochs=2)
+    assert not (tmp_path / "run").exists()
