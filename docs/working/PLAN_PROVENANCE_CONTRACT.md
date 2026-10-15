@@ -110,7 +110,7 @@ platforms and claims no conformance to them.
 | 5 | **Backlog item 14 is split into two phases.** Phase 1 is a complete CLI flow: run a test, verify the inputs, keep the report, record it automatically or by hand, and show the result on the existing model status. Phase 2 is the Test tab, job management and advanced ordering | Owner and reviewer, 2026-10-06 |
 | 6 | **Milestones follow real dependencies.** A full environment refactor, a full provenance platform and every historical defect are not prerequisites of item 14. Each milestone delivers a complete flow that can be run and accepted | Reviewer, 2026-10-06 |
 | 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings | Owner, 2026-10-06 |
-| 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15), accepted by the owner (2026-10-15) on the understanding that the branch mode comes before the experiment phase |
+| 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15); the author's understanding of the owner's intent, awaiting the owner's confirmation |
 | 9 | **One directory per training run** (M3a-2). No run overwrites another's files. Outputs in the old layout are moved once, explicitly, by the owner, with no runtime fallback. An explicitly entered model path stays available as a locator; whether a file is accepted is decided by its bytes | Owner, 2026-10-15 |
 | 10 | **Serving loads checkpoints with `weights_only=True`** once M3a's shared checkpoint payload is in place | Owner, 2026-10-15 |
 
@@ -2174,8 +2174,10 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 **M3a — training records the setup that took effect, and resume continues exactly (R6, R11).**
 
 **Revised on 2026-10-15** after the reviewer's design review of that day (five P2 against the first
-proposal, each closed below) and the owner's decisions 8–10 (§1). The seed ordering is implemented
-(below); nothing else in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
+proposal, each answered below) and its incremental review of `0142436..76ca541` (two P2: an
+extension's own stage, and the migration's labels, answered below), with decisions 8–10 (§1;
+decision 8 awaits the owner's confirmation). The seed ordering is implemented (below); nothing else
+in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
 
 **What the code does today.**
 - **Every run of a workspace and architecture writes the same directories:**
@@ -2211,7 +2213,9 @@ proposal, each closed below) and the owner's decisions 8–10 (§1). The seed or
   - AMP: requested and effective (on only on CUDA; bf16 without a scaler);
   - the schedule as built: its type, base rate, total steps, effective warmup and minimum ratio.
 
-  The values recorded are today's behaviour. Changing any of them is a separate behaviour change.
+  The values recorded are today's behaviour, apart from the fixes this section commits to (the
+  accumulation tail, the device rule, resume and `extend`). Changing any other is a separate
+  behaviour change.
 - **`producer`: the code revision and its dirty state.**
   - No `.git`, no git, or a git that refuses gives *unrecorded*: never guessed, never recorded as
     clean (§8 question 1).
@@ -2220,18 +2224,27 @@ proposal, each closed below) and the owner's decisions 8–10 (§1). The seed or
   - Counts only, never file names.
 - **`environment`:** §5.3, from one collector in `src/utils`, collected once at the start of the run.
 - **One payload builder,** which ModelCheckpoint and `Trainer.save_checkpoint` both delegate to.
-  Every field is a primitive container or a scalar, so the checkpoint loads with
-  `weights_only=True`, as serving will (decision 10).
+  Every metadata field is a primitive container or a scalar; model and optimizer tensors stay
+  tensors. The whole payload loads with `weights_only=True`, as serving will (decision 10), tested
+  on both writers' output, with no fallback to `weights_only=False`.
 - **The resume state, taken at one consistent point:**
   - the model, the optimizer, the scheduler's definition and state, and the AMP scaler where used;
   - the completed epochs and the next epoch;
   - the counts of optimizer attempts, successful updates and scheduler steps, kept apart: they
     differ when AMP skips an update (`trainer.py:560-581`);
   - early stopping's and best-k's state, with what restoring the best weights needs;
-  - how the run ended: finished its schedule, stopped early (with the reason), or paused.
+  - the active stage, the original schedule or an extension (M3a-4): where it started, its target
+    end, its progress within the stage and cumulatively, and its schedule's definition;
+  - how the run ended: finished its stage, stopped early (with the reason), or paused.
+
+  A stage is finished when its agreed budget of epochs is done, or by its recorded stop reason;
+  never by the scheduler reaching an estimated step count. When AMP skips updates, a finished
+  budget may leave the scheduler short of that estimate, and nothing runs extra steps or changes
+  the rate to close the gap.
 - **The accumulation tail:** one stated policy, under which the schedule's step count equals the
-  updates actually taken. No gradient crosses an epoch boundary unrecorded. Accepted on a case that
-  does not divide.
+  updates actually taken. No gradient crosses an epoch boundary unrecorded. If the tail is applied
+  at the epoch boundary, its loss scaling and the step count agree with that; clearing gradients
+  without saying so is not a policy. Accepted on a case that does not divide.
 - **Device:** `auto` without CUDA refuses before anything is written (§5.2). An explicit `cpu`
   stays available and is recorded.
 - **The seed is applied before the data loaders and the model are built.** Today it is applied
@@ -2285,8 +2298,17 @@ proposal, each closed below) and the owner's decisions 8–10 (§1). The seed or
   - `scripts/migrate_checkpoints.py`, updated for this layout, lists a plan first and moves only
     with `--apply`.
   - Checkpoints M2 refuses go to `{workspace}/archive/`.
-  - M2-valid ones without M3's resume state go into an imported run, marked servable and not
-    resumable.
+  - Ones whose M2 record checks pass go into an imported run, labelled "M2 record checks pass; no
+    M3 resume state; servability not judged". M2's comparison reads the recorded roles only, not
+    the weights (`src/utils/fingerprint.py:192-223`; the inventory says the same,
+    `scripts/audit_checkpoint_family.py:424-429`). Whether a file serves is decided by serving's own
+    entry point, never by the move.
+  - A check the tool cannot complete is shown as *unverifiable*, apart from a real mismatch, and is
+    never reported as proof that a model is invalid.
+  - An imported run's id is assigned by the move and is not in the checkpoint's bytes; settings the
+    checkpoint does not record stay unknown. Nothing is backfilled into a checkpoint.
+  - A destination that already exists stops the move and keeps the source; the old tool's
+    `--overwrite` does not carry over.
   - A move keeps the bytes, so every digest stands. Settings that name a path are listed for the
     owner to change.
   - There is no runtime fallback to the old layout. Whether a checkpoint is servable is decided by
@@ -2306,25 +2328,30 @@ proposal, each closed below) and the owner's decisions 8–10 (§1). The seed or
 - **The schedule is rebuilt from the parent's record,** then the optimizer's and the scheduler's
   progress is restored. Never a curve built from the child's settings with the parent's progress.
   A parent whose record cannot rebuild it is not resumed as a full restore.
-- **Only the remaining epochs run,** and `on_train_begin` does not clear the restored state.
+- **Resume continues the active stage,** an unfinished extension included: only that stage's
+  remaining epochs run, and `on_train_begin` does not clear the restored state.
 - **A pause flag:** stop after epoch N of the run's total progress.
   - It stops at a safe boundary: validation and state updated, a resume snapshot written, the
     accumulation tail handled.
+  - The snapshot is the latest training state, never the best weights paired with the latest
+    optimizer. It is written in an epoch without validation too.
   - The run is recorded as paused, not finished.
   - It is separate from the planned horizon, and a child does not inherit it.
-- **A parent that finished its schedule is refused for resume,** with the reason: that is
+- **A parent that finished its active stage is refused for resume,** with the reason: that is
   `extend`'s case. A run that stopped early keeps its stop reason, and resume does not reset its
   patience to continue.
 
 **M3a-4 — extend a finished schedule at a fixed rate.**
-- **`extend` continues a finished run beyond its planned horizon,** from 100 epochs to 150, say, at
-  a fixed rate.
+- **`extend` opens a new stage after a finished one,** from 100 epochs to 150, say, at a fixed
+  rate. The stage records its start, its target end and its schedule; paused, it is resumed like any
+  stage (M3a-3).
   - The model, the optimizer state and the cumulative progress continue.
   - No warmup, no recomputed curve, no cosine past its end, no OneCycle stepped past its total.
 - **The fixed rate is each param group's effective rate after the restore,** recorded as the
-  extension's starting value.
+  extension's starting value. An ordinary `extend` gives no rate.
   - A zero rate is never replaced by a guess.
-  - A non-zero rate is given explicitly, with the groups it applies to.
+  - Replacing a zero rate with a non-zero one takes an explicit rate, with the groups it applies
+    to.
 - **One code path:** the same entry point, trainer, loaders and writer.
 - **An early-stopped run is not extended as if it had paused.**
 
@@ -2332,6 +2359,23 @@ proposal, each closed below) and the owner's decisions 8–10 (§1). The seed or
 - **A mode that changes learning settings from a parent (a branch) is not built in M3.** Until it
   is, resume refuses changed settings. It is a prerequisite of the GNN experiment phase, which
   starts only once the platform is stable, and is recorded as BACKLOG item 23.
+- **Room left for a branch, without building it** (the reviewer's recommendation, 2026-10-15):
+  - **Provenance checks and mode rules stay apart.** The checkpoint, graph and data checks are the
+    shared contract. Whether settings must equal the parent's is `resume`'s and `extend`'s rule,
+    never written into the checkpoint reader or the model builder.
+  - **One decision before the Trainer.** The settings in effect and how the run restores are
+    resolved in one place, before any output exists: which settings come from the parent, which
+    operational fields from the request, and what happens to the optimizer, the scheduler, the
+    progress and the stop state. The UI, the CLI and the probe all go through it.
+  - **Restoring the weights, the optimizer and the scheduler are separate steps,** combined only as
+    each mode allows: `resume` restores the active stage; `extend` keeps the model and the optimizer
+    and opens a fixed-rate stage. No `strict=False` that bypasses both the settings rule and the
+    provenance checks.
+  - **The checkpoint's record is versioned,** and says enough of a run's history: the parent's
+    digest, the settings in effect, the active stage, the schedule, the progress and the stop
+    reason. No empty branch fields, stub or plugin system.
+  - **One loader, Trainer, checkpoint writer and run-directory manager for every mode.** Only
+    `new`, `resume` and `extend` exist; a branch request is refused, with no hidden entry point.
 - **Tags, filters and a lineage tree** come with M4/M5's model list.
 
 **Acceptance for M3a.**
@@ -2351,6 +2395,9 @@ proposal, each closed below) and the owner's decisions 8–10 (§1). The seed or
   - an accumulation that does not divide, and an update AMP skipped, keep the schedule's position.
 - **Ends:** a finished schedule refuses resume with the reason; `extend` continues at a fixed rate
   with no rise and no warmup.
+- **An extension paused and resumed:** an original stage of two epochs finishes; `extend` adds two;
+  the extension pauses after one; resume runs only the remaining one, with the rate, the optimizer
+  state and the cumulative progress correct and the original curve not replayed.
 - **The probe** keeps M2's data and graph refusals. Its resume case becomes a real pause and resume:
   plan two epochs, pause after one, resume the remaining one. `extend` is tested apart.
 - **Not claimed:** bit-identical training with and without a pause. Random state and sampling are a
