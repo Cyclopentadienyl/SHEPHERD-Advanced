@@ -488,9 +488,9 @@ class TrainingManager:
         if self._snapshot_cache and self._snapshot_cache[0] == key:
             return self._snapshot_cache[1]
         try:
-            import torch
+            from src.utils.checkpoint_io import read_checkpoint
 
-            record = torch.load(last, map_location="cpu", weights_only=True)
+            record = read_checkpoint(last, map_location="cpu", weights_only=True).checkpoint
         except Exception as exc:  # noqa: BLE001 - shown, not raised
             snapshot = {"checkpoint": str(last), "readable": False,
                         "reason": f"{type(exc).__name__}: {exc}"}
