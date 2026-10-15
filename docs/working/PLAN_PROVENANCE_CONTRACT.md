@@ -50,8 +50,9 @@ acceptance stands as recorded. M3a's design was revised on 2026-10-15 after the 
 review and the owner's decisions 8–10 (§1; §4, M3a). **M3a is implemented (2026-10-15):** M3a-1
 with its four review fixes (`26a7268..fbd850d`), and M3a-2, M3a-3 and M3a-4 with the stop status,
 the console's continue block, the migration tool and the probe (`6143e17` onward; §4, "M3a as
-implemented"). It awaits the reviewer's code review, then one acceptance on the GB10. M3b, M3c,
-M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+implemented"). The reviewer's code review of `8876d2b..094b90d` (2026-10-15) found three P2 and
+no P1, so M3a's functional acceptance is not passed; the fixes (`ed70e15` onward) await the
+reviewer's re-review, then one acceptance on the GB10. M3b, M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2405,8 +2406,9 @@ in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
 - **Not claimed:** bit-identical training with and without a pause. Random state and sampling are a
   separate layer, described apart.
 
-**M3a as implemented (2026-10-15).** Awaiting the reviewer's code review; the GB10 acceptance
-follows it. What differs from the text above, or was decided while building, is stated here.
+**M3a as implemented (2026-10-15).** Code-reviewed at `094b90d` with three P2 and no P1 (below,
+"The review of `094b90d`"); the fixes await the re-review, and the GB10 acceptance follows it.
+What differs from the text above, or was decided while building, is stated here.
 
 - **M3a-2, run directories.** `src/utils/checkpoint_paths.py` names (`propose_run_dir`) and claims
   (`claim_run_dir`, by creating `checkpoints/`) a run's directory; the training entry point claims
@@ -2419,8 +2421,9 @@ follows it. What differs from the text above, or was decided while building, is 
   (latest run, then the existing in-run order), the inventory, `setup_demo` and the probe use the
   same functions; the old resolvers are removed. The sample generator's guard covers `runs/`.
   - **`run.json` is not built.** As the text above allows, the listing reads each checkpoint's own
-    record with the safe loader when it is listed; nothing is cached, and a listed file is not
-    shown as verified.
+    record with the safe loader when it is listed, which deserialises each file whole (weights
+    included); nothing is cached, and a listed file is not shown as verified. Listing without
+    loading the model files is not claimed.
   - **The one-time move** (`scripts/migrate_checkpoints.py`) follows decision 9: plan first,
     `--apply` to move; M2's serving comparison passes -> an imported run labelled "M2 record checks
     pass; no M3 resume state; servability not judged" (in its `imported.json`); refused ->
@@ -2471,6 +2474,24 @@ follows it. What differs from the text above, or was decided while building, is 
   refusals); the move in `test_migrate_checkpoints.py`; the probe in `test_probe_m2_phase.py`. An
   update AMP skipped keeps the schedule's position (`test_accumulation_tail.py`) and resume restores
   the scaler; a pause and resume under AMP runs only on CUDA, in the GB10 acceptance.
+- **The review of `094b90d` (2026-10-15): three P2, no P1,** each reproduced by the reviewer on a
+  synthetic workspace through the production entry points; the fixes reuse the shared run plan,
+  readers and writer.
+  - **P2-1, a best file's weights lost after one generation.** A best-k file is written before it
+    is listed, so its own record says its weights are the best (`{"kind": "self"}`) with a best-k
+    list without itself; a child continued from it could not name those weights and a grandchild
+    lost them. The run plan now carries such a parent as a best-k entry of its own run, named by
+    the digest of the read already made (`parent_sha256`), so every later checkpoint names it and
+    the next generation checks it like any best-k file. A record whose best weights must be
+    restored and cannot be located is refused before anything exists.
+  - **P2-2, a hidden "Extra epochs" value blocking a resume** in the console. A change of the
+    chosen checkpoint or its source clears the field and the last check; the console sends the
+    value only for a finished checkpoint (the service's `extend_if_finished`, the console's alone).
+    An explicit `extend_epochs` for an unfinished parent is still refused everywhere else.
+  - **P2-3, the API checking a continuation's cross-field rules on new-run defaults.** The rules
+    are one function (`routes/training.cross_field_errors`); a new run's request is checked with
+    its defaults, a continued run's on the settings the run plan resolves from its parent, inside
+    the training service (422). Explicit conflicts are refused as before.
 
 **M3b — the dataset record is required (R5).**
 - **Refused:** training, serving and measurement refuse a workspace whose `kg.provenance.json`
