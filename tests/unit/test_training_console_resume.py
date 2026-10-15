@@ -151,3 +151,16 @@ def test_a_stopped_run_shows_stopped_and_where_it_can_be_continued(checkpoints):
     assert text.startswith("**Status**: STOPPED")
     assert "Paused at epoch 1 of 2" in text
     assert "No checkpoint was saved" in tc._format_status({"status": "stopped", "outcome": None})
+
+
+def test_the_service_refuses_an_explicit_conflict_before_launching(checkpoints, monkeypatch):
+    import subprocess as sp
+    from unittest.mock import patch
+
+    manager = training_manager.__class__()
+    with patch.object(sp, "Popen") as popen:
+        result = manager.start_training({"data_dir": str(checkpoints["ws"]),
+                                         "resume_from": str(checkpoints["paused"]),
+                                         "device": "cpu", "learning_rate": 0.5})
+    assert result["success"] is False and "learning_rate" in result["error"]
+    popen.assert_not_called()

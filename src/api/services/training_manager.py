@@ -142,7 +142,8 @@ class TrainingManager:
         if config.get("resume_from"):
             preview = self.preview_continuation(
                 config["resume_from"], device=config.get("device", "auto"),
-                extend_epochs=config.get("extend_epochs"))
+                extend_epochs=config.get("extend_epochs"),
+                requested={k: v for k, v in config.items() if k != "resume_from"})
             if not preview["ok"]:
                 return {"success": False, "error": preview["reason"], "status": self._status}
             architecture = preview.get("architecture") or architecture
@@ -518,9 +519,14 @@ class TrainingManager:
         *,
         device: str = "auto",
         extend_epochs: Optional[int] = None,
+        requested: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """What starting from `parent_path` would do, for the console to show
         before start (contract M3a-3, M3a-4).
+
+        `requested` is a training request's own fields, set explicitly: a
+        learning setting among them that differs from the parent's is refused
+        here, as the training process would refuse it.
 
         **The same decision the training process makes**
         (`src.training.run_plan.plan_continuation`), on the parent's own
@@ -555,16 +561,19 @@ class TrainingManager:
             "architecture": ((record.get("config") or {}).get("model_config") or {}).get(
                 "conv_type"),
         }
-        # The parent's own settings, with this request's operational fields:
-        # nothing is set explicitly here, so nothing conflicts and every
-        # learning setting shows as inherited.
-        requested = (record.get("config") or {}).get("requested")
-        request = {**(requested if isinstance(requested, dict) else {}),
+        # The parent's own settings, with the request's fields over them; only
+        # the request's fields count as set explicitly, so every other learning
+        # setting shows as inherited.
+        explicit = dict(requested or {})
+        recorded = (record.get("config") or {}).get("requested")
+        request = {**(recorded if isinstance(recorded, dict) else {}), **explicit,
                    "resume_from": str(path), "run_dir": "", "extend_epochs": extend_epochs,
-                   "extend_lr": None, "pause_after_epoch": None, "device": device}
+                   "extend_lr": explicit.get("extend_lr"), "pause_after_epoch": None,
+                   "device": device}
         effective_device = "cuda" if device == "auto" else device
         try:
-            plan = plan_continuation(record, path, request, set(), device=effective_device)
+            plan = plan_continuation(record, path, request, set(explicit),
+                                     device=effective_device)
         except RunPlanRefused as exc:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
