@@ -263,6 +263,11 @@ class Trainer:
         # State
         self.state = TrainingState()
 
+        # Set when the model holds weights from an earlier step than the
+        # optimizer (early stopping restores its best at the end of `train`);
+        # the checkpoint payload then writes weights only (contract M3a-1).
+        self.weights_restored_from: Optional[Dict[str, Any]] = None
+
         # The active stage: today always the original schedule, from epoch 0
         # for `num_epochs` (contract M3a-1; M3a-3 and M3a-4 restore and extend
         # it). Recorded in every checkpoint.
@@ -525,6 +530,7 @@ class Trainer:
         """
         logger.info(f"Starting training on {self.device}")
         logger.info(f"Config: {self.config}")
+        self.weights_restored_from = None
 
         self.callbacks.on_train_begin(self)
 

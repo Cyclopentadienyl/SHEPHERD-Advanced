@@ -194,7 +194,10 @@ def test_a_weights_only_checkpoint_keeps_the_provenance_and_nothing_to_resume(tm
 
     payload = build_checkpoint_payload(trainer, epoch=0, logs={}, weights_only=True)
 
-    assert set(payload) == {"state_dict", "training_input_digests", "producer", "environment"}
+    assert set(payload) == {"record_version", "checkpoint_kind", "weights_from", "state_dict",
+                            "training_input_digests", "producer", "environment"}
+    assert payload["checkpoint_kind"] == "weights"
+    assert payload["weights_from"] == {"kind": "latest", "epoch": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -236,3 +239,100 @@ def test_a_run_records_its_progress_best_k_and_where_the_best_weights_are(tmp_pa
     assert source is not None
     assert any(e["file"] == source["file"] and e["epoch"] == early["best_epoch"]
                for e in best_k)
+
+
+# ---------------------------------------------------------------------------
+# The best weights (review P2-1) and one step's state (review P2-2)
+# ---------------------------------------------------------------------------
+def _callback(trainer, name):
+    return next(c for c in trainer.callbacks.callbacks if type(c).__name__ == name)
+
+
+def _end_epoch(trainer, epoch, value):
+    """What `Trainer.train` does at an epoch's end, with the weights set to a
+    value of the epoch's own so every file's weights can be told apart."""
+    with torch.no_grad():
+        trainer.model.weight.fill_(float(epoch))
+    trainer.state.epoch = epoch
+    trainer.state.completed_epochs = epoch + 1
+    trainer.callbacks.on_epoch_end(trainer, epoch, {"val_mrr": value})
+
+
+def test_early_stoppings_best_file_survives_a_top_k_it_no_longer_ranks_in(tmp_path):
+    """The reviewer's case: improvements below `min_delta` rank later epochs
+    above early stopping's best, and pruning used to delete epoch 0's file, the
+    one holding the weights early stopping restores and a resume needs."""
+    trainer = _tiny_trainer(tmp_path, num_epochs=4, save_top_k=3)
+    trainer.callbacks.on_train_begin(trainer)
+    for epoch, value in enumerate([0.5, 0.50002, 0.50004, 0.50006]):
+        _end_epoch(trainer, epoch, value)
+
+    early = _callback(trainer, "EarlyStopping")
+    assert early.best_epoch == 0, "the case needs early stopping to keep epoch 0"
+    checkpoint_dir = tmp_path / "ckpt"
+    kept = sorted(p.name for p in checkpoint_dir.glob("model-*.pt"))
+    assert kept[0].startswith("model-00-") and len(kept) == 4
+
+    last = torch.load(checkpoint_dir / "last.pt", map_location="cpu", weights_only=True)
+    source = last["callbacks"]["best_weights_source"]
+    assert source["kind"] == "file" and source["file"] == kept[0]
+    best = checkpoint_dir / source["file"]
+    assert source["sha256"] == _sha(best)
+    best_weights = torch.load(best, map_location="cpu", weights_only=True)["state_dict"]
+    assert torch.all(best_weights["weight"] == 0.0), "the file holds epoch 0's weights"
+
+
+def test_the_first_best_file_says_its_own_weights_are_the_best(tmp_path):
+    trainer = _tiny_trainer(tmp_path, num_epochs=2)
+    trainer.callbacks.on_train_begin(trainer)
+
+    _end_epoch(trainer, 0, 0.5)
+
+    first = next((tmp_path / "ckpt").glob("model-00-*.pt"))
+    record = torch.load(first, map_location="cpu", weights_only=True)
+    assert record["callbacks"]["best_weights_source"] == {"kind": "self"}
+    assert record["callbacks"]["early_stopping"]["best_epoch"] == 0
+
+
+def test_a_model_holding_restored_best_weights_is_written_as_weights_only(tmp_path):
+    """After `train`, early stopping has put epoch 0's weights back while the
+    optimizer and progress stay at the last step. Written together they would
+    be a state the run never passed through; they are written as weights, and
+    say which ones."""
+    from src.training.trainer import Trainer, TrainerConfig
+
+    model = torch.nn.Linear(1, 1, bias=False)
+    trainer = Trainer(
+        model=model, train_dataloader=[],
+        optimizer=torch.optim.SGD(model.parameters(), lr=1.0, momentum=0.9),
+        config=TrainerConfig(device="cpu", scheduler_type="none", use_amp=False,
+                             num_epochs=2, checkpoint_dir=str(tmp_path / "ckpt"),
+                             log_dir=str(tmp_path / "logs")),
+    )
+    trainer.callbacks.on_train_begin(trainer)
+    for epoch, value in enumerate([0.9, 0.1]):
+        # One SGD step per epoch, so the momentum buffer moves with the weights.
+        model.weight.grad = torch.ones_like(model.weight)
+        trainer.optimizer.step()
+        trainer.optimizer.zero_grad()
+        trainer.state.epoch, trainer.state.completed_epochs = epoch, epoch + 1
+        trainer.callbacks.on_epoch_end(trainer, epoch, {"val_mrr": value})
+    latest_weight = model.weight.detach().clone()
+    latest_momentum = trainer.optimizer.state_dict()["state"][0]["momentum_buffer"].clone()
+
+    trainer.callbacks.on_train_end(trainer)
+    assert not torch.equal(model.weight, latest_weight), "early stopping restored epoch 0"
+    trainer.save_checkpoint(tmp_path / "after_train.pt")
+
+    after = torch.load(tmp_path / "after_train.pt", map_location="cpu", weights_only=True)
+    assert after["checkpoint_kind"] == "weights"
+    assert after["weights_from"] == {"kind": "best", "epoch": 0}
+    assert "optimizer_state_dict" not in after and "progress" not in after
+
+    # `last.pt`, written at the last epoch's end, is one step's state.
+    last = torch.load(tmp_path / "ckpt" / "last.pt", map_location="cpu", weights_only=True)
+    assert last["checkpoint_kind"] == "training_state"
+    assert torch.equal(last["state_dict"]["weight"], latest_weight)
+    assert torch.equal(last["optimizer_state_dict"]["state"][0]["momentum_buffer"],
+                       latest_momentum)
+    assert last["progress"]["completed_epochs"] == 2

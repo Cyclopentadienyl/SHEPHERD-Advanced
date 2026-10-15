@@ -26,9 +26,12 @@ Module: src/training/checkpoint_payload.py
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Mapping
 
 from src.utils.run_environment import assert_primitive
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.training.trainer import Trainer
@@ -96,14 +99,21 @@ def _find_callback(trainer: "Trainer", name: str) -> Any:
     return None
 
 
-def _callback_state(trainer: "Trainer") -> Dict[str, Any]:
+def _callback_state(trainer: "Trainer", epoch: int) -> Dict[str, Any]:
     """Early stopping's and best-k's state, and where the best weights are.
 
-    Early stopping keeps its best weights in memory only, so what restoring them
-    needs is the best-k file of the same epoch, named here by its file name
-    within the run's checkpoint directory and the SHA-256 it was written with.
-    `None` when no such file exists (a best-k list of one that a later tie
-    pushed out, or monitors that differ).
+    Early stopping keeps its best weights in memory only, so a checkpoint says
+    where they can be had again (`best_weights_source`):
+
+    - **`{"kind": "self"}`** when this checkpoint is written at early stopping's
+      best epoch: its own weights are the best weights. This is how the first
+      best-k file says it, without carrying its own digest.
+    - **`{"kind": "file", "file", "sha256"}`**: the best-k file of that epoch,
+      by its name within the run's checkpoint directory and the SHA-256 it was
+      written with. `ModelCheckpoint` never prunes that file while early
+      stopping counts its epoch as best (contract M3a-1 review, P2-1).
+    - **`None`** before any best exists, or when early stopping does not restore
+      weights.
     """
     early = _find_callback(trainer, "EarlyStopping")
     checkpoint = _find_callback(trainer, "ModelCheckpoint")
@@ -131,10 +141,14 @@ def _callback_state(trainer: "Trainer") -> Dict[str, Any]:
             "stopped_epoch": int(early.stopped_epoch),
             "should_stop": bool(early.should_stop),
         }
-        if early.best_value is not None and best_k:
-            match = [e for e in best_k if e["epoch"] == early.best_epoch]
-            if match:
-                best_source = {"file": match[0]["file"], "sha256": match[0]["sha256"]}
+        if early.best_value is not None and early.config.restore_best_weights:
+            if int(early.best_epoch) == int(epoch):
+                best_source = {"kind": "self"}
+            else:
+                match = [e for e in (best_k or []) if e["epoch"] == early.best_epoch]
+                if match:
+                    best_source = {"kind": "file", "file": match[0]["file"],
+                                   "sha256": match[0]["sha256"]}
 
     model_checkpoint_state = None
     if checkpoint is not None:
@@ -201,8 +215,28 @@ def build_checkpoint_payload(
     """
     run_record: Mapping[str, Any] = getattr(trainer, "run_record", None) or {}
 
+    # **A training state is one step's model, optimizer and progress together**
+    # (contract M3a-1 review, P2-2). After `train` returns, early stopping has
+    # put its best weights back into the model while the optimizer, scheduler
+    # and progress stay at the last step; written together they would describe
+    # a state the run never passed through. Such a model is written as weights
+    # only, saying which weights they are.
+    restored = getattr(trainer, "weights_restored_from", None)
+    if restored is not None and not weights_only:
+        logger.warning(
+            "The model holds early stopping's best weights (epoch %s) while the "
+            "optimizer is at the last step; writing weights only, not a "
+            "resumable training state.", restored.get("epoch"))
+        weights_only = True
+
     if weights_only:
-        payload: Dict[str, Any] = {"state_dict": trainer.model.state_dict()}
+        payload: Dict[str, Any] = {
+            "record_version": CHECKPOINT_RECORD_VERSION,
+            "checkpoint_kind": "weights",
+            "weights_from": (dict(restored) if restored is not None
+                             else {"kind": "latest", "epoch": int(epoch)}),
+            "state_dict": trainer.model.state_dict(),
+        }
     else:
         config = dict(trainer._serialize_config())
         config["requested"] = run_record.get("requested")
@@ -216,6 +250,7 @@ def build_checkpoint_payload(
         }
         payload = {
             "record_version": CHECKPOINT_RECORD_VERSION,
+            "checkpoint_kind": "training_state",
             "epoch": int(epoch),
             "global_step": int(trainer.state.global_step),
             "state_dict": trainer.model.state_dict(),
@@ -224,7 +259,7 @@ def build_checkpoint_payload(
             "config": config,
             "state": _training_state(trainer),
             "progress": _progress(trainer),
-            "callbacks": _callback_state(trainer),
+            "callbacks": _callback_state(trainer, epoch),
         }
         if trainer.scheduler is not None:
             payload["scheduler_state_dict"] = trainer.scheduler.state_dict()

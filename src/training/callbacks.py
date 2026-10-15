@@ -191,6 +191,11 @@ class EarlyStopping(Callback):
                 f"EarlyStopping: restoring best weights from epoch {self.best_epoch}"
             )
             trainer.model.load_state_dict(self.best_weights)
+            # The model now holds weights from an earlier step than the
+            # optimizer, scheduler and progress: what the checkpoint payload
+            # needs to know so it never writes the two as one resumable state
+            # (contract M3a-1 review, P2-2).
+            trainer.weights_restored_from = {"kind": "best", "epoch": int(self.best_epoch)}
 
     def _is_improvement(self, current: float) -> bool:
         if self.best_value is None:
@@ -200,6 +205,16 @@ class EarlyStopping(Callback):
             return current < self.best_value - self.config.min_delta
         else:
             return current > self.best_value + self.config.min_delta
+
+
+def _early_stopping_best_epoch(trainer: Optional["Trainer"]) -> Optional[int]:
+    """The epoch early stopping restores, if a trainer runs it and it has one."""
+    callbacks = getattr(getattr(trainer, "callbacks", None), "callbacks", None) or []
+    for callback in callbacks:
+        if (isinstance(callback, EarlyStopping) and callback.config.restore_best_weights
+                and callback.best_value is not None):
+            return int(callback.best_epoch)
+    return None
 
 
 # =============================================================================
@@ -267,7 +282,7 @@ class ModelCheckpoint(Callback):
             })
 
             # 排序並移除多餘的檢查點
-            self._sort_and_prune()
+            self._sort_and_prune(trainer)
 
         # 保存最後一個檢查點
         if self.config.save_last:
@@ -315,17 +330,35 @@ class ModelCheckpoint(Callback):
         logger.info(f"ModelCheckpoint: saved to {filepath} (sha256 {digest[:12]})")
         return digest
 
-    def _sort_and_prune(self) -> None:
+    def _sort_and_prune(self, trainer: Optional["Trainer"] = None) -> None:
+        """Keep the best `save_top_k` files, and the file of early stopping's
+        best epoch whatever its rank.
+
+        **That file is protected** (contract M3a-1 review, P2-1). Early stopping
+        counts an improvement only beyond `min_delta`, and keeps its best
+        weights in memory; this list ranks by the raw value. A run whose later
+        epochs improve by less than `min_delta` therefore ranks them above
+        early stopping's best, and pruning used to delete the one file holding
+        the weights early stopping restores and a resume needs. The epoch early
+        stopping counts as best is always saved here when it happens (it beats
+        every earlier value), so protecting it is enough; when early stopping's
+        best moves on, the old file ranks like any other.
+        """
         # 排序
         reverse = self.config.mode == "max"
         self.best_k_models.sort(key=lambda x: x["value"], reverse=reverse)
 
+        protected = _early_stopping_best_epoch(trainer)
+        keep = self.best_k_models[: self.config.save_top_k]
+        keep += [e for e in self.best_k_models[self.config.save_top_k:]
+                 if e["epoch"] == protected]
+
         # 移除多餘的檢查點
-        while len(self.best_k_models) > self.config.save_top_k:
-            removed = self.best_k_models.pop()
+        for removed in [e for e in self.best_k_models if e not in keep]:
             if removed["filepath"].exists():
                 removed["filepath"].unlink()
                 logger.info(f"ModelCheckpoint: removed {removed['filepath']}")
+        self.best_k_models = keep
 
 
 # =============================================================================
