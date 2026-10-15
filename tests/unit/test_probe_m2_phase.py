@@ -295,3 +295,29 @@ def test_a_report_target_that_appears_during_the_run_is_not_overwritten(
     assert "is not replaced" in out.err
     start = out.out.index("\n{\n") + 1           # the payload's opening line
     assert json.loads(out.out[start:])["m2_acceptance"]["complete"] is False
+
+
+def test_a_resume_under_amp_must_carry_its_gradient_scaler():
+    """Only CUDA runs AMP, so the GB10 acceptance is where this branch runs;
+    its logic is checked here on recorded values (contract M3a-3)."""
+    probe = _probe()
+    amp = {"enabled": True, "dtype": "float16", "grad_scaler": True}
+
+    def side(updates, scale, tracker):
+        return {"amp": amp, "progress": {"optimizer_updates": updates},
+                "scaler": {"scale": scale, "_growth_tracker": tracker}}
+
+    facts = probe._assert_scaler_continued(side(4, 1024.0, 4), side(8, 1024.0, 8))
+    assert facts["scaler_continuity"] == "verified (scale unchanged)"
+    with pytest.raises(AssertionError, match="restarted"):
+        probe._assert_scaler_continued(side(4, 1024.0, 4), side(8, 1024.0, 4))
+    assert probe._assert_scaler_continued(side(4, 1024.0, 4), side(8, 512.0, 1))[
+        "scaler_continuity"].startswith("not judged")
+    with pytest.raises(AssertionError, match="no state"):
+        probe._assert_scaler_continued(side(4, 1024.0, 4), {**side(8, 1024.0, 8), "scaler": None})
+    with pytest.raises(AssertionError, match="mixed precision"):
+        probe._assert_scaler_continued(side(4, 1024.0, 4), {**side(8, 1024.0, 8),
+                                                            "amp": {"enabled": False}})
+    off = {"amp": {"enabled": False, "grad_scaler": False}, "progress": {}, "scaler": None}
+    assert probe._assert_scaler_continued(off, off) == {"amp_enabled": False,
+                                                        "grad_scaler": False}

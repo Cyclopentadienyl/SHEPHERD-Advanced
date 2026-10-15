@@ -56,19 +56,26 @@ Usage:
         --real-config <config.yaml with the established training settings> \
         --real-reference-checkpoint <path to the reference model's .pt file>
 
-Contract M2's acceptance (`--m2-acceptance`):
+Contract M2's acceptance (`--m2-acceptance`), which also carries contract
+M3a's checks:
     Phase M, on the demo workspace, after B-E: a valid same-shaped workspace
-    over another graph (M1); a resume that trains and records its parent (M2);
-    measurement (M3) and serving with a verified shortest-path table (M4) of the
-    resumed model; the five resume refusals, each leaving no run directory and
-    nothing changed (M5); serving (M6) and measurement (M7) refusing a checkpoint
-    over the same-shaped workspace; the inventory's verdicts (M8).
+    over another graph (M1); a run paused after one of two planned epochs and
+    resumed for the remaining one, recording its parent, its mixed precision and
+    whether its gradient scaler was carried (M2); measurement (M3) and serving
+    with a verified shortest-path table (M4) of the resumed model; the five
+    resume refusals, each leaving no run directory and nothing changed (M5);
+    serving (M6) and measurement (M7) refusing a checkpoint over the same-shaped
+    workspace; the inventory's verdicts (M8); the finished child extended by one
+    epoch at a fixed rate (M9); resuming that finished child refused before
+    anything exists (M10).
     Phase R, on the real workspace: it verifies (R1); the settings carry the
-    reference's architecture (R2); one epoch from scratch (R3) and one resumed
-    (R4); measurement (R5) and serving with the table verified, and a diagnosis
-    (R6); the inventory refuses the reference and passes the new model (R7);
-    the workspace and the reference are unchanged by listing, size and
-    modification time, not by content digest (R8).
+    reference's architecture (R2), the output locations an older config.yaml
+    names dropped; one epoch of two from scratch, paused (R3), and its remaining
+    epoch resumed (R4); measurement (R5) and serving with the table verified,
+    and a diagnosis (R6); the inventory refuses the reference and passes the
+    new model (R7); the workspace and the reference are unchanged by listing,
+    size and modification time, not by content digest (R8). Every run writes
+    into its own run directory under --work-dir.
     The report stays inside --work-dir and replaces no existing file.
     Run as a program, the probe applies the project's allocator rule before
     torch is imported, as train_model.py does, and the report records the
@@ -1402,6 +1409,12 @@ def _read_run_checkpoint(path: Path) -> Dict[str, Any]:
         "progress": checkpoint.get("progress") or {},
         "rates": [float(g["lr"]) for g in
                   (checkpoint.get("optimizer_state_dict") or {}).get("param_groups", [])],
+        # Mixed precision as it took effect, and the gradient scaler's state
+        # (plain numbers), so a pause and resume under AMP, which only CUDA
+        # runs, is shown in the report (contract M3a).
+        "amp": ((checkpoint.get("config") or {}).get("effective") or {}).get("amp") or {},
+        "scaler": {k: v for k, v in (checkpoint.get("scaler_state_dict") or {}).items()
+                   if isinstance(v, (int, float))} or None,
     }
 
 
@@ -1431,6 +1444,7 @@ def _assert_resumed(parent: Path, child: Path) -> Dict[str, Any]:
         if name in before["weights"] and not torch.equal(tensor, before["weights"][name])
     )
     assert changed > 0, "the resumed run left every weight as its parent had it"
+    amp = _assert_scaler_continued(before, after)
     return {
         "parent_sha256": before["sha256"],
         "child_sha256": after["sha256"],
@@ -1439,7 +1453,40 @@ def _assert_resumed(parent: Path, child: Path) -> Dict[str, Any]:
         "weight_tensors_changed": changed,
         "weight_tensors": len(after["weights"]),
         "recorded_roles": sorted(after["record"]),
+        **amp,
     }
+
+
+def _assert_scaler_continued(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
+    """Mixed precision took effect in the child as in its parent, and a
+    gradient scaler's state was carried, not restarted (contract M3a-3).
+
+    The scaler's growth tracker counts successful updates since its scale last
+    changed. When the scale is the same in both, no update was skipped and none
+    grew it in the child's run, so a carried tracker has grown by exactly the
+    child's updates; a restarted one would hold only those. When the scale
+    changed, the values are recorded and not judged.
+    """
+    assert after["amp"] == before["amp"], (
+        f"the resumed run's mixed precision {after['amp']} is not its parent's {before['amp']}")
+    facts: Dict[str, Any] = {"amp_enabled": bool(before["amp"].get("enabled")),
+                             "grad_scaler": bool(before["amp"].get("grad_scaler"))}
+    if not facts["grad_scaler"]:
+        return facts
+    assert before["scaler"] and after["scaler"], "a run with a gradient scaler recorded no state"
+    updates = (after["progress"].get("optimizer_updates", 0)
+               - before["progress"].get("optimizer_updates", 0))
+    facts.update(parent_scale=before["scaler"].get("scale"), child_scale=after["scaler"].get("scale"),
+                 parent_growth_tracker=before["scaler"].get("_growth_tracker"),
+                 child_growth_tracker=after["scaler"].get("_growth_tracker"),
+                 child_run_updates=updates)
+    if facts["parent_scale"] == facts["child_scale"]:
+        assert facts["child_growth_tracker"] == facts["parent_growth_tracker"] + updates, (
+            "the gradient scaler was restarted, not carried from the parent")
+        facts["scaler_continuity"] = "verified (scale unchanged)"
+    else:
+        facts["scaler_continuity"] = "not judged (the scale changed in the child's run)"
+    return facts
 
 
 def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str) -> int:

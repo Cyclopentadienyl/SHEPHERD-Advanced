@@ -51,8 +51,10 @@ review and the owner's decisions 8–10 (§1; §4, M3a). **M3a is implemented (2
 with its four review fixes (`26a7268..fbd850d`), and M3a-2, M3a-3 and M3a-4 with the stop status,
 the console's continue block, the migration tool and the probe (`6143e17` onward; §4, "M3a as
 implemented"). The reviewer's code review of `8876d2b..094b90d` (2026-10-15) found three P2 and
-no P1, so M3a's functional acceptance is not passed; the fixes (`ed70e15` onward) await the
-reviewer's re-review, then one acceptance on the GB10. M3b, M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+no P1; its re-review of the fixes (`094b90d..815d763`, 2026-10-15) closed all three and found no
+new P1 or P2. **M3a's code review is passed; its functional acceptance is not**: that is one
+acceptance on the GB10 (§4, "How M3a's acceptance is run"), complete only with its evidence. M3b,
+M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2406,9 +2408,33 @@ in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
 - **Not claimed:** bit-identical training with and without a pause. Random state and sampling are a
   separate layer, described apart.
 
+*How M3a's acceptance is run (prepared 2026-10-15, after the re-review):* through the same
+deployment probe and production entry points as M2's, which now carry M3a's checks
+(`scripts/probe_deployment.py --m2-acceptance --device cuda`); no other training pipeline.
+- **Locked:** the commit the probe records (the branch head at the run); the inputs, the same as
+  M2's acceptance and checked by SHA-256 against its evidence (`hpo_2026_0929_5a`, its
+  `train_outputs/config.yaml`, `checkpoints/hgt/model-02-0.1813.pt`, given by path); the allocator,
+  the saved preset `cuda_async`, applied by the probe before torch's first import and recorded in
+  the report. A new work directory and report outside the repository, kept as evidence.
+- **What M3a's part shows:** demo M2, a run with mixed precision on CUDA paused after one of two
+  epochs and resumed for the remaining one, its gradient scaler carried (`scaler_continuity`,
+  judged when the scale did not change in the child's run, recorded otherwise); M9, the finished
+  child extended by one epoch at a fixed rate; M10, resuming it refused before anything exists;
+  real-data R3 and R4, one epoch of two paused and its remaining epoch resumed; every run in its
+  own run directory under the work directory; M2's refusals and checks as before. The older
+  `config.yaml` names `output_dir`, `checkpoint_dir` and `log_dir`; the probe drops them as
+  locations (R2 records the fields it sets).
+- **Not part of it:** moving the workspace's older checkpoints into the run layout. That is the
+  owner's, with `scripts/migrate_checkpoints.py` (a plan first, `--apply` to move), and the
+  acceptance does not need it: the reference is read by path.
+- **Not claimed:** capacity, model quality, identical weights with and without a pause.
+- **Complete** when the evidence (beside M2's, with digests) is reviewed and every required probe
+  passed; until then M3a's functional acceptance is not passed.
+
 **M3a as implemented (2026-10-15).** Code-reviewed at `094b90d` with three P2 and no P1 (below,
-"The review of `094b90d`"); the fixes await the re-review, and the GB10 acceptance follows it.
-What differs from the text above, or was decided while building, is stated here.
+"The review of `094b90d`"); the re-review of `094b90d..815d763` closed them with no new P1 or P2.
+The GB10 acceptance follows (above). What differs from the text above, or was decided while
+building, is stated here.
 
 - **M3a-2, run directories.** `src/utils/checkpoint_paths.py` names (`propose_run_dir`) and claims
   (`claim_run_dir`, by creating `checkpoints/`) a run's directory; the training entry point claims
@@ -2497,19 +2523,29 @@ What differs from the text above, or was decided while building, is stated here.
     clears the last check; a Refresh or conv_type change no longer clears a typed path's check
     (the run list clears only when it is the source); Continue on a finished checkpoint shows
     Extra epochs and the hint; the API refuses `extend_epochs` without `resume_from` (422); the
-    preview's settings for the cross-field rules are its learning settings only. Left as they
-    are, for the reviewer:
+    preview's settings for the cross-field rules are its learning settings only. Two P3 left as
+    they are; the re-review keeps both as P3, not blocking:
     - **Continued from a best-k file that is not early stopping's best epoch**, the parent's own
       file is not ranked in the child's best-k list, which is the one the parent recorded before
       it was written (it can name a file the parent's run pruned right after). As before
       `094b90d`; no weights are lost, since foreign files are never deleted and the best weights
       are named and checked. Continued from the run's last.pt, the ranking is a run never
       interrupted's. `ModelCheckpoint.restore_foreign` now says so instead of claiming the
-      latter in every case.
+      latter in every case. **This is a real limitation, tracked (BACKLOG item 15), not fixed by
+      the docstring:** the re-review reproduced it (scores 0.9, 0.1, 0.8, 0.5, top-2, continued
+      from the 0.8 file: the child ranks 0.9 and 0.5 and leaves out the 0.8 file, which still
+      exists; the best weights are still named and restored exactly, and the parent is
+      unchanged). It is not claimed that every best-k checkpoint restores the full top-k
+      candidate list. To complete it later: the run plan carries the chosen parent as a
+      candidate, and the best-k restore rebuilds the list by the same pruning rule; no index,
+      scanner or management system.
     - **A continuation that repeats the parent's value for a field outside the API's range for a
       new run** (a CLI-trained `hidden_dim=18`, say) is refused by that field's own range check;
       omitting the field inherits it. Each field's own type and range apply to every request, as
-      the reviewer asked to keep.
+      the reviewer asked to keep. These are two existing boundaries, kept apart: the API's range
+      for an explicitly given value, and the inheritance of an existing model's settings; a legal
+      model pair such as 18/3 does not make `hidden_dim=18` an API input for a new run. Nothing here
+      claims that the API's and the CLI's value ranges are unified.
 
 **M3b — the dataset record is required (R5).**
 - **Refused:** training, serving and measurement refuse a workspace whose `kg.provenance.json`
