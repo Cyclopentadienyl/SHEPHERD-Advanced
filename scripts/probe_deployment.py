@@ -1821,7 +1821,7 @@ def phase_m2_demo(
     report.run("M9", "m2", "CONTROL: a finished run extends at a fixed rate (M3a-4)", _extended)
 
     def _finished_refused() -> Tuple[str, Dict[str, Any]]:
-        from src.training.run_plan import RunPlanRefused
+        from src.utils.run_plan import RunPlanRefused
 
         assert "child" in state, "the resumed checkpoint (M2) is not available"
         return "a finished run is refused for resume, with the reason", _refused_resume(

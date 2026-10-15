@@ -235,7 +235,7 @@ def parent(train_model, workspace, tmp_path_factory):
 
 
 def _plan(record, path, request, explicit=(), device="cpu"):
-    from src.training.run_plan import plan_continuation
+    from src.utils.run_plan import plan_continuation
 
     return plan_continuation(record, Path(path), request, set(explicit), device=device)
 
@@ -257,7 +257,7 @@ def test_an_unfinished_parent_is_resumed_with_its_settings_inherited(parent):
 
 
 def test_an_explicit_learning_setting_that_differs_is_refused_not_ignored(parent):
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, record = parent
     with pytest.raises(RunPlanRefused, match=r"learning_rate: the parent's 0\.0001, requested 0\.5"):
@@ -282,7 +282,7 @@ def test_an_explicit_learning_setting_that_differs_is_refused_not_ignored(parent
 def test_what_the_parents_state_does_not_allow_is_refused_with_the_reason(parent, edit, message):
     import copy
 
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, record = parent
     record = copy.deepcopy(record)
@@ -293,7 +293,7 @@ def test_what_the_parents_state_does_not_allow_is_refused_with_the_reason(parent
 
 
 def test_extend_epochs_on_an_unfinished_parent_is_refused(parent):
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, record = parent
     with pytest.raises(RunPlanRefused, match="applies only to a finished stage"):
@@ -301,7 +301,7 @@ def test_extend_epochs_on_an_unfinished_parent_is_refused(parent):
 
 
 def test_a_pause_at_or_before_the_start_is_refused(parent):
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, record = parent
     with pytest.raises(RunPlanRefused, match="not after this run's start"):
@@ -312,7 +312,7 @@ def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, tr
     import copy
     import shutil
 
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
     from src.utils.checkpoint_io import read_checkpoint
 
     path, record = parent
@@ -337,7 +337,7 @@ def test_a_schedule_the_record_cannot_rebuild_is_refused_before_the_run_exists(
 ):
     import copy
 
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, record = parent
     record = copy.deepcopy(record)
@@ -353,7 +353,7 @@ def test_a_schedule_the_record_cannot_rebuild_is_refused_before_the_run_exists(
 def test_a_conflicting_cli_flag_is_refused_and_an_omitted_one_inherited(
     train_model, workspace, parent, tmp_path
 ):
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, _ = parent
     with pytest.raises(RunPlanRefused, match="learning_rate"):
@@ -458,7 +458,7 @@ def test_extending_takes_the_restored_rate_and_says_so(parent):
 
 
 def test_a_zero_rate_is_replaced_only_by_an_explicit_rate(parent):
-    from src.training.run_plan import RunPlanRefused
+    from src.utils.run_plan import RunPlanRefused
 
     path, record = parent
     with pytest.raises(RunPlanRefused, match=r"rate of 0 in parameter group\(s\) \[0, 1\]"):

@@ -117,7 +117,7 @@ def test_an_existing_destination_stops_the_move_before_anything_moves(workspace)
 
 
 def test_an_imported_run_is_listed_and_selected_but_not_continued(workspace):
-    from src.training.run_plan import RunPlanRefused, plan_continuation
+    from src.utils.run_plan import RunPlanRefused, plan_continuation
     from src.utils.checkpoint_paths import select_run_checkpoint
 
     _run(workspace, "--apply")

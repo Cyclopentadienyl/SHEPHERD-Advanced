@@ -36,10 +36,13 @@ this workspace's data and graph is M2.3's check (`train_model.check_resume_
 parent`), applied by the entry point; this module decides only what the parent's
 state and settings allow.
 
-The console calls it to preview a selection; it reads no file itself except to
-see that a named best-weights file exists.
+It sits in `src.utils`, beside the run layout (`checkpoint_paths`), and imports
+nothing from the training stack, so the training service and the console can
+preview a selection without it (`.import-linter.ini`: the WebUI must not import
+`src.training`). It reads no file itself except to see that a named
+best-weights file exists.
 
-Module: src/training/run_plan.py
+Module: src/utils/run_plan.py
 """
 from __future__ import annotations
 
@@ -48,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
-from src.training.checkpoint_payload import CHECKPOINT_RECORD_VERSION
+from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
 #: how this run is continued: never inherited, free to differ from the parent.

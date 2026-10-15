@@ -1237,7 +1237,7 @@ class TrainerProtocol(Protocol):
         best_weights: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Continue a parent's training from a checkpoint already read
-        (`read_checkpoint`), as `src.training.run_plan` decided; reads nothing.
+        (`read_checkpoint`), as `src.utils.run_plan` decided; reads nothing.
         Contract M2.1, S8, and M3a-3."""
         ...
 

@@ -32,6 +32,11 @@ from typing import Any, NamedTuple
 
 from src.utils.fingerprint import ReadIdentity
 
+#: The checkpoint record's schema (contract M3a). 1 is M3a's first. Written by
+#: `src.training.checkpoint_payload`; read by `src.utils.run_plan` to decide
+#: whether a checkpoint holds a state a run can continue from.
+CHECKPOINT_RECORD_VERSION = 1
+
 __all__ = ["CheckpointRead", "read_checkpoint", "write_checkpoint"]
 
 

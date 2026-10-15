@@ -529,12 +529,12 @@ class TrainingManager:
         here, as the training process would refuse it.
 
         **The same decision the training process makes**
-        (`src.training.run_plan.plan_continuation`), on the parent's own
+        (`src.utils.run_plan.plan_continuation`), on the parent's own
         record read with the safe loader. A preview is not the check: the
         training process reads the parent again, checks it against the
         workspace's data and graph (M2.3) and decides again on those bytes.
         """
-        from src.training.run_plan import RunPlanRefused, plan_continuation
+        from src.utils.run_plan import RunPlanRefused, plan_continuation
         from src.utils.checkpoint_io import read_checkpoint
 
         path = Path(parent_path)

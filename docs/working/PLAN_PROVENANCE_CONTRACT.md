@@ -2427,7 +2427,7 @@ follows it. What differs from the text above, or was decided while building, is 
     `archive/`; not completable -> left in place as unverifiable. It renames within the workspace,
     checks each digest after, stops before anything moves when a destination exists, deletes
     nothing, and lists saved settings that name a moved file.
-- **M3a-3, resume.** One decision before the Trainer, `src/training/run_plan.py`, which the entry
+- **M3a-3, resume.** One decision before the Trainer, `src/utils/run_plan.py`, which the entry
   point, the training service and the console's preview call.
   - **One parent field for resume and extend** (`resume_from`, `--resume`): what happens follows
     the parent's record (unfinished -> resume; finished with `extend_epochs` -> extend; stopped

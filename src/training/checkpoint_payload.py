@@ -29,15 +29,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Mapping
 
+from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
 from src.utils.run_environment import assert_primitive
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.training.trainer import Trainer
-
-#: The checkpoint record's schema. 1 is contract M3a's first.
-CHECKPOINT_RECORD_VERSION = 1
 
 #: Keys whose values are torch state, written as torch made them.
 TENSOR_KEYS = frozenset({

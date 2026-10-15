@@ -471,7 +471,7 @@ def test_continue_from_reads_nothing(train_model, captured, workspace, tmp_path)
     that read's dict and opens no file (contract M2.1, S8; M3a-3)."""
     from pathlib import Path
 
-    from src.training.run_plan import plan_continuation
+    from src.utils.run_plan import plan_continuation
 
     train_model.train(_config(train_model, workspace, tmp_path / "seed"))
     trainer = captured.pop("trainer")

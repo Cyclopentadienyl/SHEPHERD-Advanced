@@ -212,7 +212,7 @@ class TrainConfig:
     compile: bool = False
 
     # Continue from a parent checkpoint (contract M3a-3, M3a-4). What happens
-    # is decided by the parent's own record (`src.training.run_plan`): an
+    # is decided by the parent's own record (`src.utils.run_plan`): an
     # unfinished stage is resumed with every learning setting inherited; a
     # finished one is extended at a fixed rate only with `extend_epochs`;
     # `extend_lr` replaces a zero rate, and only a zero rate. None of these, nor
@@ -613,14 +613,14 @@ def plan_from_parent(
     parent: "CheckpointRead", config: TrainConfig, explicit: Optional[Collection[str]],
     device: str,
 ) -> Tuple[Any, Optional[Dict[str, Any]]]:
-    """How this run continues from `parent` (`src.training.run_plan`), and
+    """How this run continues from `parent` (`src.utils.run_plan`), and
     early stopping's best weights when the parent names a file for them.
 
     That file is read once, with the safe loader, and accepted only with the
     SHA-256 the parent recorded for it: the weights a run restores at its end
     are the ones its record names, or the run is refused.
     """
-    from src.training.run_plan import RunPlanRefused, plan_continuation
+    from src.utils.run_plan import RunPlanRefused, plan_continuation
     from src.utils.checkpoint_io import read_checkpoint
 
     request = asdict(config)

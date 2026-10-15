@@ -1170,7 +1170,7 @@ class Trainer:
         best_weights: Optional[Mapping[str, Any]] = None,
     ) -> None:
         """Continue a parent's training from a checkpoint already read, as
-        `plan` (`src.training.run_plan.ContinuationPlan`) decided.
+        `plan` (`src.utils.run_plan.ContinuationPlan`) decided.
 
         **Reads nothing** (contract M2.1, S8): the entry point read the parent
         once and records that read's identity. The Trainer was built with the
@@ -1198,7 +1198,7 @@ class Trainer:
             RunPlanRefused: the parent's record cannot rebuild its schedule, or
                 its scaler state does not fit this run.
         """
-        from src.training.run_plan import RunPlanRefused
+        from src.utils.run_plan import RunPlanRefused
 
         stage = dict(plan.stage)
         recorded_schedule = (checkpoint.get("progress") or {}).get("stage", {}).get("schedule")
