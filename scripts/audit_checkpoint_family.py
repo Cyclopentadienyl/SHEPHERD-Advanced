@@ -48,7 +48,7 @@ serving uses the full one, so one the safe loader cannot open is not judged.
 
 Usage:
     python scripts/audit_checkpoint_family.py \\
-        --checkpoint-dir checkpoints/hgt \\
+        --checkpoint-dir data/workspaces/<ws>/runs/hgt/<run>/checkpoints \\
         --output docs/working/EVIDENCE_M1_M3_checkpoints.json
 
     python scripts/audit_checkpoint_family.py \\

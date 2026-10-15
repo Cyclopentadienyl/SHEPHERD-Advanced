@@ -13,8 +13,9 @@ acceptance shown here:
   manifest is republished after the read, is refused, and the refusal names it;
 - each input is opened once, and with every path hash poisoned no poisoned
   digest reaches what the pipeline keeps;
-- graph tensors load with ``map_location="cpu"`` and ``weights_only=True``; the
-  checkpoint keeps this site's own options;
+- graph tensors and the checkpoint load with ``map_location="cpu"`` and
+  ``weights_only=True`` (the checkpoint since contract decision 10, M3a-1); a
+  checkpoint holding anything but tensors and plain data is refused;
 - the `GraphRead` arrives whole, and the pipeline refuses a graph and an
   identity given apart;
 - an external `kg.json` that matches the manifest decides startup; one that
@@ -240,7 +241,7 @@ def test_no_path_digest_is_kept(api, workspace, monkeypatch):
     assert pipeline._checkpoint_identity.sha256 == _sha(checkpoint)
 
 
-def test_graph_tensors_load_on_cpu_and_safely_and_the_checkpoint_keeps_its_options(
+def test_graph_tensors_and_the_checkpoint_load_on_cpu_and_safely(
     api, workspace, monkeypatch
 ):
     import sys
@@ -261,7 +262,7 @@ def test_graph_tensors_load_on_cpu_and_safely_and_the_checkpoint_keeps_its_optio
     graph = [call for call in calls if call[0] == "src.kg.storage.file_storage"]
     assert graph == [("src.kg.storage.file_storage", "cpu", True)] * 2
     loaded = [call for call in calls if call[0] == "src.utils.checkpoint_io"]
-    assert loaded == [("src.utils.checkpoint_io", "cpu", False)]
+    assert loaded == [("src.utils.checkpoint_io", "cpu", True)]
     assert all(call[0] in {"src.kg.storage.file_storage", "src.utils.checkpoint_io"}
                for call in calls), f"a load outside the readers: {calls}"
 
@@ -391,7 +392,7 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     replaced after that selection; what is served, and what is kept as its
     identity, is what the build read."""
     data_dir, checkpoint = workspace
-    architecture = data_dir / "checkpoints" / "gat"
+    architecture = data_dir / "runs" / "gat" / "20261015-000000_run_aaaaaa" / "checkpoints"
     architecture.mkdir(parents=True)
     shutil.copyfile(checkpoint, architecture / "model.pt")
     _other_checkpoint(checkpoint, tmp_path / "b.pt")
@@ -410,3 +411,20 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     assert result.success, result.message
     assert api.app_state.pipeline._checkpoint_identity.sha256 == replacement
     assert result.status.checkpoint_meta["epoch"] == 9
+
+
+def test_a_checkpoint_holding_arbitrary_objects_is_refused(api, workspace, tmp_path):
+    """`weights_only=True` (contract decision 10): a pickled object other than
+    tensors and plain data is not loaded, so a file a request names cannot run
+    code in the service. Refused like any unreadable checkpoint, with no second
+    attempt under the unsafe loader."""
+    from pathlib import Path
+
+    data_dir, checkpoint = workspace
+    contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    contents["config"]["not_plain"] = Path("x")
+    unsafe = tmp_path / "unsafe.pt"
+    torch.save(contents, unsafe)
+
+    with pytest.raises(Exception, match="could not be read"):
+        _build(api, data_dir, unsafe)

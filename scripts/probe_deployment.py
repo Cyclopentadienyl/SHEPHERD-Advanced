@@ -54,21 +54,29 @@ Usage:
         --work-dir <empty directory> --report <empty directory>/m2_report.json \
         --real-workspace data/workspaces/<workspace> \
         --real-config <config.yaml with the established training settings> \
-        --real-reference-checkpoint data/workspaces/<workspace>/checkpoints/<arch>/<model>.pt
+        --real-reference-checkpoint <path to the reference model's .pt file>
 
-Contract M2's acceptance (`--m2-acceptance`):
+Contract M2's acceptance (`--m2-acceptance`), which also carries contract
+M3a's checks:
     Phase M, on the demo workspace, after B-E: a valid same-shaped workspace
-    over another graph (M1); a resume that trains and records its parent (M2);
-    measurement (M3) and serving with a verified shortest-path table (M4) of the
-    resumed model; the five resume refusals, each leaving no run directory and
-    nothing changed (M5); serving (M6) and measurement (M7) refusing a checkpoint
-    over the same-shaped workspace; the inventory's verdicts (M8).
+    over another graph (M1); a run paused after one of two planned epochs and
+    resumed for the remaining one, recording its parent and its mixed precision,
+    its gradient scaler's state checked right after the restore against the
+    parent's (M2); measurement (M3) and serving
+    with a verified shortest-path table (M4) of the resumed model; the five
+    resume refusals, each leaving no run directory and nothing changed (M5);
+    serving (M6) and measurement (M7) refusing a checkpoint over the same-shaped
+    workspace; the inventory's verdicts (M8); the finished child extended by one
+    epoch at a fixed rate (M9); resuming that finished child refused before
+    anything exists (M10).
     Phase R, on the real workspace: it verifies (R1); the settings carry the
-    reference's architecture (R2); one epoch from scratch (R3) and one resumed
-    (R4); measurement (R5) and serving with the table verified, and a diagnosis
-    (R6); the inventory refuses the reference and passes the new model (R7);
-    the workspace and the reference are unchanged by listing, size and
-    modification time, not by content digest (R8).
+    reference's architecture (R2), the output locations an older config.yaml
+    names dropped; one epoch of two from scratch, paused (R3), and its remaining
+    epoch resumed (R4); measurement (R5) and serving with the table verified,
+    and a diagnosis (R6); the inventory refuses the reference and passes the
+    new model (R7); the workspace and the reference are unchanged by listing,
+    size and modification time, not by content digest (R8). Every run writes
+    into its own run directory under --work-dir.
     The report stays inside --work-dir and replaces no existing file.
     Run as a program, the probe applies the project's allocator rule before
     torch is imported, as train_model.py does, and the report records the
@@ -80,6 +88,7 @@ Contract M2's acceptance (`--m2-acceptance`):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import re
@@ -916,17 +925,18 @@ def phase_training(
     def _train() -> Tuple[str, Dict[str, Any]]:
         from scripts.train_model import TrainConfig, train
         from src.utils.checkpoint_paths import (
-            resolve_checkpoint_dir,
+            propose_run_dir,
+            run_checkpoint_dir,
             select_checkpoint_in_dir,
         )
 
+        # **Named, not found afterwards**: the run's directory under the
+        # workspace's runs (contract M3a-2), so the checkpoint read below is
+        # this run's and no other's.
+        run_dir = propose_run_dir(sound, "gat", "probe")
         config = TrainConfig(
             data_dir=str(sound),
-            # **Named, not defaulted.** TrainConfig writes to "outputs" and
-            # "logs" relative to the working directory, so a probe that left
-            # them alone would scatter run artifacts through the repository.
-            output_dir=str(work / "train_outputs"),
-            log_dir=str(work / "train_logs"),
+            run_dir=str(run_dir),
             conv_type="gat",
             hidden_dim=FEATURE_DIM,
             num_layers=2,
@@ -941,8 +951,7 @@ def phase_training(
         metrics = train(config)
         assert metrics, "training returned no metrics"
 
-        ckpt_dir = resolve_checkpoint_dir(str(sound), "gat", None)
-        chosen = select_checkpoint_in_dir(ckpt_dir)
+        chosen = select_checkpoint_in_dir(run_checkpoint_dir(run_dir))
         assert chosen is not None, "training wrote no checkpoint"
         selected["path"] = chosen
 
@@ -972,7 +981,7 @@ def phase_training(
         from src.utils.fingerprint import verify_training_record
 
         checkpoint = read_checkpoint(
-            selected["path"], map_location="cpu", weights_only=False
+            selected["path"], map_location="cpu", weights_only=True
         ).checkpoint
         digests, _, _ = verify_workspace(sound)
         # **Through the consumers' own comparator** (contract M2.4), not a
@@ -1280,6 +1289,9 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     "M5.pre_contract", "M5.other_graph", "M5.other_samples",
     "M5.validated_parent", "M5.missing",
     "M6", "M7", "M8",
+    # Contract M3a on the same runs: M2 above is a real pause and resume; M9
+    # extends the finished child at a fixed rate; M10 refuses to resume it.
+    "M9", "M10",
 )
 M2_REAL_REQUIRED: Tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8")
 
@@ -1337,29 +1349,89 @@ def _tested_commit() -> Dict[str, Any]:
 
 
 def _workspace_copy(source: Path, target: Path) -> Path:
-    """`source`'s files, without any checkpoint a run wrote into it."""
-    shutil.copytree(source, target, ignore=shutil.ignore_patterns("checkpoints"))
+    """`source`'s files, without any run or checkpoint written into it."""
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns("checkpoints", "runs"))
     return target
 
 
 def _train_run(
     data_dir: Path, run: Path, device: str, epochs: int, *,
     settings: Dict[str, Any], resume_from: Optional[Path] = None,
+    pause_after: Optional[int] = None, extend_epochs: Optional[int] = None,
+    observe: Optional[List[Dict[str, Any]]] = None,
 ) -> Path:
-    """One run of the production trainer (`train_model.train`) with every output
-    named under `run` -- `outputs`, `logs`, `checkpoints` -- so no default lands
-    in the workspace or anywhere else. Returns the run's checkpoint directory."""
-    from scripts.train_model import TrainConfig, train
+    """One run of the production trainer (`train_model.train`) with `run` as its
+    run directory (contract M3a-2), so every output -- its checkpoints, logs and
+    records -- is inside it and nothing lands in the workspace or anywhere else.
+    Returns the run's checkpoint directory.
 
-    fields = dict(settings)
-    fields.update(
-        data_dir=str(data_dir), output_dir=str(run / "outputs"),
-        log_dir=str(run / "logs"), checkpoint_dir=str(run / "checkpoints"),
-        num_epochs=epochs, device=device,
-        resume_from=str(resume_from) if resume_from is not None else None,
-    )
-    train(TrainConfig(**fields))
-    return run / "checkpoints"
+    **A run continued from a parent is given operational fields only**
+    (contract M3a-3): it inherits every learning setting from the parent's
+    record, the number of epochs included, and an explicit one would be
+    refused if it differed.
+
+    `observe`, for a continued run, receives what the restore left
+    (`_observing_restore`)."""
+    from scripts.train_model import TrainConfig, train
+    from src.utils.checkpoint_paths import run_checkpoint_dir
+
+    if resume_from is not None:
+        fields: Dict[str, Any] = dict(
+            data_dir=str(data_dir), run_dir=str(run), device=device,
+            num_workers=settings.get("num_workers", 0), resume_from=str(resume_from),
+            pause_after_epoch=pause_after, extend_epochs=extend_epochs,
+        )
+        with _observing_restore(observe):
+            train(TrainConfig(**fields), {k for k, v in fields.items() if v is not None})
+    else:
+        fields = dict(settings)
+        fields.update(data_dir=str(data_dir), run_dir=str(run), num_epochs=epochs,
+                      device=device, pause_after_epoch=pause_after)
+        train(TrainConfig(**fields))
+    return run_checkpoint_dir(run)
+
+
+def _scaler_numbers(state: Any) -> Optional[Dict[str, Any]]:
+    """A gradient scaler's state as plain numbers (all GradScaler records), or
+    `None` without one."""
+    if not state:
+        return None
+    return {k: v for k, v in state.items() if isinstance(v, (int, float))}
+
+
+@contextlib.contextmanager
+def _observing_restore(observed: Optional[List[Dict[str, Any]]]):
+    """While a continued run starts, what the production restore left.
+
+    **Observed at the restore, not inferred from the ends** (contract M3a;
+    the reviewer's review of `7e1e373`). The run is the production one: the
+    probe only wraps `Trainer.continue_from` for its duration. Right after it
+    restored the parent and before the first update, the gradient scaler's
+    state is recorded beside the parent's `scaler_state_dict` from the same
+    read the run restored from. A scaler's end values cannot show this: an
+    overflow lowers the scale and resets its growth tracker, and a full growth
+    interval later the scale is back where it was.
+    """
+    if observed is None:
+        yield
+        return
+    from src.training.trainer import Trainer
+
+    original = Trainer.continue_from
+
+    def observing(self, checkpoint, plan, best_weights=None):
+        original(self, checkpoint, plan, best_weights)
+        observed.append({
+            "parent": _scaler_numbers(checkpoint.get("scaler_state_dict")),
+            "restored": (_scaler_numbers(self.scaler.state_dict())
+                         if self.scaler is not None else None),
+        })
+
+    Trainer.continue_from = observing
+    try:
+        yield
+    finally:
+        Trainer.continue_from = original
 
 
 def _last(checkpoint_dir: Path) -> Path:
@@ -1373,7 +1445,7 @@ def _read_run_checkpoint(path: Path) -> Dict[str, Any]:
     resume is judged by. The weights stay out of every report."""
     from src.utils.checkpoint_io import read_checkpoint
 
-    read = read_checkpoint(path, map_location="cpu", weights_only=False)
+    read = read_checkpoint(path, map_location="cpu", weights_only=True)
     checkpoint = read.checkpoint
     steps = []
     for state in (checkpoint.get("optimizer_state_dict") or {}).get("state", {}).values():
@@ -1384,13 +1456,24 @@ def _read_run_checkpoint(path: Path) -> Dict[str, Any]:
         "record": dict(checkpoint.get("training_input_digests") or {}),
         "optimizer_step": max(steps) if steps else None,
         "weights": checkpoint.get("state_dict") or checkpoint.get("model_state_dict") or {},
+        "progress": checkpoint.get("progress") or {},
+        "rates": [float(g["lr"]) for g in
+                  (checkpoint.get("optimizer_state_dict") or {}).get("param_groups", [])],
+        # Mixed precision as it took effect, and the gradient scaler's state
+        # (plain numbers), so a pause and resume under AMP, which only CUDA
+        # runs, is shown in the report (contract M3a).
+        "amp": ((checkpoint.get("config") or {}).get("effective") or {}).get("amp") or {},
+        "scaler": _scaler_numbers(checkpoint.get("scaler_state_dict")),
+        "loaders": ((checkpoint.get("config") or {}).get("effective") or {}).get("loaders") or {},
     }
 
 
-def _assert_resumed(parent: Path, child: Path) -> Dict[str, Any]:
+def _assert_resumed(parent: Path, child: Path,
+                    observed: List[Dict[str, Any]]) -> Dict[str, Any]:
     """A resume that trained, not one that only loaded: the child names its
     parent's bytes and the same workspace roles, its optimizer went on stepping
-    from the parent's state, and its weights moved."""
+    from the parent's state, its weights moved, and its mixed precision and
+    gradient scaler were restored (`observed`, from `_observing_restore`)."""
     import torch
 
     before, after = _read_run_checkpoint(parent), _read_run_checkpoint(child)
@@ -1413,6 +1496,7 @@ def _assert_resumed(parent: Path, child: Path) -> Dict[str, Any]:
         if name in before["weights"] and not torch.equal(tensor, before["weights"][name])
     )
     assert changed > 0, "the resumed run left every weight as its parent had it"
+    amp = _scaler_restore_facts(before, after, observed)
     return {
         "parent_sha256": before["sha256"],
         "child_sha256": after["sha256"],
@@ -1421,7 +1505,97 @@ def _assert_resumed(parent: Path, child: Path) -> Dict[str, Any]:
         "weight_tensors_changed": changed,
         "weight_tensors": len(after["weights"]),
         "recorded_roles": sorted(after["record"]),
+        **amp,
     }
+
+
+def _assert_only_the_remaining_epochs(before: Dict[str, Any],
+                                      after: Dict[str, Any]) -> Dict[str, Any]:
+    """The child ran only the epochs its parent had left (contract M3a-3).
+
+    **Counted by optimizer attempts, not successful updates.** AMP's gradient
+    scaler skips an update on non-finite gradients, and two epochs need not
+    skip alike: at the GB10 acceptance of `4b1571e` the parent's epoch made 8
+    attempts and 7 updates, the remaining epoch 8 and 8, and a check that
+    required twice the parent's updates refused a correct resume. An epoch
+    takes `ceil(batches / accumulation)` attempts, from the parent's recorded
+    schedule (and its train loader, when recorded); the child's must have
+    grown by exactly that for each epoch it had left. Its successful updates
+    must have grown, by no more than its attempts, and its scheduler steps by
+    its successful updates (the schedule steps only when the optimizer ran).
+    """
+    p, c = before["progress"], after["progress"]
+    stage = p.get("stage") or {}
+    assert c.get("stage") == stage, "the resumed run is not in its parent's stage"
+    target = int(stage.get("start_epoch", 0)) + int(stage.get("target_epochs", 0))
+    assert c.get("end") == "finished" and c.get("completed_epochs") == target, (
+        f"the resumed run did not finish its stage: {c.get('completed_epochs')}/{target}, "
+        f"end {c.get('end')}")
+    epochs_run = int(c["completed_epochs"]) - int(p["completed_epochs"])
+    schedule = stage.get("schedule") or {}
+    batches = schedule.get("steps_per_epoch")
+    accumulation = int(schedule.get("gradient_accumulation_steps") or 1)
+    assert batches, "the parent's schedule records no batches per epoch"
+    loader = (before.get("loaders") or {}).get("train") or {}
+    if loader.get("num_batches") is not None:
+        assert int(loader["num_batches"]) == int(batches), (
+            "the parent's train loader and schedule record different batches per epoch")
+    per_epoch = -(-int(batches) // accumulation)
+    attempts = int(c["optimizer_attempts"]) - int(p["optimizer_attempts"])
+    assert attempts == epochs_run * per_epoch, (
+        f"the resumed run made {attempts} optimizer attempts; the {epochs_run} epoch(s) its "
+        f"parent had left take {epochs_run * per_epoch} ({per_epoch} each)")
+    updates = int(c["optimizer_updates"]) - int(p["optimizer_updates"])
+    assert 0 < updates <= attempts, (
+        f"the resumed run's successful updates grew by {updates} over {attempts} attempts")
+    steps = int(c["scheduler_steps"]) - int(p["scheduler_steps"])
+    expected = 0 if schedule.get("type") in (None, "none") else updates
+    assert steps == expected, (
+        f"the resumed run's scheduler stepped {steps} times for {updates} successful updates")
+    return {"epochs_run": epochs_run, "attempts_per_epoch": per_epoch,
+            "child_run_attempts": attempts, "child_run_updates": updates,
+            "child_run_skipped_updates": attempts - updates,
+            "child_run_scheduler_steps": steps}
+
+
+def _scaler_restore_facts(before: Dict[str, Any], after: Dict[str, Any],
+                          observed: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Mixed precision took effect in the child as in its parent, and the
+    gradient scaler was restored from the parent's state (contract M3a-3).
+
+    **Judged at the restore** (`_observing_restore`): the scaler's state right
+    after `Trainer.continue_from`, before the first update, must equal the
+    parent's from the same read, which must be the parent file's. The scale and
+    growth tracker at the two ends are recorded, not judged: equal or not, they
+    can show neither a carried nor a restarted scaler.
+    """
+    assert after["amp"] == before["amp"], (
+        f"the resumed run's mixed precision {after['amp']} is not its parent's {before['amp']}")
+    assert len(observed) == 1, f"the continued run's restore was observed {len(observed)} times"
+    restore = observed[0]
+    facts: Dict[str, Any] = {"amp_enabled": bool(before["amp"].get("enabled")),
+                             "grad_scaler": bool(before["amp"].get("grad_scaler"))}
+    if not facts["grad_scaler"]:
+        assert restore["parent"] is None and restore["restored"] is None, (
+            f"a run without a gradient scaler restored one: {restore}")
+        facts["scaler_restore"] = "no gradient scaler (mixed precision off, or bfloat16)"
+        return facts
+    assert restore["parent"] is not None and restore["parent"] == before["scaler"], (
+        "the scaler state the run restored from is not the parent file's")
+    assert restore["restored"] == restore["parent"], (
+        f"the gradient scaler was not restored from the parent's state: "
+        f"{restore['restored']} after the restore, the parent's {restore['parent']}")
+    after_scaler = after["scaler"] or {}
+    facts.update(
+        scaler_restore="verified at restore: equal to the parent's before the first update",
+        parent_scaler=restore["parent"],
+        child_end_scale=after_scaler.get("scale"),
+        child_end_growth_tracker=after_scaler.get("_growth_tracker"),
+        child_run_updates=(after["progress"].get("optimizer_updates", 0)
+                           - before["progress"].get("optimizer_updates", 0)),
+        end_values="recorded, not judged",
+    )
+    return facts
 
 
 def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str) -> int:
@@ -1549,13 +1723,25 @@ def phase_m2_demo(
                _other_workspace)
 
     def _resumed() -> Tuple[str, Dict[str, Any]]:
-        child = _last(_train_run(sound, m2 / "resume_ok", device, 1,
-                                 settings=_DEMO_TRAINING, resume_from=checkpoint))
-        facts = _assert_resumed(checkpoint, child)
+        # **A real pause and resume** (contract M3a-3): plan two epochs, pause
+        # after one, resume the remaining one.
+        paused = _last(_train_run(sound, m2 / "paused", device, 2,
+                                  settings=_DEMO_TRAINING, pause_after=1))
+        before = _read_run_checkpoint(paused)["progress"]
+        assert before.get("end") == "paused" and before.get("completed_epochs") == 1, (
+            f"the run did not pause after epoch 1: {before.get('end')}")
+        observed: List[Dict[str, Any]] = []
+        child = _last(_train_run(sound, m2 / "resume_ok", device, 2,
+                                 settings=_DEMO_TRAINING, resume_from=paused, observe=observed))
+        facts = _assert_resumed(paused, child, observed)
+        facts.update(_assert_only_the_remaining_epochs(
+            _read_run_checkpoint(paused), _read_run_checkpoint(child)))
         state["child"] = child
-        return "the resume trained on and names its parent", facts
+        facts.update(paused_end=before["end"], parent_attempts=before["optimizer_attempts"],
+                     parent_updates=before["optimizer_updates"])
+        return "paused after one of two epochs, resumed only the remaining one", facts
 
-    report.run("M2", "m2", "CONTROL: a resume from a qualifying parent trains and records it",
+    report.run("M2", "m2", "CONTROL: a paused run resumes its remaining epoch and records it",
                _resumed)
 
     def _measured() -> Tuple[str, Dict[str, Any]]:
@@ -1615,7 +1801,7 @@ def phase_m2_demo(
             stripped = m2 / "parents" / "pre_contract.pt"
             stripped.parent.mkdir(parents=True, exist_ok=True)
             contents = read_checkpoint(checkpoint, map_location="cpu",
-                                       weights_only=False).checkpoint
+                                       weights_only=True).checkpoint
             del contents["training_input_digests"]
             torch.save(contents, stripped)
             state["pre_contract"] = stripped
@@ -1766,6 +1952,40 @@ def phase_m2_demo(
 
     report.run("M8", "m2", "the inventory lists the demo checkpoints' M2 verdicts", _inventory)
 
+    def _extended() -> Tuple[str, Dict[str, Any]]:
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        before = _read_run_checkpoint(state["child"])
+        observed: List[Dict[str, Any]] = []
+        extended = _last(_train_run(sound, m2 / "extended", device, 2, settings=_DEMO_TRAINING,
+                                    resume_from=state["child"], extend_epochs=1,
+                                    observe=observed))
+        after = _read_run_checkpoint(extended)
+        scaler = _scaler_restore_facts(before, after, observed)
+        stage = after["progress"].get("stage") or {}
+        assert after["record"].get("resume_checkpoint") == before["sha256"]
+        assert after["progress"].get("completed_epochs") == 3
+        assert stage.get("kind") == "extension" and stage.get("start_epoch") == 2
+        assert stage.get("schedule", {}).get("lrs") == before["rates"] == after["rates"], (
+            "the extension did not hold the finished run's final rate")
+        assert after["progress"]["scheduler_steps"] == before["progress"]["scheduler_steps"], (
+            "a scheduler stepped during a fixed-rate extension")
+        return "extended by one epoch at the finished run's final rate", {
+            "fixed_rates": after["rates"], "completed_epochs": 3,
+            "optimizer_updates": after["progress"]["optimizer_updates"], **scaler,
+        }
+
+    report.run("M9", "m2", "CONTROL: a finished run extends at a fixed rate (M3a-4)", _extended)
+
+    def _finished_refused() -> Tuple[str, Dict[str, Any]]:
+        from src.utils.run_plan import RunPlanRefused
+
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        return "a finished run is refused for resume, with the reason", _refused_resume(
+            "finished", sound, state["child"], RunPlanRefused, "nothing left to resume")
+
+    report.run("M10", "m2", "resuming a finished run is refused before anything exists",
+               _finished_refused)
+
 
 # =============================================================================
 # Phase R — contract M2's acceptance on real data (--real-workspace)
@@ -1784,17 +2004,24 @@ def _stat_tree(directory: Path) -> Dict[str, Tuple[int, int]]:
 def _training_settings(config_path: Path) -> Tuple[Dict[str, Any], str]:
     """The training settings, parsed from one read of a `config.yaml` as
     `train_model.py` writes one, and the digest of those bytes. Unknown keys are
-    refused rather than dropped, so every setting named is a setting applied."""
+    refused rather than dropped, so every setting named is a setting applied.
+
+    The output locations an older `config.yaml` names (`output_dir`,
+    `checkpoint_dir`, `log_dir`, retired by contract M3a-2) are locations, not
+    settings, and this probe names every run's directory itself; they are
+    dropped, never applied."""
     import dataclasses
 
     import yaml
 
     from scripts.train_model import TrainConfig
+    from src.utils.checkpoint_paths import RETIRED_LOCATION_FIELDS
     from src.utils.fingerprint import read_once
 
     read = read_once(config_path)
     loaded = yaml.safe_load(read.data.decode("utf-8")) or {}
     assert isinstance(loaded, dict), "the training settings are not a mapping"
+    loaded = {k: v for k, v in loaded.items() if k not in RETIRED_LOCATION_FIELDS}
     known = {field.name for field in dataclasses.fields(TrainConfig)}
     unknown = sorted(set(loaded) - known)
     assert not unknown, f"the training settings name fields TrainConfig does not have: {unknown}"
@@ -1876,8 +2103,8 @@ def phase_m2_real(
             "conv_type": effective["conv_type"],
             "architecture_fields_compared": compared,
             "fields_set_by_this_probe": sorted(
-                ("data_dir", "output_dir", "log_dir", "checkpoint_dir", "num_epochs",
-                 "device", "resume_from")),
+                ("data_dir", "run_dir", "num_epochs", "device", "resume_from",
+                 "pause_after_epoch")),
         }
 
     report.run("R2", "real", "the training settings carry the reference's architecture",
@@ -1885,31 +2112,38 @@ def phase_m2_real(
 
     def _initial() -> Tuple[str, Dict[str, Any]]:
         assert "settings" in state and "kg" in state, "R1 or R2 did not pass"
-        parent = _last(_train_run(real, runs / "initial", device, 1,
-                                  settings=state["settings"]))
+        # One epoch of a two-epoch plan, paused (contract M3a-3), so R4 has
+        # an unfinished stage to resume.
+        parent = _last(_train_run(real, runs / "initial", device, 2,
+                                  settings=state["settings"], pause_after=1))
         read = _read_run_checkpoint(parent)
+        assert read["progress"].get("end") == "paused", "the initial run did not pause"
         missing = sorted({"kg", "node_features", "edge_indices", "num_nodes",
                           "split_manifest", "train_samples"} - set(read["record"]))
         assert not missing, f"the checkpoint does not record {missing}"
         assert read["record"]["kg"] == state["kg"], "the checkpoint records another graph"
         state["parent"] = parent
-        return "one epoch from scratch, recorded", {
+        return "one epoch of two from scratch, paused, recorded", {
             "sha256": read["sha256"], "recorded_roles": sorted(read["record"]),
             "optimizer_step": read["optimizer_step"],
         }
 
-    report.run("R3", "real", "a short training from scratch completes and records its inputs",
+    report.run("R3", "real", "a short training from scratch pauses and records its inputs",
                _initial)
 
     def _resumed() -> Tuple[str, Dict[str, Any]]:
         assert "parent" in state, "R3 did not pass"
-        child = _last(_train_run(real, runs / "resumed", device, 1,
-                                 settings=state["settings"], resume_from=state["parent"]))
-        facts = _assert_resumed(state["parent"], child)
+        observed: List[Dict[str, Any]] = []
+        child = _last(_train_run(real, runs / "resumed", device, 2,
+                                 settings=state["settings"], resume_from=state["parent"],
+                                 observe=observed))
+        facts = _assert_resumed(state["parent"], child, observed)
+        progress = _read_run_checkpoint(child)["progress"]
+        assert progress.get("end") == "finished" and progress.get("completed_epochs") == 2
         state["child"] = child
-        return "one more epoch from the new checkpoint, recorded", facts
+        return "the remaining epoch from the paused checkpoint, recorded", facts
 
-    report.run("R4", "real", "a resume from the new checkpoint trains one epoch and names it",
+    report.run("R4", "real", "a resume of the paused run trains its remaining epoch and names it",
                _resumed)
 
     def _measured() -> Tuple[str, Dict[str, Any]]:

@@ -957,11 +957,16 @@ class DiagnosisPipeline:
         logger.info(f"Loading GNN model from checkpoint: {ckpt_path}")
         # **The model is built from this read** (contract M2.1, S6; decision 4).
         # Its parsed object is what the build uses and its identity is what is
-        # kept, never anything a selection scan read earlier. The options are
-        # this site's own, unchanged by the move to one read.
+        # kept, never anything a selection scan read earlier.
+        #
+        # **`weights_only=True`** (contract decision 10, M3a-1): a checkpoint is
+        # parsed as tensors and plain data, never as arbitrary pickled objects,
+        # so a path a client names cannot run code here. The trainer's payload
+        # loads this way; a file that does not is refused like any unreadable
+        # one, with no second attempt.
         try:
             checkpoint_read = read_checkpoint(
-                ckpt_path, map_location="cpu", weights_only=False
+                ckpt_path, map_location="cpu", weights_only=True
             )
         except Exception as exc:  # noqa: BLE001 — any unreadable file is the same refusal
             raise PipelineBuildError(

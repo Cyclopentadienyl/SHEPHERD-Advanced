@@ -68,6 +68,10 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
     child = facts["M2"]["child_sha256"]
     assert measured["manifest"]["artifact_digests"]["checkpoint"] == child
     assert facts["M3"]["checkpoint_sha256"] == child != facts["M2"]["parent_sha256"]
+    # On the CPU no mixed precision takes effect, and the report says so for
+    # each continued run; on CUDA the restore is checked (scaler_restore).
+    for probe_id in ("M2", "M9"):
+        assert facts[probe_id]["scaler_restore"].startswith("no gradient scaler")
 
 
 def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
@@ -94,7 +98,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
     # models trained before the contract are.
     trained = probe._last(probe._train_run(real, tmp_path / "reference_run", "cpu", 1,
                                            settings=probe._DEMO_TRAINING))
-    contents = read_checkpoint(trained, map_location="cpu", weights_only=False).checkpoint
+    contents = read_checkpoint(trained, map_location="cpu", weights_only=True).checkpoint
     del contents["training_input_digests"]
     reference = real / "checkpoints" / "gat" / "model-ref.pt"
     reference.parent.mkdir(parents=True)
@@ -295,3 +299,224 @@ def test_a_report_target_that_appears_during_the_run_is_not_overwritten(
     assert "is not replaced" in out.err
     start = out.out.index("\n{\n") + 1           # the payload's opening line
     assert json.loads(out.out[start:])["m2_acceptance"]["complete"] is False
+
+
+def _scaler_step(scaler, parameter, optimizer, overflow=False):
+    import torch
+
+    optimizer.zero_grad()
+    loss = parameter.square() * (float("inf") if overflow else 1.0)
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
+
+
+def _side(scaler_state, updates):
+    amp = {"enabled": True, "dtype": "float16", "grad_scaler": True}
+    return {"amp": amp, "progress": {"optimizer_updates": updates},
+            "scaler": {k: v for k, v in scaler_state.items() if isinstance(v, (int, float))}}
+
+
+def test_a_correct_restore_is_not_refused_when_the_scale_falls_and_rises_again():
+    """The reviewer's counterexample (review of 7e1e373), with real CPU
+    GradScalers: restored correctly, then an overflow halves the scale and a
+    full growth interval doubles it back, the tracker reset. The end values
+    equal the parent's scale; they are recorded, not judged, and the restore,
+    observed before the first update, is what is checked."""
+    import torch
+
+    probe = _probe()
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=0.01)
+    parent = torch.amp.GradScaler("cpu", init_scale=8.0, growth_interval=4)
+    _scaler_step(parent, parameter, optimizer)
+    parent_state = parent.state_dict()
+
+    child = torch.amp.GradScaler("cpu")
+    child.load_state_dict(parent_state)
+    observed = [{"parent": probe._scaler_numbers(parent_state),
+                 "restored": probe._scaler_numbers(child.state_dict())}]
+    _scaler_step(child, parameter, optimizer, overflow=True)
+    for _ in range(4):
+        _scaler_step(child, parameter, optimizer)
+    end = child.state_dict()
+    assert end["scale"] == parent_state["scale"] and end["_growth_tracker"] == 0
+
+    facts = probe._scaler_restore_facts(_side(parent_state, 1), _side(end, 6), observed)
+    assert facts["scaler_restore"].startswith("verified at restore")
+    assert facts["end_values"] == "recorded, not judged"
+
+
+def test_a_scaler_not_restored_is_caught_at_the_restore():
+    import torch
+
+    probe = _probe()
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=0.01)
+    parent = torch.amp.GradScaler("cpu", init_scale=8.0)
+    _scaler_step(parent, parameter, optimizer)
+    parent_state = parent.state_dict()
+    fresh = torch.amp.GradScaler("cpu", init_scale=8.0)    # the same scale, never loaded
+
+    observed = [{"parent": probe._scaler_numbers(parent_state),
+                 "restored": probe._scaler_numbers(fresh.state_dict())}]
+    with pytest.raises(AssertionError, match="not restored from the parent's state"):
+        probe._scaler_restore_facts(_side(parent_state, 1), _side(parent_state, 2), observed)
+    with pytest.raises(AssertionError, match="observed 0 times"):
+        probe._scaler_restore_facts(_side(parent_state, 1), _side(parent_state, 2), [])
+    off = {"amp": {"enabled": False, "grad_scaler": False}, "progress": {}, "scaler": None}
+    assert probe._scaler_restore_facts(off, off, [{"parent": None, "restored": None}])[
+        "scaler_restore"].startswith("no gradient scaler")
+
+
+def test_the_probe_observes_the_production_restore_and_catches_an_omitted_one(tmp_path):
+    """End to end on the CPU: a real GradScaler is given to the Trainer (only
+    in this test; on CPU mixed precision takes no effect), the parent pauses,
+    and the probe's own `_train_run` continues it through `Trainer.continue_from`.
+    The restore is verified; a restore that leaves the scaler fresh is caught;
+    and the probe leaves `Trainer.continue_from` as it found it."""
+    from unittest.mock import patch
+
+    import torch
+
+    from src.training.trainer import Trainer
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    probe = _probe()
+    settings = dict(hidden_dim=16, num_layers=1, num_heads=2, num_workers=0, use_amp=False,
+                    batch_size=5, warmup_steps=1, seed=7)
+
+    def cpu_scaler(self):
+        self.use_amp, self.amp_dtype = False, torch.float32
+        self.scaler = torch.amp.GradScaler("cpu", init_scale=8.0)
+
+    original = Trainer.continue_from
+    with patch.object(Trainer, "_setup_amp", cpu_scaler):
+        ws = write_trainable_workspace(tmp_path / "ws")
+        parent = probe._last(probe._train_run(ws, tmp_path / "parent", "cpu", 2,
+                                              settings=settings, pause_after=1))
+        observed = []
+        child = probe._last(probe._train_run(ws, tmp_path / "child", "cpu", 2, settings=settings,
+                                             resume_from=parent, observe=observed))
+        assert Trainer.continue_from is original, "the probe left its observer installed"
+        facts = probe._assert_resumed(parent, child, observed)
+        assert facts["grad_scaler"] is True
+        assert facts["scaler_restore"].startswith("verified at restore")
+
+        def restore_then_forget(self, checkpoint, plan, best_weights=None):
+            original(self, checkpoint, plan, best_weights)
+            self.scaler = torch.amp.GradScaler("cpu", init_scale=8.0)
+
+        with patch.object(Trainer, "continue_from", restore_then_forget):
+            observed = []
+            omitted = probe._last(probe._train_run(ws, tmp_path / "omitted", "cpu", 2,
+                                                   settings=settings, resume_from=parent,
+                                                   observe=observed))
+        with pytest.raises(AssertionError, match="not restored from the parent's state"):
+            probe._assert_resumed(parent, omitted, observed)
+
+
+# ---------------------------------------------------------------------------
+# "Only the remaining epoch" is counted by attempts (the GB10 acceptance of
+# 4b1571e: a skipped AMP update in the parent's epoch, none in the child's)
+# ---------------------------------------------------------------------------
+def _record(completed, attempts, updates, steps, end, batches=8, accumulation=1):
+    stage = {"kind": "original", "start_epoch": 0, "target_epochs": 2,
+             "schedule": {"type": "cosine", "steps_per_epoch": batches,
+                          "gradient_accumulation_steps": accumulation}}
+    return {"progress": {"completed_epochs": completed, "optimizer_attempts": attempts,
+                         "optimizer_updates": updates, "scheduler_steps": steps,
+                         "stage": stage, "end": end},
+            "loaders": {"train": {"num_batches": batches}}}
+
+
+@pytest.mark.parametrize("parent,child", [
+    ((1, 8, 7, 7), (2, 16, 15, 15)),     # the GB10 run: the parent's epoch skipped one
+    ((1, 8, 8, 8), (2, 16, 15, 15)),     # the reverse: the child's epoch skipped one
+    ((1, 8, 8, 8), (2, 16, 16, 16)),     # no skip
+])
+def test_a_skipped_amp_update_in_either_epoch_is_not_an_extra_epoch(parent, child):
+    probe = _probe()
+    facts = probe._assert_only_the_remaining_epochs(_record(*parent, "paused"),
+                                                    _record(*child, "finished"))
+    assert facts["child_run_attempts"] == 8 and facts["epochs_run"] == 1
+
+
+@pytest.mark.parametrize("child,message", [
+    ((2, 24, 23, 23, "finished"), "made 16 optimizer attempts"),   # the curve replayed
+    ((2, 16, 15, 14, "finished"), "scheduler stepped 7 times"),
+    ((2, 16, 7, 7, "finished"), "grew by 0"),
+    ((1, 8, 7, 7, "paused"), "did not finish its stage"),
+])
+def test_more_work_than_the_remaining_epoch_or_inconsistent_counts_fail(child, message):
+    probe = _probe()
+    with pytest.raises(AssertionError, match=message):
+        probe._assert_only_the_remaining_epochs(_record(1, 8, 7, 7, "paused"), _record(*child))
+
+
+def test_the_remaining_epoch_is_counted_with_accumulation():
+    """Seven batches with an accumulation of 3 take three attempts an epoch,
+    the tail included."""
+    probe = _probe()
+    facts = probe._assert_only_the_remaining_epochs(
+        _record(1, 3, 3, 3, "paused", batches=7, accumulation=3),
+        _record(2, 6, 5, 5, "finished", batches=7, accumulation=3))
+    assert facts["attempts_per_epoch"] == 3
+
+
+@pytest.mark.parametrize("skip_in", ["parent", "child"])
+def test_a_real_skipped_update_through_the_trainer_passes_and_a_replay_fails(tmp_path, skip_in):
+    """End to end on the CPU with a real CPU GradScaler: a non-finite gradient
+    at one optimizer attempt makes the scaler skip that update, in the parent's
+    epoch or in the child's. The probe's check passes either way; a restore that
+    replays the original curve from epoch 0 is caught."""
+    from unittest.mock import patch
+
+    import torch
+
+    from src.training.trainer import Trainer
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    probe = _probe()
+    settings = dict(hidden_dim=16, num_layers=1, num_heads=2, num_workers=0, use_amp=False,
+                    batch_size=5, warmup_steps=1, seed=7)
+
+    def cpu_scaler(self):
+        self.use_amp, self.amp_dtype = False, torch.float32
+        self.scaler = torch.amp.GradScaler("cpu", init_scale=8.0)
+
+    original_update = Trainer._optimizer_update
+    skip_attempt = {"parent": 1, "child": 4}[skip_in]    # 3 attempts an epoch here
+
+    def update_with_one_skip(self):
+        if self.state.global_step == skip_attempt:
+            parameter = next(p for p in self.model.parameters() if p.grad is not None)
+            parameter.grad = torch.full_like(parameter, float("inf"))
+        return original_update(self)
+
+    with patch.object(Trainer, "_setup_amp", cpu_scaler), \
+            patch.object(Trainer, "_optimizer_update", update_with_one_skip):
+        ws = write_trainable_workspace(tmp_path / "ws")
+        parent = probe._last(probe._train_run(ws, tmp_path / "parent", "cpu", 2,
+                                              settings=settings, pause_after=1))
+        child = probe._last(probe._train_run(ws, tmp_path / "child", "cpu", 2, settings=settings,
+                                             resume_from=parent, observe=[]))
+        before, after = probe._read_run_checkpoint(parent), probe._read_run_checkpoint(child)
+        skipped = (before if skip_in == "parent" else after)["progress"]
+        assert skipped["optimizer_attempts"] - skipped["optimizer_updates"] == 1, (
+            "the injected non-finite gradient did not make the scaler skip an update")
+        facts = probe._assert_only_the_remaining_epochs(before, after)
+        assert facts["child_run_skipped_updates"] == (1 if skip_in == "child" else 0)
+
+        original_continue = Trainer.continue_from
+
+        def replay_from_the_start(self, checkpoint, plan, best_weights=None):
+            original_continue(self, checkpoint, plan, best_weights)
+            self.start_epoch = 0
+
+        with patch.object(Trainer, "continue_from", replay_from_the_start):
+            replayed = probe._last(probe._train_run(ws, tmp_path / "replayed", "cpu", 2,
+                                                    settings=settings, resume_from=parent,
+                                                    observe=[]))
+        with pytest.raises(AssertionError, match="optimizer attempts"):
+            probe._assert_only_the_remaining_epochs(before, probe._read_run_checkpoint(replayed))

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -44,16 +44,51 @@ _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 
 
 # =============================================================================
+# Rules that span fields
+# =============================================================================
+def cross_field_errors(settings: Mapping[str, Any]) -> List[str]:
+    """The training request's rules that span fields, on complete settings.
+
+    One definition for both places they apply (contract M3a review of
+    `094b90d`, P2-3): a new run's request, its unset fields at their defaults
+    (`TrainingStartRequest`'s validators), and a continued run's settings as
+    the shared run plan resolves them from its parent
+    (`TrainingManager.start_training`), never the defaults it will not use.
+
+    - Only the attention convolutions split `hidden_dim` across heads: HGTConv
+      divides out_channels by heads, and GATConv is built as
+      `(hidden_dim // num_heads) * heads` with concat=True, so a non-divisible
+      pair silently truncates and breaks the residual add /
+      LayerNorm(hidden_dim). SAGEConv takes no heads, so it is exempt.
+    - `min_lr_ratio == 0` is valid for cosine/linear (decay to zero); only
+      onecycle divides by it (`final_div_factor = 1 / min_lr_ratio`).
+    """
+    errors: List[str] = []
+    conv_type = settings.get("conv_type")
+    hidden_dim, num_heads = settings.get("hidden_dim"), settings.get("num_heads")
+    if (conv_type in ("hgt", "gat") and isinstance(hidden_dim, int)
+            and isinstance(num_heads, int) and num_heads > 0 and hidden_dim % num_heads != 0):
+        errors.append(
+            f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads}) "
+            f"when conv_type is '{conv_type}'.")
+    min_lr_ratio = settings.get("min_lr_ratio")
+    if (settings.get("scheduler_type") == "onecycle" and isinstance(min_lr_ratio, (int, float))
+            and min_lr_ratio <= 0):
+        errors.append("min_lr_ratio must be > 0 when scheduler_type is 'onecycle'.")
+    return errors
+
+
+# =============================================================================
 # Request/Response Models
 # =============================================================================
 class TrainingStartRequest(BaseModel):
     """Training start request with configuration parameters."""
 
-    # Paths
+    # Paths. Every run writes into a directory of its own, allocated under the
+    # workspace (contract M3a-2); the name is optional and for people.
     data_dir: str = Field(default="data/workspaces/default", description="Workspace directory")
-    output_dir: str = Field(default="outputs", description="Output directory")
-    checkpoint_dir: str = Field(default="", description="Checkpoint directory (blank = auto-derive from workspace)")
-    log_dir: str = Field(default="logs", description="Log directory")
+    run_name: str = Field(default="", max_length=200,
+                          description="Optional run name, part of the allocated directory's name")
 
     # Tier 1 — Basic
     num_epochs: int = Field(default=100, ge=1, le=10000, description="Number of epochs")
@@ -61,7 +96,13 @@ class TrainingStartRequest(BaseModel):
     batch_size: int = Field(default=32, ge=1, le=2048, description="Batch size")
     conv_type: Literal["gat", "hgt", "sage"] = Field(default="gat", description="GNN convolution type")
     device: str = Field(default="auto", description="Device: auto, cpu, mps, cuda, or cuda:N")
-    resume_from: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
+    resume_from: Optional[str] = Field(
+        default=None,
+        description="Parent checkpoint to continue from: an unfinished stage is resumed with "
+                    "the parent's settings, a finished one extended with extend_epochs")
+    extend_epochs: Optional[int] = Field(
+        default=None, ge=1, description="Extend a finished parent by this many epochs at a "
+                                        "fixed rate")
     seed: int = Field(default=42, ge=0, le=2**32 - 1, description="Random seed")
 
     # Tier 2 — Advanced
@@ -106,6 +147,17 @@ class TrainingStartRequest(BaseModel):
     eval_every_n_epochs: int = Field(default=1, ge=1, description="Evaluate every N epochs")
     save_top_k: int = Field(default=3, ge=1, description="Save top K checkpoints")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_locations(cls, data: Any) -> Any:
+        # output_dir / checkpoint_dir / log_dir were retired by the run layout.
+        # Ignoring them, as an unknown key would be, would start a run that
+        # writes somewhere other than where its caller looks.
+        from src.utils.checkpoint_paths import refuse_retired_locations
+
+        refuse_retired_locations(data, source="This request")
+        return data
+
     @field_validator("device")
     @classmethod
     def _validate_device(cls, v: str) -> str:
@@ -120,26 +172,33 @@ class TrainingStartRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_head_divisibility(self) -> "TrainingStartRequest":
-        # Only the attention convolutions split hidden_dim across heads: HGTConv divides
-        # out_channels by heads, and GATConv is built as (hidden_dim // num_heads) * heads with
-        # concat=True, so a non-divisible pair silently truncates and breaks the residual add /
-        # LayerNorm(hidden_dim). SAGEConv takes no heads, so it is deliberately exempt.
-        if self.conv_type in ("hgt", "gat") and self.hidden_dim % self.num_heads != 0:
-            raise ValueError(
-                f"hidden_dim ({self.hidden_dim}) must be divisible by num_heads "
-                f"({self.num_heads}) when conv_type is '{self.conv_type}'."
-            )
+        # A continued run (resume_from) uses its parent's settings, not these
+        # defaults: its cross-field rules are checked on the settings the run
+        # plan resolves (start_training below). Each field's own type and range
+        # are checked here for every request.
+        if self.resume_from:
+            return self
+        errors = [e for e in cross_field_errors(self.model_dump()) if "num_heads" in e]
+        if errors:
+            raise ValueError(errors[0])
+        return self
+
+    @model_validator(mode="after")
+    def _validate_extend_needs_a_parent(self) -> "TrainingStartRequest":
+        # Extending continues a parent; without one the training process
+        # refuses (scripts/train_model.py), so the request is refused here,
+        # before a process is started for nothing.
+        if self.extend_epochs is not None and not self.resume_from:
+            raise ValueError("extend_epochs continues a parent; give resume_from.")
         return self
 
     @model_validator(mode="after")
     def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":
-        # min_lr_ratio == 0 is valid for cosine/linear (decay-to-zero), so the
-        # field keeps ge=0.0. Only onecycle divides by it (final_div_factor =
-        # 1 / min_lr_ratio) and therefore needs a strictly positive value.
-        if self.scheduler_type == "onecycle" and self.min_lr_ratio <= 0:
-            raise ValueError(
-                "min_lr_ratio must be > 0 when scheduler_type is 'onecycle'."
-            )
+        if self.resume_from:
+            return self
+        errors = [e for e in cross_field_errors(self.model_dump()) if "onecycle" in e]
+        if errors:
+            raise ValueError(errors[0])
         return self
 
 
@@ -155,6 +214,10 @@ class TrainingStatusResponse(BaseModel):
     latest_metrics: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    run_dir: Optional[str] = None
+    # How the run stands once its process is not running, from its last
+    # snapshot's record (contract M3a); None when it saved none.
+    outcome: Optional[Dict[str, Any]] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -166,6 +229,10 @@ class CheckpointInfo(BaseModel):
     modified: str
     epoch: Optional[int] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
+    run: Optional[str] = None
+    run_dir: Optional[str] = None
+    architecture: Optional[str] = None
+    checkpoint_kind: Optional[str] = None
 
 
 # =============================================================================
@@ -177,14 +244,24 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     Start a new training run.
 
     Launches scripts/train_model.py as a subprocess with the provided config.
-    """
-    config = request.model_dump(exclude_none=True)
 
-    result = training_manager.start_training(config)
+    **Only the fields the caller set** are passed on (contract M3a-3): the
+    defaults are the training script's own, and a run continued from a parent
+    inherits every learning setting the caller did not set, and refuses one it
+    set to another value.
+    """
+    config = request.model_dump(exclude_unset=True, exclude_none=True)
+
+    # A continued run's cross-field rules apply to the settings it will use,
+    # resolved from its parent by the shared run plan, inside the service.
+    result = training_manager.start_training(config, effective_rules=cross_field_errors)
+    # Each field's own type and range apply to every request, a value repeating
+    # the parent's included; omitting a field inherits it.
 
     if not result.get("success"):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(status.HTTP_422_UNPROCESSABLE_ENTITY if result.get("invalid_settings")
+                         else status.HTTP_409_CONFLICT),
             detail=result.get("error", "Failed to start training"),
         )
 
@@ -227,5 +304,6 @@ async def get_training_metrics() -> Dict[str, Any]:
 
 @router.get("/training/checkpoints", response_model=List[CheckpointInfo])
 async def get_checkpoints() -> List[Dict[str, Any]]:
-    """List available model checkpoints with metadata."""
+    """List the checkpoints of the last requested workspace's runs, with
+    each file's own metadata (contract M3a-2)."""
     return training_manager.get_checkpoints()

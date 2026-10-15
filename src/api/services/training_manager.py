@@ -50,7 +50,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
@@ -64,7 +64,10 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 class TrainingStatus:
     """Snapshot of training state."""
 
-    status: str = "idle"  # idle, running, completed, failed, stopping
+    # idle, running, stopping, stopped (by the operator), completed (the
+    # process exited cleanly; how the stage stood is the run's `outcome`),
+    # failed.
+    status: str = "idle"
     pid: Optional[int] = None
     current_epoch: Optional[int] = None
     total_epochs: Optional[int] = None
@@ -82,12 +85,7 @@ class TrainingManager:
     and Gradio event handlers in the same FastAPI process.
     """
 
-    def __init__(
-        self,
-        log_dir: str = "logs",
-        checkpoint_dir: str = "checkpoints",  # relative to workspace
-        output_dir: str = "outputs",
-    ):
+    def __init__(self):
         self._process: Optional[subprocess.Popen] = None
         self._status: str = "idle"
         self._user_stopped: bool = False
@@ -98,20 +96,43 @@ class TrainingManager:
         self._monitor_thread: Optional[threading.Thread] = None
         self._temp_config_path: Optional[Path] = None
 
-        self.log_dir = Path(log_dir)
-        self.checkpoint_dir = Path(checkpoint_dir)
-        self.output_dir = Path(output_dir)
+        #: The directory of the run started last (contract M3a-2). Named here
+        #: and claimed by the training process once its inputs pass, so a
+        #: refused run leaves nothing behind; its logs are read from inside it.
+        self.run_dir: Optional[Path] = None
+        self._snapshot_cache: Optional[tuple] = None
+
+    @property
+    def log_dir(self) -> Optional[Path]:
+        """The logs of the run started last, or `None` before any."""
+        from src.utils.checkpoint_paths import run_log_dir
+
+        return run_log_dir(self.run_dir) if self.run_dir is not None else None
+
+    @staticmethod
+    def workspace_path(data_dir: str) -> Path:
+        """A workspace path as the training process resolves it: relative to
+        the project root, where the process runs."""
+        path = Path(data_dir or "data/workspaces/default")
+        return path if path.is_absolute() else PROJECT_ROOT / path
 
     # =========================================================================
     # Training Control
     # =========================================================================
 
-    def start_training(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def start_training(
+        self,
+        config: Dict[str, Any],
+        effective_rules: Optional[Callable[[Dict[str, Any]], List[str]]] = None,
+    ) -> Dict[str, Any]:
         """
         Start a training run as a subprocess.
 
         Args:
             config: Training configuration dict (mirrors TrainConfig fields).
+            effective_rules: for a run continued from a parent, rules checked on
+                the settings the run plan resolves (the API's cross-field
+                rules); a violation is refused with `invalid_settings`.
 
         Returns:
             Status dict with success/error info.
@@ -119,6 +140,26 @@ class TrainingManager:
         Raises:
             RuntimeError: If training is already running.
         """
+        # A run continued from a parent is decided by the parent's record
+        # (contract M3a-3): refused here as the training process would refuse
+        # it, and placed under the parent's architecture, which it inherits.
+        # The process decides again on the bytes it restores. Read before the
+        # lock, so the status stays readable meanwhile.
+        architecture = config.get("conv_type")
+        if config.get("resume_from"):
+            preview = self.preview_continuation(
+                config["resume_from"], device=config.get("device", "auto"),
+                extend_epochs=config.get("extend_epochs"),
+                requested={k: v for k, v in config.items() if k != "resume_from"})
+            if not preview["ok"]:
+                return {"success": False, "error": preview["reason"], "status": self._status}
+            errors = effective_rules(preview["learning_settings"]) if effective_rules else []
+            if errors:
+                return {"success": False, "invalid_settings": True, "status": self._status,
+                        "error": "The settings this run would use, its parent's with this "
+                                 "request's: " + " ".join(errors)}
+            architecture = preview.get("architecture") or architecture
+
         with self._lock:
             if self._status == "running":
                 return {
@@ -127,33 +168,30 @@ class TrainingManager:
                     "status": self._status,
                 }
 
+            # **The run's own directory** (contract M3a-2): named here, so the
+            # status and the console know where its logs and checkpoints will be,
+            # and handed to the training process, which claims it after its
+            # inputs pass. An explicit one must be free; nothing is created here.
+            from src.utils.checkpoint_paths import (
+                check_run_dir_free, propose_run_dir, refuse_retired_locations,
+            )
+
+            try:
+                refuse_retired_locations(config, source="This training request")
+                if config.get("run_dir"):
+                    run_dir = check_run_dir_free(config["run_dir"])
+                else:
+                    run_dir = propose_run_dir(
+                        self.workspace_path(config.get("data_dir", "")),
+                        architecture, config.get("run_name"))
+            except (ValueError, OSError) as e:
+                return {"success": False, "error": str(e), "status": self._status}
+
+            config = {**config, "run_dir": str(run_dir)}
             self._config = config
             self._error_message = None
             self._user_stopped = False
-
-            # Derive an architecture-scoped checkpoint_dir
-            # ({data_dir}/checkpoints/{conv_type}) so conv types don't collide;
-            # an explicit checkpoint_dir is honoured verbatim. The resolved dir
-            # is written back into the config below, so the training subprocess
-            # inherits it directly.
-            from src.utils.checkpoint_paths import resolve_checkpoint_dir
-
-            data_dir = config.get("data_dir", "")
-            cfg_ckpt_dir = config.get("checkpoint_dir", "")
-            if data_dir or cfg_ckpt_dir:
-                self.checkpoint_dir = resolve_checkpoint_dir(
-                    data_dir, config.get("conv_type"), cfg_ckpt_dir or None
-                )
-
-            # Ensure directories exist
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Apply directory paths to config
-            config.setdefault("log_dir", str(self.log_dir))
-            config.setdefault("checkpoint_dir", str(self.checkpoint_dir))
-            config.setdefault("output_dir", str(self.output_dir))
+            self.run_dir = run_dir
 
             # Write config to temp YAML
             temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
@@ -203,12 +241,13 @@ class TrainingManager:
             )
             self._monitor_thread.start()
 
-            logger.info(f"Training started (PID: {self._process.pid})")
+            logger.info(f"Training started (PID: {self._process.pid}), run directory {run_dir}")
             return {
                 "success": True,
                 "pid": self._process.pid,
                 "status": "running",
                 "config_path": str(self._temp_config_path),
+                "run_dir": str(run_dir),
             }
 
     def stop_training(self) -> Dict[str, Any]:
@@ -258,9 +297,12 @@ class TrainingManager:
             return {"success": False, "error": str(e), "status": "failed"}
 
         with self._lock:
-            self._status = "completed"
+            self._status = "stopped"
         logger.info("Training stopped")
-        return {"success": True, "status": "completed"}
+        # **Stopped, not completed** (contract M3a): the stage did not finish.
+        # What can be continued is the run's last saved snapshot, if any;
+        # progress after it is lost.
+        return {"success": True, "status": "stopped", "outcome": self.latest_snapshot()}
 
     def _monitor_process(self) -> None:
         """Background thread that monitors the training subprocess."""
@@ -288,12 +330,9 @@ class TrainingManager:
         returncode = self._process.poll()
         with self._lock:
             if self._status == "stopping" or self._user_stopped:
-                # User-initiated stop — always treat as completed
-                self._status = "completed"
+                # Operator-initiated stop: stopped, whatever the exit code.
+                self._status = "stopped"
             elif returncode == 0:
-                self._status = "completed"
-            elif returncode and returncode < 0:
-                # Killed by signal (Unix) — if we sent the signal, it's a stop
                 self._status = "completed"
             else:
                 self._status = "failed"
@@ -327,6 +366,8 @@ class TrainingManager:
 
     def _read_progress_file(self) -> Optional[Dict[str, Any]]:
         """Read the lightweight progress.json file."""
+        if self.log_dir is None:
+            return None
         progress_file = self.log_dir / "progress.json"
         if not progress_file.exists():
             return None
@@ -350,7 +391,14 @@ class TrainingManager:
                 "elapsed_seconds": elapsed,
                 "error_message": self._error_message,
                 "config": self._config,
+                "run_dir": str(self.run_dir) if self.run_dir is not None else None,
             }
+
+        # How the run stands, from its last snapshot's own record, once the
+        # process is not running: finished, paused, stopped early, or where it
+        # can be continued from (contract M3a).
+        if result["status"] in ("stopped", "completed", "failed"):
+            result["outcome"] = self.latest_snapshot()
 
         # Read progress file for real-time batch-level progress
         progress = self._read_progress_file()
@@ -365,7 +413,9 @@ class TrainingManager:
             # Convert 0-indexed epoch to 1-indexed for display
             raw_epoch = metrics.get("epoch")
             result["current_epoch"] = (raw_epoch + 1) if raw_epoch is not None else None
-            result["total_epochs"] = (
+            # The run's own count (its active stage's end), which an inherited
+            # or extended run does not carry in the request.
+            result["total_epochs"] = (progress or {}).get("total_epochs") or (
                 self._config.get("num_epochs") if self._config else None
             )
             result["latest_metrics"] = metrics
@@ -419,7 +469,7 @@ class TrainingManager:
 
     def _find_latest_log_file(self) -> Optional[Path]:
         """Find the most recently modified training log file."""
-        if not self.log_dir.exists():
+        if self.log_dir is None or not self.log_dir.exists():
             return None
 
         log_files = sorted(
@@ -429,42 +479,186 @@ class TrainingManager:
         )
         return log_files[0] if log_files else None
 
+    def latest_snapshot(self) -> Optional[Dict[str, Any]]:
+        """The run's latest saved training state (`last.pt`) as its own record
+        describes it, or `None` when the run saved none.
+
+        Read whole with the safe loader, so only when asked (the stop
+        confirmation, a status after the process ended) and cached by the
+        file's size and modification time.
+        """
+        from src.utils.checkpoint_paths import run_checkpoint_dir
+
+        if self.run_dir is None:
+            return None
+        last = run_checkpoint_dir(self.run_dir) / "last.pt"
+        try:
+            stat = last.stat()
+        except OSError:
+            return None
+        key = (str(last), stat.st_mtime_ns, stat.st_size)
+        if self._snapshot_cache and self._snapshot_cache[0] == key:
+            return self._snapshot_cache[1]
+        try:
+            from src.utils.checkpoint_io import read_checkpoint
+
+            record = read_checkpoint(last, map_location="cpu", weights_only=True).checkpoint
+        except Exception as exc:  # noqa: BLE001 - shown, not raised
+            snapshot = {"checkpoint": str(last), "readable": False,
+                        "reason": f"{type(exc).__name__}: {exc}"}
+        else:
+            progress = (record.get("progress") or {}) if isinstance(record, dict) else {}
+            stage = progress.get("stage") or {}
+            end = progress.get("end")
+            snapshot = {
+                "checkpoint": str(last),
+                "readable": True,
+                "completed_epochs": progress.get("completed_epochs"),
+                "target_epochs": (int(stage.get("start_epoch", 0))
+                                  + int(stage.get("target_epochs", 0))) if stage else None,
+                "end": end,
+                "stop_reason": progress.get("stop_reason"),
+                "resumable": (isinstance(record, dict)
+                              and record.get("checkpoint_kind") == "training_state"
+                              and end in (None, "paused")),
+            }
+        self._snapshot_cache = (key, snapshot)
+        return snapshot
+
+    def preview_continuation(
+        self,
+        parent_path: str,
+        *,
+        device: str = "auto",
+        extend_epochs: Optional[int] = None,
+        requested: Optional[Dict[str, Any]] = None,
+        extend_if_finished: bool = False,
+    ) -> Dict[str, Any]:
+        """What starting from `parent_path` would do, for the console to show
+        before start (contract M3a-3, M3a-4).
+
+        `requested` is a training request's own fields, set explicitly: a
+        learning setting among them that differs from the parent's is refused
+        here, as the training process would refuse it.
+
+        `extend_if_finished` is the console's: its Extra epochs field belongs to
+        a finished parent, so for any other parent the value is not sent
+        (`training_console._preview_for`). Every other caller leaves it off, and
+        an `extend_epochs` given for an unfinished parent is refused.
+
+        **The same decision the training process makes**
+        (`src.utils.run_plan.plan_continuation`), on the parent's own
+        record read with the safe loader. A preview is not the check: the
+        training process reads the parent again, checks it against the
+        workspace's data and graph (M2.3) and decides again on those bytes.
+        """
+        from src.utils.run_plan import OPERATIONAL_FIELDS, RunPlanRefused, plan_continuation
+        from src.utils.checkpoint_io import read_checkpoint
+
+        path = Path(parent_path)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        if not path.is_file():
+            return {"ok": False, "reason": f"{path} does not exist."}
+        try:
+            read = read_checkpoint(path, map_location="cpu", weights_only=True)
+        except Exception as exc:  # noqa: BLE001 - a refusal to show
+            return {"ok": False,
+                    "reason": f"{path.name} cannot be read as a checkpoint "
+                              f"({type(exc).__name__}: {exc})."}
+        record = read.checkpoint if isinstance(read.checkpoint, dict) else {}
+        progress = record.get("progress") or {}
+        stage = progress.get("stage") or {}
+        if extend_if_finished and progress.get("end") != "finished":
+            extend_epochs = None
+        facts = {
+            "parent": str(path),
+            "sha256": read.identity.sha256,
+            "end": progress.get("end"),
+            "completed_epochs": progress.get("completed_epochs"),
+            "target_epochs": (int(stage.get("start_epoch", 0))
+                              + int(stage.get("target_epochs", 0))) if stage else None,
+            "architecture": ((record.get("config") or {}).get("model_config") or {}).get(
+                "conv_type"),
+        }
+        # The parent's own settings, with the request's fields over them; only
+        # the request's fields count as set explicitly, so every other learning
+        # setting shows as inherited.
+        explicit = dict(requested or {})
+        recorded = (record.get("config") or {}).get("requested")
+        request = {**(recorded if isinstance(recorded, dict) else {}), **explicit,
+                   "resume_from": str(path), "run_dir": "", "extend_epochs": extend_epochs,
+                   "extend_lr": explicit.get("extend_lr"), "pause_after_epoch": None,
+                   "device": device}
+        effective_device = "cuda" if device == "auto" else device
+        try:
+            plan = plan_continuation(record, path, request, set(explicit),
+                                     device=effective_device,
+                                     parent_sha256=read.identity.sha256)
+        except RunPlanRefused as exc:
+            return {**facts, "ok": False, "reason": str(exc)}
+        return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
+                "inherited": plan.inherited, "start_epoch": plan.start_epoch,
+                "end_epoch": plan.end_epoch, "stage": plan.stage,
+                # The learning settings the run would use (the parent's, with
+                # the request's explicit values), for checks that need them
+                # complete: the API's cross-field rules. Operational fields are
+                # left out: the process takes them from the request or its own
+                # defaults, which this preview does not know.
+                "learning_settings": {k: v for k, v in plan.settings.items()
+                                      if k not in OPERATIONAL_FIELDS}}
+
     # =========================================================================
     # Checkpoint Management
     # =========================================================================
 
-    def get_checkpoints(self) -> List[Dict[str, Any]]:
+    def get_checkpoints(
+        self, data_dir: Optional[str] = None, conv_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        List checkpoint files with metadata.
+        List a workspace's run checkpoints with metadata (contract M3a-2).
+
+        Every run's, or one architecture's, through the shared listing
+        (`checkpoint_paths.list_run_checkpoints`): runs most recently trained
+        first, newest file first within a run. The workspace defaults to the
+        last training request's. What each file is comes from its own record;
+        a listed file is not thereby verified, and a file outside the run
+        layout is reached by its path.
 
         Returns:
             List of checkpoint info dicts.
         """
-        if not self.checkpoint_dir.exists():
-            return []
+        from src.utils.checkpoint_paths import list_run_checkpoints, run_architecture
+
+        if data_dir is None:
+            if not self._config:
+                return []
+            data_dir = self._config.get("data_dir", "")
+        workspace = self.workspace_path(data_dir)
 
         checkpoints = []
-        for ckpt_path in sorted(
-            self.checkpoint_dir.glob("*.pt"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        ):
+        for run, ckpt_path in list_run_checkpoints(workspace, conv_type):
             stat = ckpt_path.stat()
             info: Dict[str, Any] = {
                 "filename": ckpt_path.name,
                 "filepath": str(ckpt_path),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "run": run.name,
+                "run_dir": str(run),
+                "architecture": run_architecture(run),
             }
 
-            # Try to read checkpoint metadata without loading full tensors
+            # The file's own record. This loads the whole file; tensors and
+            # plain data only (contract decision 10).
             try:
                 import torch
 
-                meta = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                meta = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 if isinstance(meta, dict):
                     info["epoch"] = meta.get("epoch")
                     info["metrics"] = meta.get("logs", {})
+                    info["checkpoint_kind"] = meta.get("checkpoint_kind")
             except Exception:
                 pass
 

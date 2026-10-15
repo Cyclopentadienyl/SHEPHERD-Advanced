@@ -31,7 +31,7 @@ Output files:
     <output_dir>/train_samples.json   - Training cohort
     <output_dir>/val_samples.json     - Validation cohort (disease-disjoint)
     <output_dir>/split_manifest.json  - Binds all six to one production event
-    <output_dir>/checkpoints/gat/     - Checkpoints (if --train-model)
+    <output_dir>/runs/gat/<run>/      - The demo run (if --train-model)
 
 The command to start the API is printed on completion, with the checkpoint the
 run actually selected.
@@ -241,7 +241,7 @@ def build_demo_kg() -> KnowledgeGraph:
 # =============================================================================
 # Model training
 # =============================================================================
-def train_demo_model(workspace: Path, num_epochs: int) -> Path:
+def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> Path:
     """Train a small model on the demo workspace **through the real trainer**.
 
     This script used to carry its own: it read the exported tensors, built a
@@ -259,12 +259,16 @@ def train_demo_model(workspace: Path, num_epochs: int) -> Path:
         The checkpoint the API should serve.
     """
     from scripts.train_model import TrainConfig, train
-    from src.utils.checkpoint_paths import resolve_checkpoint_dir, select_checkpoint_in_dir
+    from src.utils.checkpoint_paths import (
+        propose_run_dir, run_checkpoint_dir, select_checkpoint_in_dir,
+    )
 
+    # The run's own directory under the workspace's runs (contract M3a-2),
+    # named here so the checkpoint served is this run's.
+    run_dir = propose_run_dir(workspace, "gat", "demo")
     config = TrainConfig(
         data_dir=str(workspace),
-        output_dir=str(workspace / "outputs"),
-        log_dir=str(workspace / "logs"),
+        run_dir=str(run_dir),
         conv_type="gat",
         hidden_dim=DEMO_FEATURE_DIM,
         num_layers=2,
@@ -272,6 +276,9 @@ def train_demo_model(workspace: Path, num_epochs: int) -> Path:
         num_epochs=num_epochs,
         batch_size=8,
         warmup_steps=0,
+        # `auto` refuses without CUDA (contract M3a); a CPU-only development
+        # host passes --device cpu.
+        device=device,
     )
     if not train(config):
         raise SystemExit(
@@ -280,7 +287,7 @@ def train_demo_model(workspace: Path, num_epochs: int) -> Path:
             f"scripts/train_model.py --data-dir {workspace}"
         )
 
-    ckpt_dir = resolve_checkpoint_dir(str(workspace), config.conv_type, None)
+    ckpt_dir = run_checkpoint_dir(run_dir)
     selected = select_checkpoint_in_dir(ckpt_dir)
     if selected is None:
         raise SystemExit(f"Training wrote no checkpoint under {ckpt_dir}.")
@@ -312,6 +319,13 @@ def main():
         default=20,
         help="Training epochs when --train-model is given (default: 20)",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Training device when --train-model is given: auto (CUDA, refused "
+             "without it), cuda, cuda:N or cpu (default: auto)",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -340,7 +354,7 @@ def main():
 
     checkpoint_path = None
     if args.train_model:
-        checkpoint_path = train_demo_model(output_dir, args.epochs)
+        checkpoint_path = train_demo_model(output_dir, args.epochs, args.device)
 
     print("\n" + "=" * 60)
     print("Demo setup complete!")

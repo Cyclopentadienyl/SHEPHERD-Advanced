@@ -137,6 +137,10 @@ class TrainerConfig:
     # Loss configuration
     loss_config: Optional[LossConfig] = None
 
+    # Stop at a safe boundary once this many epochs of the run's total progress
+    # are complete, recorded as paused (contract M3a-3). Not inherited.
+    pause_after_epoch: Optional[int] = None
+
 
 @dataclass
 class TrainingState:
@@ -147,6 +151,13 @@ class TrainingState:
     best_epoch: int = 0
     train_loss_history: List[float] = field(default_factory=list)
     val_metric_history: List[Dict[str, float]] = field(default_factory=list)
+    # Progress counted three ways (contract M3a-1). `global_step` above is the
+    # optimizer attempts; these are the epochs completed, the updates that
+    # actually ran (AMP's GradScaler skips one on non-finite gradients) and
+    # the scheduler steps taken, which follow the updates.
+    completed_epochs: int = 0
+    optimizer_updates: int = 0
+    scheduler_steps: int = 0
 
 
 # =============================================================================
@@ -237,7 +248,11 @@ class Trainer:
         # Optimizer
         self.optimizer = optimizer or self._create_optimizer()
 
-        # Scheduler (created after optimizer)
+        # Scheduler (created after optimizer). `schedule_record` is the schedule
+        # as built, recorded in every checkpoint (contract M3a-1).
+        self.schedule_record: Dict[str, Any] = {
+            "type": "external" if scheduler is not None else self.config.scheduler_type,
+        }
         self.scheduler = scheduler or self._create_scheduler()
 
         # Mixed precision
@@ -251,6 +266,31 @@ class Trainer:
 
         # State
         self.state = TrainingState()
+
+        # Set when the model holds weights from an earlier step than the
+        # optimizer (early stopping restores its best at the end of `train`);
+        # the checkpoint payload then writes weights only (contract M3a-1).
+        self.weights_restored_from: Optional[Dict[str, Any]] = None
+
+        # The active stage: the original schedule, from epoch 0 for
+        # `num_epochs`, unless `continue_from` restores another or opens an
+        # extension (contract M3a-3, M3a-4). Recorded in every checkpoint.
+        self.stage: Dict[str, Any] = {
+            "kind": "original",
+            "start_epoch": 0,
+            "target_epochs": int(self.config.num_epochs),
+            "schedule": self.schedule_record,
+        }
+        # The next epoch index to run; a continued run starts after its
+        # parent's last completed epoch.
+        self.start_epoch: int = 0
+        # Set at the epoch boundary where `pause_after_epoch` stops the run,
+        # before the callbacks write that epoch's checkpoint.
+        self.pausing: bool = False
+        # Set when a stop (KeyboardInterrupt) ended `train`.
+        self.interrupted: bool = False
+        # The parent's callback state, applied after `on_train_begin` resets it.
+        self._pending_callbacks: Optional[Dict[str, Any]] = None
 
         # Set seed
         if self.config.seed is not None:
@@ -298,6 +338,8 @@ class Trainer:
 
     def _create_scheduler(self) -> Optional[LRScheduler]:
         """創建學習率調度器"""
+        self.schedule_record = {"type": self.config.scheduler_type,
+                                "base_lr": float(self.config.learning_rate)}
         if self.config.scheduler_type == "none":
             return None
 
@@ -318,6 +360,15 @@ class Trainer:
         # Ensure at least 1 step for main scheduler phase
         warmup_steps = min(warmup_steps, max(0, total_steps - 1))
 
+        self.schedule_record.update({
+            "steps_per_epoch": self._steps_per_epoch(),
+            "gradient_accumulation_steps": int(self.config.gradient_accumulation_steps),
+            "total_steps": int(total_steps),
+            "warmup_steps_requested": int(original_warmup),
+            "warmup_ratio": float(self.config.warmup_ratio),
+            "min_lr_ratio": float(self.config.min_lr_ratio),
+        })
+
         if original_warmup > 0 and warmup_steps < original_warmup:
             logger.warning(
                 f"warmup_steps reduced from {original_warmup} to {warmup_steps} "
@@ -329,6 +380,9 @@ class Trainer:
             min_lr_ratio = self.config.min_lr_ratio
             ws = max(1, warmup_steps)
             cs = max(1, total_steps - warmup_steps)
+            # What the curve below uses: at least one warmup step, at least one
+            # decay step.
+            self.schedule_record.update({"warmup_steps_effective": ws, "decay_steps": cs})
 
             def lr_lambda(current_step: int) -> float:
                 if current_step < ws:
@@ -343,6 +397,11 @@ class Trainer:
             return LambdaLR(self.optimizer, lr_lambda)
 
         elif self.config.scheduler_type == "onecycle":
+            self.schedule_record.update({
+                "pct_start": float(self.config.warmup_ratio), "div_factor": 25.0,
+                "final_div_factor": 1 / self.config.min_lr_ratio,
+                "total_steps_scheduled": max(1, total_steps),
+            })
             return OneCycleLR(
                 self.optimizer,
                 max_lr=self.config.learning_rate,
@@ -353,6 +412,10 @@ class Trainer:
             )
 
         elif self.config.scheduler_type == "linear":
+            self.schedule_record.update({
+                "start_factor": 1.0, "end_factor": float(self.config.min_lr_ratio),
+                "total_iters": max(1, total_steps), "warmup_steps_effective": 0,
+            })
             return LinearLR(
                 self.optimizer,
                 start_factor=1.0,
@@ -362,18 +425,24 @@ class Trainer:
 
         return None
 
+    def _steps_per_epoch(self) -> Optional[int]:
+        """Batches per epoch, or `None` for a loader without a length."""
+        try:
+            return int(len(self.train_dataloader))
+        except TypeError:
+            return None
+
     def _estimate_total_steps(self) -> int:
         """估算總訓練步數"""
-        try:
-            steps_per_epoch = len(self.train_dataloader)
-        except TypeError:
+        steps_per_epoch = self._steps_per_epoch()
+        if steps_per_epoch is None:
             # Iterator doesn't have len
             steps_per_epoch = 1000  # Default estimate
 
-        return (
-            self.config.num_epochs * steps_per_epoch
-            // self.config.gradient_accumulation_steps
-        )
+        # Updates per epoch: every full accumulation group, and the tail as one
+        # more (`_train_epoch`), so the schedule counts the updates taken.
+        accumulation = self.config.gradient_accumulation_steps
+        return self.config.num_epochs * (-(-steps_per_epoch // accumulation))
 
     def _setup_amp(self) -> None:
         """設置混合精度訓練"""
@@ -389,6 +458,26 @@ class Trainer:
         else:
             self.amp_dtype = torch.float32
             self.scaler = None
+
+    def amp_record(self) -> Dict[str, Any]:
+        """AMP as requested and as it took effect: on only on CUDA, and bf16
+        without a scaler (contract M3a-1)."""
+        return {
+            "requested": bool(self.config.use_amp),
+            "dtype_requested": str(self.config.amp_dtype),
+            "enabled": bool(self.use_amp),
+            "dtype": str(self.amp_dtype).replace("torch.", ""),
+            "grad_scaler": self.scaler is not None,
+        }
+
+    def stage_record(self) -> Dict[str, Any]:
+        """The active stage, as recorded in a checkpoint."""
+        return dict(self.stage)
+
+    def stage_end(self) -> int:
+        """The epoch the active stage ends at (exclusive): its start plus its
+        target number of epochs."""
+        return int(self.stage["start_epoch"]) + int(self.stage["target_epochs"])
 
     def _create_default_callbacks(self) -> List[Callback]:
         """創建預設回調"""
@@ -460,11 +549,22 @@ class Trainer:
         """
         logger.info(f"Starting training on {self.device}")
         logger.info(f"Config: {self.config}")
+        self.weights_restored_from = None
+        self.pausing = False
+        self.interrupted = False
 
         self.callbacks.on_train_begin(self)
+        # A continued run's callback state, after `on_train_begin` reset it.
+        if self._pending_callbacks is not None:
+            self._restore_callbacks(self._pending_callbacks)
+            self._pending_callbacks = None
 
+        end = self.stage_end()
+        pause = self.config.pause_after_epoch
+        if pause is not None and pause >= end:
+            logger.info(f"The stage ends at epoch {end}, before pause_after_epoch {pause}.")
         try:
-            for epoch in range(self.config.num_epochs):
+            for epoch in range(self.start_epoch, end):
                 self.state.epoch = epoch
 
                 # Training epoch
@@ -481,6 +581,12 @@ class Trainer:
                 # Combine metrics
                 epoch_metrics = {**train_metrics, **val_metrics}
 
+                # The epoch is complete before the callbacks see it, so a
+                # checkpoint written at its end records it as done, and as
+                # paused when the pause stops the run here.
+                self.state.completed_epochs = epoch + 1
+                self.pausing = pause is not None and epoch + 1 == pause and epoch + 1 < end
+
                 # Callbacks
                 self.callbacks.on_epoch_end(self, epoch, epoch_metrics)
 
@@ -488,15 +594,24 @@ class Trainer:
                 if self.callbacks.should_stop():
                     logger.info(f"Early stopping at epoch {epoch}")
                     break
+                if self.pausing:
+                    logger.info(
+                        f"Paused after epoch {epoch + 1} of {end} (pause_after_epoch); "
+                        "resume from this run's last.pt.")
+                    break
 
         except KeyboardInterrupt:
+            # A stop (SIGINT) inside an epoch: that epoch's progress is lost;
+            # the last epoch's `last.pt` is the state to continue from.
+            self.interrupted = True
             logger.info("Training interrupted by user")
 
         finally:
             self.callbacks.on_train_end(self)
 
-        # Final evaluation
-        if self.val_dataloader is not None:
+        # Final evaluation, of a run that ended, not of one stopped: a stop
+        # should end promptly, and its run has no final metrics.
+        if self.val_dataloader is not None and not self.interrupted:
             final_metrics = self._validate(self.state.epoch)
         else:
             final_metrics = {}
@@ -504,13 +619,35 @@ class Trainer:
         return final_metrics
 
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
-        """訓練一個 epoch"""
+        """訓練一個 epoch
+
+        **The accumulation tail is applied at the epoch's end** (contract
+        M3a-1). With gradient accumulation, the batches after the last full
+        group used to leave their gradients in `.grad`, where the next epoch's
+        first update absorbed them (and the last epoch's were dropped), while
+        the schedule's step count assumed a fraction of an update. Now the tail
+        of `r` batches is one more update, its gradients rescaled by
+        `accumulation / r` so that, like every full group, it applies the mean
+        of the batches it holds. No gradient crosses an epoch boundary, and an
+        epoch takes `ceil(batches / accumulation)` updates, which is what
+        `_estimate_total_steps` counts. With an accumulation of 1 nothing
+        changes.
+
+        **`train_loss` is the mean loss per batch** (contract M3a-1 review). It
+        used to be the mean, over updates, of each group's summed loss, which
+        is `accumulation` times the batch mean, and adding the tail as its own
+        update mixed in a mean; one denominator now, independent of updates.
+        With an accumulation of 1 the value is unchanged.
+        """
         self.model.train()
         self.callbacks.on_epoch_begin(self, epoch)
 
-        total_loss = 0.0
-        num_batches = 0
-        accumulated_loss = 0.0
+        accumulation = self.config.gradient_accumulation_steps
+        # `train_loss` is the mean loss per batch over the epoch: one unit, one
+        # denominator, kept apart from how many updates the batches made.
+        loss_sum = 0.0
+        batch_count = 0
+        pending = 0
 
         epoch_start_time = time.time()
 
@@ -536,7 +673,7 @@ class Trainer:
                 loss, loss_dict = self.loss_fn(batch, model_outputs)
 
                 # Scale for gradient accumulation
-                loss = loss / self.config.gradient_accumulation_steps
+                loss = loss / accumulation
 
             # Backward pass
             if self.scaler is not None:
@@ -544,48 +681,18 @@ class Trainer:
             else:
                 loss.backward()
 
-            accumulated_loss += loss.item()
+            loss_sum += loss.item() * accumulation
+            batch_count += 1
+            pending += 1
 
             # Optimizer step (with gradient accumulation)
-            if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                # Gradient clipping
-                if self.config.max_grad_norm > 0:
-                    if self.scaler is not None:
-                        self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        self.config.max_grad_norm,
-                    )
-
-                # Optimizer step
-                if self.scaler is not None:
-                    scale_before = self.scaler.get_scale()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                    # GradScaler skips optimizer.step() on NaN/Inf gradients,
-                    # indicated by scale decreasing. Only step the scheduler
-                    # when the optimizer actually ran.
-                    optimizer_was_run = self.scaler.get_scale() >= scale_before
-                else:
-                    self.optimizer.step()
-                    optimizer_was_run = True
-
-                # Scheduler step (only if optimizer actually updated weights)
-                if self.scheduler is not None and optimizer_was_run:
-                    self.scheduler.step()
-
-                # Zero gradients
-                self.optimizer.zero_grad()
-
-                # Update state
-                self.state.global_step += 1
-                total_loss += accumulated_loss * self.config.gradient_accumulation_steps
-                accumulated_loss = 0.0
-                num_batches += 1
+            if (batch_idx + 1) % accumulation == 0:
+                self._optimizer_update()
+                pending = 0
 
             # Batch metrics
             batch_metrics = {
-                "batch_loss": loss.item() * self.config.gradient_accumulation_steps,
+                "batch_loss": loss.item() * accumulation,
                 **{f"loss_{k}": v for k, v in loss_dict.items()},
             }
 
@@ -600,9 +707,17 @@ class Trainer:
                 self._validate(epoch)
                 self.model.train()
 
+        # The accumulation tail: one more update, as the mean of its batches.
+        if pending:
+            factor = accumulation / pending
+            for parameter in self.model.parameters():
+                if parameter.grad is not None:
+                    parameter.grad.mul_(factor)
+            self._optimizer_update()
+
         # Epoch metrics
         epoch_time = time.time() - epoch_start_time
-        avg_loss = total_loss / max(num_batches, 1)
+        avg_loss = loss_sum / max(batch_count, 1)
 
         self.state.train_loss_history.append(avg_loss)
 
@@ -611,6 +726,49 @@ class Trainer:
             "epoch_time": epoch_time,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
         }
+
+    def _optimizer_update(self) -> None:
+        """Clip, step the optimizer (through the scaler where AMP uses one),
+        step the scheduler if the optimizer ran, zero the gradients and count.
+
+        `global_step` counts the attempts; `optimizer_updates` and
+        `scheduler_steps` count what ran (contract M3a-1).
+        """
+        # Gradient clipping
+        if self.config.max_grad_norm > 0:
+            if self.scaler is not None:
+                self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(),
+                self.config.max_grad_norm,
+            )
+
+        # Optimizer step
+        if self.scaler is not None:
+            scale_before = self.scaler.get_scale()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            # GradScaler skips optimizer.step() on NaN/Inf gradients,
+            # indicated by scale decreasing. Only step the scheduler
+            # when the optimizer actually ran.
+            optimizer_was_run = self.scaler.get_scale() >= scale_before
+        else:
+            self.optimizer.step()
+            optimizer_was_run = True
+
+        if optimizer_was_run:
+            self.state.optimizer_updates += 1
+
+        # Scheduler step (only if optimizer actually updated weights)
+        if self.scheduler is not None and optimizer_was_run:
+            self.scheduler.step()
+            self.state.scheduler_steps += 1
+
+        # Zero gradients
+        self.optimizer.zero_grad()
+
+        # Update state
+        self.state.global_step += 1
 
     @dataclass(frozen=True)
     class _EvaluationPass:
@@ -980,76 +1138,155 @@ class Trainer:
 
         return config_dict
 
-    def save_checkpoint(self, filepath: Union[str, Path], data_fingerprint: Optional[Dict[str, Any]] = None) -> None:
-        """Save training checkpoint with optional data fingerprint for KG version tracking."""
-        filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+    def save_checkpoint(
+        self,
+        filepath: Union[str, Path],
+        data_fingerprint: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Write the trainer's checkpoint to `filepath`; return its SHA-256.
 
-        checkpoint = {
-            "epoch": self.state.epoch,
-            "global_step": self.state.global_step,
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "state": self.state.__dict__,
-            "config": self._serialize_config(),
-        }
-
-        if data_fingerprint is not None:
-            checkpoint["data_fingerprint"] = data_fingerprint
-        # The record of the inputs this run consumed, as `ModelCheckpoint` embeds
-        # it, so a checkpoint from either writer can be served, measured or
-        # resumed (contract M2.4, M2.3); set by the training script.
-        digests = getattr(self, "training_input_digests", None)
-        if digests is not None:
-            checkpoint["training_input_digests"] = digests
-
-        if self.scheduler is not None:
-            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
-
-        if self.scaler is not None:
-            checkpoint["scaler_state_dict"] = self.scaler.state_dict()
-
-        torch.save(checkpoint, filepath)
-        logger.info(f"Checkpoint saved to {filepath}")
-
-    def restore_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
-        """Restore model, optimizer, scheduler, scaler and state from a checkpoint
-        that has already been read.
-
-        **Reads nothing** (contract M2.1, S8). The caller reads the parent once,
-        with `src.utils.checkpoint_io.read_checkpoint`, and records that read's
-        identity; restoring from the dict it parsed means the state restored and
-        the digest recorded cannot come from two reads of a file that changed in
-        between. There is no path form beside this one.
+        **The same payload `ModelCheckpoint` writes** (contract M3a-1), from
+        `src.training.checkpoint_payload.build_checkpoint_payload`, written whole
+        by `src.utils.checkpoint_io.write_checkpoint`. `data_fingerprint`, when
+        given, replaces the one the training script attached.
         """
-        # Accept both key conventions: Trainer.save_checkpoint() uses
-        # "model_state_dict" while ModelCheckpoint callback uses "state_dict".
-        model_sd = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
-        if model_sd is None:
-            raise KeyError(
-                "Checkpoint contains neither 'model_state_dict' nor 'state_dict'. "
-                f"Available keys: {list(checkpoint.keys())}"
-            )
-        self.model.load_state_dict(model_sd)
+        from src.training.checkpoint_payload import build_checkpoint_payload
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.run_environment import assert_primitive
+
+        checkpoint = build_checkpoint_payload(self, epoch=self.state.epoch, logs={})
+        if data_fingerprint is not None:
+            assert_primitive(data_fingerprint, "data_fingerprint")
+            checkpoint["data_fingerprint"] = data_fingerprint
+
+        digest = write_checkpoint(checkpoint, filepath)
+        logger.info(f"Checkpoint saved to {filepath} (sha256 {digest[:12]})")
+        return digest
+
+    def continue_from(
+        self,
+        checkpoint: Mapping[str, Any],
+        plan: Any,
+        best_weights: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Continue a parent's training from a checkpoint already read, as
+        `plan` (`src.utils.run_plan.ContinuationPlan`) decided.
+
+        **Reads nothing** (contract M2.1, S8): the entry point read the parent
+        once and records that read's identity. The Trainer was built with the
+        plan's settings, the parent's learning settings, so the schedule it
+        built is the parent's; each part is restored as the mode allows
+        (contract M3a, "room for a branch"):
+
+        - **resume** restores the active stage. The original schedule is
+          rebuilt from the settings and must equal the one the parent recorded
+          before its scheduler's progress is loaded: never a curve built from
+          other settings with the parent's progress. A paused extension keeps
+          its fixed rates.
+        - **extend** keeps the model, the optimizer and the progress, and opens
+          a stage at each group's rate after the restore (M3a-4).
+
+        The model, the optimizer, the scaler and the progress counters are
+        restored in both; the callbacks' state is applied after
+        `on_train_begin` (`train`), which would otherwise reset it.
+
+        `best_weights` is early stopping's best weights when the plan names a
+        file the entry point read and checked; for `{"kind": "self"}` they are
+        the parent's own.
+
+        Raises:
+            RunPlanRefused: the parent's record cannot rebuild its schedule, or
+                its scaler state does not fit this run.
+        """
+        from src.utils.run_plan import RunPlanRefused
+
+        stage = dict(plan.stage)
+        recorded_schedule = (checkpoint.get("progress") or {}).get("stage", {}).get("schedule")
+        if plan.mode == "resume" and stage.get("kind", "original") == "original":
+            if recorded_schedule != self.schedule_record:
+                differ = sorted(
+                    k for k in set(recorded_schedule or {}) | set(self.schedule_record)
+                    if (recorded_schedule or {}).get(k) != self.schedule_record.get(k))
+                raise RunPlanRefused(
+                    "The parent's schedule cannot be rebuilt from its record: rebuilt here, "
+                    f"{', '.join(differ) or 'it'} differ"
+                    f"{'s' if len(differ) == 1 else ''} from what the parent recorded. A run "
+                    "is never resumed on a curve built from other settings.")
+
+        has_scaler = "scaler_state_dict" in checkpoint
+        if has_scaler != (self.scaler is not None):
+            raise RunPlanRefused(
+                "The parent's mixed-precision scaler state does not fit this run "
+                f"(the parent {'has' if has_scaler else 'has no'} scaler state; this run "
+                f"{'uses' if self.scaler is not None else 'does not use'} a scaler).")
+
+        self.model.load_state_dict(checkpoint["state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
-        if self.scheduler is not None and "scheduler_state_dict" in checkpoint:
-            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-
-        if self.scaler is not None and "scaler_state_dict" in checkpoint:
+        if self.scaler is not None:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
-        # Restore state
-        self.state.epoch = checkpoint.get("epoch", 0)
-        self.state.global_step = checkpoint.get("global_step", 0)
+        if stage.get("kind", "original") == "original":
+            if self.scheduler is not None:
+                if "scheduler_state_dict" not in checkpoint:
+                    raise RunPlanRefused("The parent records a schedule but no scheduler state.")
+                self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        else:
+            # A fixed-rate stage steps no scheduler (contract M3a-4). A new
+            # extension sets each group's rate as the plan fixed it (the
+            # restored rate, or `extend_lr` for a rate that ended at 0); a
+            # paused one must hold the rates its stage recorded.
+            self.scheduler = None
+            fixed = [float(r) for r in stage["schedule"]["lrs"]]
+            if len(fixed) != len(self.optimizer.param_groups):
+                raise RunPlanRefused(
+                    f"The extension fixes {len(fixed)} rates for "
+                    f"{len(self.optimizer.param_groups)} parameter groups.")
+            if plan.mode == "extend":
+                for group, rate in zip(self.optimizer.param_groups, fixed):
+                    group["lr"] = rate
+            else:
+                rates = [float(group["lr"]) for group in self.optimizer.param_groups]
+                if rates != fixed:
+                    raise RunPlanRefused(
+                        f"The parent's extension records fixed rates {fixed}, and its "
+                        f"optimizer holds {rates}.")
 
-        if "state" in checkpoint:
-            for key, value in checkpoint["state"].items():
-                if hasattr(self.state, key):
-                    setattr(self.state, key, value)
+        state = checkpoint.get("state") or {}
+        for key in ("epoch", "global_step", "best_metric", "best_epoch",
+                    "train_loss_history", "val_metric_history", "completed_epochs",
+                    "optimizer_updates", "scheduler_steps"):
+            if key in state:
+                setattr(self.state, key, state[key])
 
-        logger.info(f"Checkpoint restored (epoch {self.state.epoch})")
+        self.stage = stage
+        self.start_epoch = int(plan.start_epoch)
+        if best_weights is None and (plan.best_weights or {}).get("kind") == "self":
+            best_weights = checkpoint["state_dict"]
+        self._pending_callbacks = {
+            "recorded": plan.callbacks or {},
+            "best_k": list(plan.best_k),
+            "best_weights": ({k: v.detach().cpu().clone() for k, v in best_weights.items()}
+                             if best_weights is not None else None),
+        }
+        logger.info(
+            f"Continuing ({plan.mode}) from epoch {self.start_epoch} to {self.stage_end()}")
 
+    def _restore_callbacks(self, pending: Mapping[str, Any]) -> None:
+        """Early stopping's and best-k's state, as the parent recorded them.
+
+        The parent's best-k files are ranked with this run's but belong to the
+        run that wrote them: `ModelCheckpoint` never deletes them.
+        """
+        from src.training.callbacks import EarlyStopping, ModelCheckpoint
+
+        recorded = pending["recorded"]
+        # Early stopping first: best-k keeps its best epoch's file listed.
+        for callback in self.callbacks.callbacks:
+            if isinstance(callback, EarlyStopping) and recorded.get("early_stopping"):
+                callback.restore_state(recorded["early_stopping"], pending["best_weights"])
+        for callback in self.callbacks.callbacks:
+            if isinstance(callback, ModelCheckpoint):
+                callback.restore_foreign(pending["best_k"], self)
 
 # =============================================================================
 # Seeding

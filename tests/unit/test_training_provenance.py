@@ -384,32 +384,30 @@ def test_two_runs_over_different_samples_are_distinguishable_from_provenance(tmp
 # ---------------------------------------------------------------------------
 # The checkpoint writer
 # ---------------------------------------------------------------------------
-class _StubModel:
-    def state_dict(self):
-        return {"w": torch.zeros(1)}
+def _tiny_trainer(tmp_path, **attrs):
+    """A real `Trainer` over a one-parameter model and no batches. Since M3a-1
+    both writers build their payload from the trainer's own state
+    (`build_checkpoint_payload`), so a stub would have to imitate all of it."""
+    from src.training.trainer import Trainer, TrainerConfig
 
-
-class _StubTrainer:
-    """Only what `_save_checkpoint` reads. A real `Trainer` would drag an
-    optimizer, a scheduler and a config in for no benefit to this contract."""
-
-    def __init__(self, **attrs):
-        self.model = _StubModel()
-        self.optimizer = None
-        self.scheduler = None
-        for name, value in attrs.items():
-            setattr(self, name, value)
-
-    def _serialize_config(self):
-        return {}
+    trainer = Trainer(
+        model=torch.nn.Linear(1, 1),
+        train_dataloader=[],
+        config=TrainerConfig(
+            device="cpu", scheduler_type="none", use_amp=False, num_epochs=2,
+            checkpoint_dir=str(tmp_path / "ckpt"), log_dir=str(tmp_path / "logs"),
+        ),
+    )
+    for name, value in attrs.items():
+        setattr(trainer, name, value)
+    return trainer
 
 
 def _write(tmp_path, *, weights_only, **trainer_attrs):
     callback = ModelCheckpoint(ModelCheckpointConfig(
         dirpath=str(tmp_path), save_weights_only=weights_only,
     ))
-    trainer = _StubTrainer(**trainer_attrs)
-    trainer.optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+    trainer = _tiny_trainer(tmp_path, **trainer_attrs)
     path = tmp_path / "ckpt.pt"
     callback._save_checkpoint(trainer, path, epoch=1, logs={})
     return torch.load(path, map_location="cpu", weights_only=False)

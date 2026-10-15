@@ -6,7 +6,7 @@ functional acceptance of the contract. It is not a capacity reading under the de
 `cuda_async` allocator (§3), not a measure of model quality, and not a merge. The probe's allocator
 start-up was fixed afterwards and confirmed on the GB10 at `b8a43c8` (§6). On this record the owner
 decided (2026-10-14) that M2's technical work and its acceptance within the scope agreed are
-complete; M2 is not merged.
+complete; the owner merged M2 into `main` the same day (#121, `9fe5113`).
 
 ## 1. The run
 

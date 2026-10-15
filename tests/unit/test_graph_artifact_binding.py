@@ -104,10 +104,12 @@ class TestTrainingRefusesBeforeItActs:
         return train_model
 
     def _config(self, train_model, root, tmp_path, **overrides):
+        # An explicit device: `auto` refuses on a host without CUDA (M3a)
+        # before any of the checks these tests are about.
+        overrides.setdefault("device", "cpu")
         return train_model.TrainConfig(
             data_dir=str(root),
-            output_dir=str(tmp_path / "outputs"),
-            log_dir=str(tmp_path / "logs"),
+            run_dir=str(tmp_path / "run"),
             **overrides,
         )
 
@@ -149,9 +151,8 @@ class TestTrainingRefusesBeforeItActs:
         with pytest.raises(ValueError, match=expected):
             train_model.train(self._config(train_model, root, tmp_path))
 
-        assert not (tmp_path / "outputs").exists(), "run directory was created"
-        assert not (tmp_path / "logs").exists(), "log directory was created"
-        assert not (root / "checkpoints").exists(), "checkpoint directory was created"
+        assert not (tmp_path / "run").exists(), "run directory was created"
+        assert not (root / "runs").exists(), "a run directory was allocated"
 
     def test_a_sound_workspace_reaches_the_next_stage(self, monkeypatch, tmp_path):
         """The refusal must be about the workspace, not about the ordering itself:

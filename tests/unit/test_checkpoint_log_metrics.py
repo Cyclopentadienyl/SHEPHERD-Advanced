@@ -57,6 +57,7 @@ def _current_trainer_logs():
         train_dataloader=[],
         state=SimpleNamespace(train_loss_history=[]),
         optimizer=SimpleNamespace(param_groups=[{"lr": 1e-3}]),
+        config=SimpleNamespace(gradient_accumulation_steps=1),
     )
     train_metrics = Trainer._train_epoch(train_stub, 0)
     return {**train_metrics, **val_metrics}

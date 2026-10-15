@@ -58,7 +58,7 @@ _MAX_SEED = 2**32 - 1
 # Position of the `seed` widget in all_params / _on_start's *args. MUST match the
 # order of all_params (and _collect_config's signature) below — used by _on_start
 # to swap in a random seed when "Randomize seed" is on.
-SEED_PARAM_INDEX = 8
+SEED_PARAM_INDEX = 7
 
 
 def _random_seed() -> int:
@@ -142,8 +142,7 @@ def _num(value, label, cast, errors, *, positive=False, lo=None, hi=None):
 def _collect_config(
     # Paths
     data_dir: str,
-    output_dir: str,
-    checkpoint_dir: str,
+    run_name: str,
     # Tier 1 — Basic
     num_epochs: int,
     learning_rate: float,
@@ -209,8 +208,9 @@ def _collect_config(
     config: Dict[str, Any] = {
         # Paths (strip display prefix so backend receives relative-to-project-root paths)
         "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",
-        "output_dir": _strip_prefix(output_dir) or "outputs",
-        "checkpoint_dir": _strip_prefix(checkpoint_dir) or "",  # empty = auto-derive from data_dir
+        # The run writes into a directory of its own, allocated under the
+        # workspace (contract M3a-2); the name is optional and for people.
+        "run_name": (run_name or "").strip(),
         # Tier 1
         "num_epochs": _num(num_epochs, "Epochs", int, errors, lo=1, hi=10000),
         "learning_rate": _num(learning_rate, "Learning Rate", float, errors, positive=True),
@@ -289,7 +289,8 @@ def _on_start(*args):
     result = training_manager.start_training(config)
     if result.get("success"):
         return (
-            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Starting...",
+            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Starting..."
+            f"\n**Run directory**: `{result.get('run_dir')}`",
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
@@ -306,10 +307,52 @@ def _on_start(*args):
     )
 
 
-def _on_stop():
-    """Handle Stop Training button click.
+def _snapshot_sentence(snapshot: Optional[Dict[str, Any]]) -> str:
+    """Where a run can be continued from, in one sentence (contract M3a)."""
+    if not snapshot:
+        return "No checkpoint was saved, so nothing can be continued."
+    if not snapshot.get("readable", True):
+        return (f"The latest checkpoint `{snapshot['checkpoint']}` cannot be read "
+                f"({snapshot.get('reason')}).")
+    epoch, target = snapshot.get("completed_epochs"), snapshot.get("target_epochs")
+    where = f"epoch {epoch} of {target}" if target else f"epoch {epoch}"
+    end = snapshot.get("end")
+    if end == "finished":
+        return (f"Finished ({where}): `{snapshot['checkpoint']}`. To train further, "
+                "extend it under Continue Training.")
+    if end == "stopped_early":
+        return f"Stopped early at {where} ({snapshot.get('stop_reason')}); it cannot be continued."
+    label = "Paused at" if end == "paused" else "Latest resumable checkpoint:"
+    return f"{label} {where}, `{snapshot['checkpoint']}`."
 
-    Returns status text, gr.update() for 4 plots (no change), and 3 button updates.
+
+def _on_stop_request():
+    """First step of Stop: say what stopping loses before it happens.
+
+    Returns the confirmation group's visibility and its text.
+    """
+    snapshot = training_manager.latest_snapshot()
+    if snapshot and snapshot.get("readable", True) and snapshot.get("completed_epochs"):
+        text = (
+            f"**Stop training now?** The last saved checkpoint is from epoch "
+            f"{snapshot['completed_epochs']} (`{snapshot['checkpoint']}`). Progress since "
+            f"then is lost; you can continue from epoch {snapshot['completed_epochs']}."
+        )
+    else:
+        text = ("**Stop training now?** No checkpoint has been saved yet, so all progress "
+                "of this run is lost and nothing can be continued.")
+    return gr.update(visible=True), text
+
+
+def _on_stop_cancel():
+    return gr.update(visible=False)
+
+
+def _on_stop():
+    """Handle the confirmed Stop.
+
+    Returns status text, gr.update() for 4 plots (no change), 3 button
+    updates, and the confirmation group hidden.
     """
     global _poll_cache_key
     _poll_cache_key = None  # force full refresh on next poll tick
@@ -317,109 +360,188 @@ def _on_stop():
     no_change = gr.update()
     if result.get("success"):
         return (
-            "**Status**: COMPLETED\nTraining stopped by user.",
+            "**Status**: STOPPED\n" + _snapshot_sentence(result.get("outcome")),
             no_change, no_change, no_change, no_change,
             gr.update(interactive=True),    # re-enable start
             gr.update(interactive=False),   # disable stop
-            gr.update(interactive=True),    # re-enable resume
+            gr.update(interactive=True),    # re-enable continue
+            gr.update(visible=False),
         )
     return (
         f"Failed: {result.get('error', 'Unknown error')}",
         no_change, no_change, no_change, no_change,
         gr.update(interactive=False),   # keep start disabled while running
         gr.update(interactive=True),    # keep stop enabled
-        gr.update(interactive=False),   # keep resume disabled while running
+        gr.update(interactive=False),   # keep continue disabled while running
+        gr.update(visible=False),
     )
 
 
-def _on_resume(*args):
-    """Handle Resume Training button click (same as start with resume path).
+#: The two sources of a parent checkpoint. Both go through the same check.
+CONTINUE_FROM_LIST = "From run list"
+CONTINUE_FROM_PATH = "Manual path"
 
-    The last argument is the checkpoint dropdown selection (may be None).
-    All preceding arguments are passed to _collect_config.
 
-    Returns status text, 4 empty plot DataFrames (to clear stale charts),
-    and 3 button updates.
+def _continue_parent(source: str, listed: Optional[str], manual: Optional[str]) -> str:
+    """The parent checkpoint the operator chose, from the source they chose."""
+    if source == CONTINUE_FROM_PATH:
+        return _strip_display_prefix(manual or "")
+    return str(listed or "").strip()
+
+
+def _format_continue_preview(preview: Dict[str, Any], source: str) -> str:
+    """The check result, what will happen, and the inherited settings, as a
+    read-only summary (contract M3a-3; not disabled inputs, which screen
+    readers skip)."""
+    origin = "manual path" if source == CONTINUE_FROM_PATH else "run list"
+    head = f"**Checkpoint** ({origin}): `{preview.get('parent', '')}`"
+    if preview.get("sha256"):
+        head += (f"  \nSHA-256 `{preview['sha256'][:16]}…`"
+                 + (f", architecture **{preview['architecture']}**"
+                    if preview.get("architecture") else ""))
+    if not preview.get("ok"):
+        return f"{head}\n\n❌ **Cannot continue.** {preview.get('reason')}"
+    lines = [head, "", f"✅ **{preview['action']}.**", ""]
+    inherited = preview.get("inherited") or {}
+    if inherited:
+        lines.append("Settings taken from this checkpoint (they cannot be changed when "
+                     "continuing; to train with other settings, start a new run):")
+        lines.append("")
+        lines.append("| Setting | Value |")
+        lines.append("|---|---|")
+        for name in sorted(inherited):
+            lines.append(f"| {name} | {inherited[name]!r} |")
+        lines.append("")
+    lines.append("The start checks again against this workspace's data and graph.")
+    return "\n".join(lines)
+
+
+#: The continue block's prompt before a check, and after the selection changes.
+_CONTINUE_PROMPT = "Select a checkpoint, then click **Check checkpoint**."
+
+
+def _extra_epochs_update(preview: Dict[str, Any]):
+    """The Extra epochs field belongs to a finished checkpoint: shown for one,
+    and hidden and cleared for any other, so no value is left behind for a
+    checkpoint it does not apply to (contract M3a review of `094b90d`, P2-2)."""
+    if preview.get("end") == "finished":
+        return gr.update(visible=True)
+    return gr.update(visible=False, value=None)
+
+
+def _on_continue_selection_changed():
+    """The chosen checkpoint, or where it comes from, changed: the last check
+    and the Extra epochs entered for it no longer apply, and are cleared."""
+    return gr.update(visible=False, value=None), _CONTINUE_PROMPT
+
+
+def _on_listed_changed(source):
+    """The run list changed. It is the chosen checkpoint only when the source
+    is the run list: a Refresh or a conv_type change repopulates it even while
+    a typed path is the source, and must not clear that path's check."""
+    if source == CONTINUE_FROM_PATH:
+        return gr.update(), gr.update()
+    return _on_continue_selection_changed()
+
+
+def _on_manual_changed(source):
+    """The typed path changed; it is the chosen checkpoint only when the
+    source is the typed path."""
+    if source != CONTINUE_FROM_PATH:
+        return gr.update(), gr.update()
+    return _on_continue_selection_changed()
+
+
+def _on_continue_device_changed():
+    """The device is part of the check (mixed precision takes effect only on
+    CUDA): the last check no longer describes what Continue will do. The Extra
+    epochs entered stay; they belong to the checkpoint, not the device."""
+    return _CONTINUE_PROMPT
+
+
+def _preview_for(parent: str, device: Optional[str], extend_epochs) -> Dict[str, Any]:
+    """The service's preview, with Extra epochs only for a finished
+    checkpoint: the field is the console's, and for any other checkpoint a
+    value in it is one left from an earlier selection, not a request. The API
+    and the CLI send `extend_epochs` as given and are refused as before."""
+    epochs = int(extend_epochs) if extend_epochs else None
+    return training_manager.preview_continuation(
+        parent, device=device or "auto", extend_epochs=epochs, extend_if_finished=True)
+
+
+def _on_check_continue(source, listed, manual, device, extend_epochs):
+    """Check button: preview what continuing from the chosen checkpoint does.
+
+    Returns the preview text and the extend-epochs input's update: shown only
+    for a finished checkpoint, where extending is the only way on.
+    """
+    parent = _continue_parent(source, listed, manual)
+    if not parent:
+        return ("Select a checkpoint from the run list, or enter a path, then click "
+                "**Check checkpoint**."), gr.update(visible=False, value=None)
+    preview = _preview_for(parent, device, extend_epochs)
+    text = _format_continue_preview(preview, source)
+    if preview.get("end") == "finished" and not preview.get("ok") and not extend_epochs:
+        text += "\n\nEnter **Extra epochs** below, then click **Check checkpoint** again."
+    return text, _extra_epochs_update(preview)
+
+
+def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs):
+    """Continue Training: the same check as the preview, then start.
+
+    Only operational fields are sent (contract M3a-3): every learning setting
+    comes from the checkpoint, so the training form's values are not used.
+    The training service and the training process each check again.
     """
     global _poll_cache_key
-    _poll_cache_key = None  # force full refresh on next poll tick
-    # Last arg is checkpoint dropdown; rest go to _collect_config
-    checkpoint_selection = args[-1] if args else None
-    try:
-        config = _collect_config(*args[:-1])
-    except ConfigValidationError as e:
-        gr.Warning(str(e), duration=12)
-        return (
-            "⚠️ **Invalid configuration** — see the notification.",
-            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-            gr.update(interactive=True),    # keep start enabled
-            gr.update(interactive=False),   # keep stop disabled
-            gr.update(interactive=True),    # keep resume enabled
-        )
+    _poll_cache_key = None
+    no_start = (gr.update(interactive=True), gr.update(interactive=False),
+                gr.update(interactive=True))
+    empty = (_EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF)
 
-    # Resolve the expected checkpoint dir from the CURRENT config (same rule as
-    # the write path). This is the authoritative gate — never trust whatever
-    # training_manager.checkpoint_dir happened to be from a previous refresh.
-    from src.utils.checkpoint_paths import select_checkpoint_in_dir
-
-    resolved_dir = _resolve_resume_dir(
-        config["data_dir"], config.get("conv_type", ""), config.get("checkpoint_dir", "")
-    )
-    training_manager.checkpoint_dir = resolved_dir
-
-    def _resume_error(message: str):
-        # The full message goes to a toast (persistent countdown bar + close X,
-        # unaffected by the ~1.5s status poll). The Status field only carries a
-        # short marker — details live in the toast.
+    parent = _continue_parent(source, listed, manual)
+    if not parent:
+        message = "Select a checkpoint (run list or path) under Continue Training first."
         gr.Warning(message, duration=12)
-        return (
-            "⚠️ **Resume rejected** — see the notification.",
-            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-            gr.update(interactive=True),
-            gr.update(interactive=False),
-            gr.update(interactive=True),
-        )
+        return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, message,
+                gr.update(visible=False, value=None))
+    preview = _preview_for(parent, device, extend_epochs)
+    preview_text = _format_continue_preview(preview, source)
+    if not preview.get("ok"):
+        if preview.get("end") == "finished" and not extend_epochs:
+            preview_text += ("\n\nEnter **Extra epochs** below, then click **Continue "
+                             "Training** again.")
+        gr.Warning("Cannot continue from this checkpoint; the reason is under Continue "
+                   "Training.", duration=12)
+        return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, preview_text,
+                _extra_epochs_update(preview))
 
-    selection = str(checkpoint_selection).strip() if checkpoint_selection else ""
-    if selection:
-        sel_path = Path(selection)
-        if not sel_path.exists():
-            return _resume_error(
-                "⚠️ Selected checkpoint no longer exists. Click **Refresh** and pick again."
-            )
-        # Guard against a stale dropdown pointing at another architecture's dir.
-        if not _is_within_dir(sel_path, resolved_dir):
-            return _resume_error(
-                "⚠️ Selected checkpoint is outside the checkpoint directory for the "
-                "current architecture/settings. Click **Refresh** and select a matching "
-                "checkpoint."
-            )
-        config["resume_from"] = str(sel_path)
-    else:
-        # No selection -> resume the LATEST state in the resolved dir (last.pt ->
-        # newest). No score_fn: resume wants the latest checkpoint, not the best-val.
-        fallback = select_checkpoint_in_dir(resolved_dir)
-        if fallback is None:
-            return _resume_error(f"No checkpoints found to resume from in {resolved_dir}.")
-        config["resume_from"] = str(fallback)
-
+    config: Dict[str, Any] = {
+        "data_dir": _strip_display_prefix(data_dir) or DEFAULT_WORKSPACE,
+        "run_name": (run_name or "").strip(),
+        "device": device or "auto",
+        "resume_from": preview["parent"],
+        "compile": bool(load_runtime_settings().get("torch_compile", False)),
+    }
+    if preview["mode"] == "extend":
+        config["extend_epochs"] = preview["stage"]["target_epochs"]
     result = training_manager.start_training(config)
     if result.get("success"):
-        ckpt_name = Path(config["resume_from"]).name
         return (
-            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Resuming from {ckpt_name}...",
-            _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-            gr.update(interactive=False),   # disable start
-            gr.update(interactive=True),    # enable stop
-            gr.update(interactive=False),   # disable resume
+            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n"
+            f"**Phase**: {preview['action']}...\n**Run directory**: `{result.get('run_dir')}`",
+            *empty,
+            gr.update(interactive=False), gr.update(interactive=True), gr.update(interactive=False),
+            preview_text, _extra_epochs_update(preview),
         )
-    return (
-        f"Failed: {result.get('error', 'Unknown error')}",
-        _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
-        gr.update(interactive=True),
-        gr.update(interactive=False),
-        gr.update(interactive=True),
-    )
+    return (f"Failed: {result.get('error', 'Unknown error')}", *empty, *no_start, preview_text,
+            _extra_epochs_update(preview))
+
+
+def _toggle_continue_source(source):
+    from_list = source != CONTINUE_FROM_PATH
+    return (gr.update(visible=from_list), gr.update(visible=from_list),
+            gr.update(visible=not from_list))
 
 
 def _export_metrics_csv() -> Optional[str]:
@@ -474,49 +596,23 @@ def _strip_display_prefix(path: str) -> str:
     return p[len("SHEPHERD-Advanced/"):] if p.startswith("SHEPHERD-Advanced/") else p
 
 
-def _is_within_dir(child: Path, parent: Path) -> bool:
-    """True if ``child`` is inside ``parent`` (resolved). Robust to odd/absent paths."""
-    try:
-        child_r = str(Path(child).resolve())
-        parent_r = str(Path(parent).resolve())
-        return os.path.commonpath([child_r, parent_r]) == parent_r
-    except (ValueError, OSError):
-        return False
-
-
-def _resolve_resume_dir(data_dir: str, conv_type: str, checkpoint_dir: str) -> Path:
-    """Resolve the checkpoint dir for resume, using the SAME rule as the write
-    path: an explicit checkpoint_dir wins; otherwise {data_dir}/checkpoints/{conv_type}."""
-    from src.utils.checkpoint_paths import resolve_checkpoint_dir
-
-    return resolve_checkpoint_dir(
-        _strip_display_prefix(data_dir) or "data/workspaces/default",
-        conv_type,
-        _strip_display_prefix(checkpoint_dir) or None,
-    )
-
-
-def _refresh_checkpoints(
-    data_dir_value: str = "", conv_type_value: str = "", checkpoint_dir_value: str = ""
-):
+def _refresh_checkpoints(data_dir_value: str = "", conv_type_value: str = ""):
     """Refresh the resume-checkpoint dropdown for the CURRENT training architecture.
 
-    Lists checkpoints from the architecture-scoped dir
-    ({data_dir}/checkpoints/{conv_type}/) — or an explicit checkpoint_dir if set —
-    so the dropdown always matches the selected conv_type. Wired to both the
+    Lists that architecture's run checkpoints through the shared listing
+    (`TrainingManager.get_checkpoints`, contract M3a-2), latest run first, so
+    the dropdown always matches the selected conv_type. Wired to both the
     Refresh button and conv_type's change event.
     """
-    resolved = _resolve_resume_dir(data_dir_value, conv_type_value, checkpoint_dir_value)
-    training_manager.checkpoint_dir = resolved
-    logger.info("Scanning checkpoints in: %s (exists=%s)", resolved, resolved.exists())
-
-    checkpoints = training_manager.get_checkpoints()
+    data_dir = _strip_display_prefix(data_dir_value) or DEFAULT_WORKSPACE
+    checkpoints = training_manager.get_checkpoints(data_dir, conv_type_value or None)
+    logger.info("Listed %d checkpoints in the %s runs of %s",
+                len(checkpoints), conv_type_value, data_dir)
     choices = []
     for ckpt in checkpoints:
-        name = ckpt["filename"]
         size = ckpt.get("size_mb", 0)
         epoch = ckpt.get("epoch")
-        label = f"{name} ({size:.1f} MB"
+        label = f"{ckpt['run']} / {ckpt['filename']} ({size:.1f} MB"
         if epoch is not None:
             label += f", epoch {epoch}"
         label += ")"
@@ -659,6 +755,8 @@ def _format_status(status_info: Dict[str, Any]) -> str:
 
     if status_info.get("pid"):
         lines.append(f"**PID**: {status_info['pid']}")
+    if status_info.get("run_dir"):
+        lines.append(f"**Run directory**: `{status_info['run_dir']}`")
 
     # Show phase if available (initializing, training, completed)
     phase = status_info.get("phase")
@@ -691,6 +789,9 @@ def _format_status(status_info: Dict[str, Any]) -> str:
         metric_strs = [f"{k}: {v:.4f}" for k, v in metrics.items() if isinstance(v, (int, float))]
         if metric_strs:
             lines.append("**Metrics**: " + " | ".join(metric_strs[:6]))
+
+    if s in ("stopped", "completed", "failed"):
+        lines.append(_snapshot_sentence(status_info.get("outcome")))
 
     # NOTE: error_message is intentionally NOT rendered here. It is surfaced in
     # the dedicated error banner (see _build_error_banner_payload) so failures
@@ -1095,17 +1196,17 @@ def create_training_tab() -> None:
                         value=f"{DISPLAY_PREFIX}{saved_data_dir}",
                         elem_id="data_dir",
                     )
-                    output_dir = gr.Textbox(
-                        label="Output Directory",
-                        info="Where final metrics and results are saved. (relative to project root)",
-                        value="SHEPHERD-Advanced/outputs",
-                        elem_id="output_dir",
-                    )
-                    checkpoint_dir = gr.Textbox(
-                        label="Checkpoint Directory",
-                        info="Where model checkpoints (.pt files) are saved. Leave blank to auto-derive from workspace.",
+                    run_name = gr.Textbox(
+                        label="Run name (optional)",
+                        info=(
+                            "Each run is saved in a new folder of its own: "
+                            "`<workspace>/runs/<architecture>/<date-time>_<name>_<id>/`. "
+                            "Letters, digits and hyphens are kept; blank uses \"run\". "
+                            "The folder is shown in Status once training starts."
+                        ),
                         value="",
-                        elem_id="checkpoint_dir",
+                        max_lines=1,
+                        elem_id="run_name",
                     )
                 with gr.Row():
                     save_path_btn = gr.Button("💾 Save Path", size="sm", variant="secondary")
@@ -1368,20 +1469,63 @@ def create_training_tab() -> None:
             with gr.Row():
                 start_btn = gr.Button("Start Training", variant="primary")
                 stop_btn = gr.Button("Stop Training", variant="stop", interactive=False)
-                resume_btn = gr.Button("Resume Training")
+                resume_btn = gr.Button("Continue Training")
 
-            # Checkpoint selection for resume training
-            with gr.Accordion("Checkpoint Selection for Resume Training", open=False):
+            # Stop asks first, saying what stopping loses (contract M3a).
+            with gr.Column(visible=False) as stop_confirm:
+                stop_confirm_text = gr.Markdown("")
+                with gr.Row():
+                    stop_confirm_btn = gr.Button("Stop training", variant="stop", size="sm")
+                    stop_keep_btn = gr.Button("Keep training", size="sm")
+
+            # Continue a run from a checkpoint (contract M3a-3, M3a-4): one
+            # check for a listed checkpoint and a typed path; what happens is
+            # decided by the checkpoint's own record and shown before start.
+            with gr.Accordion("Continue Training (from a saved checkpoint)", open=False):
+                gr.Markdown(
+                    "An unfinished run is resumed with its own settings; a finished run "
+                    "can be extended at a fixed rate. Click **Check checkpoint** to see "
+                    "what will happen, then **Continue Training**."
+                )
+                continue_source = gr.Radio(
+                    choices=[CONTINUE_FROM_LIST, CONTINUE_FROM_PATH],
+                    value=CONTINUE_FROM_LIST,
+                    label="Checkpoint source",
+                    elem_id="continue_source",
+                )
                 with gr.Row():
                     checkpoint_dropdown = gr.Dropdown(
-                        label="Resume Checkpoint",
-                        info="Select a checkpoint to resume from. Click Refresh to update the list.",
+                        label="Run checkpoint",
+                        info="This architecture's runs, latest first. Click Refresh to update the list.",
                         choices=[],
                         value=None,
-                        allow_custom_value=True,
                         elem_id="checkpoint_dropdown",
                     )
                     refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0)
+                manual_checkpoint = gr.Textbox(
+                    label="Checkpoint path",
+                    info="A .pt file, in the run layout or not; checked the same way as a listed one.",
+                    value="",
+                    max_lines=1,
+                    visible=False,
+                    elem_id="manual_checkpoint",
+                )
+                # No widget minimum: hidden and empty, a Number is sent as 0,
+                # which a minimum would reject before any handler runs. Empty
+                # or 0 means "not extending"; the run plan refuses below 1.
+                extend_epochs = gr.Number(
+                    label="Extra epochs (extend a finished run)",
+                    info="Trained at the fixed rate shown in the check result.",
+                    value=None,
+                    precision=0,
+                    visible=False,
+                    elem_id="extend_epochs",
+                )
+                check_continue_btn = gr.Button("Check checkpoint", size="sm")
+                continue_preview = gr.Markdown(
+                    _CONTINUE_PROMPT,
+                    elem_id="continue_preview",
+                )
 
             status_display = gr.Markdown(
                 value="**Status**: IDLE",
@@ -1492,7 +1636,7 @@ def create_training_tab() -> None:
     # =========================================================================
     all_params = [
         # Paths
-        data_dir, output_dir, checkpoint_dir,
+        data_dir, run_name,
         # Tier 1
         num_epochs, learning_rate, batch_size, conv_type, device,
         seed,
@@ -1529,18 +1673,48 @@ def create_training_tab() -> None:
         outputs=[seed],
     )
     stop_btn.click(
+        fn=_on_stop_request,
+        inputs=[],
+        outputs=[stop_confirm, stop_confirm_text],
+    )
+    stop_confirm_btn.click(
         fn=_on_stop,
         inputs=[],
-        outputs=btn_outputs,
+        outputs=btn_outputs + [stop_confirm],
+    )
+    stop_keep_btn.click(fn=_on_stop_cancel, inputs=[], outputs=[stop_confirm])
+    continue_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, device,
+                       extend_epochs]
+    check_continue_btn.click(
+        fn=_on_check_continue,
+        inputs=continue_inputs,
+        outputs=[continue_preview, extend_epochs],
     )
     resume_btn.click(
         fn=_on_resume,
-        inputs=all_params + [checkpoint_dropdown],
-        outputs=btn_outputs,
+        inputs=[data_dir, run_name, device, continue_source, checkpoint_dropdown,
+                manual_checkpoint, extend_epochs],
+        outputs=btn_outputs + [continue_preview, extend_epochs],
     )
+    continue_source.change(
+        fn=_toggle_continue_source,
+        inputs=[continue_source],
+        outputs=[checkpoint_dropdown, refresh_ckpt_btn, manual_checkpoint],
+    )
+    # A changed selection, or source, makes the last check and its Extra
+    # epochs stale: both are cleared (contract M3a review of 094b90d, P2-2).
+    # `.change` fires on updates from other events too (Refresh, conv_type), so
+    # the run list and the typed path clear only when they are the source.
+    continue_source.change(fn=_on_continue_selection_changed, inputs=[],
+                           outputs=[extend_epochs, continue_preview])
+    checkpoint_dropdown.change(fn=_on_listed_changed, inputs=[continue_source],
+                               outputs=[extend_epochs, continue_preview])
+    manual_checkpoint.change(fn=_on_manual_changed, inputs=[continue_source],
+                             outputs=[extend_epochs, continue_preview])
+    device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview])
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
-        inputs=[data_dir, conv_type, checkpoint_dir],
+        inputs=[data_dir, conv_type],
         outputs=[checkpoint_dropdown],
     )
     # Auto-relink the resume list to the selected training architecture: changing
@@ -1550,7 +1724,7 @@ def create_training_tab() -> None:
     # and the _on_resume guard cover it.)
     conv_type.change(
         fn=_refresh_checkpoints,
-        inputs=[data_dir, conv_type, checkpoint_dir],
+        inputs=[data_dir, conv_type],
         outputs=[checkpoint_dropdown],
     )
     save_path_btn.click(

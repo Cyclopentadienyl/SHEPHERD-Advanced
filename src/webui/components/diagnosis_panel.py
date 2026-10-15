@@ -915,7 +915,7 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
                 label="Architecture",
                 choices=["auto", "hgt", "gat", "sage"],
                 value="auto",
-                info="Which GNN to serve from {data}/checkpoints/<arch>/. "
+                info="Which GNN to serve: the latest run under {data}/runs/<arch>/. "
                 "'auto' = latest trained. Ignored if a checkpoint path is given.",
             )
 

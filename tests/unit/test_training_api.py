@@ -36,28 +36,28 @@ from src.api.services.training_manager import TrainingManager
 # ==============================================================================
 @pytest.fixture
 def tmp_dirs(tmp_path):
-    """Create temp directories for logs, checkpoints, and outputs."""
-    log_dir = tmp_path / "logs"
-    checkpoint_dir = tmp_path / "checkpoints"
-    output_dir = tmp_path / "outputs"
-    log_dir.mkdir()
+    """A workspace with one run directory (contract M3a-2): its logs and
+    checkpoints are inside it."""
+    data_dir = tmp_path / "ws"
+    run_dir = data_dir / "runs" / "gat" / "20260223-100000_run_aaaaaa"
+    log_dir = run_dir / "logs"
+    checkpoint_dir = run_dir / "checkpoints"
+    log_dir.mkdir(parents=True)
     checkpoint_dir.mkdir()
-    output_dir.mkdir()
     return {
+        "data_dir": str(data_dir),
+        "run_dir": str(run_dir),
         "log_dir": str(log_dir),
         "checkpoint_dir": str(checkpoint_dir),
-        "output_dir": str(output_dir),
     }
 
 
 @pytest.fixture
 def manager(tmp_dirs):
-    """Create a TrainingManager instance with temp directories."""
-    return TrainingManager(
-        log_dir=tmp_dirs["log_dir"],
-        checkpoint_dir=tmp_dirs["checkpoint_dir"],
-        output_dir=tmp_dirs["output_dir"],
-    )
+    """A TrainingManager whose last run is the fixture's run."""
+    manager = TrainingManager()
+    manager.run_dir = Path(tmp_dirs["run_dir"])
+    return manager
 
 
 @pytest.fixture
@@ -106,10 +106,12 @@ class TestTrainingManagerInit:
         assert status["status"] == "idle"
         assert status["pid"] is None
 
-    def test_directories_are_set(self, manager, tmp_dirs):
+    def test_logs_are_read_from_the_last_runs_directory(self, manager, tmp_dirs):
         assert str(manager.log_dir) == tmp_dirs["log_dir"]
-        assert str(manager.checkpoint_dir) == tmp_dirs["checkpoint_dir"]
-        assert str(manager.output_dir) == tmp_dirs["output_dir"]
+        fresh = TrainingManager()
+        assert fresh.run_dir is None and fresh.log_dir is None
+        assert fresh.get_metrics_history() == {"train": [], "validation": []}
+        assert fresh.get_status()["run_dir"] is None
 
 
 class TestTrainingManagerStartStop:
@@ -129,6 +131,47 @@ class TestTrainingManagerStartStop:
         assert result["success"] is True
         assert result["pid"] == 12345
         assert result["status"] == "running"
+
+    def test_start_names_a_new_run_directory_and_creates_nothing(self, tmp_path):
+        """The directory is named here and claimed by the training process
+        after its refusals (contract M3a-2), so a refused run leaves nothing."""
+        manager = TrainingManager()
+        mock_proc = MagicMock(pid=1)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        config = {"data_dir": str(tmp_path / "ws"), "conv_type": "hgt", "run_name": "Pilot A"}
+
+        with patch("subprocess.Popen", return_value=mock_proc) as popen:
+            result = manager.start_training(config)
+
+        run_dir = Path(result["run_dir"])
+        assert run_dir.parent == tmp_path / "ws" / "runs" / "hgt"
+        assert "_pilot-a_" in run_dir.name
+        assert not run_dir.exists()
+        assert manager.run_dir == run_dir and manager.get_status()["run_dir"] == str(run_dir)
+        import yaml
+        written = yaml.safe_load(Path(result["config_path"]).read_text())
+        assert written["run_dir"] == str(run_dir), "the process is not given the directory named"
+        assert popen.call_args[0][0][-1] == result["config_path"]
+        assert "run_dir" not in config, "the caller's dict was changed"
+
+    @pytest.mark.parametrize("retired", ["output_dir", "checkpoint_dir", "log_dir"])
+    def test_a_retired_location_is_refused_not_ignored(self, retired, tmp_path):
+        manager = TrainingManager()
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training({"data_dir": str(tmp_path), retired: "x"})
+        assert result["success"] is False and retired in result["error"]
+        popen.assert_not_called()
+
+    def test_an_explicit_run_directory_that_holds_files_is_refused(self, tmp_path):
+        used = tmp_path / "used"
+        used.mkdir()
+        (used / "config.yaml").write_text("x")
+        manager = TrainingManager()
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training({"run_dir": str(used)})
+        assert result["success"] is False and "already holds files" in result["error"]
+        popen.assert_not_called()
 
     def test_start_training_already_running(self, manager, sample_config):
         """Cannot start training when already running."""
@@ -150,6 +193,40 @@ class TestTrainingManagerStartStop:
         result = manager.stop_training()
         assert result["success"] is False
         assert "No training" in result["error"]
+
+    def test_a_stop_is_reported_as_stopped_with_the_latest_snapshot(self, manager):
+        """Contract M3a: an operator's stop is not a completed stage."""
+        process = MagicMock(pid=7)
+        process.wait.return_value = 0
+        manager._process, manager._status = process, "running"
+
+        result = manager.stop_training()
+
+        assert result == {"success": True, "status": "stopped", "outcome": None}
+        assert manager.get_status()["status"] == "stopped"
+        assert manager.get_status()["outcome"] is None, "no last.pt was saved"
+
+    def test_a_continuation_the_parent_does_not_allow_is_refused_before_launch(self, tmp_path):
+        manager = TrainingManager()
+        parent = tmp_path / "old.pt"
+        import torch
+        torch.save({"state_dict": {}}, parent)   # no M3a record
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training({"resume_from": str(parent)})
+        assert result["success"] is False and "before contract M3a" in result["error"]
+        popen.assert_not_called()
+
+    def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
+        manager = TrainingManager()
+        mock_proc = MagicMock(pid=3)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        preview = {"ok": True, "architecture": "hgt"}
+        with patch.object(manager, "preview_continuation", return_value=preview), \
+                patch("subprocess.Popen", return_value=mock_proc):
+            result = manager.start_training({"data_dir": str(tmp_path / "ws"),
+                                             "resume_from": "p.pt"})
+        assert Path(result["run_dir"]).parent == tmp_path / "ws" / "runs" / "hgt"
 
 
 class TestTrainingManagerMetrics:
@@ -198,8 +275,10 @@ class TestTrainingManagerCheckpoints:
         (ckpt_dir / "model-01-0.5000.pt").write_bytes(b"dummy")
         (ckpt_dir / "last.pt").write_bytes(b"dummy")
 
-        checkpoints = manager.get_checkpoints()
+        checkpoints = manager.get_checkpoints(tmp_dirs["data_dir"])
         assert len(checkpoints) == 2
+        assert {c["run"] for c in checkpoints} == {"20260223-100000_run_aaaaaa"}
+        assert {c["architecture"] for c in checkpoints} == {"gat"}
         filenames = [c["filename"] for c in checkpoints]
         assert "last.pt" in filenames
         assert "model-01-0.5000.pt" in filenames
@@ -300,6 +379,36 @@ class TestTrainingAPIEndpoints:
         resp = self.client.post("/api/v1/training/stop")
         assert resp.status_code == 409
 
+    def test_a_retired_location_is_refused_by_the_api(self, sample_config):
+        with patch("subprocess.Popen") as popen:
+            resp = self.client.post("/api/v1/training/start",
+                                    json={**sample_config, "checkpoint_dir": "elsewhere"})
+        assert resp.status_code == 422
+        assert "checkpoint_dir" in resp.text
+        popen.assert_not_called()
+
+    def test_only_the_fields_the_caller_set_reach_the_training_process(self):
+        """Defaults are the training script's own; a continued run inherits
+        what the caller did not set (contract M3a-3)."""
+        import yaml
+        mock_proc = MagicMock(pid=4)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        with patch("subprocess.Popen", return_value=mock_proc):
+            resp = self.client.post("/api/v1/training/start",
+                                    json={"num_epochs": 3, "device": "cpu"})
+        written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
+        assert set(written) == {"num_epochs", "device", "run_dir"}
+
+    def test_an_empty_retired_location_is_the_old_default(self, sample_config):
+        mock_proc = MagicMock(pid=2)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        with patch("subprocess.Popen", return_value=mock_proc):
+            resp = self.client.post("/api/v1/training/start",
+                                    json={**sample_config, "checkpoint_dir": ""})
+        assert resp.status_code == 200 and resp.json()["run_dir"]
+
 
 class TestSystemAPIEndpoint:
     """Test system resources endpoint."""
@@ -367,3 +476,105 @@ class TestTrainingRequestValidation:
 
         with pytest.raises(ValidationError):
             self._req(seed=2**32)
+
+
+# ==============================================================================
+# A continued run's rules are checked on the settings it will use
+# (contract M3a review of 094b90d, P2-3)
+# ==============================================================================
+@pytest.fixture(scope="module")
+def heads3_parent(tmp_path_factory):
+    """A real paused parent with hidden_dim=18 and num_heads=3: valid for gat,
+    and invalid against the new-training default hidden_dim of 256."""
+    import scripts.train_model as train_model
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    root = tmp_path_factory.mktemp("heads3")
+    ws = write_trainable_workspace(root / "ws")
+    train_model.train(train_model.TrainConfig(
+        data_dir=str(ws), run_dir=str(root / "parent"), device="cpu", hidden_dim=18,
+        num_layers=1, num_heads=3, num_workers=0, use_amp=False, num_epochs=2,
+        batch_size=5, warmup_steps=1, pause_after_epoch=1))
+    return ws, root / "parent" / "checkpoints" / "last.pt"
+
+
+@pytest.fixture
+def real_client(monkeypatch):
+    """The real route over a real TrainingManager; only the process is stubbed."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from src.api.routes.training import router
+
+    manager = TrainingManager()
+    monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    process = MagicMock(pid=11)
+    process.poll.return_value = None
+    process.stdout.readline.return_value = ""
+    with patch("subprocess.Popen", return_value=process) as popen:
+        yield TestClient(app), popen
+
+
+class TestContinuationRulesOnResolvedSettings:
+    def test_a_partial_request_inherits_before_its_rules_are_checked(self, heads3_parent,
+                                                                     real_client):
+        import yaml
+
+        ws, parent = heads3_parent
+        client, popen = real_client
+        resp = client.post("/api/v1/training/start", json={
+            "data_dir": str(ws), "resume_from": str(parent), "device": "cpu", "num_heads": 3})
+
+        assert resp.status_code == 200, resp.text
+        popen.assert_called_once()
+        written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
+        assert "hidden_dim" not in written, "hidden_dim is the parent's (18), inherited"
+
+    def test_an_explicit_value_other_than_the_parents_is_still_refused(self, heads3_parent,
+                                                                       real_client):
+        ws, parent = heads3_parent
+        client, popen = real_client
+        for heads in (6, 4):     # 18 % 6 == 0; 18 % 4 != 0: refused as a conflict either way
+            resp = client.post("/api/v1/training/start", json={
+                "data_dir": str(ws), "resume_from": str(parent), "device": "cpu",
+                "num_heads": heads})
+            assert resp.status_code == 409 and "num_heads: the parent's 3" in resp.text
+        popen.assert_not_called()
+
+    def test_resolved_settings_that_break_a_rule_are_refused_with_422(self, heads3_parent,
+                                                                      real_client, tmp_path):
+        """A parent whose recorded settings break the rule (here edited; one
+        trained through the CLI, which does not apply the API's rules, could
+        record such a pair) is refused on the settings the run would use."""
+        ws, parent = heads3_parent
+        client, popen = real_client
+        record = torch_load(parent)
+        record["config"]["requested"]["num_heads"] = 4
+        edited = tmp_path / "edited.pt"
+        import torch
+        torch.save(record, edited)
+
+        resp = client.post("/api/v1/training/start", json={
+            "data_dir": str(ws), "resume_from": str(edited), "device": "cpu"})
+        assert resp.status_code == 422
+        assert "hidden_dim (18) must be divisible by num_heads (4)" in resp.text
+        popen.assert_not_called()
+
+    def test_a_new_run_still_validates_its_defaults(self, real_client):
+        client, popen = real_client
+        for body, fragment in (
+            ({"num_heads": 3}, "hidden_dim (256) must be divisible by num_heads (3)"),
+            ({"hidden_dim": 100, "num_heads": 8}, "hidden_dim (100) must be divisible"),
+            ({"scheduler_type": "onecycle", "min_lr_ratio": 0.0}, "onecycle"),
+            ({"extend_epochs": 2}, "extend_epochs continues a parent; give resume_from"),
+        ):
+            resp = client.post("/api/v1/training/start", json=body)
+            assert resp.status_code == 422 and fragment in resp.text, (body, resp.text)
+        popen.assert_not_called()
+
+
+def torch_load(path):
+    import torch
+
+    return torch.load(path, map_location="cpu", weights_only=True)

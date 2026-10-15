@@ -15,7 +15,11 @@ Purpose:
 Usage:
     python scripts/train_model.py --config configs/train_config.yaml
     python scripts/train_model.py --data-dir data/workspaces/demo --epochs 100
-    python scripts/train_model.py --resume data/workspaces/<ws>/checkpoints/hgt/last.pt
+    python scripts/train_model.py --data-dir data/workspaces/demo --run-name pilot
+    python scripts/train_model.py --resume data/workspaces/<ws>/runs/hgt/<run>/checkpoints/last.pt
+
+    Every run writes into a new directory of its own,
+    {data_dir}/runs/{conv_type}/{date}_{run_name}_{run_id}/ (contract M3a-2).
 
 Dependencies:
     - argparse: CLI argument parsing
@@ -53,7 +57,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Collection, Dict, List, NamedTuple, Optional, Set, Tuple
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -100,6 +104,7 @@ import yaml
 from src.training.trainer import Trainer, TrainerConfig, apply_seed
 from src.training.loss_functions import LossConfig
 from src.kg.data_loader import (
+    DIAGNOSIS_SUBGRAPH_HOPS,
     DataLoaderConfig,
     DiagnosisDataLoader,
     DiagnosisDataset,
@@ -134,10 +139,13 @@ class TrainConfig:
     """Complete training configuration"""
     # Paths
     data_dir: str = "data/workspaces/default"
-    output_dir: str = "outputs"
-    checkpoint_dir: str = ""  # empty = auto-derive as {data_dir}/checkpoints
-    log_dir: str = "logs"
     config_file: Optional[str] = None
+    # Where the run writes (contract M3a-2): a directory of its own, allocated
+    # as {data_dir}/runs/{conv_type}/{date}_{run_name}_{run_id}/ unless
+    # `run_dir` names one, which must be absent or empty. Its checkpoints/ and
+    # logs/ are inside it. The name is for people and optional.
+    run_name: str = ""
+    run_dir: str = ""
 
     # Model configuration
     hidden_dim: int = 256
@@ -203,8 +211,18 @@ class TrainConfig:
     # sm_121 Triton/ptxas issue on GB10) falls back to eager via suppress_errors.
     compile: bool = False
 
-    # Resume training
+    # Continue from a parent checkpoint (contract M3a-3, M3a-4). What happens
+    # is decided by the parent's own record (`src.utils.run_plan`): an
+    # unfinished stage is resumed with every learning setting inherited; a
+    # finished one is extended at a fixed rate only with `extend_epochs`;
+    # `extend_lr` replaces a zero rate, and only a zero rate. None of these, nor
+    # `pause_after_epoch`, is inherited by a child.
     resume_from: Optional[str] = None
+    extend_epochs: Optional[int] = None
+    extend_lr: Optional[float] = None
+    # Stop at a safe boundary once this many epochs of the run's total progress
+    # are complete, recorded as paused. CLI and probe only.
+    pause_after_epoch: Optional[int] = None
 
 
 # PyTorch device grammar, kept in step with the API (src/api/routes/training.py::_DEVICE_RE) and
@@ -247,16 +265,17 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing processed data",
     )
     parser.add_argument(
-        "--output-dir",
+        "--run-name",
         type=str,
         default=None,
-        help="Directory for training outputs",
+        help="Optional name for this run, part of its allocated directory's name",
     )
     parser.add_argument(
-        "--checkpoint-dir",
+        "--run-dir",
         type=str,
         default=None,
-        help="Directory for model checkpoints",
+        help="Write this run into this directory instead of an allocated one; it must "
+             "be absent or empty",
     )
 
     # Model
@@ -324,11 +343,32 @@ def parse_args() -> argparse.Namespace:
         help="Enable torch.compile (experimental; falls back to eager on failure)",
     )
 
-    # Resume
+    # Continue from a parent
     parser.add_argument(
         "--resume",
         type=str,
-        help="Path to checkpoint to resume from",
+        help="Parent checkpoint to continue from. An unfinished stage is resumed with "
+             "the parent's settings; a finished one is extended with --extend-epochs",
+    )
+    parser.add_argument(
+        "--extend-epochs",
+        type=int,
+        default=None,
+        help="Extend a finished parent by this many epochs at a fixed rate",
+    )
+    parser.add_argument(
+        "--extend-lr",
+        type=float,
+        default=None,
+        help="With --extend-epochs: the rate for parameter groups whose rate ended at 0 "
+             "(only those; refused when none did)",
+    )
+    parser.add_argument(
+        "--pause-after-epoch",
+        type=int,
+        default=None,
+        help="Stop once this many epochs of the run's total progress are complete, "
+             "with a resumable checkpoint, recorded as paused",
     )
 
     # Misc
@@ -349,23 +389,42 @@ def parse_args() -> argparse.Namespace:
 
 def load_config(args: argparse.Namespace) -> TrainConfig:
     """Load configuration from file and command-line arguments"""
+    return load_config_with_explicit(args)[0]
+
+
+#: CLI flags whose value lands in a `TrainConfig` field of another name.
+_FLAG_FIELDS = {"epochs": "num_epochs", "lr": "learning_rate",
+                "grad_accum": "gradient_accumulation_steps", "resume": "resume_from",
+                "no_amp": "use_amp"}
+
+
+def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Set[str]]:
+    """The configuration, and the fields the operator set: the configuration
+    file's keys and the CLI flags given. A continued run inherits its parent's
+    learning settings and refuses only those set explicitly to another value
+    (contract M3a-3), so a default is never mistaken for a choice."""
     config = TrainConfig()
+    explicit: Set[str] = set()
 
     # Load from YAML if provided
     if args.config and Path(args.config).exists():
         with open(args.config) as f:
             yaml_config = yaml.safe_load(f)
+        from src.utils.checkpoint_paths import refuse_retired_locations
+
+        refuse_retired_locations(yaml_config, source=f"The configuration {args.config}")
         for key, value in yaml_config.items():
             if hasattr(config, key):
                 setattr(config, key, value)
+                explicit.add(key)
 
     # Override with command-line arguments (only if explicitly provided)
     if args.data_dir is not None:
         config.data_dir = args.data_dir
-    if args.output_dir is not None:
-        config.output_dir = args.output_dir
-    if args.checkpoint_dir is not None:
-        config.checkpoint_dir = args.checkpoint_dir
+    if args.run_name is not None:
+        config.run_name = args.run_name
+    if args.run_dir is not None:
+        config.run_dir = args.run_dir
     if args.hidden_dim is not None:
         config.hidden_dim = args.hidden_dim
     if args.num_layers is not None:
@@ -388,10 +447,20 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
         config.compile = True
     if args.resume:
         config.resume_from = args.resume
+    if args.extend_epochs is not None:
+        config.extend_epochs = args.extend_epochs
+    if args.extend_lr is not None:
+        config.extend_lr = args.extend_lr
+    if args.pause_after_epoch is not None:
+        config.pause_after_epoch = args.pause_after_epoch
     if args.seed is not None:
         config.seed = args.seed
 
-    return config
+    for name, value in vars(args).items():
+        if name in ("config", "debug") or value is None or value is False:
+            continue
+        explicit.add(_FLAG_FIELDS.get(name, name))
+    return config, explicit
 
 
 # =============================================================================
@@ -494,7 +563,8 @@ def read_resume_parent(
     - **A requested parent that does not exist refuses.** The run does not train
       from scratch instead.
     - **Read once** (M2.1), with this site's options (`map_location` the run's
-      device, `weights_only=False`). The trainer restores from this read's dict
+      device, `weights_only=True`: tensors and plain data, which every
+      checkpoint contract M3a writes is). The trainer restores from this read's dict
       and the record's `resume_checkpoint` is this read's identity, so the state
       restored and the digest recorded cannot come from two reads.
     - **The parent must record every one of this run's workspace roles with the
@@ -529,7 +599,7 @@ def read_resume_parent(
     # Named before the read, so a parent that does not load fails after a line
     # that says which file it was.
     logger.info(f"Reading the resume parent: {resume_path}")
-    parent = read_checkpoint(resume_path, map_location=device, weights_only=False)
+    parent = read_checkpoint(resume_path, map_location=device, weights_only=True)
     check_resume_parent(
         parent.checkpoint, inputs, recorded_by=f"The resume parent {resume_path}"
     )
@@ -537,6 +607,46 @@ def read_resume_parent(
         f"Resume parent accepted: {resume_path} (sha256 {parent.identity.sha256[:12]})"
     )
     return parent
+
+
+def plan_from_parent(
+    parent: "CheckpointRead", config: TrainConfig, explicit: Optional[Collection[str]],
+    device: str,
+) -> Tuple[Any, Optional[Dict[str, Any]]]:
+    """How this run continues from `parent` (`src.utils.run_plan`), and
+    early stopping's best weights when the parent names a file for them.
+
+    That file is read once, with the safe loader, and accepted only with the
+    SHA-256 the parent recorded for it: the weights a run restores at its end
+    are the ones its record names, or the run is refused.
+    """
+    from src.utils.run_plan import RunPlanRefused, plan_continuation
+    from src.utils.checkpoint_io import read_checkpoint
+
+    request = asdict(config)
+    if explicit is None:
+        defaults = asdict(TrainConfig())
+        explicit = {name for name, value in request.items() if value != defaults[name]}
+    plan = plan_continuation(parent.checkpoint, Path(parent.identity.path), request,
+                             set(explicit), device=device,
+                             parent_sha256=parent.identity.sha256)
+    logger.info(f"{plan.action}.")
+    if plan.inherited:
+        logger.info("Inherited from the parent: " + ", ".join(
+            f"{name}={value!r}" for name, value in sorted(plan.inherited.items())))
+
+    best_weights = None
+    if (plan.best_weights or {}).get("kind") == "file":
+        source = plan.best_weights
+        read = read_checkpoint(source["path"], map_location="cpu", weights_only=True)
+        if read.identity.sha256 != source["sha256"]:
+            raise RunPlanRefused(
+                f"The parent names {source['path'].name} as early stopping's best weights "
+                f"with SHA-256 {source['sha256']}; the file there now has "
+                f"{read.identity.sha256}. Put the recorded file back or choose another "
+                "checkpoint.")
+        best_weights = read.checkpoint["state_dict"]
+    return plan, best_weights
 
 
 def check_resume_parent(
@@ -678,6 +788,36 @@ def create_dataloaders(
     return train_loader, val_loader
 
 
+def loader_record(loader: DiagnosisDataLoader) -> Dict[str, Any]:
+    """A loader's settings as they take effect (contract M3a-1).
+
+    The subgraph is sampled over `DIAGNOSIS_SUBGRAPH_HOPS` hops, so only that
+    many entries of `num_neighbors` are used; both lists are recorded. The
+    validation loader is built without `num_negative_samples`, so it uses the
+    `DataLoaderConfig` default, and that is what is recorded for it. Values are
+    recorded as they are today, not corrected.
+    """
+    cfg = loader.config
+    return {
+        "batch_size": int(cfg.batch_size),
+        "num_batches": int(len(loader)),
+        "num_samples": int(len(loader.dataset)),
+        "shuffle": bool(cfg.shuffle),
+        "num_workers": int(cfg.num_workers),
+        "pin_memory_requested": bool(cfg.pin_memory),
+        "prefetch_factor": int(cfg.prefetch_factor) if cfg.num_workers > 0 else None,
+        "num_hops": int(DIAGNOSIS_SUBGRAPH_HOPS),
+        "num_neighbors_configured": [int(n) for n in cfg.num_neighbors],
+        "num_neighbors_effective": [int(n) for n in cfg.num_neighbors[:DIAGNOSIS_SUBGRAPH_HOPS]],
+        "max_subgraph_nodes": int(cfg.max_subgraph_nodes),
+        "sampling_strategy": str(cfg.sampling_strategy),
+        "num_negative_samples": int(cfg.num_negative_samples),
+        "negative_sampling_strategy": str(cfg.negative_sampling_strategy),
+        "pipeline_prefetch": int(cfg.pipeline_prefetch),
+        "fast_subgraph_build": bool(cfg.fast_subgraph_build),
+    }
+
+
 # =============================================================================
 # Model Creation
 # =============================================================================
@@ -723,12 +863,53 @@ def create_model_from_config(
     return model
 
 
+#: Fields of `TrainConfig` that say where files are, not how training runs.
+#: Left out of the checkpoint's record of the configuration requested: the inputs
+#: are identified by digest (`training_input_digests`), the parent by its digest,
+#: and a checkpoint travels without the layout of the machine that wrote it.
+LOCATION_FIELDS = frozenset({"data_dir", "run_dir", "config_file", "resume_from"})
+
+
+class TrainingDeviceUnavailable(RuntimeError):
+    """The device a run asked for cannot be had on this host."""
+
+
+def resolve_training_device(requested: str) -> str:
+    """The device training runs on, or a refusal (contract M3a, §5.2).
+
+    **`auto` means CUDA, and without CUDA it refuses**, as measurement's does
+    (`scripts/measure_scorer.py`, `_resolve_device`). It used to become CPU
+    silently, so a run asked to train on the deployment's hardware trained
+    somewhere else and said nothing; the checkpoint recorded only where it ran.
+    An explicit `cpu` stays available for development and is recorded as asked.
+
+    A request for CUDA on a host without it refuses here too, before any input
+    is read or any output exists, instead of failing later when the model is
+    moved. Other device strings are handed to torch as given.
+    """
+    wants_cuda = requested == "auto" or requested == "cuda" or requested.startswith("cuda:")
+    if wants_cuda and not torch.cuda.is_available():
+        raise TrainingDeviceUnavailable(
+            f"--device {requested} requires CUDA, which is not available here. "
+            "CUDA is a hard requirement of this project, so training does not "
+            "substitute the CPU for it. Pass --device cpu explicitly for "
+            "development; the run records the device it was given."
+        )
+    return "cuda" if requested == "auto" else requested
+
+
 # =============================================================================
 # Main Training Function
 # =============================================================================
-def train(config: TrainConfig) -> Dict[str, float]:
+def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Dict[str, float]:
     """
     Main training function
+
+    Args:
+        config: the requested configuration.
+        explicit: the fields the operator set (`load_config_with_explicit`).
+            `None`, for a caller that built `config` itself, counts every
+            field that differs from its default as set.
 
     Returns:
         Final evaluation metrics
@@ -738,13 +919,10 @@ def train(config: TrainConfig) -> Dict[str, float]:
     logger.info("=" * 60)
     logger.info(f"Configuration: {asdict(config)}")
 
-    # Set device
-    if config.device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device = config.device
+    # Set device. Refused here, before any read or write, when it cannot be had.
+    device = resolve_training_device(config.device)
 
-    logger.info(f"Using device: {device}")
+    logger.info(f"Using device: {device} (requested: {config.device})")
 
     if device == "cuda":
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
@@ -775,35 +953,48 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info("  python scripts/preprocess_data.py")
         return {}
 
+    # An explicit run directory that holds files is refused here, before the
+    # first artifact exists (contract M3a-2). It is claimed below, after every
+    # refusal, which decides again.
+    from src.utils.checkpoint_paths import (
+        check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
+    )
+
+    if config.run_dir:
+        check_run_dir_free(config.run_dir)
+
     inputs = read_training_inputs(data_dir)
     parent = read_resume_parent(config.resume_from, inputs, device)
 
-    # Create output directories
-    output_dir = Path(config.output_dir)
-    # Auto-derive an architecture-scoped checkpoint dir
-    # ({data_dir}/checkpoints/{conv_type}) so different conv types never
-    # overwrite each other. An explicit checkpoint_dir is honoured verbatim.
-    from src.utils.checkpoint_paths import resolve_checkpoint_dir
+    # **How the run continues from its parent, decided once, before any output**
+    # (contract M3a-3, M3a-4): from the parent's own record, its learning
+    # settings inherited and an explicit conflict refused. The run uses the
+    # plan's settings from here on.
+    plan = None
+    best_weights = None
+    if parent is not None:
+        plan, best_weights = plan_from_parent(parent, config, explicit, device)
+        config = TrainConfig(**plan.settings)
+    elif config.extend_epochs or config.extend_lr is not None:
+        raise ValueError("extend_epochs and extend_lr continue a parent; give resume_from.")
 
-    checkpoint_dir = resolve_checkpoint_dir(
-        config.data_dir, config.conv_type, config.checkpoint_dir or None
-    )
-    log_dir = Path(config.log_dir)
+    # **The code revision and the environment, collected once** (contract
+    # M3a-1), after every refusal above and before anything is written. Both
+    # go into every checkpoint; neither refuses anything.
+    from src.utils.run_environment import code_revision, collect_environment
 
-    for d in [output_dir, checkpoint_dir, log_dir]:
-        d.mkdir(parents=True, exist_ok=True)
+    producer = code_revision(PROJECT_ROOT)
+    environment = collect_environment(device)
 
-    # Save configuration
-    config_path = output_dir / "config.yaml"
-    with open(config_path, "w") as f:
-        yaml.dump(asdict(config), f)
-    logger.info(f"Configuration saved to {config_path}")
-
-    # The allocator is not a training parameter, so it is not in config.yaml,
-    # but it changes memory by a multiple on this project; runs are compared
-    # with it beside them.
-    with open(output_dir / "runtime.json", "w") as f:
-        json.dump(_allocator_record(), f, indent=2)
+    # **The run's own directory** (contract M3a-2): named now, claimed below
+    # after the last refusal (the parent's schedule is checked once the
+    # trainer is built), so a refused run leaves nothing. Nothing writes
+    # outside it, so no run overwrites or prunes another's files, a continued
+    # run's parent included.
+    run_dir = Path(config.run_dir) if config.run_dir else propose_run_dir(
+        config.data_dir, config.conv_type, config.run_name)
+    checkpoint_dir = run_checkpoint_dir(run_dir)
+    log_dir = run_log_dir(run_dir)
 
     # **The seed governs the initial weights too** (contract M3a). The model
     # draws its weights when it is built, and the seed used to be applied first in
@@ -832,6 +1023,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # (reduce-overhead/CUDA-graphs need static shapes). suppress_errors makes a
     # graph break or codegen failure (e.g. the known sm_121 Triton/ptxas crash
     # on GB10) fall back to eager per-graph instead of killing training.
+    compile_installed = False
     if config.compile:
         try:
             # NOTE: `import torch._dynamo as _dynamo` binds `_dynamo`, NOT `torch`.
@@ -841,6 +1033,9 @@ def train(config: TrainConfig) -> Dict[str, float]:
             import torch._dynamo as _dynamo
             _dynamo.config.suppress_errors = True
             model.compile()
+            # Installed without raising; whether graphs then ran compiled is not
+            # observed (suppress_errors falls back to eager per graph).
+            compile_installed = True
             logger.info(
                 "torch.compile ENABLED (in-place, dynamic=auto, mode=default). "
                 "Tip: run once with TORCH_LOGS=graph_breaks to count breaks; "
@@ -870,6 +1065,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
         log_dir=str(log_dir),
         device=device,
         seed=config.seed,
+        pause_after_epoch=config.pause_after_epoch,
         loss_config=LossConfig(
             diagnosis_weight=config.diagnosis_weight,
             link_prediction_weight=config.link_prediction_weight,
@@ -905,14 +1101,33 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # attribute here is not enough on its own.
     from src.utils.fingerprint import compute_fingerprint
 
-    # Restore from the parent read and checked at the top (contract M2.3); the
-    # trainer reads nothing.
+    # Continue from the parent read and checked at the top (contract M2.3,
+    # M3a-3); the trainer reads nothing. A schedule the parent's record cannot
+    # rebuild is refused here, still before the run directory exists.
     if parent is not None:
-        trainer.restore_checkpoint(parent.checkpoint)
+        trainer.continue_from(parent.checkpoint, plan, best_weights)
         logger.info(
-            f"Resumed from checkpoint: {parent.identity.path} "
+            f"Continuing from checkpoint: {parent.identity.path} "
             f"(sha256 {parent.identity.sha256[:12]})"
         )
+    del best_weights
+
+    # Claimed after the last refusal: the run's first artifact.
+    claim_run_dir(run_dir)
+    logger.info(f"Run directory: {run_dir}")
+
+    # Save configuration: the settings in effect, with the directory the run
+    # was given.
+    config_path = run_dir / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump({**asdict(config), "run_dir": str(run_dir)}, f)
+    logger.info(f"Configuration saved to {config_path}")
+
+    # The allocator is not a training parameter, so it is not in config.yaml,
+    # but it changes memory by a multiple on this project; runs are compared
+    # with it beside them.
+    with open(run_dir / "runtime.json", "w") as f:
+        json.dump(_allocator_record(), f, indent=2)
     # **Only the identity outlives the restore.** The model, optimizer,
     # scheduler and scaler hold what they took from the parent; the read itself
     # would otherwise keep every source tensor it parsed, on the run's device,
@@ -933,6 +1148,22 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # changes nothing except what they can see.
     trainer.data_fingerprint = compute_fingerprint(graph_data)
 
+    # What only this entry point knows, for every checkpoint the trainer writes
+    # (contract M3a-1; read by `build_checkpoint_payload`): the configuration
+    # as requested, the device asked for, compile, the loaders as built, and
+    # the revision and environment collected above.
+    trainer.run_record = {
+        "producer": producer,
+        "environment": environment,
+        "requested": {k: v for k, v in asdict(config).items() if k not in LOCATION_FIELDS},
+        "device_requested": config.device,
+        "compile": {"requested": bool(config.compile), "installed": compile_installed},
+        "loaders": {
+            "train": loader_record(train_loader),
+            "val": loader_record(val_loader) if val_loader is not None else None,
+        },
+    }
+
     # Only the roles this run consumed, and only from the reads: the inputs read
     # and verified at the top, and the parent restored above.
     trainer.training_input_digests = training_input_digests(inputs, parent=parent_identity)
@@ -940,6 +1171,14 @@ def train(config: TrainConfig) -> Dict[str, float]:
     # Train
     logger.info("Starting training...")
     final_metrics = trainer.train()
+    if trainer.interrupted:
+        last = checkpoint_dir / "last.pt"
+        logger.info(
+            "Training stopped. "
+            + (f"The latest resumable checkpoint is {last} (epoch "
+               f"{trainer.state.completed_epochs}); progress after it is lost."
+               if last.is_file() else "No checkpoint was saved, so nothing can be resumed."))
+        return {}
 
     # Log final results
     logger.info("=" * 60)
@@ -950,7 +1189,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info(f"  {name}: {value:.4f}")
 
     # Save final metrics
-    metrics_path = output_dir / "final_metrics.json"
+    metrics_path = run_dir / "final_metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(final_metrics, f, indent=2)
     logger.info(f"Final metrics saved to {metrics_path}")
@@ -985,7 +1224,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Load configuration
-    config = load_config(args)
+    config, explicit = load_config_with_explicit(args)
 
     # Validate training data exists
     data_dir = Path(config.data_dir)
@@ -1007,7 +1246,7 @@ def main():
 
     # Run training
     try:
-        metrics = train(config)
+        metrics = train(config, explicit)
         return 0 if metrics else 1
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")

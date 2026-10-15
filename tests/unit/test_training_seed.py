@@ -119,8 +119,7 @@ def _run(train_model, workspace, run, seed, disturbance):
     torch.rand(disturbance % 7 + 1)
 
     train_model.train(train_model.TrainConfig(
-        data_dir=str(workspace), output_dir=str(run / "outputs"), log_dir=str(run / "logs"),
-        checkpoint_dir=str(run / "checkpoints"), device="cpu", hidden_dim=16,
+        data_dir=str(workspace), run_dir=str(run), device="cpu", hidden_dim=16,
         num_layers=1, num_heads=2, num_workers=0, use_amp=False, seed=seed,
     ))
 

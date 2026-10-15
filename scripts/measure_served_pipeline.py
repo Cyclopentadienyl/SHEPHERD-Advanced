@@ -44,7 +44,7 @@ Linux only, like `benchmark_sp_lookup.py`: every counter is read from `/proc`.
 Usage:
     .venv/bin/python scripts/measure_served_pipeline.py \\
         --workspace data/workspaces/<ws> \\
-        --checkpoint data/workspaces/<ws>/checkpoints/hgt/<file>.pt \\
+        --checkpoint data/workspaces/<ws>/runs/hgt/<run>/checkpoints/<file>.pt \\
         --output readings.json
 
 Module: scripts/measure_served_pipeline.py

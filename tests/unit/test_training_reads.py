@@ -95,14 +95,15 @@ def _workspace(root, **overrides):
 
 def _config(train_model, root, run, **overrides):
     return train_model.TrainConfig(
-        data_dir=str(root), output_dir=str(run / "outputs"), log_dir=str(run / "logs"),
-        checkpoint_dir=str(run / "checkpoints"), device="cpu", hidden_dim=16,
+        data_dir=str(root), run_dir=str(run), device="cpu", hidden_dim=16,
         num_layers=1, num_heads=2, num_workers=0, use_amp=False, **overrides,
     )
 
 
 def _run_artifacts(run):
-    return [name for name in ("outputs", "logs", "checkpoints") if (run / name).exists()]
+    """What a run left in its run directory (contract M3a-2); a refused run
+    creates none."""
+    return sorted(p.name for p in run.iterdir()) if run.exists() else []
 
 
 @pytest.fixture
@@ -446,8 +447,11 @@ def test_the_path_forms_are_gone_from_training():
     from src.training.trainer import Trainer
 
     assert not hasattr(Trainer, "load_checkpoint")
-    assert hasattr(TrainerProtocol, "restore_checkpoint")
+    # M3a-3: one restore path, which continues as the run plan decided.
+    assert not hasattr(Trainer, "restore_checkpoint")
+    assert hasattr(TrainerProtocol, "continue_from")
     assert not hasattr(TrainerProtocol, "load_checkpoint")
+    assert not hasattr(TrainerProtocol, "restore_checkpoint")
 
     source = (REPO_ROOT / "scripts" / "train_model.py").read_text(encoding="utf-8")
     names = {node.id for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Name)}
@@ -462,18 +466,22 @@ def test_the_path_forms_are_gone_from_training():
     assert "torch.load" not in source
 
 
-def test_restore_checkpoint_reads_nothing_and_accepts_both_layouts(
-    train_model, captured, workspace, tmp_path
-):
-    from src.training.trainer import Trainer
+def test_continue_from_reads_nothing(train_model, captured, workspace, tmp_path):
+    """The parent is read once, by the entry point; continuing restores from
+    that read's dict and opens no file (contract M2.1, S8; M3a-3)."""
+    from pathlib import Path
+
+    from src.utils.run_plan import plan_continuation
 
     train_model.train(_config(train_model, workspace, tmp_path / "seed"))
     trainer = captured.pop("trainer")
     path = tmp_path / "parent.pt"
     trainer.state.epoch = 4
     trainer.save_checkpoint(path)
-    saved = torch.load(path, weights_only=False)
-    weights = {name: value.clone() for name, value in saved["model_state_dict"].items()}
+    saved = torch.load(path, weights_only=True)
+    weights = {name: value.clone() for name, value in saved["state_dict"].items()}
+    plan = plan_continuation(saved, Path(path), dict(saved["config"]["requested"]), set(),
+                             device="cpu")
 
     with torch.no_grad():
         for parameter in trainer.model.parameters():
@@ -481,16 +489,9 @@ def test_restore_checkpoint_reads_nothing_and_accepts_both_layouts(
     trainer.state.epoch = 0
 
     with count_opens() as opens:
-        trainer.restore_checkpoint(saved)
+        trainer.continue_from(saved, plan)
 
-    assert sum(opens.counts.values()) == 0, "restore_checkpoint opened a file"
+    assert sum(opens.counts.values()) == 0, "continue_from opened a file"
     assert trainer.state.epoch == 4
     for name, value in trainer.model.state_dict().items():
         assert torch.equal(value, weights[name])
-
-    callback_layout = dict(saved)
-    callback_layout["state_dict"] = callback_layout.pop("model_state_dict")
-    trainer.restore_checkpoint(callback_layout)
-    with pytest.raises(KeyError, match="neither 'model_state_dict' nor 'state_dict'"):
-        trainer.restore_checkpoint({"optimizer_state_dict": saved["optimizer_state_dict"]})
-    assert isinstance(trainer, Trainer)

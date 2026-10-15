@@ -73,7 +73,7 @@ Three steps, in order. Full walkthrough with data sources and expected artifacts
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
 | 2. Shortest paths | `scripts/compute_shortest_paths.py` | `shortest_paths.pt` |
-| 3. Train | dashboard training console, or `scripts/train_model.py` | `checkpoints/*.pt` |
+| 3. Train | dashboard training console, or `scripts/train_model.py` | `runs/<arch>/<run>/checkpoints/*.pt` |
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See

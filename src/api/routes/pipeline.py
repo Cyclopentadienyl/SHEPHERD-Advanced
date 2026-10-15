@@ -25,7 +25,6 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
-from src.config.model_types import SUPPORTED_CONV_TYPES
 from src.utils.file_modes import create_staging_file
 
 logger = logging.getLogger(__name__)
@@ -75,7 +74,7 @@ class PipelineReloadRequest(BaseModel):
     checkpoint_path: Optional[str] = Field(
         None,
         description="Explicit path to a .pt checkpoint. If null, auto-selects from "
-        "the architecture subdirs under {data_dir}/checkpoints/.",
+        "the latest run under {data_dir}/runs/.",
     )
     conv_type: Optional[str] = Field(
         None,
@@ -136,27 +135,21 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
     if checkpoint_path:
         result["checkpoint"] = Path(checkpoint_path).exists()
     else:
-        # Distinguish auto-selectable checkpoints (in architecture subdirs,
-        # {data_dir}/checkpoints/{conv_type}/) from LEGACY FLAT ones sitting
-        # directly under checkpoints/ (or the root). Auto only serves the former,
-        # so reporting them separately avoids "files say checkpoint=True while
-        # reload says none found".
+        # Distinguish checkpoints in the run layout ({data_dir}/runs/..., the
+        # only place automatic selection looks, contract M3a-2) from ones in an
+        # older layout ({data_dir}/checkpoints/, or the workspace root). Both are
+        # reported, so "files say checkpoint=True while reload says none found"
+        # cannot happen; a file outside the runs is served by its explicit path.
+        from src.utils.checkpoint_paths import list_run_checkpoints
+
+        run_pts = [p for _, p in list_run_checkpoints(d)]
         ckpt_dir = d / "checkpoints"
-        arch_pts: List[Path] = []
-        flat_pts: List[Path] = []
-        if ckpt_dir.is_dir():
-            for p in ckpt_dir.rglob("*.pt"):
-                rel = p.relative_to(ckpt_dir)
-                if len(rel.parts) == 1:
-                    flat_pts.append(p)  # legacy flat, not auto-selected
-                elif rel.parts[0] in SUPPORTED_CONV_TYPES:
-                    arch_pts.append(p)  # architecture-scoped, auto-selectable
-        else:
-            flat_pts = [p for p in d.glob("*.pt")
-                        if "checkpoint" in p.name or "model" in p.name]
-        result["checkpoint"] = len(arch_pts) > 0  # auto-selectable
-        result["checkpoint_legacy_flat"] = len(flat_pts) > 0
-        all_pts = arch_pts + flat_pts
+        outside = sorted(ckpt_dir.rglob("*.pt")) if ckpt_dir.is_dir() else []
+        outside += [p for p in sorted(d.glob("*.pt"))
+                    if "checkpoint" in p.name or "model" in p.name]
+        result["checkpoint"] = len(run_pts) > 0  # auto-selectable
+        result["checkpoint_outside_runs"] = len(outside) > 0
+        all_pts = run_pts + outside
         if all_pts:
             result["checkpoint_files"] = [str(p.relative_to(d)) for p in all_pts]
 
@@ -305,17 +298,19 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             f"Missing required files in {data_dir}: {missing_required}", files
         )
 
-    # Resolve which checkpoint to serve, from the architecture-scoped layout
-    # ({data_dir}/checkpoints/{conv_type}/). Priority:
-    #   1. explicit checkpoint_path (also the escape hatch for legacy flat files)
-    #   2. a specified conv_type -> that architecture's best/last/newest
-    #   3. auto -> latest-trained architecture, serving its best checkpoint
-    # Legacy flat checkpoints are NOT auto-scanned here (see checkpoint_paths).
+    # Resolve which checkpoint to serve, from the run layout
+    # ({data_dir}/runs/{conv_type}/{run}/checkpoints/, contract M3a-2). Priority:
+    #   1. explicit checkpoint_path (any location; accepted by its bytes)
+    #   2. a specified conv_type -> that architecture's latest run, its
+    #      best/last/newest
+    #   3. auto -> the latest-trained run of any architecture, its best
+    # Runs are not ranked against each other by metric. Checkpoints in an older
+    # layout are NOT scanned here (see checkpoint_paths).
     from src.utils.checkpoint_paths import (
         normalize_conv_type,
         ranking_score_detail,
-        select_auto_checkpoint,
-        select_checkpoint_in_dir,
+        select_auto_run_checkpoint,
+        select_run_checkpoint,
     )
 
     # score_fn reads the ranking metric from a checkpoint's OWN metadata (never
@@ -325,7 +320,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     def _checkpoint_score(path: Path) -> Optional[float]:
         try:
             import torch
-            ckpt = torch.load(path, map_location="cpu", weights_only=False)
+            # Tensors and plain data only (contract decision 10): this scan
+            # reads files in a directory a request names.
+            ckpt = torch.load(path, map_location="cpu", weights_only=True)
         except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
             logger.debug("checkpoint score read failed for %s: %s", path, exc)
             return None
@@ -341,7 +338,6 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     if checkpoint_path:
         selection_reason = "explicit checkpoint_path"
     else:
-        base = Path(data_dir) / "checkpoints"
         if requested_conv and requested_conv != "auto":
             try:
                 architecture = normalize_conv_type(requested_conv)
@@ -349,18 +345,19 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
                 return _refused(
                     str(exc), files, selection_reason="invalid conv_type"
                 )
-            selected = select_checkpoint_in_dir(base / architecture, score_fn=_checkpoint_score)
-            selection_reason = f"architecture '{architecture}'"
+            selected, selection_reason = select_run_checkpoint(
+                data_dir, architecture, score_fn=_checkpoint_score
+            )
         else:
-            selected, architecture, selection_reason = select_auto_checkpoint(
-                base, score_fn=_checkpoint_score
+            selected, architecture, selection_reason = select_auto_run_checkpoint(
+                data_dir, score_fn=_checkpoint_score
             )
         if selected is not None:
             checkpoint_path = str(selected)
             # Record which metric/score chose it, so "why this one?" is answerable.
             try:
                 import torch
-                _logs = torch.load(selected, map_location="cpu", weights_only=False).get("logs")
+                _logs = torch.load(selected, map_location="cpu", weights_only=True).get("logs")
                 _detail = ranking_score_detail(_logs)
             except Exception:  # noqa: BLE001
                 _detail = None
@@ -369,14 +366,14 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)
 
     if not checkpoint_path or not Path(checkpoint_path).exists():
-        # If legacy flat checkpoints exist but weren't auto-selected, say so —
-        # this is the migration-only design, so guide the user rather than
-        # contradict files_found.
-        if files.get("checkpoint_legacy_flat"):
+        # If checkpoints exist outside the run layout, say so: they are not
+        # selected automatically (decision 9: no runtime fallback), so guide the
+        # user rather than contradict files_found.
+        if files.get("checkpoint_outside_runs"):
             hint = (
-                "Legacy flat checkpoints exist under checkpoints/ but are not "
-                "auto-selected; migrate them (scripts/migrate_checkpoints.py) or "
-                "pass an explicit checkpoint_path."
+                "Checkpoints exist outside the run layout (runs/) and are not "
+                "selected automatically; move them once with "
+                "scripts/migrate_checkpoints.py, or pass an explicit checkpoint_path."
             )
         else:
             hint = "Train a model or pass an explicit checkpoint_path."

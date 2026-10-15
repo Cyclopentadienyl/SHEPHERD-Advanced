@@ -185,12 +185,30 @@ class EarlyStopping(Callback):
                     f"Best {self.config.monitor}: {self.best_value:.4f} at epoch {self.best_epoch}"
                 )
 
+    def restore_state(
+        self, recorded: Dict[str, Any], best_weights: Optional[Dict[str, Any]]
+    ) -> None:
+        """Take up a parent's state (contract M3a-3): the best value and epoch,
+        the patience counter as it stood, and the best weights the entry point
+        read. Applied after `on_train_begin`, which resets it."""
+        self.best_value = recorded.get("best_value")
+        self.best_epoch = int(recorded.get("best_epoch", 0))
+        self.counter = int(recorded.get("counter", 0))
+        self.stopped_epoch = int(recorded.get("stopped_epoch", 0))
+        self.should_stop = bool(recorded.get("should_stop", False))
+        self.best_weights = best_weights
+
     def on_train_end(self, trainer: "Trainer", **kwargs) -> None:
         if self.config.restore_best_weights and self.best_weights is not None:
             logger.info(
                 f"EarlyStopping: restoring best weights from epoch {self.best_epoch}"
             )
             trainer.model.load_state_dict(self.best_weights)
+            # The model now holds weights from an earlier step than the
+            # optimizer, scheduler and progress: what the checkpoint payload
+            # needs to know so it never writes the two as one resumable state
+            # (contract M3a-1 review, P2-2).
+            trainer.weights_restored_from = {"kind": "best", "epoch": int(self.best_epoch)}
 
     def _is_improvement(self, current: float) -> bool:
         if self.best_value is None:
@@ -200,6 +218,23 @@ class EarlyStopping(Callback):
             return current < self.best_value - self.config.min_delta
         else:
             return current > self.best_value + self.config.min_delta
+
+
+def _early_stopping_best_epoch(trainer: Optional["Trainer"]) -> Optional[int]:
+    """The epoch early stopping restores, if a trainer runs it and it has one."""
+    callbacks = getattr(getattr(trainer, "callbacks", None), "callbacks", None) or []
+    for callback in callbacks:
+        if (isinstance(callback, EarlyStopping) and callback.config.restore_best_weights
+                and callback.best_value is not None):
+            return int(callback.best_epoch)
+    return None
+
+
+def _total_epochs(trainer: "Trainer") -> int:
+    """The epoch the run trains to: its active stage's end, which an extension
+    moves past `num_epochs` (contract M3a-4)."""
+    stage_end = getattr(trainer, "stage_end", None)
+    return stage_end() if callable(stage_end) else trainer.config.num_epochs
 
 
 # =============================================================================
@@ -234,39 +269,62 @@ class ModelCheckpoint(Callback):
         self.dirpath.mkdir(parents=True, exist_ok=True)
         self.best_k_models = []
 
+    def restore_foreign(
+        self, entries: List[Dict[str, Any]], trainer: Optional["Trainer"] = None
+    ) -> None:
+        """A parent's best-k entries (contract M3a-3), each with its file
+        resolved to a path. They are ranked with this run's, but belong to the
+        run that wrote them: pruning drops them from the list and never deletes
+        them. Continued from the run's last.pt, the same epochs are kept as in a
+        run never interrupted. Continued from a best-k file, the parent's own
+        entry is listed only when it is early stopping's best epoch
+        (`src.utils.run_plan._locate_best_weights`); otherwise that file is not
+        ranked and the list is the one recorded before it was written.
+        Early stopping's state is restored first, so its best epoch's file stays
+        listed whatever its rank."""
+        self.best_k_models = [
+            {"filepath": Path(e["path"]), "value": e["value"], "epoch": int(e["epoch"]),
+             "sha256": e.get("sha256"), "foreign": True}
+            for e in entries
+        ]
+        self._sort_and_prune(trainer)
+
     def on_epoch_end(
         self, trainer: "Trainer", epoch: int, logs: Dict[str, float], **kwargs
     ) -> None:
         current_value = logs.get(self.config.monitor)
 
         if current_value is None:
+            # No best-k candidate in an epoch without the monitored metric (one
+            # without validation); `last.pt` is still written below, so the
+            # latest training state is never missing (contract M3a-3).
             logger.warning(
                 f"ModelCheckpoint: metric '{self.config.monitor}' not found"
             )
-            return
-
-        # 格式化檔名
-        filename = self.config.filename.format(
-            epoch=epoch,
-            **{k: v for k, v in logs.items() if isinstance(v, (int, float))}
-        )
-        filepath = self.dirpath / f"{filename}.pt"
-
-        # 檢查是否應該保存
-        should_save = self._should_save(current_value)
+            should_save = False
+        else:
+            should_save = self._should_save(current_value)
 
         if should_save:
-            self._save_checkpoint(trainer, filepath, epoch, logs)
+            # 格式化檔名
+            filename = self.config.filename.format(
+                epoch=epoch,
+                **{k: v for k, v in logs.items() if isinstance(v, (int, float))}
+            )
+            filepath = self.dirpath / f"{filename}.pt"
+
+            digest = self._save_checkpoint(trainer, filepath, epoch, logs)
 
             # 更新最佳模型列表
             self.best_k_models.append({
                 "filepath": filepath,
                 "value": current_value,
                 "epoch": epoch,
+                "sha256": digest,
             })
 
             # 排序並移除多餘的檢查點
-            self._sort_and_prune()
+            self._sort_and_prune(trainer)
 
         # 保存最後一個檢查點
         if self.config.save_last:
@@ -292,54 +350,58 @@ class ModelCheckpoint(Callback):
         filepath: Path,
         epoch: int,
         logs: Dict[str, float],
-    ) -> None:
-        if self.config.save_weights_only:
-            checkpoint = {"state_dict": trainer.model.state_dict()}
-        else:
-            checkpoint = {
-                "epoch": epoch,
-                "state_dict": trainer.model.state_dict(),
-                "optimizer_state_dict": trainer.optimizer.state_dict(),
-                "logs": logs,
-                "config": (
-                    trainer._serialize_config()
-                    if hasattr(trainer, "_serialize_config")
-                    else (trainer.config.__dict__ if hasattr(trainer, "config") else {})
-                ),
-            }
+    ) -> str:
+        """Write the trainer's checkpoint; return the SHA-256 of the bytes written.
 
-            if trainer.scheduler is not None:
-                checkpoint["scheduler_state_dict"] = trainer.scheduler.state_dict()
+        **One payload for both writers** (contract M3a-1): the keys, the
+        provenance (`data_fingerprint`, `training_input_digests`, `producer`,
+        `environment`) and the resume state come from
+        `src.training.checkpoint_payload.build_checkpoint_payload`, which
+        `Trainer.save_checkpoint` calls too, so a new key cannot reach one writer
+        and not the other. Written whole by
+        `src.utils.checkpoint_io.write_checkpoint`: staged, then renamed over
+        the file, so `last.pt` is never seen half-written.
+        """
+        from src.training.checkpoint_payload import build_checkpoint_payload
+        from src.utils.checkpoint_io import write_checkpoint
 
-        # Embed provenance if the trainer carries it (set by the training script).
-        #
-        # **Copied by name, both of them.** This callback does not generalise over
-        # trainer attributes, so a new one serialises nothing until it is named
-        # here. Placed after the weights-only/full branch on purpose: a
-        # weights-only checkpoint is still an artifact somebody will later have to
-        # identify, and the two questions it needs answered — is this structurally
-        # compatible, and which inputs produced it — do not stop mattering because
-        # the optimizer state was left out.
-        if hasattr(trainer, "data_fingerprint") and trainer.data_fingerprint is not None:
-            checkpoint["data_fingerprint"] = trainer.data_fingerprint
-        digests = getattr(trainer, "training_input_digests", None)
-        if digests is not None:
-            checkpoint["training_input_digests"] = digests
+        checkpoint = build_checkpoint_payload(
+            trainer, epoch=epoch, logs=logs, weights_only=self.config.save_weights_only,
+        )
+        digest = write_checkpoint(checkpoint, filepath)
+        logger.info(f"ModelCheckpoint: saved to {filepath} (sha256 {digest[:12]})")
+        return digest
 
-        torch.save(checkpoint, filepath)
-        logger.info(f"ModelCheckpoint: saved to {filepath}")
+    def _sort_and_prune(self, trainer: Optional["Trainer"] = None) -> None:
+        """Keep the best `save_top_k` files, and the file of early stopping's
+        best epoch whatever its rank.
 
-    def _sort_and_prune(self) -> None:
+        **That file is protected** (contract M3a-1 review, P2-1). Early stopping
+        counts an improvement only beyond `min_delta`, and keeps its best
+        weights in memory; this list ranks by the raw value. A run whose later
+        epochs improve by less than `min_delta` therefore ranks them above
+        early stopping's best, and pruning used to delete the one file holding
+        the weights early stopping restores and a resume needs. The epoch early
+        stopping counts as best is always saved here when it happens (it beats
+        every earlier value), so protecting it is enough; when early stopping's
+        best moves on, the old file ranks like any other.
+        """
         # 排序
         reverse = self.config.mode == "max"
         self.best_k_models.sort(key=lambda x: x["value"], reverse=reverse)
 
-        # 移除多餘的檢查點
-        while len(self.best_k_models) > self.config.save_top_k:
-            removed = self.best_k_models.pop()
-            if removed["filepath"].exists():
+        protected = _early_stopping_best_epoch(trainer)
+        keep = self.best_k_models[: self.config.save_top_k]
+        keep += [e for e in self.best_k_models[self.config.save_top_k:]
+                 if e["epoch"] == protected]
+
+        # 移除多餘的檢查點. Only this run's: a parent's file (`foreign`) leaves
+        # the list and stays on disk (contract M3a-2).
+        for removed in [e for e in self.best_k_models if e not in keep]:
+            if not removed.get("foreign") and removed["filepath"].exists():
                 removed["filepath"].unlink()
                 logger.info(f"ModelCheckpoint: removed {removed['filepath']}")
+        self.best_k_models = keep
 
 
 # =============================================================================
@@ -426,7 +488,7 @@ class MetricsLogger(Callback):
 
         self._write_progress({
             "phase": "initializing",
-            "total_epochs": trainer.config.num_epochs,
+            "total_epochs": _total_epochs(trainer),
             "timestamp": datetime.now().isoformat(),
         })
 
@@ -443,7 +505,7 @@ class MetricsLogger(Callback):
         self._write_progress({
             "phase": "training",
             "epoch": epoch,
-            "total_epochs": trainer.config.num_epochs,
+            "total_epochs": _total_epochs(trainer),
             "batch": 0,
             "total_batches": total_batches,
             "timestamp": datetime.now().isoformat(),
@@ -483,7 +545,7 @@ class MetricsLogger(Callback):
             self._write_progress({
                 "phase": "training",
                 "epoch": trainer.state.epoch,
-                "total_epochs": trainer.config.num_epochs,
+                "total_epochs": _total_epochs(trainer),
                 "batch": batch_idx + 1,
                 "total_batches": total_batches,
                 "batch_loss": logs.get("batch_loss"),
@@ -536,7 +598,7 @@ class MetricsLogger(Callback):
         self._write_progress({
             "phase": "completed",
             "epoch": trainer.state.epoch,
-            "total_epochs": trainer.config.num_epochs,
+            "total_epochs": _total_epochs(trainer),
             "timestamp": datetime.now().isoformat(),
         })
 

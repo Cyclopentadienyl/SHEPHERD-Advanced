@@ -8,7 +8,12 @@ actually loaded. Loading by path and hashing by path read the file twice, and
 checkpoints.
 
 **Not in `checkpoint_paths.py`,** which promises no torch so that the API can
-import it. torch is imported here only when a checkpoint is read.
+import it. torch is imported here only when a checkpoint is read or written.
+
+**One writer** (`write_checkpoint`, contract M3a-1): the payload is serialised
+to bytes once, its SHA-256 taken from those bytes, and the file staged and
+renamed into place, so a reader never sees a half-written checkpoint and the
+digest is that of the bytes written, not of a later read of the path.
 
 **Each site keeps its own loading options.** `map_location` and `weights_only`
 have no defaults, so a caller states the ones it already uses instead of
@@ -19,13 +24,20 @@ Module: src/utils/checkpoint_io.py
 """
 from __future__ import annotations
 
+import hashlib
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from src.utils.fingerprint import ReadIdentity
 
-__all__ = ["CheckpointRead", "read_checkpoint"]
+#: The checkpoint record's schema (contract M3a). 1 is M3a's first. Written by
+#: `src.training.checkpoint_payload`; read by `src.utils.run_plan` to decide
+#: whether a checkpoint holds a state a run can continue from.
+CHECKPOINT_RECORD_VERSION = 1
+
+__all__ = ["CheckpointRead", "read_checkpoint", "write_checkpoint"]
 
 
 class CheckpointRead(NamedTuple):
@@ -57,3 +69,35 @@ def read_checkpoint(
         torch.load(BytesIO(read.data), map_location=map_location, weights_only=weights_only),
         read.identity,
     )
+
+
+def write_checkpoint(payload: Any, path: str | Path) -> str:
+    """Write `payload` to `path` whole, and return the SHA-256 of the bytes written.
+
+    Serialised once to memory; the bytes are written to a staging file in the
+    same directory (`create_staging_file`: an unused name, the target's existing
+    mode kept), flushed to disk and renamed over `path`. A failure leaves `path`
+    as it was and removes the staging file.
+    """
+    import torch
+
+    from src.utils.file_modes import create_staging_file
+
+    buffer = BytesIO()
+    torch.save(payload, buffer)
+    data = buffer.getvalue()
+    digest = hashlib.sha256(data).hexdigest()
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, staged = create_staging_file(target, binary=True)
+    try:
+        with handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, target)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
+    return digest

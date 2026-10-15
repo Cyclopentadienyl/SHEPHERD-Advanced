@@ -698,6 +698,19 @@ class TestSplitRegimeBoundary:
                 min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
             )
 
+    def test_regenerating_where_a_run_exists_is_refused(self, demo_kg, tmp_dir):
+        """Runs live in their own directories (contract M3a-2); the guard
+        follows them there."""
+        run = tmp_dir / "runs" / "hgt" / "20261015-000000_run_aaaaaa" / "checkpoints"
+        run.mkdir(parents=True)
+        (run / "last.pt").write_bytes(b"x")
+        with pytest.raises(FileExistsError, match="runs/hgt"):
+            generate_training_samples(
+                demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
+                min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),
+            )
+        assert not (tmp_dir / "train_samples.json").exists()
+
     def test_the_refusal_writes_nothing(self, demo_kg, tmp_dir):
         (tmp_dir / "checkpoints" / "gat").mkdir(parents=True)
         with pytest.raises(FileExistsError):
@@ -711,6 +724,7 @@ class TestSplitRegimeBoundary:
     def test_an_empty_checkpoint_directory_does_not_block(self, demo_kg, tmp_dir):
         """Nothing was trained there, so nothing can be mixed."""
         (tmp_dir / "checkpoints").mkdir()
+        (tmp_dir / "runs").mkdir()
         generate_training_samples(
             demo_kg, self._allocation(demo_kg), num_train=10, num_val=5,
             min_phenotypes=1, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir), graph_export=_stub_graph_export(),

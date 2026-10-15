@@ -104,7 +104,8 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="hidden_dim",
         operand="num_heads",
         when={"conv_type": ("hgt", "gat")},
-        enforced_in="current (API _validate_head_divisibility)",
+        enforced_in="current (API _validate_head_divisibility; a continued run's on the settings "
+                    "the run plan resolves, routes/training.cross_field_errors)",
         description=(
             "hidden_dim % num_heads == 0. Required for hgt (HGTConv splits out_channels across "
             "heads) and gat (GATConv uses hidden_dim // num_heads with concat=True, so a "
@@ -118,7 +119,8 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="min_lr_ratio",
         threshold=0.0,
         when={"scheduler_type": ("onecycle",)},
-        enforced_in="current (API _validate_onecycle_min_lr; trainer _validate_min_lr_ratio)",
+        enforced_in="current (API _validate_onecycle_min_lr, and a continued run's on the "
+                    "resolved settings; trainer _validate_min_lr_ratio)",
         description=(
             "onecycle computes final_div_factor = 1 / min_lr_ratio, so it needs a strictly "
             "positive value; cosine/linear legitimately allow 0 (decay to zero)."
@@ -204,16 +206,18 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("data_dir", "str", "data/workspaces/default", "path", projects_to="TrainConfig.data_dir",
               current_api={}, current_webui="Textbox", ui_widget="Textbox",
               description="Workspace directory."),
-    FieldSpec("output_dir", "str", "outputs", "path", projects_to="TrainConfig.output_dir",
+    # Contract M3a-2: every run writes into a directory of its own under the workspace. The
+    # free output, checkpoint and log locations gave way to an optional run name; an explicit
+    # directory (absent or empty) stays a CLI option.
+    FieldSpec("run_name", "str", "", "path", projects_to="TrainConfig.run_name",
               current_api={}, current_webui="Textbox", ui_widget="Textbox",
-              description="Output directory."),
-    FieldSpec("checkpoint_dir", "str", "", "path", projects_to="TrainConfig.checkpoint_dir",
-              current_api={}, current_webui="Textbox", ui_widget="Textbox",
-              description="Checkpoint directory (blank = auto-derive from workspace)."),
-    FieldSpec("log_dir", "str", "logs", "path", projects_to="TrainConfig.log_dir",
-              current_api={}, current_webui="not-exposed", webui_exposed=False,
-              known_divergence=True, divergence_note="WebUI does not expose log_dir.",
-              description="Log directory."),
+              description="Optional run name, part of the allocated run directory's name."),
+    FieldSpec("run_dir", "str", "", "path", projects_to="TrainConfig.run_dir",
+              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              known_divergence=True,
+              divergence_note="CLI only (--run-dir). The API and the WebUI name a run and have "
+                              "its directory allocated.",
+              description="Explicit run directory; must be absent or empty."),
     FieldSpec("resume_from", "str", None, "path", projects_to="TrainConfig.resume_from",
               current_api={}, current_webui="not-exposed (WebUI uses a checkpoint dropdown)",
               webui_exposed=False, known_divergence=True,
@@ -408,6 +412,27 @@ FIELDS: Tuple[FieldSpec, ...] = (
               known_divergence=True,
               divergence_note="WebUI clamps to 0.1-3.0; API unbounded above.",
               description="Ranking-loss margin."),
+
+    # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------
+    # The parent is `resume_from`; what happens is decided by its record (src/utils/run_plan).
+    FieldSpec("extend_epochs", "int", None, "trainer", projects_to="TrainConfig.extend_epochs",
+              valid={"ge": 1}, current_api={"ge": 1},
+              current_webui="Number in the continue block (not _collect_config)",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="Set in the console's continue block, shown only for a finished "
+                              "parent; not a training-form field.",
+              description="Extend a finished parent by this many epochs at a fixed rate."),
+    FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
+              valid={"gt": 0}, current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI only (--extend-lr): replaces a zero rate, and only a zero rate.",
+              description="Rate for parameter groups whose rate ended at 0, when extending."),
+    FieldSpec("pause_after_epoch", "int", None, "runtime_setting",
+              projects_to="TrainConfig.pause_after_epoch",
+              valid={"ge": 1}, current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI and probe only (--pause-after-epoch); no WebUI or HTTP control.",
+              description="Stop with a resumable checkpoint after this many epochs of progress."),
 
     # ---- runtime setting (exempt from the projection requirement) ----------------------------
     FieldSpec("compile", "bool", False, "runtime_setting", projects_to="TrainConfig.compile",
