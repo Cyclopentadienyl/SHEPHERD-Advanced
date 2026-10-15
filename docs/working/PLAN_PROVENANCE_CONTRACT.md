@@ -2472,11 +2472,20 @@ deployment probe and production entry points as M2's, which now carry M3a's chec
   changes only M2's check), so the real-data part's 43 minutes are not rerun. The same probe
   command without `--real-*`, in a new evidence root (`/home/user/m3a-acceptance-<commit>-02/`,
   the layout above). **It ends `M2 acceptance, real data: not requested in this run`, `M2
-  acceptance: NOT COMPLETE` and exit 1 by design**; it is read by the report's
-  `acceptance.demo.complete`, every demo probe's result (M2, M3, M4, M9 and M10 among them) and
-  the exit's reason, never presented as a complete single run. M3a's functional acceptance is the
-  two rounds together, recorded with their commits and the statement that the product code is
-  the same; it is complete when the reviewer has reviewed round 02's evidence.
+  acceptance: NOT COMPLETE` and exit 1 by design**, and is never accepted on its exit alone nor
+  presented as a complete single run. It is read by the report: no probe failed or errored;
+  `m2_acceptance.demo.complete` is true and `m2_acceptance.real_data.requested` false; every
+  required demo probe passed (M2, M3, M4, M9 and M10 among them); and the exit's only reason is
+  the real data not requested. Round 01's evidence root is kept as it is, neither reused nor
+  cleared. M3a's functional acceptance is the two rounds together, recorded with their commits,
+  their scopes and the statement that the product code is the same; it is complete when the
+  reviewer has reviewed round 02's evidence.
+- **The fix, reviewed (2026-10-15):** the reviewer's review of `4b1571e..c4a21b5` closed the P2
+  with no new P1 or P2, and applied the new check offline to round 01's checkpoints (CPU,
+  `weights_only=True`, no training): demo, one epoch, 8 attempts, 8 updates, 0 skipped, 8
+  scheduler steps; real data, one epoch, 2500 attempts, 2499 updates, 1 skipped, 2499 scheduler
+  steps; both pass. That is a check of the rule on recorded counts, not a rerun of the demo's
+  measurement, serving or extension, which round 02 supplies.
 - **Not part of it:** moving the workspace's older checkpoints into the run layout. That is the
   owner's, with `scripts/migrate_checkpoints.py` (a plan first, `--apply` to move), and the
   acceptance does not need it: the reference is read by path.
