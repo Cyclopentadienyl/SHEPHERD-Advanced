@@ -204,16 +204,18 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("data_dir", "str", "data/workspaces/default", "path", projects_to="TrainConfig.data_dir",
               current_api={}, current_webui="Textbox", ui_widget="Textbox",
               description="Workspace directory."),
-    FieldSpec("output_dir", "str", "outputs", "path", projects_to="TrainConfig.output_dir",
+    # Contract M3a-2: every run writes into a directory of its own under the workspace. The
+    # free output, checkpoint and log locations gave way to an optional run name; an explicit
+    # directory (absent or empty) stays a CLI option.
+    FieldSpec("run_name", "str", "", "path", projects_to="TrainConfig.run_name",
               current_api={}, current_webui="Textbox", ui_widget="Textbox",
-              description="Output directory."),
-    FieldSpec("checkpoint_dir", "str", "", "path", projects_to="TrainConfig.checkpoint_dir",
-              current_api={}, current_webui="Textbox", ui_widget="Textbox",
-              description="Checkpoint directory (blank = auto-derive from workspace)."),
-    FieldSpec("log_dir", "str", "logs", "path", projects_to="TrainConfig.log_dir",
-              current_api={}, current_webui="not-exposed", webui_exposed=False,
-              known_divergence=True, divergence_note="WebUI does not expose log_dir.",
-              description="Log directory."),
+              description="Optional run name, part of the allocated run directory's name."),
+    FieldSpec("run_dir", "str", "", "path", projects_to="TrainConfig.run_dir",
+              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              known_divergence=True,
+              divergence_note="CLI only (--run-dir). The API and the WebUI name a run and have "
+                              "its directory allocated.",
+              description="Explicit run directory; must be absent or empty."),
     FieldSpec("resume_from", "str", None, "path", projects_to="TrainConfig.resume_from",
               current_api={}, current_webui="not-exposed (WebUI uses a checkpoint dropdown)",
               webui_exposed=False, known_divergence=True,

@@ -36,28 +36,28 @@ from src.api.services.training_manager import TrainingManager
 # ==============================================================================
 @pytest.fixture
 def tmp_dirs(tmp_path):
-    """Create temp directories for logs, checkpoints, and outputs."""
-    log_dir = tmp_path / "logs"
-    checkpoint_dir = tmp_path / "checkpoints"
-    output_dir = tmp_path / "outputs"
-    log_dir.mkdir()
+    """A workspace with one run directory (contract M3a-2): its logs and
+    checkpoints are inside it."""
+    data_dir = tmp_path / "ws"
+    run_dir = data_dir / "runs" / "gat" / "20260223-100000_run_aaaaaa"
+    log_dir = run_dir / "logs"
+    checkpoint_dir = run_dir / "checkpoints"
+    log_dir.mkdir(parents=True)
     checkpoint_dir.mkdir()
-    output_dir.mkdir()
     return {
+        "data_dir": str(data_dir),
+        "run_dir": str(run_dir),
         "log_dir": str(log_dir),
         "checkpoint_dir": str(checkpoint_dir),
-        "output_dir": str(output_dir),
     }
 
 
 @pytest.fixture
 def manager(tmp_dirs):
-    """Create a TrainingManager instance with temp directories."""
-    return TrainingManager(
-        log_dir=tmp_dirs["log_dir"],
-        checkpoint_dir=tmp_dirs["checkpoint_dir"],
-        output_dir=tmp_dirs["output_dir"],
-    )
+    """A TrainingManager whose last run is the fixture's run."""
+    manager = TrainingManager()
+    manager.run_dir = Path(tmp_dirs["run_dir"])
+    return manager
 
 
 @pytest.fixture
@@ -106,10 +106,12 @@ class TestTrainingManagerInit:
         assert status["status"] == "idle"
         assert status["pid"] is None
 
-    def test_directories_are_set(self, manager, tmp_dirs):
+    def test_logs_are_read_from_the_last_runs_directory(self, manager, tmp_dirs):
         assert str(manager.log_dir) == tmp_dirs["log_dir"]
-        assert str(manager.checkpoint_dir) == tmp_dirs["checkpoint_dir"]
-        assert str(manager.output_dir) == tmp_dirs["output_dir"]
+        fresh = TrainingManager()
+        assert fresh.run_dir is None and fresh.log_dir is None
+        assert fresh.get_metrics_history() == {"train": [], "validation": []}
+        assert fresh.get_status()["run_dir"] is None
 
 
 class TestTrainingManagerStartStop:
@@ -129,6 +131,47 @@ class TestTrainingManagerStartStop:
         assert result["success"] is True
         assert result["pid"] == 12345
         assert result["status"] == "running"
+
+    def test_start_names_a_new_run_directory_and_creates_nothing(self, tmp_path):
+        """The directory is named here and claimed by the training process
+        after its refusals (contract M3a-2), so a refused run leaves nothing."""
+        manager = TrainingManager()
+        mock_proc = MagicMock(pid=1)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        config = {"data_dir": str(tmp_path / "ws"), "conv_type": "hgt", "run_name": "Pilot A"}
+
+        with patch("subprocess.Popen", return_value=mock_proc) as popen:
+            result = manager.start_training(config)
+
+        run_dir = Path(result["run_dir"])
+        assert run_dir.parent == tmp_path / "ws" / "runs" / "hgt"
+        assert "_pilot-a_" in run_dir.name
+        assert not run_dir.exists()
+        assert manager.run_dir == run_dir and manager.get_status()["run_dir"] == str(run_dir)
+        import yaml
+        written = yaml.safe_load(Path(result["config_path"]).read_text())
+        assert written["run_dir"] == str(run_dir), "the process is not given the directory named"
+        assert popen.call_args[0][0][-1] == result["config_path"]
+        assert "run_dir" not in config, "the caller's dict was changed"
+
+    @pytest.mark.parametrize("retired", ["output_dir", "checkpoint_dir", "log_dir"])
+    def test_a_retired_location_is_refused_not_ignored(self, retired, tmp_path):
+        manager = TrainingManager()
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training({"data_dir": str(tmp_path), retired: "x"})
+        assert result["success"] is False and retired in result["error"]
+        popen.assert_not_called()
+
+    def test_an_explicit_run_directory_that_holds_files_is_refused(self, tmp_path):
+        used = tmp_path / "used"
+        used.mkdir()
+        (used / "config.yaml").write_text("x")
+        manager = TrainingManager()
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training({"run_dir": str(used)})
+        assert result["success"] is False and "already holds files" in result["error"]
+        popen.assert_not_called()
 
     def test_start_training_already_running(self, manager, sample_config):
         """Cannot start training when already running."""
@@ -198,8 +241,10 @@ class TestTrainingManagerCheckpoints:
         (ckpt_dir / "model-01-0.5000.pt").write_bytes(b"dummy")
         (ckpt_dir / "last.pt").write_bytes(b"dummy")
 
-        checkpoints = manager.get_checkpoints()
+        checkpoints = manager.get_checkpoints(tmp_dirs["data_dir"])
         assert len(checkpoints) == 2
+        assert {c["run"] for c in checkpoints} == {"20260223-100000_run_aaaaaa"}
+        assert {c["architecture"] for c in checkpoints} == {"gat"}
         filenames = [c["filename"] for c in checkpoints]
         assert "last.pt" in filenames
         assert "model-01-0.5000.pt" in filenames
@@ -299,6 +344,23 @@ class TestTrainingAPIEndpoints:
     def test_stop_training_not_running(self):
         resp = self.client.post("/api/v1/training/stop")
         assert resp.status_code == 409
+
+    def test_a_retired_location_is_refused_by_the_api(self, sample_config):
+        with patch("subprocess.Popen") as popen:
+            resp = self.client.post("/api/v1/training/start",
+                                    json={**sample_config, "checkpoint_dir": "elsewhere"})
+        assert resp.status_code == 422
+        assert "checkpoint_dir" in resp.text
+        popen.assert_not_called()
+
+    def test_an_empty_retired_location_is_the_old_default(self, sample_config):
+        mock_proc = MagicMock(pid=2)
+        mock_proc.poll.return_value = None
+        mock_proc.stdout.readline.return_value = ""
+        with patch("subprocess.Popen", return_value=mock_proc):
+            resp = self.client.post("/api/v1/training/start",
+                                    json={**sample_config, "checkpoint_dir": ""})
+        assert resp.status_code == 200 and resp.json()["run_dir"]
 
 
 class TestSystemAPIEndpoint:

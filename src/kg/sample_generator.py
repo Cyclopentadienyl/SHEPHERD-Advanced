@@ -456,10 +456,14 @@ def refuse_if_checkpoints_exist(workspace: Path) -> None:
     them — an identical ``kg.json`` digest proves both workspaces were cut from
     the same graph.
     """
-    checkpoints = workspace / "checkpoints"
-    if not checkpoints.is_dir():
-        return
-    existing = sorted(path.name for path in checkpoints.iterdir())
+    # Both layouts: the run directories (contract M3a-2) and the older
+    # checkpoints/ directory, which nothing writes any more but may still hold
+    # models trained on this workspace.
+    existing = sorted(
+        f"{holder.name}/{path.name}"
+        for holder in (workspace / "runs", workspace / "checkpoints") if holder.is_dir()
+        for path in holder.iterdir()
+    )
     if not existing:
         return
     raise FileExistsError(

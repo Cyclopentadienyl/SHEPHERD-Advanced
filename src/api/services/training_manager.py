@@ -82,12 +82,7 @@ class TrainingManager:
     and Gradio event handlers in the same FastAPI process.
     """
 
-    def __init__(
-        self,
-        log_dir: str = "logs",
-        checkpoint_dir: str = "checkpoints",  # relative to workspace
-        output_dir: str = "outputs",
-    ):
+    def __init__(self):
         self._process: Optional[subprocess.Popen] = None
         self._status: str = "idle"
         self._user_stopped: bool = False
@@ -98,9 +93,24 @@ class TrainingManager:
         self._monitor_thread: Optional[threading.Thread] = None
         self._temp_config_path: Optional[Path] = None
 
-        self.log_dir = Path(log_dir)
-        self.checkpoint_dir = Path(checkpoint_dir)
-        self.output_dir = Path(output_dir)
+        #: The directory of the run started last (contract M3a-2). Named here
+        #: and claimed by the training process once its inputs pass, so a
+        #: refused run leaves nothing behind; its logs are read from inside it.
+        self.run_dir: Optional[Path] = None
+
+    @property
+    def log_dir(self) -> Optional[Path]:
+        """The logs of the run started last, or `None` before any."""
+        from src.utils.checkpoint_paths import run_log_dir
+
+        return run_log_dir(self.run_dir) if self.run_dir is not None else None
+
+    @staticmethod
+    def workspace_path(data_dir: str) -> Path:
+        """A workspace path as the training process resolves it: relative to
+        the project root, where the process runs."""
+        path = Path(data_dir or "data/workspaces/default")
+        return path if path.is_absolute() else PROJECT_ROOT / path
 
     # =========================================================================
     # Training Control
@@ -127,33 +137,30 @@ class TrainingManager:
                     "status": self._status,
                 }
 
+            # **The run's own directory** (contract M3a-2): named here, so the
+            # status and the console know where its logs and checkpoints will be,
+            # and handed to the training process, which claims it after its
+            # inputs pass. An explicit one must be free; nothing is created here.
+            from src.utils.checkpoint_paths import (
+                check_run_dir_free, propose_run_dir, refuse_retired_locations,
+            )
+
+            try:
+                refuse_retired_locations(config, source="This training request")
+                if config.get("run_dir"):
+                    run_dir = check_run_dir_free(config["run_dir"])
+                else:
+                    run_dir = propose_run_dir(
+                        self.workspace_path(config.get("data_dir", "")),
+                        config.get("conv_type"), config.get("run_name"))
+            except (ValueError, OSError) as e:
+                return {"success": False, "error": str(e), "status": self._status}
+
+            config = {**config, "run_dir": str(run_dir)}
             self._config = config
             self._error_message = None
             self._user_stopped = False
-
-            # Derive an architecture-scoped checkpoint_dir
-            # ({data_dir}/checkpoints/{conv_type}) so conv types don't collide;
-            # an explicit checkpoint_dir is honoured verbatim. The resolved dir
-            # is written back into the config below, so the training subprocess
-            # inherits it directly.
-            from src.utils.checkpoint_paths import resolve_checkpoint_dir
-
-            data_dir = config.get("data_dir", "")
-            cfg_ckpt_dir = config.get("checkpoint_dir", "")
-            if data_dir or cfg_ckpt_dir:
-                self.checkpoint_dir = resolve_checkpoint_dir(
-                    data_dir, config.get("conv_type"), cfg_ckpt_dir or None
-                )
-
-            # Ensure directories exist
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Apply directory paths to config
-            config.setdefault("log_dir", str(self.log_dir))
-            config.setdefault("checkpoint_dir", str(self.checkpoint_dir))
-            config.setdefault("output_dir", str(self.output_dir))
+            self.run_dir = run_dir
 
             # Write config to temp YAML
             temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
@@ -203,12 +210,13 @@ class TrainingManager:
             )
             self._monitor_thread.start()
 
-            logger.info(f"Training started (PID: {self._process.pid})")
+            logger.info(f"Training started (PID: {self._process.pid}), run directory {run_dir}")
             return {
                 "success": True,
                 "pid": self._process.pid,
                 "status": "running",
                 "config_path": str(self._temp_config_path),
+                "run_dir": str(run_dir),
             }
 
     def stop_training(self) -> Dict[str, Any]:
@@ -327,6 +335,8 @@ class TrainingManager:
 
     def _read_progress_file(self) -> Optional[Dict[str, Any]]:
         """Read the lightweight progress.json file."""
+        if self.log_dir is None:
+            return None
         progress_file = self.log_dir / "progress.json"
         if not progress_file.exists():
             return None
@@ -350,6 +360,7 @@ class TrainingManager:
                 "elapsed_seconds": elapsed,
                 "error_message": self._error_message,
                 "config": self._config,
+                "run_dir": str(self.run_dir) if self.run_dir is not None else None,
             }
 
         # Read progress file for real-time batch-level progress
@@ -419,7 +430,7 @@ class TrainingManager:
 
     def _find_latest_log_file(self) -> Optional[Path]:
         """Find the most recently modified training log file."""
-        if not self.log_dir.exists():
+        if self.log_dir is None or not self.log_dir.exists():
             return None
 
         log_files = sorted(
@@ -433,39 +444,53 @@ class TrainingManager:
     # Checkpoint Management
     # =========================================================================
 
-    def get_checkpoints(self) -> List[Dict[str, Any]]:
+    def get_checkpoints(
+        self, data_dir: Optional[str] = None, conv_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        List checkpoint files with metadata.
+        List a workspace's run checkpoints with metadata (contract M3a-2).
+
+        Every run's, or one architecture's, through the shared listing
+        (`checkpoint_paths.list_run_checkpoints`): runs most recently trained
+        first, newest file first within a run. The workspace defaults to the
+        last training request's. What each file is comes from its own record;
+        a listed file is not thereby verified, and a file outside the run
+        layout is reached by its path.
 
         Returns:
             List of checkpoint info dicts.
         """
-        if not self.checkpoint_dir.exists():
-            return []
+        from src.utils.checkpoint_paths import list_run_checkpoints, run_architecture
+
+        if data_dir is None:
+            if not self._config:
+                return []
+            data_dir = self._config.get("data_dir", "")
+        workspace = self.workspace_path(data_dir)
 
         checkpoints = []
-        for ckpt_path in sorted(
-            self.checkpoint_dir.glob("*.pt"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        ):
+        for run, ckpt_path in list_run_checkpoints(workspace, conv_type):
             stat = ckpt_path.stat()
             info: Dict[str, Any] = {
                 "filename": ckpt_path.name,
                 "filepath": str(ckpt_path),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "run": run.name,
+                "run_dir": str(run),
+                "architecture": run_architecture(run),
             }
 
-            # Try to read checkpoint metadata without loading full tensors
+            # The file's own record. This loads the whole file; tensors and
+            # plain data only (contract decision 10).
             try:
                 import torch
 
-                # Tensors and plain data only (contract decision 10).
                 meta = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 if isinstance(meta, dict):
                     info["epoch"] = meta.get("epoch")
                     info["metrics"] = meta.get("logs", {})
+                    info["checkpoint_kind"] = meta.get("checkpoint_kind")
             except Exception:
                 pass
 

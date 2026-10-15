@@ -31,7 +31,7 @@ Output files:
     <output_dir>/train_samples.json   - Training cohort
     <output_dir>/val_samples.json     - Validation cohort (disease-disjoint)
     <output_dir>/split_manifest.json  - Binds all six to one production event
-    <output_dir>/checkpoints/gat/     - Checkpoints (if --train-model)
+    <output_dir>/runs/gat/<run>/      - The demo run (if --train-model)
 
 The command to start the API is printed on completion, with the checkpoint the
 run actually selected.
@@ -259,12 +259,16 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
         The checkpoint the API should serve.
     """
     from scripts.train_model import TrainConfig, train
-    from src.utils.checkpoint_paths import resolve_checkpoint_dir, select_checkpoint_in_dir
+    from src.utils.checkpoint_paths import (
+        propose_run_dir, run_checkpoint_dir, select_checkpoint_in_dir,
+    )
 
+    # The run's own directory under the workspace's runs (contract M3a-2),
+    # named here so the checkpoint served is this run's.
+    run_dir = propose_run_dir(workspace, "gat", "demo")
     config = TrainConfig(
         data_dir=str(workspace),
-        output_dir=str(workspace / "outputs"),
-        log_dir=str(workspace / "logs"),
+        run_dir=str(run_dir),
         conv_type="gat",
         hidden_dim=DEMO_FEATURE_DIM,
         num_layers=2,
@@ -283,7 +287,7 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
             f"scripts/train_model.py --data-dir {workspace}"
         )
 
-    ckpt_dir = resolve_checkpoint_dir(str(workspace), config.conv_type, None)
+    ckpt_dir = run_checkpoint_dir(run_dir)
     selected = select_checkpoint_in_dir(ckpt_dir)
     if selected is None:
         raise SystemExit(f"Training wrote no checkpoint under {ckpt_dir}.")

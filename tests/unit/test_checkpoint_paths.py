@@ -1,5 +1,5 @@
 """
-Unit tests for architecture-scoped checkpoint path derivation & selection.
+Unit tests for the run layout's path derivation & selection (contract M3a-2).
 
 Dependency-light — checkpoint_paths imports only the torch-free constants module.
 """
@@ -12,8 +12,6 @@ from src.utils.checkpoint_paths import (
     normalize_conv_type,
     ranking_score_detail,
     ranking_score_from_logs,
-    resolve_checkpoint_dir,
-    select_auto_checkpoint,
     select_checkpoint_in_dir,
 )
 
@@ -44,24 +42,6 @@ def test_normalize_conv_type_explicit_invalid_raises(bad):
 
 
 # --------------------------------------------------------------- resolve dir
-def test_resolve_checkpoint_dir_auto():
-    assert resolve_checkpoint_dir("ws", "hgt") == Path("ws/checkpoints/hgt")
-    assert resolve_checkpoint_dir("ws", "GAT") == Path("ws/checkpoints/gat")
-    assert resolve_checkpoint_dir("ws", None) == Path("ws/checkpoints/gat")  # default
-
-
-def test_resolve_checkpoint_dir_invalid_conv_raises():
-    with pytest.raises(ValueError, match="Unsupported conv_type"):
-        resolve_checkpoint_dir("ws", "gatv2")
-
-
-def test_resolve_checkpoint_dir_explicit_wins_verbatim():
-    # explicit dir is returned unchanged — no conv_type appended, no validation
-    assert resolve_checkpoint_dir("ws", "hgt", "/custom/ckpts") == Path("/custom/ckpts")
-    # even an odd conv_type is irrelevant when an explicit dir is given
-    assert resolve_checkpoint_dir("ws", "gatv2", "/custom") == Path("/custom")
-
-
 # ---------------------------------------------------------- ranking score reader
 def test_ranking_score_key_priority():
     assert ranking_score_detail({"val_mrr": 0.7, "val_hits@10": 0.9}) == ("val_mrr", 0.7)
@@ -158,98 +138,6 @@ def test_select_none_when_empty_or_missing(tmp_path):
     assert select_checkpoint_in_dir(tmp_path / "empty") is None
 
 
-# --------------------------------------------------------------- auto selection
-def test_auto_picks_latest_arch_then_best_within(tmp_path):
-    # auto = latest-trained architecture, then best-scoring checkpoint within it.
-    # hgt has a HIGHER score but is older -> not chosen (metrics not compared
-    # across architectures).
-    base = tmp_path / "checkpoints"
-    _touch(base / "hgt" / "model-40-hi.pt", 100)   # score 0.95 but older arch
-    _touch(base / "gat" / "model-05-lo.pt", 500)
-    _touch(base / "gat" / "model-20-hi.pt", 501)   # newer arch, its best
-    fn = _score_map({
-        "model-40-hi.pt": 0.95,
-        "model-05-lo.pt": 0.30,
-        "model-20-hi.pt": 0.85,
-    })
-    path, arch, reason = select_auto_checkpoint(base, score_fn=fn)
-    assert arch == "gat"
-    assert path.name == "model-20-hi.pt"
-    assert "gat" in reason
-
-
-def test_auto_ignores_non_architecture_dirs(tmp_path):
-    base = tmp_path / "checkpoints"
-    _touch(base / "junk" / "last.pt", 999)  # not a supported arch name
-    _touch(base / "hgt" / "last.pt", 100)
-    path, arch, _ = select_auto_checkpoint(base)
-    assert arch == "hgt"
-    assert path.name == "last.pt"
-
-
-def test_auto_none_without_architecture_checkpoints(tmp_path):
-    base = tmp_path / "checkpoints"
-    base.mkdir()
-    _touch(base / "legacy.pt", 100)  # flat file, no arch subdir -> not auto-selected
-    path, arch, reason = select_auto_checkpoint(base)
-    assert path is None and arch is None
-    assert "no architecture" in reason
-
-
-def _layout(tmp_path, mtimes):
-    base = tmp_path / "checkpoints"
-    for arch, when in mtimes.items():
-        directory = base / arch
-        directory.mkdir(parents=True)
-        checkpoint = directory / "last.pt"
-        checkpoint.write_bytes(b"weights")
-        os.utime(checkpoint, (when, when))
-    return base
-
-
-def test_equal_mtimes_choose_by_name_not_by_the_filesystem(tmp_path, monkeypatch):
-    """`iterdir()` order is unspecified — ext4 returns directory-hash order,
-    which depends on the names and a per-filesystem seed. Two architectures
-    whose newest checkpoint shares an mtime would otherwise pick which model
-    gets served by a property of the disk.
-
-    **The order is injected, not hoped for.** The first version of this test
-    built three directories and trusted the filesystem to hand them back
-    adversarially; it passed against the unfixed selector on this machine, which
-    is a test passing for the wrong reason. Feeding the discovery step a
-    deliberately wrong order is what isolates the ranking key.
-    """
-    from src.utils import checkpoint_paths
-
-    base = _layout(tmp_path, {"gat": 1_700_000_000, "hgt": 1_700_000_000,
-                              "sage": 1_700_000_000})
-    monkeypatch.setattr(
-        checkpoint_paths, "_architecture_dirs",
-        lambda b: [base / "sage", base / "hgt", base / "gat"],
-    )
-
-    selected, architecture, reason = checkpoint_paths.select_auto_checkpoint(base)
-
-    assert architecture == "gat", "the tie was not broken by name"
-    assert selected == base / "gat" / "last.pt"
-    assert "gat" in reason
-
-
-def test_a_newer_architecture_still_wins_over_the_name(tmp_path, monkeypatch):
-    """Otherwise the tie-break would have become the rule."""
-    from src.utils import checkpoint_paths
-
-    base = _layout(tmp_path, {"gat": 1_700_000_000, "sage": 1_700_000_900})
-    monkeypatch.setattr(
-        checkpoint_paths, "_architecture_dirs",
-        lambda b: [base / "gat", base / "sage"],
-    )
-
-    _, architecture, _ = checkpoint_paths.select_auto_checkpoint(base)
-
-    assert architecture == "sage"
-
-
 # --------------------------------------------------------------- run directories (M3a-2)
 def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
     from datetime import datetime
@@ -260,7 +148,7 @@ def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
                                 now=datetime(2026, 10, 15, 9, 30, 0))
     assert first.parent == tmp_path / "runs" / "hgt"
     assert first.name.startswith("20261015-093000_temp-cosine-pilot_")
-    assert first.is_dir() and not any(first.iterdir())
+    assert sorted(p.name for p in first.iterdir()) == ["checkpoints", "logs"]
 
     second = cp.allocate_run_dir(tmp_path, "hgt")
     assert second != first and "_run_" in second.name
@@ -324,3 +212,80 @@ def test_selection_finds_nothing_outside_the_run_layout(tmp_path):
 
     assert select_auto_run_checkpoint(tmp_path)[0] is None
     assert select_run_checkpoint(tmp_path, "hgt")[0] is None
+
+
+def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
+    """The order is a total key (newest checkpoint, then the run's name), so
+    which run is selected never depends on `iterdir()`'s order, which ext4
+    gives by directory hash."""
+    from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
+
+    root = tmp_path / "runs"
+    for arch, name in (("sage", "20261001-000000_a_111111"),
+                       ("gat", "20261003-000000_c_333333"),
+                       ("hgt", "20261002-000000_b_222222")):
+        _touch(root / arch / name / "checkpoints" / "last.pt", 1_700_000_000)
+
+    assert [r.name for r in list_runs(tmp_path)] == [
+        "20261003-000000_c_333333", "20261002-000000_b_222222", "20261001-000000_a_111111"]
+    assert select_auto_run_checkpoint(tmp_path)[1] == "gat"
+    _touch(root / "sage" / "20261001-000000_a_111111" / "checkpoints" / "last.pt",
+           1_700_000_900)
+    assert select_auto_run_checkpoint(tmp_path)[1] == "sage", "newer training wins over the name"
+
+
+def test_an_explicit_run_directory_must_be_free(tmp_path):
+    from src.utils.checkpoint_paths import RunDirectoryTaken, check_run_dir_free, claim_run_dir
+
+    assert check_run_dir_free(tmp_path / "absent") == tmp_path / "absent"
+    (tmp_path / "empty").mkdir()
+    assert claim_run_dir(tmp_path / "empty") == tmp_path / "empty"
+    assert (tmp_path / "empty" / "checkpoints").is_dir()
+
+    used = tmp_path / "used"
+    _touch(used / "config.yaml", 100)
+    with pytest.raises(RunDirectoryTaken, match="already holds files"):
+        check_run_dir_free(used)
+    with pytest.raises(RunDirectoryTaken):
+        claim_run_dir(used)
+    assert sorted(p.name for p in used.iterdir()) == ["config.yaml"], "a refusal created files"
+
+    _touch(tmp_path / "a-file", 100)
+    with pytest.raises(RunDirectoryTaken, match="not a directory"):
+        check_run_dir_free(tmp_path / "a-file")
+
+
+def test_of_two_claims_on_one_free_directory_only_one_wins(tmp_path, monkeypatch):
+    """The free check and the creation are two steps; the claim is the
+    creation of `checkpoints/`, so a run that passed the check second is still
+    refused."""
+    from src.utils import checkpoint_paths as cp
+
+    target = tmp_path / "shared"
+    real_check = cp.check_run_dir_free
+
+    def check_then_lose_the_race(run_dir):
+        path = real_check(run_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "checkpoints").mkdir(exist_ok=True)   # the other run claims it here
+        return path
+
+    monkeypatch.setattr(cp, "check_run_dir_free", check_then_lose_the_race)
+    with pytest.raises(cp.RunDirectoryTaken, match="claimed by another run"):
+        cp.claim_run_dir(target)
+
+
+def test_the_listing_is_by_run_then_newest_file(tmp_path):
+    from src.utils.checkpoint_paths import list_run_checkpoints
+
+    root = tmp_path / "runs"
+    old = root / "gat" / "20261001-000000_a_111111"
+    new = root / "hgt" / "20261002-000000_b_222222"
+    _touch(old / "checkpoints" / "last.pt", 100)
+    _touch(new / "checkpoints" / "model-1.pt", 200)
+    _touch(new / "checkpoints" / "last.pt", 300)
+    _touch(tmp_path / "checkpoints" / "gat" / "last.pt", 900)   # old layout: not listed
+
+    assert [(r.name, p.name) for r, p in list_run_checkpoints(tmp_path)] == [
+        (new.name, "last.pt"), (new.name, "model-1.pt"), (old.name, "last.pt")]
+    assert [p.name for _, p in list_run_checkpoints(tmp_path, "gat")] == ["last.pt"]

@@ -1,25 +1,31 @@
 """
 Checkpoint path derivation & selection — dependency-light.
 ==========================================================
-Single source of truth for the on-disk checkpoint layout, shared by the trainer
-(write path), the training service (listing), and the inference reload route
-(read path) so all three agree:
+Single source of truth for the on-disk run layout, shared by the training entry
+point (write path), the training service and console (listing, resume source),
+and the inference reload route (read path), so all of them agree:
 
-    {data_dir}/checkpoints/{conv_type}/     e.g.  .../checkpoints/hgt/
+    {data_dir}/runs/{conv_type}/{date}_{name}_{run_id}/
+        config.yaml  runtime.json  final_metrics.json
+        checkpoints/   last.pt, model-*.pt
+        logs/          train_*.json, progress.json
 
-Splitting by architecture stops different conv types (HGT/GAT/SAGE) from
-overwriting each other's ``last.pt`` and intermixing their ``model-*.pt`` best
-checkpoints in one flat directory.
+**One directory per training run** (contract decision 9, M3a-2). A run, new or
+resumed, writes only into a directory no run has used, so no run overwrites or
+prunes another's files. Runs sit side by side under their architecture, never
+nested by lineage: a resumed run records its parent by SHA-256, not by where it
+sits.
 
 No torch / PyG imports — safe to import from training scripts and API services.
 
-Legacy note:
-    Flat checkpoints written before this layout (``{data_dir}/checkpoints/*.pt``)
-    are intentionally NOT handled by a runtime fallback here. That set is finite
-    and frozen — no new flat checkpoints are ever produced — so rather than carry
-    permanent fallback code + tests, legacy checkpoints are loaded via an
-    explicit checkpoint path (already supported by the reload API) or retired
-    once via ``scripts/migrate_checkpoints.py``.
+Old layouts:
+    Checkpoints written before this layout (``{data_dir}/checkpoints/{conv}/``
+    and the older flat ``{data_dir}/checkpoints/*.pt``) are intentionally NOT
+    found by a runtime fallback here. Nothing writes there any more; such a file
+    is reached by an explicit checkpoint path, which every reader accepts and
+    checks by its bytes, or moved once, by the owner, with
+    ``scripts/migrate_checkpoints.py`` (decision 9). Not being listed does not
+    make a file invalid.
 
 Module: src/utils/checkpoint_paths.py
 """
@@ -87,22 +93,6 @@ def normalize_conv_type(conv_type: Optional[str]) -> str:
     return ct
 
 
-def resolve_checkpoint_dir(
-    data_dir: PathLike,
-    conv_type: Optional[str],
-    explicit_dir: Optional[PathLike] = None,
-) -> Path:
-    """Where a training run's checkpoints live.
-
-    An explicit dir is honoured verbatim (the user chose it — no conv_type is
-    appended). Otherwise the architecture-scoped default
-    ``{data_dir}/checkpoints/{conv_type}`` is used.
-    """
-    if explicit_dir:
-        return Path(explicit_dir)
-    return Path(data_dir) / "checkpoints" / normalize_conv_type(conv_type)
-
-
 def select_checkpoint_in_dir(
     ckpt_dir: PathLike, score_fn: Optional[ScoreFn] = None
 ) -> Optional[Path]:
@@ -144,46 +134,6 @@ def select_checkpoint_in_dir(
     return max(pts, key=lambda p: p.stat().st_mtime)
 
 
-def _architecture_dirs(base: Path) -> List[Path]:
-    """Valid architecture subdirs under a checkpoints/ dir (ignores stray names)."""
-    if not base.is_dir():
-        return []
-    return [d for d in base.iterdir() if d.is_dir() and d.name in SUPPORTED_CONV_TYPES]
-
-
-def select_auto_checkpoint(
-    base_checkpoints_dir: PathLike, score_fn: Optional[ScoreFn] = None
-) -> Tuple[Optional[Path], Optional[str], str]:
-    """Auto selection: the most-recently-trained architecture, serving its best.
-
-    The architecture is chosen by mtime (latest trained); within it the best
-    checkpoint is chosen by ``score_fn`` (see ``select_checkpoint_in_dir``).
-    Metrics from different architectures are not compared directly.
-
-    Returns ``(checkpoint_path, conv_type, reason)``. Only architecture subdirs
-    are considered; legacy flat checkpoints are handled out-of-band (explicit
-    path / migration), not by a runtime fallback here.
-    """
-    base = Path(base_checkpoints_dir)
-    ranked: List[Tuple[float, Path]] = []
-    for d in _architecture_dirs(base):
-        pts = list(d.glob("*.pt"))
-        if pts:
-            ranked.append((max(p.stat().st_mtime for p in pts), d))
-    if not ranked:
-        return None, None, "no architecture-subdir checkpoints found"
-    # **Name breaks the tie, not the filesystem.** `iterdir()` order is
-    # unspecified — ext4 returns directory-hash order, which depends on the
-    # names and on a per-filesystem seed — so two architectures whose newest
-    # checkpoint shares an mtime would otherwise pick which model gets served
-    # by a property of the disk. Rare, and not a thing to leave to chance in the
-    # component that decides what a clinician is scored against.
-    ranked.sort(key=lambda t: (-t[0], t[1].name))
-    arch_dir = ranked[0][1]
-    selected = select_checkpoint_in_dir(arch_dir, score_fn=score_fn)
-    return selected, arch_dir.name, f"auto: latest-trained architecture '{arch_dir.name}'"
-
-
 # =============================================================================
 # Run directories (contract M3a-2)
 # =============================================================================
@@ -213,6 +163,94 @@ def runs_root(data_dir: PathLike, conv_type: Optional[str]) -> Path:
     return Path(data_dir) / RUNS_DIRNAME / normalize_conv_type(conv_type)
 
 
+#: Output locations retired by the run layout. A configuration that still sets
+#: one is refused rather than ignored: the run would otherwise write somewhere
+#: other than where its author looks.
+RETIRED_LOCATION_FIELDS = ("output_dir", "checkpoint_dir", "log_dir")
+
+
+def refuse_retired_locations(values, *, source: str) -> None:
+    """Refuse a configuration (a mapping) that sets an output location the run
+    layout retired. An empty value is the old default and says nothing.
+
+    Raises:
+        ValueError: naming the fields and what replaced them.
+    """
+    named = sorted(k for k in RETIRED_LOCATION_FIELDS
+                   if isinstance(values, dict) and values.get(k) not in (None, ""))
+    if named:
+        raise ValueError(
+            f"{source} sets {', '.join(named)}, which no longer exist: every run writes "
+            "into a directory of its own, {data_dir}/runs/{conv_type}/..., with its "
+            "checkpoints/ and logs/ inside. Remove them; give run_name to name the run, "
+            "or run_dir for an explicit directory that is absent or empty."
+        )
+
+
+class RunDirectoryTaken(FileExistsError):
+    """A run directory that is not free: it holds files, or another run claimed
+    it first. A run never writes into another run's directory."""
+
+
+def propose_run_dir(
+    data_dir: PathLike,
+    conv_type: Optional[str],
+    name: Optional[str] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> Path:
+    """A new run directory's path, not yet created:
+    ``{data_dir}/runs/{conv_type}/{YYYYMMDD-HHMMSS}_{name or 'run'}_{6 hex}``.
+
+    A name already on disk is drawn again. Proposing claims nothing:
+    `claim_run_dir` does, so a launcher (the training service) can name the
+    directory before the run that writes it has passed its refusals.
+    """
+    root = runs_root(data_dir, conv_type)
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    label = slugify_run_name(name) or "run"
+    for _ in range(100):
+        candidate = root / f"{stamp}_{label}_{secrets.token_hex(_RUN_ID_BYTES)}"
+        if not candidate.exists():
+            return candidate
+    raise RunDirectoryTaken(f"no unused run directory under {root} after 100 tries")
+
+
+def check_run_dir_free(run_dir: PathLike) -> Path:
+    """Refuse a run directory that is not free: an existing file, or a
+    directory holding anything. Absent or empty is free. Creates nothing, so an
+    explicitly given location is refused before any run artifact exists;
+    `claim_run_dir` decides again when it creates."""
+    path = Path(run_dir)
+    if path.exists():
+        if not path.is_dir():
+            raise RunDirectoryTaken(f"the run directory {path} exists and is not a directory")
+        if any(path.iterdir()):
+            raise RunDirectoryTaken(
+                f"the run directory {path} already holds files. A run writes only into a "
+                "directory no run has used; name a new one, or leave it empty to have "
+                "one allocated.")
+    return path
+
+
+def claim_run_dir(run_dir: PathLike) -> Path:
+    """Create the run directory and its ``checkpoints/`` and ``logs/``, or refuse.
+
+    **Claimed by creating ``checkpoints/``** (`mkdir` without `exist_ok`): of two
+    runs handed the same free directory, one creates it and the other is refused,
+    so neither writes into the other's files. The caller claims only after every
+    refusal, since this is the run's first artifact.
+    """
+    path = check_run_dir_free(run_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        run_checkpoint_dir(path).mkdir()
+    except FileExistsError:
+        raise RunDirectoryTaken(f"the run directory {path} was claimed by another run") from None
+    run_log_dir(path).mkdir(exist_ok=True)
+    return path
+
+
 def allocate_run_dir(
     data_dir: PathLike,
     conv_type: Optional[str],
@@ -220,30 +258,25 @@ def allocate_run_dir(
     *,
     now: Optional[datetime] = None,
 ) -> Path:
-    """Create and return a run directory no run has used.
-
-    **Claimed by creating it** (`mkdir` without `exist_ok`), so two runs started
-    at once cannot be handed the same directory; a run id already taken is drawn
-    again. The caller allocates only after every refusal, since this is the
-    run's first artifact.
-    """
-    root = runs_root(data_dir, conv_type)
-    root.mkdir(parents=True, exist_ok=True)
-    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    label = slugify_run_name(name) or "run"
+    """Propose and claim a new run directory; a directory claimed in between
+    by another run is drawn again, never shared."""
     for _ in range(100):
-        candidate = root / f"{stamp}_{label}_{secrets.token_hex(_RUN_ID_BYTES)}"
         try:
-            candidate.mkdir()
-        except FileExistsError:
+            return claim_run_dir(propose_run_dir(data_dir, conv_type, name, now=now))
+        except RunDirectoryTaken:
             continue
-        return candidate
-    raise FileExistsError(f"no unused run directory under {root} after 100 tries")
+    raise RunDirectoryTaken(
+        f"no unused run directory under {runs_root(data_dir, conv_type)} after 100 tries")
 
 
 def run_checkpoint_dir(run_dir: PathLike) -> Path:
     """A run's ``checkpoints/``."""
     return Path(run_dir) / RUN_CHECKPOINTS_DIRNAME
+
+
+def run_log_dir(run_dir: PathLike) -> Path:
+    """A run's ``logs/``."""
+    return Path(run_dir) / RUN_LOGS_DIRNAME
 
 
 def run_checkpoints(run_dir: PathLike) -> List[Path]:
@@ -280,6 +313,22 @@ def run_architecture(run_dir: PathLike) -> str:
     return Path(run_dir).parent.name
 
 
+def list_run_checkpoints(
+    data_dir: PathLike, conv_type: Optional[str] = None
+) -> List[Tuple[Path, Path]]:
+    """Every checkpoint in a workspace's runs, as ``(run_dir, checkpoint)``:
+    runs most recently trained first (`list_runs`), and within a run the newest
+    file first, then by name. The one listing the console, the training service
+    and the API show; what a file is comes from its own record, read by the
+    caller, never from where it sits."""
+    entries: List[Tuple[Path, Path]] = []
+    for run in list_runs(data_dir, conv_type):
+        files = sorted(run_checkpoints(run),
+                       key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
+        entries.extend((run, path) for path in files)
+    return entries
+
+
 def select_run_checkpoint(
     data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None
 ) -> Tuple[Optional[Path], str]:
@@ -313,14 +362,22 @@ def select_auto_run_checkpoint(
 
 __all__ = [
     "RANKING_SCORE_KEYS",
+    "RETIRED_LOCATION_FIELDS",
     "RUNS_DIRNAME",
     "RUN_CHECKPOINTS_DIRNAME",
     "RUN_LOGS_DIRNAME",
+    "RunDirectoryTaken",
     "allocate_run_dir",
+    "check_run_dir_free",
+    "claim_run_dir",
+    "list_run_checkpoints",
     "list_runs",
+    "propose_run_dir",
+    "refuse_retired_locations",
     "run_architecture",
     "run_checkpoint_dir",
     "run_checkpoints",
+    "run_log_dir",
     "runs_root",
     "select_auto_run_checkpoint",
     "select_run_checkpoint",
@@ -328,7 +385,5 @@ __all__ = [
     "ranking_score_detail",
     "ranking_score_from_logs",
     "normalize_conv_type",
-    "resolve_checkpoint_dir",
     "select_checkpoint_in_dir",
-    "select_auto_checkpoint",
 ]

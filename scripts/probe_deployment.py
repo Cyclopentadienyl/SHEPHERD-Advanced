@@ -54,7 +54,7 @@ Usage:
         --work-dir <empty directory> --report <empty directory>/m2_report.json \
         --real-workspace data/workspaces/<workspace> \
         --real-config <config.yaml with the established training settings> \
-        --real-reference-checkpoint data/workspaces/<workspace>/checkpoints/<arch>/<model>.pt
+        --real-reference-checkpoint <path to the reference model's .pt file>
 
 Contract M2's acceptance (`--m2-acceptance`):
     Phase M, on the demo workspace, after B-E: a valid same-shaped workspace
@@ -916,17 +916,18 @@ def phase_training(
     def _train() -> Tuple[str, Dict[str, Any]]:
         from scripts.train_model import TrainConfig, train
         from src.utils.checkpoint_paths import (
-            resolve_checkpoint_dir,
+            propose_run_dir,
+            run_checkpoint_dir,
             select_checkpoint_in_dir,
         )
 
+        # **Named, not found afterwards**: the run's directory under the
+        # workspace's runs (contract M3a-2), so the checkpoint read below is
+        # this run's and no other's.
+        run_dir = propose_run_dir(sound, "gat", "probe")
         config = TrainConfig(
             data_dir=str(sound),
-            # **Named, not defaulted.** TrainConfig writes to "outputs" and
-            # "logs" relative to the working directory, so a probe that left
-            # them alone would scatter run artifacts through the repository.
-            output_dir=str(work / "train_outputs"),
-            log_dir=str(work / "train_logs"),
+            run_dir=str(run_dir),
             conv_type="gat",
             hidden_dim=FEATURE_DIM,
             num_layers=2,
@@ -941,8 +942,7 @@ def phase_training(
         metrics = train(config)
         assert metrics, "training returned no metrics"
 
-        ckpt_dir = resolve_checkpoint_dir(str(sound), "gat", None)
-        chosen = select_checkpoint_in_dir(ckpt_dir)
+        chosen = select_checkpoint_in_dir(run_checkpoint_dir(run_dir))
         assert chosen is not None, "training wrote no checkpoint"
         selected["path"] = chosen
 
@@ -972,7 +972,7 @@ def phase_training(
         from src.utils.fingerprint import verify_training_record
 
         checkpoint = read_checkpoint(
-            selected["path"], map_location="cpu", weights_only=False
+            selected["path"], map_location="cpu", weights_only=True
         ).checkpoint
         digests, _, _ = verify_workspace(sound)
         # **Through the consumers' own comparator** (contract M2.4), not a
@@ -1337,8 +1337,8 @@ def _tested_commit() -> Dict[str, Any]:
 
 
 def _workspace_copy(source: Path, target: Path) -> Path:
-    """`source`'s files, without any checkpoint a run wrote into it."""
-    shutil.copytree(source, target, ignore=shutil.ignore_patterns("checkpoints"))
+    """`source`'s files, without any run or checkpoint written into it."""
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns("checkpoints", "runs"))
     return target
 
 
@@ -1346,20 +1346,21 @@ def _train_run(
     data_dir: Path, run: Path, device: str, epochs: int, *,
     settings: Dict[str, Any], resume_from: Optional[Path] = None,
 ) -> Path:
-    """One run of the production trainer (`train_model.train`) with every output
-    named under `run` -- `outputs`, `logs`, `checkpoints` -- so no default lands
-    in the workspace or anywhere else. Returns the run's checkpoint directory."""
+    """One run of the production trainer (`train_model.train`) with `run` as its
+    run directory (contract M3a-2), so every output -- its checkpoints, logs and
+    records -- is inside it and nothing lands in the workspace or anywhere else.
+    Returns the run's checkpoint directory."""
     from scripts.train_model import TrainConfig, train
+    from src.utils.checkpoint_paths import run_checkpoint_dir
 
     fields = dict(settings)
     fields.update(
-        data_dir=str(data_dir), output_dir=str(run / "outputs"),
-        log_dir=str(run / "logs"), checkpoint_dir=str(run / "checkpoints"),
+        data_dir=str(data_dir), run_dir=str(run),
         num_epochs=epochs, device=device,
         resume_from=str(resume_from) if resume_from is not None else None,
     )
     train(TrainConfig(**fields))
-    return run / "checkpoints"
+    return run_checkpoint_dir(run)
 
 
 def _last(checkpoint_dir: Path) -> Path:
@@ -1784,17 +1785,24 @@ def _stat_tree(directory: Path) -> Dict[str, Tuple[int, int]]:
 def _training_settings(config_path: Path) -> Tuple[Dict[str, Any], str]:
     """The training settings, parsed from one read of a `config.yaml` as
     `train_model.py` writes one, and the digest of those bytes. Unknown keys are
-    refused rather than dropped, so every setting named is a setting applied."""
+    refused rather than dropped, so every setting named is a setting applied.
+
+    The output locations an older `config.yaml` names (`output_dir`,
+    `checkpoint_dir`, `log_dir`, retired by contract M3a-2) are locations, not
+    settings, and this probe names every run's directory itself; they are
+    dropped, never applied."""
     import dataclasses
 
     import yaml
 
     from scripts.train_model import TrainConfig
+    from src.utils.checkpoint_paths import RETIRED_LOCATION_FIELDS
     from src.utils.fingerprint import read_once
 
     read = read_once(config_path)
     loaded = yaml.safe_load(read.data.decode("utf-8")) or {}
     assert isinstance(loaded, dict), "the training settings are not a mapping"
+    loaded = {k: v for k, v in loaded.items() if k not in RETIRED_LOCATION_FIELDS}
     known = {field.name for field in dataclasses.fields(TrainConfig)}
     unknown = sorted(set(loaded) - known)
     assert not unknown, f"the training settings name fields TrainConfig does not have: {unknown}"
@@ -1876,8 +1884,7 @@ def phase_m2_real(
             "conv_type": effective["conv_type"],
             "architecture_fields_compared": compared,
             "fields_set_by_this_probe": sorted(
-                ("data_dir", "output_dir", "log_dir", "checkpoint_dir", "num_epochs",
-                 "device", "resume_from")),
+                ("data_dir", "run_dir", "num_epochs", "device", "resume_from")),
         }
 
     report.run("R2", "real", "the training settings carry the reference's architecture",

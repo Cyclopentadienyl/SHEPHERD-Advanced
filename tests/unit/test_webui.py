@@ -148,8 +148,7 @@ class TestTrainingConsoleHelpers:
 
         config = _collect_config(
             # Paths
-            data_dir="data/processed", output_dir="outputs",
-            checkpoint_dir="models/checkpoints",
+            data_dir="data/processed", run_name="  Pilot Run  ",
             # Tier 1
             num_epochs=50, learning_rate=0.001, batch_size="32",
             conv_type="gat", device="auto", seed=42,
@@ -174,8 +173,8 @@ class TestTrainingConsoleHelpers:
         assert config["hidden_dim"] == 256
         assert config["num_neighbors"] == [15, 10, 5]
         assert config["data_dir"] == "data/processed"
-        assert config["output_dir"] == "outputs"
-        assert config["checkpoint_dir"] == "models/checkpoints"
+        assert config["run_name"] == "Pilot Run"
+        assert not {"output_dir", "checkpoint_dir", "log_dir"} & set(config)
 
     def test_collect_config_strips_prefix(self, monkeypatch):
         """Verify that SHEPHERD-Advanced/ display prefix is stripped from paths."""
@@ -187,8 +186,7 @@ class TestTrainingConsoleHelpers:
         config = _collect_config(
             # Paths with display prefix
             data_dir="SHEPHERD-Advanced/data/processed",
-            output_dir="SHEPHERD-Advanced/outputs",
-            checkpoint_dir="SHEPHERD-Advanced/models/checkpoints",
+            run_name="",
             # Tier 1
             num_epochs=10, learning_rate=0.001, batch_size="32",
             conv_type="gat", device="auto", seed=42,
@@ -207,16 +205,14 @@ class TestTrainingConsoleHelpers:
         )
         # Prefix should be stripped — backend uses project-root-relative paths
         assert config["data_dir"] == "data/processed"
-        assert config["output_dir"] == "outputs"
-        assert config["checkpoint_dir"] == "models/checkpoints"
+        assert config["run_name"] == ""
 
     def test_collect_config_compile_from_runtime_settings(self, monkeypatch):
         """torch.compile is now sourced from Runtime Settings, not a Training widget."""
         from src.webui.components import training_console as tc
 
         common = dict(
-            data_dir="data/processed", output_dir="outputs",
-            checkpoint_dir="models/checkpoints",
+            data_dir="data/processed", run_name="",
             num_epochs=10, learning_rate=0.001, batch_size="32",
             conv_type="gat", device="auto", seed=42,
             hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,

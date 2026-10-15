@@ -209,8 +209,7 @@ def test_a_run_records_its_progress_best_k_and_where_the_best_weights_are(tmp_pa
     workspace = write_trainable_workspace(tmp_path / "ws")
     run = tmp_path / "run"
     config = train_model.TrainConfig(
-        data_dir=str(workspace), output_dir=str(run / "outputs"), log_dir=str(run / "logs"),
-        checkpoint_dir=str(run / "checkpoints"), device="cpu", hidden_dim=16,
+        data_dir=str(workspace), run_dir=str(run), device="cpu", hidden_dim=16,
         num_layers=1, num_heads=2, num_workers=0, use_amp=False, num_epochs=2,
         batch_size=2, save_top_k=2, early_stopping_patience=5,
     )

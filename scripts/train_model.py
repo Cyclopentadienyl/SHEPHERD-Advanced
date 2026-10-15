@@ -15,7 +15,11 @@ Purpose:
 Usage:
     python scripts/train_model.py --config configs/train_config.yaml
     python scripts/train_model.py --data-dir data/workspaces/demo --epochs 100
-    python scripts/train_model.py --resume data/workspaces/<ws>/checkpoints/hgt/last.pt
+    python scripts/train_model.py --data-dir data/workspaces/demo --run-name pilot
+    python scripts/train_model.py --resume data/workspaces/<ws>/runs/hgt/<run>/checkpoints/last.pt
+
+    Every run writes into a new directory of its own,
+    {data_dir}/runs/{conv_type}/{date}_{run_name}_{run_id}/ (contract M3a-2).
 
 Dependencies:
     - argparse: CLI argument parsing
@@ -135,10 +139,13 @@ class TrainConfig:
     """Complete training configuration"""
     # Paths
     data_dir: str = "data/workspaces/default"
-    output_dir: str = "outputs"
-    checkpoint_dir: str = ""  # empty = auto-derive as {data_dir}/checkpoints
-    log_dir: str = "logs"
     config_file: Optional[str] = None
+    # Where the run writes (contract M3a-2): a directory of its own, allocated
+    # as {data_dir}/runs/{conv_type}/{date}_{run_name}_{run_id}/ unless
+    # `run_dir` names one, which must be absent or empty. Its checkpoints/ and
+    # logs/ are inside it. The name is for people and optional.
+    run_name: str = ""
+    run_dir: str = ""
 
     # Model configuration
     hidden_dim: int = 256
@@ -248,16 +255,17 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing processed data",
     )
     parser.add_argument(
-        "--output-dir",
+        "--run-name",
         type=str,
         default=None,
-        help="Directory for training outputs",
+        help="Optional name for this run, part of its allocated directory's name",
     )
     parser.add_argument(
-        "--checkpoint-dir",
+        "--run-dir",
         type=str,
         default=None,
-        help="Directory for model checkpoints",
+        help="Write this run into this directory instead of an allocated one; it must "
+             "be absent or empty",
     )
 
     # Model
@@ -356,6 +364,9 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
     if args.config and Path(args.config).exists():
         with open(args.config) as f:
             yaml_config = yaml.safe_load(f)
+        from src.utils.checkpoint_paths import refuse_retired_locations
+
+        refuse_retired_locations(yaml_config, source=f"The configuration {args.config}")
         for key, value in yaml_config.items():
             if hasattr(config, key):
                 setattr(config, key, value)
@@ -363,10 +374,10 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
     # Override with command-line arguments (only if explicitly provided)
     if args.data_dir is not None:
         config.data_dir = args.data_dir
-    if args.output_dir is not None:
-        config.output_dir = args.output_dir
-    if args.checkpoint_dir is not None:
-        config.checkpoint_dir = args.checkpoint_dir
+    if args.run_name is not None:
+        config.run_name = args.run_name
+    if args.run_dir is not None:
+        config.run_dir = args.run_dir
     if args.hidden_dim is not None:
         config.hidden_dim = args.hidden_dim
     if args.num_layers is not None:
@@ -758,9 +769,7 @@ def create_model_from_config(
 #: Left out of the checkpoint's record of the configuration requested: the inputs
 #: are identified by digest (`training_input_digests`), the parent by its digest,
 #: and a checkpoint travels without the layout of the machine that wrote it.
-LOCATION_FIELDS = frozenset({
-    "data_dir", "output_dir", "checkpoint_dir", "log_dir", "config_file", "resume_from",
-})
+LOCATION_FIELDS = frozenset({"data_dir", "run_dir", "config_file", "resume_from"})
 
 
 class TrainingDeviceUnavailable(RuntimeError):
@@ -840,6 +849,16 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info("  python scripts/preprocess_data.py")
         return {}
 
+    # An explicit run directory that holds files is refused here, before the
+    # first artifact exists (contract M3a-2). It is claimed below, after every
+    # refusal, which decides again.
+    from src.utils.checkpoint_paths import (
+        allocate_run_dir, check_run_dir_free, claim_run_dir, run_checkpoint_dir, run_log_dir,
+    )
+
+    if config.run_dir:
+        check_run_dir_free(config.run_dir)
+
     inputs = read_training_inputs(data_dir)
     parent = read_resume_parent(config.resume_from, inputs, device)
 
@@ -851,31 +870,26 @@ def train(config: TrainConfig) -> Dict[str, float]:
     producer = code_revision(PROJECT_ROOT)
     environment = collect_environment(device)
 
-    # Create output directories
-    output_dir = Path(config.output_dir)
-    # Auto-derive an architecture-scoped checkpoint dir
-    # ({data_dir}/checkpoints/{conv_type}) so different conv types never
-    # overwrite each other. An explicit checkpoint_dir is honoured verbatim.
-    from src.utils.checkpoint_paths import resolve_checkpoint_dir
+    # **The run's own directory, claimed after every refusal** (contract M3a-2):
+    # the first artifact this run creates. Nothing below writes outside it, so
+    # no run overwrites or prunes another's files, a resumed run's parent
+    # included.
+    run_dir = (claim_run_dir(config.run_dir) if config.run_dir
+               else allocate_run_dir(config.data_dir, config.conv_type, config.run_name))
+    checkpoint_dir = run_checkpoint_dir(run_dir)
+    log_dir = run_log_dir(run_dir)
+    logger.info(f"Run directory: {run_dir}")
 
-    checkpoint_dir = resolve_checkpoint_dir(
-        config.data_dir, config.conv_type, config.checkpoint_dir or None
-    )
-    log_dir = Path(config.log_dir)
-
-    for d in [output_dir, checkpoint_dir, log_dir]:
-        d.mkdir(parents=True, exist_ok=True)
-
-    # Save configuration
-    config_path = output_dir / "config.yaml"
+    # Save configuration, with the directory the run was given.
+    config_path = run_dir / "config.yaml"
     with open(config_path, "w") as f:
-        yaml.dump(asdict(config), f)
+        yaml.dump({**asdict(config), "run_dir": str(run_dir)}, f)
     logger.info(f"Configuration saved to {config_path}")
 
     # The allocator is not a training parameter, so it is not in config.yaml,
     # but it changes memory by a multiple on this project; runs are compared
     # with it beside them.
-    with open(output_dir / "runtime.json", "w") as f:
+    with open(run_dir / "runtime.json", "w") as f:
         json.dump(_allocator_record(), f, indent=2)
 
     # **The seed governs the initial weights too** (contract M3a). The model
@@ -1043,7 +1057,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
         logger.info(f"  {name}: {value:.4f}")
 
     # Save final metrics
-    metrics_path = output_dir / "final_metrics.json"
+    metrics_path = run_dir / "final_metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(final_metrics, f, indent=2)
     logger.info(f"Final metrics saved to {metrics_path}")

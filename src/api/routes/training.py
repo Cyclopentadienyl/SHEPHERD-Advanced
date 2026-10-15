@@ -49,11 +49,11 @@ _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 class TrainingStartRequest(BaseModel):
     """Training start request with configuration parameters."""
 
-    # Paths
+    # Paths. Every run writes into a directory of its own, allocated under the
+    # workspace (contract M3a-2); the name is optional and for people.
     data_dir: str = Field(default="data/workspaces/default", description="Workspace directory")
-    output_dir: str = Field(default="outputs", description="Output directory")
-    checkpoint_dir: str = Field(default="", description="Checkpoint directory (blank = auto-derive from workspace)")
-    log_dir: str = Field(default="logs", description="Log directory")
+    run_name: str = Field(default="", max_length=200,
+                          description="Optional run name, part of the allocated directory's name")
 
     # Tier 1 — Basic
     num_epochs: int = Field(default=100, ge=1, le=10000, description="Number of epochs")
@@ -106,6 +106,17 @@ class TrainingStartRequest(BaseModel):
     eval_every_n_epochs: int = Field(default=1, ge=1, description="Evaluate every N epochs")
     save_top_k: int = Field(default=3, ge=1, description="Save top K checkpoints")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_locations(cls, data: Any) -> Any:
+        # output_dir / checkpoint_dir / log_dir were retired by the run layout.
+        # Ignoring them, as an unknown key would be, would start a run that
+        # writes somewhere other than where its caller looks.
+        from src.utils.checkpoint_paths import refuse_retired_locations
+
+        refuse_retired_locations(data, source="This request")
+        return data
+
     @field_validator("device")
     @classmethod
     def _validate_device(cls, v: str) -> str:
@@ -155,6 +166,7 @@ class TrainingStatusResponse(BaseModel):
     latest_metrics: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    run_dir: Optional[str] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -166,6 +178,10 @@ class CheckpointInfo(BaseModel):
     modified: str
     epoch: Optional[int] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
+    run: Optional[str] = None
+    run_dir: Optional[str] = None
+    architecture: Optional[str] = None
+    checkpoint_kind: Optional[str] = None
 
 
 # =============================================================================
@@ -227,5 +243,6 @@ async def get_training_metrics() -> Dict[str, Any]:
 
 @router.get("/training/checkpoints", response_model=List[CheckpointInfo])
 async def get_checkpoints() -> List[Dict[str, Any]]:
-    """List available model checkpoints with metadata."""
+    """List the checkpoints of the last requested workspace's runs, with
+    each file's own metadata (contract M3a-2)."""
     return training_manager.get_checkpoints()

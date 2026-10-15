@@ -58,7 +58,7 @@ _MAX_SEED = 2**32 - 1
 # Position of the `seed` widget in all_params / _on_start's *args. MUST match the
 # order of all_params (and _collect_config's signature) below — used by _on_start
 # to swap in a random seed when "Randomize seed" is on.
-SEED_PARAM_INDEX = 8
+SEED_PARAM_INDEX = 7
 
 
 def _random_seed() -> int:
@@ -142,8 +142,7 @@ def _num(value, label, cast, errors, *, positive=False, lo=None, hi=None):
 def _collect_config(
     # Paths
     data_dir: str,
-    output_dir: str,
-    checkpoint_dir: str,
+    run_name: str,
     # Tier 1 — Basic
     num_epochs: int,
     learning_rate: float,
@@ -209,8 +208,9 @@ def _collect_config(
     config: Dict[str, Any] = {
         # Paths (strip display prefix so backend receives relative-to-project-root paths)
         "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",
-        "output_dir": _strip_prefix(output_dir) or "outputs",
-        "checkpoint_dir": _strip_prefix(checkpoint_dir) or "",  # empty = auto-derive from data_dir
+        # The run writes into a directory of its own, allocated under the
+        # workspace (contract M3a-2); the name is optional and for people.
+        "run_name": (run_name or "").strip(),
         # Tier 1
         "num_epochs": _num(num_epochs, "Epochs", int, errors, lo=1, hi=10000),
         "learning_rate": _num(learning_rate, "Learning Rate", float, errors, positive=True),
@@ -289,7 +289,8 @@ def _on_start(*args):
     result = training_manager.start_training(config)
     if result.get("success"):
         return (
-            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Starting...",
+            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Starting..."
+            f"\n**Run directory**: `{result.get('run_dir')}`",
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
@@ -357,15 +358,12 @@ def _on_resume(*args):
             gr.update(interactive=True),    # keep resume enabled
         )
 
-    # Resolve the expected checkpoint dir from the CURRENT config (same rule as
-    # the write path). This is the authoritative gate — never trust whatever
-    # training_manager.checkpoint_dir happened to be from a previous refresh.
-    from src.utils.checkpoint_paths import select_checkpoint_in_dir
+    # The current architecture's runs, from the CURRENT config: the same layout
+    # the write path uses (contract M3a-2), never a list from an earlier refresh.
+    from src.utils.checkpoint_paths import runs_root, select_run_checkpoint
 
-    resolved_dir = _resolve_resume_dir(
-        config["data_dir"], config.get("conv_type", ""), config.get("checkpoint_dir", "")
-    )
-    training_manager.checkpoint_dir = resolved_dir
+    workspace = training_manager.workspace_path(config["data_dir"])
+    resolved_dir = runs_root(workspace, config.get("conv_type", ""))
 
     def _resume_error(message: str):
         # The full message goes to a toast (persistent countdown bar + close X,
@@ -387,18 +385,17 @@ def _on_resume(*args):
             return _resume_error(
                 "⚠️ Selected checkpoint no longer exists. Click **Refresh** and pick again."
             )
-        # Guard against a stale dropdown pointing at another architecture's dir.
+        # Guard against a stale dropdown pointing at another architecture's runs.
         if not _is_within_dir(sel_path, resolved_dir):
             return _resume_error(
-                "⚠️ Selected checkpoint is outside the checkpoint directory for the "
-                "current architecture/settings. Click **Refresh** and select a matching "
-                "checkpoint."
+                "⚠️ Selected checkpoint is not in a run of the current architecture "
+                f"({resolved_dir}). Click **Refresh** and select a matching checkpoint."
             )
         config["resume_from"] = str(sel_path)
     else:
-        # No selection -> resume the LATEST state in the resolved dir (last.pt ->
+        # No selection -> resume the LATEST run's latest state (last.pt ->
         # newest). No score_fn: resume wants the latest checkpoint, not the best-val.
-        fallback = select_checkpoint_in_dir(resolved_dir)
+        fallback, _ = select_run_checkpoint(workspace, config.get("conv_type", ""))
         if fallback is None:
             return _resume_error(f"No checkpoints found to resume from in {resolved_dir}.")
         config["resume_from"] = str(fallback)
@@ -407,7 +404,8 @@ def _on_resume(*args):
     if result.get("success"):
         ckpt_name = Path(config["resume_from"]).name
         return (
-            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Resuming from {ckpt_name}...",
+            f"**Status**: RUNNING\n**PID**: {result.get('pid')}\n**Phase**: Resuming from {ckpt_name}..."
+            f"\n**Run directory**: `{result.get('run_dir')}`",
             _EMPTY_LOSS_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF, _EMPTY_METRIC_DF,
             gr.update(interactive=False),   # disable start
             gr.update(interactive=True),    # enable stop
@@ -484,39 +482,23 @@ def _is_within_dir(child: Path, parent: Path) -> bool:
         return False
 
 
-def _resolve_resume_dir(data_dir: str, conv_type: str, checkpoint_dir: str) -> Path:
-    """Resolve the checkpoint dir for resume, using the SAME rule as the write
-    path: an explicit checkpoint_dir wins; otherwise {data_dir}/checkpoints/{conv_type}."""
-    from src.utils.checkpoint_paths import resolve_checkpoint_dir
-
-    return resolve_checkpoint_dir(
-        _strip_display_prefix(data_dir) or "data/workspaces/default",
-        conv_type,
-        _strip_display_prefix(checkpoint_dir) or None,
-    )
-
-
-def _refresh_checkpoints(
-    data_dir_value: str = "", conv_type_value: str = "", checkpoint_dir_value: str = ""
-):
+def _refresh_checkpoints(data_dir_value: str = "", conv_type_value: str = ""):
     """Refresh the resume-checkpoint dropdown for the CURRENT training architecture.
 
-    Lists checkpoints from the architecture-scoped dir
-    ({data_dir}/checkpoints/{conv_type}/) — or an explicit checkpoint_dir if set —
-    so the dropdown always matches the selected conv_type. Wired to both the
+    Lists that architecture's run checkpoints through the shared listing
+    (`TrainingManager.get_checkpoints`, contract M3a-2), latest run first, so
+    the dropdown always matches the selected conv_type. Wired to both the
     Refresh button and conv_type's change event.
     """
-    resolved = _resolve_resume_dir(data_dir_value, conv_type_value, checkpoint_dir_value)
-    training_manager.checkpoint_dir = resolved
-    logger.info("Scanning checkpoints in: %s (exists=%s)", resolved, resolved.exists())
-
-    checkpoints = training_manager.get_checkpoints()
+    data_dir = _strip_display_prefix(data_dir_value) or DEFAULT_WORKSPACE
+    checkpoints = training_manager.get_checkpoints(data_dir, conv_type_value or None)
+    logger.info("Listed %d checkpoints in the %s runs of %s",
+                len(checkpoints), conv_type_value, data_dir)
     choices = []
     for ckpt in checkpoints:
-        name = ckpt["filename"]
         size = ckpt.get("size_mb", 0)
         epoch = ckpt.get("epoch")
-        label = f"{name} ({size:.1f} MB"
+        label = f"{ckpt['run']} / {ckpt['filename']} ({size:.1f} MB"
         if epoch is not None:
             label += f", epoch {epoch}"
         label += ")"
@@ -659,6 +641,8 @@ def _format_status(status_info: Dict[str, Any]) -> str:
 
     if status_info.get("pid"):
         lines.append(f"**PID**: {status_info['pid']}")
+    if status_info.get("run_dir"):
+        lines.append(f"**Run directory**: `{status_info['run_dir']}`")
 
     # Show phase if available (initializing, training, completed)
     phase = status_info.get("phase")
@@ -1095,17 +1079,17 @@ def create_training_tab() -> None:
                         value=f"{DISPLAY_PREFIX}{saved_data_dir}",
                         elem_id="data_dir",
                     )
-                    output_dir = gr.Textbox(
-                        label="Output Directory",
-                        info="Where final metrics and results are saved. (relative to project root)",
-                        value="SHEPHERD-Advanced/outputs",
-                        elem_id="output_dir",
-                    )
-                    checkpoint_dir = gr.Textbox(
-                        label="Checkpoint Directory",
-                        info="Where model checkpoints (.pt files) are saved. Leave blank to auto-derive from workspace.",
+                    run_name = gr.Textbox(
+                        label="Run name (optional)",
+                        info=(
+                            "Each run is saved in a new folder of its own: "
+                            "`<workspace>/runs/<architecture>/<date-time>_<name>_<id>/`. "
+                            "Letters, digits and hyphens are kept; blank uses \"run\". "
+                            "The folder is shown in Status once training starts."
+                        ),
                         value="",
-                        elem_id="checkpoint_dir",
+                        max_lines=1,
+                        elem_id="run_name",
                     )
                 with gr.Row():
                     save_path_btn = gr.Button("💾 Save Path", size="sm", variant="secondary")
@@ -1492,7 +1476,7 @@ def create_training_tab() -> None:
     # =========================================================================
     all_params = [
         # Paths
-        data_dir, output_dir, checkpoint_dir,
+        data_dir, run_name,
         # Tier 1
         num_epochs, learning_rate, batch_size, conv_type, device,
         seed,
@@ -1540,7 +1524,7 @@ def create_training_tab() -> None:
     )
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
-        inputs=[data_dir, conv_type, checkpoint_dir],
+        inputs=[data_dir, conv_type],
         outputs=[checkpoint_dropdown],
     )
     # Auto-relink the resume list to the selected training architecture: changing
@@ -1550,7 +1534,7 @@ def create_training_tab() -> None:
     # and the _on_resume guard cover it.)
     conv_type.change(
         fn=_refresh_checkpoints,
-        inputs=[data_dir, conv_type, checkpoint_dir],
+        inputs=[data_dir, conv_type],
         outputs=[checkpoint_dropdown],
     )
     save_path_btn.click(

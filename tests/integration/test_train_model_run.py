@@ -39,19 +39,22 @@ def test_a_short_run_completes_and_records_its_allocator(tmp_path):
     )
 
     data_dir = write_trainable_workspace(tmp_path)
-    output_dir = tmp_path / "out"
+    output_dir = tmp_path / "run"
     env = {k: v for k, v in os.environ.items()
            if k not in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF", ALLOC_SOURCE_ENV)}
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--data-dir", str(data_dir), "--device", "cpu",
          "--epochs", "1", "--seed", "42", "--conv-type", "gat", "--hidden-dim", "16",
-         "--num-layers", "1", "--batch-size", "4", "--output-dir", str(output_dir)],
+         "--num-layers", "1", "--batch-size", "4", "--run-dir", str(output_dir)],
         capture_output=True, encoding="utf-8", env={**env, "PYTHONIOENCODING": "utf-8"},
         cwd=REPO_ROOT, timeout=600,
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
     assert (output_dir / "config.yaml").is_file()
     assert (output_dir / "final_metrics.json").is_file()
+    # Everything inside the run's own directory (contract M3a-2), nothing
+    # written into the workspace.
+    assert not (data_dir / "checkpoints").exists() and not (data_dir / "runs").exists()
 
     _preset, expected = resolve_allocator(load_runtime_settings().get("allocator_preset"))
     runtime = json.loads((output_dir / "runtime.json").read_text(encoding="utf-8"))
@@ -66,8 +69,8 @@ def test_a_short_run_completes_and_records_its_allocator(tmp_path):
     # The record names the bytes the run read: every role, the file's digest.
     import hashlib
 
-    checkpoint = torch.load(data_dir / "checkpoints" / "gat" / "last.pt",
-                            map_location="cpu", weights_only=False)
+    checkpoint = torch.load(output_dir / "checkpoints" / "last.pt",
+                            map_location="cpu", weights_only=True)
     files = {"train_samples": "train_samples.json", "val_samples": "val_samples.json",
              "node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
              "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json",

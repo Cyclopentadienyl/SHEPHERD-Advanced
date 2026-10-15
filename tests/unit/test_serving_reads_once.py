@@ -392,7 +392,7 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     replaced after that selection; what is served, and what is kept as its
     identity, is what the build read."""
     data_dir, checkpoint = workspace
-    architecture = data_dir / "checkpoints" / "gat"
+    architecture = data_dir / "runs" / "gat" / "20261015-000000_run_aaaaaa" / "checkpoints"
     architecture.mkdir(parents=True)
     shutil.copyfile(checkpoint, architecture / "model.pt")
     _other_checkpoint(checkpoint, tmp_path / "b.pt")

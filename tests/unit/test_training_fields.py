@@ -170,7 +170,7 @@ def test_projection_rule_is_exception_based():
     for f in tf.FIELDS:
         if tf.must_project(f):
             assert f.projects_to, f"{f.name}: effective non-runtime field must declare projects_to"
-    for name in ("data_dir", "output_dir", "checkpoint_dir", "log_dir", "resume_from"):
+    for name in ("data_dir", "run_name", "run_dir", "resume_from"):
         assert tf.by_name(name).projects_to == f"TrainConfig.{name}"
 
 

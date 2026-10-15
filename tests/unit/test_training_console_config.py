@@ -19,8 +19,7 @@ from src.webui.components import training_console as tc  # noqa: E402
 # _collect_config is positional; keep a valid baseline in signature order.
 _DEFAULTS = {
     "data_dir": "data/workspaces/default",
-    "output_dir": "outputs",
-    "checkpoint_dir": "",
+    "run_name": "",
     "num_epochs": 100,
     "learning_rate": 1e-4,
     "batch_size": "32",
@@ -201,3 +200,13 @@ def test_nonnumeric_value_reports_friendly_error():
     with pytest.raises(tc.ConfigValidationError) as ei:
         tc._collect_config(*_args(num_epochs="abc"))
     assert "Epochs" in str(ei.value)
+
+
+def test_the_seed_index_matches_the_collect_signature():
+    """`_on_start` swaps the seed in by position; the index must follow the
+    signature when path fields change (contract M3a-2 replaced two with one)."""
+    import inspect
+
+    names = list(inspect.signature(tc._collect_config).parameters)
+    assert names == _ORDER
+    assert names[tc.SEED_PARAM_INDEX] == "seed"

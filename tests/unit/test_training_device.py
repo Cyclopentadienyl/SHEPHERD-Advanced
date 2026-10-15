@@ -54,9 +54,7 @@ def test_train_refuses_before_reading_or_writing_anything(no_cuda, tmp_path, mon
     workspace.mkdir()
     config = train_model.TrainConfig(
         data_dir=str(workspace),
-        output_dir=str(tmp_path / "outputs"),
-        log_dir=str(tmp_path / "logs"),
-        checkpoint_dir=str(tmp_path / "checkpoints"),
+        run_dir=str(tmp_path / "run"),
         device="auto",
     )
 
