@@ -354,6 +354,12 @@ def verify_workspace(directory: Path):
     return bound, cohorts, {Path(read.path).name: read.sha256 for read in reads}, record
 
 
+def _kg_and_record(directory: Path) -> Tuple[str, Any]:
+    """The `kg` digest and the dataset record the workspace check verifies."""
+    bound, _, _, record = verify_workspace(directory)
+    return bound["kg"], record
+
+
 def _record_facts(record) -> Dict[str, Any]:
     """A verified dataset record as a report shows it (contract M3b): binding
     state and origin apart, each source by role with its digest and declared
@@ -1725,7 +1731,9 @@ def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str) -> int
 
 
 def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
-                       origin: str) -> Dict[str, Any]:
+                       record: Any) -> Dict[str, Any]:
+    """`record` is the dataset record the workspace check verified: the
+    measurement manifest must carry it whole, sources and digest included."""
     from src.utils.fingerprint import file_sha256
 
     assert output.is_file(), "the measurement wrote no report"
@@ -1735,23 +1743,25 @@ def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
         "the measurement does not name the checkpoint it was given"
     )
     assert digests.get("kg") == kg_digest, "the measurement records another source graph"
-    # **The number says what its graph was built from** (contract M3b).
-    record = result["manifest"].get("dataset_record") or {}
-    assert (record.get("binding"), record.get("origin")) == ("verified", origin), (
-        f"the measurement records its dataset record as {record.get('binding')}, "
-        f"origin {record.get('origin')}; expected verified, {origin}"
+    # **The number says what its graph was built from** (contract M3b): the
+    # record the workspace check verified, whole.
+    recorded = result["manifest"].get("dataset_record")
+    assert recorded == record.summary(), (
+        f"the measurement records its dataset record as {recorded}, not the record "
+        f"the workspace check verified ({record.binding}, origin {record.origin})"
     )
     return {
         "report_sha256": file_sha256(output),
         "checkpoint_sha256": checkpoint_sha,
-        "dataset_record": {"binding": record["binding"], "origin": record["origin"]},
+        "dataset_record": {"binding": recorded["binding"], "origin": recorded["origin"],
+                           "sha256": recorded["sha256"], "sources": len(recorded["sources"])},
         "n_ranked": result.get("n_ranked"),
         "authoritative_metrics": result.get("authoritative_metrics"),
     }
 
 
 def _serve_and_diagnose(
-    kg_path: Path, checkpoint: Path, data_dir: Path, device: str, origin: str
+    kg_path: Path, checkpoint: Path, data_dir: Path, device: str, record: Any
 ) -> Dict[str, Any]:
     """The production serving build (`build_pipeline`), shortest paths verified
     by its own loader, and one diagnosis through the built pipeline."""
@@ -1771,11 +1781,12 @@ def _serve_and_diagnose(
         "the shortest-path table's source binding was not verified by the loader"
     )
     assert config.get("scoring_mode") == "gnn_plus_shortest_path", "the scoring mode is not GNN+SP"
-    # The served workspace's record, binding state and origin apart (contract M3b).
-    record = config.get("dataset_record") or {}
-    assert (record.get("binding"), record.get("origin")) == ("verified", origin), (
-        f"serving publishes its dataset record as {record.get('binding')}, origin "
-        f"{record.get('origin')}; expected verified, {origin}"
+    # The served workspace's record, binding state and origin apart (contract
+    # M3b): the record the workspace check verified, whole.
+    published = config.get("dataset_record")
+    assert published == record.summary(), (
+        f"serving publishes its dataset record as {published}, not the record the "
+        f"workspace check verified ({record.binding}, origin {record.origin})"
     )
     devices = {str(p.device).split(":")[0] for p in bundle.pipeline.model.parameters()}
     assert devices == {device}, f"the model's parameters are on {sorted(devices)}"
@@ -1793,7 +1804,8 @@ def _serve_and_diagnose(
         "sp_kg_binding": config.get("sp_kg_binding"),
         "sp_hop_bound_source": config.get("sp_hop_bound_source"),
         "sp_max_hops": config.get("sp_max_hops"),
-        "dataset_record": {"binding": record["binding"], "origin": record["origin"]},
+        "dataset_record": {"binding": published["binding"], "origin": published["origin"],
+                           "sha256": published["sha256"], "sources": len(published["sources"])},
         "parameter_devices": sorted(devices),
         "candidates": len(scores),
     }
@@ -1881,8 +1893,7 @@ def phase_m2_demo(
         output = m2 / "measured" / "measurement.json"
         assert _measure(state["child"], sound, output, device) == 0, "the measurement failed"
         return "the resumed checkpoint was measured over its own workspace", _measurement_facts(
-            output, _read_run_checkpoint(state["child"])["sha256"],
-            verify_workspace(sound)[0]["kg"], "synthetic")
+            output, _read_run_checkpoint(state["child"])["sha256"], *_kg_and_record(sound))
 
     report.run("M3", "m2", "CONTROL: measurement accepts the resumed checkpoint over its graph",
                _measured)
@@ -1900,7 +1911,7 @@ def phase_m2_demo(
         )
         assert produced.returncode == 0, "the shortest-path producer failed"
         facts = _serve_and_diagnose(served / "kg.json", state["child"], served, device,
-                                    "synthetic")
+                                    _kg_and_record(served)[1])
         return "build, train, resume and serve, with the table verified", facts
 
     report.run("M4", "m2",
@@ -2257,7 +2268,7 @@ def phase_m2_real(
         assert kg_binding_state(binding, digests["kg"], source=table.name) == "verified", (
             "the table's sidecar does not name this workspace's graph"
         )
-        state["kg"] = digests["kg"]
+        state["kg"], state["record"] = digests["kg"], record
         return "the workspace's graph and training inputs verify", {
             "kg_digest": digests["kg"],
             "dataset_record": _record_facts(record),
@@ -2343,13 +2354,15 @@ def phase_m2_real(
         output = runs / "measurement" / "measurement.json"
         assert _measure(state["child"], real, output, device) == 0, "the measurement failed"
         return "measured through the production entry point", _measurement_facts(
-            output, _read_run_checkpoint(state["child"])["sha256"], state["kg"], "files")
+            output, _read_run_checkpoint(state["child"])["sha256"], state["kg"],
+            state["record"])
 
     report.run("R5", "real", "measurement accepts and measures the new checkpoint", _measured)
 
     def _served() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "R4 did not pass"
-        facts = _serve_and_diagnose(real / "kg.json", state["child"], real, device, "files")
+        facts = _serve_and_diagnose(real / "kg.json", state["child"], real, device,
+                                    state["record"])
         return "served with the table verified, and a diagnosis ran", facts
 
     report.run("R6", "real", "serving builds the new checkpoint, SP verified, and diagnoses",

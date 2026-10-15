@@ -439,6 +439,10 @@ class DatasetRecordRefused(ValueError):
     """
 
     def __init__(self, message: str, binding: str, origin: Optional[str] = None) -> None:
+        from src.kg.provenance import BINDING_STATES
+
+        if binding not in BINDING_STATES:
+            raise ValueError(f"{binding!r} is not a binding state ({', '.join(BINDING_STATES)})")
         super().__init__(message)
         self.binding = binding
         self.origin = origin
@@ -516,11 +520,14 @@ def verify_dataset_record(manifest: ManifestRead, kg_digest: str) -> DatasetReco
             f"replaced after the build. {_REBUILD}",
             "mismatch",
         )
+    # A parse that fails in any way is a record this revision does not read;
+    # `RecursionError` is how `json` meets nesting deeper than the interpreter's
+    # limit, and `TypeError` stands for a shape no rule anticipated.
     try:
         text = read.data.decode("utf-8")
         del read
         record = validate_record(json.loads(text), str(path))
-    except ValueError as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         raise DatasetRecordRefused(
             f"{path} is the record {manifest_path} binds and is not one this revision "
             f"reads (unverifiable): {exc}. {_REBUILD}",

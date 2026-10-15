@@ -195,6 +195,11 @@ def read_measurement_inputs(
         "Read %d %s samples; checkpoint %s (sha256 %s)",
         len(samples.samples), split, read.identity.path, read.identity.sha256[:12],
     )
+    logger.info(
+        "Dataset record %s: binding %s, origin %s (sha256 %s)",
+        dataset_record.identity.path.name, dataset_record.binding, dataset_record.origin,
+        dataset_record.identity.sha256[:12],
+    )
     return MeasurementInputs(cohort, manifest, graph, samples, read, bound, dataset_record)
 
 
@@ -432,6 +437,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  {'candidate diseases per patient':38s} "
           f"{result.sampler_evidence['candidate_columns']['max']}")
 
+    # **The number says what its graph was built from** (contract M3b), here as
+    # in the manifest: binding state and origin apart.
+    record = inputs.dataset_record
+    print(f"\nDataset record: binding {record.binding}, origin {record.origin}")
+    if record.origin == "synthetic":
+        print("SYNTHETIC WORKSPACE — this number is not over a graph built from real files.")
     if not cuda_executed:
         print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
     print("\nWhether this is the institution's number depends on the checkpoint and\n"

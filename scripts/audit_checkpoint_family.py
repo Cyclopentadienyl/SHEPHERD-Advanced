@@ -387,6 +387,9 @@ def _dataset_record(manifest: Any, kg_digest: str, root: Path) -> Dict[str, Any]
     except DatasetRecordRefused as exc:
         return {"verdict": "refused", "reason": f"{type(exc).__name__}: {_scrub(str(exc), root)}",
                 "binding": exc.binding, "origin": exc.origin}
+    except Exception as exc:  # noqa: BLE001 - one workspace never stops the listing
+        return {"verdict": "refused", "reason": f"{type(exc).__name__}: {_scrub(str(exc), root)}",
+                "binding": None, "origin": None}
     summary = record.summary()
     return {"verdict": "accepted", "reason": None, "binding": summary["binding"],
             "origin": summary["origin"], "sha256": summary["sha256"],

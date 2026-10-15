@@ -322,17 +322,69 @@ class TestTheRecordRefusesToContradictItselfWhenRead:
 
     @pytest.mark.parametrize("changes,fragment", [
         ({"origin": "imagined"}, "not one of"),
+        ({"origin": ["files"]}, "not one of"),
         ({"kg_digest": "A" * 64}, "not a SHA-256"),
         ({"sources": {"mondo": "x"}}, "not a list"),
         ({"missing_roles": []}, "contradicts itself"),
         ({"incomplete_by_design": "nothing"}, "not a list of statements"),
         ({"schema_version": 2}, "provenance schema 2"),
-    ], ids=["origin", "kg-digest", "sources-shape", "missing-roles", "limits", "schema"])
+        ({"schema_version": True}, "provenance schema True"),
+        ({"schema_version": 1.0}, "provenance schema 1.0"),
+    ], ids=["origin", "origin-list", "kg-digest", "sources-shape", "missing-roles", "limits",
+            "schema", "schema-bool", "schema-float"])
     def test_a_malformed_record_is_refused(self, changes, fragment):
         from src.kg.provenance import ProvenanceError, validate_record
 
         with pytest.raises(ProvenanceError, match=fragment):
             validate_record(self._record(**changes))
+
+    def test_a_record_without_its_limits_is_refused_not_shown_as_complete(self):
+        """Every writer has written `incomplete_by_design`; without it the record
+        would be shown as establishing everything."""
+        from src.kg.provenance import ProvenanceError, validate_record
+
+        record = self._record()
+        del record["incomplete_by_design"]
+        with pytest.raises(ProvenanceError, match="is missing"):
+            validate_record(record)
+
+    @staticmethod
+    def _files_record(**entry_changes):
+        """A files record with all four roles, its first source changed."""
+        from src.kg.provenance import SOURCE_ROLES, build_provenance, source_entry
+
+        record = build_provenance("a" * 64, sources=[
+            source_entry(role, f"{role}.f", c * 64) for role, c in zip(SOURCE_ROLES, "bcde")])
+        record["sources"][0] = {**record["sources"][0], **entry_changes}
+        return record
+
+    @pytest.mark.parametrize("changes,fragment", [
+        ({"digest": "B" * 64}, "not a SHA-256"),
+        ({"digest": " " * 64}, "not a SHA-256"),
+        ({"filename": 5}, "not a path"),
+        ({"filename": ["mondo.obo"]}, "not a path"),
+        ({"filename": "/home/operator/mondo.obo"}, "not in the form a build writes"),
+        ({"note": "extra"}, "not in the form a build writes"),
+    ], ids=["upper-case-digest", "blank-digest", "int-filename", "list-filename",
+            "directory-in-filename", "extra-key"])
+    def test_a_source_not_in_the_form_a_build_writes_is_refused(self, changes, fragment):
+        """Each source is exactly what `source_entry` builds: a digest no file can
+        have identifies nothing, and a path or an extra key would be published
+        wherever the record is shown."""
+        from src.kg.provenance import ProvenanceError, validate_record
+
+        with pytest.raises(ProvenanceError, match=fragment):
+            validate_record(self._files_record(**changes))
+
+    def test_the_writer_stores_sources_as_source_entry_builds_them(self):
+        """A caller's absolute path and extra keys do not reach the record."""
+        from src.kg.provenance import SOURCE_ROLES, build_provenance
+
+        entries = [{"role": role, "filename": f"/home/operator/{role}.f", "digest": c * 64,
+                    "operator": "someone"} for role, c in zip(SOURCE_ROLES, "bcde")]
+        record = build_provenance("a" * 64, sources=entries)
+        assert record["sources"][0] == {"role": "mondo", "filename": "mondo.f",
+                                        "digest": "b" * 64, "declared_version": None}
 
     def test_a_synthetic_record_listing_sources_is_refused(self):
         from src.kg.provenance import ProvenanceError, source_entry, validate_record
@@ -522,7 +574,32 @@ class TestTheRecordMustBeTheOneBound:
         assert refused.binding == "unverifiable"
         assert fragment in str(refused)
 
-    @pytest.mark.parametrize("drop", ["origin", "sources", "kg_digest"])
+    def test_a_bound_record_with_a_shape_no_rule_names_is_unverifiable(self, tmp_path):
+        """A source filename that is not a path, and nesting past the parser's
+        limit: refused with the binding state, never escaping as another error."""
+        workspace = _bound_workspace(tmp_path)
+        for payload in (
+            json.dumps({**json.loads((workspace / "kg.provenance.json").read_text()),
+                        "origin": "files", "missing_roles": [],
+                        "sources": [{"role": role, "filename": 5, "digest": c * 64,
+                                     "declared_version": None}
+                                    for role, c in zip(
+                                        ("mondo", "hpo", "phenotype_hpoa",
+                                         "genes_to_phenotype"), "abcd")]}).encode(),
+            b"[" * 200_000 + b"]" * 200_000,
+        ):
+            _rebind(workspace, payload)
+            refused = _refusal(workspace)
+            assert refused.binding == "unverifiable"
+            assert "is not one this revision reads" in str(refused)
+
+    def test_a_refusal_names_a_binding_state_or_is_not_made(self):
+        from src.kg.artifacts import DatasetRecordRefused
+
+        with pytest.raises(ValueError, match="not a binding state"):
+            DatasetRecordRefused("message", "refused")
+
+    @pytest.mark.parametrize("drop", ["origin", "sources", "kg_digest", "incomplete_by_design"])
     def test_a_bound_record_missing_a_required_field_is_unverifiable(self, tmp_path, drop):
         """Parsing is not being a record: without these it states no origin and
         lists no sources."""

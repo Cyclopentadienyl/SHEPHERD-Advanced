@@ -2703,13 +2703,17 @@ decided while building, is stated here.
   (`workspace_provenance_status`, `provenance_status`, `read_provenance`, `verify_provenance`) are
   removed, with their static-pin entries (BACKLOG 19.14, 19.15); no production code called them.
 - **The record's rules in one place** (`src.kg.provenance.validate_record`, `unidentified_roles`,
-  `require_identified`): an object of schema 1 with the required fields; a SHA-256 `kg_digest`; an
-  origin of `files` or `synthetic`; a list of sources, each one `source_entry` would build, no role
-  twice; none for a synthetic origin; `missing_roles`, where present, equal to the roles the sources
-  leave out (every role for a synthetic record); `incomplete_by_design` a list of statements. The
-  writer applies the same rules before it writes (`build_provenance`, `write_provenance`), so a
-  `files` record with an unidentified input, or one that contradicts itself, is never written; the
-  workspace writer runs them before its first byte.
+  `require_identified`): an object of schema 1 (the integer) with the required fields,
+  `incomplete_by_design` among them (every writer has written it); a SHA-256 `kg_digest`; an
+  origin of `files` or `synthetic`; a list of sources, each exactly what `source_entry` builds (its
+  role, its file's basename, a lower-case SHA-256 hexdigest, its declared version, nothing else),
+  no role twice; none for a synthetic origin; `missing_roles`, where present, equal to the roles the
+  sources leave out (every role for a synthetic record); `incomplete_by_design` a list of
+  statements. The writer applies the same rules before it writes (`build_provenance`, which stores
+  each source as `source_entry` builds it, and `write_provenance`), so a `files` record with an
+  unidentified input, or one that contradicts itself, is never written; the workspace writer runs
+  them before its first byte. A parse that fails in any way, a nesting past the parser's limit
+  included, is *unverifiable*; a refusal names one of `BINDING_STATES` or is not made.
 - **Consumers.** Training (`read_training_inputs`, at the top of the run, before the run directory),
   measurement (`read_measurement_inputs`, both cohort kinds, before the checkpoint is read) and
   serving (`DiagnosisPipeline`, before the tensors are adopted and the checkpoint read) call it
@@ -2719,13 +2723,18 @@ decided while building, is stated here.
   workspace's files in place as unverifiable. The reload route lists `kg.provenance.json` among the
   required files, as it lists the manifest. Path-only serving, with no checkpoint, verifies no
   workspace and is unchanged (BACKLOG 19.20).
-- **Shown apart, never as plain verified.** Training logs the record's binding and origin. Serving
-  publishes `dataset_record` in `get_pipeline_config()` and the API's pipeline status (an additive
-  field; the Diagnosis tab is unchanged until M3c's served identity): binding, origin, the digest of
-  its bytes, the sources it names and `incomplete_by_design`. The measurement manifest gains the
-  same summary as `dataset_record` (§5.1); it is outside the measurement's semantics digest, since
-  no mode computes from it (`NON_SEMANTIC_FIELDS`). The checkpoint's record is unchanged (§5.1):
-  the manifest it records binds the record's digest.
+- **Shown apart, never as plain verified.** Training and measurement log the record's binding and
+  origin. Serving publishes `dataset_record` in `get_pipeline_config()` and the API's pipeline
+  status (an additive field; the Diagnosis tab is unchanged until M3c's served identity): binding,
+  origin, the digest of its bytes, the sources it names and `incomplete_by_design`. The measurement
+  manifest gains the same summary as `dataset_record` (§5.1), outside the measurement's semantics
+  digest, since no mode computes from it (`NON_SEMANTIC_FIELDS`), and its console summary prints
+  the binding and origin, with "SYNTHETIC WORKSPACE" for a synthetic one. The checkpoint's record is
+  unchanged (§5.1): the manifest it records binds the record's digest.
+  - **Stated exception: the evaluation ledger.** `record_evaluation.py`'s ledger record and
+    `--show` do not carry the origin; the ledger is item 14's ledger v2 (§5.1, M4), and the
+    measurement report it is filed from carries `dataset_record`. Until then a ledger row does not
+    say whether its workspace was synthetic.
 - **The manifest binding is required at write.** `generate_training_samples` refuses a persisting
   call whose `graph_digests` lack `provenance` (or carry a malformed one) before anything is
   written, as it refuses an unbound graph role. The schema stays 3: the field was already written
@@ -2747,8 +2756,21 @@ decided while building, is stated here.
   an ontology the loader did not produce, and the annotation files' path digests, are unchanged
   (BACKLOG 19.13, the KG record v2).
 - **Fixtures.** The generated-workspace fixture writes a synthetic record through the production
-  writer and binds it, so every test workspace is fully bound and synthetic; no test skips the
-  check.
+  writer and binds it, so every workspace built on it is fully bound and synthetic; no test skips
+  the check. Tests that need a `files` record build one from files: real test inputs in the build
+  tests, and written stand-ins with their own digests in the probe's real-data test, which says it
+  is a stand-in (its graph is the in-memory demo).
+- **Internal review before delivery** (2026-10-15, four lenses and an independent check of each
+  serious finding): no P1. One P2, the deployment guides (§4.4, both languages) still describing
+  the record as reported and not enforced, rewritten. P3s fixed: the writer-refusal tests for
+  malformed digests had become refusals for an unbound record (now each reaches the shape check
+  and names its reason, with malformed record digests added); measurement's console did not name
+  the origin; source digests were checked for length only, a non-path filename escaped as
+  `TypeError`, `schema_version` `true` or `1.0` read as 1, a record without
+  `incomplete_by_design` was shown as establishing everything, and a caller's absolute path or
+  extra keys could reach the published summary (all now refused or normalised); one record failure
+  no rule names could stop the inventory; R5 and R6 compared only the binding and origin (now the
+  whole record the workspace check verified). The ledger is the stated exception above.
 
 *How M3b's acceptance is run (prepared 2026-10-15; to be confirmed by the reviewer):* through the
 same deployment probe and production entry points (`scripts/probe_deployment.py --m2-acceptance
@@ -2763,9 +2785,15 @@ evidence root (`/home/user/m3b-acceptance-20261015-01/`, then `-02`, …). What 
   manifest and the served configuration showing the record as verified and synthetic; M11,
   training, serving and measurement each refusing a workspace whose record is missing, with
   nothing written and the served pipeline unchanged. All are in `M2_DEMO_REQUIRED`.
-- **Real data:** R1, R5 and R6, the real workspace's record verified with origin `files`, every
-  source named with its digest and declared version, in the workspace check, the measurement
-  manifest and the served configuration; F1 for a fresh real build, where run.
+- **Real data:** R1, the real workspace's record verified with origin `files`, every source named
+  with its digest and declared version; R5 and R6, the measurement manifest and the served
+  configuration carrying that same record whole (equal to what R1 verified, digest and sources
+  included); F1 for a fresh real build, where run.
+- **Before the run:** the real workspace `hpo_2026_0929_5a` was built after the manifest began
+  binding the record (`ceb9c9c`, 2026-09-20), and the record's shape is unchanged since, so it is
+  expected to pass; this cannot be confirmed from the repository. The read-only inventory
+  (`scripts/audit_checkpoint_family.py --inventory`) shows its `dataset_record` verdict first. If
+  it is refused, decision 2 applies: the workspace is rebuilt, not admitted.
 - **Not shown:** that a record names the right releases. The record identifies the bytes a build
   consumed; whether those are the intended releases is the operator's to read from it.
 

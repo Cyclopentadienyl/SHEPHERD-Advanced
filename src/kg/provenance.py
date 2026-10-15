@@ -73,7 +73,11 @@ INCOMPLETE_BY_DESIGN = (
 #: record": one with only a schema version and a digest states no origin and
 #: lists no sources, and a reader that accepted it would report a build's inputs
 #: as an empty set rather than as unrecorded.
-REQUIRED_RECORD_FIELDS = ("schema_version", "kg_digest", "origin", "sources")
+#: `incomplete_by_design` among them: every writer since the record existed has
+#: written it, and a record without it would be shown as establishing everything.
+REQUIRED_RECORD_FIELDS = (
+    "schema_version", "kg_digest", "origin", "sources", "incomplete_by_design",
+)
 
 #: What produced the graph: real input files, or a construction in memory (a
 #: demo, a test, the deployment probe). A description, never a binding state.
@@ -116,7 +120,9 @@ def source_entry(
         raise ProvenanceError(
             f"{role!r} is not one of the roles a build consumes ({', '.join(SOURCE_ROLES)})"
         )
-    if not isinstance(digest, str) or len(digest) != 64:
+    # The form `hashlib` gives, as for `kg_digest`: anything else can never be
+    # the digest of the file it names, so it identifies nothing.
+    if not (isinstance(digest, str) and _IS_SHA256.fullmatch(digest)):
         raise ProvenanceError(
             f"the digest recorded for {role} is not a SHA-256 hexdigest ({digest!r})"
         )
@@ -124,6 +130,8 @@ def source_entry(
         raise ProvenanceError(
             f"{role} declares a version that is not a string ({declared_version!r})"
         )
+    if path is not None and not isinstance(path, (str, os.PathLike)):
+        raise ProvenanceError(f"{role} names its file as {path!r}, which is not a path")
     return {
         "role": role,
         "filename": Path(path).name if path is not None else None,
@@ -149,39 +157,14 @@ def build_provenance(
             when it was constructed in memory by a demo or a test. **A synthetic
             build records that it has no sources; it never invents digests.**
     """
-    if origin not in ("files", "synthetic"):
-        raise ProvenanceError(f"origin must be 'files' or 'synthetic', got {origin!r}")
-    if not isinstance(kg_digest, str) or len(kg_digest) != 64:
-        raise ProvenanceError(
-            f"kg_digest is not a SHA-256 hexdigest ({kg_digest!r}); without it "
-            "the record cannot say which graph it describes"
-        )
-    entries = list(sources or [])
-    # **Entries are re-checked here, not trusted because `source_entry` exists.**
-    # That helper validates what it builds; nothing stops a caller assembling a
-    # dict by hand, and a record listing an entry with no digest identifies
-    # nothing while looking like it does.
-    for entry in entries:
-        if not isinstance(entry, dict):
-            raise ProvenanceError(f"a source entry is not an object ({entry!r})")
-        absent = [key for key in ("role", "digest") if key not in entry]
-        if absent:
-            raise ProvenanceError(
-                f"a source entry is missing {absent}; without them it names "
-                f"nothing and identifies nothing ({entry!r})"
-            )
-        source_entry(
-            role=entry["role"],
-            path=entry.get("filename"),
-            digest=entry["digest"],
-            declared_version=entry.get("declared_version"),
-        )
-    if origin == "synthetic" and entries:
-        raise ProvenanceError(
-            "a synthetic build recorded source files. Nothing read them, so "
-            "recording them would attribute a graph to inputs it never had."
-        )
-    missing = [role for role in SOURCE_ROLES if role not in {e["role"] for e in entries}]
+    # **Entries are normalised here, not trusted because `source_entry` exists.**
+    # Nothing stops a caller assembling a dict by hand: one with no digest
+    # identifies nothing, and one with a directory in its filename or keys of its
+    # own would carry them into every surface that shows the record. What is
+    # stored is what `source_entry` builds.
+    entries = [_normalised_entry(entry) for entry in (sources or [])]
+    roles = {entry["role"] for entry in entries}
+    missing = [role for role in SOURCE_ROLES if role not in roles]
     record = {
         "schema_version": PROVENANCE_SCHEMA_VERSION,
         "kg_digest": kg_digest,
@@ -193,13 +176,33 @@ def build_provenance(
         "counters": dict(counters or {}),
         "incomplete_by_design": list(INCOMPLETE_BY_DESIGN),
     }
-    # **The reader's rules, applied before anything is written** (contract M3b).
-    # A record every consumer would refuse is not produced: the workspace writer
-    # runs this before its first byte, so the refusal lands at the build, not at
-    # a training run an hour later.
+    # **The reader's rules, and only those, applied before anything is written**
+    # (contract M3b): the origin, the graph digest, a synthetic record with
+    # sources. A record every consumer would refuse is not produced; the
+    # workspace writer runs this before its first byte, so the refusal lands at
+    # the build, not at a training run an hour later.
     validate_record(record)
     require_identified(record)
     return record
+
+
+def _normalised_entry(entry: Any) -> Dict[str, Any]:
+    """A source entry as `source_entry` builds it: its role, its file's basename,
+    its digest and its declared version, and nothing else."""
+    if not isinstance(entry, dict):
+        raise ProvenanceError(f"a source entry is not an object ({entry!r})")
+    absent = [key for key in ("role", "digest") if key not in entry]
+    if absent:
+        raise ProvenanceError(
+            f"a source entry is missing {absent}; without them it names "
+            f"nothing and identifies nothing ({entry!r})"
+        )
+    return source_entry(
+        role=entry["role"],
+        path=entry.get("filename"),
+        digest=entry["digest"],
+        declared_version=entry.get("declared_version"),
+    )
 
 
 def validate_record(record: Any, where: str = "the provenance record") -> Dict[str, Any]:
@@ -211,12 +214,14 @@ def validate_record(record: Any, where: str = "the provenance record") -> Dict[s
     cannot produce a record the reader refuses. `where` names the file when
     there is one.
 
-    What a record must be: a JSON object of this schema, with its required
-    fields; a `kg_digest` that is a SHA-256 hexdigest; an origin from `ORIGINS`;
-    a list of sources, each one `source_entry` would build, no role twice; none
-    for a synthetic origin; and, where it lists `missing_roles`, the roles its
-    sources leave out (every role, for a synthetic one) — a record that
-    contradicts itself is not read as either of its claims.
+    What a record must be: a JSON object of this schema (the integer 1), with
+    its required fields; a `kg_digest` that is a SHA-256 hexdigest; an origin
+    from `ORIGINS`; a list of sources, each exactly what `source_entry` builds
+    (its role, its file's basename, a SHA-256 hexdigest, its declared version),
+    no role twice; none for a synthetic origin; where it lists `missing_roles`,
+    the roles its sources leave out (every role, for a synthetic one) — a record
+    that contradicts itself is not read as either of its claims; and
+    `incomplete_by_design`, a list of statements.
 
     Whether a `files` record identifies every input is not a shape rule: such a
     record is well formed and refused for what it says (`require_identified`).
@@ -227,7 +232,8 @@ def validate_record(record: Any, where: str = "the provenance record") -> Dict[s
     if not isinstance(record, dict):
         raise ProvenanceError(f"{where} is not a JSON object, so it describes no build")
     version = record.get("schema_version")
-    if version != PROVENANCE_SCHEMA_VERSION:
+    if (isinstance(version, bool) or not isinstance(version, int)
+            or version != PROVENANCE_SCHEMA_VERSION):
         raise ProvenanceError(
             f"{where} is provenance schema {version!r}; this code reads "
             f"{PROVENANCE_SCHEMA_VERSION}. Which of its fields still mean what "
@@ -244,29 +250,26 @@ def validate_record(record: Any, where: str = "the provenance record") -> Dict[s
     if not (isinstance(kg_digest, str) and _IS_SHA256.fullmatch(kg_digest)):
         raise ProvenanceError(
             f"{where} records kg_digest {kg_digest!r}, which is not a SHA-256 "
-            "hexdigest; it names no graph"
+            "hexdigest, so the record cannot say which graph it describes"
         )
     origin = record["origin"]
-    if origin not in ORIGINS:
+    if not isinstance(origin, str) or origin not in ORIGINS:
         raise ProvenanceError(f"{where} records origin {origin!r}, not one of {list(ORIGINS)}")
     sources = record["sources"]
     if not isinstance(sources, list):
         raise ProvenanceError(f"{where} records sources as {type(sources).__name__}, not a list")
     roles: List[str] = []
     for entry in sources:
-        if not isinstance(entry, dict) or "role" not in entry or "digest" not in entry:
-            raise ProvenanceError(
-                f"{where} lists a source that names nothing and identifies nothing ({entry!r})"
-            )
         try:
-            source_entry(
-                role=entry["role"],
-                path=entry.get("filename"),
-                digest=entry["digest"],
-                declared_version=entry.get("declared_version"),
-            )
+            normalised = _normalised_entry(entry)
         except ProvenanceError as exc:
             raise ProvenanceError(f"{where}: {exc}") from exc
+        if entry != normalised:
+            raise ProvenanceError(
+                f"{where} lists a source not in the form a build writes ({entry!r}): "
+                "its role, its file's basename, its digest and its declared version, "
+                "and nothing else"
+            )
         roles.append(entry["role"])
     repeated = sorted({role for role in roles if roles.count(role) > 1})
     if repeated:
@@ -276,7 +279,8 @@ def validate_record(record: Any, where: str = "the provenance record") -> Dict[s
         )
     if origin == "synthetic" and sources:
         raise ProvenanceError(
-            f"{where} is synthetic and lists source files; nothing read them"
+            f"{where} is synthetic and lists source files. Nothing read them, so "
+            "recording them would attribute a graph to inputs it never had."
         )
     expected = (
         [role for role in SOURCE_ROLES if role not in roles]
@@ -288,7 +292,7 @@ def validate_record(record: Any, where: str = "the provenance record") -> Dict[s
             f"sources leave out {expected!r}; a record that contradicts itself "
             "is not read as either claim"
         )
-    described = record.get("incomplete_by_design", [])
+    described = record["incomplete_by_design"]
     if not (isinstance(described, list) and all(isinstance(item, str) for item in described)):
         raise ProvenanceError(
             f"{where} records incomplete_by_design as {described!r}, not a list of statements"

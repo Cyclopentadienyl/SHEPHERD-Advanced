@@ -202,6 +202,18 @@ def test_a_measurement_records_its_dataset_record_with_the_origin_apart(tmp_path
     assert recorded["incomplete_by_design"], "what the record does not establish is shown"
 
 
+def test_the_measurement_console_says_what_its_graph_was_built_from(tmp_path, capsys):
+    """Where an operator reads the number, as in the manifest."""
+    from tests.fixtures.synthetic_workspace import build_workspace
+
+    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    assert _measure(data_dir, checkpoint, tmp_path / "out" / "measurement.json") == 0
+
+    out = capsys.readouterr().out
+    assert "Dataset record: binding verified, origin synthetic" in out
+    assert "SYNTHETIC WORKSPACE" in out
+
+
 def test_the_dataset_record_does_not_enter_the_measurement_semantics():
     """It describes the graph's sources; no mode computes from it, so two runs
     over the same tensors are the same measurement whatever it says."""
@@ -328,6 +340,31 @@ def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_
                      "reason": "the workspace's dataset record is refused"}
     assert report["counts"]["dataset_record:refused"] == 1
     assert report["counts"]["dataset_record origin:synthetic"] == 1
+
+
+def test_one_unreadable_record_does_not_stop_the_inventory(tmp_path, monkeypatch):
+    """A failure no rule names is listed as a refusal for that workspace, and the
+    others are still listed."""
+    import scripts.audit_checkpoint_family as audit
+    import src.kg.artifacts as artifacts
+
+    root = tmp_path / "workspaces"
+    write_generated_workspace(root / "a", training_fields=True, **IDS)
+    write_generated_workspace(root / "b", training_fields=True, train_ids=[5, 6], val_ids=[7])
+    real = artifacts.verify_dataset_record
+
+    def failing(manifest, kg_digest):
+        if manifest.identity.path.parent.name == "b":
+            raise OSError("the disk said no")
+        return real(manifest, kg_digest)
+
+    monkeypatch.setattr(artifacts, "verify_dataset_record", failing)
+    report = audit.build_inventory(root, "unstated")
+
+    assert report["workspaces"]["a"]["dataset_record"]["verdict"] == "accepted"
+    b = report["workspaces"]["b"]["dataset_record"]
+    assert (b["verdict"], b["binding"]) == ("refused", None)
+    assert "the disk said no" in b["reason"]
 
 
 def test_the_move_leaves_a_refused_workspaces_files_in_place(tmp_path):

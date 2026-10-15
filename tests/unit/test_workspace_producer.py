@@ -1291,6 +1291,12 @@ class TestTheRecipeIsRequiredWhereItIsRead:
         assert manifest["graph_export"] == {}
 
 
+#: Every bound role but `num_nodes`, sound, so a case malforms that role alone.
+_OTHERS_SOUND = {r: "0" * 64 for r in ("kg", "node_features", "edge_indices", "provenance")}
+#: Every graph role sound, so a case malforms the dataset record's binding alone.
+_ALL_SOUND = {r: "0" * 64 for r in ("kg", "node_features", "edge_indices", "num_nodes")}
+
+
 class TestARefusalToPersistTouchesNothing:
     """The blocker this class exists for, stated as the property it protects.
 
@@ -1351,37 +1357,45 @@ class TestARefusalToPersistTouchesNothing:
         # these are the strings `file_sha256` could never return, so refusing
         # them turns an hour-long build's late mismatch into an immediate one
         # without claiming anything about the ones it lets through.
-        "a digest that is too short": dict(digests={
-            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
-            "num_nodes": "0" * 63}),
-        "a digest in upper case": dict(digests={
-            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
-            "num_nodes": "A" * 64}),
-        "a digest that is not hex": dict(digests={
-            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
-            "num_nodes": "z" * 64}),
-        "a digest that is a number": dict(digests={
-            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
-            "num_nodes": 12345}),
+        "a digest that is too short": dict(digests={**_OTHERS_SOUND, "num_nodes": "0" * 63}),
+        "a digest in upper case": dict(digests={**_OTHERS_SOUND, "num_nodes": "A" * 64}),
+        "a digest that is not hex": dict(digests={**_OTHERS_SOUND, "num_nodes": "z" * 64}),
+        "a digest that is a number": dict(digests={**_OTHERS_SOUND, "num_nodes": 12345}),
         # **The case the first version of this matrix missed.** `12345` above is
         # refused for its length, so it passed while proving nothing about type.
         # A 64-digit integer stringifies to 64 characters that are all valid
         # hex, and the manifest would then record a JSON number no consumer
         # comparing against a hexdigest could match.
-        "a 64-digit integer": dict(digests={
-            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
-            "num_nodes": int("1" * 64)}),
-        "a digest that is a list of hex": dict(digests={
-            **{r: "0" * 64 for r in ("kg", "node_features", "edge_indices")},
-            "num_nodes": ["a" * 64]}),
+        "a 64-digit integer": dict(digests={**_OTHERS_SOUND, "num_nodes": int("1" * 64)}),
+        "a digest that is a list of hex": dict(digests={**_OTHERS_SOUND,
+                                                         "num_nodes": ["a" * 64]}),
+        # Contract M3b: the dataset record is bound with the graph, held to the
+        # same shape, and refused when unbound.
+        "the dataset record unbound": dict(digests={
+            r: "0" * 64 for r in ("kg", "node_features", "edge_indices", "num_nodes")}),
+        "a record digest in upper case": dict(digests={**_ALL_SOUND, "provenance": "A" * 64}),
+        "a record digest that is not hex": dict(digests={**_ALL_SOUND, "provenance": "z" * 64}),
+        "a record digest that is a 64-digit integer": dict(digests={
+            **_ALL_SOUND, "provenance": int("1" * 64)}),
     }
+
+    @staticmethod
+    def _says(case):
+        """What a refusal must name, so a case refused for another reason fails:
+        since the record became a required role, an unbound record was refused
+        first and the shape checks below it went unexercised."""
+        if "recipe" in case:
+            return "graph_export"
+        if case in ("no digests at all", "digests missing a role", "the dataset record unbound"):
+            return "unbound"
+        return "not SHA-256"
 
     @pytest.mark.parametrize("case", sorted(REFUSALS))
     def test_a_new_workspace_is_never_created(self, tmp_path, case):
         """Not merely empty — absent. `mkdir` is downstream of every refusal."""
         workspace = tmp_path / "ws"
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=self._says(case)):
             self._call(workspace, **self.REFUSALS[case])
 
         assert not workspace.exists(), (
@@ -1408,7 +1422,7 @@ class TestARefusalToPersistTouchesNothing:
             for name in names
         }
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=self._says(case)):
             self._call(workspace, **self.REFUSALS[case])
 
         for name, (payload, mtime) in before.items():
