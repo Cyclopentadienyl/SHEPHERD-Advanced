@@ -2523,9 +2523,11 @@ deployment probe and production entry points as M2's, which now carry M3a's chec
   meet M3a's functional acceptance as agreed, with no new P1 or P2; no rerun of the real data or
   another identical round is needed. Both rounds' raw reports are kept as written; neither is
   rewritten as a complete single run. Not included: capacity, model quality, clinical benchmarks,
-  M3b and M3c. The two non-blocking P3 stay tracked as recorded above. The homelab checkout is
-  restored to what `checkout-before.txt` records (`main` at `9fe5113`) by the round 02 runbook's
-  last step, which the owner carries out.
+  M3b and M3c. The two non-blocking P3 stay tracked as recorded above.
+- **The homelab checkout restored (2026-10-15, done):** by the round 02 runbook's last step, to what
+  `checkout-before.txt` records; the reviewer checked it directly, `main` at `9fe5113` with the
+  tracked files clean, and round 02's `checkout-restored.txt` is kept. The review's note that the
+  checkout was still detached at `c4a21b5` is the state before the restore; nothing is rerun.
 - **Not part of it:** moving the workspace's older checkpoints into the run layout. That is the
   owner's, with `scripts/migrate_checkpoints.py` (a plan first, `--apply` to move), and the
   acceptance does not need it: the reference is read by path.
