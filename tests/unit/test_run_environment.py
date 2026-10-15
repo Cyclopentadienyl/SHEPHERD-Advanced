@@ -14,6 +14,7 @@ import io
 import json
 import shutil
 import subprocess
+import sys
 
 import pytest
 import torch
@@ -115,7 +116,7 @@ def test_a_status_that_fails_leaves_dirty_unknown(repo, monkeypatch):
 
     def _status_fails(cmd, *args, **kwargs):
         if "status" in cmd:
-            return subprocess.CompletedProcess(cmd, 128, "", "")
+            return subprocess.CompletedProcess(cmd, 128, b"", b"")
         return real(cmd, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", _status_fails)
@@ -172,3 +173,30 @@ def test_the_gpu_facts_name_the_device_the_run_uses(monkeypatch):
 def test_assert_primitive_refuses_what_is_not_plain_data(bad):
     with pytest.raises(TypeError):
         assert_primitive(bad)
+
+
+@needs_git
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file names are bytes")
+def test_a_file_name_that_does_not_decode_is_counted_not_fatal(repo):
+    """`git status -z` reports raw path bytes. One that does not decode in the
+    locale's encoding used to raise `UnicodeDecodeError` out of the probe and
+    stop the training run whose revision was only being recorded."""
+    import os
+
+    os.close(os.open(os.path.join(os.fsencode(repo / "src"), b"caf\xe9.py"),
+                     os.O_CREAT | os.O_WRONLY, 0o644))
+
+    record = code_revision(repo)
+
+    assert record["state"] == "recorded"
+    assert record["untracked"] == 1 and record["dirty"] is True
+    assert "caf" not in json.dumps(record)
+
+
+def test_output_that_is_not_a_commit_id_is_unrecorded(tmp_path, monkeypatch):
+    def _odd(cmd, *args, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, b"\xff\xfe not a commit\n", b"")
+
+    monkeypatch.setattr(subprocess, "run", _odd)
+
+    assert code_revision(tmp_path)["state"] == "unrecorded"

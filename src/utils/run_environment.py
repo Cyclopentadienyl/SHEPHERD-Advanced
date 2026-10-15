@@ -46,24 +46,35 @@ GENERATED_UNTRACKED_PREFIXES = (
 _PROBE_TIMEOUT_SECONDS = 15
 
 
-def _git(root: Path, *args: str) -> Optional[str]:
-    """Git's stdout, or `None` for any failure: no git, no repository, a
-    repository git refuses (ownership), a timeout or a non-zero exit."""
+def _git(root: Path, *args: str) -> Optional[bytes]:
+    """Git's stdout as bytes, or `None` for any failure: no git, no repository,
+    a repository git refuses (ownership), a timeout or a non-zero exit.
+
+    **Bytes, never decoded here.** Paths in `git status -z` are raw bytes, which
+    need not decode in the locale's encoding (a file name in another encoding,
+    or a Windows code page): decoding them used to raise `UnicodeDecodeError`,
+    which nothing caught, and stopped the training run whose revision was only
+    being recorded.
+    """
     try:
         done = subprocess.run(
             ["git", "-C", str(root), *args],
-            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_SECONDS,
+            capture_output=True, timeout=_PROBE_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
     return done.stdout if done.returncode == 0 else None
 
 
-def _count_status(porcelain: str) -> Dict[str, int]:
+_GENERATED_PREFIXES_BYTES = tuple(p.encode("ascii") for p in GENERATED_UNTRACKED_PREFIXES)
+
+
+def _count_status(porcelain: bytes) -> Dict[str, int]:
     """Counts from `git status --porcelain=v1 -z`: tracked files with any change,
-    staged or not, and untracked files outside `GENERATED_UNTRACKED_PREFIXES`."""
+    staged or not, and untracked files outside `GENERATED_UNTRACKED_PREFIXES`.
+    Works on the raw bytes: a path is compared by prefix, never decoded."""
     modified = untracked = 0
-    entries = porcelain.split("\0")
+    entries = porcelain.split(b"\0")
     i = 0
     while i < len(entries):
         entry = entries[i]
@@ -71,16 +82,25 @@ def _count_status(porcelain: str) -> Dict[str, int]:
         if len(entry) < 4:
             continue
         code, path = entry[:2], entry[3:]
-        if code == "??":
-            if not path.startswith(GENERATED_UNTRACKED_PREFIXES):
+        if code == b"??":
+            if not path.startswith(_GENERATED_PREFIXES_BYTES):
                 untracked += 1
             continue
         modified += 1
         # A rename or copy is followed by its source path, which is not a
         # second change.
-        if "R" in code or "C" in code:
+        if b"R" in code or b"C" in code:
             i += 1
     return {"modified_tracked": modified, "untracked": untracked}
+
+
+def _commit(raw: Optional[bytes]) -> Optional[str]:
+    """A commit id from `git rev-parse HEAD`'s output, or `None`. A commit id
+    is hexadecimal; anything else is not taken for one."""
+    if not raw:
+        return None
+    text = raw.strip().decode("ascii", errors="replace")
+    return text if text and all(c in "0123456789abcdef" for c in text) else None
 
 
 def code_revision(root: Path) -> Dict[str, Any]:
@@ -94,16 +114,16 @@ def code_revision(root: Path) -> Dict[str, Any]:
       not, or an untracked file exists outside the run's own products; `None`
       when git named the commit but could not report its status.
     """
-    head = _git(root, "rev-parse", "HEAD")
-    if not head or not head.strip():
+    head = _commit(_git(root, "rev-parse", "HEAD"))
+    if head is None:
         return {"state": "unrecorded", "revision": None, "dirty": None,
                 "modified_tracked": None, "untracked": None}
     status = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if status is None:
-        return {"state": "recorded", "revision": head.strip(), "dirty": None,
+        return {"state": "recorded", "revision": head, "dirty": None,
                 "modified_tracked": None, "untracked": None}
     counts = _count_status(status)
-    return {"state": "recorded", "revision": head.strip(),
+    return {"state": "recorded", "revision": head,
             "dirty": bool(counts["modified_tracked"] or counts["untracked"]),
             **counts}
 
@@ -113,11 +133,11 @@ def _driver_version(index: int) -> Optional[str]:
         done = subprocess.run(
             ["nvidia-smi", f"--id={index}", "--query-gpu=driver_version",
              "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_SECONDS,
+            capture_output=True, timeout=_PROBE_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
-    value = done.stdout.strip() if done.returncode == 0 else ""
+    value = done.stdout.decode("ascii", errors="replace").strip() if done.returncode == 0 else ""
     return value.splitlines()[0].strip() if value else None
 
 
