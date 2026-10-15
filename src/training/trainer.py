@@ -420,10 +420,10 @@ class Trainer:
             # Iterator doesn't have len
             steps_per_epoch = 1000  # Default estimate
 
-        return (
-            self.config.num_epochs * steps_per_epoch
-            // self.config.gradient_accumulation_steps
-        )
+        # Updates per epoch: every full accumulation group, and the tail as one
+        # more (`_train_epoch`), so the schedule counts the updates taken.
+        accumulation = self.config.gradient_accumulation_steps
+        return self.config.num_epochs * (-(-steps_per_epoch // accumulation))
 
     def _setup_amp(self) -> None:
         """設置混合精度訓練"""
@@ -573,13 +573,27 @@ class Trainer:
         return final_metrics
 
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
-        """訓練一個 epoch"""
+        """訓練一個 epoch
+
+        **The accumulation tail is applied at the epoch's end** (contract
+        M3a-1). With gradient accumulation, the batches after the last full
+        group used to leave their gradients in `.grad`, where the next epoch's
+        first update absorbed them (and the last epoch's were dropped), while
+        the schedule's step count assumed a fraction of an update. Now the tail
+        of `r` batches is one more update, its gradients rescaled by
+        `accumulation / r` so that, like every full group, it applies the mean
+        of the batches it holds. No gradient crosses an epoch boundary, and an
+        epoch takes `ceil(batches / accumulation)` updates, which is what
+        `_estimate_total_steps` counts. With an accumulation of 1 nothing
+        changes.
+        """
         self.model.train()
         self.callbacks.on_epoch_begin(self, epoch)
 
-        total_loss = 0.0
-        num_batches = 0
+        accumulation = self.config.gradient_accumulation_steps
+        stats = {"total_loss": 0.0, "num_updates": 0}
         accumulated_loss = 0.0
+        pending = 0
 
         epoch_start_time = time.time()
 
@@ -605,7 +619,7 @@ class Trainer:
                 loss, loss_dict = self.loss_fn(batch, model_outputs)
 
                 # Scale for gradient accumulation
-                loss = loss / self.config.gradient_accumulation_steps
+                loss = loss / accumulation
 
             # Backward pass
             if self.scaler is not None:
@@ -614,51 +628,17 @@ class Trainer:
                 loss.backward()
 
             accumulated_loss += loss.item()
+            pending += 1
 
             # Optimizer step (with gradient accumulation)
-            if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                # Gradient clipping
-                if self.config.max_grad_norm > 0:
-                    if self.scaler is not None:
-                        self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        self.config.max_grad_norm,
-                    )
-
-                # Optimizer step
-                if self.scaler is not None:
-                    scale_before = self.scaler.get_scale()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                    # GradScaler skips optimizer.step() on NaN/Inf gradients,
-                    # indicated by scale decreasing. Only step the scheduler
-                    # when the optimizer actually ran.
-                    optimizer_was_run = self.scaler.get_scale() >= scale_before
-                else:
-                    self.optimizer.step()
-                    optimizer_was_run = True
-
-                if optimizer_was_run:
-                    self.state.optimizer_updates += 1
-
-                # Scheduler step (only if optimizer actually updated weights)
-                if self.scheduler is not None and optimizer_was_run:
-                    self.scheduler.step()
-                    self.state.scheduler_steps += 1
-
-                # Zero gradients
-                self.optimizer.zero_grad()
-
-                # Update state
-                self.state.global_step += 1
-                total_loss += accumulated_loss * self.config.gradient_accumulation_steps
+            if (batch_idx + 1) % accumulation == 0:
+                self._optimizer_update(accumulated_loss * accumulation, stats)
                 accumulated_loss = 0.0
-                num_batches += 1
+                pending = 0
 
             # Batch metrics
             batch_metrics = {
-                "batch_loss": loss.item() * self.config.gradient_accumulation_steps,
+                "batch_loss": loss.item() * accumulation,
                 **{f"loss_{k}": v for k, v in loss_dict.items()},
             }
 
@@ -673,9 +653,17 @@ class Trainer:
                 self._validate(epoch)
                 self.model.train()
 
+        # The accumulation tail: one more update, as the mean of its batches.
+        if pending:
+            factor = accumulation / pending
+            for parameter in self.model.parameters():
+                if parameter.grad is not None:
+                    parameter.grad.mul_(factor)
+            self._optimizer_update(accumulated_loss * accumulation / pending, stats)
+
         # Epoch metrics
         epoch_time = time.time() - epoch_start_time
-        avg_loss = total_loss / max(num_batches, 1)
+        avg_loss = stats["total_loss"] / max(stats["num_updates"], 1)
 
         self.state.train_loss_history.append(avg_loss)
 
@@ -684,6 +672,52 @@ class Trainer:
             "epoch_time": epoch_time,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
         }
+
+    def _optimizer_update(self, update_loss: float, stats: Dict[str, Any]) -> None:
+        """Clip, step the optimizer (through the scaler where AMP uses one),
+        step the scheduler if the optimizer ran, zero the gradients and count.
+
+        `update_loss` is the mean loss of the batches this update applies.
+        `global_step` counts the attempts; `optimizer_updates` and
+        `scheduler_steps` count what ran (contract M3a-1).
+        """
+        # Gradient clipping
+        if self.config.max_grad_norm > 0:
+            if self.scaler is not None:
+                self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(),
+                self.config.max_grad_norm,
+            )
+
+        # Optimizer step
+        if self.scaler is not None:
+            scale_before = self.scaler.get_scale()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            # GradScaler skips optimizer.step() on NaN/Inf gradients,
+            # indicated by scale decreasing. Only step the scheduler
+            # when the optimizer actually ran.
+            optimizer_was_run = self.scaler.get_scale() >= scale_before
+        else:
+            self.optimizer.step()
+            optimizer_was_run = True
+
+        if optimizer_was_run:
+            self.state.optimizer_updates += 1
+
+        # Scheduler step (only if optimizer actually updated weights)
+        if self.scheduler is not None and optimizer_was_run:
+            self.scheduler.step()
+            self.state.scheduler_steps += 1
+
+        # Zero gradients
+        self.optimizer.zero_grad()
+
+        # Update state
+        self.state.global_step += 1
+        stats["total_loss"] += update_loss
+        stats["num_updates"] += 1
 
     @dataclass(frozen=True)
     class _EvaluationPass:
