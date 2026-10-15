@@ -110,7 +110,7 @@ platforms and claims no conformance to them.
 | 5 | **Backlog item 14 is split into two phases.** Phase 1 is a complete CLI flow: run a test, verify the inputs, keep the report, record it automatically or by hand, and show the result on the existing model status. Phase 2 is the Test tab, job management and advanced ordering | Owner and reviewer, 2026-10-06 |
 | 6 | **Milestones follow real dependencies.** A full environment refactor, a full provenance platform and every historical defect are not prerequisites of item 14. Each milestone delivers a complete flow that can be run and accepted | Reviewer, 2026-10-06 |
 | 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings | Owner, 2026-10-06 |
-| 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15); the author's understanding of the owner's intent, awaiting the owner's confirmation |
+| 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15), confirmed by the owner (2026-10-15) |
 | 9 | **One directory per training run** (M3a-2). No run overwrites another's files. Outputs in the old layout are moved once, explicitly, by the owner, with no runtime fallback. An explicitly entered model path stays available as a locator; whether a file is accepted is decided by its bytes | Owner, 2026-10-15 |
 | 10 | **Serving loads checkpoints with `weights_only=True`** once M3a's shared checkpoint payload is in place | Owner, 2026-10-15 |
 
@@ -2175,8 +2175,7 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 
 **Revised on 2026-10-15** after the reviewer's design review of that day (five P2 against the first
 proposal, each answered below) and its incremental review of `0142436..76ca541` (two P2: an
-extension's own stage, and the migration's labels, answered below), with decisions 8–10 (§1;
-decision 8 awaits the owner's confirmation). The seed ordering is implemented (below); nothing else
+extension's own stage, and the migration's labels, answered below), with decisions 8–10 (§1). The seed ordering is implemented (below); nothing else
 in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
 
 **What the code does today.**
