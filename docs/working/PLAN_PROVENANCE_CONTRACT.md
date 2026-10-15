@@ -46,7 +46,9 @@ complete and its acceptance, within the scope agreed, is complete** (the owner, 
 reviewer's recommendation); the owner merged it into `main` on 2026-10-14 (#121, `9fe5113`). The
 probe's allocator start-up was fixed since (`b8a43c8`), reviewed with no P1 or P2 and confirmed on
 the GB10: its demo phases ran under `cudaMallocAsync`, as torch reported (2026-10-14). M2.1's
-acceptance stands as recorded. The rest of M3–M5 is not implemented.** Facts about the code are cited at `627ed08`, before M1;
+acceptance stands as recorded. The rest of M3–M5 is not implemented. M3a's design was revised on
+2026-10-15 after the reviewer's design review and the owner's decisions 8–10 (§1; §4, M3a); the
+revision awaits the reviewer's review.** Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -108,6 +110,9 @@ platforms and claims no conformance to them.
 | 5 | **Backlog item 14 is split into two phases.** Phase 1 is a complete CLI flow: run a test, verify the inputs, keep the report, record it automatically or by hand, and show the result on the existing model status. Phase 2 is the Test tab, job management and advanced ordering | Owner and reviewer, 2026-10-06 |
 | 6 | **Milestones follow real dependencies.** A full environment refactor, a full provenance platform and every historical defect are not prerequisites of item 14. Each milestone delivers a complete flow that can be run and accepted | Reviewer, 2026-10-06 |
 | 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings | Owner, 2026-10-06 |
+| 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15), accepted by the owner (2026-10-15) on the understanding that the branch mode comes before the experiment phase |
+| 9 | **One directory per training run** (M3a-2). No run overwrites another's files. Outputs in the old layout are moved once, explicitly, by the owner, with no runtime fallback. An explicitly entered model path stays available as a locator; whether a file is accepted is decided by its bytes | Owner, 2026-10-15 |
+| 10 | **Serving loads checkpoints with `weights_only=True`** once M3a's shared checkpoint payload is in place | Owner, 2026-10-15 |
 
 ## 2. The rule
 
@@ -2166,13 +2171,69 @@ capacity reading; the short-trained model is not a serving model.
 
 Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 
-**M3a — training records the setup that took effect (R6, R11).**
-- **`checkpoint['config']` gains the values in effect:**
-  - the loader and sampling settings;
-  - compile, both requested and whether it enabled;
-  - AMP and warmup, both requested and effective.
-- **`producer`:** the code revision, plus a dirty flag that counts untracked files.
-- **`environment`:** §5.3.
+**M3a — training records the setup that took effect, and resume continues exactly (R6, R11).**
+
+**Revised on 2026-10-15** after the reviewer's design review of that day (five P2 against the first
+proposal, each closed below) and the owner's decisions 8–10 (§1). The seed ordering is implemented
+(below); nothing else in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
+
+**What the code does today.**
+- **Every run of a workspace and architecture writes the same directories:**
+  `{workspace}/checkpoints/{conv_type}/` and one fixed output directory (`src/utils/checkpoint_paths.py`;
+  `scripts/train_model.py:782-806`). Each run replaces `last.pt` and `config.yaml`. A best-k name,
+  `model-{epoch:02d}-{val_mrr:.4f}` (`src/training/trainer.py:411`), can repeat across runs, and the
+  later run's pruning then deletes the file (`src/training/callbacks.py:333-341`).
+- **Resume compares data and graph roles only** (`train_model.py:542-567`; decision 7).
+- **Resume restores the parent's optimizer and scheduler state into a scheduler built from the
+  child's settings** (`trainer.py:1015-1051`). `LambdaLR` saves its progress, not its function.
+  So the child's `learning_rate` is replaced by the parent's. The cosine schedule's progress has no
+  ceiling (`trainer.py:327-341`), so resuming a finished schedule climbs back to the full rate.
+  `OneCycleLR` raises past its total. Reproduced with PyTorch 2.10 outside the trainer.
+- **The schedule's step count and the updates taken disagree.** The total is
+  `num_epochs × len(train_loader) // gradient_accumulation_steps` (`trainer.py:365-376`), while
+  `_train_epoch` steps only when the batch index divides by the accumulation (`:550`). With two
+  epochs of five batches and an accumulation of two, the formula says 5 and the loop updates 4 times.
+  The tail batch's gradients stay in `.grad` at the epoch's end, and no state dict holds them.
+- **Resume restarts the epoch loop at 0** and runs the full `num_epochs` (`trainer.py:467`).
+  - The checkpoints ModelCheckpoint writes (`last.pt` and best-k, `callbacks.py:289-330`) hold no
+    global step and no trainer state, unlike `Trainer.save_checkpoint` (`trainer.py:983-1013`).
+  - `on_train_begin` clears early stopping's and ModelCheckpoint's state (`callbacks.py:150-156`,
+    `:233-235`).
+  - ModelCheckpoint writes nothing in an epoch without its monitored metric (`:240-246`).
+- **Training turns `auto` into CPU silently** (`train_model.py:742-745`).
+
+**M3a-1 — the setup in effect, and one checkpoint payload.**
+- **`config` gains the values in effect,** requested beside effective where they differ:
+  - the loaders, per split, with the effective fan-out (the third hop of `num_neighbors` is cut,
+    `src/kg/data_loader.py:206`), validation's negative count (the default 5, not the configured
+    value) and `batch_size`;
+  - compile: requested, and whether it installed without raising, not that it ran compiled;
+  - AMP: requested and effective (on only on CUDA; bf16 without a scaler);
+  - the schedule as built: its type, base rate, total steps, effective warmup and minimum ratio.
+
+  The values recorded are today's behaviour. Changing any of them is a separate behaviour change.
+- **`producer`: the code revision and its dirty state.**
+  - No `.git`, no git, or a git that refuses gives *unrecorded*: never guessed, never recorded as
+    clean (§8 question 1).
+  - Dirty counts modified tracked files and untracked files, under one explicit shared exclusion
+    for generated data, caches and outputs.
+  - Counts only, never file names.
+- **`environment`:** §5.3, from one collector in `src/utils`, collected once at the start of the run.
+- **One payload builder,** which ModelCheckpoint and `Trainer.save_checkpoint` both delegate to.
+  Every field is a primitive container or a scalar, so the checkpoint loads with
+  `weights_only=True`, as serving will (decision 10).
+- **The resume state, taken at one consistent point:**
+  - the model, the optimizer, the scheduler's definition and state, and the AMP scaler where used;
+  - the completed epochs and the next epoch;
+  - the counts of optimizer attempts, successful updates and scheduler steps, kept apart: they
+    differ when AMP skips an update (`trainer.py:560-581`);
+  - early stopping's and best-k's state, with what restoring the best weights needs;
+  - how the run ended: finished its schedule, stopped early (with the reason), or paused.
+- **The accumulation tail:** one stated policy, under which the schedule's step count equals the
+  updates actually taken. No gradient crosses an epoch boundary unrecorded. Accepted on a case that
+  does not divide.
+- **Device:** `auto` without CUDA refuses before anything is written (§5.2). An explicit `cpu`
+  stays available and is recorded.
 - **The seed is applied before the data loaders and the model are built.** Today it is applied
   in `Trainer.__init__` (`trainer.py:255-257`), after the loaders (`train_model.py:748`) and the
   model (`train_model.py:751`), so the recorded seed does not govern initialisation.
@@ -2184,18 +2245,116 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
     applies it, so the stream training draws from (negatives, shuffling, dropout) starts from
     the seed as before, whatever construction consumed. In `train_model`'s own entry, not a
     wrapper. It does not promise bit-identical GPU training or a restored random state on
-    resume. Tested on CPU by `tests/unit/test_training_seed.py`. The rest of M3a is not implemented.
-- **Device.** `auto` without CUDA refuses, as measurement's does (§5.2). Today training turns it
-  into CPU silently (`train_model.py:688-691`).
-- **Resume, what M2 leaves.** A write-time guard in `ModelCheckpoint` refuses to overwrite the
-  file the run resumed from.
-  - After M2.1 the record no longer depends on that file: the parent's digest comes from the
-    bytes read.
-  - The file the record names should still exist, for the inventory and for audit. The WebUI's
-    default resume target, `last.pt`, is exactly that file (`training_console.py:398-404`,
-    `callbacks.py:271-274`).
-- **One constraint on every new field:** measurement loads checkpoints with `weights_only=True`
-  (`measure_scorer.py:593`), so everything new is a primitive container or a scalar.
+    resume. Tested on CPU by `tests/unit/test_training_seed.py`.
+
+**M3a-2 — one run directory per training run** (decision 9).
+- **Every run, new or resumed, writes into a directory no run has used:**
+  `{workspace}/runs/{conv_type}/{date}_{optional name}_{run_id}/`.
+  - Its checkpoint, output and log directories are all inside it.
+  - Directories are flat, never nested by lineage.
+  - A colliding run id is drawn again, never reused.
+  - The name is for people. A run is identified by its run id; a checkpoint by its SHA-256.
+- **What is protected:** no run overwrites or deletes another run's files or its inputs.
+  - A run updates its own `last.pt`, staged and then replaced.
+  - It prunes only the best-k files it wrote. A restored best-k list never makes a parent's files
+    deletable.
+  - An explicitly given output path obeys the same rule, and a collision is refused before
+    anything is created.
+- **Every existing consumer moves in the same change,** through `checkpoint_paths`: the listing,
+  the resume source, the reload's automatic selection, the training manager, the inventory, the
+  probe and the deployment guides.
+  - One resolver. No recursive scan written separately in the UI, the CLI and the API.
+  - The selection's existing ordering is stated for runs. No new ranking across experiments.
+  - The training console's free output fields give way to an optional run name.
+- **The source and the destination are separate.**
+  - An explicitly entered model path stays available, for the resume source and for serving.
+  - It locates a file. What the file is, and whether it is accepted, come from its bytes (SHA-256,
+    M2, M3), through the same checks as a listed file.
+  - A resumed run still writes into its own new directory, and records the parent by its SHA-256.
+- **The run listing (`run.json`) is a projection of the checkpoints' records, never an authority.**
+  - Run-level fields: the run id, the parent checkpoint's SHA-256, the settings in effect.
+  - One entry per checkpoint: its SHA-256, epoch, metrics, and whether it can be resumed.
+  - A checkpoint never contains its own listing's digest.
+  - A checkpoint published without its listing entry (an interrupted update) is shown as incomplete
+    until an explicit refresh.
+  - The listing never overrides a checkpoint's own record, and listing a file does not verify its
+    weights.
+  - Until these rules are implemented, the listing reads checkpoint metadata as today, with no
+    second path beside it.
+- **Legacy outputs are moved once, by the owner** (decision 9).
+  - `scripts/migrate_checkpoints.py`, updated for this layout, lists a plan first and moves only
+    with `--apply`.
+  - Checkpoints M2 refuses go to `{workspace}/archive/`.
+  - M2-valid ones without M3's resume state go into an imported run, marked servable and not
+    resumable.
+  - A move keeps the bytes, so every digest stands. Settings that name a path are listed for the
+    owner to change.
+  - There is no runtime fallback to the old layout. Whether a checkpoint is servable is decided by
+    its records, never by where it sits.
+
+**M3a-3 — resume continues an unfinished schedule** (decision 8).
+- **The learning settings are inherited and locked:**
+  - the learning rate, the scheduler, its warmup and minimum, and the planned number of epochs;
+  - `batch_size` and gradient accumulation, which set the steps per epoch;
+  - the optimizer and its weight decay;
+  - the objective's settings: the loss weights, temperature, margin, label smoothing and negative
+    counts.
+
+  Operational fields may differ: the name, the output location, the pause limit, logging and the
+  device. The UI shows the inherited values, locked. The CLI refuses a conflicting value instead of
+  ignoring it.
+- **The schedule is rebuilt from the parent's record,** then the optimizer's and the scheduler's
+  progress is restored. Never a curve built from the child's settings with the parent's progress.
+  A parent whose record cannot rebuild it is not resumed as a full restore.
+- **Only the remaining epochs run,** and `on_train_begin` does not clear the restored state.
+- **A pause flag:** stop after epoch N of the run's total progress.
+  - It stops at a safe boundary: validation and state updated, a resume snapshot written, the
+    accumulation tail handled.
+  - The run is recorded as paused, not finished.
+  - It is separate from the planned horizon, and a child does not inherit it.
+- **A parent that finished its schedule is refused for resume,** with the reason: that is
+  `extend`'s case. A run that stopped early keeps its stop reason, and resume does not reset its
+  patience to continue.
+
+**M3a-4 — extend a finished schedule at a fixed rate.**
+- **`extend` continues a finished run beyond its planned horizon,** from 100 epochs to 150, say, at
+  a fixed rate.
+  - The model, the optimizer state and the cumulative progress continue.
+  - No warmup, no recomputed curve, no cosine past its end, no OneCycle stepped past its total.
+- **The fixed rate is each param group's effective rate after the restore,** recorded as the
+  extension's starting value.
+  - A zero rate is never replaced by a guess.
+  - A non-zero rate is given explicitly, with the groups it applies to.
+- **One code path:** the same entry point, trainer, loaders and writer.
+- **An early-stopped run is not extended as if it had paused.**
+
+**Not in M3a.**
+- **A mode that changes learning settings from a parent (a branch) is not built in M3.** Until it
+  is, resume refuses changed settings. It is a prerequisite of the GNN experiment phase, which
+  starts only once the platform is stable, and is recorded as BACKLOG item 23.
+- **Tags, filters and a lineage tree** come with M4/M5's model list.
+
+**Acceptance for M3a.**
+- **Run directories:**
+  - two new runs with the same settings get different directories;
+  - a child leaves its parent's checkpoints, settings, metrics and logs unchanged;
+  - a run updates its own `last.pt`, and best-k never deletes a parent's file;
+  - a colliding output is refused before any run artifact exists.
+- **Consumers:** a new run's checkpoints are listed by the existing UI, selectable as a resume
+  source, and found by the reload's selection.
+- **Listing:** a run with several checkpoints shows each one's epoch and metrics; a stale listing or
+  a replaced file is not shown as verified.
+- **Resume, on a small controlled input:**
+  - an uninterrupted run and a paused-then-resumed run give the same learning rate at every step,
+    through warmup and into decay;
+  - the optimizer, the scaler, early stopping and the progress are restored;
+  - an accumulation that does not divide, and an update AMP skipped, keep the schedule's position.
+- **Ends:** a finished schedule refuses resume with the reason; `extend` continues at a fixed rate
+  with no rise and no warmup.
+- **The probe** keeps M2's data and graph refusals. Its resume case becomes a real pause and resume:
+  plan two epochs, pause after one, resume the remaining one. `extend` is tested apart.
+- **Not claimed:** bit-identical training with and without a pause. Random state and sampling are a
+  separate layer, described apart.
 
 **M3b — the dataset record is required (R5).**
 - **Refused:** training, serving and measurement refuse a workspace whose `kg.provenance.json`
@@ -2279,10 +2438,10 @@ All of it is in `PLAN_TEST_RESULTS.md`:
 - the network-side restrictions those operations need;
 - the advanced ordering and arbitration.
 
-**Training start's explicit `checkpoint_dir`** is honoured verbatim today. It is restricted to
-directories the server resolves in the same change that upgrades the checkpoint listing, because
-the two share the write path. It is a visible behaviour change, documented there. No input
-identity depends on it, so it does not hold up M2–M4.
+**Training start's explicit `checkpoint_dir`** is honoured verbatim today. **Superseded by M3a-2
+(2026-10-15):** every run writes into its own run directory, the listing moves with it, and an
+explicitly given output path obeys the same protection. What phase 2 adds here is the network-side
+restriction of the operations that start training.
 
 ### Not prerequisites
 
@@ -2301,13 +2460,15 @@ Each of these is done when its entry point is next touched, or on its own merit:
 ## 5. What changes in existing records
 
 No new record type is introduced, except item 14's cohort version and report store, which its
-own plan defines.
+own plan defines. M3a-2's run listing is derived from checkpoint records and is not a record of its
+own.
 
 ### 5.1 By record
 
 | Record | Change | Milestone |
 |---|---|---|
-| Checkpoint (`callbacks.py:296-327`) | `training_input_digests` gains `kg`, the manifest-bound source graph (M2.1's stated exceptions); every other digest comes from the bytes read; `config` gains the values in effect; new `producer` and `environment` keys | M2, M3a |
+| Checkpoint (`callbacks.py:296-327`) | `training_input_digests` gains `kg`, the manifest-bound source graph (M2.1's stated exceptions); every other digest comes from the bytes read; `config` gains the values in effect; new `producer` and `environment` keys; one payload builder for both writers, with the resume state (M3a-1); written into the run's own directory (M3a-2) | M2, M3a |
+| Run listing (`run.json`), new | A projection of its run's checkpoint records, never an authority (M3a-2) | M3a |
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
@@ -2328,8 +2489,8 @@ own plan defines.
   check that the hardware can do what was asked.
 - Measurement already refuses `auto` without CUDA instead of substituting CPU
   (`measure_scorer.py:157-188`), because CUDA is a stated project requirement.
-- Training and serving turn `auto` into CPU silently today (`train_model.py:688-691`,
-  `pipeline.py:965-966`). M3a and M3c align them with measurement.
+- Training and serving turn `auto` into CPU silently today (`train_model.py:742-745`,
+  `pipeline.py:1065-1066`, at `0142436`). M3a and M3c align them with measurement.
 - An explicit `cpu` stays available for development, and is recorded as such.
 
 ### 5.3 Environment facts
@@ -2502,6 +2663,9 @@ evidence.
        the latest commit;
      - no version-management system is added for it.
    - Whether such a deployment exists is for the deployment inventory to answer.
+   - **M3a-1 (2026-10-15)** follows the second and third points for training's `producer`:
+     *unrecorded* when the revision cannot be obtained, never recorded as clean. Stamping at
+     packaging or deployment is not built in M3.
 2. **B-2 policy.** When no checkpoint is configured at all, should path-reasoning-only serving
    remain available, or require an explicit opt-in?
    - **The reviewer's recommendation, given the formal GNN diagnosis requirement:**
