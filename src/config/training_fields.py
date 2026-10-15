@@ -411,6 +411,25 @@ FIELDS: Tuple[FieldSpec, ...] = (
               divergence_note="WebUI clamps to 0.1-3.0; API unbounded above.",
               description="Ranking-loss margin."),
 
+    # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------
+    # The parent is `resume_from`; what happens is decided by its record (src/training/run_plan).
+    FieldSpec("extend_epochs", "int", None, "trainer", projects_to="TrainConfig.extend_epochs",
+              valid={"ge": 1}, current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI (--extend-epochs) until the console's continue block.",
+              description="Extend a finished parent by this many epochs at a fixed rate."),
+    FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
+              valid={"gt": 0}, current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI only (--extend-lr): replaces a zero rate, and only a zero rate.",
+              description="Rate for parameter groups whose rate ended at 0, when extending."),
+    FieldSpec("pause_after_epoch", "int", None, "runtime_setting",
+              projects_to="TrainConfig.pause_after_epoch",
+              valid={"ge": 1}, current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI and probe only (--pause-after-epoch); no WebUI or HTTP control.",
+              description="Stop with a resumable checkpoint after this many epochs of progress."),
+
     # ---- runtime setting (exempt from the projection requirement) ----------------------------
     FieldSpec("compile", "bool", False, "runtime_setting", projects_to="TrainConfig.compile",
               current_api=None, current_webui="derived from .shepherd_runtime_settings.json (torch_compile)",

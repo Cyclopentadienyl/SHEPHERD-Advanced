@@ -137,6 +137,10 @@ class TrainerConfig:
     # Loss configuration
     loss_config: Optional[LossConfig] = None
 
+    # Stop at a safe boundary once this many epochs of the run's total progress
+    # are complete, recorded as paused (contract M3a-3). Not inherited.
+    pause_after_epoch: Optional[int] = None
+
 
 @dataclass
 class TrainingState:
@@ -268,15 +272,23 @@ class Trainer:
         # the checkpoint payload then writes weights only (contract M3a-1).
         self.weights_restored_from: Optional[Dict[str, Any]] = None
 
-        # The active stage: today always the original schedule, from epoch 0
-        # for `num_epochs` (contract M3a-1; M3a-3 and M3a-4 restore and extend
-        # it). Recorded in every checkpoint.
+        # The active stage: the original schedule, from epoch 0 for
+        # `num_epochs`, unless `continue_from` restores another or opens an
+        # extension (contract M3a-3, M3a-4). Recorded in every checkpoint.
         self.stage: Dict[str, Any] = {
             "kind": "original",
             "start_epoch": 0,
             "target_epochs": int(self.config.num_epochs),
             "schedule": self.schedule_record,
         }
+        # The next epoch index to run; a continued run starts after its
+        # parent's last completed epoch.
+        self.start_epoch: int = 0
+        # Set at the epoch boundary where `pause_after_epoch` stops the run,
+        # before the callbacks write that epoch's checkpoint.
+        self.pausing: bool = False
+        # The parent's callback state, applied after `on_train_begin` resets it.
+        self._pending_callbacks: Optional[Dict[str, Any]] = None
 
         # Set seed
         if self.config.seed is not None:
@@ -460,6 +472,11 @@ class Trainer:
         """The active stage, as recorded in a checkpoint."""
         return dict(self.stage)
 
+    def stage_end(self) -> int:
+        """The epoch the active stage ends at (exclusive): its start plus its
+        target number of epochs."""
+        return int(self.stage["start_epoch"]) + int(self.stage["target_epochs"])
+
     def _create_default_callbacks(self) -> List[Callback]:
         """創建預設回調"""
         callbacks = []
@@ -531,11 +548,20 @@ class Trainer:
         logger.info(f"Starting training on {self.device}")
         logger.info(f"Config: {self.config}")
         self.weights_restored_from = None
+        self.pausing = False
 
         self.callbacks.on_train_begin(self)
+        # A continued run's callback state, after `on_train_begin` reset it.
+        if self._pending_callbacks is not None:
+            self._restore_callbacks(self._pending_callbacks)
+            self._pending_callbacks = None
 
+        end = self.stage_end()
+        pause = self.config.pause_after_epoch
+        if pause is not None and pause >= end:
+            logger.info(f"The stage ends at epoch {end}, before pause_after_epoch {pause}.")
         try:
-            for epoch in range(self.config.num_epochs):
+            for epoch in range(self.start_epoch, end):
                 self.state.epoch = epoch
 
                 # Training epoch
@@ -553,8 +579,10 @@ class Trainer:
                 epoch_metrics = {**train_metrics, **val_metrics}
 
                 # The epoch is complete before the callbacks see it, so a
-                # checkpoint written at its end records it as done.
+                # checkpoint written at its end records it as done, and as
+                # paused when the pause stops the run here.
                 self.state.completed_epochs = epoch + 1
+                self.pausing = pause is not None and epoch + 1 == pause and epoch + 1 < end
 
                 # Callbacks
                 self.callbacks.on_epoch_end(self, epoch, epoch_metrics)
@@ -562,6 +590,11 @@ class Trainer:
                 # Check early stopping
                 if self.callbacks.should_stop():
                     logger.info(f"Early stopping at epoch {epoch}")
+                    break
+                if self.pausing:
+                    logger.info(
+                        f"Paused after epoch {epoch + 1} of {end} (pause_after_epoch); "
+                        "resume from this run's last.pt.")
                     break
 
         except KeyboardInterrupt:
@@ -1123,44 +1156,128 @@ class Trainer:
         logger.info(f"Checkpoint saved to {filepath} (sha256 {digest[:12]})")
         return digest
 
-    def restore_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
-        """Restore model, optimizer, scheduler, scaler and state from a checkpoint
-        that has already been read.
+    def continue_from(
+        self,
+        checkpoint: Mapping[str, Any],
+        plan: Any,
+        best_weights: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Continue a parent's training from a checkpoint already read, as
+        `plan` (`src.training.run_plan.ContinuationPlan`) decided.
 
-        **Reads nothing** (contract M2.1, S8). The caller reads the parent once,
-        with `src.utils.checkpoint_io.read_checkpoint`, and records that read's
-        identity; restoring from the dict it parsed means the state restored and
-        the digest recorded cannot come from two reads of a file that changed in
-        between. There is no path form beside this one.
+        **Reads nothing** (contract M2.1, S8): the entry point read the parent
+        once and records that read's identity. The Trainer was built with the
+        plan's settings, the parent's learning settings, so the schedule it
+        built is the parent's; each part is restored as the mode allows
+        (contract M3a, "room for a branch"):
+
+        - **resume** restores the active stage. The original schedule is
+          rebuilt from the settings and must equal the one the parent recorded
+          before its scheduler's progress is loaded: never a curve built from
+          other settings with the parent's progress. A paused extension keeps
+          its fixed rates.
+        - **extend** keeps the model, the optimizer and the progress, and opens
+          a stage at each group's rate after the restore (M3a-4).
+
+        The model, the optimizer, the scaler and the progress counters are
+        restored in both; the callbacks' state is applied after
+        `on_train_begin` (`train`), which would otherwise reset it.
+
+        `best_weights` is early stopping's best weights when the plan names a
+        file the entry point read and checked; for `{"kind": "self"}` they are
+        the parent's own.
+
+        Raises:
+            RunPlanRefused: the parent's record cannot rebuild its schedule, or
+                its scaler state does not fit this run.
         """
-        # Accept both key conventions: Trainer.save_checkpoint() uses
-        # "model_state_dict" while ModelCheckpoint callback uses "state_dict".
-        model_sd = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
-        if model_sd is None:
-            raise KeyError(
-                "Checkpoint contains neither 'model_state_dict' nor 'state_dict'. "
-                f"Available keys: {list(checkpoint.keys())}"
-            )
-        self.model.load_state_dict(model_sd)
+        from src.training.run_plan import RunPlanRefused
+
+        stage = dict(plan.stage)
+        recorded_schedule = (checkpoint.get("progress") or {}).get("stage", {}).get("schedule")
+        if plan.mode == "resume" and stage.get("kind", "original") == "original":
+            if recorded_schedule != self.schedule_record:
+                differ = sorted(
+                    k for k in set(recorded_schedule or {}) | set(self.schedule_record)
+                    if (recorded_schedule or {}).get(k) != self.schedule_record.get(k))
+                raise RunPlanRefused(
+                    "The parent's schedule cannot be rebuilt from its record: rebuilt here, "
+                    f"{', '.join(differ) or 'it'} differ"
+                    f"{'s' if len(differ) == 1 else ''} from what the parent recorded. A run "
+                    "is never resumed on a curve built from other settings.")
+
+        has_scaler = "scaler_state_dict" in checkpoint
+        if has_scaler != (self.scaler is not None):
+            raise RunPlanRefused(
+                "The parent's mixed-precision scaler state does not fit this run "
+                f"(the parent {'has' if has_scaler else 'has no'} scaler state; this run "
+                f"{'uses' if self.scaler is not None else 'does not use'} a scaler).")
+
+        self.model.load_state_dict(checkpoint["state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
-        if self.scheduler is not None and "scheduler_state_dict" in checkpoint:
-            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-
-        if self.scaler is not None and "scaler_state_dict" in checkpoint:
+        if self.scaler is not None:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
-        # Restore state
-        self.state.epoch = checkpoint.get("epoch", 0)
-        self.state.global_step = checkpoint.get("global_step", 0)
+        if stage.get("kind", "original") == "original":
+            if self.scheduler is not None:
+                if "scheduler_state_dict" not in checkpoint:
+                    raise RunPlanRefused("The parent records a schedule but no scheduler state.")
+                self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        else:
+            # A fixed-rate stage steps no scheduler; the rates are the
+            # optimizer's, restored above.
+            self.scheduler = None
+            rates = [float(group["lr"]) for group in self.optimizer.param_groups]
+            if stage.get("schedule") is None:
+                stage["schedule"] = self._open_fixed_rate_stage(rates, plan)
+            elif [float(r) for r in stage["schedule"]["lrs"]] != rates:
+                raise RunPlanRefused(
+                    "The parent's extension records fixed rates "
+                    f"{stage['schedule']['lrs']}, and its optimizer holds {rates}.")
 
-        if "state" in checkpoint:
-            for key, value in checkpoint["state"].items():
-                if hasattr(self.state, key):
-                    setattr(self.state, key, value)
+        state = checkpoint.get("state") or {}
+        for key in ("epoch", "global_step", "best_metric", "best_epoch",
+                    "train_loss_history", "val_metric_history", "completed_epochs",
+                    "optimizer_updates", "scheduler_steps"):
+            if key in state:
+                setattr(self.state, key, state[key])
 
-        logger.info(f"Checkpoint restored (epoch {self.state.epoch})")
+        self.stage = stage
+        self.start_epoch = int(plan.start_epoch)
+        if best_weights is None and (plan.best_weights or {}).get("kind") == "self":
+            best_weights = checkpoint["state_dict"]
+        self._pending_callbacks = {
+            "recorded": plan.callbacks or {},
+            "best_k": list(plan.best_k),
+            "best_weights": ({k: v.detach().cpu().clone() for k, v in best_weights.items()}
+                             if best_weights is not None else None),
+        }
+        logger.info(
+            f"Continuing ({plan.mode}) from epoch {self.start_epoch} to {self.stage_end()}")
 
+    def _open_fixed_rate_stage(self, rates: List[float], plan: Any) -> Dict[str, Any]:
+        """The schedule of an extension: each group's rate after the restore,
+        held fixed (contract M3a-4)."""
+        from src.training.run_plan import RunPlanRefused
+
+        raise RunPlanRefused("Extending a finished stage is not available in this build.")
+
+    def _restore_callbacks(self, pending: Mapping[str, Any]) -> None:
+        """Early stopping's and best-k's state, as the parent recorded them.
+
+        The parent's best-k files are ranked with this run's but belong to the
+        run that wrote them: `ModelCheckpoint` never deletes them.
+        """
+        from src.training.callbacks import EarlyStopping, ModelCheckpoint
+
+        recorded = pending["recorded"]
+        # Early stopping first: best-k keeps its best epoch's file listed.
+        for callback in self.callbacks.callbacks:
+            if isinstance(callback, EarlyStopping) and recorded.get("early_stopping"):
+                callback.restore_state(recorded["early_stopping"], pending["best_weights"])
+        for callback in self.callbacks.callbacks:
+            if isinstance(callback, ModelCheckpoint):
+                callback.restore_foreign(pending["best_k"], self)
 
 # =============================================================================
 # Seeding

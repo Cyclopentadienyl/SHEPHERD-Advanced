@@ -1230,12 +1230,15 @@ class TrainerProtocol(Protocol):
         """保存檢查點"""
         ...
 
-    def restore_checkpoint(
+    def continue_from(
         self,
         checkpoint: Dict[str, Any],
+        plan: Any,
+        best_weights: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Restore from a checkpoint already read (`read_checkpoint`); reads
-        nothing. Contract M2.1, S8."""
+        """Continue a parent's training from a checkpoint already read
+        (`read_checkpoint`), as `src.training.run_plan` decided; reads nothing.
+        Contract M2.1, S8, and M3a-3."""
         ...
 
 

@@ -185,6 +185,19 @@ class EarlyStopping(Callback):
                     f"Best {self.config.monitor}: {self.best_value:.4f} at epoch {self.best_epoch}"
                 )
 
+    def restore_state(
+        self, recorded: Dict[str, Any], best_weights: Optional[Dict[str, Any]]
+    ) -> None:
+        """Take up a parent's state (contract M3a-3): the best value and epoch,
+        the patience counter as it stood, and the best weights the entry point
+        read. Applied after `on_train_begin`, which resets it."""
+        self.best_value = recorded.get("best_value")
+        self.best_epoch = int(recorded.get("best_epoch", 0))
+        self.counter = int(recorded.get("counter", 0))
+        self.stopped_epoch = int(recorded.get("stopped_epoch", 0))
+        self.should_stop = bool(recorded.get("should_stop", False))
+        self.best_weights = best_weights
+
     def on_train_end(self, trainer: "Trainer", **kwargs) -> None:
         if self.config.restore_best_weights and self.best_weights is not None:
             logger.info(
@@ -215,6 +228,13 @@ def _early_stopping_best_epoch(trainer: Optional["Trainer"]) -> Optional[int]:
                 and callback.best_value is not None):
             return int(callback.best_epoch)
     return None
+
+
+def _total_epochs(trainer: "Trainer") -> int:
+    """The epoch the run trains to: its active stage's end, which an extension
+    moves past `num_epochs` (contract M3a-4)."""
+    stage_end = getattr(trainer, "stage_end", None)
+    return stage_end() if callable(stage_end) else trainer.config.num_epochs
 
 
 # =============================================================================
@@ -249,28 +269,46 @@ class ModelCheckpoint(Callback):
         self.dirpath.mkdir(parents=True, exist_ok=True)
         self.best_k_models = []
 
+    def restore_foreign(
+        self, entries: List[Dict[str, Any]], trainer: Optional["Trainer"] = None
+    ) -> None:
+        """A parent's best-k entries (contract M3a-3), each with its file
+        resolved to a path. They are ranked with this run's, so the same epochs
+        are kept as in a run never interrupted, but they belong to the run that
+        wrote them: pruning drops them from the list and never deletes them.
+        Early stopping's state is restored first, so its best epoch's file stays
+        listed whatever its rank."""
+        self.best_k_models = [
+            {"filepath": Path(e["path"]), "value": e["value"], "epoch": int(e["epoch"]),
+             "sha256": e.get("sha256"), "foreign": True}
+            for e in entries
+        ]
+        self._sort_and_prune(trainer)
+
     def on_epoch_end(
         self, trainer: "Trainer", epoch: int, logs: Dict[str, float], **kwargs
     ) -> None:
         current_value = logs.get(self.config.monitor)
 
         if current_value is None:
+            # No best-k candidate in an epoch without the monitored metric (one
+            # without validation); `last.pt` is still written below, so the
+            # latest training state is never missing (contract M3a-3).
             logger.warning(
                 f"ModelCheckpoint: metric '{self.config.monitor}' not found"
             )
-            return
-
-        # 格式化檔名
-        filename = self.config.filename.format(
-            epoch=epoch,
-            **{k: v for k, v in logs.items() if isinstance(v, (int, float))}
-        )
-        filepath = self.dirpath / f"{filename}.pt"
-
-        # 檢查是否應該保存
-        should_save = self._should_save(current_value)
+            should_save = False
+        else:
+            should_save = self._should_save(current_value)
 
         if should_save:
+            # 格式化檔名
+            filename = self.config.filename.format(
+                epoch=epoch,
+                **{k: v for k, v in logs.items() if isinstance(v, (int, float))}
+            )
+            filepath = self.dirpath / f"{filename}.pt"
+
             digest = self._save_checkpoint(trainer, filepath, epoch, logs)
 
             # 更新最佳模型列表
@@ -353,9 +391,10 @@ class ModelCheckpoint(Callback):
         keep += [e for e in self.best_k_models[self.config.save_top_k:]
                  if e["epoch"] == protected]
 
-        # 移除多餘的檢查點
+        # 移除多餘的檢查點. Only this run's: a parent's file (`foreign`) leaves
+        # the list and stays on disk (contract M3a-2).
         for removed in [e for e in self.best_k_models if e not in keep]:
-            if removed["filepath"].exists():
+            if not removed.get("foreign") and removed["filepath"].exists():
                 removed["filepath"].unlink()
                 logger.info(f"ModelCheckpoint: removed {removed['filepath']}")
         self.best_k_models = keep
@@ -445,7 +484,7 @@ class MetricsLogger(Callback):
 
         self._write_progress({
             "phase": "initializing",
-            "total_epochs": trainer.config.num_epochs,
+            "total_epochs": _total_epochs(trainer),
             "timestamp": datetime.now().isoformat(),
         })
 
@@ -462,7 +501,7 @@ class MetricsLogger(Callback):
         self._write_progress({
             "phase": "training",
             "epoch": epoch,
-            "total_epochs": trainer.config.num_epochs,
+            "total_epochs": _total_epochs(trainer),
             "batch": 0,
             "total_batches": total_batches,
             "timestamp": datetime.now().isoformat(),
@@ -502,7 +541,7 @@ class MetricsLogger(Callback):
             self._write_progress({
                 "phase": "training",
                 "epoch": trainer.state.epoch,
-                "total_epochs": trainer.config.num_epochs,
+                "total_epochs": _total_epochs(trainer),
                 "batch": batch_idx + 1,
                 "total_batches": total_batches,
                 "batch_loss": logs.get("batch_loss"),
@@ -555,7 +594,7 @@ class MetricsLogger(Callback):
         self._write_progress({
             "phase": "completed",
             "epoch": trainer.state.epoch,
-            "total_epochs": trainer.config.num_epochs,
+            "total_epochs": _total_epochs(trainer),
             "timestamp": datetime.now().isoformat(),
         })
 

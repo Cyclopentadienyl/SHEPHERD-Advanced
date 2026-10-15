@@ -78,7 +78,9 @@ def _plain_logs(logs: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _end_state(trainer: "Trainer", completed: int, target: int) -> Dict[str, Any]:
-    """How the run stood when the checkpoint was written."""
+    """How the run stood when the checkpoint was written: stopped early,
+    finished its stage, paused by `pause_after_epoch` (contract M3a-3), or
+    still running (`None`, which a stop between epochs leaves too)."""
     early = _find_callback(trainer, "EarlyStopping")
     if early is not None and early.should_stop:
         reason = (
@@ -88,6 +90,8 @@ def _end_state(trainer: "Trainer", completed: int, target: int) -> Dict[str, Any
         return {"end": "stopped_early", "stop_reason": reason}
     if completed >= target:
         return {"end": "finished", "stop_reason": None}
+    if getattr(trainer, "pausing", False):
+        return {"end": "paused", "stop_reason": f"paused after epoch {completed} (requested)"}
     return {"end": None, "stop_reason": None}
 
 
@@ -109,8 +113,9 @@ def _callback_state(trainer: "Trainer", epoch: int) -> Dict[str, Any]:
       best epoch: its own weights are the best weights. This is how the first
       best-k file says it, without carrying its own digest.
     - **`{"kind": "file", "file", "sha256"}`**: the best-k file of that epoch,
-      by its name within the run's checkpoint directory and the SHA-256 it was
-      written with. `ModelCheckpoint` never prunes that file while early
+      by its path relative to this run's checkpoint directory (its name, for
+      this run's own; `../../<run>/checkpoints/<name>` for a parent's, contract
+      M3a-3) and the SHA-256 it was written with. `ModelCheckpoint` never prunes that file while early
       stopping counts its epoch as best (contract M3a-1 review, P2-1).
     - **`None`** before any best exists, or when early stopping does not restore
       weights.
@@ -121,7 +126,8 @@ def _callback_state(trainer: "Trainer", epoch: int) -> Dict[str, Any]:
     best_k = None
     if checkpoint is not None:
         best_k = [
-            {"file": entry["filepath"].name, "value": plain_number(entry["value"]),
+            {"file": _relative_to(entry["filepath"], checkpoint.dirpath),
+             "value": plain_number(entry["value"]),
              "epoch": int(entry["epoch"]), "sha256": entry.get("sha256")}
             for entry in checkpoint.best_k_models
         ]
@@ -163,6 +169,19 @@ def _callback_state(trainer: "Trainer", epoch: int) -> Dict[str, Any]:
         "model_checkpoint": model_checkpoint_state,
         "best_weights_source": best_source,
     }
+
+
+def _relative_to(path: Any, directory: Any) -> str:
+    """A file named relative to a checkpoint directory, so a run's records
+    travel with the layout of runs side by side and not with this machine's
+    absolute paths. Across drives (Windows) there is no relative path, and the
+    absolute one is kept."""
+    import os
+
+    try:
+        return os.path.relpath(str(path), str(directory)).replace(os.sep, "/")
+    except ValueError:
+        return str(path)
 
 
 def _progress(trainer: "Trainer") -> Dict[str, Any]:
@@ -246,7 +265,9 @@ def build_checkpoint_payload(
             "amp": trainer.amp_record(),
             "compile": run_record.get("compile"),
             "loaders": run_record.get("loaders"),
-            "schedule": trainer.schedule_record,
+            # The active stage's schedule: the original curve, or an
+            # extension's fixed rates (contract M3a-4).
+            "schedule": trainer.stage_record().get("schedule"),
         }
         payload = {
             "record_version": CHECKPOINT_RECORD_VERSION,

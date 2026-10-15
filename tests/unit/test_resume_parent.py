@@ -232,8 +232,8 @@ def test_a_parent_that_does_not_qualify_is_refused_before_anything_exists(
     restored = []
     from src.training import trainer as trainer_module
 
-    monkeypatch.setattr(trainer_module.Trainer, "restore_checkpoint",
-                        lambda self, checkpoint: restored.append(checkpoint))
+    monkeypatch.setattr(trainer_module.Trainer, "continue_from",
+                        lambda self, checkpoint, *a, **k: restored.append(checkpoint))
     _forbid_later_stages(monkeypatch, train_model)
     run = tmp_path / "run"
 
