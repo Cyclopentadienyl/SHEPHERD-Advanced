@@ -586,13 +586,21 @@ class Trainer:
         epoch takes `ceil(batches / accumulation)` updates, which is what
         `_estimate_total_steps` counts. With an accumulation of 1 nothing
         changes.
+
+        **`train_loss` is the mean loss per batch** (contract M3a-1 review). It
+        used to be the mean, over updates, of each group's summed loss, which
+        is `accumulation` times the batch mean, and adding the tail as its own
+        update mixed in a mean; one denominator now, independent of updates.
+        With an accumulation of 1 the value is unchanged.
         """
         self.model.train()
         self.callbacks.on_epoch_begin(self, epoch)
 
         accumulation = self.config.gradient_accumulation_steps
-        stats = {"total_loss": 0.0, "num_updates": 0}
-        accumulated_loss = 0.0
+        # `train_loss` is the mean loss per batch over the epoch: one unit, one
+        # denominator, kept apart from how many updates the batches made.
+        loss_sum = 0.0
+        batch_count = 0
         pending = 0
 
         epoch_start_time = time.time()
@@ -627,13 +635,13 @@ class Trainer:
             else:
                 loss.backward()
 
-            accumulated_loss += loss.item()
+            loss_sum += loss.item() * accumulation
+            batch_count += 1
             pending += 1
 
             # Optimizer step (with gradient accumulation)
             if (batch_idx + 1) % accumulation == 0:
-                self._optimizer_update(accumulated_loss * accumulation, stats)
-                accumulated_loss = 0.0
+                self._optimizer_update()
                 pending = 0
 
             # Batch metrics
@@ -659,11 +667,11 @@ class Trainer:
             for parameter in self.model.parameters():
                 if parameter.grad is not None:
                     parameter.grad.mul_(factor)
-            self._optimizer_update(accumulated_loss * accumulation / pending, stats)
+            self._optimizer_update()
 
         # Epoch metrics
         epoch_time = time.time() - epoch_start_time
-        avg_loss = stats["total_loss"] / max(stats["num_updates"], 1)
+        avg_loss = loss_sum / max(batch_count, 1)
 
         self.state.train_loss_history.append(avg_loss)
 
@@ -673,11 +681,10 @@ class Trainer:
             "learning_rate": self.optimizer.param_groups[0]["lr"],
         }
 
-    def _optimizer_update(self, update_loss: float, stats: Dict[str, Any]) -> None:
+    def _optimizer_update(self) -> None:
         """Clip, step the optimizer (through the scaler where AMP uses one),
         step the scheduler if the optimizer ran, zero the gradients and count.
 
-        `update_loss` is the mean loss of the batches this update applies.
         `global_step` counts the attempts; `optimizer_updates` and
         `scheduler_steps` count what ran (contract M3a-1).
         """
@@ -716,8 +723,6 @@ class Trainer:
 
         # Update state
         self.state.global_step += 1
-        stats["total_loss"] += update_loss
-        stats["num_updates"] += 1
 
     @dataclass(frozen=True)
     class _EvaluationPass:

@@ -135,3 +135,17 @@ def test_attempts_updates_and_scheduler_steps_are_counted_apart(tmp_path):
     assert trainer.state.optimizer_updates == 0
     assert trainer.state.scheduler_steps == 0
     assert trainer.model.w.item() == 0.0
+
+
+@pytest.mark.parametrize("accumulation", [1, 2, 3])
+def test_train_loss_is_the_mean_loss_per_batch(tmp_path, accumulation):
+    """Batches with losses 1, 2 and 3 report 2.0 whatever the accumulation: one
+    unit and one denominator, kept apart from the number of updates. With an
+    accumulation of 2 this was 3.0 (a group sum averaged with a tail mean)."""
+    trainer = _trainer(tmp_path, [1, 2, 3], accumulation=accumulation)
+    trainer.loss_fn = lambda batch, outputs: (
+        outputs["w"].sum() * 0 + batch["v"].sum(), {})
+
+    metrics = trainer._train_epoch(0)
+
+    assert metrics["train_loss"] == pytest.approx(2.0)
