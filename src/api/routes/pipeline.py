@@ -325,7 +325,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     def _checkpoint_score(path: Path) -> Optional[float]:
         try:
             import torch
-            ckpt = torch.load(path, map_location="cpu", weights_only=False)
+            # Tensors and plain data only (contract decision 10): this scan
+            # reads files in a directory a request names.
+            ckpt = torch.load(path, map_location="cpu", weights_only=True)
         except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
             logger.debug("checkpoint score read failed for %s: %s", path, exc)
             return None
@@ -360,7 +362,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             # Record which metric/score chose it, so "why this one?" is answerable.
             try:
                 import torch
-                _logs = torch.load(selected, map_location="cpu", weights_only=False).get("logs")
+                _logs = torch.load(selected, map_location="cpu", weights_only=True).get("logs")
                 _detail = ranking_score_detail(_logs)
             except Exception:  # noqa: BLE001
                 _detail = None

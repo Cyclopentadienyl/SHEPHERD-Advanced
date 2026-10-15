@@ -461,7 +461,8 @@ class TrainingManager:
             try:
                 import torch
 
-                meta = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                # Tensors and plain data only (contract decision 10).
+                meta = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 if isinstance(meta, dict):
                     info["epoch"] = meta.get("epoch")
                     info["metrics"] = meta.get("logs", {})
