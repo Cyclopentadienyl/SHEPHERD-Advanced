@@ -1453,12 +1453,14 @@ def create_training_tab() -> None:
                     visible=False,
                     elem_id="manual_checkpoint",
                 )
+                # No widget minimum: hidden and empty, a Number is sent as 0,
+                # which a minimum would reject before any handler runs. Empty
+                # or 0 means "not extending"; the run plan refuses below 1.
                 extend_epochs = gr.Number(
                     label="Extra epochs (extend a finished run)",
                     info="Trained at the fixed rate shown in the check result.",
                     value=None,
                     precision=0,
-                    minimum=1,
                     visible=False,
                     elem_id="extend_epochs",
                 )

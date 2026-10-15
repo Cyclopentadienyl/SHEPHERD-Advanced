@@ -164,3 +164,17 @@ def test_the_service_refuses_an_explicit_conflict_before_launching(checkpoints, 
                                          "device": "cpu", "learning_rate": 0.5})
     assert result["success"] is False and "learning_rate" in result["error"]
     popen.assert_not_called()
+
+
+def test_the_continue_inputs_pass_gradios_own_preprocessing_when_empty():
+    """Found by driving the page: an empty, hidden extra-epochs Number is sent as
+    0, and a widget minimum of 1 rejected the whole Check event before the
+    handler ran. The handler tests call it directly and could not see that."""
+    import gradio as gr
+
+    with gr.Blocks() as demo:
+        tc.create_training_tab()
+    widgets = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
+    for elem_id, empty in (("extend_epochs", 0), ("extend_epochs", None),
+                           ("manual_checkpoint", ""), ("checkpoint_dropdown", None)):
+        widgets[elem_id].preprocess(empty)
