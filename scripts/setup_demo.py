@@ -241,7 +241,7 @@ def build_demo_kg() -> KnowledgeGraph:
 # =============================================================================
 # Model training
 # =============================================================================
-def train_demo_model(workspace: Path, num_epochs: int) -> Path:
+def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> Path:
     """Train a small model on the demo workspace **through the real trainer**.
 
     This script used to carry its own: it read the exported tensors, built a
@@ -272,6 +272,9 @@ def train_demo_model(workspace: Path, num_epochs: int) -> Path:
         num_epochs=num_epochs,
         batch_size=8,
         warmup_steps=0,
+        # `auto` refuses without CUDA (contract M3a); a CPU-only development
+        # host passes --device cpu.
+        device=device,
     )
     if not train(config):
         raise SystemExit(
@@ -312,6 +315,13 @@ def main():
         default=20,
         help="Training epochs when --train-model is given (default: 20)",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Training device when --train-model is given: auto (CUDA, refused "
+             "without it), cuda, cuda:N or cpu (default: auto)",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -340,7 +350,7 @@ def main():
 
     checkpoint_path = None
     if args.train_model:
-        checkpoint_path = train_demo_model(output_dir, args.epochs)
+        checkpoint_path = train_demo_model(output_dir, args.epochs, args.device)
 
     print("\n" + "=" * 60)
     print("Demo setup complete!")

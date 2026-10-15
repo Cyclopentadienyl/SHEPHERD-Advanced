@@ -104,6 +104,9 @@ class TestTrainingRefusesBeforeItActs:
         return train_model
 
     def _config(self, train_model, root, tmp_path, **overrides):
+        # An explicit device: `auto` refuses on a host without CUDA (M3a)
+        # before any of the checks these tests are about.
+        overrides.setdefault("device", "cpu")
         return train_model.TrainConfig(
             data_dir=str(root),
             output_dir=str(tmp_path / "outputs"),

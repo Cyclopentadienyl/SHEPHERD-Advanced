@@ -723,6 +723,34 @@ def create_model_from_config(
     return model
 
 
+class TrainingDeviceUnavailable(RuntimeError):
+    """The device a run asked for cannot be had on this host."""
+
+
+def resolve_training_device(requested: str) -> str:
+    """The device training runs on, or a refusal (contract M3a, §5.2).
+
+    **`auto` means CUDA, and without CUDA it refuses**, as measurement's does
+    (`scripts/measure_scorer.py`, `_resolve_device`). It used to become CPU
+    silently, so a run asked to train on the deployment's hardware trained
+    somewhere else and said nothing; the checkpoint recorded only where it ran.
+    An explicit `cpu` stays available for development and is recorded as asked.
+
+    A request for CUDA on a host without it refuses here too, before any input
+    is read or any output exists, instead of failing later when the model is
+    moved. Other device strings are handed to torch as given.
+    """
+    wants_cuda = requested == "auto" or requested == "cuda" or requested.startswith("cuda:")
+    if wants_cuda and not torch.cuda.is_available():
+        raise TrainingDeviceUnavailable(
+            f"--device {requested} requires CUDA, which is not available here. "
+            "CUDA is a hard requirement of this project, so training does not "
+            "substitute the CPU for it. Pass --device cpu explicitly for "
+            "development; the run records the device it was given."
+        )
+    return "cuda" if requested == "auto" else requested
+
+
 # =============================================================================
 # Main Training Function
 # =============================================================================
@@ -738,13 +766,10 @@ def train(config: TrainConfig) -> Dict[str, float]:
     logger.info("=" * 60)
     logger.info(f"Configuration: {asdict(config)}")
 
-    # Set device
-    if config.device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device = config.device
+    # Set device. Refused here, before any read or write, when it cannot be had.
+    device = resolve_training_device(config.device)
 
-    logger.info(f"Using device: {device}")
+    logger.info(f"Using device: {device} (requested: {config.device})")
 
     if device == "cuda":
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
