@@ -222,6 +222,7 @@ def test_a_run_records_its_progress_best_k_and_where_the_best_weights_are(tmp_pa
     assert last["producer"]["state"] in {"recorded", "unrecorded"}
     assert last["environment"]["torch"] == str(torch.__version__)
     assert last["config"]["requested"]["device"] == "cpu"
+    assert not {"data_dir", "output_dir", "resume_from"} & set(last["config"]["requested"])
     loaders = last["config"]["effective"]["loaders"]
     assert loaders["train"]["num_neighbors_effective"] == [15, 10]
     assert loaders["val"]["num_negative_samples"] == 5

@@ -754,6 +754,15 @@ def create_model_from_config(
     return model
 
 
+#: Fields of `TrainConfig` that say where files are, not how training runs.
+#: Left out of the checkpoint's record of the configuration requested: the inputs
+#: are identified by digest (`training_input_digests`), the parent by its digest,
+#: and a checkpoint travels without the layout of the machine that wrote it.
+LOCATION_FIELDS = frozenset({
+    "data_dir", "output_dir", "checkpoint_dir", "log_dir", "config_file", "resume_from",
+})
+
+
 class TrainingDeviceUnavailable(RuntimeError):
     """The device a run asked for cannot be had on this host."""
 
@@ -1008,7 +1017,7 @@ def train(config: TrainConfig) -> Dict[str, float]:
     trainer.run_record = {
         "producer": producer,
         "environment": environment,
-        "requested": asdict(config),
+        "requested": {k: v for k, v in asdict(config).items() if k not in LOCATION_FIELDS},
         "device_requested": config.device,
         "compile": {"requested": bool(config.compile), "installed": compile_installed},
         "loaders": {
