@@ -414,3 +414,109 @@ def test_the_probe_observes_the_production_restore_and_catches_an_omitted_one(tm
                                                    observe=observed))
         with pytest.raises(AssertionError, match="not restored from the parent's state"):
             probe._assert_resumed(parent, omitted, observed)
+
+
+# ---------------------------------------------------------------------------
+# "Only the remaining epoch" is counted by attempts (the GB10 acceptance of
+# 4b1571e: a skipped AMP update in the parent's epoch, none in the child's)
+# ---------------------------------------------------------------------------
+def _record(completed, attempts, updates, steps, end, batches=8, accumulation=1):
+    stage = {"kind": "original", "start_epoch": 0, "target_epochs": 2,
+             "schedule": {"type": "cosine", "steps_per_epoch": batches,
+                          "gradient_accumulation_steps": accumulation}}
+    return {"progress": {"completed_epochs": completed, "optimizer_attempts": attempts,
+                         "optimizer_updates": updates, "scheduler_steps": steps,
+                         "stage": stage, "end": end},
+            "loaders": {"train": {"num_batches": batches}}}
+
+
+@pytest.mark.parametrize("parent,child", [
+    ((1, 8, 7, 7), (2, 16, 15, 15)),     # the GB10 run: the parent's epoch skipped one
+    ((1, 8, 8, 8), (2, 16, 15, 15)),     # the reverse: the child's epoch skipped one
+    ((1, 8, 8, 8), (2, 16, 16, 16)),     # no skip
+])
+def test_a_skipped_amp_update_in_either_epoch_is_not_an_extra_epoch(parent, child):
+    probe = _probe()
+    facts = probe._assert_only_the_remaining_epochs(_record(*parent, "paused"),
+                                                    _record(*child, "finished"))
+    assert facts["child_run_attempts"] == 8 and facts["epochs_run"] == 1
+
+
+@pytest.mark.parametrize("child,message", [
+    ((2, 24, 23, 23, "finished"), "made 16 optimizer attempts"),   # the curve replayed
+    ((2, 16, 15, 14, "finished"), "scheduler stepped 7 times"),
+    ((2, 16, 7, 7, "finished"), "grew by 0"),
+    ((1, 8, 7, 7, "paused"), "did not finish its stage"),
+])
+def test_more_work_than_the_remaining_epoch_or_inconsistent_counts_fail(child, message):
+    probe = _probe()
+    with pytest.raises(AssertionError, match=message):
+        probe._assert_only_the_remaining_epochs(_record(1, 8, 7, 7, "paused"), _record(*child))
+
+
+def test_the_remaining_epoch_is_counted_with_accumulation():
+    """Seven batches with an accumulation of 3 take three attempts an epoch,
+    the tail included."""
+    probe = _probe()
+    facts = probe._assert_only_the_remaining_epochs(
+        _record(1, 3, 3, 3, "paused", batches=7, accumulation=3),
+        _record(2, 6, 5, 5, "finished", batches=7, accumulation=3))
+    assert facts["attempts_per_epoch"] == 3
+
+
+@pytest.mark.parametrize("skip_in", ["parent", "child"])
+def test_a_real_skipped_update_through_the_trainer_passes_and_a_replay_fails(tmp_path, skip_in):
+    """End to end on the CPU with a real CPU GradScaler: a non-finite gradient
+    at one optimizer attempt makes the scaler skip that update, in the parent's
+    epoch or in the child's. The probe's check passes either way; a restore that
+    replays the original curve from epoch 0 is caught."""
+    from unittest.mock import patch
+
+    import torch
+
+    from src.training.trainer import Trainer
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    probe = _probe()
+    settings = dict(hidden_dim=16, num_layers=1, num_heads=2, num_workers=0, use_amp=False,
+                    batch_size=5, warmup_steps=1, seed=7)
+
+    def cpu_scaler(self):
+        self.use_amp, self.amp_dtype = False, torch.float32
+        self.scaler = torch.amp.GradScaler("cpu", init_scale=8.0)
+
+    original_update = Trainer._optimizer_update
+    skip_attempt = {"parent": 1, "child": 4}[skip_in]    # 3 attempts an epoch here
+
+    def update_with_one_skip(self):
+        if self.state.global_step == skip_attempt:
+            parameter = next(p for p in self.model.parameters() if p.grad is not None)
+            parameter.grad = torch.full_like(parameter, float("inf"))
+        return original_update(self)
+
+    with patch.object(Trainer, "_setup_amp", cpu_scaler), \
+            patch.object(Trainer, "_optimizer_update", update_with_one_skip):
+        ws = write_trainable_workspace(tmp_path / "ws")
+        parent = probe._last(probe._train_run(ws, tmp_path / "parent", "cpu", 2,
+                                              settings=settings, pause_after=1))
+        child = probe._last(probe._train_run(ws, tmp_path / "child", "cpu", 2, settings=settings,
+                                             resume_from=parent, observe=[]))
+        before, after = probe._read_run_checkpoint(parent), probe._read_run_checkpoint(child)
+        skipped = (before if skip_in == "parent" else after)["progress"]
+        assert skipped["optimizer_attempts"] - skipped["optimizer_updates"] == 1, (
+            "the injected non-finite gradient did not make the scaler skip an update")
+        facts = probe._assert_only_the_remaining_epochs(before, after)
+        assert facts["child_run_skipped_updates"] == (1 if skip_in == "child" else 0)
+
+        original_continue = Trainer.continue_from
+
+        def replay_from_the_start(self, checkpoint, plan, best_weights=None):
+            original_continue(self, checkpoint, plan, best_weights)
+            self.start_epoch = 0
+
+        with patch.object(Trainer, "continue_from", replay_from_the_start):
+            replayed = probe._last(probe._train_run(ws, tmp_path / "replayed", "cpu", 2,
+                                                    settings=settings, resume_from=parent,
+                                                    observe=[]))
+        with pytest.raises(AssertionError, match="optimizer attempts"):
+            probe._assert_only_the_remaining_epochs(before, probe._read_run_checkpoint(replayed))

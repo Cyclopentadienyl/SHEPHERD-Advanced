@@ -2443,6 +2443,40 @@ deployment probe and production entry points as M2's, which now carry M3a's chec
   no other loader, Trainer or training mode, AMP unchanged. Tested with the reviewer's
   counterexample (not refused) and with a restore that leaves the scaler fresh (caught), the
   latter end to end through the Trainer on the CPU with a real CPU `GradScaler`.
+- **Round 01 (2026-10-15, at `4b1571e`; evidence `/home/user/m3a-acceptance-4b1571e-01/`,
+  reviewed by the reviewer):** the probe ran to the end and wrote its report; 59 passed, 5 failed,
+  0 errors, 0 skipped; exit 1, acceptance not passed. **Real data R1–R8 all passed** and stand as
+  that version's real-data functional evidence: R4 recorded `scaler_restore` verified at the
+  restore (the parent 2500 attempts and 2498 updates, the child 5000 and 4997 cumulative: one
+  remaining epoch); R5 measurement, R6 serving with the table verified and a diagnosis, R7 the
+  inventory, R8 the inputs unchanged (listing, size and modification time; the reviewer also
+  re-hashed the config and `model-02`, both unchanged); allocator from the saved preset, set
+  before torch's first import, `cudaMallocAsync`. **The five failures are one wrong assertion in
+  the probe and its four dependants:** demo M2 required the child's successful updates to be twice
+  the parent's, and AMP's scaler had skipped one update in the parent's epoch (8 attempts, 7
+  updates) and none in the remaining one (8 and 8), so a correct resume (16 attempts, 15 updates,
+  15 scheduler steps, completed 2/2, finished) was refused; M3, M4, M9 and M10 then failed for
+  want of the resumed checkpoint, which exists. Not four product defects. The product's counts
+  separate attempts from successful updates, as designed.
+- **The fix (probe and tests only):** "only the remaining epoch" is counted by optimizer attempts:
+  the child's grow by `ceil(batches / accumulation)` for each epoch its parent had left, from the
+  parent's recorded schedule and train loader; its successful updates grow, by no more than its
+  attempts (AMP may skip); its scheduler steps grow by its successful updates. The check passes on
+  round 01's demo checkpoints (8 attempts, 8 updates, 8 scheduler steps in the child's run) and
+  is tested with a skipped update in the parent's epoch and in the child's, end to end through the
+  Trainer with a real CPU `GradScaler`, and with a restore that replays the curve from epoch 0
+  (refused). Not a warning, not dropped; AMP, the scale, the seed and the Trainer's counts
+  untouched. The R phase's code is unchanged.
+- **Round 02, the demo part only (A–E and M), at the fix's commit:** the product code is the same as
+  round 01's (`git diff 4b1571e..<the fix> -- src scripts/train_model.py` is empty; the probe
+  changes only M2's check), so the real-data part's 43 minutes are not rerun. The same probe
+  command without `--real-*`, in a new evidence root (`/home/user/m3a-acceptance-<commit>-02/`,
+  the layout above). **It ends `M2 acceptance, real data: not requested in this run`, `M2
+  acceptance: NOT COMPLETE` and exit 1 by design**; it is read by the report's
+  `acceptance.demo.complete`, every demo probe's result (M2, M3, M4, M9 and M10 among them) and
+  the exit's reason, never presented as a complete single run. M3a's functional acceptance is the
+  two rounds together, recorded with their commits and the statement that the product code is
+  the same; it is complete when the reviewer has reviewed round 02's evidence.
 - **Not part of it:** moving the workspace's older checkpoints into the run layout. That is the
   owner's, with `scripts/migrate_checkpoints.py` (a plan first, `--apply` to move), and the
   acceptance does not need it: the reference is read by path.

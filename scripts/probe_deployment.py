@@ -1464,6 +1464,7 @@ def _read_run_checkpoint(path: Path) -> Dict[str, Any]:
         # runs, is shown in the report (contract M3a).
         "amp": ((checkpoint.get("config") or {}).get("effective") or {}).get("amp") or {},
         "scaler": _scaler_numbers(checkpoint.get("scaler_state_dict")),
+        "loaders": ((checkpoint.get("config") or {}).get("effective") or {}).get("loaders") or {},
     }
 
 
@@ -1506,6 +1507,55 @@ def _assert_resumed(parent: Path, child: Path,
         "recorded_roles": sorted(after["record"]),
         **amp,
     }
+
+
+def _assert_only_the_remaining_epochs(before: Dict[str, Any],
+                                      after: Dict[str, Any]) -> Dict[str, Any]:
+    """The child ran only the epochs its parent had left (contract M3a-3).
+
+    **Counted by optimizer attempts, not successful updates.** AMP's gradient
+    scaler skips an update on non-finite gradients, and two epochs need not
+    skip alike: at the GB10 acceptance of `4b1571e` the parent's epoch made 8
+    attempts and 7 updates, the remaining epoch 8 and 8, and a check that
+    required twice the parent's updates refused a correct resume. An epoch
+    takes `ceil(batches / accumulation)` attempts, from the parent's recorded
+    schedule (and its train loader, when recorded); the child's must have
+    grown by exactly that for each epoch it had left. Its successful updates
+    must have grown, by no more than its attempts, and its scheduler steps by
+    its successful updates (the schedule steps only when the optimizer ran).
+    """
+    p, c = before["progress"], after["progress"]
+    stage = p.get("stage") or {}
+    assert c.get("stage") == stage, "the resumed run is not in its parent's stage"
+    target = int(stage.get("start_epoch", 0)) + int(stage.get("target_epochs", 0))
+    assert c.get("end") == "finished" and c.get("completed_epochs") == target, (
+        f"the resumed run did not finish its stage: {c.get('completed_epochs')}/{target}, "
+        f"end {c.get('end')}")
+    epochs_run = int(c["completed_epochs"]) - int(p["completed_epochs"])
+    schedule = stage.get("schedule") or {}
+    batches = schedule.get("steps_per_epoch")
+    accumulation = int(schedule.get("gradient_accumulation_steps") or 1)
+    assert batches, "the parent's schedule records no batches per epoch"
+    loader = (before.get("loaders") or {}).get("train") or {}
+    if loader.get("num_batches") is not None:
+        assert int(loader["num_batches"]) == int(batches), (
+            "the parent's train loader and schedule record different batches per epoch")
+    per_epoch = -(-int(batches) // accumulation)
+    attempts = int(c["optimizer_attempts"]) - int(p["optimizer_attempts"])
+    assert attempts == epochs_run * per_epoch, (
+        f"the resumed run made {attempts} optimizer attempts; the {epochs_run} epoch(s) its "
+        f"parent had left take {epochs_run * per_epoch} ({per_epoch} each)")
+    updates = int(c["optimizer_updates"]) - int(p["optimizer_updates"])
+    assert 0 < updates <= attempts, (
+        f"the resumed run's successful updates grew by {updates} over {attempts} attempts")
+    steps = int(c["scheduler_steps"]) - int(p["scheduler_steps"])
+    expected = 0 if schedule.get("type") in (None, "none") else updates
+    assert steps == expected, (
+        f"the resumed run's scheduler stepped {steps} times for {updates} successful updates")
+    return {"epochs_run": epochs_run, "attempts_per_epoch": per_epoch,
+            "child_run_attempts": attempts, "child_run_updates": updates,
+            "child_run_skipped_updates": attempts - updates,
+            "child_run_scheduler_steps": steps}
 
 
 def _scaler_restore_facts(before: Dict[str, Any], after: Dict[str, Any],
@@ -1684,15 +1734,11 @@ def phase_m2_demo(
         child = _last(_train_run(sound, m2 / "resume_ok", device, 2,
                                  settings=_DEMO_TRAINING, resume_from=paused, observe=observed))
         facts = _assert_resumed(paused, child, observed)
-        after = _read_run_checkpoint(child)["progress"]
-        assert after.get("end") == "finished" and after.get("completed_epochs") == 2, (
-            "the resumed run did not finish the planned two epochs")
-        assert after["optimizer_updates"] == 2 * before["optimizer_updates"], (
-            "the resumed run took more than the remaining epoch's updates")
+        facts.update(_assert_only_the_remaining_epochs(
+            _read_run_checkpoint(paused), _read_run_checkpoint(child)))
         state["child"] = child
-        facts.update(paused_end=before["end"], child_end=after["end"],
-                     parent_updates=before["optimizer_updates"],
-                     child_updates=after["optimizer_updates"])
+        facts.update(paused_end=before["end"], parent_attempts=before["optimizer_attempts"],
+                     parent_updates=before["optimizer_updates"])
         return "paused after one of two epochs, resumed only the remaining one", facts
 
     report.run("M2", "m2", "CONTROL: a paused run resumes its remaining epoch and records it",
