@@ -628,7 +628,8 @@ def plan_from_parent(
         defaults = asdict(TrainConfig())
         explicit = {name for name, value in request.items() if value != defaults[name]}
     plan = plan_continuation(parent.checkpoint, Path(parent.identity.path), request,
-                             set(explicit), device=device)
+                             set(explicit), device=device,
+                             parent_sha256=parent.identity.sha256)
     logger.info(f"{plan.action}.")
     if plan.inherited:
         logger.info("Inherited from the parent: " + ", ".join(

@@ -50,7 +50,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
@@ -120,12 +120,19 @@ class TrainingManager:
     # Training Control
     # =========================================================================
 
-    def start_training(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def start_training(
+        self,
+        config: Dict[str, Any],
+        effective_rules: Optional[Callable[[Dict[str, Any]], List[str]]] = None,
+    ) -> Dict[str, Any]:
         """
         Start a training run as a subprocess.
 
         Args:
             config: Training configuration dict (mirrors TrainConfig fields).
+            effective_rules: for a run continued from a parent, rules checked on
+                the settings the run plan resolves (the API's cross-field
+                rules); a violation is refused with `invalid_settings`.
 
         Returns:
             Status dict with success/error info.
@@ -146,6 +153,11 @@ class TrainingManager:
                 requested={k: v for k, v in config.items() if k != "resume_from"})
             if not preview["ok"]:
                 return {"success": False, "error": preview["reason"], "status": self._status}
+            errors = effective_rules(preview["settings"]) if effective_rules else []
+            if errors:
+                return {"success": False, "invalid_settings": True, "status": self._status,
+                        "error": "The settings this run would use, its parent's with this "
+                                 "request's: " + " ".join(errors)}
             architecture = preview.get("architecture") or architecture
 
         with self._lock:
@@ -520,6 +532,7 @@ class TrainingManager:
         device: str = "auto",
         extend_epochs: Optional[int] = None,
         requested: Optional[Dict[str, Any]] = None,
+        extend_if_finished: bool = False,
     ) -> Dict[str, Any]:
         """What starting from `parent_path` would do, for the console to show
         before start (contract M3a-3, M3a-4).
@@ -527,6 +540,11 @@ class TrainingManager:
         `requested` is a training request's own fields, set explicitly: a
         learning setting among them that differs from the parent's is refused
         here, as the training process would refuse it.
+
+        `extend_if_finished` is the console's: its Extra epochs field belongs to
+        a finished parent, so for any other parent the value is not sent
+        (`training_console._preview_for`). Every other caller leaves it off, and
+        an `extend_epochs` given for an unfinished parent is refused.
 
         **The same decision the training process makes**
         (`src.utils.run_plan.plan_continuation`), on the parent's own
@@ -551,6 +569,8 @@ class TrainingManager:
         record = read.checkpoint if isinstance(read.checkpoint, dict) else {}
         progress = record.get("progress") or {}
         stage = progress.get("stage") or {}
+        if extend_if_finished and progress.get("end") != "finished":
+            extend_epochs = None
         facts = {
             "parent": str(path),
             "sha256": read.identity.sha256,
@@ -573,12 +593,16 @@ class TrainingManager:
         effective_device = "cuda" if device == "auto" else device
         try:
             plan = plan_continuation(record, path, request, set(explicit),
-                                     device=effective_device)
+                                     device=effective_device,
+                                     parent_sha256=read.identity.sha256)
         except RunPlanRefused as exc:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
                 "inherited": plan.inherited, "start_epoch": plan.start_epoch,
-                "end_epoch": plan.end_epoch, "stage": plan.stage}
+                "end_epoch": plan.end_epoch, "stage": plan.stage,
+                # The whole configuration the run would use, for checks that
+                # need complete settings (the API's cross-field rules).
+                "settings": plan.settings}
 
     # =========================================================================
     # Checkpoint Management

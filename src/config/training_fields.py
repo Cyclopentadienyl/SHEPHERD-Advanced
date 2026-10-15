@@ -104,7 +104,8 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="hidden_dim",
         operand="num_heads",
         when={"conv_type": ("hgt", "gat")},
-        enforced_in="current (API _validate_head_divisibility)",
+        enforced_in="current (API _validate_head_divisibility; a continued run's on the settings "
+                    "the run plan resolves, routes/training.cross_field_errors)",
         description=(
             "hidden_dim % num_heads == 0. Required for hgt (HGTConv splits out_channels across "
             "heads) and gat (GATConv uses hidden_dim // num_heads with concat=True, so a "
@@ -118,7 +119,8 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="min_lr_ratio",
         threshold=0.0,
         when={"scheduler_type": ("onecycle",)},
-        enforced_in="current (API _validate_onecycle_min_lr; trainer _validate_min_lr_ratio)",
+        enforced_in="current (API _validate_onecycle_min_lr, and a continued run's on the "
+                    "resolved settings; trainer _validate_min_lr_ratio)",
         description=(
             "onecycle computes final_div_factor = 1 / min_lr_ratio, so it needs a strictly "
             "positive value; cosine/linear legitimately allow 0 (decay to zero)."

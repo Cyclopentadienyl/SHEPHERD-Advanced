@@ -153,6 +153,12 @@ def _callback_state(trainer: "Trainer", epoch: int) -> Dict[str, Any]:
                 if match:
                     best_source = {"kind": "file", "file": match[0]["file"],
                                    "sha256": match[0]["sha256"]}
+                else:
+                    # Recorded as such: `src.utils.run_plan` refuses to continue
+                    # from a checkpoint whose best weights cannot be located.
+                    logger.warning(
+                        "Early stopping's best weights (epoch %s) are in no listed "
+                        "best-k file; this checkpoint cannot be continued.", early.best_epoch)
 
     model_checkpoint_state = None
     if checkpoint is not None:

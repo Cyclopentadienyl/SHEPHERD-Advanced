@@ -479,3 +479,115 @@ def test_extend_without_a_parent_is_refused(train_model, workspace, tmp_path):
     with pytest.raises(ValueError, match="give resume_from"):
         _run(train_model, workspace, tmp_path / "run", extend_epochs=2)
     assert not (tmp_path / "run").exists()
+
+
+# ---------------------------------------------------------------------------
+# The best weights' source through generations (review of 094b90d, P2-1)
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def never_improving(monkeypatch):
+    """Validation that never beats epoch 0, and every finished Trainer kept,
+    so a test can read the weights early stopping restored at the end."""
+    from src.training.trainer import Trainer
+
+    values = [0.9, 0.8, 0.7, 0.6]
+    monkeypatch.setattr(Trainer, "_validate", lambda self, epoch: {"val_mrr": values[epoch]})
+    finished = []
+    original = Trainer.train
+
+    def keep(self):
+        result = original(self)
+        finished.append(self)
+        return result
+
+    monkeypatch.setattr(Trainer, "train", keep)
+    return finished
+
+
+def test_a_best_files_weights_are_carried_through_every_generation(
+    train_model, workspace, tmp_path, never_improving
+):
+    """The reviewer's case: continue from the first best-k file, whose own
+    record lists no best-k entry and says its weights are the best ("self");
+    later epochs never improve; continue again from the child's last.pt. Each
+    generation names the best weights by file and digest, and the last one
+    restores them."""
+    _run(train_model, workspace, tmp_path / "first", pause_after_epoch=1)
+    best = next((tmp_path / "first" / "checkpoints").glob("model-*.pt"))
+    best_record = _read(best)
+    assert best_record["callbacks"]["best_weights_source"] == {"kind": "self"}
+    assert best_record["callbacks"]["model_checkpoint"]["best_k"] == []
+    parent_files = _tree(tmp_path / "first")
+    named = {"kind": "file", "file": f"../../first/checkpoints/{best.name}",
+             "sha256": _sha(best)}
+
+    _run(train_model, workspace, tmp_path / "second", resume_from=str(best),
+         pause_after_epoch=2)
+    second = _read(tmp_path / "second" / "checkpoints" / "last.pt")
+    assert second["callbacks"]["early_stopping"]["best_epoch"] == 0
+    assert second["callbacks"]["best_weights_source"] == named
+    assert {"file": named["file"], "value": 0.9, "epoch": 0, "sha256": named["sha256"]} in (
+        second["callbacks"]["model_checkpoint"]["best_k"])
+
+    _run(train_model, workspace, tmp_path / "third",
+         resume_from=str(tmp_path / "second" / "checkpoints" / "last.pt"))
+    third = _read(tmp_path / "third" / "checkpoints" / "last.pt")
+    assert third["progress"]["end"] == "finished"
+    assert third["callbacks"]["best_weights_source"] == named
+
+    trainer = never_improving[-1]
+    assert trainer.weights_restored_from == {"kind": "best", "epoch": 0}
+    restored = trainer.model.state_dict()
+    assert all(torch.equal(restored[k].cpu(), v) for k, v in best_record["state_dict"].items()), (
+        "the weights restored at the end are not the best file's")
+    assert _tree(tmp_path / "first") == parent_files, "a generation changed the first run"
+
+
+def test_continuing_from_last_pt_names_the_listed_best_file(
+    train_model, workspace, tmp_path, never_improving
+):
+    """The ordinary case stays as it was: last.pt lists the best file, and the
+    child names that file, not last.pt."""
+    _run(train_model, workspace, tmp_path / "first", pause_after_epoch=1)
+    best = next((tmp_path / "first" / "checkpoints").glob("model-*.pt"))
+    _run(train_model, workspace, tmp_path / "second",
+         resume_from=str(tmp_path / "first" / "checkpoints" / "last.pt"))
+    child = _read(tmp_path / "second" / "checkpoints" / "last.pt")
+    assert child["callbacks"]["best_weights_source"] == {
+        "kind": "file", "file": f"../../first/checkpoints/{best.name}", "sha256": _sha(best)}
+    assert never_improving[-1].weights_restored_from == {"kind": "best", "epoch": 0}
+
+
+def test_best_weights_the_record_cannot_locate_are_refused(parent):
+    """A record with early stopping's best value to restore and no file for it
+    (as 094b90d wrote after a best-file continuation) is refused before
+    anything exists, never continued as if there were no best weights."""
+    import copy
+
+    from src.utils.run_plan import RunPlanRefused
+
+    path, record = parent
+    record = copy.deepcopy(record)
+    record["callbacks"]["best_weights_source"] = None
+    assert record["callbacks"]["early_stopping"]["best_value"] is not None
+    with pytest.raises(RunPlanRefused, match="names no file holding those weights"):
+        _plan(record, path, _request(record))
+    # Without weights to restore, nothing is missing.
+    record["callbacks"]["early_stopping"]["restore_best_weights"] = False
+    assert _plan(record, path, _request(record)).best_weights is None
+
+
+def test_a_self_best_parent_cannot_be_named_without_its_reads_digest(parent):
+    import copy
+
+    from src.utils.run_plan import RunPlanRefused, plan_continuation
+
+    path, record = parent
+    record = copy.deepcopy(record)
+    record["callbacks"]["model_checkpoint"]["best_k"] = []
+    record["callbacks"]["best_weights_source"] = {"kind": "self"}
+    with pytest.raises(RunPlanRefused, match="digest of its read"):
+        _plan(record, path, _request(record))
+    plan = plan_continuation(record, Path(path), _request(record), set(), device="cpu",
+                             parent_sha256="a" * 64)
+    assert plan.best_k[-1]["path"] == Path(path) and plan.best_k[-1]["sha256"] == "a" * 64

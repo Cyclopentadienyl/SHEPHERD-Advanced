@@ -476,3 +476,104 @@ class TestTrainingRequestValidation:
 
         with pytest.raises(ValidationError):
             self._req(seed=2**32)
+
+
+# ==============================================================================
+# A continued run's rules are checked on the settings it will use
+# (contract M3a review of 094b90d, P2-3)
+# ==============================================================================
+@pytest.fixture(scope="module")
+def heads3_parent(tmp_path_factory):
+    """A real paused parent with hidden_dim=18 and num_heads=3: valid for gat,
+    and invalid against the new-training default hidden_dim of 256."""
+    import scripts.train_model as train_model
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    root = tmp_path_factory.mktemp("heads3")
+    ws = write_trainable_workspace(root / "ws")
+    train_model.train(train_model.TrainConfig(
+        data_dir=str(ws), run_dir=str(root / "parent"), device="cpu", hidden_dim=18,
+        num_layers=1, num_heads=3, num_workers=0, use_amp=False, num_epochs=2,
+        batch_size=5, warmup_steps=1, pause_after_epoch=1))
+    return ws, root / "parent" / "checkpoints" / "last.pt"
+
+
+@pytest.fixture
+def real_client(monkeypatch):
+    """The real route over a real TrainingManager; only the process is stubbed."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from src.api.routes.training import router
+
+    manager = TrainingManager()
+    monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    process = MagicMock(pid=11)
+    process.poll.return_value = None
+    process.stdout.readline.return_value = ""
+    with patch("subprocess.Popen", return_value=process) as popen:
+        yield TestClient(app), popen
+
+
+class TestContinuationRulesOnResolvedSettings:
+    def test_a_partial_request_inherits_before_its_rules_are_checked(self, heads3_parent,
+                                                                     real_client):
+        import yaml
+
+        ws, parent = heads3_parent
+        client, popen = real_client
+        resp = client.post("/api/v1/training/start", json={
+            "data_dir": str(ws), "resume_from": str(parent), "device": "cpu", "num_heads": 3})
+
+        assert resp.status_code == 200, resp.text
+        popen.assert_called_once()
+        written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
+        assert "hidden_dim" not in written, "hidden_dim is the parent's (18), inherited"
+
+    def test_an_explicit_value_other_than_the_parents_is_still_refused(self, heads3_parent,
+                                                                       real_client):
+        ws, parent = heads3_parent
+        client, popen = real_client
+        for heads in (6, 4):     # 18 % 6 == 0; 18 % 4 != 0: refused as a conflict either way
+            resp = client.post("/api/v1/training/start", json={
+                "data_dir": str(ws), "resume_from": str(parent), "device": "cpu",
+                "num_heads": heads})
+            assert resp.status_code == 409 and "num_heads: the parent's 3" in resp.text
+        popen.assert_not_called()
+
+    def test_resolved_settings_that_break_a_rule_are_refused_with_422(self, heads3_parent,
+                                                                      real_client, tmp_path):
+        """A parent whose recorded settings break the rule (here edited; one
+        trained through the CLI, which does not apply the API's rules, could
+        record such a pair) is refused on the settings the run would use."""
+        ws, parent = heads3_parent
+        client, popen = real_client
+        record = torch_load(parent)
+        record["config"]["requested"]["num_heads"] = 4
+        edited = tmp_path / "edited.pt"
+        import torch
+        torch.save(record, edited)
+
+        resp = client.post("/api/v1/training/start", json={
+            "data_dir": str(ws), "resume_from": str(edited), "device": "cpu"})
+        assert resp.status_code == 422
+        assert "hidden_dim (18) must be divisible by num_heads (4)" in resp.text
+        popen.assert_not_called()
+
+    def test_a_new_run_still_validates_its_defaults(self, real_client):
+        client, popen = real_client
+        for body, fragment in (
+            ({"num_heads": 3}, "hidden_dim (256) must be divisible by num_heads (3)"),
+            ({"hidden_dim": 100, "num_heads": 8}, "hidden_dim (100) must be divisible"),
+            ({"scheduler_type": "onecycle", "min_lr_ratio": 0.0}, "onecycle"),
+        ):
+            resp = client.post("/api/v1/training/start", json=body)
+            assert resp.status_code == 422 and fragment in resp.text, (body, resp.text)
+        popen.assert_not_called()
+
+
+def torch_load(path):
+    import torch
+
+    return torch.load(path, map_location="cpu", weights_only=True)

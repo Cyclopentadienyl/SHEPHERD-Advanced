@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -41,6 +41,41 @@ router = APIRouter()
 # The WebUI keeps its conservative three-choice Radio; see src/config/training_fields.py
 # (field "device", valid_pattern) which this must stay in step with.
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
+
+
+# =============================================================================
+# Rules that span fields
+# =============================================================================
+def cross_field_errors(settings: Mapping[str, Any]) -> List[str]:
+    """The training request's rules that span fields, on complete settings.
+
+    One definition for both places they apply (contract M3a review of
+    `094b90d`, P2-3): a new run's request, its unset fields at their defaults
+    (`TrainingStartRequest`'s validators), and a continued run's settings as
+    the shared run plan resolves them from its parent
+    (`TrainingManager.start_training`), never the defaults it will not use.
+
+    - Only the attention convolutions split `hidden_dim` across heads: HGTConv
+      divides out_channels by heads, and GATConv is built as
+      `(hidden_dim // num_heads) * heads` with concat=True, so a non-divisible
+      pair silently truncates and breaks the residual add /
+      LayerNorm(hidden_dim). SAGEConv takes no heads, so it is exempt.
+    - `min_lr_ratio == 0` is valid for cosine/linear (decay to zero); only
+      onecycle divides by it (`final_div_factor = 1 / min_lr_ratio`).
+    """
+    errors: List[str] = []
+    conv_type = settings.get("conv_type")
+    hidden_dim, num_heads = settings.get("hidden_dim"), settings.get("num_heads")
+    if (conv_type in ("hgt", "gat") and isinstance(hidden_dim, int)
+            and isinstance(num_heads, int) and num_heads > 0 and hidden_dim % num_heads != 0):
+        errors.append(
+            f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads}) "
+            f"when conv_type is '{conv_type}'.")
+    min_lr_ratio = settings.get("min_lr_ratio")
+    if (settings.get("scheduler_type") == "onecycle" and isinstance(min_lr_ratio, (int, float))
+            and min_lr_ratio <= 0):
+        errors.append("min_lr_ratio must be > 0 when scheduler_type is 'onecycle'.")
+    return errors
 
 
 # =============================================================================
@@ -137,26 +172,24 @@ class TrainingStartRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_head_divisibility(self) -> "TrainingStartRequest":
-        # Only the attention convolutions split hidden_dim across heads: HGTConv divides
-        # out_channels by heads, and GATConv is built as (hidden_dim // num_heads) * heads with
-        # concat=True, so a non-divisible pair silently truncates and breaks the residual add /
-        # LayerNorm(hidden_dim). SAGEConv takes no heads, so it is deliberately exempt.
-        if self.conv_type in ("hgt", "gat") and self.hidden_dim % self.num_heads != 0:
-            raise ValueError(
-                f"hidden_dim ({self.hidden_dim}) must be divisible by num_heads "
-                f"({self.num_heads}) when conv_type is '{self.conv_type}'."
-            )
+        # A continued run (resume_from) uses its parent's settings, not these
+        # defaults: its cross-field rules are checked on the settings the run
+        # plan resolves (start_training below). Each field's own type and range
+        # are checked here for every request.
+        if self.resume_from:
+            return self
+        errors = [e for e in cross_field_errors(self.model_dump()) if "num_heads" in e]
+        if errors:
+            raise ValueError(errors[0])
         return self
 
     @model_validator(mode="after")
     def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":
-        # min_lr_ratio == 0 is valid for cosine/linear (decay-to-zero), so the
-        # field keeps ge=0.0. Only onecycle divides by it (final_div_factor =
-        # 1 / min_lr_ratio) and therefore needs a strictly positive value.
-        if self.scheduler_type == "onecycle" and self.min_lr_ratio <= 0:
-            raise ValueError(
-                "min_lr_ratio must be > 0 when scheduler_type is 'onecycle'."
-            )
+        if self.resume_from:
+            return self
+        errors = [e for e in cross_field_errors(self.model_dump()) if "onecycle" in e]
+        if errors:
+            raise ValueError(errors[0])
         return self
 
 
@@ -210,11 +243,14 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     """
     config = request.model_dump(exclude_unset=True, exclude_none=True)
 
-    result = training_manager.start_training(config)
+    # A continued run's cross-field rules apply to the settings it will use,
+    # resolved from its parent by the shared run plan, inside the service.
+    result = training_manager.start_training(config, effective_rules=cross_field_errors)
 
     if not result.get("success"):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(status.HTTP_422_UNPROCESSABLE_ENTITY if result.get("invalid_settings")
+                         else status.HTTP_409_CONFLICT),
             detail=result.get("error", "Failed to start training"),
         )
 

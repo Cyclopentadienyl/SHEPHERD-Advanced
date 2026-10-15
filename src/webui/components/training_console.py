@@ -416,6 +416,35 @@ def _format_continue_preview(preview: Dict[str, Any], source: str) -> str:
     return "\n".join(lines)
 
 
+#: The continue block's prompt before a check, and after the selection changes.
+_CONTINUE_PROMPT = "Select a checkpoint, then click **Check checkpoint**."
+
+
+def _extra_epochs_update(preview: Dict[str, Any]):
+    """The Extra epochs field belongs to a finished checkpoint: shown for one,
+    and hidden and cleared for any other, so no value is left behind for a
+    checkpoint it does not apply to (contract M3a review of `094b90d`, P2-2)."""
+    if preview.get("end") == "finished":
+        return gr.update(visible=True)
+    return gr.update(visible=False, value=None)
+
+
+def _on_continue_selection_changed():
+    """The chosen checkpoint, or where it comes from, changed: the last check
+    and the Extra epochs entered for it no longer apply, and are cleared."""
+    return gr.update(visible=False, value=None), _CONTINUE_PROMPT
+
+
+def _preview_for(parent: str, device: Optional[str], extend_epochs) -> Dict[str, Any]:
+    """The service's preview, with Extra epochs only for a finished
+    checkpoint: the field is the console's, and for any other checkpoint a
+    value in it is one left from an earlier selection, not a request. The API
+    and the CLI send `extend_epochs` as given and are refused as before."""
+    epochs = int(extend_epochs) if extend_epochs else None
+    return training_manager.preview_continuation(
+        parent, device=device or "auto", extend_epochs=epochs, extend_if_finished=True)
+
+
 def _on_check_continue(source, listed, manual, device, extend_epochs):
     """Check button: preview what continuing from the chosen checkpoint does.
 
@@ -425,12 +454,12 @@ def _on_check_continue(source, listed, manual, device, extend_epochs):
     parent = _continue_parent(source, listed, manual)
     if not parent:
         return ("Select a checkpoint from the run list, or enter a path, then click "
-                "**Check checkpoint**."), gr.update()
-    epochs = int(extend_epochs) if extend_epochs else None
-    preview = training_manager.preview_continuation(parent, device=device or "auto",
-                                                    extend_epochs=epochs)
-    finished = preview.get("end") == "finished"
-    return _format_continue_preview(preview, source), gr.update(visible=finished)
+                "**Check checkpoint**."), gr.update(visible=False, value=None)
+    preview = _preview_for(parent, device, extend_epochs)
+    text = _format_continue_preview(preview, source)
+    if preview.get("end") == "finished" and not preview.get("ok") and not extend_epochs:
+        text += "\n\nEnter **Extra epochs** below, then click **Check checkpoint** again."
+    return text, _extra_epochs_update(preview)
 
 
 def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs):
@@ -451,9 +480,7 @@ def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs
         message = "Select a checkpoint (run list or path) under Continue Training first."
         gr.Warning(message, duration=12)
         return ("⚠️ **Not started** — see Continue Training.", *empty, *no_start, message)
-    epochs = int(extend_epochs) if extend_epochs else None
-    preview = training_manager.preview_continuation(parent, device=device or "auto",
-                                                    extend_epochs=epochs)
+    preview = _preview_for(parent, device, extend_epochs)
     preview_text = _format_continue_preview(preview, source)
     if not preview.get("ok"):
         gr.Warning("Cannot continue from this checkpoint; the reason is under Continue "
@@ -467,8 +494,8 @@ def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs
         "resume_from": preview["parent"],
         "compile": bool(load_runtime_settings().get("torch_compile", False)),
     }
-    if epochs:
-        config["extend_epochs"] = epochs
+    if preview["mode"] == "extend":
+        config["extend_epochs"] = preview["stage"]["target_epochs"]
     result = training_manager.start_training(config)
     if result.get("success"):
         return (
@@ -1466,7 +1493,7 @@ def create_training_tab() -> None:
                 )
                 check_continue_btn = gr.Button("Check checkpoint", size="sm")
                 continue_preview = gr.Markdown(
-                    "Select a checkpoint, then click **Check checkpoint**.",
+                    _CONTINUE_PROMPT,
                     elem_id="continue_preview",
                 )
 
@@ -1644,6 +1671,15 @@ def create_training_tab() -> None:
         inputs=[continue_source],
         outputs=[checkpoint_dropdown, refresh_ckpt_btn, manual_checkpoint],
     )
+    # A changed selection, or source, makes the last check and its Extra
+    # epochs stale: both are cleared (contract M3a review of 094b90d, P2-2).
+    # `.change` fires on updates from other events too (Refresh, conv_type).
+    for selection in (continue_source, checkpoint_dropdown, manual_checkpoint):
+        selection.change(
+            fn=_on_continue_selection_changed,
+            inputs=[],
+            outputs=[extend_epochs, continue_preview],
+        )
     refresh_ckpt_btn.click(
         fn=_refresh_checkpoints,
         inputs=[data_dir, conv_type],

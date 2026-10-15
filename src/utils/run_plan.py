@@ -89,8 +89,10 @@ class ContinuationPlan:
     #: own weights) or `{"kind": "file", "path": Path, "sha256": str}` (a file
     #: the entry point reads and checks by digest).
     best_weights: Optional[Dict[str, Any]]
-    #: The parent's best-k entries, each with its file resolved to a path.
-    #: They belong to the run that wrote them: ranked here, never deleted.
+    #: The parent's best-k entries, each with its file resolved to a path, and
+    #: the parent itself when it is the file of early stopping's best epoch
+    #: (`_locate_best_weights`). They belong to the run that wrote them: ranked
+    #: here, never deleted.
     best_k: List[Dict[str, Any]] = field(default_factory=list)
     #: The parent's callback state as recorded.
     callbacks: Optional[Dict[str, Any]] = None
@@ -127,6 +129,7 @@ def plan_continuation(
     explicit: Collection[str],
     *,
     device: str,
+    parent_sha256: Optional[str] = None,
 ) -> ContinuationPlan:
     """Decide how a run over `request` continues from `parent`.
 
@@ -139,6 +142,9 @@ def plan_continuation(
             flags, request fields); a learning setting among them that differs
             from the parent's is refused.
         device: the device the run will use, resolved.
+        parent_sha256: the digest of the read `parent` came from. The parent
+            is named by it when it is itself the file of early stopping's best
+            epoch, so the child's checkpoints can name it in turn.
 
     Raises:
         RunPlanRefused: with the reason and the remedy.
@@ -223,7 +229,7 @@ def plan_continuation(
             f"pause_after_epoch {pause} is not after this run's start (epoch {start_epoch} "
             "is already done).")
 
-    best_weights, best_k = _locate_best_weights(parent, parent_path, where)
+    best_weights, best_k = _locate_best_weights(parent, parent_path, where, parent_sha256)
     return ContinuationPlan(
         mode=mode, action=action, settings=settings, inherited=inherited,
         stage=run_stage, start_epoch=start_epoch, end_epoch=end_epoch,
@@ -328,17 +334,54 @@ def _fixed_rates(
 
 def _locate_best_weights(
     parent: Mapping[str, Any], parent_path: Path, where: str,
+    parent_sha256: Optional[str] = None,
 ) -> "tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]":
+    """Where early stopping's best weights are, and the parent's best-k
+    entries, each resolved to a path.
+
+    **A parent that is itself the best epoch's file is carried as a best-k
+    entry** (contract M3a review of `094b90d`, P2-1). `ModelCheckpoint` writes a
+    best-k file before listing it, so that file records `best_weights_source`
+    `{"kind": "self"}` and a best-k list without itself. Continued from it, the
+    child restores the parent's own weights; unless the parent is also listed,
+    the child's checkpoints cannot name where those weights are, and a
+    grandchild would lose them. The entry names the parent by this read's
+    digest, so the next generation checks it like any other best-k file.
+
+    **Best weights the record says must be restored, and cannot be located,
+    are refused**, never treated as absent.
+    """
     callbacks = parent.get("callbacks") or {}
     checkpoint_dir = parent_path.parent
+    model_checkpoint = callbacks.get("model_checkpoint") or {}
     best_k = []
-    for entry in ((callbacks.get("model_checkpoint") or {}).get("best_k") or []):
+    for entry in (model_checkpoint.get("best_k") or []):
         best_k.append({**entry, "path": resolve_recorded_file(entry["file"], checkpoint_dir)})
 
+    early = callbacks.get("early_stopping") or {}
+    restores = bool(early.get("restore_best_weights")) and early.get("best_value") is not None
     source = callbacks.get("best_weights_source")
     if source is None:
+        if restores:
+            raise RunPlanRefused(
+                f"{where} records early stopping's best {early.get('monitor')} "
+                f"({early.get('best_value')}, epoch {early.get('best_epoch')}) to be restored "
+                "at the end of training, and names no file holding those weights. Continuing "
+                "would lose them; choose another checkpoint.")
         return None, best_k
     if source.get("kind") == "self":
+        best_epoch = int(early.get("best_epoch", 0))
+        if model_checkpoint and not any(int(e["epoch"]) == best_epoch for e in best_k):
+            if not parent_sha256:
+                raise RunPlanRefused(
+                    f"{where} holds early stopping's best weights itself and cannot be named "
+                    "for the run's checkpoints without the digest of its read.")
+            monitor = model_checkpoint.get("monitor")
+            value = (parent.get("logs") or {}).get(monitor)
+            if value is None and monitor == early.get("monitor"):
+                value = early.get("best_value")
+            best_k.append({"file": parent_path.name, "value": value, "epoch": best_epoch,
+                           "sha256": parent_sha256, "path": parent_path})
         return {"kind": "self"}, best_k
     path = resolve_recorded_file(source["file"], checkpoint_dir)
     if not path.is_file():

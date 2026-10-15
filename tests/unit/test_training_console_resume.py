@@ -178,3 +178,98 @@ def test_the_continue_inputs_pass_gradios_own_preprocessing_when_empty():
     for elem_id, empty in (("extend_epochs", 0), ("extend_epochs", None),
                            ("manual_checkpoint", ""), ("checkpoint_dropdown", None)):
         widgets[elem_id].preprocess(empty)
+
+
+# --------------------------------------------------------------- stale Extra epochs (review of 094b90d, P2-2)
+def _apply(state, update):
+    """What Gradio does with a returned update: set the fields it names."""
+    for key in ("value", "visible"):
+        if key in update:
+            state[key] = update[key]
+    return state
+
+
+@pytest.mark.parametrize("source", [tc.CONTINUE_FROM_LIST, tc.CONTINUE_FROM_PATH])
+def test_extra_epochs_left_from_a_finished_checkpoint_never_block_a_resume(
+    checkpoints, monkeypatch, source
+):
+    """Finished checkpoint, Extra epochs 3; then the unfinished one; Check;
+    Continue. The selection change clears the field and the old check, and the
+    resume starts without extend_epochs. Both sources, with the component state
+    the returned updates leave."""
+    started = []
+    monkeypatch.setattr(training_manager, "start_training",
+                        lambda config: started.append(config) or {"success": True, "pid": 1,
+                                                                  "run_dir": "/r"})
+
+    def chosen(path):
+        return (path, "") if source == tc.CONTINUE_FROM_LIST else (None, path)
+
+    extra = {"value": None, "visible": False}
+    listed, manual = chosen(str(checkpoints["finished"]))
+    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"])
+    _apply(extra, update)
+    assert extra["visible"] is True and "Enter **Extra epochs**" in text
+    extra["value"] = 3
+    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"])
+    _apply(extra, update)
+    assert "Extend training by 3 epochs" in text and extra == {"value": 3, "visible": True}
+
+    # The operator picks the unfinished checkpoint: the change event fires.
+    listed, manual = chosen(str(checkpoints["paused"]))
+    update, preview = tc._on_continue_selection_changed()
+    _apply(extra, update)
+    assert extra == {"value": None, "visible": False} and preview == tc._CONTINUE_PROMPT
+
+    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"])
+    _apply(extra, update)
+    assert "Resume the original training" in text and extra["visible"] is False
+    tc._on_resume(str(checkpoints["ws"]), "", "cpu", source, listed, manual, extra["value"])
+    assert len(started) == 1 and "extend_epochs" not in started[0]
+    assert started[0]["resume_from"] == str(checkpoints["paused"])
+
+
+def test_a_stale_value_that_reaches_the_handlers_is_not_sent_for_an_unfinished_checkpoint(
+    checkpoints, monkeypatch
+):
+    """Without the change event (a value left however it was), Check and
+    Continue still treat Extra epochs as the finished checkpoint's field."""
+    started = []
+    monkeypatch.setattr(training_manager, "start_training",
+                        lambda config: started.append(config) or {"success": True, "pid": 1,
+                                                                  "run_dir": "/r"})
+    paused = str(checkpoints["paused"])
+    text, update = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, paused, "cpu", 3)
+    assert "Resume the original training" in text
+    assert update["visible"] is False and update["value"] is None
+    tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None, paused, 3)
+    assert len(started) == 1 and "extend_epochs" not in started[0]
+
+    # A finished checkpoint still extends by the epochs entered.
+    tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None,
+                  str(checkpoints["finished"]), 3)
+    assert started[1]["extend_epochs"] == 3
+
+
+def test_the_service_still_refuses_extend_epochs_for_an_unfinished_parent(checkpoints):
+    """The console's rule does not reach other callers: an explicit
+    extend_epochs on an unfinished parent is refused."""
+    preview = training_manager.preview_continuation(str(checkpoints["paused"]), device="cpu",
+                                                    extend_epochs=3)
+    assert preview["ok"] is False and "applies only to a finished stage" in preview["reason"]
+
+
+def test_every_selection_change_clears_the_check_and_extra_epochs():
+    import gradio as gr
+
+    with gr.Blocks() as demo:
+        tc.create_training_tab()
+    by_id = {block._id: getattr(block, "elem_id", None) for block in demo.blocks.values()}
+    cleared = set()
+    for fn in demo.fns.values():
+        if fn.fn is tc._on_continue_selection_changed:
+            assert [getattr(o, "elem_id", None) for o in fn.outputs] == [
+                "extend_epochs", "continue_preview"]
+            cleared |= {(by_id[block], event) for block, event in fn.targets}
+    assert cleared == {("continue_source", "change"), ("checkpoint_dropdown", "change"),
+                       ("manual_checkpoint", "change")}
