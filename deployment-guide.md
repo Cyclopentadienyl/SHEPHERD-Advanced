@@ -1525,6 +1525,212 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 
 ---
 
+## 4.9 測試 cohort：匯入、量測、登錄（自 contract M4 起）
+
+自 contract M4 起（2026-10-16），checkpoint 的測試是在命令列上、以一個**已登錄的測試 cohort
+版本**進行——MyGene2、院內離線 cohort，或驗收用的合成 cohort——結果登錄在 checkpoint 旁邊。
+流程如下：
+
+1. `scripts/import_cohort.py` 先預覽、再提交一個對應到某個 workspace 圖的 cohort 版本；
+2. `scripts/measure_scorer.py --cohort LABEL --registry DIR` 在這個版本上量測 checkpoint
+   （Mode C），並保留完整報告；
+3. `--record`，或之後用 `scripts/record_evaluation.py --report`，把報告登錄到 checkpoint 旁的
+   `evaluations.json`；
+4. Diagnosis 分頁的模型狀態顯示目前載入之 checkpoint 已登錄的結果。
+
+以上都由操作者在機器上執行。沒有任何 UI 控制項或 API 請求會匯入、量測或登錄任何東西。
+
+### registry
+
+registry 是**由你建立**的目錄，每個指令都以**位於 repository 之外的絕對路徑**傳入。相對路徑、
+不存在的路徑，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。不會有任何東西
+替你建立它，也沒有任何請求、環境變數或設定鍵指定它。
+
+它存放病人層級的資料——原樣保存的來源檔、對應後的樣本與逐案的排名——所以請建在只有執行這些
+指令的帳號讀得到的地方（例如 `mkdir -m 700 /srv/shepherd/cohorts`）。其中的檔案依 §4.6 的方式
+發布：先寫入暫存檔，再改名就位，權限依目錄的政策。
+
+```
+<registry>/
+  sources/<sha256>.json                  來源檔的位元組，原樣保存，以其 digest 命名
+  versions/<label>/cohort.json           版本 manifest；最後寫入，它存在才代表版本存在
+  versions/<label>/samples.json          對應後的樣本，由 cohort.json 的 digest 綁定
+  versions/<label>/reports/<run id>/     每次量測一個目錄：先 ranks.json，再 report.json
+```
+
+**版本永不改變。** 一個 label 只能用一次。沒有 `cohort.json` 的 `versions/<label>/` 是中斷的
+匯入：每個指令都拒絕它，匯入工具會指出它，讓你在重用該 label 之前移除。沒有任何指令會刪除
+registry 中的東西。
+
+### 來源檔：`shepherd-cases/1`
+
+匯入工具只讀一種格式，由本專案所定義：
+
+```json
+{
+  "format": "shepherd-cases/1",
+  "cases": [
+    {"case_id": "c001", "phenotypes": ["HP:0001250", "HP:0001263"], "disease": "MONDO:0011073"}
+  ]
+}
+```
+
+- 兩層都必須恰好是這些鍵。`case_id` 為非空字串，在檔案中唯一；`phenotypes` 為非空串列，每項是
+  `HP:` 加七位數字；`disease` 是 `MONDO:` 加七位數字。
+- **任何不符的地方都會讓整個匯入被拒絕**，並依案例索引與 case id 列出每一個問題；不寫入任何
+  東西。
+- **以 `OMIM:`、`ORPHA:` 或 `Orphanet:` 給出的疾病**同樣讓整個匯入被拒絕，並指出命名空間與
+  案例數：圖中的疾病是 MONDO 詞彙，這個版本不做轉換。真實格式（MyGene2 的、院方的）在有樣本
+  之後以轉接器轉成這個格式（`docs/working/PLAN_TEST_RESULTS.md` §4.9）。
+
+### 匯入：先預覽，再提交
+
+```bash
+python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> --source /srv/intake/cases.json \
+    --label mygene2-2026-10 --role mygene2 [--partial-phenotypes keep|exclude]
+```
+
+label 與 role 是小寫識別字（字母、數字、`_`、`-`、`.`；最多 64 字元）；role 不可為 `train`
+或 `val`。
+
+**預覽不寫入任何東西。** 它以與訓練、serving 相同的讀取器與檢查，把每個案例對應到 workspace
+manifest 所綁定的圖，並印出：
+
+- 來源案例數、可排名的案例數，以及**依類別列出的排除案例，各附 case id 與原因**（只在本機
+  顯示：會出現 case id，不會出現表型與疾病）：
+  - `ground_truth_absent`——案例的疾病不是這張圖的疾病節點；
+  - `phenotype_unmappable`——沒有任何詞彙對應得上，或在 `--partial-phenotypes exclude` 下有
+    詞彙對應不上；
+- 對應不上的 HPO 詞彙（過時或替代 id 不是節點，因此屬於此類）、以少於所列詞彙排名的案例數，
+  以及移除的重複（列兩次的詞彙只算一次，表型正規化規則 1）；
+- 圖的四個 digest、dataset record 的來源與 digest，以及其 HPO 與 MONDO 條目；
+- 一個 **preview id** 與完整的提交指令。
+
+`--partial-phenotypes keep`（預設）以對應得上的詞彙為案例排名；`exclude` 則排除它。沒有任何
+詞彙對應得上的案例一律排除。所採政策記錄在版本中。
+
+**提交**：執行印出的指令，也就是相同參數加上 `--commit <preview id>`。匯入工具會重新讀取所有
+輸入，只有結果仍是同一個 id 時才發布；否則拒絕（"inputs changed since the preview"）。它會印出
+版本目錄與 manifest 的 SHA-256。沒有任何案例可排名的來源在提交時會被拒絕，因為沒有東西可量測。
+
+### 量測
+
+```bash
+python scripts/measure_scorer.py \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
+    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
+```
+
+在寫入任何東西之前，這次執行會以它實際讀到的位元組檢查：版本的 `cohort.json`，以及其
+`samples.json` 是否符合它所綁定的 digest；workspace 的圖檔是否符合其 manifest 與 dataset
+record（§4.4）；**版本是否屬於這個 workspace**——它的四個圖 digest 與 dataset record 必須是這個
+workspace 的，否則在讀取 checkpoint 之前就拒絕；接著是 checkpoint（以 `weights_only=True` 讀取）
+是否與它訓練所用的圖相符。裝置依 §4.8：`auto` 需要 CUDA，`cpu` 是開發用的執行，會如實記錄，
+而且與 CUDA 的量測是不同的量測。
+
+**R10——與模型訓練及驗證資料的重疊。** 這次執行會尋找 checkpoint 所記錄 digest 的訓練與驗證
+樣本檔：先找 workspace 自己的 `train_samples.json` 與 `val_samples.json`，再找每個
+`--training-evidence` 目錄中（不遞迴）的每一個 `*_samples.json`（若模型在別處訓練，或
+workspace 之後重建過，請給出訓練當時 workspace 所在的目錄）。只有位元組具有所記錄 digest 的
+檔案才算數。共四個標籤：訓練與驗證 × 疾病重疊與表型集合重疊，每個標籤為 `overlap`（附計數與
+分母）、`none`、`unverifiable`（找不到所記錄的檔案，或讀不了：**絕不顯示為零**），或驗證範圍的
+`no validation inputs recorded`。`none` 不代表證明沒有洩漏：它只就 checkpoint 所記錄的輸入而言。
+
+**報告保存在哪裡。** 在 registry 中、該版本之下：
+`<registry>/versions/<label>/reports/<UTC 時間>-<checkpoint digest 前 12 個十六進位字元>-<8 個
+隨機十六進位字元>/`，每次執行一個新目錄：先 `ranks.json`（逐案、病人層級），再 `report.json`，
+後者以 digest 指明排名檔。報告絕不覆寫，不論是否登錄，每份報告都會保留。`--cohort` 搭配
+`--output` 會被拒絕。
+
+主控台會印出 Mode C 的指標、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
+四個 R10 標籤、報告路徑與 run id。
+
+### 登錄
+
+- **`--record`** 在執行結束後立即登錄報告。**沒有加它時**，執行會印出之後登錄用的指令：
+
+  ```bash
+  python scripts/record_evaluation.py \
+      --report <registry>/versions/<label>/reports/<run id>/report.json \
+      --checkpoint-dir data/workspaces/<ws>/runs/<arch>/<run>/checkpoints
+  ```
+
+  `record_evaluation.py` 要求 `--checkpoint-dir` 中有一個檔案，其位元組就是報告所量測的
+  checkpoint。兩種方式走同一個函式，所以登錄的紀錄相同。
+- **ledger** 是 checkpoint **解析後路徑**所在目錄中的 `evaluations.json`——在 run layout 下為
+  `data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/evaluations.json`。以 symlink 指向的
+  checkpoint，其 ledger 放在連結目標旁邊，服務也是在那裡找。
+- **結果**：已登錄（附序號）；已存在（同一份報告再次登錄：不寫入任何東西）；與既有紀錄一致
+  （報告的 digest 加入該紀錄的佐證報告清單）。與同一鍵——同一個 checkpoint、cohort 版本與
+  量測設定，結果卻不同——的紀錄互相矛盾的報告會被拒絕，並指出不同的欄位。沒有覆寫旗標；
+  錯誤的紀錄以編輯這個可讀的 JSON 檔來更正，會留下 diff。
+- **之後查看**：`python scripts/record_evaluation.py --checkpoint-dir <dir> --show
+  <checkpoint sha256>`。空的回答代表這個 ledger 沒有這組權重的結果，不代表它們從未被評估過。
+- **一次只能有一個寫入者。** 登錄時若發現 ledger 在讀取之後被改過，會拒絕而不是覆蓋；這不是
+  鎖，所以不要從兩個地方同時登錄到同一個目錄。
+- 只有**已登錄 cohort 版本**的報告會被登錄；`--split` 的報告不會。
+
+### 結束碼
+
+| 指令 | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查在寫入任何東西之前拒絕了這次執行；Python 印出以該訊息結尾的 traceback（與 M4 之前相同） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測、報告已保留，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令 |
+| `record_evaluation.py` | 已登錄、已存在、一致，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕 | — |
+| `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`） | — |
+
+若 checkpoint 目錄對你而言是唯讀的，量測會以結束碼 3 結束：報告會保留，由可以寫入該目錄的人
+用 `record_evaluation.py` 登錄。
+
+### Diagnosis 分頁顯示什麼
+
+模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
+（`sha256:<前 12 字元>…`）加上 **「Recorded test results (Mode C)」**。每次讀取狀態時，都透過
+`GET /api/v1/evaluations/loaded-model` 讀取，並以 checkpoint 的 digest 而不是檔名來找：換成另一個
+模型之後，絕不會顯示前一個模型的結果；連同 ledger 一起搬移且位元組不變的 checkpoint，仍找得到
+自己的結果。
+
+- 每筆紀錄前都有 **"Disease ranking by the model, approved scorer policy (Mode C)."** 與說明
+  **"This is the model's own Mode C disease ranking. Until B-1 ships, the Diagnosis tab ranks by
+  the legacy GNN+SP mixture behind the path gate, so this number does not describe the tab's
+  current ranking."**（原文照錄）。
+- 每筆紀錄：role · label；以已排名案例計算的 Mode C 指標（其 MRR 與 Checkpoint 那一行訓練器的
+  "Val MRR" 分開標示）；覆蓋率（`ranked/source`，附各排除數）；已檢查的關係（✓ 或不適用）；
+  四個 R10 標籤——`unverifiable` 與 `no validation inputs recorded` 以文字顯示，**絕不顯示為零或
+  數字**；環境類別（CUDA 且開或關 deterministic algorithms，或 CPU）與 GPU；dataset 來源（合成
+  workspace 會特別標出）；登錄序號與時間，以及佐證報告數。
+- 沒有紀錄時改為一句話：載入的 checkpoint 旁沒有 ledger；ledger 未讀取，附原因（例如下述的
+  schema 2 檔案）；這個 ledger 沒有這組權重的結果；有些紀錄因不符登錄寫出的形狀而未顯示；或
+  "The loaded model changed while its recorded results were read; refresh the page."。
+- **這個 route** 不接受任何參數，每次請求都讀取載入之 checkpoint 旁的 ledger，不寫入任何東西，
+  也不回傳任何路徑、case id 或排名。它掛在自己的 router 上，不在 pipeline router 中，因此卸載
+  或保護 pipeline routes 的部署（`docs/working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`，
+  B2）仍保有它。
+
+### 行為變更（M4）
+
+- **`measure_scorer.py --cohort-kind` 已移除**，以前 workspace 中當作 supplied cohort 的鬆散
+  `<split>_samples.json` 也一併移除。`--split` 只接受產生器的 `train` 或 `val`，且需要
+  `--output`；與它一起給出 `--registry`、`--training-evidence` 或 `--record` 會被拒絕。院方或外部
+  cohort 以 `--cohort LABEL --registry DIR` 匯入並量測。
+- **產生的 split 的報告不可登錄**：`record_evaluation.py` 拒絕它（"a generated split's report
+  is not registered"）。`--split val` 是挑選 checkpoint 用的 split，不是保留的測試資料。
+- **產生的 split 的報告與排名檔改為先寫入暫存檔再改名就位**（排名檔先）；已存在的 `--output`
+  仍會被取代。
+- **ledger schema 3。** 既有的 schema 1 或 2 的 `evaluations.json` 會被拒絕——`--record`、
+  `record_evaluation.py`（`--report` 與 `--show`）以及模型狀態都會拒絕，模型狀態會回報 ledger
+  未讀取。沒有任何東西會遷移它：**請手動封存**，例如 `mv evaluations.json evaluations.v2.json`，
+  以寫出它的版本讀取，並重新量測需要的結果。M4 之前寫出的報告同樣會被拒絕，並指示重新量測。
+- **`scripts/audit_split_overlap.py`**：`--evaluation-cohort-kind` 已移除；測試 cohort 以
+  `--registry DIR --cohort LABEL` 稽核（與它一起給出 `--splits` 會被拒絕）。版本的圖與 dataset
+  record digest 會與這個 workspace 的 manifest 所記錄的比對，不載入 tensor；只讀 `train`。報告的
+  `schema_version` 為 6。
+
+---
+
 ## 總結：部署檢查清單 ✅
 
 ### Windows x86 + Blackwell

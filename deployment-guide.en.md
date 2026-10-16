@@ -1115,6 +1115,240 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 
 ---
 
+## 4.9 Test cohorts: import, measure, record (since contract M4)
+
+Since contract M4 (2026-10-16) a checkpoint is tested from the command line on a **registered
+test cohort version** — MyGene2, the institution's offline cohort, or a synthetic cohort for an
+acceptance — and its result is recorded beside the checkpoint. The flow is:
+
+1. `scripts/import_cohort.py` previews, then commits, a cohort version mapped to one workspace's
+   graph;
+2. `scripts/measure_scorer.py --cohort LABEL --registry DIR` measures the checkpoint on it (Mode
+   C) and keeps the full report;
+3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
+   `evaluations.json` beside the checkpoint;
+4. the Diagnosis tab's model status shows the loaded checkpoint's recorded results.
+
+All of it runs on the machine, by the operator. No UI control and no API request imports,
+measures or records anything.
+
+### The registry
+
+The registry is a directory **you create**, given to every command as an **absolute path outside
+the repository**. A relative path, a path that does not exist, and a path that resolves inside
+the repository (through a symlink too) are refused. Nothing creates it for you, and no request,
+environment variable or configuration key names it.
+
+It holds patient-level data — the source file kept verbatim, the mapped samples and the per-case
+ranks — so create it where only the accounts that run these commands can read it (for example
+`mkdir -m 700 /srv/shepherd/cohorts`). Its files are published as §4.6 describes: staged, then
+renamed into place, with the directory's permission policy.
+
+```
+<registry>/
+  sources/<sha256>.json                  the source file's bytes, verbatim, named by their digest
+  versions/<label>/cohort.json           the version manifest, written last: it makes the version exist
+  versions/<label>/samples.json          the mapped samples, bound by cohort.json's digest
+  versions/<label>/reports/<run id>/     one directory per measurement: ranks.json, then report.json
+```
+
+**A version never changes.** A label is used once. A `versions/<label>/` without `cohort.json`
+is an interrupted import: every command refuses it, and the importer names it so you can remove
+it before reusing the label. No command deletes anything in the registry.
+
+### The source file: `shepherd-cases/1`
+
+The importer reads one format, owned by this project:
+
+```json
+{
+  "format": "shepherd-cases/1",
+  "cases": [
+    {"case_id": "c001", "phenotypes": ["HP:0001250", "HP:0001263"], "disease": "MONDO:0011073"}
+  ]
+}
+```
+
+- Exactly these keys, at both levels. `case_id` is a non-empty string, unique in the file;
+  `phenotypes` a non-empty list of `HP:` + seven digits; `disease` `MONDO:` + seven digits.
+- **Anything that does not fit refuses the import as a whole**, with every problem listed by case
+  index and case id; nothing is written.
+- **A disease given as `OMIM:`, `ORPHA:` or `Orphanet:`** also refuses the import as a whole,
+  naming the namespace and the number of cases: the graph's diseases are MONDO terms, and this
+  revision does not translate. Real formats (MyGene2's, the institution's) are converted to this
+  format by an adapter, written once samples exist (`docs/working/PLAN_TEST_RESULTS.md` §4.9).
+
+### Import: preview, then commit
+
+```bash
+python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> --source /srv/intake/cases.json \
+    --label mygene2-2026-10 --role mygene2 [--partial-phenotypes keep|exclude]
+```
+
+Labels and roles are lowercase identifiers (letters, digits, `_`, `-`, `.`; at most 64
+characters); a role may not be `train` or `val`.
+
+**The preview writes nothing.** It maps every case against the graph the workspace manifest
+binds, through the same readers and checks as training and serving, and prints:
+
+- the source cases, the cases eligible for ranking, and the excluded cases **by category, each
+  with its case id and reasons** (on this machine only: case ids appear, phenotypes and diseases
+  do not):
+  - `ground_truth_absent` — the case's disease is not a disease node of this graph;
+  - `phenotype_unmappable` — no term maps, or, with `--partial-phenotypes exclude`, some term does
+    not;
+- the HPO terms that did not map (an obsolete or alternative id is not a node, so it is one of
+  them), the cases ranked on fewer terms than they listed, and the repeats removed (a term listed
+  twice counts once, phenotype normalisation rule 1);
+- the graph's four digests, the dataset record's origin and digest, and its HPO and MONDO
+  entries;
+- a **preview id** and the exact commit command.
+
+`--partial-phenotypes keep` (the default) ranks a case on the terms that mapped;
+`exclude` excludes it. A case with no term that maps is always excluded. The policy is recorded in
+the version.
+
+**Commit** by running the printed command: the same arguments plus `--commit <preview id>`. The
+importer reads every input again and publishes only if they still give that id; otherwise it
+refuses ("inputs changed since the preview"). It prints the version's directory and the manifest's
+SHA-256. A source in which no case can be ranked is refused at commit, since there would be nothing
+to measure.
+
+### Measure
+
+```bash
+python scripts/measure_scorer.py \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
+    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
+```
+
+Before anything is written the run checks, on the bytes it read: the version's `cohort.json` and
+its `samples.json` against the digest it binds; the workspace's graph files against its manifest
+and the dataset record (§4.4); **the version against this workspace** — its four graph digests and
+its dataset record must be this workspace's, or the run is refused before the checkpoint is read;
+then the checkpoint (read with `weights_only=True`) against the graph it was trained on. The
+device follows §4.8: `auto` needs CUDA, and `cpu` is a development run, recorded as such and a
+different measurement from a CUDA one.
+
+**R10 — overlap with what the model was trained and validated on.** The run looks for the
+training and validation sample files whose digests the checkpoint records: first the workspace's
+own `train_samples.json` and `val_samples.json`, then every `*_samples.json` directly inside each
+`--training-evidence` directory (give the directory where the training run's workspace is, if it
+was trained elsewhere or the workspace has been rebuilt since). Only a file whose bytes have the
+recorded digest counts. Four labels: training and validation × disease overlap and phenotype-set
+overlap, each `overlap` (with its count and denominator), `none`, `unverifiable` (the recorded
+file was not found, or could not be read: **never shown as zero**), or, for validation, `no
+validation inputs recorded`. `none` is not proof of no leakage: it speaks only about the inputs
+the checkpoint records.
+
+**Where the report is kept.** In the registry, under the version:
+`<registry>/versions/<label>/reports/<UTC time>-<first 12 hex of the checkpoint digest>-<8 random
+hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) and then
+`report.json`, which names the ranks file by its digest. Reports are never overwritten, and every
+report is kept whether or not it is registered. `--output` is refused with `--cohort`.
+
+The console prints Mode C's metrics, the coverage (`N ranked of M source cases; K excluded`, with
+each category), the four R10 labels, the report's path and the run id.
+
+### Record
+
+- **`--record`** registers the report right after the run. **Without it**, the run prints the
+  command that registers it later:
+
+  ```bash
+  python scripts/record_evaluation.py \
+      --report <registry>/versions/<label>/reports/<run id>/report.json \
+      --checkpoint-dir data/workspaces/<ws>/runs/<arch>/<run>/checkpoints
+  ```
+
+  `record_evaluation.py` requires a file in `--checkpoint-dir` whose bytes are the checkpoint the
+  report measured. Both ways go through the same function, so the record is the same.
+- **The ledger** is `evaluations.json` in the directory of the checkpoint's **resolved** path —
+  under the run layout `data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/evaluations.json`. A
+  symlinked checkpoint files its ledger beside the link's target, which is where the service
+  looks.
+- **Outcomes:** registered (with its sequence number); already held (the same report again:
+  nothing written); agrees with an existing record (the report's digest is added to that record's
+  corroborating reports). A report that contradicts a record with the same key — same checkpoint,
+  cohort version and measurement settings, different results — is refused, naming the fields
+  that differ. There is no override flag; a wrong record is corrected by editing the readable
+  JSON file, which leaves a diff.
+- **What is shown later:** `python scripts/record_evaluation.py --checkpoint-dir <dir> --show
+  <checkpoint sha256>`. An empty answer means this ledger holds no result for those weights, not
+  that they were never evaluated.
+- **One writer at a time.** A registration that finds the ledger changed since it read it is
+  refused rather than overwriting; this is not a lock, so do not register into one directory from
+  two places at once.
+- Only a **registered cohort version's** report is recorded; a report from `--split` is not.
+
+### Exit codes
+
+| Command | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
+| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run before anything was written; Python prints a traceback ending in the message (unchanged from before M4) | the command line was rejected, including an argument of the other kind of cohort | **measured and the report kept, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later |
+| `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected | — |
+| `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`) | — |
+
+A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,
+and whoever may write that directory registers it with `record_evaluation.py`.
+
+### What the Diagnosis tab shows
+
+The model status (Model Configuration), under its "Serving" line, adds **"Recorded test results
+(Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`). It is read through
+`GET /api/v1/evaluations/loaded-model` each time the status is read, and found by the checkpoint's
+digest, not its file name: after another model is loaded the previous model's results are never
+shown, and a checkpoint moved with its ledger and unchanged bytes still finds them.
+
+- Every record is introduced by **"Disease ranking by the model, approved scorer policy (Mode
+  C)."** and the note **"This is the model's own Mode C disease ranking. Until B-1 ships, the
+  Diagnosis tab ranks by the legacy GNN+SP mixture behind the path gate, so this number does not
+  describe the tab's current ranking."**
+- Per record: role · label; Mode C's metrics over the cases ranked (its MRR is labelled apart
+  from the trainer's "Val MRR" on the Checkpoint line); coverage (`ranked/source` with each
+  exclusion count); the relations checked (✓ or not applicable); the four R10 labels —
+  `unverifiable` and `no validation inputs recorded` are shown as words, **never as zero or a
+  number**; the environment class (CUDA with deterministic algorithms on or off, or CPU) and the
+  GPU; the dataset origin (a synthetic workspace is called out); the registration's sequence and
+  time and the number of corroborating reports.
+- Instead of records, a sentence: no ledger beside the loaded checkpoint; the ledger was not read,
+  with the reason (for example a schema 2 file, below); this ledger holds no result for these
+  weights; some records not shown because they do not have the shape registration writes; or "The
+  loaded model changed while its recorded results were read; refresh the page."
+- **The route** takes no parameters, reads the ledger beside the loaded checkpoint on every
+  request, writes nothing, and returns no path, case id or rank. It is mounted on its own router,
+  not the pipeline router, so a deployment that unmounts or protects the pipeline routes
+  (`docs/working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`, B2) keeps it.
+
+### Behaviour changes (M4)
+
+- **`measure_scorer.py --cohort-kind` is removed**, and so is the loose `<split>_samples.json` a
+  workspace used to carry as a supplied cohort. `--split` takes the generator's `train` or `val`
+  only and needs `--output`; `--registry`, `--training-evidence` and `--record` are refused with
+  it. An institutional or external cohort is imported and measured with `--cohort LABEL
+  --registry DIR`.
+- **A generated split's report is not registrable**: `record_evaluation.py` refuses it ("a
+  generated split's report is not registered"). `--split val` is the checkpoint-selection split,
+  not held-out data.
+- **A generated split's report and ranks are staged and renamed into place** (ranks first); an
+  existing `--output` is still replaced.
+- **Ledger schema 3.** An existing `evaluations.json` of schema 1 or 2 is refused — by
+  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the model status, which
+  reports the ledger as not read. Nothing migrates it: **archive it by hand**, for example
+  `mv evaluations.json evaluations.v2.json`, read it with the revision that wrote it, and
+  re-measure what you need. A report written before M4 is refused too, with an instruction to
+  re-measure.
+- **`scripts/audit_split_overlap.py`**: `--evaluation-cohort-kind` is removed; a test cohort is
+  audited with `--registry DIR --cohort LABEL` (and `--splits` beside it is refused). The version's
+  graph and dataset record digests are compared with those this workspace's manifest records,
+  without loading tensors; only `train` is read. The report's `schema_version` is 6.
+
+---
+
 ## Summary: deployment checklist ✅
 
 ### Windows x86 + Blackwell

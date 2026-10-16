@@ -9,6 +9,16 @@ fixed; §6.8's audit built and run, its evidence committed (revision 28).
 <details>
 <summary><b>Revision history</b></summary>
 
+- **31** — the provenance contract's M4, item 14's phase 1 (implemented on the branch
+  2026-10-16, awaiting its GPU acceptance and review). §6.5's "As built" is amended in place:
+  the key is stated as the code has it (`PLAN_TEST_RESULTS.md` F4), the ledger is schema 3 and
+  sits beside the checkpoint under the run layout, and recording is one function reached
+  automatically with `measure_scorer.py --record` or later with `record_evaluation.py`. The
+  earlier statement that recording is only a separate entry point, because the checkpoint
+  directory may be read-only to whoever measures, is reconciled rather than removed: a refused
+  `--record` keeps the report and exits 3. §6.1 notes that a supplied cohort is now a registered
+  cohort version, so the cohort kind follows from the argument that names it, and §6.6 records
+  the read-only display.
 - **30** — the Mode A/B retirement's R2 (2026-10-12): measurement runs Mode C only and records no
   seed and no loader fields. §1.7, §6.1 and §6.5's "As built" are amended in place; the two seed
   bullets of §6.1 are marked superseded rather than removed. The ledger reads only what the
@@ -922,6 +932,15 @@ correctly has no manifest — and a workspace built before the allocation step, 
 Reading the first and third the same way is what keeps a superseded pipeline alive inside the
 current one.
 
+*Since the provenance contract's M4 (2026-10-16), the kind is stated by the argument that names
+the cohort rather than by a separate flag.* A supplied cohort is no longer a `<split>_samples.json`
+in the workspace: it is a registered cohort version, imported by `scripts/import_cohort.py`,
+bound to one graph's digests and its dataset record, and measured or audited with `--cohort LABEL
+--registry DIR`. `--split` names the generator's `train` or `val` only, and `--cohort-kind` and
+`--evaluation-cohort-kind` are gone (`PLAN_TEST_RESULTS.md` §5, as implemented). A role still may
+not be `train` or `val` (the last rule below). The registered overlap audit binds generated
+`train` and never opens `val`, as the scoped verification below requires.
+
 Two rules follow, and both are enforced rather than advised:
 
 - **A generated cohort with no manifest is refused** at training, measurement and
@@ -1002,7 +1021,9 @@ Two rules follow, and both are enforced rather than advised:
   after the parity they served was retired as an acceptance (BACKLOG §3.1.2).
 - **A supplied cohort may not be named `train` or `val`.** Written into `val_samples.json` it
   would inherit the manifest of a cut it was never part of and be recorded as an ordinary
-  validation number — which is §6.7's role hazard, arriving through a filename.
+  validation number — which is §6.7's role hazard, arriving through a filename. *Since M4* a
+  registered version's role is refused when it is `train` or `val` (`validate_role`), and no
+  supplied cohort is a file in the workspace at all.
 
 ### 6.2 Partition before generation
 
@@ -1112,15 +1133,22 @@ these weights*.
 
 #### As built
 
-`src/evaluation/sidecar.py` and `scripts/record_evaluation.py`. A ledger,
-`evaluations.json`, beside the checkpoints; a record per
-(checkpoint digest, cohort role, cohort digest, mode, tie-policy version).
+`src/evaluation/sidecar.py`, `src/evaluation/registration.py` and their two entry points. A
+ledger, `evaluations.json`, beside the checkpoint it describes: under the run layout
+`<workspace>/runs/<arch>/<run>/checkpoints/evaluations.json`, in the directory of the
+checkpoint's resolved path. A record per (checkpoint digest, cohort role, cohort digest,
+measurement semantics digest). Mode and tie-policy version are not key fields of their own: the
+semantics digest hashes both among its score-affecting fields (`PLAN_TEST_RESULTS.md` F4). Since
+the provenance contract's M4 (2026-10-16) the ledger is **schema 3**, and the cohort digest is
+the registered cohort version's manifest digest, which binds the samples, the source, the graph,
+the mapping and the counts.
 
-Three points where the implementation had to decide something this section left open:
+Points where the implementation had to decide something this section left open:
 
-- **`mode` is part of the key.** This section predates the A/B/C/D modes. Mode A and Mode C over
-  one checkpoint and one cohort are different measurements with different candidate universes, and
-  a key without the mode would report them as a contradiction. *Since the Mode A/B retirement's R2
+- **`mode` is part of the key, through the semantics digest** (next point). This section
+  predates the A/B/C/D modes. Mode A and Mode C over one checkpoint and one cohort are different
+  measurements with different candidate universes, and a key without the mode would report them
+  as a contradiction. *Since the Mode A/B retirement's R2
   (2026-10-12) Mode C is the only mode the CLI measures; `mode` stays in the key for Mode D (B-0.5),
   which scores a different candidate universe over the same checkpoint and cohort.*
 - **The key is a semantics digest, not a field list.** An earlier version keyed on
@@ -1139,18 +1167,36 @@ Three points where the implementation had to decide something this section left 
 - **The ledger must be beside the weights it describes.** `record_evaluation` hashes the `.pt`
   files in the target directory and refuses unless one matches the report's checkpoint digest.
   Several files with identical bytes are fine — the digest is the identity, not the name.
+  `measure_scorer.py --record` (since M4) writes beside the checkpoint the measurement itself
+  read moments earlier, and trusts that read instead of hashing the directory again.
 - **Single-writer, and the boundary is stated rather than implied.** Atomic replace closes an
   interrupted write. The digest the reader saw is **best-effort stale-write detection**: it catches
   the ordinary accident — one writer read, another replaced, the first then wrote — and it does
   *not* make concurrent append safe, since two writers whose check-then-replace windows overlap
   both pass and the second replacement still erases the first. Real exclusion is not built. The
   ledger is single-writer by operational rule, and locking earns its place only if the
-  institutional workflow actually appends concurrently.
+  institutional workflow actually appends concurrently. *Since M4* (BACKLOG item 18) that digest
+  is the digest of the ledger bytes the writer parsed, from one read, and the report a record is
+  derived from is likewise parsed and named by its digest from one read; the window before the
+  replacement stays open.
 - **The allocation provenance had to be added upstream first.** A measurement's
   `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
   which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace
   has one, mirroring training's record of its inputs. Without it the ledger would faithfully store two
-  incomparable quantities under one metric name.
+  incomparable quantities under one metric name. *Since M4* this concerns generated splits, which
+  are no longer registered: a registered cohort version's report records no `split_manifest`,
+  because the version is bound to the graph's digests and its dataset record, not to a sampling
+  event.
+- **Only registered cohort versions are recorded** (since M4). A generated split's report is
+  refused ("a generated split's report is not registered"): `val` is the selection split
+  (`PLAN_TEST_RESULTS.md` §4.9, M4 question 6). A report written before M4 lacks the fields a
+  schema 3 record copies and is refused with an instruction to re-measure; a schema 1 or 2
+  ledger is refused, naming the file, and archived by hand, never read or migrated.
+- **The same result again is not a contradiction** (since M4, `PLAN_TEST_RESULTS.md` D5). The
+  same report is a no-op; another report agreeing on every compared field — a re-run, or the
+  checkpoint measured again after a move — adds its digest to the first record's corroborating
+  reports. Fields that legitimately differ between two runs of one measurement (R10's labels, the
+  environment, the report's own digest) are excluded from the comparison, each with its reason.
 
 A contradiction — one key, two metric sets — is refused rather than merged, and no override flag is
 offered: correcting a bad record means editing a readable JSON file, which leaves a diff, rather
@@ -1160,6 +1206,16 @@ Recording is a **separate entry point**, not a step inside `measure_scorer.py`. 
 directory is the institution's and may be read-only to whoever runs a measurement, so writing into
 it is a decision someone makes rather than a side effect of measuring; and the ledger can then be
 built from artifacts that already exist.
+
+*Reconciled with M4 (2026-10-16).* Recording is now **one function**, `register_report`, with
+two ways to reach it: automatically, when the person measuring passes `measure_scorer.py
+--record`, or later with `record_evaluation.py --report` on a report already kept. Without
+`--record` nothing is written beside the checkpoint, so writing there is still a decision rather
+than a side effect. The read-only checkpoint directory is still provided for: every report is kept
+in the registry's report store whether or not it is registered, and a `--record` that cannot
+write the ledger is refused with nothing written there; the report stays, the run exits 3, and the
+message names the `record_evaluation.py` command with which whoever may write the directory
+registers that same report later. The ledger is still built from artifacts that already exist.
 
 ### 6.6 Order, and what is explicitly last
 
@@ -1173,7 +1229,9 @@ built from artifacts that already exist.
 
 **Status:** steps 1–3 and 5 are done, step 4 is half delivered and half deferred (below), and step
 6 is outside this project's scope as BACKLOG 11i stands; BACKLOG item 14 would reopen it for one
-surface.
+surface. *Since M4 (item 14's phase 1, on the branch 2026-10-16, awaiting its GPU acceptance and
+review)* it has, read-only: the Diagnosis tab's model status shows the loaded checkpoint's
+recorded results, and no UI control changes a cohort's role or records a result (§6.7).
 
 **Not built:** `synthetic_test_unseen`, refit siblings, allocation generations for burned synthetic
 cohorts, and any surface that attributes one checkpoint's numbers to another. §5 closed the

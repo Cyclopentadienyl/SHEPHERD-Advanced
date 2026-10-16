@@ -1,7 +1,7 @@
 """
 Mode C — every patient scored against every disease, checked on its own terms.
 ==============================================================================
-`run_mode_c` produces the formal Test's number (`docs/working/PLAN_TEST_RESULTS.md:289`),
+`run_mode_c` produces the formal Test's number (`docs/working/PLAN_TEST_RESULTS.md` D3, "This is Mode C"),
 so what is tested here is what that number is made of, with no other mode to
 compare it against:
 

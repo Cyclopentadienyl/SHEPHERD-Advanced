@@ -5,7 +5,12 @@ test on the homelab at `af49bd3`** (2026-10-07; §8, "What N1 did" and "N1's acc
 homelab"). **N2 has not started and is not implemented by the contract's M3b**, which shipped
 without a manifest change (§8, N2, "Since M3b"); N2 is its own change, not yet scheduled. The
 owner adopted the rule, and the reviewer closed this revision's corrections at `e9708cf`. Facts
-about this repository are cited at `15dfcb5`, before N1; N1's code is at `af49bd3`.
+about this repository are cited at `15dfcb5`, before N1; N1's code is at `af49bd3`. **Since the
+contract's M4 (implemented on the branch 2026-10-16, awaiting its GPU acceptance and review), the
+D6 importer is a second caller of N1's function** (§5, §8): it removes repeats after mapping,
+keeps the source bytes and records the rule's version and counts. That is N1's rule applied at a
+new entry point, not N2: the generator, the shared reader's check and the workspace manifest are
+unchanged, and M4 rebuilt no workspace.
 
 **Revision 2 (2026-10-07)** follows the review of `f7a5c8e`:
 - **the API's own summary moves too** (§4.6, §5, §7). `/diagnose` builds its summary from the
@@ -307,9 +312,9 @@ express today.
 
 | Caller | Role |
 |---|---|
-| D6 importer (`PLAN_TEST_RESULTS.md` D6) | Producer: applies the rule after mapping, writes the normalised mapped version, and records the counts |
+| D6 importer (`PLAN_TEST_RESULTS.md` D6) | Producer: applies the rule after mapping, writes the normalised mapped version, and records the counts. **Since M4:** `map_cases` in `src/evaluation/cohort_registry.py` calls `normalise_phenotypes` with the mapped indices and their source positions, and the version manifest records `mapping.phenotype_normalisation_version` and the counts `repeats_removed` and `cases_with_repeats` |
 | Sample generator | Producer: already in normal form. It applies the same function, so the rule has one definition, and records the version |
-| Shared reader `read_samples` (`file_storage.py:60-101`) | Consumer: **checks** that a stored case is in normal form, and refuses a file that is not, naming the entry point that rebuilds it. It never changes the data. Training and measurement reach it through contract M2.1 |
+| Shared reader `read_samples` (`src/kg/storage/file_storage.py`; since M4 it delegates to `read_samples_file`, the one samples parser) | Consumer: **checks** that a stored case is in normal form, and refuses a file that is not, naming the entry point that rebuilds it. It never changes the data. Training and measurement reach it through contract M2.1 |
 | A reader that does not use it | **A named exception, and it does not check.** `scripts/measure_served_pipeline.py:487` reads `val_samples.json` with `json.loads` and does not check the file; that its producer writes no repeats is not a check. Its requests go through the API, so N1 applies to them. When it is next touched it moves onto the shared reader and its one check |
 | `DiagnosisPipeline.run` | Checks the per-position contract (§4.5), then applies the rule to a request after mapping (`pipeline.py:1195-1202`), with the request positions mapping kept, before the model's count check. Everything after it — scoring, explanations, the summary — reads the normalised list, and the result carries that list and its counts (§4.6). The result's warnings state how many repeats were removed. The API and the UI reach it through here |
 | API `/diagnose` | Enforces the list-length limit and, in its request model, the per-position contract. Builds its response from the result: the used count, and the received count only where labelled so (§4.6) |
@@ -393,7 +398,9 @@ string-level semantics with it.
 - **The records say what was done.**
   - D6's mapped-version manifest and the split manifest carry `phenotype_normalisation`: the
     rule version, the number of cases affected and the number of repeats removed. The
-    generator's are zero by construction.
+    generator's are zero by construction. *As implemented in M4,* the version manifest carries
+    them as `mapping.phenotype_normalisation_version` and the counts `cases_with_repeats` and
+    `repeats_removed`; the split manifest's field is N2's and not delivered.
   - The split manifest field was to land with the contract's M3b, on the premise that its
     manifest change would rebuild workspaces anyway. **That premise no longer holds** (§8, N2,
     "Since M3b"): M3b kept split-manifest schema 3, and existing fully bound workspaces stay
@@ -415,8 +422,11 @@ string-level semantics with it.
     keyed on that digest then describes the same scored input, which is correct for its scores.
   - **The mapped version.** Its identity is the rule version and the manifest, which can differ
     while the sample bytes do not. Whether the ledger's cohort key carries that identity is
-    settled with ledger v2 (`PLAN_TEST_RESULTS.md` §5). This plan does not assume that
-    re-running normalisation always changes a digest.
+    settled with the ledger's next format (`PLAN_TEST_RESULTS.md` §5). This plan does not assume
+    that re-running normalisation always changes a digest. *Settled in M4's ledger schema 3:* a
+    record's `cohort_digest` is the version manifest's SHA-256, which binds the samples digest,
+    the source digest, the graph and the mapping with its rule version, so two versions whose
+    samples are identical but whose rule version or source differ are two cohorts.
 - **R10 computes set relations only**, and never edits a scoring input (contract §5.4).
 
 ## 7. Acceptance
@@ -528,7 +538,7 @@ compares the two.
 | WebUI, parsing | Removes repeated strings | Keeps order and repeats (decision W) | A pasted list of more than 100 entries that fits only after removing repeats is refused (422) |
 | WebUI, an API error | Shows the status and the raw response body | A list over the limit gets the message of §5, with both numbers from the server; any other 422 is one readable line per entry; other failures keep their messages | The echoed input no longer appears |
 | Training and measurement readers | Accept repeats | Refuse a file not in normal form; the named exception (§5) does not check | Only files with repeats; generated files have none |
-| Importer | Does not exist | Normalises after mapping and records the counts | New |
+| Importer | Does not exist | Normalises after mapping and records the counts | New (built in M4) |
 | `InputValidator` | Unused | Removed (decided) | None at run time |
 
 **Where it lands, once the implementation scope is settled:**
@@ -561,7 +571,16 @@ compares the two.
       change and so a rebuild. Under the contract's decision 2 that would be a refusal of older
       workspaces, not a migration or a compatibility path. Nothing is rebuilt, upgraded or
       admitted in anticipation of it.
-- **The importer** would apply it from its first version (item 14 phase 1, step 1).
+    - **For N2's design, from M4:** R10 reads a checkpoint's recorded training and validation
+      files as evidence through the shared reader. Once the reader's check lands, an evidence
+      file with repeats would fail to parse, and R10 would report that scope *unverifiable*
+      rather than count it (contract §5.4).
+- **The importer** applies it from its first version (item 14 phase 1, step 1). **Since the
+  contract's M4** (implemented on the branch 2026-10-16, awaiting its GPU acceptance and review):
+  `map_cases` (`src/evaluation/cohort_registry.py`) maps HPO terms to phenotype nodes, then calls
+  `normalise_phenotypes` with the source positions kept; the source file is kept verbatim under
+  its digest, and the version manifest records the rule version and its counts. M4 has no N2
+  dependency: Mode C reads the mapped samples, and R10 compares sets.
 
 **Not a remedy anywhere here:** a compatibility mode for files with repeats, or a CPU fallback.
 A file that fails the check is rebuilt by its producer.

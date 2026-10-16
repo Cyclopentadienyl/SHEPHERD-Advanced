@@ -69,8 +69,10 @@ one P3 is fixed after it, and **its GB10 functional acceptance, within the scope
 (2026-10-16)**: one run at `52152e4`, the demo and the real workspace, 75 of 75 probes, with a
 WebUI smoke and its exports, reviewed by the reviewer (§4, "M3c's acceptance on the GB10"). It is a
 functional acceptance, not a capacity, AMP, model-quality or clinical reading. The owner merged M3c
-into `main` afterwards (#124, `ed8f51d`, 2026-10-16). M4 and M5 are not
-implemented. Facts about the code are cited at `627ed08`, before M1;
+into `main` afterwards (#124, `ed8f51d`, 2026-10-16). **M4 is implemented on the branch
+(2026-10-16) over `59f519d`, awaiting its bounded GB10 functional acceptance through the
+deployment probe and then external review** (§4, "M4 as implemented"); it is not accepted and not
+merged. M5 is not implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -106,6 +108,12 @@ the code was unchanged at `463a0df`. §1 records decisions already made; §4 is 
     It is decision 7 in §1, and M2.3 and §5.4 state it as decided;
   - whether a case may list a phenotype twice is taken up by its own plan,
     `PLAN_PHENOTYPE_NORMALISATION.md` (§5.4).
+- **Amended 2026-10-16, with M4:**
+  - §5.4 no longer calls the repeat rule undecided: the owner adopted its principle on
+    2026-10-07; N1 is delivered (serving, and since M4 the importer); N2 is not;
+  - the ledger format M4 introduces is **ledger schema 3**, not "v2": the file's
+    `schema_version` was already 2 (§5.1);
+  - §4, "M4 as implemented", records what was built.
 
 **What this is.** The project's goal for this stage, in the owner's words: the model must always
 match the exact setup that trained it, dataset version and every other stage's settings included,
@@ -184,9 +192,9 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R6 | Model ↔ the training settings, code and environment in effect | `config` = `TrainerConfig` plus `model_config` (`src/training/trainer.py:937-981`). Not recorded: the loader and sampling settings (`DataLoaderConfig`, `train_model.py:585-592`), compile (`train_model.py:760-777`), the code revision, the environment | — | **M3a** |
 | R7 | Model ↔ its resume parent | The parent's digest (`train_model.py:558-559`), hashed by path after the parent was loaded (`:835`, `:854-860`) | **Nothing compared**: `load_checkpoint` restores state without looking at the parent's inputs or config (`trainer.py:1009-1044`). A missing parent only warns, and the run trains from scratch (`train_model.py:505-507`). The WebUI's default resume target is `last.pt` (`src/webui/components/training_console.py:398-404`), which `ModelCheckpoint` overwrites (`callbacks.py:271-274`) | **M2** (the parent's records, graph and data); M3a (overwrite guard) |
 | R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** (implemented 2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`, its GB10 functional acceptance passed at `52152e4`; §4, "M3c as implemented") |
-| R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** |
-| R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 |
-| R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement) |
+| R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** (implemented on the branch 2026-10-16, awaiting its GB10 acceptance and review; §4, "M4 as implemented") |
+| R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 (implemented on the branch 2026-10-16, awaiting its GB10 acceptance and review; §4, "M4 as implemented") |
+| R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement; implemented on the branch 2026-10-16, §4, "M4 as implemented") |
 
 **What the table shows.** The links inside a workspace refuse today (R1, R2), and so does a
 broken SP pair. Every link with the model on one side is checked by structure only, or recorded
@@ -2744,9 +2752,10 @@ differs from the text above, or was decided while building, is stated here.
   the binding and origin, with "SYNTHETIC WORKSPACE" for a synthetic one. The checkpoint's record is
   unchanged (§5.1): the manifest it records binds the record's digest.
   - **Stated exception: the evaluation ledger.** `record_evaluation.py`'s ledger record and
-    `--show` do not carry the origin; the ledger is item 14's ledger v2 (§5.1, M4), and the
-    measurement report it is filed from carries `dataset_record`. Until then a ledger row does not
-    say whether its workspace was synthetic.
+    `--show` do not carry the origin; the ledger is item 14's next ledger format, ledger schema
+    3 (§5.1, M4), and the measurement report it is filed from carries `dataset_record`. Until then
+    a ledger row does not say whether its workspace was synthetic. *Since M4 a schema 3 record
+    carries `dataset_record` (origin and digest), and the model status shows the origin.*
 - **The manifest binding is required at write.** `generate_training_samples` refuses a persisting
   call whose `graph_digests` lack `provenance` (or carry a malformed one) before anything is
   written, as it refuses an unbound graph role. The schema stays 3: the field was already written
@@ -3228,6 +3237,228 @@ above; product code the reviewed `1246f0c` plus the review's P3 fix.
   phase 2 with its protection.
 - **Acceptance for R10** is §5.4's list.
 
+**M4 as implemented (2026-10-16).** Implemented on the branch over `main` at `59f519d`, in
+`6e37208` (stage 1: the registry and importer, the samples reader's digest check, R10, the report
+manifest's new fields, ledger schema 3, the registration function, the read-only view) and
+`d3d6ce7` (stage 2: the measurement's registered path, the report store, the overlap audit, the
+tests moved off the removed path), followed by the probe's M4 probes and these documents. The full
+suite passed at `d3d6ce7`: 3751 passed, 14 skipped. **Awaiting its acceptance: one bounded GB10
+functional acceptance through the deployment probe, then external review.** It is not accepted
+and not merged. Citations here name functions. `PLAN_TEST_RESULTS.md` holds the plan, its §4.9
+the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
+
+- **One flow, from the CLI on the machine.** `scripts/import_cohort.py` previews, then commits, a
+  cohort version bound to the graph → `scripts/measure_scorer.py --cohort LABEL --registry DIR`
+  measures Mode C with every relation checked on the bytes it read, and records R10 and the
+  environment → the full report is kept in the report store → `--record`, or later
+  `scripts/record_evaluation.py --report`, registers it through one function → the Diagnosis
+  tab's model status shows the loaded checkpoint's records through
+  `GET /api/v1/evaluations/loaded-model`. No second evaluator, reader, scorer, ledger or
+  compatibility path was added. The pieces shared: `read_once`; the workspace readers and checks
+  (`read_split_manifest`, `KnowledgeGraph.read_json`, `read_graph_artifacts`,
+  `verify_graph_source_read`, `check_unparsed_kg_json`, `verify_dataset_record`);
+  `read_checkpoint` and `verify_training_record`; `run_mode_c`; `normalise_phenotypes`;
+  `collect_environment` and `code_revision`; `create_staging_file`; the ledger module.
+- **The registry and its versions** (`src/evaluation/cohort_registry.py`; `PLAN_TEST_RESULTS.md`
+  D6, D7).
+  - **Where:** `--registry DIR`, given by the operator on the command line: absolute, existing,
+    and refused when it resolves inside the repository (a symlink into it included). Nothing
+    creates a registry root, and no request, environment variable or configuration key names one;
+    the API needs none, since it reads the ledger beside the checkpoint.
+  - **Layout:** `sources/<sha256>.json`, the source bytes verbatim, written no-clobber (a file
+    already there must hash to its name); `versions/<label>/samples.json`, the mapped samples in
+    the format `read_samples_file` parses; `versions/<label>/cohort.json`, the version manifest
+    (schema 1), written last and binding the samples by digest, so its presence is what makes a
+    version exist; `versions/<label>/reports/<run id>/`. Every registry file is published
+    through `publish_bytes` (`src/utils/file_modes.py`: staged, flushed, synced, renamed, and the
+    digest of the bytes written returned), encoded with sorted keys, ASCII and no NaN.
+  - **Immutable.** A label is claimed by `mkdir(exist_ok=False)`. A directory without
+    `cohort.json` is an interrupted import: every reader refuses it, and the importer names it
+    for the operator to remove. Nothing is deleted by code.
+  - **The source format, `shepherd-cases/1`**, synthetic and owned by this project:
+    `{"format": "shepherd-cases/1", "cases": [{"case_id", "phenotypes": ["HP:nnnnnnn", …],
+    "disease": "MONDO:nnnnnnn"}, …]}`, strict at both levels; another key, a key stated twice, an
+    empty case list or a repeated case id is malformed. A malformed source is refused as a whole,
+    listing every problem by case index and case id. A disease named in `OMIM:`, `ORPHA:` or
+    `Orphanet:` refuses the import as a whole, naming the namespace and the count.
+  - **Mapping**, against the graph the workspace manifest binds, read through the existing chain
+    once each (the tensors too, since `verify_graph_reads` requires every bound role to have been
+    read): a phenotype maps when `hpo:<term>` is a phenotype node and a disease when
+    `mondo:<term>` is a disease node, serving's lookup; then `normalise_phenotypes` (N1, rule
+    version 1) removes repeats by node, first occurrence kept (`map_cases`). An excluded case has
+    one primary category, `ground_truth_absent` before `phenotype_unmappable`, and lists every
+    reason that applied. `--partial-phenotypes keep|exclude` (default `keep`) decides a case that
+    lost some terms; a case with no mappable term is always excluded. The manifest records the
+    source digest, the four graph digests, the dataset record's digest and origin with its HPO
+    and MONDO entries, the mapping (rule version, namespaces, policy), every count with its
+    denominator (`source_cases = ranked_eligible + n_excluded`), the unmappable terms with the
+    number of cases listing each, the exclusions by case id, and when and at which code revision
+    it was imported.
+  - **Preview, then commit.** The preview writes nothing and prints a preview id: the first 16
+    hex of SHA-256 over the would-be manifest without its `imported` block. `--commit ID` with
+    the same arguments reads every input again and publishes only if the id is unchanged. A
+    version with no rankable case is refused at commit, since Mode C would measure nobody.
+  - **The binding** (`verify_cohort_binding`) is R3's comparison: the version's four graph
+    digests must equal those the run bound, and its dataset record digest the run's verified
+    record's; any difference refuses, naming the roles. `split_manifest` is not bound: it records
+    a sampling event, and two workspaces can share every graph digest.
+- **Measurement** (`scripts/measure_scorer.py`): exactly one of `--split train|val` (a generated
+  split; `--output` required) and `--cohort LABEL --registry DIR` (a registered version;
+  `--training-evidence DIR` repeatable, `--record` optional, `--output` refused). The registered
+  order (`read_measurement_inputs`): the evidence directories listed (nothing read);
+  `resolve_version`, one read of `cohort.json`; the workspace manifest and graph reads; the
+  version's `samples.json` through `read_samples_file`, refused before it is decoded unless its
+  digest is the one `cohort.json` binds (`SamplesDigestMismatch`); R1; `kg.json`; R5; the
+  cohort↔graph binding; the checkpoint read (`weights_only=True`) and R3; then R10. Nothing is
+  written before every check passes.
+  - **The report's new fields** (`MeasurementManifest`, all four non-semantic, each with its
+    reason): `cohort_version` (aggregates only: label, role, the manifest, source and samples
+    digests, the source format, the graph digests, the dataset record's digest, the mapping and
+    the counts; `None` for a generated split); `relations` (R1, R2, R3, R5 and `cohort_graph`,
+    each `verified` or `not_applicable`, fixed by the kind of cohort, `expected_relations`, so no
+    other state can be written: R2 is a generated split's relation, `cohort_graph` a registered
+    version's); `r10`; and `environment` (`collect_environment` for the device in effect, with
+    `code_revision`). `software_revision` now comes from `code_revision`, the same value as
+    before, so no key moved; the semantics digest's field list is unchanged (19 fields).
+  - **The report store:** `<registry>/versions/<label>/reports/<UTC time>-<checkpoint digest, 12
+    hex>-<8 random hex>/`, a new directory per run: `ranks.json`, then `report.json`, which names
+    the ranks by the digest written and is the run's commit point. Every report is kept,
+    registered or not. A generated split's report still goes to `--output`, with its ranks
+    beside it, both now staged and renamed into place.
+- **R10** (`src/evaluation/r10.py`; §5.4), for registered cohort versions only. The candidates:
+  the measurement workspace's `train_samples.json` and `val_samples.json`, then every
+  `*_samples.json` directly inside each `--training-evidence` directory, sorted and
+  de-duplicated by resolved path (`evidence_candidates`). Each is read once, through
+  `read_samples_file` with the digests still wanted, and counts only if its digest is one the
+  checkpoint records, compared before parsing; reading stops when every recorded digest has been
+  found. A matching file that does not parse makes that scope *unverifiable* (`UnparseableFile`,
+  a `ValueError` carrying the read's identity, so the recorded problem names no row). No
+  `val_samples` recorded: *no validation inputs recorded*; no `train_samples` either: both
+  scopes *unverifiable*, since the record is not one the pipeline wrote. `k` and `cases` are null
+  whenever a label is neither *overlap* nor *none*: never zero. Phenotype-set overlap compares
+  `(disease, set of phenotype ids)`; patient ids are ignored and nothing is normalised.
+- **Ledger schema 3** (`src/evaluation/sidecar.py`). The key: `checkpoint_digest`, `cohort_role`,
+  `cohort_digest`, now the version manifest's SHA-256 (it binds the samples, the source, the
+  graph, the mapping policy and the counts, so two versions with identical samples are two
+  cohorts), and `measurement_semantics_digest`. Compared (`RECORD_COMPARED_FIELDS`): the
+  scoring-semantics digest, the seven scoring fields, the twelve regime fields, the cohort block,
+  the metrics, `n_ranked`, the relations and the dataset record (origin and digest). Excluded,
+  each with its reason (`RECORD_EXCLUDED_FIELDS`): R10 and the environment, each true of its own
+  report (R11 never refuses); the source report's digest; the corroborating reports; the
+  registration (sequence and time). D5's duplicate rule: the same report again is a no-op;
+  another report agreeing on every compared field is appended to the first record's
+  corroborating reports; anything else is refused, naming the fields that differ. Only a
+  registered cohort version's report is recorded, and only one carrying every current manifest
+  field. A schema 1 or 2 file is refused, naming it and an archive name such as
+  `evaluations.v2.json`; nothing reads or migrates it. No prose is stored in a record; the
+  surfaces render the constants of `src/evaluation/caveats.py`.
+- **Registration** (`register_report`, `src/evaluation/registration.py`), the one function behind
+  `measure_scorer.py --record` and `record_evaluation.py --report`. **BACKLOG item 18's minimal
+  fix:** the report and the ledger are each parsed and identified from one `read_once`, so a
+  report replaced while it is registered cannot pair one file's numbers with the other's digest,
+  and another writer's append between the ledger's read and the write is refused as stale rather
+  than erased. The write keeps its path-hash stale-write guard and that guard's window to the
+  rename: single-writer, not compare-and-swap, no claim for concurrent writers. The ledger is
+  `evaluations.json` beside the checkpoint's resolved path on both the write and the read side.
+  `--record` trusts the measurement's own checkpoint read; `record_evaluation` requires a file
+  with the report's checkpoint digest in `--checkpoint-dir` (`find_checkpoint`). Every expected
+  failure is one `RegistrationRefused` saying nothing was written. A refused `--record` keeps
+  the report, prints the `record_evaluation` command that registers it later, and exits 3.
+- **The read-only view.** `GET /api/v1/evaluations/loaded-model` (`src/api/routes/evaluations.py`),
+  on its own router outside `pipeline.router`, so a deployment that unmounts or protects the C3
+  router keeps it (SPEC_4 B2). It takes no parameter. It reads `app_state.pipeline` once, takes
+  that pipeline's checkpoint read (`DiagnosisPipeline.served_checkpoint_read`: the read exactly
+  when the served identity's checkpoint is verified, M3c), and reads the ledger beside it on every
+  request through `read_ledger`, keeping the records for that digest. Its states: `no_model`,
+  `not_identified`, `no_ledger`, `ledger_not_read` (with the problem, naming the file and never
+  its directory), `no_records`, `records`. A record without the shape registration writes is
+  counted in `records_not_shown`, never a 500. No path, case id or rank; no write, no
+  `find_checkpoint`, no `torch.load`.
+- **The model status** (`src/webui/components/diagnosis_panel.py`) appends "Recorded test results
+  (Mode C)" to the existing status Markdown, from one GET, and only when the digest the view
+  echoes equals the status's served checkpoint digest (otherwise: "The loaded model changed while
+  its recorded results were read; refresh the page."). Per record: role and label, Mode C's
+  metrics over `n_ranked`, coverage with every exclusion count, the relation states, R10's four
+  labels (*unverifiable* and *no validation inputs recorded* as words, never a number), the
+  environment class and GPU, the dataset origin (synthetic called out), the registration and the
+  corroborating count. D3's label, the note that until B-1 the tab ranks by the legacy mixture,
+  the R10 definitions and §6's line appear once per block. Mode C's MRR is labelled apart from
+  the trainer's Val MRR.
+- **The overlap audit** (`scripts/audit_split_overlap.py`, report schema 6): `--registry DIR
+  --cohort LABEL` replaces `--evaluation-cohort-kind supplied`. The version's graph and dataset
+  record digests are compared with those the workspace manifest records, without loading
+  tensors, before the training split or the version's samples are opened; it reads `train`
+  only.
+- **Decisions taken while building** (the author's; the owner's questions are
+  `PLAN_TEST_RESULTS.md` §4.9, "Asked once with M4"):
+  - the registry is a CLI argument, not server configuration (D7, as implemented: phase 1 is CLI
+    only, and no request can name it);
+  - labels and roles follow the one identifier rule (`validate_split_name`); a role may not be
+    `train` or `val`;
+  - environment facts are recorded, not keyed (§5.2, R11);
+  - R10 is computed for registered cohort versions only, and a record naming no `train_samples`
+    gives *unverifiable* in both scopes;
+  - refusals beyond the design, each before any write: an empty case list, a key stated twice, a
+    version with nothing to rank, a plan whose bytes are not the ones its manifest binds, a
+    version manifest without its source format, an empty test cohort in R10;
+  - **N2: no dependency.** The importer normalises through N1's function, Mode C reads the mapped
+    samples, and R10 compares sets. No workspace was rebuilt; the generator, the reader and the
+    workspace manifest are untouched.
+- **Behaviour changes** (said for operators in the deployment guides' §4.9):
+  - `--cohort-kind` and the loose `<split>_samples.json` supplied path are removed. `--split`
+    takes the generator's `train` or `val` and needs `--output`; `--registry`,
+    `--training-evidence` and `--record` are refused with it, and `--output` with `--cohort`
+    (argument refusals exit 2);
+  - a generated split's report is refused by registration (owner question 6), and a report
+    written before M4, lacking the new manifest fields, is refused with "re-measure";
+  - a schema 1 or 2 `evaluations.json` is refused by registration, by `--show` and by the view
+    (`ledger_not_read`), and is archived by hand;
+  - `measure_scorer.py` exits 3 when it measured and kept a report whose `--record` was refused.
+    A check refusal still raises a `ValueError` (a traceback ending in one message, exit 1), as
+    before M4;
+  - `audit_split_overlap.py`: `--evaluation-cohort-kind` is removed, `--splits` beside
+    `--cohort` is refused, and its report schema is 6;
+  - the generated report and its ranks are staged and renamed into place, ranks first; an
+    existing `--output` is still replaced.
+- **Not claimed, and not done.**
+  - No GB10 acceptance yet. The tests run on the CPU over synthetic fixtures
+    (`tests/fixtures/registered_cohort.py`; the end-to-end acceptance in
+    `tests/integration/test_m4_flow.py`); no real patient data entered the repository.
+  - Nothing of phase 2: no Test tab, job runner, version listing or usage history, network write
+    operation, account or permission, D4 ordering, D5 disagreement block, contested state,
+    investigation note or deterministic switch.
+  - No multi-writer safety and no compare-and-swap; a digest is not a signature, and a record
+    says what its report says, not that the report is truthful (§6).
+  - R10's *none* is not proof of no leakage: it says nothing about data outside the inputs the
+    checkpoint records (§6).
+  - Not N2; no MyGene2 loader, real-format adapter or OMIM/ORPHA translation; not the
+    institutional acceptance, which waits for data, terms and a declared protocol, and which a
+    functional acceptance does not replace.
+  - Until B-1 a recorded Mode C number does not describe the Diagnosis tab's ranking, and the
+    display says so.
+- **Owner questions open, each with the default M4 runs on** (`PLAN_TEST_RESULTS.md` §4.9): a
+  case that loses some terms is kept (1); the all-source figure is not displayed, and stays
+  derivable from the recorded counts (2); OMIM or ORPHA ground truth is refused (3); obsolete and
+  alternative HPO ids count as unmappable (4); only `shepherd-cases/1` is read, and a real format
+  gets an adapter (5); a generated split's report is not registrable (6). Not asked again: the
+  repeat rule, no legacy compatibility path, no silent CPU fallback. Still open and not
+  engineering: the institution's declared metrics and acceptance rule, and MyGene2's terms of use.
+- **Acceptance pending.** One bounded GB10 functional acceptance through the deployment probe's
+  formal run (`scripts/probe_deployment.py --m2-acceptance --device cuda`, as M3c's, with a
+  `--work-dir` outside the repository, where the probe's registry lives). Its M4 probes, added in
+  this stage (T1–T6 in the demo part, RT1–RT3 in the real-data part, each required), are to show
+  on the demo: an import previewed and committed into a
+  temporary registry outside the repository; a measurement with `--record` and R10; a second
+  registration of the same report as a no-op, and a damaged report refused; a version mapped
+  against another graph refused; the overlap audit on the registered version; and the view
+  showing the record for the served checkpoint and none for another. On the real workspace: a
+  synthetic supplied cohort built from its validation cases (expected: training disease overlap
+  *none* by construction, validation phenotype-set overlap with `k` = `n`), measured with
+  `--record` on a checkpoint in the probe's own work directory, so that no real run directory is
+  written, and read back through the view. The probe's report and its review are the record of
+  what ran; then external review. It is a functional acceptance, not a capacity, AMP,
+  model-quality or clinical reading.
+
 ### M5 — item 14, phase 2
 
 All of it is in `PLAN_TEST_RESULTS.md`:
@@ -3271,8 +3502,8 @@ own.
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
-| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4) | M2, M3b, M4 |
-| Ledger | item 14's ledger v2 (`PLAN_TEST_RESULTS.md` §5), which takes the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`) | M4 |
+| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4). M4's part is implemented on the branch (2026-10-16): `cohort_version`, `relations`, `r10` and `environment`, all outside the semantics digest, and for a registered version a report kept in the report store with its ranks named by digest (§4, "M4 as implemented") | M2, M3b, M4 |
+| Ledger | item 14's **ledger schema 3** (`PLAN_TEST_RESULTS.md` §5), the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`). Implemented in M4 on the branch (2026-10-16): a schema 1 or 2 file is refused and archived by hand, never read or migrated (§4, "M4 as implemented") | M4 |
 | `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect. M3c's part is implemented (2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`): every result and the diagnose response carry the served identity, with the settings in effect, and `get_pipeline_config()` and the pipeline status report it for the loaded pipeline (§4, "M3c as implemented") | M3b, M3c |
 
 ### 5.2 Required versus displayed
@@ -3339,8 +3570,8 @@ evidence.
   - *Recorded training inputs*: the `train_samples` the checkpoint's `training_input_digests`
     names.
   - *Recorded validation inputs*: its `val_samples`. Early stopping and checkpoint ranking read
-    these (`trainer.py:124, 400, 412`), and so does auto-selection, through `RANKING_SCORE_KEYS`
-    (`src/utils/checkpoint_paths.py:45`).
+    these (`Trainer._validate` with `early_stopping_monitor`, `src/training/trainer.py`), and so
+    does auto-selection, through `RANKING_SCORE_KEYS` (`src/utils/checkpoint_paths.py`).
 - **The second scope is not called "selection data".** A person choosing among checkpoints by
   other means is not recorded, and the label does not claim to know it.
 - **The scopes cover the whole resume history.** M2.3 refuses a resume over other sample files,
@@ -3359,10 +3590,11 @@ evidence.
   clinical presentation of the same disease. A cohort can be disjoint by phenotype set and
   overlapping by disease, and both labels are shown.
 - **Phenotype-set overlap does not say the model saw the same scoring input.**
-  - Repetition is not neutral. Mode C averages over every listed position
-    (`src/evaluation/measurement.py:1285-1310`), and nothing removes a repeated id on the way
-    (`src/kg/storage/file_storage.py:94-100`, `src/kg/data_loader.py:646-652`,
-    `measurement.py:1193-1223`).
+  - Repetition is not neutral. Mode C averages over every listed position (`masked_mean_pool`
+    in `run_mode_c`, `src/evaluation/measurement.py`), and nothing on the stored-file path
+    removes a repeated id on the way (`read_samples_file` in `src/kg/storage/file_storage.py`,
+    `DiagnosisDataset` in `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`);
+    that check is N2's, not delivered (below).
   - So two cases with the same set can be scored differently. A training case `[0, 1]` and a
     test case `[0, 0, 1]` average to different patient vectors, and can rank the true disease
     differently.
@@ -3372,8 +3604,20 @@ evidence.
 - **Whether a case may list a term twice is a question about the data, not about this label.**
   Mapping can produce one, when two source terms map to the same node. A rule would have to
   apply alike at import, in training, in measurement and at serving.
-  `PLAN_PHENOTYPE_NORMALISATION.md` proposes one, for the owner to decide. R10 removes nothing
-  either way.
+  `PLAN_PHENOTYPE_NORMALISATION.md` sets one out, and **its principle was decided by the owner on
+  2026-10-07** (§8 there): map, then remove repeats by graph node, keeping the first occurrence.
+  Three states are kept apart:
+  - **the principle is decided;**
+  - **N1 is delivered**: serving applies it (`af49bd3`), and since M4 so does the importer
+    (`map_cases` calls `normalise_phenotypes`, `src/kg/phenotype_normalisation.py`), which keeps
+    the source bytes verbatim and records the rule's version and its counts in the version
+    manifest;
+  - **N2 is not delivered**: the generator's normalisation, the reader's check and the
+    workspace manifest's field are its own change, not yet scheduled. M4 has no N2 dependency
+    and rebuilt no workspace.
+
+  A test cohort imported since M4 therefore holds no repeat; a stored training file is checked
+  for none until N2, though the current generator writes none. R10 removes nothing either way.
 - **The patient id is not part of a case.** Generated patient ids are labels, not identities.
 - **Near-duplicates are not counted** — subsets, supersets, a term or two apart — and the
   label's name states the rule.
@@ -3390,7 +3634,8 @@ evidence.
   - every `*_samples.json` in directories the operator names (`--training-evidence DIR`).
 
   Each candidate is read once (M2.1) and counts only if its digest matches. This is
-  `find_checkpoint`'s rule applied to samples (`sidecar.py:366-383`).
+  `find_checkpoint`'s rule applied to samples (`src/evaluation/sidecar.py`); as implemented in
+  M4, the digest is compared before the bytes are parsed (`read_samples_file`, `compute_r10`).
 - **The current workspace is a candidate like any other, never a default.** A file with another
   digest — a rebuilt workspace, another seed, another split — says nothing about what the model
   saw, in either direction.
@@ -3409,8 +3654,9 @@ evidence.
 
   Shown as *unverifiable*, never as zero and never as *none*.
 - ***no validation inputs recorded*** — validation scope only. The checkpoint records no
-  `val_samples`, because training ran no validation pass (`train_model.py:525-529`). Shown as
-  such, not as *none*.
+  `val_samples`, because training ran no validation pass (`training_input_digests` in
+  `scripts/train_model.py` records it only when the run validates). Shown as such, not as
+  *none*.
 
 **Acceptance (M4):**
 - **The current split is disjoint from the test cohort, but the model was trained on another
@@ -3426,6 +3672,11 @@ evidence.
 - **A training case `[0, 1]` and a test case `[0, 0, 1]` of the same disease** count as
   phenotype-set *overlap*. The report's definition of the label says the scoring inputs may
   differ.
+
+*As implemented in M4:* each row but the resume row is a test (`tests/unit/test_r10.py`, and end
+to end over a registered cohort in `tests/integration/test_m4_flow.py`); since the importer
+removes repeats, the `[0, 0, 1]` case is tested on `compute_r10` directly. The resume row is
+M2.3's check at training, which has no R10 function to test.
 
 ## 6. The claim boundary
 
@@ -3460,7 +3711,8 @@ evidence.
 - File locks or a locking service. M2.1 reads each input once and compares it with one manifest
   reading, so a mixed read is refused rather than locked out. This is not a snapshot (§4, M2.1,
   "Boundaries"). The evaluation ledger's check-then-replace window stays open, and the ledger
-  stays single-writer by operational rule (BACKLOG item 18; M2.1 decision 5).
+  stays single-writer by operational rule (M2.1 decision 5; BACKLOG item 18, whose one-read fix
+  M4 made without closing that window).
 - A general verification framework. Each check lives at its consumer's entry point.
 - Conformance claims to SLSA, in-toto or PROV.
 - Reading or migrating old-pipeline artifacts (decision 2).

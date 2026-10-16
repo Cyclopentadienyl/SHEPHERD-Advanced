@@ -49,9 +49,13 @@ Usage:
 
     # contract M2's acceptance: the demo part (phase M) and the real-data part
     # (phase R), on CUDA, the work directory kept as evidence. The real
-    # workspace and the reference checkpoint are read, never written.
+    # workspace and the reference checkpoint are read, never written. The run
+    # also carries contract M4's flow (T1-T6, RT1-RT3), whose cohort registry
+    # is made under the work directory, so the work directory must be outside
+    # the repository.
     python scripts/probe_deployment.py --m2-acceptance --device cuda \
-        --work-dir <empty directory> --report <empty directory>/m2_report.json \
+        --work-dir <empty directory outside the repository> \
+        --report <that directory>/m2_report.json \
         --real-workspace data/workspaces/<workspace> \
         --real-config <config.yaml with the established training settings> \
         --real-reference-checkpoint <path to the reference model's .pt file>
@@ -75,8 +79,9 @@ M3a's checks:
     epoch resumed (R4); measurement (R5) and serving with the table verified,
     and a diagnosis (R6); the inventory refuses the reference and passes the
     new model (R7); the workspace and the reference are unchanged by listing,
-    size and modification time, not by content digest (R8). Every run writes
-    into its own run directory under --work-dir.
+    size and modification time, not by content digest (R8), checked after
+    every other probe of the phase, M4's included. Every run writes into its
+    own run directory under --work-dir.
     The report stays inside --work-dir and replaces no existing file.
     Run as a program, the probe applies the project's allocator rule before
     torch is imported, as train_model.py does, and the report records the
@@ -84,6 +89,31 @@ M3a's checks:
     The report's `m2_acceptance` says, per part, whether every required probe
     ran and passed; a missing, skipped or failed one leaves it incomplete, and
     the exit status is non-zero until both parts are complete.
+
+Contract M4's flow, carried by the same acceptance run (functional only: not
+model quality, and not an institutional test, which waits for real data, its
+terms and a pre-declared protocol). Every step goes through its production
+entry point, and the registry, the kept reports and the ledgers are all under
+--work-dir:
+    Phase M, after M11, on the demo workspace and D1's checkpoint: a source
+    the probe builds from the demo graph's own HP and MONDO ids, with terms
+    that do not map and a disease that is not a node, previewed (nothing
+    written) and committed by the printed preview id, its graph the
+    workspace's and its counts as built (T1); a copy of the checkpoint
+    measured on that version with --record: the report kept with its ranks
+    digest, R10 recorded with both scopes' evidence found in the workspace, one
+    record built from the report's bytes (T2); the same report registered again
+    is already registered and a damaged copy is refused, the ledger unchanged
+    (T3); the version imported against M1's same-shaped workspace is refused by
+    the measurement before the checkpoint is read (T4); served through the
+    reload route, the measured checkpoint's record shown by the read-only view
+    for the digest the status reports, and none for M2's checkpoint served
+    beside the same ledger (T5); the overlap audit in registered mode (T6).
+    Phase R, after R7: N of the real workspace's val cases written back as a
+    source through the real graph's ids, imported with no exclusions (RT1);
+    the checkpoint R4 trained measured on it with --record, training disease
+    overlap none and validation phenotype-set overlap N of N, both as
+    constructed (RT2); that record shown for that checkpoint served (RT3).
 
 Contract M3c (what is served is identified) adds checks, not probes:
     E1 requires the served identity to name the checkpoint D1 trained, the
@@ -296,9 +326,10 @@ def assert_untouched(
 
 def refuses(
     fn: Callable[[], Any], expected: type, fragment: Union[str, Tuple[str, ...]]
-) -> None:
+) -> BaseException:
     """Call `fn`, require it to raise `expected` with `fragment` in the message;
-    a tuple of fragments requires every one of them.
+    a tuple of fragments requires every one of them. Returns the refusal, for a
+    caller that records what it carries besides its message.
 
     The fragment is checked here and discarded here. It never reaches the
     report, because refusal messages name the paths they refused.
@@ -311,7 +342,7 @@ def refuses(
         assert not missing, (
             f"refused, but not for the expected reason ({missing[0]!r})"
         )
-        return
+        return exc
     except Exception as exc:  # noqa: BLE001
         raise AssertionError(
             f"raised {type(exc).__name__} rather than {expected.__name__}"
@@ -1555,8 +1586,16 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     "C5.missing", "C5.replaced", "C5.other_graph", "C5.unbound", "C5.unreadable",
     "C5.unidentified", "B22", "B23",
     "M11.training", "M11.serving", "M11.measurement",
+    # Contract M4's flow on the same workspace and D1's checkpoint, functional
+    # only: import preview and commit (T1); measure, keep and record (T2); the
+    # same report again and a damaged copy (T3); a version mapped against M1's
+    # graph (T4); the read-only view for the served checkpoint and another (T5);
+    # the overlap audit on the registered version (T6).
+    "T1", "T2", "T3", "T4", "T5", "T6",
 )
-M2_REAL_REQUIRED: Tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8")
+#: R8, the unchanged-workspace check, runs last, after M4's RT1-RT3.
+M2_REAL_REQUIRED: Tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
+                                     "RT1", "RT2", "RT3")
 
 
 def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
@@ -1586,7 +1625,13 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "M2's source contract on this machine, through the production entry "
             "points. The real-data model is a short training that shows the "
             "pipeline and its checks work; it is not a model of serving quality, "
-            "which is chosen by the established training and evaluation."
+            "which is chosen by the established training and evaluation. The run "
+            "also carries contract M4's flow (T1-T6, RT1-RT3): a synthetic "
+            "supplied cohort imported, measured, kept, registered and read back "
+            "through the read-only view. That is a functional check of the flow "
+            "and its refusals, not a measure of model quality, and not an "
+            "institutional test, which waits for real data, its terms and a "
+            "pre-declared protocol."
         ),
     }
 
@@ -1988,12 +2033,354 @@ def _same_shaped_kg():
     return kg
 
 
+# =============================================================================
+# Contract M4's flow, carried by the acceptance (T1-T6 in phase M, RT1-RT3 in R)
+# =============================================================================
+#: The role of every cohort version the acceptance imports: what they are, a
+#: synthetic supplied cohort this probe built, in every record and view.
+M4_ROLE = "probe-synthetic"
+#: The labels of those versions: the demo registry holds the first two (the
+#: second mapped against M1's graph), the real-data registry the third.
+M4_DEMO_LABEL = "probe-demo-1"
+M4_OTHER_GRAPH_LABEL = "probe-other-graph-1"
+M4_REAL_LABEL = "probe-real-val-1"
+#: How many of the real workspace's val cases RT1 writes back as a source: the
+#: first this many the source format can name, or all of them when fewer can.
+M4_REAL_CASES = 20
+#: Well-formed ids that are not nodes of the demo graph, so the demo import's
+#: exclusions are exercised: two terms that do not map, a disease that is none.
+_M4_UNKNOWN_HPO = ("HP:9999999", "HP:9999998")
+_M4_UNKNOWN_MONDO = "MONDO:9999998"
+#: What the importer must make of `_m4_demo_cases` under its default policy
+#: (keep): ten ranked of twelve, one excluded per category, one case ranked on
+#: fewer terms than it lists, two distinct terms unmappable, one repeat removed.
+M4_DEMO_COUNTS: Dict[str, Any] = {
+    "source_cases": 12, "ranked_eligible": 10,
+    "excluded": {"ground_truth_absent": 1, "phenotype_unmappable": 1}, "n_excluded": 2,
+    "cases_with_lost_terms": 1, "terms_unmappable": 2,
+    "repeats_removed": 1, "cases_with_repeats": 1,
+}
+
+
+def _node_term(node: str, node_type: str) -> Optional[str]:
+    """The `shepherd-cases/1` term that names graph node `node` (a `phenotype`
+    or a `disease`), or None when that format cannot name it.
+
+    **The importer's own rule, inverted, not a second one.** The importer maps
+    a term to the node `str(NodeID(HPO, term))` or `str(NodeID(MONDO, term))`
+    and accepts only a term its own pattern accepts (`cohort_registry`); a node
+    is named by the term for which both hold.
+    """
+    from src.core.types import DataSource, NodeID
+    from src.evaluation.cohort_registry import _HPO_TERM, _MONDO_TERM
+
+    source, pattern = {"phenotype": (DataSource.HPO, _HPO_TERM),
+                       "disease": (DataSource.MONDO, _MONDO_TERM)}[node_type]
+    local = node.split(":", 1)[-1]
+    return local if pattern.fullmatch(local) and str(NodeID(source, local)) == node else None
+
+
+def _source_case(case_id: str, sample: Any,
+                 reverse: Dict[str, Dict[int, str]]) -> Optional[Dict[str, Any]]:
+    """A workspace sample written back as a `shepherd-cases/1` case through the
+    graph's ids, or None when the format cannot name one of its nodes."""
+    phenotypes = [_node_term(reverse["phenotype"][i], "phenotype") for i in sample.phenotype_ids]
+    disease = _node_term(reverse["disease"][sample.disease_id], "disease")
+    if disease is None or None in phenotypes:
+        return None
+    return {"case_id": case_id, "phenotypes": phenotypes, "disease": disease}
+
+
+def _m4_demo_cases(data_dir: Path) -> List[Dict[str, Any]]:
+    """A source built from the demo graph's own HP and MONDO ids, whose counts
+    are `M4_DEMO_COUNTS`: eight plain cases, then one listing a term twice, one
+    with a term the graph lacks, one whose disease is not a node and one with no
+    term that maps."""
+    from src.kg.graph import KnowledgeGraph
+
+    reverse = KnowledgeGraph.read_json(data_dir / "kg.json").kg.get_reverse_node_mapping()
+    p = [_node_term(reverse["phenotype"][i], "phenotype") for i in sorted(reverse["phenotype"])]
+    d = [_node_term(reverse["disease"][i], "disease") for i in sorted(reverse["disease"])]
+    assert None not in p + d, "a demo graph node is not an HP or MONDO term"
+    assert len(p) >= 5 and len(d) >= 3, (
+        "the demo graph has too few phenotypes or diseases for the probe's cohort source")
+    cases = [{"case_id": f"probe-case-{i + 1:02d}",
+              "phenotypes": [p[i % len(p)], p[(i + 3) % len(p)]], "disease": d[i % len(d)]}
+             for i in range(8)]
+    return cases + [
+        # One repeat removed by the normalisation.
+        {"case_id": "probe-case-09", "phenotypes": [p[0], p[1], p[0]], "disease": d[0]},
+        # Kept under the default policy and ranked on the term that maps.
+        {"case_id": "probe-case-10", "phenotypes": [p[2], _M4_UNKNOWN_HPO[0]], "disease": d[1]},
+        # ground_truth_absent, then phenotype_unmappable.
+        {"case_id": "probe-case-11", "phenotypes": [p[3], p[4]], "disease": _M4_UNKNOWN_MONDO},
+        {"case_id": "probe-case-12", "phenotypes": [_M4_UNKNOWN_HPO[1]], "disease": d[2]},
+    ]
+
+
+def _write_cohort_source(path: Path, cases: List[Dict[str, Any]]) -> Path:
+    from src.evaluation.cohort_registry import SOURCE_FORMAT
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"format": SOURCE_FORMAT, "cases": cases}, indent=2),
+                    encoding="utf-8")
+    return path
+
+
+def _import_cohort(registry: Path, data_dir: Path, source: Path, label: str,
+                   commit: Optional[str] = None) -> Tuple[int, str, str]:
+    """`scripts/import_cohort.py`'s `main`, its exit code and what it printed."""
+    import io
+
+    import scripts.import_cohort as import_cohort
+
+    argv = ["--registry", str(registry), "--data-dir", str(data_dir), "--source", str(source),
+            "--label", label, "--role", M4_ROLE]
+    if commit is not None:
+        argv += ["--commit", commit]
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = import_cohort.main(argv)
+    return code, out.getvalue(), err.getvalue()
+
+
+def _import_version(registry: Path, data_dir: Path, source: Path, label: str) -> Tuple[Any, str]:
+    """The importer's two steps through its CLI: the preview, which must leave
+    the registry as it was, then the commit by the preview id it printed.
+    Returns the version as `resolve_version` reads it, and the preview id.
+
+    A refusal's message names paths, so it goes to the console and the report
+    says what happened in this file's words. A registry inside the repository
+    -- a --work-dir inside it -- is said as such.
+    """
+    from src.evaluation.cohort_registry import resolve_version
+
+    before = snapshot(registry, include_dirs=True)
+    code, out, err = _import_cohort(registry, data_dir, source, label)
+    if code != 0:
+        print(err, end="", file=sys.stderr)
+        if "inside the repository" in err:
+            raise AssertionError(
+                "the importer refused the registry under --work-dir: it is inside the "
+                "repository, and a cohort registry holds patient-level data, so it must "
+                "be outside it. Run the acceptance with a --work-dir outside the repository")
+        raise AssertionError(f"the import preview was refused (exit {code}); its message "
+                             "is on the console")
+    assert_untouched(before, registry, "the import preview", include_dirs=True)
+    found = re.search(r"Preview id: ([0-9a-f]{16})", out)
+    assert found, "the import preview printed no preview id"
+    code, _, err = _import_cohort(registry, data_dir, source, label, commit=found.group(1))
+    if code != 0:
+        print(err, end="", file=sys.stderr)
+        raise AssertionError(f"the commit by the printed preview id was refused (exit {code}); "
+                             "its message is on the console")
+    return resolve_version(registry, label), found.group(1)
+
+
+def _measure_cohort(checkpoint: Path, data_dir: Path, registry: Path, label: str,
+                    device: str, *extra: str) -> int:
+    """The production measurement entry point on a registered cohort version
+    (contract M4): `--cohort` with `--registry`, and `extra` (`--record`)."""
+    import scripts.measure_scorer as measure_scorer
+
+    return measure_scorer.main([
+        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--cohort", label, "--registry", str(registry), "--device", device, *extra,
+    ])
+
+
+def _kept_report(registry: Path, label: str) -> Tuple[Path, Dict[str, Any], Any, int]:
+    """The one report the version's report store keeps, parsed and identified
+    from one read, and the number of rows of the ranks it names.
+
+    **Through the shared reader** (`_read_json`): the report's content and its
+    digest come from the same bytes, as registration takes them, and the ranks
+    are compared with the digest the report names before they are parsed.
+    Returns the report's path, its content, the identity of the bytes parsed
+    and the ranks' row count.
+    """
+    from scripts.measure_scorer import RANKS_FILE, REPORT_FILE
+    from src.kg.storage.file_storage import SamplesDigestMismatch, _read_json
+
+    kept = sorted((registry / "versions" / label / "reports").glob(f"*/{REPORT_FILE}"))
+    assert len(kept) == 1, f"the version's report store keeps {len(kept)} reports, not one"
+    report, identity = _read_json(kept[0])
+    ranks = report.get("ranks") or {}
+    assert ranks.get("file") == RANKS_FILE and ranks.get("sha256"), (
+        "the kept report names no ranks file by digest")
+    try:
+        rows, _ = _read_json(kept[0].parent / RANKS_FILE,
+                             expected_sha256=frozenset({ranks["sha256"]}))
+    except SamplesDigestMismatch:
+        raise AssertionError("the kept ranks are not the bytes the report names") from None
+    assert len(rows) == report.get("n_ranked"), "the kept ranks are not one row per ranked case"
+    return kept[0], report, identity, len(rows)
+
+
+def _r10_facts(r10: Dict[str, Any]) -> Dict[str, Any]:
+    """R10's evidence state and each label's state and counts, per scope; the
+    evidence path and any problem text stay in the report."""
+    from src.evaluation.r10 import R10_LABELS, R10_SCOPES
+
+    return {
+        scope: {
+            "evidence": r10[scope]["evidence"]["state"],
+            **{label: {key: value for key, value in r10[scope][label].items()
+                       if key in ("state", "k", "n", "cases")} for label in R10_LABELS},
+        }
+        for scope, _ in R10_SCOPES
+    }
+
+
+def _evidence_found_in(r10: Dict[str, Any], data_dir: Path, scopes: Tuple[str, ...]) -> None:
+    """Each scope's evidence was found, among the workspace's own files."""
+    for scope in scopes:
+        evidence = r10[scope]["evidence"]
+        assert evidence["state"] == "found", (
+            f"R10's {scope} evidence is {evidence['state']}, not found")
+        assert Path(evidence["path"]).resolve().parent == data_dir.resolve(), (
+            f"R10's {scope} evidence was found outside the workspace")
+
+
+def _the_record(ledger_dir: Path, report_identity: Any, checkpoint_sha256: str,
+                version: Any) -> Tuple[Dict[str, Any], str]:
+    """The ledger beside the checkpoint, through the one ledger reader, holding
+    exactly one record: this checkpoint's, on this version, built from the kept
+    report's bytes. Returns the record and the digest of the ledger read."""
+    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
+
+    ledger, ledger_sha256 = read_ledger(ledger_dir / LEDGER_FILENAME)
+    assert ledger_sha256 is not None, "no ledger was written beside the checkpoint"
+    records = ledger["records"]
+    assert len(records) == 1, f"the ledger holds {len(records)} records, not one"
+    record = records[0]
+    assert record.get("checkpoint_digest") == checkpoint_sha256, (
+        "the record names another checkpoint")
+    assert record.get("cohort_digest") == version.identity.sha256, (
+        "the record names another cohort version")
+    assert record.get("source_artifact_digest") == report_identity.sha256, (
+        "the record was not built from the kept report's bytes")
+    assert record.get("corroborating_reports") == [], "the record lists corroborating reports"
+    return record, ledger_sha256
+
+
+@contextlib.contextmanager
+def _logged(logger: logging.Logger):
+    """The messages `logger` logs at INFO and above while this is open, for an
+    entry point that says its outcome only in its log (`record_evaluation.py`)."""
+    messages: List[str] = []
+
+    class _Kept(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            messages.append(record.getMessage())
+
+    handler, level = _Kept(logging.INFO), logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        yield messages
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(level)
+
+
+@contextlib.contextmanager
+def _observing_checkpoint_reads(observed: List[str]):
+    """While this is open, each read through the one checkpoint reader
+    (`read_checkpoint`) is noted by file name, then made as asked.
+
+    **Observed, not inferred from the refusal's type**, as `_observing_restore`
+    observes the restore: a refusal that must come before the checkpoint is
+    read is shown to. Callers import the reader when they run
+    (`read_measurement_inputs` does), so they reach this wrapper.
+    """
+    import src.utils.checkpoint_io as checkpoint_io
+
+    original = checkpoint_io.read_checkpoint
+
+    def observing(path, *args, **kwargs):
+        observed.append(Path(path).name)
+        return original(path, *args, **kwargs)
+
+    checkpoint_io.read_checkpoint = observing
+    try:
+        yield
+    finally:
+        checkpoint_io.read_checkpoint = original
+
+
+def _serve_and_view(data_dir: Path, checkpoint: Path, device: str) -> Tuple[str, Dict[str, Any]]:
+    """`checkpoint` served through the production reload, named explicitly
+    (E4's route, which publishes what it built), then the status and the loaded
+    model's recorded results read as the Diagnosis panel reads them: two GETs
+    on the application, status first.
+
+    Returns the digest the status reports for the served checkpoint and the
+    records answer, whose echoed digest must be that one.
+    """
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    import src.api.main as api
+    from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
+
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(
+        data_dir=str(data_dir), checkpoint_path=str(checkpoint), device=device)))
+    assert result.success, "the reload naming the checkpoint was refused"
+    # Not entered as a context, which would run the application's lifespan and
+    # build a pipeline from any SHEPHERD_* configuration in the environment over
+    # the one just published; the requests alone reach the routes.
+    client = TestClient(api.app)
+    try:
+        status = client.get("/api/v1/pipeline/status")
+        evaluations = client.get("/api/v1/evaluations/loaded-model")
+    finally:
+        client.close()
+    assert (status.status_code, evaluations.status_code) == (200, 200), (
+        f"the status answered {status.status_code} and the recorded results "
+        f"{evaluations.status_code}")
+    served = (status.json().get("served_identity") or {}).get("checkpoint") or {}
+    assert served.get("state") == "verified", "the status does not identify the served checkpoint"
+    answer = evaluations.json()
+    assert answer.get("checkpoint_sha256") == served["sha256"], (
+        "the recorded results are for another checkpoint than the status reports")
+    return served["sha256"], answer
+
+
+def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha256: str,
+                    scopes: Tuple[str, ...]) -> Dict[str, Any]:
+    """The read-only view's answer shows exactly `record`, from the ledger read
+    as `ledger_sha256`, with R10's evidence found for `scopes`. Returns its
+    facts: the state and the record's digests and counts, no path."""
+    assert answer.get("state") == "records", f"the view's state is {answer.get('state')}"
+    assert answer.get("records_not_shown") == 0, "a record for these weights is not shown"
+    assert (answer.get("ledger") or {}).get("sha256") == ledger_sha256, (
+        "the view read another ledger than the one the registration wrote")
+    shown = answer.get("records") or []
+    assert len(shown) == 1, f"the view shows {len(shown)} records, not one"
+    view = shown[0]
+    assert view["source_artifact_digest"] == record["source_artifact_digest"], (
+        "the view shows a record built from another report")
+    assert view["registration"]["sequence"] == record["registration"]["sequence"]
+    assert (view["cohort"]["label"], view["cohort"]["role"], view["n_ranked"]) == (
+        record["cohort"]["label"], record["cohort"]["role"], record["n_ranked"])
+    for scope in scopes:
+        assert view["r10"][scope]["evidence"]["state"] == "found", (
+            f"the view shows R10's {scope} evidence as not found")
+    return {"state": answer["state"], "checkpoint_sha256": answer["checkpoint_sha256"],
+            "records": len(shown), "source_artifact_digest": view["source_artifact_digest"],
+            "registration_sequence": view["registration"]["sequence"],
+            "n_ranked": view["n_ranked"], "environment_class": view["environment_class"]}
+
+
 def phase_m2_demo(
     report: Report, work: Path, sound: Path, checkpoint: Path, device: str
 ) -> None:
     """Contract M2's acceptance on the demo workspace: the successes first, then
-    every refusal, each from the production entry point that makes it."""
-    print("\nM. Contract M2 on the demo workspace")
+    every refusal, each from the production entry point that makes it; then
+    contract M4's flow on the same workspace (T1-T6)."""
+    print("\nM. Contract M2 on the demo workspace, then M4's flow")
     import src.api.main as api
     from src.inference.pipeline import PipelineBuildError
     from src.kg.artifacts import GRAPH_ARTIFACTS
@@ -2348,6 +2735,197 @@ def phase_m2_demo(
         report.run(f"M11.{use}", "m2",
                    f"{use} refuses a workspace whose dataset record is missing (M3b)", probe)
 
+    # ---- Contract M4's flow: import, measure, keep, register, read back
+    # Everything under <work>/m4: the source, the registry, a copy of D1's
+    # checkpoint (the ledger is written beside the measured file), the
+    # damaged copy and the audit report. The workspace is only read.
+    m4_dir = m2.parent / "m4"
+    registry, measured = m4_dir / "registry", m4_dir / "checkpoints" / "measured.pt"
+    m4: Dict[str, Any] = {}
+
+    def _imported() -> Tuple[str, Dict[str, Any]]:
+        registry.mkdir(parents=True)
+        source = _write_cohort_source(m4_dir / "cases.json", _m4_demo_cases(sound))
+        version, preview = _import_version(registry, sound, source, M4_DEMO_LABEL)
+        bound, _, _, record = verify_workspace(sound)
+        assert version.manifest["graph"] == bound, (
+            "the version's graph digests are not the workspace's")
+        assert version.manifest["dataset_record"]["sha256"] == record.summary()["sha256"], (
+            "the version is bound to another dataset record than the workspace's")
+        counts = version.manifest["counts"]
+        assert counts == M4_DEMO_COUNTS, f"the import counted {counts}, not {M4_DEMO_COUNTS}"
+        assert version.manifest["samples"]["n"] == counts["ranked_eligible"]
+        m4.update(version=version, source=source)
+        return "previewed with nothing written, committed by the printed id, bound to the graph", {
+            "preview_wrote_nothing": True, "preview_id": preview,
+            "manifest_sha256": version.identity.sha256,
+            "samples_sha256": version.manifest["samples"]["sha256"],
+            "graph_is_the_workspaces": True, "counts": counts,
+            "partial_phenotypes": version.manifest["mapping"]["partial_phenotypes"],
+        }
+
+    report.run("T1", "m2",
+               "M4: an import preview writes nothing and its id commits a version bound to "
+               "the graph", _imported)
+
+    def _measured_and_recorded() -> Tuple[str, Dict[str, Any]]:
+        from src.evaluation.sidecar import REGISTERED_RELATIONS
+
+        assert "version" in m4, "the cohort version (T1) is not available"
+        version = m4["version"]
+        measured.parent.mkdir(parents=True)
+        shutil.copyfile(checkpoint, measured)          # the bytes D1 trained, copied
+        sha256 = _read_run_checkpoint(measured)["sha256"]
+        code = _measure_cohort(measured, sound, registry, M4_DEMO_LABEL, device, "--record")
+        assert code == 0, f"the measurement with --record exited {code}"
+        path, kept, identity, rows = _kept_report(registry, M4_DEMO_LABEL)
+        manifest = kept["manifest"]
+        assert manifest["artifact_digests"]["checkpoint"] == sha256, (
+            "the report does not name the checkpoint it was given")
+        assert manifest["cohort_version"]["manifest_sha256"] == version.identity.sha256, (
+            "the report names another cohort version")
+        assert manifest["relations"] == REGISTERED_RELATIONS, (
+            f"the report's relation states are {manifest['relations']}")
+        assert kept["n_ranked"] == M4_DEMO_COUNTS["ranked_eligible"]
+        r10 = manifest["r10"]
+        # D1 trained on this workspace, so the inputs it records are its files.
+        _evidence_found_in(r10, sound, ("training", "validation"))
+        record, ledger_sha256 = _the_record(measured.parent, identity, sha256, version)
+        assert record["registration"]["sequence"] == 1
+        m4.update(report=path, report_sha256=identity.sha256, record=record,
+                  ledger_sha256=ledger_sha256, checkpoint_sha256=sha256, r10=r10)
+        return "measured, the report kept, R10 recorded, one record from the report's bytes", {
+            "exit_code": code, "checkpoint_sha256": sha256,
+            "report_sha256": identity.sha256, "ranks_sha256": kept["ranks"]["sha256"],
+            "ranks_rows": rows, "n_ranked": kept["n_ranked"],
+            "cohort_manifest_sha256": version.identity.sha256,
+            "relations": manifest["relations"], "r10": _r10_facts(r10),
+            "r10_evidence_in_the_workspace": True,
+            "ledger_sha256": ledger_sha256,
+            "record": {"sequence": record["registration"]["sequence"],
+                       "source_artifact_digest": record["source_artifact_digest"],
+                       "corroborating_reports": len(record["corroborating_reports"])},
+            "cuda_executed": manifest.get("cuda_executed"),
+        }
+
+    report.run("T2", "m2",
+               "M4: a registered version is measured with --record: report kept, R10 "
+               "recorded, one record", _measured_and_recorded)
+
+    def _registered_again() -> Tuple[str, Dict[str, Any]]:
+        import scripts.record_evaluation as record_evaluation
+
+        assert "report" in m4, "the measurement (T2) is not available"
+        before = snapshot(measured.parent, include_dirs=True)
+        with _logged(record_evaluation.logger) as said:
+            code = record_evaluation.main(["--report", str(m4["report"]),
+                                           "--checkpoint-dir", str(measured.parent)])
+        assert code == 0, f"registering the same report again exited {code}"
+        assert any("already holds this report" in line for line in said), (
+            "registering the same report again was not already_registered")
+        assert_untouched(before, measured.parent, "registering the same report again",
+                         include_dirs=True)
+        data = m4["report"].read_bytes()
+        damaged = m4_dir / "damaged" / "report.json"
+        damaged.parent.mkdir(parents=True)
+        damaged.write_bytes(data[: len(data) // 2])
+        refuses(lambda: record_evaluation.main(["--report", str(damaged),
+                                                "--checkpoint-dir", str(measured.parent)]),
+                SystemExit, ("is not a measurement report", "Nothing was written"))
+        assert_untouched(before, measured.parent, "a refused registration", include_dirs=True)
+        return "already registered and a damaged copy refused; the ledger unchanged", {
+            "same_report_again": "already_registered", "damaged_copy": "refused",
+            "damaged_copy_bytes": len(data) // 2, "ledger_unchanged": True,
+        }
+
+    report.run("T3", "m2",
+               "M4: the same report again is already registered, a damaged copy refused, the "
+               "ledger unchanged", _registered_again)
+
+    def _other_graph_refused() -> Tuple[str, Dict[str, Any]]:
+        from src.evaluation.cohort_registry import CohortBindingMismatch
+
+        assert "record" in m4, "the measurement (T2) is not available"
+        assert "other" in state, "the same-shaped workspace (M1) is not available"
+        # The same source, mapped against M1's export of a same-shaped graph.
+        _import_version(registry, state["other"], m4["source"], M4_OTHER_GRAPH_LABEL)
+        before = snapshot(registry, include_dirs=True)
+        ledger_before = snapshot(measured.parent, include_dirs=True)
+        reads: List[str] = []
+        with _observing_checkpoint_reads(reads):
+            refusal = refuses(lambda: _measure_cohort(measured, sound, registry,
+                                                      M4_OTHER_GRAPH_LABEL, device, "--record"),
+                              CohortBindingMismatch, "mapped against another graph")
+        assert not reads, "the checkpoint was read before the refusal"
+        assert_untouched(before, registry, "a refused measurement", include_dirs=True)
+        assert_untouched(ledger_before, measured.parent, "a refused measurement",
+                         include_dirs=True)
+        assert "kg" in refusal.roles, f"the refusal names {refusal.roles}, not the graph"
+        return "refused by the binding before the checkpoint was read; nothing written", {
+            "differing_roles": sorted(refusal.roles), "checkpoint_reads": 0,
+            "report_directory_created": False, "ledger_unchanged": True,
+        }
+
+    report.run("T4", "m2",
+               "M4: a version mapped against another graph is refused before the checkpoint "
+               "is read", _other_graph_refused)
+
+    def _read_only_view() -> Tuple[str, Dict[str, Any]]:
+        assert "record" in m4, "the measurement (T2) is not available"
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        served, answer = _serve_and_view(sound, measured, device)
+        assert served == m4["checkpoint_sha256"], "the status reports another checkpoint served"
+        shown = _the_view_shows(answer, m4["record"], m4["ledger_sha256"],
+                                ("training", "validation"))
+        # **Another model, beside the same ledger**: found by digest, so the
+        # measured checkpoint's record is not shown for it.
+        other = measured.with_name("other.pt")
+        shutil.copyfile(state["child"], other)
+        served_other, beside = _serve_and_view(sound, other, device)
+        assert served_other not in (None, served), "the other checkpoint is the measured one"
+        assert beside.get("state") == "no_records", (
+            f"the view's state for another checkpoint is {beside.get('state')}")
+        assert beside.get("records") == [] and beside.get("records_not_shown") == 0, (
+            "the view shows a record for a checkpoint that has none")
+        assert (beside.get("ledger") or {}).get("sha256") == m4["ledger_sha256"], (
+            "the view read another ledger for the other checkpoint")
+        return "the served checkpoint's record shown; none for another beside the same ledger", {
+            "served": "reloaded through the reload route's handler with the checkpoint named "
+                      "explicitly; read through GET /api/v1/pipeline/status and GET "
+                      "/api/v1/evaluations/loaded-model",
+            "measured": shown,
+            "other": {"state": beside["state"], "checkpoint_sha256": served_other,
+                      "records": 0, "same_ledger": True},
+        }
+
+    report.run("T5", "m2",
+               "M4: the read-only view shows the served checkpoint's record, and none for "
+               "another", _read_only_view)
+
+    def _overlap_audit() -> Tuple[str, Dict[str, Any]]:
+        import scripts.audit_split_overlap as audit
+        from src.kg.storage.file_storage import _read_json
+
+        assert "version" in m4, "the cohort version (T1) is not available"
+        version, output = m4["version"], m4_dir / "overlap_audit.json"
+        assert audit.main(["--data-dir", str(sound), "--registry", str(registry),
+                           "--cohort", M4_DEMO_LABEL, "--output", str(output)]) == 0
+        audited, identity = _read_json(output)
+        assert audited["schema_version"] == audit.REPORT_SCHEMA_VERSION
+        cohort_version = audited.get("cohort_version") or {}
+        expected = {"label": M4_DEMO_LABEL, "role": M4_ROLE,
+                    "manifest_sha256": version.identity.sha256,
+                    "samples_sha256": version.manifest["samples"]["sha256"]}
+        recorded = {key: cohort_version.get(key) for key in expected}
+        assert recorded == expected, f"the audit records the cohort version as {recorded}"
+        return "the registered version audited against train, and recorded", {
+            "report_sha256": identity.sha256, "cohort_version": recorded,
+            "counts": audited["counts"], "overlap": audited["overlap"]["as_written"],
+        }
+
+    report.run("T6", "m2", "M4: the overlap audit runs on the registered version and records it",
+               _overlap_audit)
+
 
 # =============================================================================
 # Phase R — contract M2's acceptance on real data (--real-workspace)
@@ -2395,8 +2973,9 @@ def phase_m2_real(
     workspaces_root: Path, device: str,
 ) -> None:
     """Contract M2's acceptance on real data: the full success path, from the
-    production entry points, on a workspace that is read and never written."""
-    print("\nR. Contract M2 on real data")
+    production entry points, on a workspace that is read and never written;
+    contract M4's flow on it (RT1-RT3) before R8 checks it unchanged."""
+    print("\nR. Contract M2 on real data, with M4's flow")
     from src.utils.fingerprint import file_sha256
 
     runs = work / "real"
@@ -2435,6 +3014,7 @@ def phase_m2_real(
             "the table's sidecar does not name this workspace's graph"
         )
         state["kg"], state["record"], state["read"] = digests["kg"], record, read
+        state["bound"] = dict(digests)
         return "the workspace's graph and training inputs verify", {
             "kg_digest": digests["kg"],
             "dataset_record": _record_facts(record),
@@ -2575,6 +3155,114 @@ def phase_m2_real(
 
     report.run("R7", "real",
                "the inventory refuses the old model and passes the new one's record", _inventory)
+
+    # ---- Contract M4's flow on real data, before R8 so R8 covers it. The
+    # source, the registry, the kept report and the ledger (beside R4's
+    # checkpoint, which is under --work-dir) are all under the work directory.
+    m4_dir = runs / "m4"
+    registry = m4_dir / "registry"
+
+    def _real_cohort() -> Tuple[str, Dict[str, Any]]:
+        from src.kg.graph import KnowledgeGraph
+        from src.kg.storage.file_storage import read_samples
+
+        assert "bound" in state, "R1 did not pass"
+        # The real workspace's own val cases, written back through its graph's
+        # ids: a synthetic supplied cohort whose relation to training is known.
+        reverse = KnowledgeGraph.read_json(real / "kg.json").kg.get_reverse_node_mapping()
+        cases, not_named = [], 0
+        for sample in read_samples(real, "val").samples:
+            if len(cases) == M4_REAL_CASES:
+                break
+            case = _source_case(f"probe-val-{len(cases) + 1:03d}", sample, reverse)
+            if case is None:
+                not_named += 1
+            else:
+                cases.append(case)
+        del reverse
+        assert cases, "no val case of the real workspace can be written as a shepherd-cases/1 case"
+        registry.mkdir(parents=True)
+        source = _write_cohort_source(m4_dir / "cases.json", cases)
+        version, preview = _import_version(registry, real, source, M4_REAL_LABEL)
+        assert version.manifest["graph"] == state["bound"], (
+            "the version's graph digests are not the real workspace's")
+        recorded = version.manifest["dataset_record"]["sha256"]
+        assert recorded == state["record"].summary()["sha256"], (
+            "the version is bound to another dataset record than the real workspace's")
+        counts = version.manifest["counts"]
+        assert (counts["source_cases"], counts["ranked_eligible"], counts["n_excluded"],
+                counts["terms_unmappable"]) == (len(cases), len(cases), 0, 0), (
+            f"the import of {len(cases)} val cases counted {counts}")
+        state["m4"] = {"version": version, "n": len(cases)}
+        return f"{len(cases)} val cases imported with no exclusions, bound to the real graph", {
+            "val_cases_written": len(cases), "val_cases_not_nameable_skipped": not_named,
+            "preview_wrote_nothing": True, "preview_id": preview,
+            "manifest_sha256": version.identity.sha256, "graph_is_the_workspaces": True,
+            "counts": counts,
+        }
+
+    report.run("RT1", "real",
+               "M4: a synthetic cohort of real val cases imports with no exclusions on the real "
+               "graph", _real_cohort)
+
+    def _real_measured() -> Tuple[str, Dict[str, Any]]:
+        assert "m4" in state, "the cohort version (RT1) is not available"
+        assert "child" in state, "R4 did not pass"
+        version, n = state["m4"]["version"], state["m4"]["n"]
+        # R4's checkpoint is under --work-dir, so the ledger --record writes
+        # beside its resolved path is under it too.
+        sha256 = _read_run_checkpoint(state["child"])["sha256"]
+        code = _measure_cohort(state["child"], real, registry, M4_REAL_LABEL, device, "--record")
+        assert code == 0, f"the measurement with --record exited {code}"
+        _, kept, identity, rows = _kept_report(registry, M4_REAL_LABEL)
+        assert kept["manifest"]["artifact_digests"]["checkpoint"] == sha256, (
+            "the report does not name the checkpoint it was given")
+        assert kept["n_ranked"] == n
+        r10 = kept["manifest"]["r10"]
+        # **As constructed**: the generated split is disease-disjoint, and the
+        # cohort is the validation cases themselves.
+        disease = r10["training"]["disease_overlap"]
+        assert (disease["state"], disease["k"]) == ("none", 0), (
+            f"R10's training disease overlap is {disease['state']} ({disease['k']}), not none")
+        phenotype_sets = r10["validation"]["phenotype_set_overlap"]
+        assert (phenotype_sets["state"], phenotype_sets["k"], phenotype_sets["n"]) == (
+            "overlap", n, n), (
+            f"R10's validation phenotype-set overlap is {phenotype_sets['state']} "
+            f"({phenotype_sets['k']} of {phenotype_sets['n']}), not {n} of {n}")
+        _evidence_found_in(r10, real, ("training", "validation"))
+        record, ledger_sha256 = _the_record(state["child"].resolve().parent, identity, sha256,
+                                            version)
+        state["m4"].update(record=record, ledger_sha256=ledger_sha256, checkpoint_sha256=sha256)
+        return "measured and recorded; R10 says what the construction makes true", {
+            "exit_code": code, "checkpoint_sha256": sha256, "report_sha256": identity.sha256,
+            "ranks_rows": rows, "n_ranked": kept["n_ranked"], "r10": _r10_facts(r10),
+            "r10_evidence_in_the_workspace": True, "ledger_sha256": ledger_sha256,
+            "record": {"sequence": record["registration"]["sequence"],
+                       "source_artifact_digest": record["source_artifact_digest"]},
+            "cuda_executed": kept["manifest"].get("cuda_executed"),
+        }
+
+    report.run("RT2", "real",
+               "M4: the new checkpoint measured on it with --record, R10 as constructed",
+               _real_measured)
+
+    def _real_view() -> Tuple[str, Dict[str, Any]]:
+        assert "record" in state.get("m4", {}), "the measurement (RT2) is not available"
+        m4 = state["m4"]
+        served, answer = _serve_and_view(real, state["child"], device)
+        assert served == m4["checkpoint_sha256"], "the status reports another checkpoint served"
+        shown = _the_view_shows(answer, m4["record"], m4["ledger_sha256"],
+                                ("training", "validation"))
+        return "the served real checkpoint's record is shown by the read-only view", {
+            "served": "reloaded through the reload route's handler with R4's checkpoint named "
+                      "explicitly (R6 builds its pipeline without publishing or keeping it); "
+                      "read through GET /api/v1/pipeline/status and GET "
+                      "/api/v1/evaluations/loaded-model",
+            **shown,
+        }
+
+    report.run("RT3", "real", "M4: the read-only view shows that record for the served real "
+               "checkpoint", _real_view)
 
     def _untouched() -> Tuple[str, Dict[str, Any]]:
         after = _stat_tree(real)
@@ -3009,13 +3697,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--m2-acceptance", action="store_true",
         help="Adds contract M2's acceptance on the demo workspace (phase M) and "
-             "accounts for every probe it requires. Needs --device cuda; keeps the "
+             "accounts for every probe it requires. It also carries contract M4's "
+             "flow (T1-T6; RT1-RT3 with --real-workspace), functional only: not model "
+             "quality, not an institutional test. Needs --device cuda and a --work-dir "
+             "outside the repository (M4's cohort registry is made under it); keeps the "
              "work directory as evidence.",
     )
     parser.add_argument(
         "--real-workspace", type=Path, default=None,
-        help="Adds M2's acceptance on this real workspace (phase R): it is read, "
-             "never written; every run, checkpoint and report goes under --work-dir.",
+        help="Adds M2's acceptance on this real workspace (phase R), with M4's RT1-RT3: "
+             "it is read, never written; every run, checkpoint, report, cohort registry "
+             "and ledger goes under --work-dir.",
     )
     parser.add_argument(
         "--real-config", type=Path, default=None,

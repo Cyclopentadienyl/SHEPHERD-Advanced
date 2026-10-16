@@ -17,6 +17,9 @@ Endpoints:
     POST /api/v1/diagnose     - Run diagnosis on patient phenotypes
     GET  /api/v1/hpo/search   - Search HPO terms
     GET  /api/v1/disease/{id} - Get disease information
+    GET  /api/v1/evaluations/loaded-model
+                              - The loaded checkpoint's recorded test results
+                                (read-only; contract M4)
     GET  /health              - Health check
     GET  /ready               - Readiness probe
 
