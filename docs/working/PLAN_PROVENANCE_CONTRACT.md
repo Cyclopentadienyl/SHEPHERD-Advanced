@@ -59,8 +59,11 @@ acceptance is run"). It is a functional acceptance, not a capacity, model-qualit
 benchmark reading; neither round's report is a complete single run; two P3 are tracked. The owner
 merged M3a into `main` afterwards (#122, `2049b64`, 2026-10-15).** **M3b is implemented
 (2026-10-15) and code-reviewed with no P1 or P2 at `04ecf42` (2026-10-16)** (§4, "M3b as
-implemented"); **its GB10 functional acceptance is not yet run**. M3c, M4 and M5 are not
-implemented. Facts about the code are cited at `627ed08`, before M1;
+implemented"); **its GB10 functional acceptance, within the scope agreed, is passed
+(2026-10-16)**: one run at `c80c1e4`, the demo and the real workspace `hpo_2026_0929_5a`, 75 of 75
+probes, reviewed by the reviewer (§4, "M3b's acceptance on the GB10"). It is a functional
+acceptance, not a capacity, AMP, model-quality or clinical reading; nothing is merged. M3c, M4 and
+M5 are not implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2859,6 +2862,57 @@ acceptance; no other runner. One run, demo and real data together.
   a clinical benchmark.
 - **Complete** when the evidence is reviewed and every required probe passed; until then M3b's
   functional acceptance is not passed.
+
+**M3b's acceptance on the GB10 (2026-10-16, at `c80c1e4`; evidence
+`/home/user/m3b-acceptance-c80c1e4-01/`, kept on the homelab, not in the repository; reviewed by
+the reviewer).** **Passed, within the scope agreed.** The report (SHA-256
+`9038a235907ff03b18f4a153bffc64f79b36657b9e8264dfecce58c6246ef489`, generated
+2026-10-16 13:05 +08:00) and what the reviewer checked, read only, without training again:
+- **Run:** the tested commit recorded and equal to the checked-out head, `tracked_files_modified`
+  false; probe exit 0, `tee` exit 0; 75 distinct probes, 75 passed, 0 failed, errored or skipped,
+  the console's PASS lines the same 75; every required probe run and passed (demo 33, real data
+  8, as read from the tested code's lists); `m2_acceptance` demo, real data and overall complete.
+- **Device and allocator:** NVIDIA GB10, resolved device `cuda`, the real serving model's
+  parameters on CUDA; backend `cudaMallocAsync` from the saved preset
+  (`PYTORCH_ALLOC_CONF=backend:cudaMallocAsync`, set before torch's first import); the
+  measurement reports record `cuda_executed` true.
+- **M3b's behaviour:** C1, M3 and M4, the demo record verified and synthetic, the measurement and
+  serving summaries the same record; C5, all six tamperings refused with the states expected
+  (missing and unreadable → *unverifiable*; replaced and another graph's → *mismatch*; unbound →
+  *unrecorded*; unidentified → binding *verified* and refused for the missing source, which is
+  the probe's pass condition, not an admission); B22 and B23, the writer refusing; M11, training,
+  serving and measurement each refusing a workspace without its record. R1, R5 and R6, the real
+  record verified with origin `files`, all four roles, its SHA-256
+  `2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef` in all three; the reviewer
+  also read the raw `measurement.json` and found its sources and `incomplete_by_design` equal to
+  the real `kg.provenance.json`, not merely the same count.
+- **The real short training, cross-checked:** parent `real/initial/checkpoints/last.pt`, one epoch,
+  ended paused (SHA-256 `27d1fd4c6f69459d86d9fd93f2c1f8b95740d753181548bc2f87390ef7c06b9e`);
+  child `real/resumed/checkpoints/last.pt`, two epochs, finished (SHA-256
+  `4f8032198e5cf872476dd04548ea1b4ba8298dd7f4db476c7c73172a18d80c4f`). Read with the shared
+  reader on the CPU (`weights_only=True`), these and the demo's parent and child have the digests
+  the report gives; the child's `resume_checkpoint` names its parent and its `kg` role agrees. R5's
+  measurement (15,000 samples) and the new-model inventory name the child, not the parent. R6:
+  `gnn_plus_shortest_path`, the loader's `sp_kg_binding` verified, `max_hops` 5, five candidates.
+  R7: `model-02` refused for its missing `kg` record, the child accepted by the source contract;
+  the inventory still claims no SP tensor loaded and no model quality. The measurement and
+  inventory artifacts' digests match the report. 33 cross-checks in all, kept in the reviewer's
+  `cross-checks.json`.
+- **Logs and inputs:** the four ERROR lines are the injected refusals (E5's damaged tensor, two
+  lines; M6's crossed checkpoint; M11.serving's missing record). The GB10's capability 12.1 above
+  the wheel's listed 12.0 is reported as a runtime notice; A4 and this run's training, measurement
+  and serving completed on CUDA, which does not establish that every operation has optimal native
+  support, and no compatibility or performance study is opened here. R8 compared 19 entries by
+  listing, size and modification time, not a content hash of the workspace; the reviewer
+  re-hashed the four named inputs (the config, `model-02`, `kg.provenance.json`,
+  `split_manifest.json`), all equal to `input-sha256.txt`.
+- **Not claimed:** capacity, AMP's effect, model quality or a hospital test; the short-training
+  checkpoints are not a chosen serving model. The measurement is `cohort_kind` generated, split
+  `val`: its numbers are not a MyGene2 or institutional held-out result. N2, M3c and M4 are not
+  completed by this. The evidence and `work/` stay where they are; no rerun or rebuild is needed.
+- **The homelab checkout restored (2026-10-16, the operator):** back on `main` at `9fe5113`, the
+  state `checkout-before.txt` records; at the review it was still detached at `c80c1e4` with the
+  tracked files clean, which is the state before the restore.
 
 **M3c — what is served is identified (R8).**
 - **The checkpoint's digest comes from M2.1's read** of the bytes loaded.
