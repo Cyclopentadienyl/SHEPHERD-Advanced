@@ -65,8 +65,10 @@ probes, reviewed by the reviewer (§4, "M3b's acceptance on the GB10"). It is a 
 acceptance, not a capacity, AMP, model-quality or clinical reading. The owner merged M3b into
 `main` afterwards (#123, `cbba015`, 2026-10-16). **M3c is implemented on the branch (2026-10-16)
 and code-reviewed with no P1 or P2 at `1246f0c` (2026-10-16)** (§4, "M3c as implemented"); its
-one P3 is fixed after it, and its GB10 functional acceptance is next (§4, "How M3c's acceptance
-is run"). M4 and M5 are not
+one P3 is fixed after it, and **its GB10 functional acceptance, within the scope agreed, is passed
+(2026-10-16)**: one run at `52152e4`, the demo and the real workspace, 75 of 75 probes, with a
+WebUI smoke and its exports, reviewed by the reviewer (§4, "M3c's acceptance on the GB10"). It is a
+functional acceptance, not a capacity, AMP, model-quality or clinical reading; nothing is merged. M4 and M5 are not
 implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -180,7 +182,7 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R5 | Workspace ↔ its dataset record (`kg.provenance.json`) | Written at build (`src/kg/provenance.py`); bound from the manifest | **Read by nothing in production**: `workspace_provenance_status` (`artifacts.py:208`) has no caller outside the module. Policy so far: "reported, not enforced" (`artifacts.py:123-137`; `docs/working/PLAN_ONTOLOGY_PROVENANCE.md:249-254`) | **M3b** (decision 2 reverses that policy for the formal pipeline) |
 | R6 | Model ↔ the training settings, code and environment in effect | `config` = `TrainerConfig` plus `model_config` (`src/training/trainer.py:937-981`). Not recorded: the loader and sampling settings (`DataLoaderConfig`, `train_model.py:585-592`), compile (`train_model.py:760-777`), the code revision, the environment | — | **M3a** |
 | R7 | Model ↔ its resume parent | The parent's digest (`train_model.py:558-559`), hashed by path after the parent was loaded (`:835`, `:854-860`) | **Nothing compared**: `load_checkpoint` restores state without looking at the parent's inputs or config (`trainer.py:1009-1044`). A missing parent only warns, and the run trains from scratch (`train_model.py:505-507`). The WebUI's default resume target is `last.pt` (`src/webui/components/training_console.py:398-404`), which `ModelCheckpoint` overwrites (`callbacks.py:271-274`) | **M2** (the parent's records, graph and data); M3a (overwrite guard) |
-| R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** (implemented 2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`; §4, "M3c as implemented") |
+| R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** (implemented 2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`, its GB10 functional acceptance passed at `52152e4`; §4, "M3c as implemented") |
 | R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** |
 | R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 |
 | R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement) |
@@ -3174,6 +3176,41 @@ One probe run, demo and real data together; no other runner, no extra training e
   model.
 - **Complete** when the evidence is reviewed and every required probe and the WebUI checks
   passed; until then M3c's functional acceptance is not passed.
+
+**M3c's acceptance on the GB10 (2026-10-16, at `52152e4`; evidence
+[`m3c-acceptance-2026-10-16/`](m3c-acceptance-2026-10-16/README.md)).** **Passed, within the scope
+agreed**, as the reviewer's final review of the evidence found. Run by the owner with the runbook
+above; product code the reviewed `1246f0c` plus the review's P3 fix.
+- **The probe:** 75 passed, 0 failed, 0 errors, 0 skipped; probe and `tee` exit 0;
+  `m2_acceptance` demo, real data and overall complete; `tested_commit` `52152e4` with no tracked
+  file modified; NVIDIA GB10, CUDA, `cudaMallocAsync` from the saved preset before torch's first
+  import; the four named inputs equal before and after, and again when the evidence was packaged.
+- **M3c's part:** E1, E2, E5 and E7 on the demo (checkpoint `70c44c83…9e8a`, graph and manifest
+  verified, table absent and `gnn_only`, record `synthetic`; the status reports it, a refused
+  reload leaves it, a diagnosis carries it); M4 on the demo with its table verified (`build_id`
+  `e025285c…7dff`); R6 on the real workspace: R4's child `e9400952…fd66`, `kg.json`
+  `6cae2d1a…1e43`, `split_manifest.json` `131cdf81…f664`, table `fe1a7d14…ee7b` (`max_hops` 5),
+  record `files` `2c7abdb6…12ef`, `gnn_plus_shortest_path`, `cuda` asked and `cuda:0` in effect,
+  the same checkpoint as R5's measurement. Every probe M3b's acceptance required passed again.
+- **The WebUI smoke:** the service over the real workspace with R4's child and no
+  `SHEPHERD_DEVICE` (`auto` asked, `cuda:0` in effect). The model status, the "Produced by" line
+  and the full-identity block name the same parts; one diagnosis gave 10 candidates; its CSV (36
+  columns, the 21 `served_*` the same on every row) and Markdown report carry the same identity;
+  `/pipeline/status` before and after a reload from the tab and the `/diagnose` answer carry one
+  identical identity, differing from R6's only in `device_requested` (`auto` against the probe's
+  explicit `cuda`).
+- **Kept as recorded, not smoothed over:** the first HTTP capture after the tab's reload had no
+  "before" baseline (the capture script was rerun with `bash`) and is kept as an incomplete
+  record; a new baseline, a second reload of the same checkpoint and an "after" capture form the
+  before/after comparison, both checks passing. Screenshot 01 shows an earlier saved Data
+  Directory value, not the workspace loaded (BACKLOG 17's F5); every identity names the real
+  graph.
+- **The checkout** was restored: `checkout-before.txt` and `checkout-restored.txt`
+  byte-identical (`main` at `9fe5113`), tracked files clean.
+- **Not shown:** capacity, long-run memory, AMP, model quality or clinical performance; the
+  real-data checkpoints are a short training's and not a chosen serving model. R8 compares the
+  workspace by listing, size and modification time, not by a content hash. N2, M4 and M5 are not
+  completed by it.
 
 ### M4 — item 14, phase 1
 
