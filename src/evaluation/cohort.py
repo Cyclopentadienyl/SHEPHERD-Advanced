@@ -214,7 +214,7 @@ def verify_cohort_reads(
     mean something, and it runs at every entry point that consumes generated
     cohorts, not only in the audits.
 
-    **Scoped to what the caller consumes.** A supplied-cohort overlap audit binds
+    **Scoped to what the caller consumes.** A registered-cohort overlap audit binds
     generated ``train`` and never reads generated ``val``; requiring ``val`` there
     would let a missing or corrupt file block an institutional measurement for a
     reason unrelated to it. Everything that *does* consume both — training,
@@ -237,7 +237,7 @@ def verify_cohort_reads(
     4. **The cohorts are disjoint** — both the measurement and the manifest's own
        ``disjoint`` claim, and **both only when both cohorts are in scope**. That
        field describes the generated train/val relationship, which a
-       train-versus-supplied overlap does not consume.
+       train-versus-registered overlap does not consume.
 
     **Compares, and reads nothing** (contract M2.1). `manifest` is the run's one
     reading of its manifest and `samples` maps each generated split in scope to
@@ -337,7 +337,7 @@ def _check_disjointness(
 
     **Both disjointness checks are scoped, not just the measurement.** The
     manifest's `disjoint` field describes the generated train/val relationship.
-    A train-versus-supplied overlap audit consumes neither that relationship nor
+    A train-versus-registered overlap audit consumes neither that relationship nor
     `val`, so refusing it on that field would block an institutional measurement
     on the state of an input it never reads — the same over-validation the
     scoping was introduced to remove, arriving through a claim instead of a file.

@@ -27,6 +27,10 @@ is every case by construction.
 The graph source has deliberate exclusions and one repeated term; its expected
 counts are `GRAPH_SOURCE_COUNTS`. CPU, a few seconds, deterministic.
 
+For tests that change files, `copy_registered_cohort` copies a built tree, so a
+module builds once and each test works on its own copy; `write_demo_workspace`
+with another `sample_seed` gives a re-sampled workspace over the same graph.
+
 Module: tests/fixtures/registered_cohort.py
 """
 from __future__ import annotations
@@ -34,7 +38,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from src.kg.graph import DEFAULT_FEATURE_SEED
 
@@ -87,16 +91,21 @@ class RegisteredCohort(NamedTuple):
     version: Any
 
 
-def write_demo_workspace(data_dir: Path, *, feature_seed: int = DEFAULT_FEATURE_SEED) -> Path:
+def write_demo_workspace(data_dir: Path, *, feature_seed: int = DEFAULT_FEATURE_SEED,
+                         sample_seed: Optional[int] = None) -> Path:
     """The demo graph as a complete workspace. Another `feature_seed` gives the
     same `kg.json` with different `node_features.pt`: another graph export, for
-    a binding that must refuse."""
+    a binding that must refuse. Another `sample_seed` gives the same graph
+    export and dataset record with other `train` and `val` cohorts: a workspace
+    re-sampled after a checkpoint was trained on the first, for R10."""
     from scripts.setup_demo import build_demo_kg
     from src.kg.workspace import SampleBudget, write_workspace
 
+    budget = SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2)
+    if sample_seed is not None:
+        budget = budget._replace(seed=sample_seed)
     write_workspace(
-        build_demo_kg(), data_dir, feature_dim=8, feature_seed=feature_seed,
-        samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2),
+        build_demo_kg(), data_dir, feature_dim=8, feature_seed=feature_seed, samples=budget,
     )
     return data_dir
 
@@ -245,6 +254,36 @@ def build_registered_cohort(
                             version)
 
 
+def copy_registered_cohort(cohort: RegisteredCohort, root: Path) -> RegisteredCohort:
+    """A copy of a built cohort's whole tree at `root`, for a test that changes
+    files: one build per module, one copy per test.
+
+    **No version is made here.** The copy is the bytes `commit_import` wrote,
+    resolved again through `resolve_version`, which checks the copy as it checks
+    any version. A version names no path (only its source's basename), so the
+    copy is the same version, with the same manifest digest, somewhere else.
+    `root` must not exist and must be outside the repository.
+    """
+    import shutil
+
+    from src.evaluation.cohort_registry import REPO_ROOT, resolve_version
+
+    source = cohort.data_dir.parent
+    root = Path(root).resolve()
+    if root == REPO_ROOT or REPO_ROOT in root.parents:
+        raise ValueError(f"{root} is inside the repository; copy the fixture to a tmp dir")
+    shutil.copytree(source, root)
+
+    def moved(path: Path) -> Path:
+        return root / Path(path).relative_to(source)
+
+    registry = moved(cohort.registry)
+    return RegisteredCohort(
+        moved(cohort.data_dir), moved(cohort.checkpoint), cohort.checkpoint_sha256, registry,
+        moved(cohort.source), resolve_version(registry, cohort.version.manifest["label"]),
+    )
+
+
 __all__ = [
     "GRAPH_SOURCE_COUNTS",
     "GRAPH_SOURCE_UNMAPPABLE_TERMS",
@@ -258,6 +297,7 @@ __all__ = [
     "UNKNOWN_HPO_2",
     "UNKNOWN_MONDO",
     "build_registered_cohort",
+    "copy_registered_cohort",
     "graph_source_cases",
     "import_version",
     "val_source_cases",

@@ -31,26 +31,42 @@ generator's own.
 Two verdicts, deliberately given different force:
 
 - A manifest that disagrees with the files beside it is a broken workspace under
-  any reading, so the disagreement is always fatal.
-- Non-zero overlap is fatal only under ``--require-disjoint``. It has to stay
-  measurable without refusal, because reproducing the M4 baseline means running
-  this over a pre-split workspace where the overlap is total and expected.
+  any reading, so the disagreement is always fatal. So is overlap between the
+  generated `train` and `val`: disjointness is the allocation's contract.
+- Overlap with a registered test cohort is never fatal. That cohort was not cut
+  from this disease universe, so the overlap is the measurement being taken, and
+  refusing on it would refuse the finding.
 
-**Schema.** The report is ``schema_version`` 2. Version 1 is the unversioned
-shape ``EVIDENCE_M4.json`` carries; it was not redefined in place, for the reason
-§6.8's audit gives for the same situation — a v1 artifact already exists and has
-been relied on.
+**A test cohort is a registered cohort version** (contract M4). It is imported
+and mapped to one graph by ``scripts/import_cohort.py`` and audited here with
+``--registry DIR --cohort LABEL``: the version is resolved from one read of its
+``cohort.json``, its ``samples.json`` is read once and refused unless its digest
+is the one that manifest binds, and the version's recorded graph and dataset
+record digests must be the ones this workspace's manifest records, because its
+disease indices name nodes of the graph it was mapped against. The loose
+``<split>_samples.json`` this mode used to read from the workspace is gone with
+``--evaluation-cohort-kind``.
+
+**Schema.** The report carries ``schema_version`` (`REPORT_SCHEMA_VERSION`).
+Version 1 is the unversioned shape ``EVIDENCE_M4.json`` carries; it was not
+redefined in place, for the reason §6.8's audit gives for the same situation — a
+v1 artifact already exists and has been relied on.
 
 **Counts and hashes only.** BACKLOG §5.2 forbids patient ids, sample ids and
 per-disease lists here, and nothing in the claim needs them: it is two set sizes
 and the size of their intersection. The split digests are what let a later reader
-confirm the numbers describe the files they have.
+confirm the numbers describe the files they have. A registered version is named
+by its label, role and digests, never by a path or a case.
 
 Usage:
     python scripts/audit_split_overlap.py \\
         --data-dir data/workspaces/<workspace> \\
-        --output docs/working/EVIDENCE_M4_split_overlap.json \\
-        --require-disjoint
+        --output docs/working/EVIDENCE_M4_split_overlap.json
+
+    python scripts/audit_split_overlap.py \\
+        --data-dir data/workspaces/<workspace> \\
+        --registry <absolute registry directory> --cohort <label> \\
+        --output <report>.json
 
 Module: scripts/audit_split_overlap.py
 """
@@ -71,13 +87,11 @@ if str(PROJECT_ROOT) not in sys.path:
 # reports are read together, and a claim spelled differently in each cannot be
 # compared across them.
 from src.evaluation.cohort import (  # noqa: E402
-    COHORT_KINDS,
-    DEFAULT_COHORT_KIND,
     GENERATED_SPLITS,
-    MANIFEST_FILENAME,
     resolve_cohort,
     verify_cohort_reads,
 )
+from src.utils.file_modes import publish_bytes  # noqa: E402
 from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -86,23 +100,36 @@ logger = logging.getLogger(__name__)
 def disease_ids(read: Any) -> List[int]:
     """Every sample's disease id in one split, in file order, from its one read.
 
-    `read` is what `src.kg.storage.file_storage.read_samples` returned — the
-    shared reader training and measurement use (contract M2.1) — so a second
-    parser here cannot differ from them in exactly the way this evidence exists
-    to rule out, and the ids counted come from the bytes whose digest the report
-    records and the verifier compared.
+    `read` is what `src.kg.storage.file_storage.read_samples` (or, for a
+    registered version, `read_samples_file`) returned — the shared reader
+    training and measurement use (contract M2.1) — so a second parser here
+    cannot differ from them in exactly the way this evidence exists to rule out,
+    and the ids counted come from the bytes whose digest the report records and
+    the verifier compared.
     """
     return [int(sample.disease_id) for sample in read.samples]
 
 
 #: Bumped when this report's shape changes. Version 1 is the unversioned shape
 #: ``EVIDENCE_M4.json`` carries, kept readable rather than redefined in place.
-REPORT_SCHEMA_VERSION = 5
+#: v6 — the supplied cohort is a registered cohort version, recorded under
+#: ``cohort_version`` in place of ``evaluation_cohort_kind: supplied``.
+REPORT_SCHEMA_VERSION = 6
 
+#: The two splits a generated audit compares when ``--splits`` is not given:
+#: the pair the current trainer selects checkpoints on.
+DEFAULT_SPLITS = ("train", "val")
+
+#: The generated split a registered cohort version is compared with. Not a
+#: choice: M4 asks how much of a test cohort's disease set the model had
+#: labelled training examples for, and `train` is what training learns from
+#: (`val` selects the checkpoint; the measurement report's R10 covers it).
+TRAINING_SPLIT = "train"
 
 
 def manifest_verification(
-    verified: Any, splits: List[str], evaluation_kind: str, measured: Dict[str, set]
+    verified: Any, splits: List[str], measured: Dict[str, set],
+    cohort_label: Optional[str] = None,
 ) -> Dict[str, Any]:
     """What ``verify_cohort_reads`` established, written into the report.
 
@@ -114,9 +141,9 @@ def manifest_verification(
 
     What this adds is the *record*: a reader holding only the artifact can see
     which splits were bound, on what, and what the manifest claimed. The
-    evaluation split appears only when it is generated — a supplied cohort is not
-    described by this manifest, and checking it against one would be a verdict
-    about a cut it was never part of.
+    evaluation split appears only when it is generated — a registered cohort
+    version (`cohort_label`) is not described by this manifest, and checking it
+    against one would be a verdict about a cut it was never part of.
     """
     train_split, eval_split = splits
     # **From the verifier's own return value, not recomputed here.** A section
@@ -161,45 +188,123 @@ def manifest_verification(
         section["measured_disjoint"] = not (measured[train_split] & measured[eval_split])
     else:
         section["why_the_evaluation_split_is_not_verified"] = (
-            f"{eval_split} is a supplied cohort; this manifest describes the "
-            "generated splits and says nothing about it. Generated val was not "
-            "read, and the manifest's `disjoint` field describes the generated "
-            "train/val relationship rather than this overlap, so neither the "
-            "state of val nor that claim blocks or supports this report"
+            f"the evaluation cohort is the registered cohort version {cohort_label!r} "
+            f"(role {eval_split}), not a split of this workspace, so this manifest "
+            "says nothing about it; the version binds its own samples and was checked "
+            "against this workspace's graph instead (see cohort_version). Generated "
+            "val was not read, and the manifest's `disjoint` field describes the "
+            "generated train/val relationship rather than this overlap, so neither "
+            "the state of val nor that claim blocks or supports this report"
         )
     return section
 
 
-def build_report(
-    data_dir: Path, splits: List[str], evaluation_kind: str, relationship: str
-) -> Dict[str, Any]:
+def build_report(data_dir: Path, splits: List[str], relationship: str) -> Dict[str, Any]:
+    """Two of the generator's own splits: both read, both verified, compared."""
     from src.kg.artifacts import read_split_manifest
     from src.kg.storage.file_storage import read_samples
 
-    train_split, eval_split = splits
-    # **Both splits are resolved before anything is read.** The training split is
-    # always generated; the evaluation split is whichever kind the caller states,
-    # and `resolve_cohort` is what refuses a supplied cohort wearing a generated
-    # name, a generated one with no manifest, and a workspace built before the
-    # allocation step.
-    resolve_cohort(data_dir, eval_split, evaluation_kind)
+    # **Both splits are resolved before anything is read.** `resolve_cohort` is
+    # what refuses a name that is not an identifier, a name that is not one of
+    # the generator's splits (a test cohort is a registered version, audited
+    # with --registry and --cohort), a generated split with no manifest, and a
+    # workspace built before the allocation step. The training split goes
+    # through it too: a name only ever reaches the reader once it is resolved.
+    for split in dict.fromkeys((*splits, *GENERATED_SPLITS)):
+        resolve_cohort(data_dir, split)
     # **Refuses before a single count is taken, over exactly what it reads.** The
     # generated cohorts must be the ones their manifest describes — same bytes,
     # same disease sets — and that is established by the one verifier the whole
-    # pipeline uses. The scope is what this run consumes: a supplied-cohort audit
-    # never opens generated `val`, so a missing or corrupt one there must not
-    # block an institutional measurement it has nothing to do with.
-    scope = GENERATED_SPLITS if evaluation_kind == "generated" else (train_split,)
-    for split in scope:
-        resolve_cohort(data_dir, split)
+    # pipeline uses.
+    #
     # **One read per file (contract M2.1).** The manifest is read once and every
     # split this audit uses once; the verifier compares those reads, the counts
     # are taken from them, and the digests recorded are theirs. Nothing is hashed
     # by path, so a file replaced in between is either counted and recorded as
     # read or refused as not the file the manifest describes.
     manifest = read_split_manifest(data_dir)
-    reads = {split: read_samples(data_dir, split) for split in dict.fromkeys((*scope, *splits))}
-    verified = verify_cohort_reads(manifest, {split: reads[split] for split in scope})
+    reads = {split: read_samples(data_dir, split) for split in GENERATED_SPLITS}
+    verified = verify_cohort_reads(manifest, reads)
+    return _overlap_report(
+        splits, reads, verified, relationship, {"evaluation_cohort_kind": "generated"},
+    )
+
+
+def build_registered_report(
+    data_dir: Path, registry: Path, label: str, relationship: str
+) -> Dict[str, Any]:
+    """The generated `train` split against a registered cohort version.
+
+    In order, refusing at the first failure and before anything is written:
+    `train` is resolved; the version is resolved (`resolve_version`, one read of
+    its ``cohort.json``); the workspace manifest is read once; the version's
+    four recorded graph digests and its dataset record digest are compared with
+    the ones that manifest records (`verify_cohort_binding`, the measurement's
+    comparison); `train` is read once and verified against the same manifest
+    reading; the version's ``samples.json`` is read once and refused before it
+    is parsed unless its digest is the one ``cohort.json`` binds.
+
+    **The graph is compared as recorded, and its files are not read.** This
+    audit compares disease indices, not embeddings: what it must establish is
+    that both sides index the same graph. The manifest that `train` is verified
+    against records which graph that is, and the version records which graph it
+    was mapped against, so the two records are what is compared. A version
+    mapped against another graph is refused before its samples are opened.
+
+    **Generated val is not read.** It is not an input to a train-versus-test
+    overlap, so a missing or corrupt one must not block this measurement.
+    """
+    from src.evaluation.cohort_registry import resolve_version, verify_cohort_binding
+    from src.kg.artifacts import (
+        DATASET_RECORD_ROLE,
+        GRAPH_ARTIFACTS,
+        manifest_section,
+        read_split_manifest,
+    )
+    from src.kg.storage.file_storage import read_samples, read_samples_file
+
+    resolve_cohort(data_dir, TRAINING_SPLIT)
+    version = resolve_version(registry, label)
+    manifest = read_split_manifest(data_dir)
+    artifacts = manifest_section(manifest.manifest, manifest.identity.path, "artifacts")
+    verify_cohort_binding(
+        version.manifest,
+        {role: artifacts.get(role) for role in GRAPH_ARTIFACTS},
+        artifacts.get(DATASET_RECORD_ROLE),
+    )
+    reads = {TRAINING_SPLIT: read_samples(data_dir, TRAINING_SPLIT)}
+    verified = verify_cohort_reads(manifest, reads)
+    # The role, not the label, names the evaluation side, as a measurement
+    # manifest's `split` does; `validate_role` (inside `resolve_version`) has
+    # already refused `train` and `val`, so it cannot collide with `train`.
+    role = version.manifest["role"]
+    reads[role] = read_samples_file(
+        version.samples_path, expected_sha256=version.manifest["samples"]["sha256"]
+    )
+    cohort_version = {
+        "label": version.manifest["label"],
+        "role": role,
+        "manifest_sha256": version.identity.sha256,
+        "samples_sha256": reads[role].identity.sha256,
+        "verified_against": [
+            "the samples file's SHA-256, against the version manifest's samples digest",
+            "the version's four graph digests and its dataset record digest, against "
+            "the ones this workspace's manifest records",
+        ],
+    }
+    return _overlap_report(
+        [TRAINING_SPLIT, role], reads, verified, relationship,
+        {"cohort_version": cohort_version}, cohort_label=label,
+    )
+
+
+def _overlap_report(
+    splits: List[str], reads: Dict[str, Any], verified: Any, relationship: str,
+    cohort: Dict[str, Any], cohort_label: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The report over two verified reads. `cohort` says what the evaluation
+    side is: the generated kind, or the registered version it was read from."""
+    train_split, eval_split = splits
     train_ids = disease_ids(reads[train_split])
     eval_ids = disease_ids(reads[eval_split])
     train_set, eval_set = set(train_ids), set(eval_ids)
@@ -212,12 +317,14 @@ def build_report(
     # would be read as "no contamination" by someone citing the file later. The
     # shared sample reader is left alone — a split that exists and is empty is a
     # legitimate thing for it to return, and only this audit needs to refuse it.
-    for split, ids in ((train_split, train_ids), (eval_split, eval_ids)):
+    eval_name = (f"the cohort version {cohort_label!r}" if cohort_label is not None
+                 else f"the {eval_split} split")
+    for name, ids in ((f"the {train_split} split", train_ids), (eval_name, eval_ids)):
         if not ids:
-            raise SystemExit(
-                f"the {split} split holds no samples. M4 compares two disease sets, "
-                "and an overlap involving an empty one says nothing about "
-                "contamination — only that this workspace has no such split."
+            raise ValueError(
+                f"{name} holds no samples. M4 compares two disease sets, and an "
+                "overlap involving an empty one says nothing about contamination — "
+                "only that there is nothing on that side to compare."
             )
 
     shared = eval_set & train_set
@@ -252,10 +359,10 @@ def build_report(
             "as_written": f"{len(shared)} of {len(eval_set)}",
         },
         "manifest_verification": manifest_verification(
-            verified, splits, evaluation_kind,
-            {train_split: train_set, eval_split: eval_set},
+            verified, splits, {train_split: train_set, eval_split: eval_set},
+            cohort_label=cohort_label,
         ),
-        "evaluation_cohort_kind": evaluation_kind,
+        **cohort,
         "deployment_relationship": relationship,
         "excluded_by_design": [
             "patient ids",
@@ -269,22 +376,26 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="M4 split disease-overlap evidence")
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--splits", nargs=2, default=["train", "val"],
+    parser.add_argument("--splits", nargs=2, default=None,
                         metavar=("TRAINING", "EVALUATION"),
-                        help="Which two splits to compare, training first. Defaults to "
-                             "train and val, which is the pair the current trainer "
-                             "selects checkpoints on. A supplied test cohort goes here "
-                             "as the second argument.")
+                        help="Which two of the generator's splits to compare, training "
+                             "first. Defaults to train and val, which is the pair the "
+                             "current trainer selects checkpoints on. A test cohort is "
+                             "not a split of the workspace: audit it with --registry "
+                             "and --cohort instead.")
+    parser.add_argument("--registry", type=Path, default=None,
+                        help="The cohort registry (an absolute path outside the "
+                             "repository) holding the version --cohort names. Given "
+                             "with --cohort, never alone.")
+    parser.add_argument("--cohort", default=None, metavar="LABEL",
+                        help="A registered cohort version's label "
+                             "(scripts/import_cohort.py). Its overlap with the "
+                             "generated train split is measured, never refused: the "
+                             "cohort was not cut from this disease universe, so the "
+                             "overlap is the finding. The version must have been "
+                             "mapped against this workspace's graph.")
     parser.add_argument("--overwrite", action="store_true",
                         help="Replace an existing --output. Off by default.")
-    parser.add_argument("--evaluation-cohort-kind", default=DEFAULT_COHORT_KIND,
-                        choices=COHORT_KINDS,
-                        help="What the second split is. `generated` means this "
-                             "project's own val cohort, where disease-disjointness "
-                             "is a contract and any overlap is a failure. `supplied` "
-                             "means an institutional or external cohort, where the "
-                             "overlap is the measurement being taken and refusing on "
-                             "it would refuse the finding.")
     parser.add_argument("--deployment-relationship", default=UNSTATED_RELATIONSHIP,
                         choices=DEPLOYMENT_RELATIONSHIPS,
                         help="How this machine relates to the deployment. A bounded "
@@ -298,6 +409,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args(argv)
 
+    if (args.registry is None) != (args.cohort is None):
+        raise SystemExit(
+            "--registry and --cohort go together: --cohort names a registered cohort "
+            "version and --registry the directory that keeps it. Nothing was written."
+        )
+    if args.cohort is not None and args.splits is not None:
+        raise SystemExit(
+            "--splits names two of the generator's splits; with --cohort the evaluation "
+            f"side is the registered version and it is compared with {TRAINING_SPLIT}. "
+            "Pass one or the other. Nothing was written."
+        )
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 
@@ -307,19 +429,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     # runs at training and measurement, where writing a report makes no sense, and
     # a workspace that fails it is one to rebuild rather than to publish a
     # measurement about. The refusal message names which check failed on which
-    # split, which is the citable content.
+    # file, which is the citable content.
     try:
-        report = build_report(args.data_dir, args.splits, args.evaluation_cohort_kind,
-                              args.deployment_relationship)
+        if args.cohort is None:
+            report = build_report(args.data_dir, list(args.splits or DEFAULT_SPLITS),
+                                  args.deployment_relationship)
+        else:
+            report = build_registered_report(args.data_dir, args.registry, args.cohort,
+                                             args.deployment_relationship)
+    except OSError as exc:
+        raise SystemExit(f"{exc}. Nothing was written.") from exc
     except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
-    logger.info("%s -> %s", report["overlap"]["as_written"], args.output)
+        raise SystemExit(f"{exc} Nothing was written.") from exc
 
-    # **The report is written first, then the verdict refuses.** A failed audit's
-    # evidence is the artifact describing the failure; discarding it on the way
-    # out would leave the operator with an exit code and nothing to cite.
+    # Published whole (`publish_bytes`: staged beside the target, flushed and
+    # renamed over it), so an existing report replaced under --overwrite is
+    # either the old file or the new one, never a part of either.
+    data = json.dumps(report, indent=2, sort_keys=True, allow_nan=False).encode("utf-8")
+    try:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        digest = publish_bytes(args.output, data)
+    except OSError as exc:
+        raise SystemExit(
+            f"{args.output} could not be written ({type(exc).__name__}: {exc}); "
+            "no report was published, and a file already there was left as it was."
+        ) from exc
+    logger.info("%s -> %s (sha256 %s)", report["overlap"]["as_written"], args.output, digest)
     return 0
 
 

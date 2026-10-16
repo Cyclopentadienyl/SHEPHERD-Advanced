@@ -399,15 +399,17 @@ class MeasurementManifest:
     cohort_kind: str
     """Whether this cohort came from this project's generator or from outside.
 
-    `generated` is disease-disjoint by construction and carries a
-    `split_manifest` digest below; `supplied` is an institutional or external
-    patient set that was never cut from this disease universe, so its overlap
-    with training is an open measurement rather than a contract.
+    `generated` is one of the generator's own splits (`train`, `val`),
+    disease-disjoint by construction, and carries a `split_manifest` digest
+    below; `supplied` is a registered cohort version (`cohort_version` below),
+    an institutional or external patient set that was never cut from this
+    disease universe, so its overlap with training is an open measurement (R10)
+    rather than a contract.
 
     **Stated on the manifest rather than inferred downstream from whether a
     `split_manifest` digest is present.** Absence of a role could mean several
-    things later; this field means one, and `resolve_cohort` is what makes it
-    agree with the roles at construction."""
+    things later; this field means one, and `__post_init__` refuses it unless it
+    agrees with `cohort_version`."""
     n_samples: int
     # what was ranked, and in what chunks
     candidate_construction: str

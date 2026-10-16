@@ -12,7 +12,12 @@ measurement itself:
 - the device gate: `auto` refuses to fall back to CPU, and an explicit `cpu`
   run is permitted but recorded as not CUDA;
 - that the `file_sha256` re-export is gone (contract M2.1, S9);
-- `--split`, which has no default, and the missing-split error.
+- `--split`, which has no default, and the missing-split error;
+- which arguments go with which kind of cohort (contract M4, decision 8):
+  exactly one of `--split` and `--cohort`; `--output` with `--split` only;
+  `--registry` required with `--cohort`; `--registry`, `--training-evidence`
+  and `--record` refused with `--split`. Each refusal exits 2 with one message
+  before the device is resolved or anything is read.
 
 Which files a measurement records, and that each is the digest of the bytes
 read, is pinned at the entry point in `test_measurement_reads_once.py`.
@@ -249,3 +254,67 @@ def test_missing_split_error_when_nothing_is_there(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="no \\*_samples.json files at all"):
         read_samples(tmp_path, "val")
+
+
+# ==============================================================================
+# Which arguments go with which kind of cohort (contract M4, decision 8)
+# ==============================================================================
+_BASE = ["--checkpoint", "c.pt", "--data-dir", "d", "--device", "cpu"]
+
+
+@pytest.mark.parametrize("extra, fragment", [
+    (["--split", "val", "--output", "o.json", "--registry", "/r"], "--registry apply to"),
+    (["--split", "val", "--output", "o.json", "--training-evidence", "/e"],
+     "--training-evidence apply to"),
+    (["--split", "val", "--output", "o.json", "--record"], "--record apply to"),
+    (["--split", "val", "--output", "o.json", "--record", "--registry", "/r"],
+     "--registry, --record apply to"),
+    (["--split", "val"], "--split needs --output"),
+    (["--cohort", "demo-test-1"], "--cohort needs --registry"),
+    (["--cohort", "demo-test-1", "--registry", "/r", "--output", "o.json"],
+     "--output does not apply to --cohort"),
+    (["--split", "val", "--cohort", "demo-test-1", "--output", "o.json"], "not allowed with"),
+    ([], "one of the arguments --split --cohort is required"),
+], ids=["split+registry", "split+evidence", "split+record", "split+two", "split-no-output",
+        "cohort-no-registry", "cohort+output", "both", "neither"])
+def test_an_argument_of_the_other_kind_of_cohort_is_refused_before_anything_runs(
+    extra, fragment, capsys, monkeypatch, tmp_path
+):
+    """Exit 2 with one message, from `main`, before the device is resolved:
+    nothing is read and nothing is written. A generated split's report is not
+    registered and gets no R10, and a registered version's report goes to the
+    report store, not to `--output`."""
+    import scripts.measure_scorer as measure_scorer
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(measure_scorer, "_resolve_device",
+                        lambda *a: pytest.fail("the device was resolved"))
+
+    with pytest.raises(SystemExit) as refused:
+        measure_scorer.main([*_BASE, *extra])
+
+    assert refused.value.code == 2
+    assert fragment in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == [], "something was written"
+
+
+@pytest.mark.parametrize("extra", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "demo-test-1", "--registry", "/r"],
+    ["--cohort", "demo-test-1", "--registry", "/r", "--record",
+     "--training-evidence", "/e1", "--training-evidence", "/e2"],
+], ids=["split", "cohort", "cohort-full"])
+def test_each_kind_of_cohort_parses_with_its_own_arguments(extra):
+    """The counterpart of the refusals: each kind's own arguments parse, and
+    `--training-evidence` repeats in the order given."""
+    from scripts.measure_scorer import parse_args
+
+    args = parse_args([*_BASE, *extra])
+
+    assert (args.split is None) != (args.cohort is None)
+    if args.cohort is not None:
+        assert args.output is None
+        assert [str(p) for p in args.training_evidence] == (
+            ["/e1", "/e2"] if "--training-evidence" in extra else [])
+    else:
+        assert args.training_evidence == [] and args.record is False

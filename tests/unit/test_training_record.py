@@ -150,12 +150,13 @@ def test_serving_refuses_a_checkpoint_from_before_the_contract(a, tmp_path):
 
 
 def _measure(data_dir, checkpoint, output):
+    """The generated `val` split: R3 is the same check for a registered version,
+    whose own refusals are in `test_measure_scorer_registered.py`."""
     import scripts.measure_scorer as cli
 
     return cli.main([
         "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "test", "--cohort-kind", "supplied", "--device", "cpu",
-        "--output", str(output),
+        "--split", "val", "--device", "cpu", "--output", str(output),
     ])
 
 

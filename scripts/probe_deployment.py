@@ -1867,7 +1867,7 @@ def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str) -> int
 
     return measure_scorer.main([
         "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "val", "--cohort-kind", "generated",
+        "--split", "val",
         "--output", str(output), "--device", device,
     ])
 

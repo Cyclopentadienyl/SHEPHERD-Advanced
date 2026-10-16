@@ -53,38 +53,53 @@ GENERATED_VAL_IS_DISEASE_DISJOINT = (
 )
 
 #: Why a supplied cohort's relationship to training is measured, not assumed.
+#:
+#: **Since M4 every measurement of a registered cohort version takes it** (R10,
+#: contract §5.4): the report records the cohort's disease and phenotype-set
+#: overlap with the training and validation inputs the checkpoint names, found
+#: by digest, so the number travels with the result it qualifies.
 SUPPLIED_COHORT_OVERLAP = (
     "**A supplied cohort's overlap with training is a measurement, not a "
     "contract.** An institutional or external patient set was not cut from this "
     "project's disease universe, so how much of it the model has labelled examples "
     "for is an open number — the upstream team reported 109 of 319 UDN diseases "
-    "present in their simulated cohort. Establish it for yours with "
-    "`scripts/audit_split_overlap.py`; it bounds what the cohort can be evidence "
-    "of about unseen diseases."
+    "present in their simulated cohort. Each measurement of a registered cohort "
+    "version records it as R10: disease and phenotype-set overlap with the training "
+    "and validation inputs the checkpoint names, found by their digests in the "
+    "workspace's own splits and then in each --training-evidence directory, and "
+    "unverifiable, never zero, when those bytes are not found. "
+    "`scripts/audit_split_overlap.py` audits a version against a workspace's "
+    "generated splits. The overlap bounds what the cohort can be evidence of about "
+    "unseen diseases."
 )
 
-#: Help for the cohort-kind argument, shared by every entry point that takes one.
-COHORT_KIND_HELP = (
-    "Whether this split was produced by this project's generator or supplied from "
-    "outside. `generated` covers `train` and `val` and requires the workspace's "
-    "`split_manifest.json`; `supplied` covers an institutional or external cohort, "
-    "which carries no allocation and may not use a generated split's name. Stated "
-    "rather than inferred from whether a manifest happens to be present, because "
-    "that test cannot tell a supplied cohort from a workspace built before the "
-    "allocation step."
-)
-
-#: The full `--split` help text. Assembled once so the two measurement entry
-#: points cannot drift apart.
+#: The full `--split` help text: the generator's own splits, and nothing else.
+#:
+#: **A supplied cohort is no longer a split** (contract M4, decision 8). The loose
+#: `<split>_samples.json` a workspace used to carry, and the `--cohort-kind` flag
+#: that told the two apart, are gone: the kind of cohort is decided by which
+#: argument names it, `--split` or `--cohort`, so it cannot be stated wrongly.
 SPLIT_ARGUMENT_HELP = (
-    "Which samples file to measure. **Required — there is no default.** "
-    "Generated workspaces contain train and val only; a supplied cohort exists "
-    "only where an evaluation protocol provided one, and must carry its own name. "
-    "Two distinct limits apply, and they are not the same limit. (1) "
+    "Which of the generator's splits to measure: train or val. Exactly one of "
+    "--split and --cohort is required; there is no default. Needs --output. An "
+    "institutional or external cohort is not a split of the workspace: it is "
+    "imported as a registered cohort version (scripts/import_cohort.py) and "
+    "measured with --cohort. A generated split's report is not registered in the "
+    "ledger. Two distinct limits apply, and they are not the same limit. (1) "
     + SELECTION_CONTAMINATION
     + " (2) "
     + GENERATED_VAL_IS_DISEASE_DISJOINT
-    + " (3) "
+)
+
+#: The full `--cohort` help text: a registered test cohort version (contract M4).
+COHORT_ARGUMENT_HELP = (
+    "The label of a registered test cohort version to measure "
+    "(scripts/import_cohort.py), with --registry. Its samples are read once and "
+    "must be the bytes its cohort.json binds, and the version must have been mapped "
+    "against this workspace's graph and dataset record, or the run is refused "
+    "before the checkpoint is read. The report is kept in the registry's report "
+    "store, <registry>/versions/<label>/reports/<run id>/, so --output does not "
+    "apply. "
     + SUPPLIED_COHORT_OVERLAP
 )
 

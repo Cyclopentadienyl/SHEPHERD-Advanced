@@ -150,26 +150,46 @@ def test_the_training_record_names_the_manifest_that_binds_the_dataset_record(tm
 # ---------------------------------------------------------------------------
 # Measurement
 # ---------------------------------------------------------------------------
-def _measure(data_dir, checkpoint, output, split="test", kind="supplied"):
+def _measure(data_dir, checkpoint, output, *, cohort=None):
+    """`--split val` with `--output`, or, with `cohort` (a `RegisteredCohort`),
+    `--cohort` in its registry, whose report store decides where it goes."""
     import scripts.measure_scorer as cli
 
-    return cli.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", split, "--cohort-kind", kind, "--output", str(output),
-        "--device", "cpu",
-    ])
+    argv = ["--checkpoint", str(checkpoint), "--data-dir", str(data_dir), "--device", "cpu"]
+    if cohort is None:
+        argv += ["--split", "val", "--output", str(output)]
+    else:
+        argv += ["--cohort", cohort.version.manifest["label"], "--registry", str(cohort.registry)]
+    return cli.main(argv)
 
 
+@pytest.fixture(scope="module")
+def registered_base(tmp_path_factory):
+    from tests.fixtures.registered_cohort import build_registered_cohort
+
+    return build_registered_cohort(tmp_path_factory.mktemp("registered_base"))
+
+
+@pytest.mark.parametrize("kind", ["generated", "registered"])
 @pytest.mark.parametrize("case", sorted(FAILURES))
-def test_measurement_refuses_before_a_checkpoint_or_model(tmp_path, monkeypatch, case):
-    """For a supplied cohort too: its graph is a workspace's graph."""
+def test_measurement_refuses_before_a_checkpoint_or_model(
+    tmp_path, monkeypatch, registered_base, case, kind
+):
+    """For a registered cohort version too: it is scored against a workspace's
+    graph, and that graph's record is required as for a generated split."""
     import src.models.gnn.shepherd_gnn as shepherd_gnn
     import src.utils.checkpoint_io as checkpoint_io
     from src.kg.artifacts import DatasetRecordRefused
+    from tests.fixtures.registered_cohort import copy_registered_cohort
     from tests.fixtures.synthetic_workspace import build_workspace
 
     tamper, binding, fragment = FAILURES[case]
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    cohort = None
+    if kind == "generated":
+        data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    else:
+        cohort = copy_registered_cohort(registered_base, tmp_path / "root")
+        data_dir, checkpoint = cohort.data_dir, cohort.checkpoint
     tamper(data_dir)
 
     def forbidden(*args, **kwargs):
@@ -180,10 +200,12 @@ def test_measurement_refuses_before_a_checkpoint_or_model(tmp_path, monkeypatch,
     output = tmp_path / "out" / "measurement.json"
 
     with pytest.raises(DatasetRecordRefused, match=fragment) as refused:
-        _measure(data_dir, checkpoint, output)
+        _measure(data_dir, checkpoint, output, cohort=cohort)
 
     assert refused.value.binding == binding
     assert not output.parent.exists()
+    if cohort is not None:
+        assert not (cohort.version.directory / "reports").exists()
 
 
 def test_a_measurement_records_its_dataset_record_with_the_origin_apart(tmp_path):

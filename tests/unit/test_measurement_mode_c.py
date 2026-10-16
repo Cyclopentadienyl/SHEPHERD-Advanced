@@ -71,18 +71,14 @@ def world(tmp_path_factory):
     data_dir, checkpoint_path = build_workspace(root)
     device = torch.device("cpu")
 
-    inputs = read_measurement_inputs(checkpoint_path, data_dir, "test", "supplied", device)
+    inputs = read_measurement_inputs(checkpoint_path, data_dir, device, split="val")
     digests = measurement_input_digests(inputs)
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
-    # **The manifest describes a generated split.** Since M4 a supplied cohort has
-    # a manifest only as a registered cohort version (`MeasurementManifest`
-    # refuses one without, since nothing binds its samples to the graph), and
-    # Mode C's scoring reads no part of the cohort's description, so what these
-    # tests check of the numbers is unchanged. Until this fixture reads a
-    # registered version, the samples scored are the workspace's `test` cohort.
+    # The generated `val` split, as `--split val` measures it: its manifest is a
+    # generated split's (no cohort version, no R10), which is all `build_manifest`
+    # reads of the cohort's description.
     args = argparse.Namespace(
-        checkpoint=checkpoint_path, data_dir=data_dir, split="val", cohort_kind="generated",
-        batch_size=BATCH_SIZE,
+        checkpoint=checkpoint_path, data_dir=data_dir, split="val", batch_size=BATCH_SIZE,
     )
     production_model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
 
