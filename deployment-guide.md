@@ -1460,7 +1460,8 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 - **digest 完整寫出並加上 `sha256:` 前綴**（`sha256:<64 hex>`）。前綴標明演算法，也避免
   試算表把全為數字的 digest 當成數值。
 - 布林值寫成 `true` / `false`；數字照 API 傳來的樣子寫（`0.7`、`1.0`）。
-- **沒有任何空白儲存格。** 身分中為 null 的值一律寫成一個字：
+- **身分欄位沒有空白儲存格。** 身分中為 null 的值一律寫成一個字（候選欄位沿用原本的慣例，空白
+  表示沒有值）：
 
 | 字 | 何時寫出 |
 |---|---|
@@ -1488,8 +1489,8 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 在哪裡設定：
 
 - **啟動時**：服務環境中的 `SHEPHERD_DEVICE`。
-- **reload 時**：請求的 `device`（`POST /api/v1/pipeline/reload`）。null 時先退回
-  `SHEPHERD_DEVICE`，再退回 `auto`。
+- **reload 時**：請求的 `device`（`POST /api/v1/pipeline/reload`）。null 或空白時先退回
+  `SHEPHERD_DEVICE`，再退回 `auto`；空白的環境變數也視為未設定。
 
 **何時檢查**：只要要服務 checkpoint，就在讀取任何東西之前檢查——服務在解析 `kg.json`
 之前先確定裝置（reload 則在檔案檢查之後、自動選擇讀取任何候選 checkpoint 之前），pipeline
@@ -1510,7 +1511,8 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 `cuda`）。狀態裡的 `checkpoint_meta.device` 保留。
 
 > **行為變更（M3c）**：沒有 CUDA 的主機若未指定裝置就服務，以前會在讀完 checkpoint、
-> 建好模型之後悄悄改用 CPU，只在日誌裡留一行。**現在會被拒絕。** CPU 開發機必須設定
+> 建好模型之後改用 CPU，既不拒絕也不警告，只有日誌與狀態裡的 `checkpoint_meta.device`
+> 看得出來。**現在會被拒絕。** CPU 開發機必須設定
 > `SHEPHERD_DEVICE=cpu`（reload 時送 `"device": "cpu"`，或留 null 讓這個變數生效）。
 > 字面上的 `auto` 以前會傳到 torch 才失敗，現在與未設定是同一個要求。WebUI 沒有裝置
 > 選擇器。`scripts/setup_demo.py` 印出的 serving 指令會帶上 demo 訓練時用的裝置。

@@ -321,11 +321,12 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # candidate in the run layout. The same resolution `build_pipeline` applies
     # (the request, then SHEPHERD_DEVICE, then `auto`), and the request is still
     # passed on as given, so the served identity records what was asked for.
-    from src.inference.pipeline import ServingDeviceUnavailable, resolve_serving_device
+    from src.api.main import requested_serving_device
+    from src.inference.pipeline import PipelineBuildError, resolve_serving_device
 
     try:
-        resolve_serving_device(device or os.environ.get("SHEPHERD_DEVICE") or None)
-    except ServingDeviceUnavailable as exc:
+        resolve_serving_device(requested_serving_device(device))
+    except PipelineBuildError as exc:
         return _refused(f"{str(exc).rstrip('.')}.{_still_serving()}", files)
 
     # Resolve which checkpoint to serve, from the run layout
@@ -352,7 +353,11 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # **Each read's digest is kept** (contract M3c, BACKLOG 19.1): the build
     # reads the chosen file again, and only that read is served (M2.1 decision
     # 4), so a file replaced in between is stated beside the reason below.
+    # Which candidates the scan scored is kept too: selection ranks by score
+    # whenever any candidate has one, so the chosen file was ranked exactly when
+    # it is among them.
     scored_digests: Dict[str, str] = {}
+    scored_paths: set = set()
 
     def _checkpoint_score(path: Path) -> Optional[float]:
         try:
@@ -365,6 +370,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         scored_digests[str(path)] = scored.identity.sha256
         ckpt = scored.checkpoint
         detail = ranking_score_detail(ckpt.get("logs") if isinstance(ckpt, dict) else None)
+        if detail:
+            scored_paths.add(str(path))
         return detail[1] if detail else None
 
     # architecture = the real GNN arch when known (None for an explicit path,
@@ -459,9 +466,23 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         # 4); a file replaced after the scan chose it is still served as read,
         # and the reason says so (19.1), so a choice made on other bytes is
         # never presented as this model's.
+        #
+        # **"best" only for a file ranked by its metric.** When no candidate
+        # carries one, selection falls back to `last.pt`, else the newest file,
+        # and the reason says that instead; the loaded file's metric, if its
+        # metadata has one the scan's raw read did not rank, is shown as the
+        # loaded file's, never as a winner.
         detail = ranking_score_detail(candidate.config.get("checkpoint_meta"))
-        if detail:
-            selection_reason += f"; best {detail[0]}={detail[1]:.4f}"
+        if str(selected) in scored_paths:
+            if detail:
+                selection_reason += f"; best {detail[0]}={detail[1]:.4f}"
+        else:
+            selection_reason += (
+                "; not ranked by metric (no candidate carries one): last.pt, "
+                "else the newest file"
+            )
+            if detail:
+                selection_reason += f"; loaded file {detail[0]}={detail[1]:.4f}"
         served_identity = candidate.config.get("served_identity") or {}
         served_sha = (served_identity.get("checkpoint") or {}).get("sha256")
         scored_sha = scored_digests.get(str(selected))
@@ -469,7 +490,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             selection_reason += (
                 f"; the file was replaced after it was scored (scored sha256 "
                 f"{scored_sha}, loaded sha256 {served_sha}): the choice was made "
-                "on the earlier bytes, and the metric shown is the loaded file's"
+                "on the earlier bytes"
+                + (", and the metric shown is the loaded file's" if detail else "")
             )
             logger.warning("Auto-selected checkpoint replaced after scoring: %s", checkpoint_path)
         logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)

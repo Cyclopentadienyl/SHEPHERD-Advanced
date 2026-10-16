@@ -266,11 +266,19 @@ def resolve_serving_device(requested: Optional[str]) -> str:
     is read. Other device strings are handed to torch as given, as training's
     are.
     """
+    if not HAS_TORCH:
+        # **The cause before the remedy.** Without PyTorch no device is
+        # available, and telling the operator to set the CPU would send them to
+        # a second refusal for the real reason.
+        raise PipelineBuildError(
+            "A GNN was requested, and PyTorch is not available to load it. No "
+            "pipeline is built without the model it was asked for; install torch."
+        )
     if requested is None or not str(requested).strip():
         requested = "auto"
     requested = str(requested).strip()
     wants_cuda = requested in ("auto", "cuda") or requested.startswith("cuda:")
-    if wants_cuda and not (HAS_TORCH and torch.cuda.is_available()):
+    if wants_cuda and not torch.cuda.is_available():
         raise ServingDeviceUnavailable(
             f"Serving device {requested!r} requires CUDA, which is not available "
             "here. CUDA is a hard requirement of this project, so serving does "
@@ -604,10 +612,16 @@ class DiagnosisPipeline:
         # §5.2), as training's is: `auto` without CUDA refuses here, instead of
         # after the workspace, the checkpoint and the model build, and instead of
         # turning into the CPU. A model supplied in memory with no device named
-        # stays where it is; there is nothing to resolve for it.
+        # stays where it is; there is nothing to resolve for it. One with a
+        # device named gets the same rule, so `auto` or CUDA on a host without
+        # it is this refusal, not torch's error after the workspace was read.
         if self.model is None:
             device = resolve_serving_device(device)
             self._device_requested = self._device_requested or "auto"
+        elif self._device_requested is not None:
+            device = resolve_serving_device(self._device_requested)
+        else:
+            device = None
 
         # Step 1: Load graph data
         if self._graph_data is None and data_dir is not None:

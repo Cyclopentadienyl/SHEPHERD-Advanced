@@ -460,6 +460,9 @@ SERVED_CHECKPOINT_STATES = ("verified", "supplied_in_memory", "absent")
 SERVED_GRAPH_STATES = ("verified", "unverified", "in_memory")
 SERVED_SHORTEST_PATHS_STATES = ("verified", "absent")
 SERVED_DATASET_RECORD_STATES = ("verified", "absent")
+#: The dataset record's origins (`src.kg.provenance.ORIGINS`, which this layer
+#: cannot import; `tests/unit/test_served_identity.py` pins the two equal).
+SERVED_DATASET_ORIGINS = ("files", "synthetic")
 SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback")
 
 _HEX = frozenset("0123456789abcdef")
@@ -562,7 +565,7 @@ class ServedDatasetRecord:
     def __post_init__(self) -> None:
         _require_state(self.state, SERVED_DATASET_RECORD_STATES, "dataset_record")
         if self.state == "verified":
-            if self.origin not in ("files", "synthetic"):
+            if self.origin not in SERVED_DATASET_ORIGINS:
                 raise ValueError(f"a verified dataset record's origin is {self.origin!r}")
             _require_sha256(self.sha256, "a verified dataset record's sha256")
         elif self.origin is not None or self.sha256 is not None:
@@ -578,7 +581,8 @@ class ServedSettings:
     #: in memory does not say.
     device: Optional[str]
     #: What was asked for: "auto" (CUDA, refused without it), "cuda", "cuda:N"
-    #: or "cpu". None when no checkpoint was loaded and no device was given.
+    #: or "cpu"; "auto" when a checkpoint was loaded with none named. None when
+    #: no model is served, or when a model supplied in memory was given none.
     device_requested: Optional[str]
     #: The mixing weight in effect between the GNN and shortest-path terms:
     #: 1.0 with no table, None when no model is served (neither term exists).

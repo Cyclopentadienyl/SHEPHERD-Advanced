@@ -1038,7 +1038,9 @@ identity, **the same on every row**:
   digest as a number.
 - Booleans are `true` / `false`; numbers are written as the API sends them
   (`0.7`, `1.0`).
-- **No cell is empty.** A value the identity holds as null is written as a word:
+- **No identity cell is empty.** A value the identity holds as null is written
+  as a word (the candidate columns keep their earlier convention, where an empty
+  cell means no value):
 
 | Word | Written when |
 |---|---|
@@ -1070,7 +1072,8 @@ Where it is set:
 
 - **At startup**: `SHEPHERD_DEVICE` in the service's environment.
 - **On a reload**: the request's `device` (`POST /api/v1/pipeline/reload`). Null
-  falls back to `SHEPHERD_DEVICE`, and then to `auto`.
+  or blank falls back to `SHEPHERD_DEVICE`, and then to `auto`; a blank variable
+  counts as unset too.
 
 **When it is checked**: whenever a checkpoint is to be served, before anything
 is read — the service settles the device before it parses `kg.json` (a reload,
@@ -1094,9 +1097,9 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 `checkpoint_meta.device` stays.
 
 > **Behaviour change (M3c).** A host without CUDA that served with no device
-> named used to fall back to the CPU silently, after reading the checkpoint
-> and building the model, and said so only in a log line. **It is now
-> refused.** A CPU development host must set `SHEPHERD_DEVICE=cpu` (and send
+> named used to fall back to the CPU without refusing or warning, after
+> reading the checkpoint and building the model; only the log and the status's
+> `checkpoint_meta.device` said so. **It is now refused.** A CPU development host must set `SHEPHERD_DEVICE=cpu` (and send
 > `"device": "cpu"` with a reload, or leave it null so that variable applies).
 > A literal `auto`, which used to reach torch and fail there, is the same
 > request as unset. The WebUI has no device selector.

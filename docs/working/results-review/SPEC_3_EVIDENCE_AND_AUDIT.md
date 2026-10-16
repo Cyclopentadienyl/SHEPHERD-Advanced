@@ -144,8 +144,9 @@ Rejecting 4 and 5 was right. It did not license inventing 6.
 review). The Diagnosis CSV carries what produced the result — the checkpoint, graph, manifest,
 shortest-path table and dataset record by digest or identifier, the scoring mode and the settings
 in effect — as 21 `served_*` metadata columns appended after the candidate columns, the same on
-every row, under the one header row: no preamble, no sidecar, no log file, and no blank cell (a
-null is written as a word such as `absent`). The Markdown export puts the same identity in an
+every row, under the one header row: no preamble, no sidecar, no log file, and no blank identity
+cell (a null is written as a word such as `absent`; the candidate columns keep their convention,
+where an empty cell means no value). The Markdown export puts the same identity in an
 ordinary section, "What produced this result", before the candidates. That is the identity of the
 result, not the view state at the time of export: C5's CSV provenance above stays **[OPEN]**, and
 whatever it adds should follow the same convention (one atomic value per column, a common prefix,

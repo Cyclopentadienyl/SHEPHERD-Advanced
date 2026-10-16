@@ -414,6 +414,21 @@ def get_app_state() -> AppState:
     return app_state
 
 
+def requested_serving_device(device: Optional[str]) -> Optional[str]:
+    """The device a build is asked for: the request's, else `SHEPHERD_DEVICE`,
+    else None (`auto`).
+
+    **Blank is unset at both steps**, so `""` and `"  "` defer to the
+    deployment's setting alike, as `resolve_serving_device` treats them alike
+    (contract M3c). The value is passed on as given, not resolved: the served
+    identity records what was asked for beside what took effect.
+    """
+    for value in (device, os.environ.get("SHEPHERD_DEVICE")):
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
 class PipelineBundle(NamedTuple):
     """A constructed, fully checked pipeline that nothing is serving yet.
 
@@ -478,7 +493,7 @@ def build_pipeline(
         checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH") or None
     )
     data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR") or None
-    device = device or os.environ.get("SHEPHERD_DEVICE") or None
+    device = requested_serving_device(device)
 
     if not kg_path:
         if checkpoint_path:
