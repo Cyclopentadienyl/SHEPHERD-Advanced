@@ -56,8 +56,14 @@ new P1 or P2. **M3a's functional acceptance, within the scope agreed, is passed 
 two rounds on the GB10 that the reviewer reviewed: round 01 at `4b1571e` (real data R1–R8) and
 round 02 at `c4a21b5` (demo A–E and M), the product code the same in both (§4, "How M3a's
 acceptance is run"). It is a functional acceptance, not a capacity, model-quality or clinical
-benchmark reading; neither round's report is a complete single run; two P3 are tracked; nothing is
-merged. M3b, M3c, M4 and M5 are not implemented.** Facts about the code are cited at `627ed08`, before M1;
+benchmark reading; neither round's report is a complete single run; two P3 are tracked. The owner
+merged M3a into `main` afterwards (#122, `2049b64`, 2026-10-15).** **M3b is implemented
+(2026-10-15) and code-reviewed with no P1 or P2 at `04ecf42` (2026-10-16)** (§4, "M3b as
+implemented"); **its GB10 functional acceptance, within the scope agreed, is passed
+(2026-10-16)**: one run at `c80c1e4`, the demo and the real workspace `hpo_2026_0929_5a`, 75 of 75
+probes, reviewed by the reviewer (§4, "M3b's acceptance on the GB10"). It is a functional
+acceptance, not a capacity, AMP, model-quality or clinical reading; nothing is merged. M3c, M4 and
+M5 are not implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2682,6 +2688,235 @@ building, is stated here.
     `INCOMPLETE_BY_DESIGN` lists parser versions, builder parameters and imports. Closing that
     gap is the KG record v2 (below).
 
+**M3b as implemented (2026-10-15).** Code-reviewed with no P1 or P2 (below, "The review of
+`04ecf42`"); the GB10 functional acceptance follows ("How M3b's acceptance is run"). What
+differs from the text above, or was decided while building, is stated here.
+
+- **One check, after the graph check.** `src.kg.artifacts.verify_dataset_record(manifest,
+  kg_digest)` takes the run's one manifest reading and the `kg` digest its graph check returned
+  (`verify_graph_reads` or `verify_graph_source_read`), and reads `kg.provenance.json` beside that
+  manifest once (`read_once`): the digest of the bytes is compared with the manifest's binding
+  (`artifacts.provenance`), the same buffer is decoded and parsed, the record's own rules are
+  applied, and its `kg_digest` is compared with the run's. It returns a `DatasetRecord` (the
+  record, the identity of its bytes, binding `verified`, its origin) or raises
+  `DatasetRecordRefused` carrying the binding state: *unrecorded* (the manifest binds none),
+  *unverifiable* (bound and not here, not readable, or not a record this revision reads),
+  *mismatch* (not the bytes bound, or a record of another graph). A bound `files` record that
+  leaves a role unidentified is refused with its binding *verified* and its origin `files`. A
+  `kg_digest` that is not the one this manifest reading binds is a caller's pairing error
+  (`ValueError`), not a state. The status readers that reported and never refused
+  (`workspace_provenance_status`, `provenance_status`, `read_provenance`, `verify_provenance`) are
+  removed, with their static-pin entries (BACKLOG 19.14, 19.15); no production code called them.
+- **The record's rules in one place** (`src.kg.provenance.validate_record`, `unidentified_roles`,
+  `require_identified`): an object of schema 1 (the integer) with the required fields,
+  `incomplete_by_design` among them (every writer has written it); a SHA-256 `kg_digest`; an
+  origin of `files` or `synthetic`; a list of sources, each exactly what `source_entry` builds (its
+  role, its file's basename, a lower-case SHA-256 hexdigest, its declared version, nothing else),
+  no role twice; none for a synthetic origin; `missing_roles`, where present, equal to the roles the
+  sources leave out (every role for a synthetic record); `incomplete_by_design` a list of
+  statements. The writer applies the same rules before it writes (`build_provenance`, which stores
+  each source as `source_entry` builds it, and `write_provenance`), so a `files` record with an
+  unidentified input, or one that contradicts itself, is never written; the workspace writer runs
+  them before its first byte. A parse that fails in any way, a nesting past the parser's limit
+  included, is *unverifiable*; a refusal names one of `BINDING_STATES` or is not made.
+- **Consumers.** Training (`read_training_inputs`, at the top of the run, before the run directory),
+  measurement (`read_measurement_inputs`, both cohort kinds, before the checkpoint is read) and
+  serving (`DiagnosisPipeline`, before the tensors are adopted and the checkpoint read) call it
+  after their graph check. The inventory (`audit_checkpoint_family.py --inventory`) lists the
+  record's verdict with its binding state and origin as separate fields, and judges no checkpoint
+  servable over a refused record; the one-time move (`migrate_checkpoints.py`) leaves a refused
+  workspace's files in place as unverifiable. The reload route lists `kg.provenance.json` among the
+  required files, as it lists the manifest. Path-only serving, with no checkpoint, verifies no
+  workspace and is unchanged (BACKLOG 19.20).
+- **Shown apart, never as plain verified.** Training and measurement log the record's binding and
+  origin. Serving publishes `dataset_record` in `get_pipeline_config()` and the API's pipeline
+  status (an additive field; the Diagnosis tab is unchanged until M3c's served identity): binding,
+  origin, the digest of its bytes, the sources it names and `incomplete_by_design`. The measurement
+  manifest gains the same summary as `dataset_record` (§5.1), outside the measurement's semantics
+  digest, since no mode computes from it (`NON_SEMANTIC_FIELDS`), and its console summary prints
+  the binding and origin, with "SYNTHETIC WORKSPACE" for a synthetic one. The checkpoint's record is
+  unchanged (§5.1): the manifest it records binds the record's digest.
+  - **Stated exception: the evaluation ledger.** `record_evaluation.py`'s ledger record and
+    `--show` do not carry the origin; the ledger is item 14's ledger v2 (§5.1, M4), and the
+    measurement report it is filed from carries `dataset_record`. Until then a ledger row does not
+    say whether its workspace was synthetic.
+- **The manifest binding is required at write.** `generate_training_samples` refuses a persisting
+  call whose `graph_digests` lack `provenance` (or carry a malformed one) before anything is
+  written, as it refuses an unbound graph role. The schema stays 3: the field was already written
+  by every workspace this writer produced since the record existed; one without it is refused as
+  unrecorded at read, with the instruction to rebuild (decision 2).
+- **The writers' digests are of the bytes written** (BACKLOG 19.16, 19.17). `DigestingFile` and
+  `write_digested` (`src/utils/fingerprint.py`) hash what a serialiser writes as it passes, so
+  nothing is held to be hashed later. `KnowledgeGraph.save_json` returns the digest of `kg.json`'s
+  bytes (encoded in pieces of about a megabyte; the same bytes `json.dump` wrote, measured by a
+  test); `write_graph_data` writes the three tensor files and returns theirs, and
+  `export_graph_data` calls it; `write_provenance` returns the digest of the record's bytes. The
+  workspace writer binds these and hashes no path. One consequence: `torch.save` into a stream
+  names its archive `archive/` rather than after the file, so a tensor file written now differs
+  in bytes from one written before by the same content; every digest is still of the bytes on disk,
+  and two builds by this revision still agree (the probe's F2).
+- **The builder identifies every input, or stops.** An ontology the build parsed with neither the
+  loader's digest of its bytes nor a path stops the build before anything is written; it was
+  recorded as a missing role. The loader always gives both; the fallback that hashes the path for
+  an ontology the loader did not produce, and the annotation files' path digests, are unchanged
+  (BACKLOG 19.13, the KG record v2).
+- **Fixtures.** The generated-workspace fixture writes a synthetic record through the production
+  writer and binds it, so every workspace built on it is fully bound and synthetic; no test skips
+  the check. Tests that need a `files` record build one from files: real test inputs in the build
+  tests, and written stand-ins with their own digests in the probe's real-data test, which says it
+  is a stand-in (its graph is the in-memory demo).
+- **Internal review before delivery** (2026-10-15, four lenses and an independent check of each
+  serious finding): no P1. One P2, the deployment guides (§4.4, both languages) still describing
+  the record as reported and not enforced, rewritten. P3s fixed: the writer-refusal tests for
+  malformed digests had become refusals for an unbound record (now each reaches the shape check
+  and names its reason, with malformed record digests added); measurement's console did not name
+  the origin; source digests were checked for length only, a non-path filename escaped as
+  `TypeError`, `schema_version` `true` or `1.0` read as 1, a record without
+  `incomplete_by_design` was shown as establishing everything, and a caller's absolute path or
+  extra keys could reach the published summary (all now refused or normalised); one record failure
+  no rule names could stop the inventory; R5 and R6 compared only the binding and origin (now the
+  whole record the workspace check verified). The ledger is the stated exception above.
+
+**The review of `04ecf42` (the reviewer, 2026-10-16; read only, range `2049b64..04ecf42`):** no
+P1 or P2; the GB10 functional acceptance may proceed. No unneeded parallel pipeline, old-format
+admission or CPU fallback was found. What the review established, in short:
+- the order and the reads: `verify_dataset_record` uses the caller's one manifest reading, checks
+  the given `kg` digest is that reading's, reads the record once (identity and parse from one
+  buffer), compares the binding before parsing, and refuses every other state; a `files` record
+  missing a role is refused with its binding kept as *verified*, and a synthetic record passes the
+  same binding checks, not a skipped one. Training, measurement (both cohort kinds) and serving
+  call it after their graph check and before a run directory, a checkpoint or the tensors; the
+  inventory and the move call the same verifier; a refused reload leaves the served pipeline;
+- the writers: one rule set for writer and reader (`validate_record`), digests taken while
+  serialising, one graph-export writer, the binding required before the manifest is written, and
+  no record invented for an older workspace;
+- the boundaries kept: path reasoning without a model and an in-memory graph and model handed in
+  by a program are existing interfaces that claim no persisted workspace, and a named checkpoint
+  that fails the checks still refuses; M3b is not an atomic workspace transaction and does not
+  show the sources are the releases an institution chose; the builder's annotation path digests
+  stay BACKLOG 19.13 (the KG record v2); the ledger is M4's. The tensors' new archive name means a
+  rebuild may differ in bytes for the same content, and no consumer admits a digest mismatch
+  because content looks the same;
+- tests: 823 relevant tests passed in a separate checkout on the homelab with CUDA disabled (not a
+  CUDA acceptance), import-linter 4 kept, `git diff --check` clean. One environment note: the
+  serving test file stalled inside the reviewer's sandbox at FastAPI's `TestClient.__enter__` and
+  passed outside it (22 tests, 2.92 s); the 823 is the union of completed files, not a claim for
+  the aborted batch.
+- **One P3, synced:** `PLAN_PHENOTYPE_NORMALISATION.md` and BACKLOG item 16 still made N2 ride on
+  an M3b manifest change and rebuild that M3b did not make. They now record N2 as not implemented
+  by M3b and not yet scheduled, its own change deciding how its manifest field is introduced; no
+  code, rebuild or compatibility path was added for it.
+- **The real workspace, checked read-only before the run** (the reviewer, at `04ecf42`, the
+  production `inventory_workspace`, CUDA disabled, on
+  `/home/user/Desktop/SHEPHERD-Advanced/data/workspaces/hpo_2026_0929_5a`): graph accepted;
+  training inputs accepted; `dataset_record` accepted, binding *verified*, origin `files`;
+  `kg.provenance.json` SHA-256 `2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef`;
+  `split_manifest.json` SHA-256
+  `131cdf81cfa20ab8b44609be78473d6dce3f3a18d4436fafd589c6221ddcf664`; the record's `kg_digest`
+  `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`; all four roles, both
+  ontologies declaring `2026-09-01` (read from the record, not re-checked at the source); the
+  table's source binding accepted and its serving not judged (the tensor is not loaded); its four
+  older checkpoints refused by M2 for want of a `kg` role, as before. So the workspace needs no
+  rebuild for M3b. What the record says it does not establish (imports, parser and builder
+  versions, construction parameters) stays unestablished and is not read as verified.
+
+*How M3b's acceptance is run (prepared 2026-10-15; confirmed by the reviewer, 2026-10-16):* through
+the same deployment probe and production entry points (`scripts/probe_deployment.py
+--m2-acceptance --device cuda`), with the inputs, allocator and evidence layout of M3a's
+acceptance; no other runner. One run, demo and real data together.
+- **Locked:** the commit, the branch head that records this review, documents only over `04ecf42`
+  (`git diff 04ecf42..<head> -- src scripts tests` empty); the inputs, as M2's and M3a's:
+  `hpo_2026_0929_5a`, its `train_outputs/config.yaml` (SHA-256 `14bf8eea…970e`), its
+  `checkpoints/hgt/model-02-0.1813.pt` (SHA-256 `33a7b39a…8b79`), given by path, with the
+  record and manifest digests above; the allocator, the saved preset `cuda_async`, applied by the
+  probe before torch's first import.
+- **Evidence:** a new root per attempt, `/home/user/m3b-acceptance-<commit>-01/` (then `-02`, …,
+  every attempt kept), holding `checkout-before.txt`, `input-sha256.txt`, `console.log`,
+  `exit.txt`, `checkout-restored.txt` and `work/` (`--work-dir`, absent or empty at the start;
+  the report `work/m3b_report.json`). The real workspace and its table are read in place; earlier
+  M2, M3a, S10 and diagnostic evidence is not touched. The checkout is restored afterwards to
+  what `checkout-before.txt` records.
+- **Read by the report, not by the exit alone:** no probe failed or errored;
+  `m2_acceptance.demo.complete` and `m2_acceptance.real_data.complete` true; the tested commit
+  recorded with `tracked_files_modified` false; CUDA, `cudaMallocAsync` from the saved preset.
+  What M3b's part shows:
+- **Demo:** C1, the demo workspace's record verified and synthetic; C5, each way a record can fail
+  to bind refused with the state it establishes (missing → unverifiable; another workspace's
+  record → mismatch; another graph's record rebound → mismatch; the binding removed →
+  unrecorded; a bound file that is not a record → unverifiable; a bound `files` record leaving an
+  input unidentified → refused, binding verified); B22 and B23, the writer refusing a manifest
+  without the binding and a source list leaving an input unidentified; M3 and M4, the measurement
+  manifest and the served configuration showing the record as verified and synthetic; M11,
+  training, serving and measurement each refusing a workspace whose record is missing, with
+  nothing written and the served pipeline unchanged. All are in `M2_DEMO_REQUIRED`.
+- **Real data:** R1, the real workspace's record verified with origin `files` (its SHA-256 the
+  pre-check's `2c7abdb6…12ef`), every source named with its digest and declared version; R5 and
+  R6, the measurement manifest and the served configuration carrying that same record whole
+  (equal to what R1 verified, digest and sources included), R6 with the table verified by the
+  production loader; R2–R4 and R7 as in M2's and M3a's acceptance; R8, the inputs unchanged by
+  listing, size and modification time, which is not a content hash of the workspace. F1 is not
+  part of this run (no fresh real build is requested).
+- **Not shown:** that a record names the right releases; the record identifies the bytes a build
+  consumed, and whether those are the intended releases is the operator's to read from it. Not
+  part of it: capacity, S10, the memory attribution, AMP comparisons, HGT Edit 2, model quality or
+  a clinical benchmark.
+- **Complete** when the evidence is reviewed and every required probe passed; until then M3b's
+  functional acceptance is not passed.
+
+**M3b's acceptance on the GB10 (2026-10-16, at `c80c1e4`; evidence
+`/home/user/m3b-acceptance-c80c1e4-01/` on the homelab, its report, exit status and the
+reviewer's cross-checks in [`m3b-acceptance-2026-10-16/`](m3b-acceptance-2026-10-16/README.md);
+reviewed by the reviewer).** **Passed, within the scope agreed.** The report (SHA-256
+`9038a235907ff03b18f4a153bffc64f79b36657b9e8264dfecce58c6246ef489`, generated
+2026-10-16 13:05 +08:00) and what the reviewer checked, read only, without training again:
+- **Run:** the tested commit recorded and equal to the checked-out head, `tracked_files_modified`
+  false; probe exit 0, `tee` exit 0; 75 distinct probes, 75 passed, 0 failed, errored or skipped,
+  the console's PASS lines the same 75; every required probe run and passed (demo 33, real data
+  8, as read from the tested code's lists); `m2_acceptance` demo, real data and overall complete.
+- **Device and allocator:** NVIDIA GB10, resolved device `cuda`, the real serving model's
+  parameters on CUDA; backend `cudaMallocAsync` from the saved preset
+  (`PYTORCH_ALLOC_CONF=backend:cudaMallocAsync`, set before torch's first import); the
+  measurement reports record `cuda_executed` true.
+- **M3b's behaviour:** C1, M3 and M4, the demo record verified and synthetic, the measurement and
+  serving summaries the same record; C5, all six tamperings refused with the states expected
+  (missing and unreadable → *unverifiable*; replaced and another graph's → *mismatch*; unbound →
+  *unrecorded*; unidentified → binding *verified* and refused for the missing source, which is
+  the probe's pass condition, not an admission); B22 and B23, the writer refusing; M11, training,
+  serving and measurement each refusing a workspace without its record. R1, R5 and R6, the real
+  record verified with origin `files`, all four roles, its SHA-256
+  `2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef` in all three; the reviewer
+  also read the raw `measurement.json` and found its sources and `incomplete_by_design` equal to
+  the real `kg.provenance.json`, not merely the same count.
+- **The real short training, cross-checked:** parent `real/initial/checkpoints/last.pt`, one epoch,
+  ended paused (SHA-256 `27d1fd4c6f69459d86d9fd93f2c1f8b95740d753181548bc2f87390ef7c06b9e`);
+  child `real/resumed/checkpoints/last.pt`, two epochs, finished (SHA-256
+  `4f8032198e5cf872476dd04548ea1b4ba8298dd7f4db476c7c73172a18d80c4f`). Read with the shared
+  reader on the CPU (`weights_only=True`), these and the demo's parent and child have the digests
+  the report gives; the child's `resume_checkpoint` names its parent and its `kg` role agrees. R5's
+  measurement (15,000 samples) and the new-model inventory name the child, not the parent. R6:
+  `gnn_plus_shortest_path`, the loader's `sp_kg_binding` verified, `max_hops` 5, five candidates.
+  R7: `model-02` refused for its missing `kg` record, the child accepted by the source contract;
+  the inventory still claims no SP tensor loaded and no model quality. The measurement and
+  inventory artifacts' digests match the report. 33 cross-checks in all, kept in the reviewer's
+  `cross-checks.json`.
+- **Logs and inputs:** the four ERROR lines are the injected refusals (E5's damaged tensor, two
+  lines; M6's crossed checkpoint; M11.serving's missing record). The GB10's capability 12.1 above
+  the wheel's listed 12.0 is reported as a runtime notice; A4 and this run's training, measurement
+  and serving completed on CUDA, which does not establish that every operation has optimal native
+  support, and no compatibility or performance study is opened here. R8 compared 19 entries by
+  listing, size and modification time, not a content hash of the workspace; the reviewer
+  re-hashed the four named inputs (the config, `model-02`, `kg.provenance.json`,
+  `split_manifest.json`), all equal to `input-sha256.txt`.
+- **Not claimed:** capacity, AMP's effect, model quality or a hospital test; the short-training
+  checkpoints are not a chosen serving model. The measurement is `cohort_kind` generated, split
+  `val`: its numbers are not a MyGene2 or institutional held-out result. N2, M3c and M4 are not
+  completed by this. The evidence and `work/` stay where they are; no rerun or rebuild is needed.
+- **The homelab checkout restored (2026-10-16, the operator):** back on `main` at `9fe5113`, the
+  state `checkout-before.txt` records; the reviewer's evidence package found `checkout-before.txt`
+  and `checkout-restored.txt` byte-identical, the tracked files clean and the four named inputs
+  rechecked equal. At the review it was still detached at `c80c1e4`, the state before the
+  restore.
+
 **M3c — what is served is identified (R8).**
 - **The checkpoint's digest comes from M2.1's read** of the bytes loaded.
 - **One structured field replaces the two version strings.** It replaces
@@ -2767,9 +3002,9 @@ own.
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
-| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; R10's evidence and labels (§5.4) | M2, M4 |
+| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4) | M2, M3b, M4 |
 | Ledger | item 14's ledger v2 (`PLAN_TEST_RESULTS.md` §5), which takes the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`) | M4 |
-| `InferenceResult`, `DiagnoseResponse`, serving state | One structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect | M3c |
+| `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect | M3b, M3c |
 
 ### 5.2 Required versus displayed
 

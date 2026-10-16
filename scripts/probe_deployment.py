@@ -318,12 +318,19 @@ def verify_workspace(directory: Path):
     verifiers compare those reads with that one manifest reading — `kg.json` as
     serving checks it (`verify_graph_source_read`, on the identity of the bytes
     the graph was parsed from) and the cohorts as training and measurement check
-    them (`verify_cohort_reads`). Nothing is hashed by path. Returns the
-    manifest-bound digests of the four graph roles, the verified cohorts, and the
-    digest of each file as these reads returned it, by file name.
+    them (`verify_cohort_reads`). The dataset record is read once and checked
+    against the same manifest reading and graph (`verify_dataset_record`,
+    contract M3b). Nothing is hashed by path. Returns the manifest-bound digests
+    of the four graph roles, the verified cohorts, the digest of each file as
+    these reads returned it, by file name, and the verified dataset record.
     """
     from src.evaluation.cohort import GENERATED_SPLITS, resolve_cohort, verify_cohort_reads
-    from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest, verify_graph_source_read
+    from src.kg.artifacts import (
+        GRAPH_ARTIFACTS,
+        read_split_manifest,
+        verify_dataset_record,
+        verify_graph_source_read,
+    )
     from src.kg.graph import KnowledgeGraph
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
@@ -340,10 +347,33 @@ def verify_workspace(directory: Path):
     tensors = read_graph_artifacts(directory, map_location="cpu")
     samples = {split: read_samples(directory, split) for split in GENERATED_SPLITS}
     bound = verify_graph_source_read(manifest, graph, tensors.reads)
+    record = verify_dataset_record(manifest, bound["kg"])
     cohorts = verify_cohort_reads(manifest, samples)
     reads = [manifest.identity, graph, *tensors.reads.values(),
-             *(read.identity for read in samples.values())]
-    return bound, cohorts, {Path(read.path).name: read.sha256 for read in reads}
+             *(read.identity for read in samples.values()), record.identity]
+    return bound, cohorts, {Path(read.path).name: read.sha256 for read in reads}, record
+
+
+def _kg_and_record(directory: Path) -> Tuple[str, Any]:
+    """The `kg` digest and the dataset record the workspace check verifies."""
+    bound, _, _, record = verify_workspace(directory)
+    return bound["kg"], record
+
+
+def _record_facts(record) -> Dict[str, Any]:
+    """A verified dataset record as a report shows it (contract M3b): binding
+    state and origin apart, each source by role with its digest and declared
+    version (basenames only), and what the record says it does not establish."""
+    summary = record.summary()
+    return {
+        "binding": summary["binding"],
+        "origin": summary["origin"],
+        "sha256": summary["sha256"],
+        "sources": {entry["role"]: {"digest": entry["digest"],
+                                    "declared_version": entry.get("declared_version")}
+                    for entry in summary["sources"]},
+        "incomplete_by_design": summary["incomplete_by_design"],
+    }
 
 
 # =============================================================================
@@ -566,6 +596,13 @@ BAD_INPUTS: List[Tuple[str, str, Dict[str, Any], Dict[str, Any], str]] = [
      {}, {"val_disease_fraction": 1.5}, "val_fraction must be finite"),
     ("B12", "a universe too small to split is refused",
      {}, {"min_phenotypes": 50}, "cannot be cut into two non-empty"),
+    # Contract M3b: a record from files that leaves a required input
+    # unidentified is refused by every consumer, so it is not written.
+    ("B23", "sources leaving a required input unidentified are refused",
+     {"sources": [{"role": role, "filename": f"{role}.input", "digest": "0" * 64,
+                   "declared_version": None}
+                  for role in ("hpo", "phenotype_hpoa", "genes_to_phenotype")]},
+     {}, "unidentified"),
 ]
 
 
@@ -658,7 +695,7 @@ def phase_writer(report: Report, work: Path) -> Optional[Path]:
 
         kg = _demo_kg()
         sound_digests = {role: "0" * 64 for role in
-                         ("kg", "node_features", "edge_indices", "num_nodes")}
+                         ("kg", "node_features", "edge_indices", "num_nodes", "provenance")}
         sound_recipe = {
             "feature_dim": FEATURE_DIM,
             "feature_seed": DEFAULT_FEATURE_SEED,
@@ -705,8 +742,13 @@ def phase_writer(report: Report, work: Path) -> Optional[Path]:
         # recorded a JSON number no consumer could ever match.
         ("B19", "a digest that is a 64-digit integer is refused",
          dict(digests={**{r: "0" * 64 for r in
-                          ("kg", "node_features", "edge_indices")},
+                          ("kg", "node_features", "edge_indices", "provenance")},
                        "num_nodes": int("1" * 64)}), "not SHA-256"),
+        # Contract M3b: the manifest binds the dataset record, or is not written.
+        ("B22", "a persisted call that binds no dataset record is refused",
+         dict(digests={r: "0" * 64 for r in
+                       ("kg", "node_features", "edge_indices", "num_nodes")}),
+         ("provenance", "unbound")),
     ]
 
     for probe_id, claim, kwargs, fragment in DIRECT_REFUSALS:
@@ -795,8 +837,13 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
     from src.kg.artifacts import GRAPH_ARTIFACTS
 
     def _accepted() -> Tuple[str, Dict[str, Any]]:
-        digests, cohorts, read = verify_workspace(sound)
+        digests, cohorts, read, record = verify_workspace(sound)
         assert cohorts.verified == ("train", "val")
+        # **Fully bound, and shown as synthetic** (contract M3b): the demo graph
+        # is built in memory, so its record says so and still passes every check.
+        assert (record.binding, record.origin) == ("verified", "synthetic"), (
+            f"the demo workspace's record is {record.binding}, origin {record.origin}"
+        )
         assert cohorts.disjointness_measured and cohorts.disjointness_claim_checked
         overlap = cohorts.disease_sets["train"] & cohorts.disease_sets["val"]
         assert not overlap, "the cohorts share a disease"
@@ -812,18 +859,14 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
         # asserts that it does; this measures it.
         #
         # The files the checks read are listed with the digest of the bytes they
-        # verified; a file they do not parse (the provenance record) is
-        # identified by path, which is all a listing of it can be.
-        from src.utils.fingerprint import file_sha256
-
+        # verified; since contract M3b that includes the dataset record, so no
+        # file is identified by path.
         return "every verifier accepted it", {
             # Counts and digests only: per-disease lists are forbidden in
             # evidence artifacts, and the identifiers are what those lists are.
             "kg_digest": digests["kg"],
-            "workspace_digests": {
-                path.name: read[path.name] if path.name in read else file_sha256(path)
-                for path in sorted(sound.iterdir()) if path.is_file()
-            },
+            "workspace_digests": dict(sorted(read.items())),
+            "dataset_record": {"binding": record.binding, "origin": record.origin},
             "train_diseases": len(cohorts.disease_sets["train"]),
             "val_diseases": len(cohorts.disease_sets["val"]),
             "disease_overlap": len(overlap),
@@ -912,6 +955,78 @@ def phase_workspace(report: Report, work: Path, sound: Path) -> None:
         "C4", "workspace", "another workspace's kg.json is refused", _crossed
     )
 
+    # -------------------------------------------------------------------------
+    # The dataset record is required (contract M3b). Each case tampers with a
+    # copy of the sound workspace, and each is refused with the binding state
+    # it establishes. Where the manifest is rebound to the record written, only
+    # the record's content can refuse it.
+    # -------------------------------------------------------------------------
+    from src.kg.artifacts import DATASET_RECORD_ROLE, DatasetRecordRefused, MANIFEST_FILENAME
+    from src.kg.provenance import PROVENANCE_FILENAME, SOURCE_ROLES, encode_provenance
+
+    def _rebind(copy: Path, record_bytes: bytes) -> None:
+        from src.kg.artifacts import read_split_manifest
+        from src.utils.fingerprint import write_digested
+
+        digest = write_digested(copy / PROVENANCE_FILENAME, lambda sink: sink.write(record_bytes))
+        manifest = read_split_manifest(copy).manifest
+        manifest["artifacts"][DATASET_RECORD_ROLE] = digest
+        (copy / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+    def _unbound(copy: Path) -> None:
+        from src.kg.artifacts import read_split_manifest
+
+        manifest = read_split_manifest(copy).manifest
+        del manifest["artifacts"][DATASET_RECORD_ROLE]
+        (copy / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+    def _unidentified(copy: Path) -> None:
+        # A record from files that leaves the MONDO input unidentified, well
+        # formed and naming this graph: what a build that skipped an input
+        # would have written.
+        record = verify_workspace(sound)[3].record
+        sources = [{"role": role, "filename": f"{role}.input", "digest": "0" * 64,
+                    "declared_version": None} for role in SOURCE_ROLES[1:]]
+        _rebind(copy, encode_provenance({**record, "origin": "files", "sources": sources,
+                                         "missing_roles": [SOURCE_ROLES[0]]}).encode("utf-8"))
+
+    RECORD_CASES = [
+        ("missing", "a workspace whose dataset record is gone is refused",
+         lambda copy: (copy / PROVENANCE_FILENAME).unlink(), "unverifiable", "is not here"),
+        ("replaced", "another workspace's dataset record in its place is refused",
+         lambda copy: (copy / PROVENANCE_FILENAME).write_bytes(
+             (_other() / PROVENANCE_FILENAME).read_bytes()),
+         "mismatch", "is not the dataset record"),
+        ("other_graph", "a record of another graph, rebound in the manifest, is refused",
+         lambda copy: _rebind(copy, (_other() / PROVENANCE_FILENAME).read_bytes()),
+         "mismatch", "describes the graph"),
+        ("unbound", "a manifest that binds no dataset record is refused",
+         _unbound, "unrecorded", "binds no"),
+        ("unreadable", "a bound record that is not a record is refused",
+         lambda copy: _rebind(copy, b"not a record"), "unverifiable", "is not one this revision reads"),
+        ("unidentified", "a bound files record leaving an input unidentified is refused",
+         _unidentified, "verified", "unidentified"),
+    ]
+
+    for case, claim, tamper, binding, fragment in RECORD_CASES:
+        def _record_case(tamper=tamper, binding=binding, fragment=fragment, case=case):
+            copy = work / f"record_{case}"
+            if copy.exists():
+                shutil.rmtree(copy)
+            shutil.copytree(sound, copy)
+            tamper(copy)
+            refuses(lambda: verify_workspace(copy), DatasetRecordRefused, fragment)
+            try:
+                verify_workspace(copy)
+            except DatasetRecordRefused as exc:
+                assert exc.binding == binding, (
+                    f"refused as {exc.binding}, and the state this case establishes is {binding}"
+                )
+            shutil.rmtree(copy)
+            return "refused", {"binding": binding}
+
+        report.run(f"C5.{case}", "workspace", claim, _record_case)
+
 
 # =============================================================================
 # Phase D — training on this machine, through the production entry point
@@ -983,7 +1098,7 @@ def phase_training(
         checkpoint = read_checkpoint(
             selected["path"], map_location="cpu", weights_only=True
         ).checkpoint
-        digests, _, _ = verify_workspace(sound)
+        digests, _, _, _ = verify_workspace(sound)
         # **Through the consumers' own comparator** (contract M2.4), not a
         # second comparison here: the four graph roles, `kg` the manifest-bound
         # source graph, present on both sides and equal, or it raises.
@@ -1292,6 +1407,12 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # Contract M3a on the same runs: M2 above is a real pause and resume; M9
     # extends the finished child at a fixed rate; M10 refuses to resume it.
     "M9", "M10",
+    # Contract M3b: the dataset record is required. C5 refuses each way a
+    # record can fail to bind, and M11 refuses a workspace without one at each
+    # entry point; C1, M3 and M4 show the demo's record as synthetic.
+    "C5.missing", "C5.replaced", "C5.other_graph", "C5.unbound", "C5.unreadable",
+    "C5.unidentified", "B22", "B23",
+    "M11.training", "M11.serving", "M11.measurement",
 )
 M2_REAL_REQUIRED: Tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8")
 
@@ -1609,7 +1730,10 @@ def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str) -> int
     ])
 
 
-def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str) -> Dict[str, Any]:
+def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
+                       record: Any) -> Dict[str, Any]:
+    """`record` is the dataset record the workspace check verified: the
+    measurement manifest must carry it whole, sources and digest included."""
     from src.utils.fingerprint import file_sha256
 
     assert output.is_file(), "the measurement wrote no report"
@@ -1619,16 +1743,25 @@ def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str) -> Dic
         "the measurement does not name the checkpoint it was given"
     )
     assert digests.get("kg") == kg_digest, "the measurement records another source graph"
+    # **The number says what its graph was built from** (contract M3b): the
+    # record the workspace check verified, whole.
+    recorded = result["manifest"].get("dataset_record")
+    assert recorded == record.summary(), (
+        f"the measurement records its dataset record as {recorded}, not the record "
+        f"the workspace check verified ({record.binding}, origin {record.origin})"
+    )
     return {
         "report_sha256": file_sha256(output),
         "checkpoint_sha256": checkpoint_sha,
+        "dataset_record": {"binding": recorded["binding"], "origin": recorded["origin"],
+                           "sha256": recorded["sha256"], "sources": len(recorded["sources"])},
         "n_ranked": result.get("n_ranked"),
         "authoritative_metrics": result.get("authoritative_metrics"),
     }
 
 
 def _serve_and_diagnose(
-    kg_path: Path, checkpoint: Path, data_dir: Path, device: str
+    kg_path: Path, checkpoint: Path, data_dir: Path, device: str, record: Any
 ) -> Dict[str, Any]:
     """The production serving build (`build_pipeline`), shortest paths verified
     by its own loader, and one diagnosis through the built pipeline."""
@@ -1648,6 +1781,13 @@ def _serve_and_diagnose(
         "the shortest-path table's source binding was not verified by the loader"
     )
     assert config.get("scoring_mode") == "gnn_plus_shortest_path", "the scoring mode is not GNN+SP"
+    # The served workspace's record, binding state and origin apart (contract
+    # M3b): the record the workspace check verified, whole.
+    published = config.get("dataset_record")
+    assert published == record.summary(), (
+        f"serving publishes its dataset record as {published}, not the record the "
+        f"workspace check verified ({record.binding}, origin {record.origin})"
+    )
     devices = {str(p.device).split(":")[0] for p in bundle.pipeline.model.parameters()}
     assert devices == {device}, f"the model's parameters are on {sorted(devices)}"
     result = bundle.pipeline.run(
@@ -1664,6 +1804,8 @@ def _serve_and_diagnose(
         "sp_kg_binding": config.get("sp_kg_binding"),
         "sp_hop_bound_source": config.get("sp_hop_bound_source"),
         "sp_max_hops": config.get("sp_max_hops"),
+        "dataset_record": {"binding": published["binding"], "origin": published["origin"],
+                           "sha256": published["sha256"], "sources": len(published["sources"])},
         "parameter_devices": sorted(devices),
         "candidates": len(scores),
     }
@@ -1751,8 +1893,7 @@ def phase_m2_demo(
         output = m2 / "measured" / "measurement.json"
         assert _measure(state["child"], sound, output, device) == 0, "the measurement failed"
         return "the resumed checkpoint was measured over its own workspace", _measurement_facts(
-            output, _read_run_checkpoint(state["child"])["sha256"],
-            verify_workspace(sound)[0]["kg"])
+            output, _read_run_checkpoint(state["child"])["sha256"], *_kg_and_record(sound))
 
     report.run("M3", "m2", "CONTROL: measurement accepts the resumed checkpoint over its graph",
                _measured)
@@ -1769,7 +1910,8 @@ def phase_m2_demo(
             cwd=project_root, capture_output=True, text=True, timeout=1800,
         )
         assert produced.returncode == 0, "the shortest-path producer failed"
-        facts = _serve_and_diagnose(served / "kg.json", state["child"], served, device)
+        facts = _serve_and_diagnose(served / "kg.json", state["child"], served, device,
+                                    _kg_and_record(served)[1])
         return "build, train, resume and serve, with the table verified", facts
 
     report.run("M4", "m2",
@@ -1986,6 +2128,60 @@ def phase_m2_demo(
     report.run("M10", "m2", "resuming a finished run is refused before anything exists",
                _finished_refused)
 
+    # ---- Contract M3b: each entry point refuses a workspace without its record
+    def _without_record() -> Path:
+        from src.kg.provenance import PROVENANCE_FILENAME
+
+        if "without_record" not in state:
+            copy = _workspace_copy(sound, m2 / "no_record_workspace")
+            (copy / PROVENANCE_FILENAME).unlink()
+            state["without_record"] = copy
+        return state["without_record"]
+
+    def _training_refuses_record() -> Tuple[str, Dict[str, Any]]:
+        from src.kg.artifacts import DatasetRecordRefused
+
+        copy, run = _without_record(), m2 / "refused" / "no_record"
+        before = snapshot(copy, include_dirs=True)
+        refuses(lambda: _train_run(copy, run, device, 1, settings=_DEMO_TRAINING),
+                DatasetRecordRefused, "is not here")
+        assert not run.exists(), "the refused run created its run directory"
+        assert_untouched(before, copy, "a refused training run", include_dirs=True)
+        return "refused before the run directory existed", {}
+
+    def _serving_refuses_record() -> Tuple[str, Dict[str, Any]]:
+        from src.kg.artifacts import DatasetRecordRefused
+
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        copy = _without_record()
+        before, served = snapshot(copy, include_dirs=True), api.app_state.pipeline
+        refuses(lambda: api.build_pipeline(
+            kg_path=str(copy / "kg.json"), checkpoint_path=str(state["child"]),
+            data_dir=str(copy), device=device,
+        ), DatasetRecordRefused, "is not here")
+        assert api.app_state.pipeline is served, "the served pipeline changed"
+        assert_untouched(before, copy, "a refused build", include_dirs=True)
+        return "refused before the checkpoint was read", {}
+
+    def _measurement_refuses_record() -> Tuple[str, Dict[str, Any]]:
+        from src.kg.artifacts import DatasetRecordRefused
+
+        assert "child" in state, "the resumed checkpoint (M2) is not available"
+        copy = _without_record()
+        output = m2 / "measure_no_record" / "measurement.json"
+        before = snapshot(copy, include_dirs=True)
+        refuses(lambda: _measure(state["child"], copy, output, device),
+                DatasetRecordRefused, "is not here")
+        assert not output.parent.exists(), "the refused measurement created its output directory"
+        assert_untouched(before, copy, "a refused measurement", include_dirs=True)
+        return "refused before any model was built or output written", {}
+
+    for use, probe in (("training", _training_refuses_record),
+                       ("serving", _serving_refuses_record),
+                       ("measurement", _measurement_refuses_record)):
+        report.run(f"M11.{use}", "m2",
+                   f"{use} refuses a workspace whose dataset record is missing (M3b)", probe)
+
 
 # =============================================================================
 # Phase R — contract M2's acceptance on real data (--real-workspace)
@@ -2052,7 +2248,13 @@ def phase_m2_real(
             sidecar_path,
         )
 
-        digests, cohorts, _ = verify_workspace(real)
+        digests, cohorts, _, record = verify_workspace(real)
+        # **Built from files, every input identified** (contract M3b): a real
+        # workspace whose record were synthetic, or left an input unidentified,
+        # would not be the real-data run this part claims.
+        assert (record.binding, record.origin) == ("verified", "files"), (
+            f"the real workspace's record is {record.binding}, origin {record.origin}"
+        )
         table = real / "shortest_paths.pt"
         assert table.is_file() and sidecar_path(table).is_file(), (
             "the workspace has no shortest-path table with its sidecar"
@@ -2066,9 +2268,10 @@ def phase_m2_real(
         assert kg_binding_state(binding, digests["kg"], source=table.name) == "verified", (
             "the table's sidecar does not name this workspace's graph"
         )
-        state["kg"] = digests["kg"]
+        state["kg"], state["record"] = digests["kg"], record
         return "the workspace's graph and training inputs verify", {
             "kg_digest": digests["kg"],
+            "dataset_record": _record_facts(record),
             "train_diseases": len(cohorts.disease_sets["train"]),
             "val_diseases": len(cohorts.disease_sets["val"]),
             "sidecar_names_this_graph": True,
@@ -2151,13 +2354,15 @@ def phase_m2_real(
         output = runs / "measurement" / "measurement.json"
         assert _measure(state["child"], real, output, device) == 0, "the measurement failed"
         return "measured through the production entry point", _measurement_facts(
-            output, _read_run_checkpoint(state["child"])["sha256"], state["kg"])
+            output, _read_run_checkpoint(state["child"])["sha256"], state["kg"],
+            state["record"])
 
     report.run("R5", "real", "measurement accepts and measures the new checkpoint", _measured)
 
     def _served() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "R4 did not pass"
-        facts = _serve_and_diagnose(real / "kg.json", state["child"], real, device)
+        facts = _serve_and_diagnose(real / "kg.json", state["child"], real, device,
+                                    state["record"])
         return "served with the table verified, and a diagnosis ran", facts
 
     report.run("R6", "real", "serving builds the new checkpoint, SP verified, and diagnoses",
@@ -2257,11 +2462,16 @@ def phase_real_build(
         )
         elapsed = round(time.time() - started, 1)
 
-        digests, cohorts, _ = verify_workspace(workspace)
+        digests, cohorts, _, record = verify_workspace(workspace)
         overlap = cohorts.disease_sets["train"] & cohorts.disease_sets["val"]
         assert not overlap, "the real cohorts share a disease"
+        # The builder identifies all four inputs, or stops (contract M3b).
+        assert (record.binding, record.origin) == ("verified", "files"), (
+            f"the real build's record is {record.binding}, origin {record.origin}"
+        )
         return "a real workspace was built and verified", {
             "kg_digest": digests["kg"],
+            "dataset_record": _record_facts(record),
             "train_diseases": len(cohorts.disease_sets["train"]),
             "val_diseases": len(cohorts.disease_sets["val"]),
             "disease_overlap": len(overlap),

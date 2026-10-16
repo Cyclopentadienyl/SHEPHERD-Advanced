@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from src.kg.artifacts import (
+    DATASET_RECORD_ROLE,
     GRAPH_ARTIFACTS,
     SPLIT_MANIFEST_SCHEMA_VERSION,
     validate_graph_export_recipe,
@@ -116,14 +117,18 @@ def _require_persistable(
     refuse_if_checkpoints_exist(output_dir)
 
     supplied = graph_digests or {}
-    unbound = sorted(role for role in GRAPH_ARTIFACTS if not supplied.get(role))
+    # **The dataset record is bound with the graph** (contract M3b): training,
+    # serving and measurement refuse a manifest that binds no
+    # `kg.provenance.json`, so this writer does not produce one.
+    bound_roles = (*GRAPH_ARTIFACTS, DATASET_RECORD_ROLE)
+    unbound = sorted(role for role in bound_roles if not supplied.get(role))
     if unbound:
         raise ValueError(
             f"this workspace would leave {', '.join(unbound)} unbound. "
-            "Only the writer of the graph export can vouch for those digests, "
-            "so they are supplied rather than recomputed here — and a manifest "
-            "without them cannot show that the tensors a model consumes are "
-            "this graph's."
+            "Only the writer of the graph export and its dataset record can vouch "
+            "for those digests, so they are supplied rather than recomputed here "
+            "— and a manifest without them cannot show that the tensors a model "
+            "consumes are this graph's, or what the graph was built from."
         )
 
     # **Not an integrity check, and not offered as one.** A well-formed digest
@@ -142,7 +147,7 @@ def _require_persistable(
     # value, so they cannot diverge and a stricter test would refuse a caller
     # for nothing.
     malformed = sorted(
-        role for role in GRAPH_ARTIFACTS
+        role for role in bound_roles
         if not (isinstance(supplied[role], str) and _IS_SHA256.fullmatch(supplied[role]))
     )
     if malformed:
@@ -204,9 +209,9 @@ def generate_training_samples(
             those bytes. Only the caller of the export knows that, and no check
             here can recover it — a digest says which bytes exist, not which
             arguments made them.
-        graph_digests: the digests of the graph artifacts, **computed by whoever
-            wrote them**, keyed by manifest role. Required when writing a
-            manifest. This function does not hash them itself and must not: it
+        graph_digests: the digests of the graph artifacts and of the dataset
+            record (`provenance`, contract M3b), **computed by whoever wrote
+            them**, keyed by manifest role. Required when writing a manifest. This function does not hash them itself and must not: it
             would be digesting whatever files happen to sit in ``output_dir``,
             which is a statement about the directory rather than about the export
             this allocation was cut from. Only the writer can make that binding.

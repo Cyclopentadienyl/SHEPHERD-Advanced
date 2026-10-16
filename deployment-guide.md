@@ -1080,12 +1080,14 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 | `kg_digest` | 同一次建圖寫出的 `kg.json` 的 SHA-256。**這是紀錄與圖的綁定** |
 | `origin` | `files`（真實建圖）或 `synthetic`（demo／測試用的記憶體圖） |
 | `sources` | 每個輸入的角色、檔名、內容 digest、宣告版本 |
-| `missing_roles` | 未能識別的輸入角色 |
+| `missing_roles` | `files` 時為來源清單缺少的角色——在管線接受的紀錄裡永遠為空；`synthetic` 時依定義列出全部角色 |
 | `counters` | 解析統計，例如 `rows_skipped_unresolved_disease_id` |
 | `incomplete_by_design` | **這份紀錄刻意不涵蓋的東西** |
 
-`sources` 的四個角色是 `mondo`、`hpo`、`phenotype_hpoa`、`genes_to_phenotype`。
-**檔名只是線索，digest 才是身分**——同一個目錄名下的檔案可以被原地替換。
+`sources` 的四個角色是 `mondo`、`hpo`、`phenotype_hpoa`、`genes_to_phenotype`，
+**真實建圖四者缺一不可**：缺任一註解檔 builder 就停止，兩個本體一定會載入，而對已解析
+卻無法識別的輸入，builder 會停止而不是把它記成缺少。**檔名只是線索，digest 才是身分**
+——同一個目錄名下的檔案可以被原地替換。
 
 `declared_version` 是本體檔頭的原始 `data-version`，**沒有就是 `null`**，不會用
 OBO 的 format version 冒充 release。
@@ -1100,41 +1102,49 @@ OBO 的 format version 冒充 release。
 `incomplete_by_design` 直接寫在檔案裡：本體解析時解析的 imports、parser 與 builder
 的版本、建圖參數，**都不在紀錄範圍內**。它是**來源檔清單，不是重建配方**。
 
-### 三種狀態
+### 必要條件：沒有它，訓練、serving 與量測一律拒絕
 
-| 狀態 | 意義 | 該怎麼看 |
-|---|---|---|
-| 沒有這個檔案 | 這個 workspace 建於此功能之前 | **unknown**。不會、也不該用現在快取裡的檔案回填 |
-| 有，且與 `kg.json` 相符 | 這個圖的來源 | 可信 |
-| **有，但缺檔／損壞／不相符** | 一個不成立的宣稱 | **回報為此狀態**，不等同 unknown |
+**自 contract M3b 起，這份紀錄是必要的。** manifest 綁定它的 digest（`split_manifest.json`
+裡的 `artifacts.provenance`），訓練、serving（以 workspace 上的模型服務時）與量測都在各自
+的圖檢查之後檢查它，且只讀一次：檔案位元組必須正是 manifest 綁定的那份，`kg_digest` 必須
+指向剛驗證過的那個圖。其他情況一律拒絕，而且發生在建立 run 目錄、讀取 checkpoint 或建
+模型之前。拒絕訊息會指明**綁定狀態**：
 
-第三種最重要：兩個 graph-only workspace 在搬移時互換了 provenance 檔案，**每個檔案都
-合法**，只有配對錯了。`workspace_provenance_status()` 比對紀錄裡的 `kg_digest` 與現場的
-`kg.json` 就能分辨。
+| 綁定狀態 | 意義 |
+|---|---|
+| `verified` | 正是 manifest 綁定、且指向本 workspace 圖的紀錄。唯一被接受的狀態 |
+| `mismatch` | 檔案不是 manifest 綁定的位元組，或描述的是另一個圖——例如兩個 workspace 在搬移時互換了紀錄，每個檔案都合法，只有配對錯了 |
+| `unrecorded` | manifest 沒有綁定任何紀錄 |
+| `unverifiable` | manifest 綁定了紀錄，但檔案不在、讀不到，或不是本版本能讀的紀錄 |
 
-**來源驗證不會擋下服務。** 來源狀態是「這個圖從哪裡來」的敘述，不是「這個圖能不能
-用」的判定——後者由 `kg.json` 與三個張量的 digest 綁定負責，那些仍然會拒絕。
-`workspace_provenance_status()` **不拋例外**，只回傳狀態；要不要因為來源有問題而停止
-什麼，是呼叫端的政策決定，目前沒有任何程式這樣做。這個承諾同時涵蓋磁碟層面與「檔案存不存在」的探測，不只是
-內容層面：`kg.json`、來源紀錄或 `manifest.json` 若本行程無法開啟或解碼，**或是
-workspace 目錄本身無法進入**（此時連 `Path.is_file()` 都會拋例外——`pathlib` 對
-`EACCES` 是往外拋，不是回傳 `False`），都會以 `unreadable` 狀態回傳並在 detail 裡
-帶上原因，而不是從一個所有呼叫端都沒有包 try 的函數裡丟出例外。「無從得知紀錄在不
-在」會據實回報，不會被講成「紀錄不在」。manifest 這一項尤其要分清楚——manifest 讀不到的意思是
-**「無從得知是否曾宣告過來源紀錄」**，不是**「從未宣告過」**，而只有後者才能推得
-「這個 workspace 建於 provenance 之前」。要不要因為 manifest 壞掉而拒絕整個
-workspace，仍然是各入口自己的 workspace 檢查（`read_split_manifest` 與
-`verify_graph_reads`，比對該入口實際讀到的檔案）的職責。
+已綁定、來源為 `files`、卻缺少四個角色之一的紀錄同樣拒絕，此時綁定狀態為 `verified`：
+這表示有必要輸入未被識別。
 
-> **修正紀錄**：本節的早期版本讓圖驗證函數（當時的 `verify_graph_artifacts()`，現已
-> 移除）在來源紀錄損壞時直接拋例外。serving 在載入張量前執行那項檢查——結果是「一張便條
-> 不見了」會讓模型無法初始化，冷啟動時 `/diagnose` 回 503，而張量本身完好無損。已改為
-> 回報而非拒絕。
+**來源（origin）是另一項事實，與綁定狀態並列顯示，絕不取代它。** `files` 表示圖由真實
+輸入建成；`synthetic` 表示由 demo、測試或部署探針在記憶體中建成。合成 workspace 同樣
+完整綁定、通過所有檢查，且在顯示紀錄的每個地方都標明為合成：
+
+- 訓練日誌（`Dataset record kg.provenance.json: binding verified, origin synthetic`）；
+- serving 的 pipeline 設定與 API 的 pipeline 狀態（`dataset_record`：綁定狀態、來源、紀錄
+  的 digest、來源檔清單與 `incomplete_by_design`）；
+- 量測報告的 manifest（`dataset_record`）與主控台摘要；
+- 盤點工具（`scripts/audit_checkpoint_family.py --inventory`），以兩個欄位分別列出紀錄的
+  判定、綁定狀態與來源。
+
+紀錄自述不涵蓋的部分（`incomplete_by_design`）只顯示、不拒絕。沒有模型的 serving（只用
+`kg.json` 做路徑推理）不驗證 workspace，不受影響。pipeline reload 把 `kg.provenance.json`
+列為必要檔案。
 
 ### 舊 workspace
 
-Phase 1 之前建的 schema-3 workspace **不會因為沒有這個檔案而失效**。manifest 沒有
-宣告 provenance 時，reader 不會去找它。
+**不支援。** manifest 未綁定紀錄的 workspace 會以 `unrecorded` 拒絕，紀錄遺失的會以
+`unverifiable` 拒絕，沒有相容模式。請用 `scripts/build_knowledge_graph.py --generate-samples`
+重建。部署前可先跑唯讀的盤點工具，列出哪些 workspace 受影響。
+
+> **沿革**：contract M3b 之前，這份紀錄只回報、不強制：狀態讀取函數
+> （`workspace_provenance_status()`，已移除）只回傳狀態，沒有任何程式據此拒絕。更早的版本
+> 曾讓圖驗證在載入張量前因紀錄損壞而拋例外，當時已撤回。擁有者的決定為正式管線推翻了
+> 這個政策；圖檢查與紀錄檢查仍是兩個獨立的檢查，各有各的狀態。
 
 ### 與本體版本的關係
 

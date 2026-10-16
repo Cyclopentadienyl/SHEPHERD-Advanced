@@ -56,12 +56,22 @@ def test_every_workspace_probe_passes_from_one_read_of_each_file(written):
     phase = report.probes[before:]
     assert [p.probe_id for p in phase] == [
         "C1", "C2.edge_indices", "C2.kg", "C2.node_features", "C2.num_nodes", "C3", "C4",
+        # Contract M3b: each way the dataset record can fail to bind.
+        "C5.missing", "C5.replaced", "C5.other_graph", "C5.unbound", "C5.unreadable",
+        "C5.unidentified",
     ]
     assert {p.probe_id: p.status for p in phase} == {p.probe_id: "passed" for p in phase}, (
         {p.probe_id: p.detail for p in phase if p.status != "passed"}
     )
     kg_digest = hashlib.sha256((sound / "kg.json").read_bytes()).hexdigest()
     assert phase[0].facts["kg_digest"] == kg_digest
+    # The demo's record, shown with its origin, never as plain verified.
+    assert phase[0].facts["dataset_record"] == {"binding": "verified", "origin": "synthetic"}
+    assert {p.probe_id: p.facts["binding"] for p in phase if p.probe_id.startswith("C5.")} == {
+        "C5.missing": "unverifiable", "C5.replaced": "mismatch",
+        "C5.other_graph": "mismatch", "C5.unbound": "unrecorded",
+        "C5.unreadable": "unverifiable", "C5.unidentified": "verified",
+    }
 
 
 def test_the_checks_open_each_workspace_file_once(written):
@@ -70,16 +80,18 @@ def test_the_checks_open_each_workspace_file_once(written):
     probe, _, sound, _ = written
 
     with count_opens() as opens:
-        bound, cohorts, read = probe.verify_workspace(sound)
+        bound, cohorts, read, record = probe.verify_workspace(sound)
 
-    for name in ("kg.json", "node_features.pt", "edge_indices.pt", "num_nodes.json",
-                 "train_samples.json", "val_samples.json", "split_manifest.json"):
+    names = ("kg.json", "node_features.pt", "edge_indices.pt", "num_nodes.json",
+             "train_samples.json", "val_samples.json", "split_manifest.json",
+             "kg.provenance.json")
+    for name in names:
         assert opens.opens(sound / name) == 1, name
     assert cohorts.verified == ("train", "val")
     assert bound["kg"] == hashlib.sha256((sound / "kg.json").read_bytes()).hexdigest()
-    for name in ("kg.json", "node_features.pt", "edge_indices.pt", "num_nodes.json",
-                 "train_samples.json", "val_samples.json", "split_manifest.json"):
+    for name in names:
         assert read[name] == hashlib.sha256((sound / name).read_bytes()).hexdigest(), name
+    assert (record.binding, record.origin) == ("verified", "synthetic")
 
 
 def test_a_replacement_after_the_manifest_read_is_refused_naming_the_file(

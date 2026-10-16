@@ -26,6 +26,27 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 
+def _four_sources(directory):
+    """Stand-ins for the four files a real build consumes, written and digested.
+
+    **A stand-in, said as one.** The probe's real-data phase requires a record
+    from files (R1); this test's graph is the in-memory demo, so no real build
+    produced it. The files named here exist and their digests are theirs; that
+    they made the graph is the claim a stand-in cannot make.
+    """
+    import hashlib
+
+    from src.kg.provenance import SOURCE_ROLES, source_entry
+
+    directory.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for role in SOURCE_ROLES:
+        path = directory / f"{role}.stand-in"
+        path.write_text(f"stand-in for the {role} input\n")
+        entries.append(source_entry(role, path, hashlib.sha256(path.read_bytes()).hexdigest()))
+    return entries
+
+
 def _probe():
     spec = importlib.util.spec_from_file_location(
         "probe_deployment", REPO / "scripts" / "probe_deployment.py")
@@ -85,8 +106,10 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
 
     root = tmp_path / "workspaces"
     real = root / "ws"
+    # A real workspace's record is from files, every input identified (R1,
+    # contract M3b); the stand-in names four files, as a real build would.
     write_workspace(probe._demo_kg(), real, feature_dim=probe.FEATURE_DIM,
-                    samples=probe._budget())
+                    samples=probe._budget(), sources=_four_sources(tmp_path / "inputs"))
     produced = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "compute_shortest_paths.py"),
          "--kg-path", str(real / "kg.json"), "--output-dir", str(real),

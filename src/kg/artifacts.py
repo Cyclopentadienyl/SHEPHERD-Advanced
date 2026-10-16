@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Mapping, NamedTuple, Tuple
+from typing import Any, Dict, Mapping, NamedTuple, Optional, Tuple
 
 from src.utils.fingerprint import ReadIdentity
 
@@ -46,6 +46,11 @@ GRAPH_TENSOR_ROLES: Tuple[str, ...] = ("node_features", "edge_indices", "num_nod
 
 #: The file the generator writes to record how a workspace was cut.
 MANIFEST_FILENAME = "split_manifest.json"
+
+#: The manifest's key for the digest of `kg.provenance.json`, the dataset record
+#: (contract M3b): required at write (`generate_training_samples`) and at read
+#: (`verify_dataset_record`).
+DATASET_RECORD_ROLE = "provenance"
 
 #: Bumped when the manifest's shape changes in a way that makes an old file
 #: unreadable under the new rules.
@@ -194,13 +199,11 @@ def verify_graph_reads(
     path form beside it: no path form verifies the tensors, and `kg.json`, where
     a run does not parse it, is identified by `check_unparsed_kg_json`.
 
-    **Provenance is deliberately not checked here.** An earlier revision raised
-    from the graph check when a declared build record was missing or did not
-    match; serving ran that check before it loaded a tensor, so a lost record
-    stopped a model from initialising over a note about where sound tensors came
-    from. What a graph was built from is reported, not enforced
-    (`workspace_provenance_status`, which returns a state); the four bindings
-    here still raise, because they say the tensors are not this graph's.
+    **The dataset record is checked after this, not here** (contract M3b).
+    Training, serving and measurement each call `verify_dataset_record` with
+    the `kg` digest this returns, so the record is compared with the graph these
+    reads were verified as. It is its own check because it answers its own
+    question, what this graph was built from, and names its own states.
 
     **Every tensor role must have been read** (`GRAPH_TENSOR_ROLES`). An absent
     file has no identity, and is refused rather than skipped: the manifest binds
@@ -391,99 +394,159 @@ def validate_graph_export_recipe(recipe: Any) -> Dict[str, Any]:
     return dict(recipe)
 
 
-def workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
-    """What a workspace records about the inputs its graph was built from.
+class DatasetRecord(NamedTuple):
+    """The dataset record a run read and verified, and the identity of its bytes
+    (contract M3b).
 
-    **Reports; does not refuse.** Every state this can return is a fact about a
-    note beside the graph, not about whether the graph is usable — so nothing
-    here raises, and no caller is forced to stop. A caller that decides a
-    missing record should block something is making a policy choice, and it
-    makes it explicitly by reading this.
-
-    Reads the manifest, when there is one, to learn whether a record was ever
-    declared. That is what separates "this build predates provenance" from "it
-    had one and it is gone": the file's absence alone cannot tell them apart,
-    and giving both the same name would make a broken workspace read as an old
-    one. A graph-only workspace has no manifest, and its record is still checked
-    against the graph.
-
-    **Not raising is a promise about the disk too.** Every file this touches can
-    fail for reasons that say nothing about provenance, and a caller told this
-    reports rather than refuses will not have wrapped it. Those return
-    `unreadable` with the cause in the detail.
-
-    **Including the `is_file` probes, which is what a first attempt missed.**
-    `Path.is_file` calls `stat` and `pathlib` re-raises EACCES -- only ENOENT,
-    ENOTDIR, EBADF and ELOOP come back as `False`. A workspace directory this
-    process may not traverse therefore fails at the question *is there a graph
-    here*, before any read. Reproduced as a real non-root process: with the
-    directory at mode 000 this raised `PermissionError` naming `kg.json`, out of
-    a function documented never to raise. The boundary below is around the whole
-    body for that reason -- a guard per read is a list someone has to keep
-    complete, and the probes were not on it.
+    **Its binding state is verified**: nothing else is returned. Its origin is
+    the other fact, kept apart: `files` or `synthetic`, a description of what
+    produced the graph, never a binding state. Wherever the record is shown,
+    both are shown (`summary`), so a synthetic workspace never reads as plainly
+    verified.
     """
-    from src.kg.provenance import ProvenanceStatus
 
-    try:
-        return _workspace_provenance_status(data_dir)
-    except OSError as exc:
-        return ProvenanceStatus(
-            "unreadable", None,
-            f"this workspace could not be inspected ({type(exc).__name__}: "
-            f"{exc}); what its graph was built from cannot be established, "
-            "which is not the same as its being unrecorded",
-        )
+    record: Dict[str, Any]
+    identity: ReadIdentity
+
+    @property
+    def binding(self) -> str:
+        return "verified"
+
+    @property
+    def origin(self) -> str:
+        return self.record["origin"]
+
+    def summary(self) -> Dict[str, Any]:
+        """The record as it is shown and recorded beside results: its binding
+        state and its origin apart, the digest of its bytes, the sources it
+        names, and what it says it does not establish (displayed, never
+        refused)."""
+        return {
+            "binding": self.binding,
+            "origin": self.origin,
+            "sha256": self.identity.sha256,
+            "sources": [dict(entry) for entry in self.record["sources"]],
+            "incomplete_by_design": list(self.record.get("incomplete_by_design", [])),
+        }
 
 
-def _workspace_provenance_status(data_dir: Path) -> "ProvenanceStatus":
-    """`workspace_provenance_status`'s body. Free to raise `OSError`.
+class DatasetRecordRefused(ValueError):
+    """A dataset record the formal pipeline refuses (contract M3b).
 
-    The guards inside are not redundant with the boundary around it: they name
-    which file failed and what that leaves unestablished, which a catch-all
-    cannot. The boundary is the contract; these are the message.
+    `binding` is the binding state established: `mismatch`, `unrecorded` or
+    `unverifiable`, or `verified` for a bound `files` record that leaves a
+    required input unidentified. `origin` is the record's, when it was read.
     """
-    from src.kg.provenance import ProvenanceStatus, provenance_status
-    from src.utils.fingerprint import file_sha256
 
-    kg_path = data_dir / GRAPH_ARTIFACTS["kg"]
-    if not kg_path.is_file():
-        return ProvenanceStatus(
-            "absent", None, f"{data_dir} has no {GRAPH_ARTIFACTS['kg']} to describe"
+    def __init__(self, message: str, binding: str, origin: Optional[str] = None) -> None:
+        from src.kg.provenance import BINDING_STATES
+
+        if binding not in BINDING_STATES:
+            raise ValueError(f"{binding!r} is not a binding state ({', '.join(BINDING_STATES)})")
+        super().__init__(message)
+        self.binding = binding
+        self.origin = origin
+
+
+def verify_dataset_record(manifest: ManifestRead, kg_digest: str) -> DatasetRecord:
+    """Read the workspace's dataset record once and refuse it unless it is the
+    one the run's manifest reading binds and names the run's graph (contract
+    M3b).
+
+    **Required.** Training, serving and measurement call this after their graph
+    check, with the `kg` digest that check returned; anything but *verified*
+    refuses, as R1–R5 do.
+    - *unrecorded*: the manifest binds no record.
+    - *unverifiable*: the record it binds is not here, cannot be read, or is not
+      a record this revision reads.
+    - *mismatch*: the file is not the bytes the manifest binds, or the record
+      names another graph.
+    A bound `files` record that leaves a required input unidentified is refused
+    too (`require_identified`); a synthetic record is fully bound and passes.
+
+    **One read** (M2.1): the record is hashed and parsed from the same buffer,
+    compared with this one manifest reading and this `kg` digest, and nothing
+    is hashed again by path. The record is the one beside the manifest.
+
+    Raises:
+        DatasetRecordRefused: naming the file, the manifest and the state.
+        ValueError: `kg_digest` is not the one this manifest reading binds — a
+            caller pairing two readings, not a state of the record.
+    """
+    from src.kg.provenance import (
+        PROVENANCE_FILENAME,
+        ProvenanceError,
+        require_identified,
+        validate_record,
+    )
+    from src.utils.fingerprint import read_once
+
+    manifest_path = manifest.identity.path
+    artifacts = manifest_section(manifest.manifest, manifest_path, "artifacts")
+    if artifacts.get("kg") != kg_digest:
+        raise ValueError(
+            f"the graph digest given ({str(kg_digest)[:12]}...) is not the one "
+            f"{manifest_path} binds; the record is compared with the graph of the "
+            "same manifest reading"
         )
-
-    declared = None
-    manifest_path = data_dir / MANIFEST_FILENAME
-    if manifest_path.is_file():
-        # **A manifest that cannot be read is not a manifest that declared
-        # nothing.** `declared = None` is the value that means "nothing was ever
-        # declared", and feeding it here made an unreadable manifest with a
-        # missing record report `absent` -- whose detail says the workspace
-        # predates provenance, about a workspace that may have declared one and
-        # lost it. What is true is narrower: the declaration could not be read.
-        try:
-            declared = json.loads(manifest_path.read_text()).get("artifacts", {}).get(
-                "provenance"
-            )
-        except (OSError, ValueError, AttributeError) as exc:
-            return ProvenanceStatus(
-                "unreadable", None,
-                f"{MANIFEST_FILENAME} is here and could not be read "
-                f"({type(exc).__name__}: {exc}), so whether a record was ever "
-                "declared cannot be established. Refusing the workspace over "
-                "that manifest is the consumers' own check, not this.",
-            )
-
+    path = manifest_path.parent / PROVENANCE_FILENAME
+    bound = artifacts.get(DATASET_RECORD_ROLE)
+    if bound is None:
+        raise DatasetRecordRefused(
+            f"{manifest_path} binds no {PROVENANCE_FILENAME} (unrecorded), so nothing "
+            "says what this workspace's graph was built from. The dataset record is "
+            f"required (contract M3b). {_REBUILD}",
+            "unrecorded",
+        )
     try:
-        kg_digest = file_sha256(kg_path)
+        read = read_once(path)
+    except FileNotFoundError:
+        raise DatasetRecordRefused(
+            f"{path} is not here, and {manifest_path} binds one (unverifiable): what "
+            f"this graph was built from was recorded and is lost. {_REBUILD}",
+            "unverifiable",
+        ) from None
     except OSError as exc:
-        return ProvenanceStatus(
-            "unreadable", None,
-            f"{GRAPH_ARTIFACTS['kg']} is here and could not be read "
-            f"({type(exc).__name__}: {exc}), so no record can be checked "
-            "against the graph it claims to describe",
+        raise DatasetRecordRefused(
+            f"{path} could not be read ({type(exc).__name__}: {exc}), so whether it is "
+            f"the record {manifest_path} binds cannot be established (unverifiable)",
+            "unverifiable",
+        ) from exc
+    identity = read.identity
+    if identity.sha256 != bound:
+        raise DatasetRecordRefused(
+            f"{path} is not the dataset record {manifest_path} binds "
+            f"({str(bound)[:12]}... vs {identity.sha256[:12]}...; mismatch): it was "
+            f"replaced after the build. {_REBUILD}",
+            "mismatch",
         )
-
-    return provenance_status(data_dir, kg_digest, declared)
+    # A parse that fails in any way is a record this revision does not read;
+    # `RecursionError` is how `json` meets nesting deeper than the interpreter's
+    # limit, and `TypeError` stands for a shape no rule anticipated.
+    try:
+        text = read.data.decode("utf-8")
+        del read
+        record = validate_record(json.loads(text), str(path))
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise DatasetRecordRefused(
+            f"{path} is the record {manifest_path} binds and is not one this revision "
+            f"reads (unverifiable): {exc}. {_REBUILD}",
+            "unverifiable",
+        ) from exc
+    if record["kg_digest"] != kg_digest:
+        raise DatasetRecordRefused(
+            f"{path} describes the graph {record['kg_digest'][:12]}..., and this "
+            f"workspace's graph is {kg_digest[:12]}... (mismatch): the record belongs "
+            "to another build, and reading its sources as this graph's would "
+            f"attribute inputs it never had. {_REBUILD}",
+            "mismatch",
+            record["origin"],
+        )
+    try:
+        require_identified(record, str(path))
+    except ProvenanceError as exc:
+        raise DatasetRecordRefused(str(exc), "verified", record["origin"]) from exc
+    return DatasetRecord(record, identity)
 
 
 def require_graph_export_recipe(
@@ -555,5 +618,8 @@ __all__ = [
     "validate_graph_export_recipe",
     "require_graph_export_recipe",
     "require_manifest_schema",
-    "workspace_provenance_status",
+    "DATASET_RECORD_ROLE",
+    "DatasetRecord",
+    "DatasetRecordRefused",
+    "verify_dataset_record",
 ]

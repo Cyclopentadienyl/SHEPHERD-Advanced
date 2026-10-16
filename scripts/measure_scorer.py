@@ -50,7 +50,7 @@ from src.evaluation.cohort import (
 )
 
 if TYPE_CHECKING:
-    from src.kg.artifacts import ManifestRead
+    from src.kg.artifacts import DatasetRecord, ManifestRead
     from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
     from src.utils.checkpoint_io import CheckpointRead
 
@@ -89,6 +89,11 @@ class MeasurementInputs(NamedTuple):
     #: comparing the three tensors read with it. Kept, not discarded: it is the
     #: `kg` role (M2.1 decision 2) and what M2.4 compares the checkpoint with.
     bound: Dict[str, str]
+    #: The workspace's dataset record, read once and verified against this
+    #: manifest reading and `bound["kg"]` (contract M3b), for both cohort kinds.
+    #: Its summary goes on the manifest, so a number measured over a synthetic
+    #: workspace says so.
+    dataset_record: DatasetRecord
 
 
 def read_measurement_inputs(
@@ -119,6 +124,10 @@ def read_measurement_inputs(
     manifest reading, and its digest is not recorded as a file read; the `kg`
     role is the manifest-bound source graph (`bound["kg"]`, decision 2).
 
+    **The dataset record is required, for both cohort kinds** (contract M3b):
+    `kg.provenance.json` is read once and refused unless it is the record this
+    manifest reading binds and names the graph the tensors were verified as.
+
     **A generated cohort reads its sibling split too**, with the default fields,
     so `verify_cohort_reads` checks both splits' bindings, the disease sets, and
     the manifest's disjointness claim and the measured disjointness, as the path
@@ -138,6 +147,7 @@ def read_measurement_inputs(
         GRAPH_ARTIFACTS,
         check_unparsed_kg_json,
         read_split_manifest,
+        verify_dataset_record,
         verify_graph_reads,
     )
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
@@ -159,6 +169,7 @@ def read_measurement_inputs(
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
+    dataset_record = verify_dataset_record(manifest, bound["kg"])
     if cohort.is_generated:
         verify_cohort_reads(
             manifest,
@@ -184,7 +195,12 @@ def read_measurement_inputs(
         "Read %d %s samples; checkpoint %s (sha256 %s)",
         len(samples.samples), split, read.identity.path, read.identity.sha256[:12],
     )
-    return MeasurementInputs(cohort, manifest, graph, samples, read, bound)
+    logger.info(
+        "Dataset record %s: binding %s, origin %s (sha256 %s)",
+        dataset_record.identity.path.name, dataset_record.binding, dataset_record.origin,
+        dataset_record.identity.sha256[:12],
+    )
+    return MeasurementInputs(cohort, manifest, graph, samples, read, bound, dataset_record)
 
 
 def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
@@ -279,6 +295,7 @@ def _software_revision() -> Optional[str]:
 def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    n_samples: int, device: torch.device, *,
                    digests: Mapping[str, str],
+                   dataset_record: Mapping[str, Any],
                    regime: Any,
                    cuda_executed: Optional[bool] = None,
                    model: Any = None) -> Any:
@@ -286,6 +303,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 
     `digests` is the record of what the run read, from
     `measurement_input_digests` (contract M2.1, S7); nothing here hashes a file.
+
+    `dataset_record` is the verified record's summary (`DatasetRecord.summary`,
+    contract M3b): its binding state and its origin, recorded apart.
 
     `regime` is the `AutocastRegime` `encode_full_graph` reported for the
     embeddings Mode C scores: they are computed before this manifest is built,
@@ -322,6 +342,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
         artifact_digests=dict(digests),
+        dataset_record=dict(dataset_record),
         cuda_executed=(
             device.type == "cuda" if cuda_executed is None else cuda_executed
         ),
@@ -397,6 +418,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         samples=samples,
         manifest=build_manifest(
             args, graph_data, len(samples), device, digests=digests,
+            dataset_record=inputs.dataset_record.summary(),
             cuda_executed=cuda_executed, model=model, regime=encoded.regime,
         ),
         device=device,
@@ -415,6 +437,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  {'candidate diseases per patient':38s} "
           f"{result.sampler_evidence['candidate_columns']['max']}")
 
+    # **The number says what its graph was built from** (contract M3b), here as
+    # in the manifest: binding state and origin apart.
+    record = inputs.dataset_record
+    print(f"\nDataset record: binding {record.binding}, origin {record.origin}")
+    if record.origin == "synthetic":
+        print("SYNTHETIC WORKSPACE — this number is not over a graph built from real files.")
     if not cuda_executed:
         print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
     print("\nWhether this is the institution's number depends on the checkpoint and\n"

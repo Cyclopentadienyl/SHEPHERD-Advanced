@@ -163,7 +163,8 @@ def write_workspace(
     Returns:
         The digests, the allocation, both cohorts and the manifest.
     """
-    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.kg.artifacts import DATASET_RECORD_ROLE, GRAPH_ARTIFACTS
+    from src.kg.graph import write_graph_data
     from src.kg.sample_generator import refuse_if_checkpoints_exist
     from src.kg.provenance import (
         ProvenanceError,
@@ -171,7 +172,6 @@ def write_workspace(
         encode_provenance,
         write_provenance,
     )
-    from src.utils.fingerprint import file_sha256
 
     workspace = Path(workspace)
 
@@ -286,18 +286,17 @@ def write_workspace(
     # Every refusal is behind us; this is the first thing that exists afterwards.
     workspace.mkdir(parents=True, exist_ok=True)
     kg_path = workspace / GRAPH_ARTIFACTS["kg"]
-    kg.save_json(str(kg_path))
+    # **The digests are of the bytes these writers serialised** (contract M3b,
+    # BACKLOG 19.17), returned by the writers as they write. Hashing the files
+    # by path afterwards bound whatever the paths held by then.
+    graph_digests = {"kg": kg.save_json(str(kg_path))}
     logger.info("KG saved to %s", kg_path)
 
-    kg.export_graph_data(
-        output_dir=workspace, feature_dim=feature_dim, feature_seed=feature_seed
-    )
+    graph_digests.update(write_graph_data(
+        kg.export_graph_data(feature_dim=feature_dim, feature_seed=feature_seed),
+        workspace,
+    ))
     logger.info("Graph data exported to %s (feature_dim=%d)", workspace, feature_dim)
-
-    graph_digests = {
-        role: file_sha256(workspace / filename)
-        for role, filename in GRAPH_ARTIFACTS.items()
-    }
 
     # **Written here, between the graph and the manifest, and on both paths.**
     # The record carries `kg.json`'s digest, so it can only be assembled once
@@ -339,7 +338,7 @@ def write_workspace(
         num_val=samples.num_val,
         min_phenotypes=samples.min_phenotypes,
         output_dir=workspace,
-        graph_digests={**graph_digests, "provenance": provenance_digest},
+        graph_digests={**graph_digests, DATASET_RECORD_ROLE: provenance_digest},
         # **What the digests cannot say.** They prove these are the bytes this
         # writer exported; they do not say how to make them again. The recipe
         # is what turns "rebuild this workspace" into an instruction.

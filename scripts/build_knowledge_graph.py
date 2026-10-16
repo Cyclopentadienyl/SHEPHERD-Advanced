@@ -320,20 +320,28 @@ def build_knowledge_graph(
     sources = []
     for role, ontology in (("mondo", mondo), ("hpo", hpo)):
         path = ontology.source_path
-        if path is None:
-            # Nothing to identify. Recorded as a missing role rather than as a
-            # guess: `missing_roles` in the record says which inputs went
-            # unnamed, which is the honest shape of not knowing.
-            logger.warning("%s ontology has no source path; it cannot be identified", role)
-            continue
+        # **The digest of what was parsed**, taken by the loader from the
+        # handle it parsed. Hashing `path` here, after both slots had loaded,
+        # recorded whatever the path named by then — a replacement published in
+        # between was recorded against this slot. The fallback is only for an
+        # ontology the loader did not produce.
+        digest = getattr(ontology, "source_digest", None) or (
+            file_sha256(path) if path is not None else None
+        )
+        if digest is None:
+            # **Refused, not recorded as missing** (contract M3b). Every role is
+            # an input this build requires, so a `files` record without one says
+            # a required input went unidentified, and training, serving and
+            # measurement refuse it. The check is not relaxed; the build stops
+            # here, before anything is written.
+            raise SystemExit(
+                f"The {role} ontology this build parsed cannot be identified: the "
+                "loader recorded no digest of its bytes and no file path. Its "
+                "workspace would be refused by training, serving and measurement "
+                "(contract M3b). Load it from a file. Nothing was written."
+            )
         sources.append(source_entry(
-            role=role, path=path,
-            # **The digest of what was parsed**, taken by the loader from the
-            # handle it parsed. Hashing `path` here, after both slots had
-            # loaded, recorded whatever the path named by then — a replacement
-            # published in between was recorded against this slot. The
-            # fallback is only for an ontology the loader did not produce.
-            digest=getattr(ontology, "source_digest", None) or file_sha256(path),
+            role=role, path=path, digest=digest,
             # The raw `data-version`, never `version` — that property falls back
             # to the OBO format version, which would record a file format as
             # though it were a release.

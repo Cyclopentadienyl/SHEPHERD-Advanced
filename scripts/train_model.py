@@ -115,7 +115,7 @@ from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_m
 from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
 
 if TYPE_CHECKING:
-    from src.kg.artifacts import ManifestRead
+    from src.kg.artifacts import DatasetRecord, ManifestRead
     from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
     from src.utils.checkpoint_io import CheckpointRead
     from src.utils.fingerprint import ReadIdentity
@@ -493,6 +493,10 @@ class TrainingInputs(NamedTuple):
     #: against it. `kg` is the source graph the tensors were exported from;
     #: training records it without parsing `kg.json` (contract M2.2).
     bound: Dict[str, str]
+    #: The workspace's dataset record, read once and verified against this
+    #: manifest reading and `bound["kg"]` (contract M3b). Not a recorded role:
+    #: the manifest this run records binds its digest.
+    dataset_record: DatasetRecord
 
 
 def read_training_inputs(data_dir: Path) -> TrainingInputs:
@@ -512,10 +516,20 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
     (M2.1 decision 1): the file on disk is compared with this run's one manifest
     reading, and nothing about it is recorded.
 
+    **The dataset record is required** (contract M3b): `kg.provenance.json` is
+    read once and refused unless it is the record this manifest reading binds
+    and names the graph the tensors were verified as. Its origin is logged
+    beside its binding state.
+
     `training_fields=True`: training carries the two optional sample fields
     measurement does not (`candidate_disease_ids`, `gene_ids`).
     """
-    from src.kg.artifacts import check_unparsed_kg_json, read_split_manifest, verify_graph_reads
+    from src.kg.artifacts import (
+        check_unparsed_kg_json,
+        read_split_manifest,
+        verify_dataset_record,
+        verify_graph_reads,
+    )
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
     # Stat only: a missing split or a workspace generated before the allocation
@@ -532,6 +546,7 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
+    dataset_record = verify_dataset_record(manifest, bound["kg"])
     verify_cohort_reads(manifest, samples)
 
     # After verification: an emptied cohort file is refused as not the file the
@@ -546,7 +561,12 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
         f"{len(samples['val'].samples)} val samples; "
         f"node counts: {graph.graph_data['num_nodes_dict']}"
     )
-    return TrainingInputs(manifest, graph, samples, with_validation, bound)
+    logger.info(
+        f"Dataset record {dataset_record.identity.path.name}: binding "
+        f"{dataset_record.binding}, origin {dataset_record.origin} "
+        f"(sha256 {dataset_record.identity.sha256[:12]})"
+    )
+    return TrainingInputs(manifest, graph, samples, with_validation, bound, dataset_record)
 
 
 def read_resume_parent(

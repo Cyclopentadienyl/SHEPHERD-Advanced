@@ -997,10 +997,15 @@ def _stub_graph_digests(root):
 
     root.mkdir(parents=True, exist_ok=True)
     digests = {}
-    for role, filename in GRAPH_ARTIFACTS.items():
+    for role, filename in {**GRAPH_ARTIFACTS, **_STAND_IN_RECORD}.items():
         (root / filename).write_bytes(f"{role}-bytes".encode())
         digests[role] = file_sha256(root / filename)
     return digests
+
+
+#: The dataset record a workspace-writing call binds beside the graph (contract
+#: M3b), as a stand-in: the generator binds its digest and reads nothing in it.
+_STAND_IN_RECORD = {"provenance": "kg.provenance.json"}
 
 
 class TestManifestBinding:
@@ -1013,8 +1018,8 @@ class TestManifestBinding:
         from src.utils.fingerprint import file_sha256
 
         digests = {}
-        for role, filename in GRAPH_ARTIFACTS.items():
-            if roles is not None and role not in roles:
+        for role, filename in {**GRAPH_ARTIFACTS, **_STAND_IN_RECORD}.items():
+            if roles is not None and role not in roles and role in GRAPH_ARTIFACTS:
                 continue
             (root / filename).write_bytes(f"{role}-bytes".encode())
             digests[role] = file_sha256(root / filename)
@@ -1284,14 +1289,19 @@ class TestBuildPathOrdering:
         import scripts.build_knowledge_graph as build
 
         class _Ontology:
-            """Carries what the build reads off a real ontology.
+            """Carries what the build reads off a real ontology: the file it was
+            loaded from and the digest of its bytes, as the loader records them.
 
-            `source_path = None` on purpose: this stub was never parsed from a
-            file, and the build records that as a role it could not identify
-            rather than inventing a digest for one.
+            Named, because since contract M3b the build refuses an ontology it
+            cannot identify rather than recording a role as missing.
             """
-            source_path = None
             declared_version = None
+
+            def __init__(self, path):
+                import hashlib
+
+                self.source_path = Path(path)
+                self.source_digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
         class _Loader:
             """The interface the build uses after Phase 2.
@@ -1314,7 +1324,7 @@ class TestBuildPathOrdering:
                         f"\n[Term]\nid: {prefix}:0000001\nname: t\n"
                     )
 
-            def load(self, path, expect=None): return _Ontology()
+            def load(self, path, expect=None): return _Ontology(path)
 
         class _Parser:
             def __init__(self, *a, **k): pass

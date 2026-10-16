@@ -199,7 +199,10 @@ def _split_manifest(directory):
     from src.utils.fingerprint import file_sha256
     from tests.fixtures.generated_workspace import default_graph_export
 
-    for role, filename in GRAPH_ARTIFACTS.items():
+    # The graph export and the dataset record a manifest binds (contract M3b),
+    # as stand-ins: the generator binds their digests and reads nothing in them.
+    bound = {**GRAPH_ARTIFACTS, "provenance": "kg.provenance.json"}
+    for role, filename in bound.items():
         if not (directory / filename).exists():
             (directory / filename).write_bytes(role.encode())
     kg = build_demo_kg()
@@ -208,7 +211,7 @@ def _split_manifest(directory):
         allocation=allocate_diseases(build_eligible_disease_profiles(kg, 2), 0.2, seed=42),
         num_train=20, num_val=5, output_dir=directory,
         graph_digests={role: file_sha256(directory / filename)
-                       for role, filename in GRAPH_ARTIFACTS.items()},
+                       for role, filename in bound.items()},
         graph_export=default_graph_export(),
     )
     return [directory / "split_manifest.json"]

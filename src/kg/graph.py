@@ -41,7 +41,7 @@ from src.core.types import (
 )
 from src.core.schema import KnowledgeGraphSchema, get_kg_schema
 from src.kg.artifacts import GRAPH_ARTIFACTS
-from src.utils.fingerprint import ReadIdentity
+from src.utils.fingerprint import ReadIdentity, write_digested
 
 if TYPE_CHECKING:
     pass
@@ -110,6 +110,50 @@ def validate_feature_dim(value: Any) -> None:
         raise ValueError(f"feature_dim must be an integer, got {value!r}")
     if value < 1:
         raise ValueError(f"feature_dim must be >= 1, got {value}")
+
+
+def _write_json(sink: Any, value: Any, **options: Any) -> None:
+    """Encode `value` as `json.dump` would with `options`, into a binary sink,
+    as UTF-8, in pieces of about a megabyte: the same bytes `json.dump` wrote
+    through a UTF-8 text file, without the whole document held as one string."""
+    pending: List[str] = []
+    size = 0
+    for chunk in json.JSONEncoder(**options).iterencode(value):
+        pending.append(chunk)
+        size += len(chunk)
+        if size >= 1 << 20:
+            sink.write("".join(pending).encode("utf-8"))
+            pending, size = [], 0
+    if pending:
+        sink.write("".join(pending).encode("utf-8"))
+
+
+def write_graph_data(graph_data: Dict[str, Any], output_dir: Union[str, Path]) -> Dict[str, str]:
+    """Write the three files of a graph export and return, by role, the SHA-256
+    of the bytes written to each (contract M3b).
+
+    The one writer of these files: `KnowledgeGraph.export_graph_data` calls it
+    when given a directory, and the workspace writer calls it to bind what it
+    wrote (`src/kg/workspace.py`).
+    """
+    import torch
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "node_features": write_digested(
+            output_dir / GRAPH_ARTIFACTS["node_features"],
+            lambda sink: torch.save(graph_data["x_dict"], sink),
+        ),
+        "edge_indices": write_digested(
+            output_dir / GRAPH_ARTIFACTS["edge_indices"],
+            lambda sink: torch.save(graph_data["edge_index_dict"], sink),
+        ),
+        "num_nodes": write_digested(
+            output_dir / GRAPH_ARTIFACTS["num_nodes"],
+            lambda sink: _write_json(sink, graph_data["num_nodes_dict"]),
+        ),
+    }
 
 
 class KnowledgeGraph:
@@ -645,12 +689,7 @@ class KnowledgeGraph:
 
         # --- Persist to disk ---
         if output_dir is not None:
-            output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(x_dict, output_dir / GRAPH_ARTIFACTS["node_features"])
-            torch.save(edge_index_dict, output_dir / GRAPH_ARTIFACTS["edge_indices"])
-            with open(output_dir / GRAPH_ARTIFACTS["num_nodes"], "w") as f:
-                json.dump(num_nodes_dict, f)
+            write_graph_data(graph_data, output_dir)
             logger.info(
                 f"Graph data exported to {output_dir}: "
                 f"{len(x_dict)} node types, "
@@ -753,7 +792,7 @@ class KnowledgeGraph:
     # ==========================================================================
     # Serialization
     # ==========================================================================
-    def save_json(self, filepath: str) -> None:
+    def save_json(self, filepath: str) -> str:
         """
         Save knowledge graph to JSON file.
 
@@ -765,6 +804,11 @@ class KnowledgeGraph:
 
         Args:
             filepath: Output file path (.json)
+
+        Returns:
+            The SHA-256 of the bytes written (contract M3b): the digest a
+            workspace manifest binds is of what this serialised, not of
+            whatever the path holds when it is hashed afterwards.
         """
         nodes_data = []
         for node in self._nodes.values():
@@ -808,13 +852,16 @@ class KnowledgeGraph:
 
         out_path = Path(filepath)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        digest = write_digested(
+            out_path,
+            lambda sink: _write_json(sink, data, ensure_ascii=False, indent=2),
+        )
 
         logger.info(
             f"KG saved to {filepath}: "
             f"{len(nodes_data)} nodes, {len(edges_data)} edges"
         )
+        return digest
 
     @classmethod
     def read_json(cls, filepath: Union[str, Path]) -> "GraphRead":

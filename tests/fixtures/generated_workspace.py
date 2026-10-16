@@ -175,9 +175,16 @@ def write_generated_workspace(
     Graph files a test has already written, or passes in `graph_bytes`, are kept;
     the rest are written by `write_graph_export`. `training_fields` gives the
     default rows the two fields only training reads.
+
+    **A synthetic dataset record is written and bound** (contract M3b), through
+    the production writer, naming the `kg.json` the workspace holds: training,
+    serving and measurement refuse a workspace without one. Synthetic, because
+    nothing here was built from real files, and so the workspace passes every
+    check and says it is synthetic.
     """
-    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.kg.artifacts import DATASET_RECORD_ROLE, GRAPH_ARTIFACTS
     from src.kg.disease_allocation import DiseaseAllocation, universe_digest
+    from src.kg.provenance import build_provenance, write_provenance
     from src.kg.sample_generator import build_split_manifest
     from src.utils.fingerprint import file_sha256
 
@@ -203,6 +210,9 @@ def write_generated_workspace(
     }
     for split, samples in rows.items():
         (root / f"{split}_samples.json").write_text(json.dumps(samples))
+    record_digest = write_provenance(
+        root, build_provenance(file_sha256(root / GRAPH_ARTIFACTS["kg"]), origin="synthetic")
+    )
 
     ordered = sorted(train_ids + val_ids)
     allocation = DiseaseAllocation(
@@ -222,6 +232,7 @@ def write_generated_workspace(
             "val_samples": file_sha256(root / "val_samples.json"),
             **{role: file_sha256(root / filename)
                for role, filename in GRAPH_ARTIFACTS.items()},
+            DATASET_RECORD_ROLE: record_digest,
         },
         graph_export=dict(graph_export or default_graph_export()),
     )

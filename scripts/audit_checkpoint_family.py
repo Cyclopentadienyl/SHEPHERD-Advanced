@@ -64,7 +64,7 @@ import logging
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -350,10 +350,11 @@ def _not_judged(reason: str) -> Dict[str, Any]:
     return {"verdict": "not judged", "reason": reason}
 
 
-def _graph_check(workspace: Path) -> Dict[str, str]:
+def _graph_check(workspace: Path) -> Tuple[Any, Dict[str, str]]:
     """The graph check serving and measurement make, from one read of each file:
     the tensors against the manifest, `kg.json` identified against it. Returns
-    the manifest-bound digests M2.4 compares a checkpoint with."""
+    the manifest reading and the manifest-bound digests M2.4 compares a
+    checkpoint with."""
     from src.kg.artifacts import check_unparsed_kg_json, read_split_manifest, verify_graph_reads
     from src.kg.storage.file_storage import read_graph_artifacts
 
@@ -361,7 +362,38 @@ def _graph_check(workspace: Path) -> Dict[str, str]:
     graph = read_graph_artifacts(workspace, map_location="cpu")
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(workspace, manifest)
-    return dict(bound)
+    return manifest, dict(bound)
+
+
+def _serving_check(workspace: Path) -> Dict[str, str]:
+    """Every workspace check serving and measurement make before a checkpoint is
+    read: the graph, then the dataset record (contract M3b). Returns the
+    manifest-bound digests."""
+    from src.kg.artifacts import verify_dataset_record
+
+    manifest, bound = _graph_check(workspace)
+    verify_dataset_record(manifest, bound["kg"])
+    return bound
+
+
+def _dataset_record(manifest: Any, kg_digest: str, root: Path) -> Dict[str, Any]:
+    """The dataset record's verdict (contract M3b), with its binding state and its
+    origin as separate fields, so a synthetic workspace is never listed as
+    plainly verified and a refusal names the state that refused it."""
+    from src.kg.artifacts import DatasetRecordRefused, verify_dataset_record
+
+    try:
+        record = verify_dataset_record(manifest, kg_digest)
+    except DatasetRecordRefused as exc:
+        return {"verdict": "refused", "reason": f"{type(exc).__name__}: {_scrub(str(exc), root)}",
+                "binding": exc.binding, "origin": exc.origin}
+    except Exception as exc:  # noqa: BLE001 - one workspace never stops the listing
+        return {"verdict": "refused", "reason": f"{type(exc).__name__}: {_scrub(str(exc), root)}",
+                "binding": None, "origin": None}
+    summary = record.summary()
+    return {"verdict": "accepted", "reason": None, "binding": summary["binding"],
+            "origin": summary["origin"], "sha256": summary["sha256"],
+            "incomplete_by_design": summary["incomplete_by_design"]}
 
 
 def _shortest_paths(workspace: Path, kg_digest: Optional[str], root: Path) -> Dict[str, Any]:
@@ -432,6 +464,7 @@ CHECKPOINT_SCOPE = (
 
 def _checkpoint_verdicts(
     path: Path, root: Path, bound: Optional[Dict[str, str]], inputs: Any,
+    workspace_refused: str = "the workspace's graph is refused",
 ) -> Dict[str, Any]:
     """One checkpoint, read once (`read_checkpoint`, the safe loader on CPU, as
     M1-M3 opens them), judged from that read; its digest is that read's."""
@@ -450,7 +483,7 @@ def _checkpoint_verdicts(
     checkpoint = read.checkpoint
 
     if bound is None:
-        serve = _not_judged("the workspace's graph is refused")
+        serve = _not_judged(workspace_refused)
     else:
         serve = _judge(lambda: verify_training_record(
             checkpoint, bound, tuple(GRAPH_ARTIFACTS),
@@ -470,29 +503,42 @@ def _checkpoint_verdicts(
 
 
 def inventory_workspace(workspace: Path, root: Path) -> Dict[str, Any]:
-    """One workspace: its graph, its training inputs, its table, its checkpoints."""
+    """One workspace: its graph, its dataset record, its training inputs, its
+    table, its checkpoints."""
     from scripts.train_model import read_training_inputs
 
     found: Dict[str, Any] = {}
 
     def graph() -> None:
-        found["bound"] = _graph_check(workspace)
+        found["manifest"], found["bound"] = _graph_check(workspace)
 
     def training() -> None:
         found["inputs"] = read_training_inputs(workspace)
 
     entry: Dict[str, Any] = {"graph": _judge(graph, root)}
+    bound = found.get("bound")
+    if bound is None:
+        entry["dataset_record"] = {**_not_judged("the workspace's graph is refused"),
+                                   "binding": None, "origin": None}
+    else:
+        entry["dataset_record"] = _dataset_record(found["manifest"], bound["kg"], root)
     entry["training"] = _judge(training, root)
-    bound, inputs = found.get("bound"), found.get("inputs")
+    inputs = found.get("inputs")
     entry["shortest_paths"] = _shortest_paths(
         workspace, bound["kg"] if bound else None, root
     )
+    # Serving and measurement refuse the workspace when either check does
+    # (contract M3b), so no checkpoint is judged servable over a refused record.
+    served_bound, refused = bound, "the workspace's graph is refused"
+    if bound is not None and entry["dataset_record"]["verdict"] != "accepted":
+        served_bound, refused = None, "the workspace's dataset record is refused"
     checkpoints = sorted(
         path for path in workspace.rglob("*.pt")
         if not (path.parent == workspace and path.name in _NOT_CHECKPOINTS)
     )
     entry["checkpoints"] = {
-        path.relative_to(root).as_posix(): _checkpoint_verdicts(path, root, bound, inputs)
+        path.relative_to(root).as_posix(): _checkpoint_verdicts(
+            path, root, served_bound, inputs, refused)
         for path in checkpoints
     }
     return entry
@@ -506,8 +552,10 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
 
     counts: Counter = Counter()
     for entry in listing.values():
-        for part in ("graph", "training"):
+        for part in ("graph", "dataset_record", "training"):
             counts[f"{part}:{entry[part]['verdict']}"] += 1
+        if entry["dataset_record"]["origin"] is not None:
+            counts[f"dataset_record origin:{entry['dataset_record']['origin']}"] += 1
         for part in ("source_binding", "served"):
             counts[f"shortest_paths {part}:{entry['shortest_paths'][part]['verdict']}"] += 1
         for verdicts in entry["checkpoints"].values():
@@ -518,7 +566,8 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
         "what_this_shows": (
             "for each workspace, whether contract M2 accepts its graph, its training "
             "inputs, its shortest-path table's source binding and each checkpoint's "
-            "training record, and why not"
+            "training record, and whether contract M3b accepts its dataset record "
+            "(binding state and origin apart), and why not"
         ),
         "read_only": (
             "nothing was moved, deleted or rewritten; refused artifacts are archived "

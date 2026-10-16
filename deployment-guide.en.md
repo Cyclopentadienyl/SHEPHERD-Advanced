@@ -581,13 +581,15 @@ machines whose ontologies differ by a deployment date produce different
 | `kg_digest` | SHA-256 of the `kg.json` written in the same build. **This is what binds the record to its graph** |
 | `origin` | `files` for a real build, `synthetic` for an in-memory demo or test graph |
 | `sources` | Per input: role, filename, content digest, declared version |
-| `missing_roles` | Inputs that could not be identified |
+| `missing_roles` | For `files`, the roles its sources leave out — always none in a record the pipeline accepts; for `synthetic`, every role, by construction |
 | `counters` | Parsing statistics, e.g. `rows_skipped_unresolved_disease_id` |
 | `incomplete_by_design` | **What this record deliberately does not cover** |
 
-The four roles are `mondo`, `hpo`, `phenotype_hpoa`, `genes_to_phenotype`.
-**The filename is a hint; the digest is the identity** — a file under the same
-directory name can be replaced in place.
+The four roles are `mondo`, `hpo`, `phenotype_hpoa`, `genes_to_phenotype`, and
+**a real build requires all four**: the builder stops without either annotation
+file, always loads both ontologies, and stops rather than record an input it
+parsed and cannot identify. **The filename is a hint; the digest is the
+identity** — a file under the same directory name can be replaced in place.
 
 `declared_version` is the raw `data-version` from an ontology header, and
 **absent means `null`**. It is never filled in from the OBO format version.
@@ -604,51 +606,60 @@ node is absent, and those are not in this number.
 at parse time, parser and builder versions, and graph construction parameters are
 all outside it. It is a **list of source files, not a rebuild recipe**.
 
-### Three states
+### Required: training, serving and measurement refuse without it
 
-| State | Meaning | Treatment |
-|---|---|---|
-| No such file | Built before this existed | **unknown**. Never back-filled from whatever the cache holds now |
-| Present and matching `kg.json` | This graph's sources | Trust it |
-| **Present but missing, corrupt or mismatched** | A claim that does not hold | **Reported as that**, never folded into unknown |
+**Since contract M3b the record is required.** The manifest binds its digest
+(`artifacts.provenance` in `split_manifest.json`), and training, serving (with
+a model over a workspace) and measurement each check it after their graph
+check, reading the file once: its bytes must be the ones the manifest binds,
+and its `kg_digest` must name the graph that check verified. Anything else
+refuses, before a run directory exists, a checkpoint is read or a model is
+built. A refusal names the **binding state**:
 
-The third is the one that matters: two graph-only workspaces whose provenance
-files were swapped during a copy have **every file well-formed** and only the
-pairing wrong. `workspace_provenance_status()` compares the record's `kg_digest`
-against the `kg.json` present, which is what tells them apart.
+| Binding state | Meaning |
+|---|---|
+| `verified` | The record the manifest binds, naming this workspace's graph. The only state accepted |
+| `mismatch` | The file is not the bytes the manifest binds, or it describes another graph — for example two workspaces whose records were swapped in a copy, every file well-formed and only the pairing wrong |
+| `unrecorded` | The manifest binds no record |
+| `unverifiable` | The manifest binds one and it is not here, cannot be read, or is not a record this revision reads |
 
-**Verifying provenance does not gate service.** A source state describes where a
-graph came from; whether the graph is usable is a different question, answered by
-the digest bindings on `kg.json` and the three tensors — and those still refuse.
-`workspace_provenance_status()` **does not raise**; it returns a state, and
-deciding to stop anything because of one is a policy choice no code here makes.
-That promise covers the disk as well as the content, and the existence checks
-as well as the reads: a `kg.json`, a record or a `manifest.json` that this
-process cannot open or decode — or a **workspace directory it cannot enter**,
-which makes even `Path.is_file()` raise, since `pathlib` re-raises `EACCES`
-rather than returning `False` — comes back as `unreadable` with the cause in the
-detail, rather than as an exception out of a function every caller was written
-not to wrap. Not being able to find out whether a record is there is reported as
-that, never as the record not being there. Note the manifest case in
-particular — an unreadable manifest means *whether a record was ever declared
-cannot be established*, which is not the same as *nothing declared one*, and
-only the second of those licenses the "this workspace predates provenance"
-reading. Refusing a workspace over a broken manifest remains the job of each
-entry point's own workspace check (`read_split_manifest` and
-`verify_graph_reads`, on the files that entry point read).
+A bound record from `files` that leaves one of the four roles unidentified is
+refused too, with its binding `verified`: a required input went unidentified.
 
-> **Correction.** An earlier version of this section had the graph verifier
-> (then `verify_graph_artifacts()`, removed since) raise on a broken record.
-> Serving ran that check before loading a tensor — so a lost note about where a
-> graph came from stopped a model from initialising, and a cold start answered
-> `/diagnose` with 503 while the tensors were sound. It reports now rather than
-> refusing.
+**The origin is a separate fact, shown beside the binding state, never in
+place of it.** `files` means the graph was built from real inputs; `synthetic`
+means a demo, a test or the deployment probe built it in memory. A synthetic
+workspace is fully bound and passes every check, and is shown as synthetic
+wherever its record is shown:
+
+- the training log (`Dataset record kg.provenance.json: binding verified,
+  origin synthetic`);
+- serving's pipeline configuration and the API's pipeline status
+  (`dataset_record`: binding, origin, the record's digest, its sources and
+  `incomplete_by_design`);
+- the measurement report's manifest (`dataset_record`) and its console summary;
+- the inventory (`scripts/audit_checkpoint_family.py --inventory`), which lists
+  the record's verdict with its binding state and origin as separate fields.
+
+What the record says it does not establish (`incomplete_by_design`) is
+displayed, never refused. Serving without a model — path reasoning over
+`kg.json` alone — verifies no workspace and is unaffected. The pipeline reload
+lists `kg.provenance.json` among the required files.
 
 ### Older workspaces
 
-A schema-3 workspace built before Phase 1 **does not become invalid** for lacking
-the file. When the manifest declares no provenance, the reader does not look for
-it.
+**Not supported.** A workspace whose manifest binds no record is refused as
+`unrecorded`, and one whose record is gone as `unverifiable`; there is no
+compatibility mode. Rebuild it with
+`scripts/build_knowledge_graph.py --generate-samples`. The read-only inventory
+lists which of your workspaces are affected before you deploy.
+
+> **History.** Until contract M3b the record was reported and never enforced:
+> a status reader (`workspace_provenance_status()`, removed) returned a state
+> and nothing refused on it. An earlier version still had the graph verifier
+> raise on a broken record before a tensor was loaded, which was withdrawn
+> then. The owner's decision reverses that policy for the formal pipeline; the
+> graph check and the record check stay separate checks with separate states.
 
 ### Relationship to ontology versions
 
