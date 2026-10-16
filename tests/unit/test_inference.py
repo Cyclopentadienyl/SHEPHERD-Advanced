@@ -275,10 +275,18 @@ class TestDiagnosisPipeline:
         pipeline = DiagnosisPipeline(kg=simple_kg)
         config_dict = pipeline.get_pipeline_config()
 
-        assert "version" in config_dict
+        # The class version string is gone (contract M3c); what is served is
+        # stated part by part instead.
+        assert "version" not in config_dict
         assert "max_path_length" in config_dict
         assert "aggregation_method" in config_dict
         assert config_dict["has_model"] is False
+        identity = config_dict["served_identity"]
+        assert identity["scoring_mode"] == "path_reasoning_fallback"
+        assert identity["checkpoint"] == {"state": "absent", "sha256": None}
+        assert identity["graph"] == {
+            "state": "in_memory", "kg_sha256": None, "split_manifest_sha256": None,
+        }
 
 
 # =============================================================================

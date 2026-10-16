@@ -140,6 +140,18 @@ Not decided here, and deliberately not worked around:
 
 Rejecting 4 and 5 was right. It did not license inventing 6.
 
+**The result's identity took option 3** (provenance contract M3c, implemented 2026-10-16, awaiting
+review). The Diagnosis CSV carries what produced the result — the checkpoint, graph, manifest,
+shortest-path table and dataset record by digest or identifier, the scoring mode and the settings
+in effect — as 21 `served_*` metadata columns appended after the candidate columns, the same on
+every row, under the one header row: no preamble, no sidecar, no log file, and no blank cell (a
+null is written as a word such as `absent`). The Markdown export puts the same identity in an
+ordinary section, "What produced this result", before the candidates. That is the identity of the
+result, not the view state at the time of export: C5's CSV provenance above stays **[OPEN]**, and
+whatever it adds should follow the same convention (one atomic value per column, a common prefix,
+appended, never blank) so the file is not reshaped twice. The column dictionary is in the
+deployment guides, §4.7.
+
 Automatic snapshots are system events and carry no view state — no clinician was acting.
 
 **An earlier draft specified a durable audit-action state machine** — `PREPARED` / `COMPLETED` /

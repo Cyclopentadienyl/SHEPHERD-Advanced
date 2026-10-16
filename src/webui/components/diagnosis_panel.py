@@ -12,6 +12,10 @@ Purpose:
     - Ranked disease candidate display with scores
     - Evidence panel showing Mode A (direct path) or Mode B (analogy-based)
     - Confidence labels (Strong/Weak/Analogy/Insufficient) as colored badges
+    - What produced each result (the served identity, contract M3c): a summary
+      line and a full identity table under the results, banners for a synthetic
+      workspace, a missing model or the demo answer, and the same identity in
+      the CSV and Markdown exports and in the model status
 
 Architecture Note:
     This component calls the /api/v1/diagnose endpoint via HTTP (requests),
@@ -335,9 +339,15 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     gnn_ready = bool(status_data.get("gnn_ready"))
     gnn = "✅" if gnn_ready else "❌"
     sp = "✅" if status_data.get("sp_ready") else "❌"
-    mode = status_data.get("scoring_mode", "unknown")
+    mode = status_data.get("scoring_mode", "not reported")
     kg_n = status_data.get("kg_nodes", 0)
     kg_e = status_data.get("kg_edges", 0)
+    # What the loaded pipeline serves (contract M3c). It describes the pipeline
+    # loaded now, which a reload can replace; a result's own identity is shown
+    # beside that result, never taken from here.
+    identity = status_data.get("served_identity")
+    if not isinstance(identity, dict):
+        identity = None
 
     lines = []
     if not gnn_ready:
@@ -347,6 +357,8 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
         # as long as it is true, so it survives a tab change, a refresh, or a
         # screenshot pasted into a note.
         lines.append(GNN_UNAVAILABLE_BANNER)
+    if identity is not None and _is_synthetic(identity):
+        lines.append(_identity_banner_md(_IDENTITY_BANNERS["synthetic"]))
     lines += [
         f"🟢 **Pipeline loaded** | Mode: `{mode}`",
         f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
@@ -372,11 +384,34 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
                 meta_parts.append(f"{_checkpoint_metric_label(key)}: {val:.4f}")
         lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
 
-    # Fingerprint warnings
+    if identity is not None:
+        lines += [
+            f"- {_identity_summary_md('served', identity, lead='Serving')}",
+            "",
+            f"<sub>{IDENTITY_CLAIM_BOUNDARY}</sub>",
+        ]
+    else:
+        lines.append(
+            "- **Serving:** not reported — the API's status did not say what the "
+            "loaded pipeline serves."
+        )
+
+    # **Structural fingerprint warnings, not identity.** `verify_fingerprint`
+    # compares the node types, node counts, edge-type count and feature sizes the
+    # checkpoint recorded with the served graph's. Which graph the model was
+    # trained on is a different question, settled by digest before the model is
+    # built (contract M2.4) and stated in the served identity above; this heading
+    # used to read "KG version mismatch", which a verified graph digest beside it
+    # contradicted.
     fp_warns = status_data.get("fingerprint_warnings", [])
     if fp_warns:
         lines.append("")
-        lines.append(f"⚠️ **KG version mismatch** ({len(fp_warns)} warning{'s' if len(fp_warns) != 1 else ''}):")
+        lines.append(
+            f"⚠️ **Graph structure differs from the checkpoint's structural "
+            f"fingerprint** ({len(fp_warns)} warning{'s' if len(fp_warns) != 1 else ''}; "
+            "node types and counts, edge-type count and feature sizes compared, "
+            "not the graph's identity):"
+        )
         for w in fp_warns[:3]:
             lines.append(f"- {w}")
 
@@ -484,18 +519,591 @@ def _format_full_explanation(candidate: Dict) -> str:
 
 
 # =============================================================================
+# What produced a result: the served identity (contract M3c)
+# =============================================================================
+# **One reading of the identity for every surface.** The report, the tab's
+# identity block and summary line, the model status and the CSV all read the
+# `served_identity` the API copied from the result it answered with (the status
+# reads the loaded pipeline's). The table rows are built once, by
+# `_identity_rows`, so the report and the tab cannot describe one result two
+# ways. Every part states its state in the contract's words (verified,
+# unverified, in_memory, supplied_in_memory, absent); a value that is not there
+# is written as that state and its reason, never left blank and never "unknown".
+
+#: The plan's claim boundary for the UI (PLAN_PROVENANCE_CONTRACT.md §6), verbatim.
+#: Verified states carry ✓ in the identity table, so the sentence refers to them.
+IDENTITY_CLAIM_BOUNDARY = (
+    "Checked: these files are the ones their records name, and the records agree "
+    "on the relations marked ✓. Not checked: who changed them, or anything a "
+    "person able to edit both files and records could alter."
+)
+#: Added under it when no row is marked ✓, so it is not read as a claim that
+#: something about this result was checked.
+IDENTITY_NOTHING_CHECKED = (
+    "No relation is marked ✓ for this result: nothing in it was checked against a record."
+)
+#: README's statement, carried by every report and identity block.
+NOT_A_MEDICAL_DEVICE = (
+    "Not a certified medical device; decision support for a qualified clinician."
+)
+
+#: The word for the demo answer (`served_identity` null: no pipeline is
+#: configured, nothing was served). It fills every identity cell and column.
+IDENTITY_DEMO = "demo"
+#: The word for a response that carried no `served_identity` at all (a server
+#: from before contract M3c, or a malformed reply), or a part of one it left out.
+#: Never "demo": that would claim the server said no pipeline was configured.
+IDENTITY_NOT_REPORTED = "not_reported"
+_SERVED = "served"
+
+_VERIFIED_MARK = "✓"
+#: Hex characters of a digest shown in a summary line; the full value is in the
+#: identity table directly below it.
+_SHORT_HEX = 12
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+#: A key the response did not carry, as distinct from one it carried as null.
+_MISSING = object()
+
+#: Row labels, in display order: one row per part of the identity.
+_IDENTITY_PARTS = (
+    "Checkpoint",
+    "Knowledge graph (`kg.json`)",
+    "Workspace manifest (`split_manifest.json`)",
+    "Shortest-path table",
+    "Dataset record (`kg.provenance.json`)",
+    "Scoring mode",
+    "Device (in effect; requested)",
+    "Mixing weight eta",
+    "Path settings",
+    "Phenotype normalisation rule",
+)
+#: Why nothing can be said, for the two kinds that have no identity to read.
+_NO_IDENTITY_REASON = {
+    IDENTITY_DEMO: "no pipeline is configured on this server; nothing was served",
+    IDENTITY_NOT_REPORTED: "the API's response did not carry a served identity",
+}
+_SCORING_MODE_WORDS = {
+    "gnn_plus_shortest_path": "the GNN score combined with the shortest-path table",
+    "gnn_only": "the GNN score alone",
+    "path_reasoning_fallback": "path reasoning over the knowledge graph alone",
+}
+_PATH_SETTING_KEYS = (
+    "max_path_length", "path_length_penalty", "aggregation_method",
+    "max_paths_per_candidate", "use_direct_path_optimization",
+)
+
+#: (headline, detail) for each state a reader must not miss. Words carry the
+#: meaning; the tab adds an icon, the report a blockquote, neither relies on it.
+_IDENTITY_BANNERS = {
+    IDENTITY_DEMO: (
+        "DEMO ANSWER: not computed.",
+        "No pipeline is configured on this server, so these candidates are "
+        "illustrative, not computed from any model, graph or table. Nothing here "
+        "is a diagnosis.",
+    ),
+    IDENTITY_NOT_REPORTED: (
+        "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
+        "The API's response carried no served identity, so these candidates "
+        "cannot be attributed to a model, graph or table.",
+    ),
+    "synthetic": (
+        "SYNTHETIC WORKSPACE: not a clinical result.",
+        "The served workspace's dataset record gives its origin as synthetic: a "
+        "generated stand-in, not a clinical knowledge graph. Results are for "
+        "testing only.",
+    ),
+    "no_model": (
+        "NO TRAINED MODEL: path-reasoning fallback.",
+        "No checkpoint is served, so candidates are ranked by path reasoning over "
+        "the knowledge graph alone: a disease with no qualifying path is not "
+        "scored, and scores are not comparable with GNN scores.",
+    ),
+    "no_sp": (
+        "NO SHORTEST-PATH TABLE: GNN score alone.",
+        "A trained model is served without a shortest-path table, so each score is "
+        "the GNN's alone (scoring mode gnn_only, mixing weight eta 1.0) and differs "
+        "from one computed with the table.",
+    ),
+}
+
+
+def _identity_of(container: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """What a diagnosis result says produced it: ``(kind, identity)``.
+
+    ``kind`` is ``"served"`` with the identity dict, ``"demo"`` when the API sent
+    ``served_identity: null`` (its demo answer, no pipeline configured), or
+    ``"not_reported"`` when the key is missing or is not an object.
+    """
+    if "served_identity" not in container:
+        return IDENTITY_NOT_REPORTED, None
+    identity = container["served_identity"]
+    if identity is None:
+        return IDENTITY_DEMO, None
+    if not isinstance(identity, dict):
+        return IDENTITY_NOT_REPORTED, None
+    return _SERVED, identity
+
+
+def _field(part: Any, key: str) -> Any:
+    """``part[key]``, or `_MISSING` when ``part`` is not a dict or lacks the key."""
+    return part.get(key, _MISSING) if isinstance(part, dict) else _MISSING
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+
+
+def _is_synthetic(identity: Dict[str, Any]) -> bool:
+    return _field(_field(identity, "dataset_record"), "origin") == "synthetic"
+
+
+def _has_model(identity: Dict[str, Any]) -> bool:
+    return _field(_field(identity, "checkpoint"), "state") in ("verified", "supplied_in_memory")
+
+
+def _plain_value(value: Any) -> str:
+    """A JSON scalar as text: ``true``/``false`` for booleans, floats as Python
+    prints them (``0.7``, ``1.0``)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+# ----------------------------------------------------------------- Markdown form
+#: Characters that could start Markdown or HTML syntax, or end a table cell.
+_MD_SPECIAL_RE = re.compile(r"([\\`*_{}\[\]<>#|~!])")
+
+
+def _md_text(value: Any) -> str:
+    """A value from the API as plain text, safe in a Markdown table cell: one
+    line, every character that could start Markdown or HTML escaped."""
+    text = " ".join(_plain_value(value).split())
+    return _MD_SPECIAL_RE.sub(r"\\\1", text)
+
+
+def _md_code(value: Any, in_table: bool = True) -> str:
+    """A value from the API in a code span, one line; a backtick in the value
+    gets a longer fence.
+
+    In a table cell (``in_table``) a pipe is escaped even inside the span: GFM
+    splits a row on ``|`` before it parses code spans. Outside a table the
+    escape would be shown literally, since a code span keeps backslashes.
+    """
+    text = " ".join(_plain_value(value).split())
+    if in_table:
+        text = text.replace("|", "\\|")
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _md_digest(value: Any) -> str:
+    """A full digest, ``sha256:``-prefixed, in a code span."""
+    return f"`sha256:{value}`" if _is_sha256(value) else _md_code(value)
+
+
+def _md_short(value: Any) -> str:
+    """The first `_SHORT_HEX` characters of a digest or identifier, for a
+    summary line (never a table cell)."""
+    if _is_sha256(value):
+        return f"`sha256:{value[:_SHORT_HEX]}…`"
+    text = _plain_value(value)
+    return _md_code(text[:_SHORT_HEX] + "…" if len(text) > _SHORT_HEX else text, in_table=False)
+
+
+_NOT_REPORTED_CELLS = (
+    "not\\_reported", "not reported — the response did not include this value"
+)
+
+
+def _md_setting(value: Any) -> str:
+    if value is _MISSING:
+        return "not reported"
+    return _md_code(value) if isinstance(value, str) else _md_text(value)
+
+
+def _checkpoint_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    part = _field(identity, "checkpoint")
+    state = _field(part, "state")
+    if state == "verified":
+        return f"{_VERIFIED_MARK} verified", _md_digest(_field(part, "sha256"))
+    if state == "supplied_in_memory":
+        return ("supplied\\_in\\_memory",
+                "none — a model object was supplied in memory; no checkpoint bytes were read")
+    if state == "absent":
+        return ("absent", "absent — no trained model is served; path reasoning ranks "
+                "the candidates (path-reasoning fallback)")
+    return _NOT_REPORTED_CELLS
+
+
+def _graph_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    part = _field(identity, "graph")
+    state = _field(part, "state")
+    if state == "verified":
+        return f"{_VERIFIED_MARK} verified", _md_digest(_field(part, "kg_sha256"))
+    if state == "unverified":
+        return ("unverified", f"{_md_digest(_field(part, 'kg_sha256'))} — read from a "
+                "file, checked against no workspace manifest")
+    if state == "in_memory":
+        return "in\\_memory", "none — the graph was supplied in memory; no file was read"
+    return _NOT_REPORTED_CELLS
+
+
+def _manifest_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    part = _field(identity, "graph")
+    state = _field(part, "state")
+    if state == "verified":
+        return (f"{_VERIFIED_MARK} verified",
+                _md_digest(_field(part, "split_manifest_sha256")))
+    if state == "unverified":
+        return ("absent", "absent — no workspace manifest was read (serving without "
+                "a checkpoint verifies no workspace)")
+    if state == "in_memory":
+        return "absent", "absent — the graph was supplied in memory, from no workspace"
+    return _NOT_REPORTED_CELLS
+
+
+def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    part = _field(identity, "shortest_paths")
+    state = _field(part, "state")
+    if state == "verified":
+        build_id, max_hops = _field(part, "build_id"), _field(part, "max_hops")
+        return (f"{_VERIFIED_MARK} verified",
+                f"build\\_id {_md_setting(build_id)} · max\\_hops {_md_setting(max_hops)}")
+    if state == "absent":
+        if _field(identity, "scoring_mode") == "gnn_only":
+            reason = "the GNN score is used alone (gnn\\_only, eta 1.0)"
+        elif not _has_model(identity):
+            reason = "no model is served to combine it with (path-reasoning fallback)"
+        else:
+            reason = "it does not contribute to the score"
+        return "absent", f"absent — no table is served; {reason}"
+    return _NOT_REPORTED_CELLS
+
+
+def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    part = _field(identity, "dataset_record")
+    state = _field(part, "state")
+    if state == "verified":
+        origin = _field(part, "origin")
+        # **Never "verified" alone for a synthetic record** (contract M3b): the
+        # binding and the origin are stated together.
+        meaning = {
+            "synthetic": "a generated stand-in, not a clinical knowledge graph",
+            "files": "built from identified source files",
+        }.get(origin, "not described by this page")
+        return (f"{_VERIFIED_MARK} verified · {_md_text(origin)}",
+                f"{_md_digest(_field(part, 'sha256'))} — origin {_md_text(origin)}: {meaning}")
+    if state == "absent":
+        return "absent", "absent — no workspace was verified, so no dataset record was read"
+    return _NOT_REPORTED_CELLS
+
+
+def _scoring_mode_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    mode = _field(identity, "scoring_mode")
+    if mode is _MISSING or mode is None:
+        return _NOT_REPORTED_CELLS
+    words = _SCORING_MODE_WORDS.get(mode, "not described by this page")
+    return "in effect", f"{_md_code(mode)} — {words}"
+
+
+def _device_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    settings = _field(identity, "settings")
+    device, requested = _field(settings, "device"), _field(settings, "device_requested")
+    if device is _MISSING or requested is _MISSING:
+        return _NOT_REPORTED_CELLS
+    if device is None and requested is None and not _has_model(identity):
+        return "none", "none — no model is served, so nothing runs on a device"
+    in_effect = (_md_code(device) if device is not None
+                 else "not stated by the model supplied in memory")
+    asked = (_md_code(requested) if requested is not None
+             else "none (a model supplied in memory stays on its own device)")
+    return "in effect", f"{in_effect} in effect; requested: {asked}"
+
+
+def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    eta = _field(_field(identity, "settings"), "eta")
+    if eta is _MISSING:
+        return _NOT_REPORTED_CELLS
+    if eta is None:
+        return ("none", "none — no model is served, so there are no GNN and "
+                "shortest-path terms to mix")
+    note = (" — no shortest-path table, so the GNN score is used alone"
+            if _field(identity, "scoring_mode") == "gnn_only" else "")
+    return "in effect", f"{_md_text(eta)}{note}"
+
+
+def _path_settings_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    # In effect in every mode: candidates are the diseases these paths reach.
+    settings = _field(identity, "settings")
+    if not isinstance(settings, dict):
+        return _NOT_REPORTED_CELLS
+    return "in effect", " · ".join(
+        f"`{key}` {_md_setting(_field(settings, key))}" for key in _PATH_SETTING_KEYS
+    )
+
+
+def _phenotype_rule_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+    version = _field(_field(identity, "settings"), "phenotype_normalisation_version")
+    if version is _MISSING or version is None:
+        return _NOT_REPORTED_CELLS
+    return "in effect", f"version {_md_text(version)}"
+
+
+def _identity_rows(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tuple[str, str, str]]:
+    """``(part, state, value)`` Markdown cells, one row per part, never blank.
+
+    The one builder of the identity table: the report and the tab's identity
+    block both render these rows, so they cannot disagree.
+    """
+    if kind != _SERVED or identity is None:
+        word = _md_text(kind)
+        return [(part, word, f"{word} — {_NO_IDENTITY_REASON[kind]}") for part in _IDENTITY_PARTS]
+    cells = (
+        _checkpoint_cells, _graph_cells, _manifest_cells, _shortest_path_cells,
+        _dataset_record_cells, _scoring_mode_cells, _device_cells, _eta_cells,
+        _path_settings_cells, _phenotype_rule_cells,
+    )
+    return [(part, *build(identity)) for part, build in zip(_IDENTITY_PARTS, cells, strict=True)]
+
+
+def _identity_table_lines(kind: str, identity: Optional[Dict[str, Any]]) -> List[str]:
+    """The identity table, the claim boundary under it and the fixed statement."""
+    rows = _identity_rows(kind, identity)
+    lines = ["| Part | State | Value |", "|------|-------|-------|"]
+    lines += [f"| {part} | {state} | {value} |" for part, state, value in rows]
+    lines += ["", IDENTITY_CLAIM_BOUNDARY]
+    if not any(state.startswith(_VERIFIED_MARK) for _, state, _ in rows):
+        lines += ["", IDENTITY_NOTHING_CHECKED]
+    lines += ["", NOT_A_MEDICAL_DEVICE]
+    return lines
+
+
+def _identity_banners(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tuple[str, str]]:
+    """The (headline, detail) banners for every non-normal state, most severe first."""
+    if kind != _SERVED or identity is None:
+        return [_IDENTITY_BANNERS[kind]]
+    banners = []
+    if _is_synthetic(identity):
+        banners.append(_IDENTITY_BANNERS["synthetic"])
+    if _field(_field(identity, "checkpoint"), "state") == "absent":
+        banners.append(_IDENTITY_BANNERS["no_model"])
+    elif _has_model(identity) and _field(_field(identity, "shortest_paths"), "state") == "absent":
+        banners.append(_IDENTITY_BANNERS["no_sp"])
+    return banners
+
+
+def _identity_banner_md(banner: Tuple[str, str]) -> str:
+    """A banner for the tab, built like `GNN_UNAVAILABLE_BANNER`: the words carry
+    it, the icon only draws the eye."""
+    headline, detail = banner
+    return f"⚠️ **{headline}** {detail}\n"
+
+
+def _identity_summary_md(
+    kind: str, identity: Optional[Dict[str, Any]], lead: str = "Produced by"
+) -> str:
+    """One line naming what produced a result, with short digests.
+
+    The full values are in the identity table (`_identity_rows`); this line is
+    for reading at a glance, never for copying a digest from.
+    """
+    if kind == IDENTITY_DEMO:
+        return (f"**{lead}:** demo answer — no pipeline is configured; these "
+                "candidates were not computed.")
+    if kind != _SERVED or identity is None:
+        return (f"**{lead}:** not reported — the API's response did not say what "
+                "produced this result.")
+
+    checkpoint = _field(identity, "checkpoint")
+    graph = _field(identity, "graph")
+    shortest_paths = _field(identity, "shortest_paths")
+    record = _field(identity, "dataset_record")
+    mode = _field(identity, "scoring_mode")
+    device = _field(_field(identity, "settings"), "device")
+
+    parts = []
+    state = _field(checkpoint, "state")
+    if state == "verified":
+        parts.append(f"checkpoint {_md_short(_field(checkpoint, 'sha256'))} {_VERIFIED_MARK}")
+    elif state == "supplied_in_memory":
+        parts.append("model supplied in memory (no checkpoint)")
+    elif state == "absent":
+        parts.append("no trained model (checkpoint absent)")
+    else:
+        parts.append("checkpoint not reported")
+
+    state = _field(graph, "state")
+    if state in ("verified", "unverified"):
+        mark = _VERIFIED_MARK if state == "verified" else "unverified"
+        parts.append(f"graph {_md_short(_field(graph, 'kg_sha256'))} {mark}")
+    elif state == "in_memory":
+        parts.append("graph in memory (no file)")
+    else:
+        parts.append("graph not reported")
+
+    state = _field(shortest_paths, "state")
+    if state == "verified":
+        parts.append(f"SP table {_md_short(_field(shortest_paths, 'build_id'))} {_VERIFIED_MARK}")
+    elif state == "absent":
+        parts.append("no SP table")
+    else:
+        parts.append("SP table not reported")
+
+    parts.append(_md_code(mode, in_table=False) if isinstance(mode, str)
+                 else "scoring mode not reported")
+    if isinstance(device, str):
+        parts.append(_md_code(device, in_table=False))
+
+    state = _field(record, "state")
+    if state == "verified":
+        parts.append(f"dataset {_md_text(_field(record, 'origin'))} {_VERIFIED_MARK}")
+    elif state == "absent":
+        parts.append("no dataset record")
+    else:
+        parts.append("dataset record not reported")
+    return f"**{lead}:** " + " · ".join(parts)
+
+
+def _identity_details_md(kind: str, identity: Optional[Dict[str, Any]]) -> str:
+    """The full identity table in a closed block under the result (the tab)."""
+    return "\n".join([
+        "<details><summary>What produced this result — full identity</summary>",
+        "",
+        *_identity_table_lines(kind, identity),
+        "",
+        "</details>",
+    ])
+
+
+# =============================================================================
 # Export helpers — write ALL candidates (not just the previewed one) to a file
 # =============================================================================
-_CSV_COLUMNS = [
+_CANDIDATE_CSV_COLUMNS = [
     "rank", "disease_id", "disease_name", "confidence_score", "confidence_label",
     "gnn_score", "sp_score", "reasoning_score", "evidence_mode", "evidence_summary",
     "min_path_length", "num_direct_paths", "num_analogies",
     "matching_phenotypes", "supporting_genes",
 ]
 
+# **What produced the result, on every row** (contract M3c). Appended after the
+# candidate columns, never between them, so a reader that takes columns by
+# position is not broken; one header row and no preamble, so the file stays a
+# plain table. Each column holds one atomic part, the same on every row.
+# Digests are written in full as "sha256:<hex>" -- the prefix names the
+# algorithm and stops a spreadsheet reading an all-digit digest as a number. A
+# value the identity holds as null is written as a word, never an empty cell:
+#   absent        the part is absent: no checkpoint, table, manifest or record
+#   none          nothing applies: no device or eta without a model, no digest
+#                 for a model or graph supplied in memory, no device requested
+#                 for a model supplied in memory
+#   not_stated    a model supplied in memory that does not say its device
+#   demo          every column of the demo answer (`served_identity` null: no
+#                 pipeline configured, nothing served)
+#   not_reported  every column of a response with no `served_identity`, or a
+#                 value one left out
+_SERVED_CSV_COLUMNS = [
+    "served_scoring_mode",
+    "served_checkpoint_state", "served_checkpoint_sha256",
+    "served_kg_state", "served_kg_sha256", "served_split_manifest_sha256",
+    "served_sp_state", "served_sp_build_id", "served_sp_max_hops",
+    "served_dataset_record_state", "served_dataset_origin",
+    "served_dataset_record_sha256",
+    "served_device", "served_device_requested", "served_eta",
+    "served_max_path_length", "served_path_length_penalty",
+    "served_aggregation_method", "served_max_paths_per_candidate",
+    "served_direct_path_optimization", "served_phenotype_normalisation_version",
+]
+
+_CSV_COLUMNS = _CANDIDATE_CSV_COLUMNS + _SERVED_CSV_COLUMNS
+
 
 def _fmt_num(value: Any) -> str:
     return f"{value:.4f}" if isinstance(value, (int, float)) else ""
+
+
+#: A cell a spreadsheet would run as a formula starts with one of these (OWASP,
+#: "CSV Injection").
+_CSV_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_text(value: Any) -> str:
+    """A free-text cell, defused: one that a spreadsheet would run as a formula
+    gets a leading apostrophe. Numeric columns are written by `_fmt_num` and
+    never pass through here, so a negative score stays a number."""
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(_CSV_FORMULA_START) else text
+
+
+def _csv_value(value: Any, null_word: str) -> str:
+    """One identity value as a CSV cell, never empty."""
+    if value is _MISSING:
+        return IDENTITY_NOT_REPORTED
+    if value is None:
+        return null_word
+    if isinstance(value, str):
+        return _csv_text(value) if value else IDENTITY_NOT_REPORTED
+    return _plain_value(value)
+
+
+def _csv_digest(value: Any, null_word: str) -> str:
+    if _is_sha256(value):
+        return f"sha256:{value}"
+    return _csv_value(value, null_word)
+
+
+def _served_csv_values(result: Dict[str, Any]) -> Dict[str, str]:
+    """The `_SERVED_CSV_COLUMNS` of a result, the same for every row."""
+    kind, identity = _identity_of(result)
+    if kind != _SERVED or identity is None:
+        return dict.fromkeys(_SERVED_CSV_COLUMNS, kind)
+
+    checkpoint = _field(identity, "checkpoint")
+    graph = _field(identity, "graph")
+    shortest_paths = _field(identity, "shortest_paths")
+    record = _field(identity, "dataset_record")
+    settings = _field(identity, "settings")
+    checkpoint_state = _field(checkpoint, "state")
+    model = _has_model(identity)
+
+    def setting(key: str, null_word: str = "none") -> str:
+        return _csv_value(_field(settings, key), null_word)
+
+    return {
+        "served_scoring_mode": _csv_value(_field(identity, "scoring_mode"), IDENTITY_NOT_REPORTED),
+        "served_checkpoint_state": _csv_value(checkpoint_state, IDENTITY_NOT_REPORTED),
+        "served_checkpoint_sha256": _csv_digest(
+            _field(checkpoint, "sha256"),
+            "none" if checkpoint_state == "supplied_in_memory" else "absent",
+        ),
+        "served_kg_state": _csv_value(_field(graph, "state"), IDENTITY_NOT_REPORTED),
+        "served_kg_sha256": _csv_digest(_field(graph, "kg_sha256"), "none"),
+        "served_split_manifest_sha256": _csv_digest(
+            _field(graph, "split_manifest_sha256"), "absent"
+        ),
+        "served_sp_state": _csv_value(_field(shortest_paths, "state"), IDENTITY_NOT_REPORTED),
+        "served_sp_build_id": _csv_value(_field(shortest_paths, "build_id"), "absent"),
+        "served_sp_max_hops": _csv_value(_field(shortest_paths, "max_hops"), "absent"),
+        "served_dataset_record_state": _csv_value(_field(record, "state"), IDENTITY_NOT_REPORTED),
+        "served_dataset_origin": _csv_value(_field(record, "origin"), "absent"),
+        "served_dataset_record_sha256": _csv_digest(_field(record, "sha256"), "absent"),
+        "served_device": setting("device", "not_stated" if model else "none"),
+        "served_device_requested": setting("device_requested"),
+        "served_eta": setting("eta"),
+        "served_max_path_length": setting("max_path_length", IDENTITY_NOT_REPORTED),
+        "served_path_length_penalty": setting("path_length_penalty", IDENTITY_NOT_REPORTED),
+        "served_aggregation_method": setting("aggregation_method", IDENTITY_NOT_REPORTED),
+        "served_max_paths_per_candidate": setting(
+            "max_paths_per_candidate", IDENTITY_NOT_REPORTED
+        ),
+        "served_direct_path_optimization": setting(
+            "use_direct_path_optimization", IDENTITY_NOT_REPORTED
+        ),
+        "served_phenotype_normalisation_version": setting(
+            "phenotype_normalisation_version", IDENTITY_NOT_REPORTED
+        ),
+    }
 
 
 # KG disease ids are stored as "<source>:<CURIE>", e.g. "mondo:MONDO:0019441".
@@ -530,7 +1138,9 @@ def _clean_disease_id(disease_id: Any) -> str:
 
 
 def _build_results_csv(result: Dict[str, Any]) -> str:
-    """One row per candidate — the tabular summary, for spreadsheet analysis."""
+    """One row per candidate — the tabular summary, for spreadsheet analysis —
+    with what produced the result (`_SERVED_CSV_COLUMNS`) repeated on each row."""
+    served = _served_csv_values(result)
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
     writer.writeheader()
@@ -538,34 +1148,35 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
         pkg = c.get("evidence_package") or {}
         writer.writerow({
             "rank": c.get("rank"),
-            "disease_id": _clean_disease_id(c.get("disease_id", "")),
-            "disease_name": c.get("disease_name", ""),
+            "disease_id": _csv_text(_clean_disease_id(c.get("disease_id", ""))),
+            "disease_name": _csv_text(c.get("disease_name", "")),
             "confidence_score": _fmt_num(c.get("confidence_score")),
-            "confidence_label": c.get("confidence_label") or "",
+            "confidence_label": _csv_text(c.get("confidence_label") or ""),
             "gnn_score": _fmt_num(c.get("gnn_score")),
             "sp_score": _fmt_num(c.get("sp_score")),
             "reasoning_score": _fmt_num(c.get("reasoning_score")),
-            "evidence_mode": pkg.get("mode") or "",
-            "evidence_summary": (pkg.get("summary") or "").replace("\n", " ").strip(),
+            "evidence_mode": _csv_text(pkg.get("mode") or ""),
+            "evidence_summary": _csv_text((pkg.get("summary") or "").replace("\n", " ").strip()),
             "min_path_length": pkg.get("min_path_length", ""),
             "num_direct_paths": len(pkg.get("direct_paths") or []),
             "num_analogies": len(pkg.get("analogies") or []),
-            "matching_phenotypes": "; ".join(c.get("matching_phenotypes") or []),
-            "supporting_genes": "; ".join(c.get("supporting_genes") or []),
+            "matching_phenotypes": _csv_text("; ".join(c.get("matching_phenotypes") or [])),
+            "supporting_genes": _csv_text("; ".join(c.get("supporting_genes") or [])),
+            **served,
         })
     return buf.getvalue()
 
 
 def _build_results_report_md(result: Dict[str, Any]) -> str:
-    """Full human-readable report: session meta + summary table + per-candidate
-    evidence and explanation for EVERY candidate (reuses the preview formatters)."""
+    """Full human-readable report: session meta, what produced the result (the
+    served identity), summary table, and per-candidate evidence and explanation
+    for EVERY candidate (reuses the preview formatters)."""
     candidates = result.get("candidates", [])
     lines = ["# SHEPHERD-Advanced Diagnosis Report", ""]
     for key, value in (
         ("Patient ID", result.get("patient_id")),
         ("Session ID", result.get("session_id")),
         ("Timestamp", result.get("timestamp")),
-        ("Model version", result.get("model_version")),
         ("Inference time (ms)", f"{result.get('inference_time_ms', 0):.1f}"),
         ("Candidates", len(candidates)),
     ):
@@ -577,6 +1188,16 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     warnings = result.get("warnings") or []
     if warnings:
         lines.append(f"- **Warnings**: {'; '.join(warnings)}")
+
+    # **What produced this result, before any candidate** (contract M3c). It
+    # replaces a "Model version" line that always read 1.0.0. The skip-empty
+    # loop above is not used here: an absent part is printed as its state, so
+    # an archived report says what was missing rather than omitting it.
+    kind, identity = _identity_of(result)
+    lines += ["", "## What produced this result", ""]
+    for headline, detail in _identity_banners(kind, identity):
+        lines += [f"> **{headline}** {detail}", ""]
+    lines += _identity_table_lines(kind, identity)
 
     lines += ["", "## Ranked candidates", "", _format_results_table(candidates),
               "", "## Per-candidate detail"]
@@ -617,10 +1238,24 @@ def _export_dir() -> Path:
 
 
 def _export_basename(result: Dict[str, Any]) -> str:
-    """diagnosis_<patient>_<session-signature> — distinct per run for easy filing."""
+    """diagnosis_[SYNTHETIC_|DEMO_]<patient>_<session-signature> — distinct per
+    run for easy filing.
+
+    **A file name carries the two states a copied file must not lose** (contract
+    M3c): SYNTHETIC for a result from a synthetic workspace, DEMO for the demo
+    answer. A CSV has no place for a banner, and a file is often seen by its
+    name alone.
+    """
     patient = _slug(result.get("patient_id"), "webui_patient")
     session = _slug(result.get("session_id") or result.get("timestamp"), "run")
-    return f"diagnosis_{patient}_{session}"
+    kind, identity = _identity_of(result)
+    if kind == IDENTITY_DEMO:
+        marker = "DEMO_"
+    elif kind == _SERVED and identity is not None and _is_synthetic(identity):
+        marker = "SYNTHETIC_"
+    else:
+        marker = ""
+    return f"diagnosis_{marker}{patient}_{session}"
 
 
 def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
@@ -697,9 +1332,20 @@ def _on_diagnose(
     warnings = result.get("warnings", [])
     inference_ms = result.get("inference_time_ms", 0)
 
+    # **What produced this result, attached to it** (contract M3c): the banners
+    # above the table, a summary line under it and the full identity in a closed
+    # block, all from the result's own `served_identity`. The model status
+    # describes whatever is loaded now, which a reload can change; this cannot.
+    kind, identity = _identity_of(result)
+    banners_md = "".join(
+        _identity_banner_md(banner) + "\n" for banner in _identity_banners(kind, identity)
+    )
+
     # Build results table
     table_md = _format_results_table(candidates)
     meta = f"\n\n*{len(candidates)} candidates found in {inference_ms:.1f}ms*"
+    meta += f"\n\n{_identity_summary_md(kind, identity)}"
+    meta += f"\n\n{_identity_details_md(kind, identity)}"
     if warnings:
         meta += f"\n\n⚠️ Warnings: {'; '.join(warnings)}"
 
@@ -737,7 +1383,7 @@ def _on_diagnose(
         csv_update = md_update = _DOWNLOAD_DISABLED
 
     return (
-        table_md + meta + export_note,
+        banners_md + table_md + meta + export_note,
         evidence_md,
         explain_md,
         gr.update(choices=choices, value=choices[0] if choices else None),
@@ -999,7 +1645,9 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
                 )
             gr.Markdown(
                 "<sub>CSV = one row per candidate (all Top-K) for spreadsheets · "
-                "report = full evidence + explanation for every candidate.</sub>"
+                "report = full evidence + explanation for every candidate · "
+                "both say what produced the result (the served_ columns; the "
+                "report's identity section).</sub>"
             )
 
             candidate_selector = gr.Dropdown(

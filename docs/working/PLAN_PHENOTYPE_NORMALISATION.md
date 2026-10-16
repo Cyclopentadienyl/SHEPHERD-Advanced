@@ -404,7 +404,10 @@ string-level semantics with it.
   - The one run-time application is a served request, which has no file. Its result states the
     repeats removed.
   - Its served identity (contract M3c) carries the rule version, as one of the serving settings
-    that change scores.
+    that change scores. **Since M3c (implemented 2026-10-16, awaiting review) it does:**
+    `settings.phenotype_normalisation_version`, the version the served request was normalised
+    with (`PHENOTYPE_NORMALISATION_VERSION`, currently 1, N1's rule). N2 is still not started:
+    no stored sample file or manifest records the rule yet.
 - **Two identities, not one.**
   - **The sample bytes.** If normalisation changes a case, the bytes change, the digest changes,
     and a ledger record keyed on the earlier digest (`sidecar.py:156-161`) does not attach.

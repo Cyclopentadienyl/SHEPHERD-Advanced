@@ -877,6 +877,16 @@ plan could not then produce one.
 and the choices it makes where this section left one open, are at the end of
 this section.*
 
+*Amended for contract M3c (2026-10-16, awaiting review), with the script in the
+same change (BACKLOG 19.8): readiness reads the table's state, the scoring mode
+and the device from the status's served identity; the subject is the served
+identity each repeat's service reports from its own reads, not three files hashed
+by path before the service starts; a response counts only when it carries that
+identity; and complete readings need every repeat to report the same one. The
+readings already taken (§7.4) and S10's evidence ran the script before this
+amendment and carry its earlier subject form, three path digests, which stays
+what those files say.*
+
 **The service itself, started the way the unit starts it:** through the
 launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
 --no-browser -- --host 127.0.0.1 --port <p>` (loopback, overriding the
@@ -939,8 +949,9 @@ cost, and it would be measured as reload cost. So the reload request passes the
 same path.
 
 **Readiness is asserted before anything counts.** `GET /api/v1/pipeline/status`
-must show `initialized`, `gnn_ready`, `has_model` and `sp_ready`, and
-`sp_kg_binding == "verified"`. A reload whose model fails to load still reports
+must show `initialized`, `gnn_ready`, `has_model` and `sp_ready`, and, since
+contract M3c, a served identity whose shortest-path table is `verified` (before
+M3c: `sp_kg_binding == "verified"`, the same check by its earlier field). A reload whose model fails to load still reports
 success and serves the fallback, the gap `DISEASE_SCORER_POLICY.md` §2 records
 as B-2. Without this check, a reading can come from a pipeline with no model in
 it.
@@ -1020,8 +1031,10 @@ counters are reported.
 - `top_k = 10`, `include_explanations = true`, `include_paths = true`: the API's
   defaults, which are what the WebUI sends by default.
 - A request counts only if it returns HTTP 200 with a result the response
-  schema accepts. The failures are counted, and a phase with any failure is
-  incomplete.
+  schema accepts and, since contract M3c, whose `served_identity` equals the one
+  the service reported once ready. A response from another pipeline, or the
+  demo answer's null, is its own failure class (`served_identity_mismatch`).
+  The failures are counted, and a phase with any failure is incomplete.
 
 The evidence records the seed, the SHA-256 of `val_samples.json`, the generation
 rule, the commit of the script that ran it, and the request counts and
@@ -1032,8 +1045,12 @@ process.** The median and the maximum are reported, not a mean.
 
 **Output: one aggregate JSON, emitted by one committed script**, which is the
 pattern BACKLOG §5.2 requires of every evidence file. It records bytes, seconds,
-counts, the three digests (graph, checkpoint, SP table), the code version it
-ran at, the kernel and torch versions, and the readiness fields. It records no
+counts, the subject as the service reports it (since contract M3c: the served
+identity from its status at R1 — checkpoint, `kg.json` and
+`split_manifest.json` by digest, the shortest-path table by `build_id`, the
+dataset record by origin and digest, the device the model ran on — and whether
+every repeat reported the same one; before M3c, three digests of graph,
+checkpoint and SP table hashed by path), the code version it ran at, the kernel and torch versions, and the readiness fields. It records no
 paths, no host or operator names, and no phenotype ids. The script launches the
 service through the launcher, reads the server process's `/proc`, and talks HTTP
 to loopback. It sits beside `benchmark_sp_lookup.py`, and it is not a
@@ -1061,8 +1078,14 @@ code:
   contract here first, not writing a second one.
 - **What readiness asserts.** The five fields above, the scoring mode
   `gnn_plus_shortest_path` (§7.1.1), that the status names the checkpoint that
-  was passed, and that the model was moved to CUDA (`checkpoint_meta.device`,
-  written after the model is moved), at startup and again after the reload.
+  was passed, and that the model was moved to CUDA, at startup and again after
+  the reload. Since contract M3c the table's state, the scoring mode and the
+  device are read from the status's served identity: the device is the one the
+  model's parameters are on (`settings.device`), the request beside it (before
+  M3c: `checkpoint_meta.device`, written after the model is moved). R1 also
+  fails when that identity does not name a verified checkpoint, graph and
+  manifest, table and dataset record, and after the reload R3 requires the
+  service to report the same identity again (`serves_subject`).
   `cuda` is torch's device type, not a vendor: ROCm builds of torch use it too.
   What identifies the platform is recorded beside it: torch's CUDA and HIP
   versions and the device name, from the probe. A repeat ends at R1 if
@@ -1163,7 +1186,8 @@ code:
 
 **Completing the readings is not passing a capacity gate.** §13 asks for
 readings, not a budget, and no budget is invented here. The readings for this
-platform are complete when all four phases finish with readiness asserted. For
+platform are complete when all four phases finish with readiness asserted and,
+since contract M3c, every repeat's service reported one served identity. For
 each phase the evidence records whether it completed, any allocation failure or
 OOM kill, and swap's baseline, sampled peak and increase. Swap that was already
 in use is recorded as baseline, not reported as a failure caused by the

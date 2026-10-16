@@ -34,7 +34,8 @@ Output files:
     <output_dir>/runs/gat/<run>/      - The demo run (if --train-model)
 
 The command to start the API is printed on completion, with the checkpoint the
-run actually selected.
+run actually selected and the device it was trained on: serving refuses `auto`
+without CUDA (contract M3c), so the command names the device.
 """
 from __future__ import annotations
 
@@ -295,6 +296,19 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
     return selected
 
 
+def serving_device(training_device: str) -> str:
+    """The device the printed serving command names: the one the demo trained on.
+
+    **Serving refuses `auto` without CUDA** (contract M3c), as training does, so
+    a command naming no device would be refused for a demo trained with
+    `--device cpu` on a host without CUDA. Training's `auto` ran on CUDA -- it
+    refuses otherwise -- so the command names `cuda` for it; any other device is
+    named as it was given.
+    """
+    requested = (training_device or "").strip() or "auto"
+    return "cuda" if requested == "auto" else requested
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -373,6 +387,7 @@ Start the API with GNN scoring (full mode):
   SHEPHERD_KG_PATH={kg_path} \\
   SHEPHERD_CHECKPOINT_PATH={checkpoint_path} \\
   SHEPHERD_DATA_DIR={output_dir} \\
+  SHEPHERD_DEVICE={serving_device(args.device)} \\
   python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 """)
     else:
@@ -386,6 +401,7 @@ To enable GNN scoring, train on this workspace:
   python scripts/setup_demo.py --train-model
   # or, equivalently, the production entry point:
   python scripts/train_model.py --data-dir {output_dir} --epochs 20
+  # on a host without CUDA, add --device cpu to either: auto refuses there
 """)
 
 

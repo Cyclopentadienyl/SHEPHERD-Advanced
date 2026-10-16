@@ -511,7 +511,9 @@ guess:
 With no `shortest_paths.pt` (and no sidecar) under the default configuration (GNN
 loaded, `sp_optional=True`) the **service does not stop**. It serves pure GNN
 scoring: `sp_ready=False`, `scoring_mode=gnn_only`, effective eta 1.0. **Scores and
-rankings differ from a run with shortest paths enabled.**
+rankings differ from a run with shortest paths enabled.** Every result says so in its
+served identity (§4.7): shortest paths `absent`, scoring mode `gnn_only`, eta `1.0`, and
+the Diagnosis tab and its report show a `NO SHORTEST-PATH TABLE: GNN score alone.` banner.
 
 > **Exception**: a deployment that has deliberately set `sp_optional=False` gets
 > **no pipeline** when SP is unavailable: the build is refused
@@ -533,6 +535,7 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 | `sp_hop_bound_source` | `sidecar` (the only source since the configured bound was retired) |
 | `sp_kg_binding` | `verified` |
 | `scoring_mode` | `gnn_plus_shortest_path` when enabled; `gnn_only` when SP is off and the GNN is fine |
+| `served_identity` | What the loaded pipeline serves (§4.7). When enabled: `shortest_paths.state` `verified` with the sidecar's `build_id` and `max_hops`, and `scoring_mode` `gnn_plus_shortest_path`. With no table: `shortest_paths.state` `absent`, `gnn_only`, `settings.eta` `1.0` |
 
 ---
 
@@ -639,12 +642,24 @@ wherever its record is shown:
   `incomplete_by_design`);
 - the measurement report's manifest (`dataset_record`) and its console summary;
 - the inventory (`scripts/audit_checkpoint_family.py --inventory`), which lists
-  the record's verdict with its binding state and origin as separate fields.
+  the record's verdict with its binding state and origin as separate fields;
+- since contract M3c, the served identity (§4.7): `dataset_record` `verified`
+  with origin `synthetic`, in every diagnosis response and in the API's
+  pipeline status;
+- the Diagnosis tab: a `SYNTHETIC WORKSPACE: not a clinical result.` banner
+  above the results and in the model status, and `dataset synthetic ✓` on the
+  result's "Produced by" line;
+- the downloadable report: the same banner in its "What produced this result"
+  section, and its file name, `diagnosis_SYNTHETIC_<patient>_<session>_report.md`;
+- the CSV export: `served_dataset_origin` `synthetic` on every row, and its file
+  name, `diagnosis_SYNTHETIC_<patient>_<session>.csv`.
 
 What the record says it does not establish (`incomplete_by_design`) is
 displayed, never refused. Serving without a model — path reasoning over
-`kg.json` alone — verifies no workspace and is unaffected. The pipeline reload
-lists `kg.provenance.json` among the required files.
+`kg.json` alone — verifies no workspace and is unaffected; its served identity
+says so (checkpoint `absent`, graph `unverified`, dataset record `absent`;
+§4.7, "Serving without a model"). The pipeline reload lists
+`kg.provenance.json` among the required files.
 
 ### Older workspaces
 
@@ -841,6 +856,252 @@ published file will have, so anyone who may read the file may read the partial
 copy too. And **the directories must not be writable by accounts you do not
 trust**: an account that can rename files in them can substitute a file
 between its write and its rename, as it could before this change.
+
+## 4.7 What produced a diagnosis: the served identity (since contract M3c)
+
+Since contract M3c (2026-10-16) every diagnosis carries a **served identity**:
+the checkpoint, the graph, the workspace manifest, the shortest-path table and
+the dataset record that produced it, by digest or identifier, the scoring mode
+and the serving settings in effect — **each part stating its state in words**.
+The pipeline builds it from the reads it took when it was built; nothing is
+hashed again when a result is produced, and nothing is filled in with
+"unknown".
+
+### The diagnose response changed
+
+`POST /api/v1/diagnose`:
+
+- **`model_version` is removed**, with no replacement string. It always read
+  `1.0.0`, whatever was served. A client that read it must stop.
+- **`served_identity` is added** and is always present. It is copied from the
+  result the response answers with, never from the service's shared state, so
+  a reload that lands while a request runs cannot relabel its answer.
+- **It is `null` only for the demo answer.** With no pipeline configured at all,
+  the service still answers with illustrative candidates and the warning
+  `Pipeline not fully initialized - using mock data`; nothing was served, so
+  nothing is identified. A deployment that configured a pipeline and could not
+  build it answers 503, never the demo answer.
+
+The service's own version (`1.0.0` in `/health`, `/` and the Swagger title) is
+the API's version, not the identity of what is served.
+
+### Its parts and states
+
+```json
+"served_identity": {
+  "scoring_mode": "gnn_plus_shortest_path",
+  "checkpoint": {"state": "verified", "sha256": "<SHA-256 of the checkpoint read>"},
+  "graph": {"state": "verified", "kg_sha256": "<SHA-256 of kg.json>",
+            "split_manifest_sha256": "<SHA-256 of split_manifest.json>"},
+  "shortest_paths": {"state": "verified", "build_id": "<the sidecar's build_id>", "max_hops": 5},
+  "dataset_record": {"state": "verified", "origin": "files",
+                     "sha256": "<SHA-256 of kg.provenance.json>"},
+  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": 0.7,
+               "max_path_length": 4, "path_length_penalty": 0.9,
+               "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+               "use_direct_path_optimization": true,
+               "phenotype_normalisation_version": 1}
+}
+```
+
+| Part | State | Meaning | Values |
+|---|---|---|---|
+| `checkpoint` | `verified` | The model was built from one read of a checkpoint whose record matched the served graph (contract M2.4) | `sha256`: that read's digest |
+| | `supplied_in_memory` | A program handed the pipeline a model object; no checkpoint bytes were read | `sha256` null |
+| | `absent` | No model: path reasoning ranks the candidates | `sha256` null |
+| `graph` | `verified` | `kg.json` and `split_manifest.json` were each read once, and the graph's digest matched the manifest | `kg_sha256`, `split_manifest_sha256` |
+| | `unverified` | The graph was read from a file and checked against no workspace manifest (serving without a model, below) | `kg_sha256`; `split_manifest_sha256` null |
+| | `in_memory` | A program supplied the graph in memory; no file was read | both null |
+| `shortest_paths` | `verified` | The table and its sidecar share one `build_id` and name the served graph (§4.3) | `build_id`; `max_hops`, the sidecar's |
+| | `absent` | No table contributes to the score | both null |
+| `dataset_record` | `verified` | The record the manifest binds, naming the served graph (§4.4); verified exactly when the graph is | `origin` (`files` or `synthetic`); `sha256` of `kg.provenance.json` |
+| | `absent` | No workspace was verified, so no record was read | all null |
+| `scoring_mode` | — | `gnn_plus_shortest_path`, `gnn_only` or `path_reasoning_fallback` | |
+| `settings` | — | The serving settings that change scores, as in effect | below |
+
+`settings`:
+
+- `device`: where the model ran — torch's name for the device its parameters
+  are on (`cuda:0`, `cpu`). Null with no model.
+- `device_requested`: what was asked for — `auto` when nothing was named,
+  `cuda`, `cuda:N` or `cpu` (§4.8). Null with no model.
+- `eta`: the mixing weight in effect — the configured value with a table,
+  `1.0` without one. Null with no model.
+- `max_path_length`, `path_length_penalty`, `aggregation_method`,
+  `max_paths_per_candidate`, `use_direct_path_optimization`: path discovery
+  and scoring, in effect in every mode, because the candidates are the
+  diseases these paths reach.
+- `phenotype_normalisation_version`: the rule applied to the phenotype list
+  before scoring (currently `1`).
+
+The parts cannot contradict each other: a model is served exactly when the
+mode is not `path_reasoning_fallback`; the table is `verified` exactly in
+`gnn_plus_shortest_path`; a verified checkpoint or table is served only over a
+verified graph. A value is null only where its part's state says there is
+nothing to identify.
+
+### The same field in the pipeline status
+
+`GET /api/v1/pipeline/status` carries `served_identity` for the pipeline loaded
+now, beside its existing fields, which are unchanged (`scoring_mode`,
+`sp_kg_binding`, `dataset_record`, `checkpoint_meta` with its `device`, …). It
+is null when nothing is loaded. **The status describes what is loaded now, and
+a reload replaces it.** To know what produced a given result, read that
+result's own `served_identity`, or its report or CSV, not the status.
+
+### How to read it
+
+- **A normal deployment** reads: checkpoint `verified`, graph `verified`,
+  shortest paths `verified`, dataset record `verified` with origin `files`,
+  `gnn_plus_shortest_path`, device `cuda:0`, requested `auto` or `cuda`.
+- **Compare the digests with the files you deployed**: the SHA-256 of the
+  checkpoint, `kg.json`, `split_manifest.json` and `kg.provenance.json` equal
+  the identity's digests, and the table's `build_id` is the one in
+  `shortest_paths.meta.json`.
+- **Anything else is stated, not hidden**: origin `synthetic` is a generated
+  workspace, not clinical data (§4.4); shortest paths `absent` with `gnn_only`
+  and eta `1.0` means no table was served (§4.3); checkpoint `absent` is path
+  reasoning without a model (below); device `cpu` was asked for explicitly
+  (§4.8).
+- **What it does not establish** is displayed under the identity, as the
+  contract's claim boundary: "Checked: these files are the ones their records
+  name, and the records agree on the relations marked ✓. Not checked: who
+  changed them, or anything a person able to edit both files and records could
+  alter."
+
+### Serving without a model
+
+Path reasoning over `kg.json` alone, with no checkpoint configured, verifies no
+workspace (§4.4), and its identity says so: checkpoint `absent`; graph
+`unverified`, with the digest of the `kg.json` it read and no manifest digest;
+shortest paths and dataset record `absent`; `path_reasoning_fallback`; device,
+requested device and eta null. Nothing in it is claimed verified. Whether this
+mode stays available by default is an open policy question (B-2), not decided
+by M3c.
+
+### In the Diagnosis tab and its exports
+
+The WebUI shows **the result's own identity**, never the status's:
+
+- **Banners above the results**, one per state that must not be missed:
+  `SYNTHETIC WORKSPACE: not a clinical result.`, `NO TRAINED MODEL:
+  path-reasoning fallback.`, `NO SHORTEST-PATH TABLE: GNN score alone.`,
+  `DEMO ANSWER: not computed.`, and `WHAT PRODUCED THIS RESULT WAS NOT
+  REPORTED.` for a response without the field (a server from before M3c).
+- **A "Produced by" line** under the results, with shortened digests, and a
+  closed block, "What produced this result — full identity", holding the full
+  table, the claim boundary and "Not a certified medical device; decision
+  support for a qualified clinician."
+- **The model status** (Model Configuration) shows the loaded pipeline's
+  identity on its "Serving" line.
+- **The Markdown report** has a "What produced this result" section before the
+  candidates: the same banners, a Part | State | Value table with digests in
+  full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
+  absent part is written as its state and the reason, never left blank.
+- **The CSV** carries the identity in columns (below).
+- **File names** carry the two states a copied file must not lose:
+  `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md` for a synthetic
+  workspace, `diagnosis_DEMO_…` for the demo answer; otherwise unchanged.
+
+### The CSV's identity columns
+
+The CSV keeps **one header row** and no preamble. The 15 candidate columns come
+first, unchanged in order; 21 columns follow, each holding one part of the
+identity, **the same on every row**:
+
+| Column | Holds | When the identity holds null |
+|---|---|---|
+| `served_scoring_mode` | `gnn_plus_shortest_path`, `gnn_only` or `path_reasoning_fallback` | — |
+| `served_checkpoint_state` | `verified`, `supplied_in_memory` or `absent` | — |
+| `served_checkpoint_sha256` | `sha256:<hex>` of the checkpoint read | `absent` (no model); `none` (a model supplied in memory) |
+| `served_kg_state` | `verified`, `unverified` or `in_memory` | — |
+| `served_kg_sha256` | `sha256:<hex>` of the `kg.json` read | `none` (a graph supplied in memory) |
+| `served_split_manifest_sha256` | `sha256:<hex>` of the `split_manifest.json` read | `absent` (graph `unverified` or `in_memory`) |
+| `served_sp_state` | `verified` or `absent` | — |
+| `served_sp_build_id` | the `build_id` the table and its sidecar share | `absent` |
+| `served_sp_max_hops` | the sidecar's `max_hops` | `absent` |
+| `served_dataset_record_state` | `verified` or `absent` | — |
+| `served_dataset_origin` | `files` or `synthetic` | `absent` |
+| `served_dataset_record_sha256` | `sha256:<hex>` of the `kg.provenance.json` read | `absent` |
+| `served_device` | the device in effect (`cuda:0`, `cpu`) | `none` (no model); `not_stated` (a model supplied in memory that does not say) |
+| `served_device_requested` | `auto`, `cuda`, `cuda:N` or `cpu`, as asked | `none` (no model, or a model supplied in memory with no device named) |
+| `served_eta` | the mixing weight in effect | `none` (no model) |
+| `served_max_path_length` | integer | — |
+| `served_path_length_penalty` | number | — |
+| `served_aggregation_method` | text | — |
+| `served_max_paths_per_candidate` | integer | — |
+| `served_direct_path_optimization` | `true` or `false` (`use_direct_path_optimization`) | — |
+| `served_phenotype_normalisation_version` | integer (currently `1`) | — |
+
+- **Digests are written in full with a `sha256:` prefix** (`sha256:<64 hex>`).
+  The prefix names the algorithm and stops a spreadsheet reading an all-digit
+  digest as a number.
+- Booleans are `true` / `false`; numbers are written as the API sends them
+  (`0.7`, `1.0`).
+- **No cell is empty.** A value the identity holds as null is written as a word:
+
+| Word | Written when |
+|---|---|
+| `absent` | the part is absent: no checkpoint, table, manifest or dataset record |
+| `none` | nothing applies: no device, requested device or eta without a model; no digest for a model or graph supplied in memory; no requested device for a model supplied in memory |
+| `not_stated` | a model supplied in memory does not say its device (`served_device` only) |
+| `demo` | every `served_` column of the demo answer |
+| `not_reported` | every `served_` column of a response that carried no `served_identity`, or a value one left out |
+
+- A text cell that a spreadsheet would run as a formula — one starting with
+  `=`, `+`, `-`, `@`, a tab or a carriage return — is written with a leading
+  `'`. This covers the free-text candidate columns too; numeric columns are
+  unaffected.
+
+## 4.8 The serving device (`SHEPHERD_DEVICE`)
+
+**CUDA is a requirement of this project, and serving does not substitute the
+CPU for it** (since contract M3c, 2026-10-16; training refuses the same way
+since M3a).
+
+| Value | Meaning |
+|---|---|
+| unset, empty or `auto` | CUDA. **Refused** on a host without CUDA |
+| `cuda`, `cuda:N` | That CUDA device. Refused without CUDA |
+| `cpu` | The CPU, asked for explicitly: **for development only** |
+| anything else | Handed to torch as given, as training does |
+
+Where it is set:
+
+- **At startup**: `SHEPHERD_DEVICE` in the service's environment.
+- **On a reload**: the request's `device` (`POST /api/v1/pipeline/reload`). Null
+  falls back to `SHEPHERD_DEVICE`, and then to `auto`.
+
+**When it is checked**: whenever a checkpoint is to be served, before anything
+is read — the service settles the device before it parses `kg.json` (a reload,
+right after its file check, before automatic selection reads any candidate
+checkpoint), and the pipeline again before it reads the workspace or the
+checkpoint. A refused
+startup publishes nothing and `/api/v1/diagnose` answers 503; a refused reload
+leaves the served pipeline serving. The refusal reads:
+
+> Serving device 'auto' requires CUDA, which is not available here. CUDA is a
+> hard requirement of this project, so serving does not substitute the CPU for
+> it. Set SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly
+> for development; the served identity records the device asked for and the
+> one in effect.
+
+Serving with no checkpoint — path reasoning alone — resolves no device.
+
+**The served identity records both** (§4.7): `settings.device_requested` as
+asked (`auto` when nothing was named) and `settings.device` as in effect, the
+device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
+`checkpoint_meta.device` stays.
+
+> **Behaviour change (M3c).** A host without CUDA that served with no device
+> named used to fall back to the CPU silently, after reading the checkpoint
+> and building the model, and said so only in a log line. **It is now
+> refused.** A CPU development host must set `SHEPHERD_DEVICE=cpu` (and send
+> `"device": "cpu"` with a reload, or leave it null so that variable applies).
+> A literal `auto`, which used to reach torch and fail there, is the same
+> request as unset. The WebUI has no device selector.
+> `scripts/setup_demo.py` prints its serving command with the device its demo
+> was trained on.
 
 ---
 

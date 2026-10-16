@@ -186,11 +186,21 @@ class TestTheClinicalPathIsAGraphConsumer:
         built from. A requested model that cannot be built is refused
         (`PipelineBuildError`, M1), so without them every case that passes the
         binding check would end in that refusal instead of in what it is about.
+
+        The stand-in keeps a checkpoint read's identity, as the real build does
+        (contract M3c), so a pipeline built over it states a verified checkpoint
+        rather than a model supplied in memory. Callers construct with
+        `device="cpu"` (or set `SHEPHERD_DEVICE=cpu` for the API): with no device
+        named a checkpoint asks for CUDA, and on a host without it that refusal
+        comes before the workspace these tests are about.
         """
         import src.inference.pipeline as pipeline
+        from src.utils.fingerprint import ReadIdentity
 
         def _model_built(self, checkpoint_path, device):
             reached.append("model")
+            self._checkpoint_identity = ReadIdentity(
+                path=Path(checkpoint_path), sha256="c" * 64)
             return object()
 
         monkeypatch.setattr(
@@ -216,7 +226,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         with pytest.raises(ValueError, match="is not the node_features artifact"):
             pipeline.DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(root / "kg.json"), data_dir=str(root),
-                checkpoint_path=str(root / "ckpt.pt"),
+                checkpoint_path=str(root / "ckpt.pt"), device="cpu",
             )
 
         assert reached == [], "the model was built after a digest mismatch"
@@ -230,7 +240,7 @@ class TestTheClinicalPathIsAGraphConsumer:
 
         pipeline.DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(root / "kg.json"), data_dir=str(root),
-            checkpoint_path=str(root / "ckpt.pt"),
+            checkpoint_path=str(root / "ckpt.pt"), device="cpu",
         )
 
         assert reached == ["model"]
@@ -256,7 +266,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         with pytest.raises(ValueError, match="requires graph="):
             pipeline.DiagnosisPipeline(
                 kg=KnowledgeGraph(), data_dir=str(root),
-                checkpoint_path=str(root / "ckpt.pt"),
+                checkpoint_path=str(root / "ckpt.pt"), device="cpu",
             )
 
         assert reached == [], "the model was built without a source binding"
@@ -288,6 +298,7 @@ class TestTheClinicalPathIsAGraphConsumer:
                     graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
                     data_dir=str(root),
                     checkpoint_path=str(root / "ckpt.pt"),
+                    device="cpu",
                 )
 
         assert not [path for path in root.iterdir() if opens.opens(path)], (
@@ -354,7 +365,7 @@ class TestTheCompositionMustNotCrossWorkspaces:
         with pytest.raises(ValueError, match="is not the graph"):
             pipeline.DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(b / "kg.json"), data_dir=str(a),
-                checkpoint_path=str(a / "ckpt.pt"),
+                checkpoint_path=str(a / "ckpt.pt"), device="cpu",
             )
 
         assert reached == [], "the model was built on a crossed pair"
@@ -374,7 +385,7 @@ class TestTheCompositionMustNotCrossWorkspaces:
 
         pipeline.DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(a / "kg.json"), data_dir=str(a),
-            checkpoint_path=str(a / "ckpt.pt"),
+            checkpoint_path=str(a / "ckpt.pt"), device="cpu",
         )
 
         assert reached == ["model"]
@@ -394,7 +405,7 @@ class TestTheCompositionMustNotCrossWorkspaces:
 
         pipeline.DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(elsewhere), data_dir=str(a),
-            checkpoint_path=str(a / "ckpt.pt"),
+            checkpoint_path=str(a / "ckpt.pt"), device="cpu",
         )
 
         assert reached == ["model"]
@@ -420,6 +431,7 @@ class TestTheCompositionMustNotCrossWorkspaces:
         monkeypatch.setenv("SHEPHERD_KG_PATH", str(a / "kg.json"))
         monkeypatch.setenv("SHEPHERD_DATA_DIR", str(a))
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(a / "ckpt.pt"))
+        monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
 
         with pytest.raises(RuntimeError, match="late failure"):
             api.initialize_pipeline()
@@ -442,6 +454,9 @@ class TestTheCompositionMustNotCrossWorkspaces:
         # Without a checkpoint the pipeline consumes no graph at all and verifies
         # nothing, which is correct and would make this test vacuous.
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(a / "ckpt.pt"))
+        # Without a device named the checkpoint asks for CUDA and, on a host
+        # without it, is refused before the graph is read (contract M3c).
+        monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
 
         with pytest.raises(ValueError, match="is not the graph"):
             api.initialize_pipeline()

@@ -1040,7 +1040,9 @@ sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`
 
 沒有 `shortest_paths.pt`（也沒有 sidecar）時，在預設配置（GNN 已載入、
 `sp_optional=True`）下**服務不會停止**，而是改為純 GNN 評分：`sp_ready=False`、
-`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與啟用最短路徑時不同。**
+`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與啟用最短路徑時不同。** 每個
+結果的 served identity（§4.7）也會如實標明：最短路徑 `absent`、評分模式 `gnn_only`、eta
+`1.0`；Diagnosis 分頁與其報告會顯示 `NO SHORTEST-PATH TABLE: GNN score alone.` 橫幅。
 
 > **例外：** 若部署刻意設定了 `sp_optional=False`，SP 不可用時**不會建出 pipeline**：
 > 建置被拒絕（`PipelineBuildError`），啟動時不發布任何 pipeline、`/diagnose` 回 503；
@@ -1060,6 +1062,7 @@ curl -s http://localhost:8000/api/v1/pipeline/status
 | `sp_hop_bound_source` | `sidecar`（設定值退役後唯一的來源） |
 | `sp_kg_binding` | `verified` |
 | `scoring_mode` | 啟用時 `gnn_plus_shortest_path`；SP 關閉且 GNN 正常時 `gnn_only` |
+| `served_identity` | 目前載入的 pipeline 服務的是什麼（§4.7）。啟用時：`shortest_paths.state` 為 `verified`，帶 sidecar 的 `build_id` 與 `max_hops`，`scoring_mode` 為 `gnn_plus_shortest_path`。沒有距離表時：`shortest_paths.state` 為 `absent`、`gnn_only`、`settings.eta` 為 `1.0` |
 
 ---
 
@@ -1129,11 +1132,20 @@ OBO 的 format version 冒充 release。
   的 digest、來源檔清單與 `incomplete_by_design`）；
 - 量測報告的 manifest（`dataset_record`）與主控台摘要；
 - 盤點工具（`scripts/audit_checkpoint_family.py --inventory`），以兩個欄位分別列出紀錄的
-  判定、綁定狀態與來源。
+  判定、綁定狀態與來源；
+- 自 contract M3c 起，served identity（§4.7）：`dataset_record` 為 `verified`、來源
+  `synthetic`，出現在每一個診斷回應與 API 的 pipeline 狀態裡；
+- Diagnosis 分頁：結果上方與模型狀態裡的 `SYNTHETIC WORKSPACE: not a clinical result.`
+  橫幅，以及結果「Produced by」那一行的 `dataset synthetic ✓`；
+- 可下載的報告：「What produced this result」段落裡的同一個橫幅，以及檔名
+  `diagnosis_SYNTHETIC_<patient>_<session>_report.md`；
+- CSV 匯出：每一列的 `served_dataset_origin` 都是 `synthetic`，檔名為
+  `diagnosis_SYNTHETIC_<patient>_<session>.csv`。
 
 紀錄自述不涵蓋的部分（`incomplete_by_design`）只顯示、不拒絕。沒有模型的 serving（只用
-`kg.json` 做路徑推理）不驗證 workspace，不受影響。pipeline reload 把 `kg.provenance.json`
-列為必要檔案。
+`kg.json` 做路徑推理）不驗證 workspace，不受影響；它的 served identity 也如實這樣標明
+（checkpoint `absent`、圖 `unverified`、dataset record `absent`；見 §4.7「沒有模型的
+serving」）。pipeline reload 把 `kg.provenance.json` 列為必要檔案。
 
 ### 舊 workspace
 
@@ -1290,6 +1302,218 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
 **寫入期間**，暫存檔就已經具有發布後的權限，所以能讀這個檔案的人，也能讀到寫到一半的
 內容。另外，**這些目錄不可讓不信任的帳號寫入**：能在目錄裡改名的帳號，可以在檔案寫完
 到換名之間把它換掉，這一點在這次修改之前就是如此。
+
+## 4.7 診斷結果是由什麼產生的：served identity（自 contract M3c 起）
+
+自 contract M3c 起（2026-10-16），每一個診斷結果都帶有 **served identity**：產生它的
+checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 digest 或識別碼標明，
+再加上評分模式與實際生效的 serving 設定——**每個部分都用文字寫出自己的狀態**。pipeline
+是從建置時實際讀取的內容組出這份身分，產生結果時不會重新雜湊任何檔案，也不會用
+「unknown」填空。
+
+### 診斷回應的變更
+
+`POST /api/v1/diagnose`：
+
+- **移除 `model_version`**，沒有任何替代字串。不論服務的是什麼，它永遠是 `1.0.0`。
+  有讀取它的用戶端必須停止讀取。
+- **新增 `served_identity`**，而且一定存在。它複製自這個回應所依據的那個結果，絕不取自
+  服務的共享狀態，因此請求進行中剛好發生的 reload 不會改掉它的標示。
+- **只有 demo 回答時它才是 `null`。** 完全沒有設定任何 pipeline 時，服務仍會回傳示意用的
+  候選與警告 `Pipeline not fully initialized - using mock data`；沒有任何東西被服務，所以
+  也沒有可標明的身分。已設定 pipeline 卻建置失敗的部署回 503，絕不會給 demo 回答。
+
+服務本身的版本（`/health`、`/` 與 Swagger 標題中的 `1.0.0`）是 API 的版本，不是所服務
+內容的身分。
+
+### 組成部分與狀態
+
+```json
+"served_identity": {
+  "scoring_mode": "gnn_plus_shortest_path",
+  "checkpoint": {"state": "verified", "sha256": "<所讀 checkpoint 的 SHA-256>"},
+  "graph": {"state": "verified", "kg_sha256": "<kg.json 的 SHA-256>",
+            "split_manifest_sha256": "<split_manifest.json 的 SHA-256>"},
+  "shortest_paths": {"state": "verified", "build_id": "<sidecar 的 build_id>", "max_hops": 5},
+  "dataset_record": {"state": "verified", "origin": "files",
+                     "sha256": "<kg.provenance.json 的 SHA-256>"},
+  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": 0.7,
+               "max_path_length": 4, "path_length_penalty": 0.9,
+               "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+               "use_direct_path_optimization": true,
+               "phenotype_normalisation_version": 1}
+}
+```
+
+| 部分 | 狀態 | 意義 | 值 |
+|---|---|---|---|
+| `checkpoint` | `verified` | 模型由一次讀取的 checkpoint 建成，且其紀錄與正在服務的圖相符（contract M2.4） | `sha256`：那次讀取的 digest |
+| | `supplied_in_memory` | 程式直接交給 pipeline 一個模型物件，沒有讀任何 checkpoint 位元組 | `sha256` 為 null |
+| | `absent` | 沒有模型：由路徑推理排序候選 | `sha256` 為 null |
+| `graph` | `verified` | `kg.json` 與 `split_manifest.json` 各讀一次，且圖的 digest 與 manifest 相符 | `kg_sha256`、`split_manifest_sha256` |
+| | `unverified` | 圖從檔案讀入，但沒有與任何 workspace manifest 比對（沒有模型的 serving，見下文） | `kg_sha256`；`split_manifest_sha256` 為 null |
+| | `in_memory` | 程式在記憶體中提供圖，沒有讀任何檔案 | 兩者皆為 null |
+| `shortest_paths` | `verified` | 距離表與其 sidecar 共用同一個 `build_id`，並指向正在服務的圖（§4.3） | `build_id`；`max_hops`（取自 sidecar） |
+| | `absent` | 沒有距離表參與評分 | 兩者皆為 null |
+| `dataset_record` | `verified` | manifest 綁定、且指向正在服務之圖的紀錄（§4.4）；恰在圖為 verified 時才是 verified | `origin`（`files` 或 `synthetic`）；`kg.provenance.json` 的 `sha256` |
+| | `absent` | 沒有驗證任何 workspace，因此沒有讀取紀錄 | 全部為 null |
+| `scoring_mode` | — | `gnn_plus_shortest_path`、`gnn_only` 或 `path_reasoning_fallback` | |
+| `settings` | — | 會改變分數的 serving 設定，以實際生效者為準 | 見下 |
+
+`settings`：
+
+- `device`：模型實際在哪裡執行——torch 對其參數所在裝置的名稱（`cuda:0`、`cpu`）。
+  沒有模型時為 null。
+- `device_requested`：要求的是什麼——沒有指定時為 `auto`，或 `cuda`、`cuda:N`、`cpu`
+  （§4.8）。沒有模型時為 null。
+- `eta`：實際生效的混合權重——有距離表時為設定值，沒有時為 `1.0`。沒有模型時為 null。
+- `max_path_length`、`path_length_penalty`、`aggregation_method`、
+  `max_paths_per_candidate`、`use_direct_path_optimization`：路徑探索與路徑評分，
+  在每一種模式下都生效，因為候選就是這些路徑能到達的疾病。
+- `phenotype_normalisation_version`：評分前套用於表型清單的規則版本（目前為 `1`）。
+
+各部分不能互相矛盾：恰在模式不是 `path_reasoning_fallback` 時才有模型在服務；距離表
+恰在 `gnn_plus_shortest_path` 時才是 `verified`；verified 的 checkpoint 或距離表只會建立
+在 verified 的圖之上。只有在某部分的狀態表示沒有東西可標明時，它的值才會是 null。
+
+### pipeline 狀態裡的同一個欄位
+
+`GET /api/v1/pipeline/status` 會針對目前載入的 pipeline 帶出 `served_identity`，與既有
+欄位並列，既有欄位不變（`scoring_mode`、`sp_kg_binding`、`dataset_record`、含 `device` 的
+`checkpoint_meta` 等）。沒有載入任何東西時為 null。**狀態描述的是現在載入的東西，reload
+會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的 `served_identity`，或它的
+報告與 CSV，而不是狀態。
+
+### 怎麼讀
+
+- **正常的部署**應該是：checkpoint `verified`、圖 `verified`、最短路徑 `verified`、
+  dataset record `verified` 且來源為 `files`、`gnn_plus_shortest_path`、裝置 `cuda:0`，
+  要求的是 `auto` 或 `cuda`。
+- **把 digest 與你部署的檔案比對**：checkpoint、`kg.json`、`split_manifest.json` 與
+  `kg.provenance.json` 的 SHA-256 應與身分中的 digest 相同，距離表的 `build_id` 應與
+  `shortest_paths.meta.json` 裡的一致。
+- **其他情況都會明寫，不會隱藏**：來源 `synthetic` 表示這是產生出來的 workspace，不是臨床
+  資料（§4.4）；最短路徑 `absent` 加上 `gnn_only` 與 eta `1.0` 表示沒有服務距離表（§4.3）；
+  checkpoint `absent` 是沒有模型的路徑推理（見下文）；裝置 `cpu` 是明確要求的（§4.8）。
+- **它不證明什麼**，以 contract 的宣稱界線顯示在身分下方（原文照錄）："Checked: these
+  files are the ones their records name, and the records agree on the relations marked ✓.
+  Not checked: who changed them, or anything a person able to edit both files and records
+  could alter."
+
+### 沒有模型的 serving
+
+沒有設定 checkpoint、只用 `kg.json` 做路徑推理時，不會驗證任何 workspace（§4.4），它的
+身分也如實這樣寫：checkpoint `absent`；圖 `unverified`，帶它所讀 `kg.json` 的 digest，
+沒有 manifest digest；最短路徑與 dataset record `absent`；`path_reasoning_fallback`；
+裝置、要求的裝置與 eta 皆為 null。其中沒有任何部分宣稱已驗證。這個模式是否預設保留，
+是尚未決定的政策問題（B-2），M3c 沒有決定它。
+
+### Diagnosis 分頁與其匯出
+
+WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
+
+- **結果上方的橫幅**，每個不可漏看的狀態一條：`SYNTHETIC WORKSPACE: not a clinical
+  result.`、`NO TRAINED MODEL: path-reasoning fallback.`、`NO SHORTEST-PATH TABLE: GNN
+  score alone.`、`DEMO ANSWER: not computed.`，以及回應沒有這個欄位時（M3c 之前的伺服器）
+  的 `WHAT PRODUCED THIS RESULT WAS NOT REPORTED.`。
+- 結果下方的 **「Produced by」一行**（digest 縮短顯示），以及一個預設收合的區塊
+  「What produced this result — full identity」，內含完整表格、宣稱界線與
+  "Not a certified medical device; decision support for a qualified clinician."。
+- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分。
+- **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
+  Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
+  缺少的部分寫成它的狀態與原因，絕不留白。
+- **CSV** 以欄位帶出身分（見下）。
+- **檔名**帶有複製出去後也不能遺失的兩種狀態：合成 workspace 為
+  `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md`，demo 回答為
+  `diagnosis_DEMO_…`；其他情況不變。
+
+### CSV 的身分欄位
+
+CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位在前，順序不變；其後接 21 個
+欄位，每欄存放身分的一個部分，**每一列都相同**：
+
+| 欄位 | 內容 | 身分中為 null 時 |
+|---|---|---|
+| `served_scoring_mode` | `gnn_plus_shortest_path`、`gnn_only` 或 `path_reasoning_fallback` | — |
+| `served_checkpoint_state` | `verified`、`supplied_in_memory` 或 `absent` | — |
+| `served_checkpoint_sha256` | 所讀 checkpoint 的 `sha256:<hex>` | `absent`（沒有模型）；`none`（記憶體中提供的模型） |
+| `served_kg_state` | `verified`、`unverified` 或 `in_memory` | — |
+| `served_kg_sha256` | 所讀 `kg.json` 的 `sha256:<hex>` | `none`（記憶體中提供的圖） |
+| `served_split_manifest_sha256` | 所讀 `split_manifest.json` 的 `sha256:<hex>` | `absent`（圖為 `unverified` 或 `in_memory`） |
+| `served_sp_state` | `verified` 或 `absent` | — |
+| `served_sp_build_id` | 距離表與其 sidecar 共用的 `build_id` | `absent` |
+| `served_sp_max_hops` | sidecar 的 `max_hops` | `absent` |
+| `served_dataset_record_state` | `verified` 或 `absent` | — |
+| `served_dataset_origin` | `files` 或 `synthetic` | `absent` |
+| `served_dataset_record_sha256` | 所讀 `kg.provenance.json` 的 `sha256:<hex>` | `absent` |
+| `served_device` | 實際生效的裝置（`cuda:0`、`cpu`） | `none`（沒有模型）；`not_stated`（記憶體中提供、未表明裝置的模型） |
+| `served_device_requested` | 所要求的 `auto`、`cuda`、`cuda:N` 或 `cpu` | `none`（沒有模型，或記憶體中提供且未指定裝置的模型） |
+| `served_eta` | 實際生效的混合權重 | `none`（沒有模型） |
+| `served_max_path_length` | 整數 | — |
+| `served_path_length_penalty` | 數字 | — |
+| `served_aggregation_method` | 文字 | — |
+| `served_max_paths_per_candidate` | 整數 | — |
+| `served_direct_path_optimization` | `true` 或 `false`（`use_direct_path_optimization`） | — |
+| `served_phenotype_normalisation_version` | 整數（目前為 `1`） | — |
+
+- **digest 完整寫出並加上 `sha256:` 前綴**（`sha256:<64 hex>`）。前綴標明演算法，也避免
+  試算表把全為數字的 digest 當成數值。
+- 布林值寫成 `true` / `false`；數字照 API 傳來的樣子寫（`0.7`、`1.0`）。
+- **沒有任何空白儲存格。** 身分中為 null 的值一律寫成一個字：
+
+| 字 | 何時寫出 |
+|---|---|
+| `absent` | 該部分不存在：沒有 checkpoint、距離表、manifest 或 dataset record |
+| `none` | 不適用：沒有模型時的裝置、要求的裝置或 eta；記憶體中提供的模型或圖沒有 digest；記憶體中提供的模型沒有要求的裝置 |
+| `not_stated` | 記憶體中提供的模型沒有表明它的裝置（僅 `served_device`） |
+| `demo` | demo 回答的每一個 `served_` 欄位 |
+| `not_reported` | 回應沒有帶 `served_identity` 時的每一個 `served_` 欄位，或回應漏掉的某個值 |
+
+- 試算表會當成公式執行的文字儲存格——以 `=`、`+`、`-`、`@`、tab 或 carriage return
+  開頭者——會在前面加上 `'`。這也適用於自由文字的候選欄位；數值欄位不受影響。
+
+## 4.8 serving 的裝置（`SHEPHERD_DEVICE`）
+
+**CUDA 是本專案的必要條件，serving 不會用 CPU 代替它**（自 contract M3c 起，2026-10-16；
+訓練自 M3a 起已用同樣方式拒絕）。
+
+| 值 | 意義 |
+|---|---|
+| 未設定、空白或 `auto` | CUDA。沒有 CUDA 的主機上**拒絕** |
+| `cuda`、`cuda:N` | 該 CUDA 裝置。沒有 CUDA 時拒絕 |
+| `cpu` | 明確要求 CPU：**僅供開發使用** |
+| 其他任何值 | 原樣交給 torch，與訓練的做法相同 |
+
+在哪裡設定：
+
+- **啟動時**：服務環境中的 `SHEPHERD_DEVICE`。
+- **reload 時**：請求的 `device`（`POST /api/v1/pipeline/reload`）。null 時先退回
+  `SHEPHERD_DEVICE`，再退回 `auto`。
+
+**何時檢查**：只要要服務 checkpoint，就在讀取任何東西之前檢查——服務在解析 `kg.json`
+之前先確定裝置（reload 則在檔案檢查之後、自動選擇讀取任何候選 checkpoint 之前），pipeline
+在讀 workspace 或 checkpoint 之前再確定一次。啟動被拒絕時不發布
+任何 pipeline，`/api/v1/diagnose` 回 503；reload 被拒絕時，原本的 pipeline 繼續服務。
+拒絕訊息為：
+
+> Serving device 'auto' requires CUDA, which is not available here. CUDA is a
+> hard requirement of this project, so serving does not substitute the CPU for
+> it. Set SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly
+> for development; the served identity records the device asked for and the
+> one in effect.
+
+沒有 checkpoint 的 serving（只做路徑推理）不會決定任何裝置。
+
+**served identity 兩者都記錄**（§4.7）：`settings.device_requested` 是所要求的（沒有指定
+時為 `auto`），`settings.device` 是實際生效的、模型參數所在的裝置（`cuda:0`，而不只是
+`cuda`）。狀態裡的 `checkpoint_meta.device` 保留。
+
+> **行為變更（M3c）**：沒有 CUDA 的主機若未指定裝置就服務，以前會在讀完 checkpoint、
+> 建好模型之後悄悄改用 CPU，只在日誌裡留一行。**現在會被拒絕。** CPU 開發機必須設定
+> `SHEPHERD_DEVICE=cpu`（reload 時送 `"device": "cpu"`，或留 null 讓這個變數生效）。
+> 字面上的 `auto` 以前會傳到 torch 才失敗，現在與未設定是同一個要求。WebUI 沒有裝置
+> 選擇器。`scripts/setup_demo.py` 印出的 serving 指令會帶上 demo 訓練時用的裝置。
 
 ---
 

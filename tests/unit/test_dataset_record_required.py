@@ -242,15 +242,34 @@ def _demo_workspace(root):
     return root
 
 
+#: The digest the stubbed model build records as the checkpoint read, as a real
+#: build records its read's (contract M3c); no checkpoint bytes exist here.
+STUB_CHECKPOINT_SHA256 = "c" * 64
+
+
+def _built(self, checkpoint_path, device):
+    """Stands for a model built from one checkpoint read: it keeps the read's
+    identity, as `_load_model_from_checkpoint` does, so the served identity names
+    a verified checkpoint rather than an in-memory model."""
+    from src.utils.fingerprint import ReadIdentity
+
+    self._checkpoint_identity = ReadIdentity(
+        path=Path(checkpoint_path), sha256=STUB_CHECKPOINT_SHA256)
+    return object()
+
+
 def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
     """Serving's own sequence with only the model build stubbed (`load`, which
-    by default stands for a model built)."""
+    by default stands for a model built).
+
+    `device="cpu"`: a checkpoint served with no device named asks for CUDA and
+    is refused without it before the workspace is read (contract M3c, §5.2);
+    these tests are about the workspace, so they name the development device."""
     import src.inference.pipeline as pipeline
     from src.kg.graph import KnowledgeGraph
 
     monkeypatch.setattr(
-        pipeline.DiagnosisPipeline, "_load_model_from_checkpoint",
-        load or (lambda self, checkpoint_path, device: object()),
+        pipeline.DiagnosisPipeline, "_load_model_from_checkpoint", load or _built,
     )
     monkeypatch.setattr(
         pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
@@ -262,6 +281,7 @@ def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
         graph=KnowledgeGraph.read_json(workspace / "kg.json"),
         data_dir=str(workspace),
         checkpoint_path=str(checkpoint_path),
+        device="cpu",
     )
 
 
@@ -293,6 +313,10 @@ def test_serving_publishes_the_record_with_its_origin_apart(tmp_path, monkeypatc
     assert record["sha256"] == _sha(workspace / "kg.provenance.json")
     status = _status_of(config, str(workspace), str(tmp_path / "ck.pt"))
     assert status.dataset_record == record
+    # The served identity names the same record, origin apart (contract M3c).
+    served = status.served_identity.dataset_record
+    assert (served.state, served.origin, served.sha256) == (
+        "verified", "synthetic", record["sha256"])
 
 
 def test_a_pipeline_over_no_workspace_publishes_no_record():

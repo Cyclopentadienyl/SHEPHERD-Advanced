@@ -343,7 +343,6 @@ def api(monkeypatch):
 
     for field in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
         monkeypatch.setattr(api_main.app_state, field, None, raising=False)
-    monkeypatch.setattr(api_main.app_state, "model_version", "unknown", raising=False)
     monkeypatch.setattr(api_main.app_state, "is_ready", False, raising=False)
     for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
         monkeypatch.delenv(name, raising=False)
@@ -475,19 +474,30 @@ class TestAReloadKeepsWhatIsServing:
     def _served(api, data_dir, checkpoint):
         result = _reload(data_dir=str(data_dir), checkpoint_path=str(checkpoint))
         assert result.success is True, result.message
-        assert api.app_state.pipeline.get_pipeline_config()["gnn_ready"] is True
+        config = api.app_state.pipeline.get_pipeline_config()
+        assert config["gnn_ready"] is True
+        # **What is served is read from the live pipeline** (contract M3c): app
+        # state keeps no copy of it, so the snapshot takes it from there.
+        assert config["served_identity"]["checkpoint"]["state"] == "verified"
         return {
-            field: getattr(api.app_state, field)
-            for field in ("pipeline", "kg", "model_version",
-                          "_current_data_dir", "_current_checkpoint_path")
+            "app_state": {
+                field: getattr(api.app_state, field)
+                for field in ("pipeline", "kg",
+                              "_current_data_dir", "_current_checkpoint_path")
+            },
+            "served_identity": config["served_identity"],
         }
 
     @staticmethod
     def _assert_still_serving(api, before):
-        for field, value in before.items():
+        for field, value in before["app_state"].items():
             assert getattr(api.app_state, field) is value, (
                 f"a refused reload changed app_state.{field}"
             )
+        assert (
+            api.app_state.pipeline.get_pipeline_config()["served_identity"]
+            == before["served_identity"]
+        ), "a refused reload changed what is served"
 
     def test_a_checkpoint_that_cannot_be_read_is_refused(self, api, workspace, tmp_path):
         data_dir, checkpoint = workspace
@@ -559,6 +569,12 @@ class TestReadinessFollowsWhatIsServed:
             "gnn_ready": status["gnn_ready"],
         }
 
+    @staticmethod
+    def _served_identity(client):
+        """What is served, as `/pipeline/status` reports it (contract M3c); None
+        while no pipeline is."""
+        return client.get("/api/v1/pipeline/status").json()["served_identity"]
+
     NOT_SERVING = {"ready": 503, "diagnose": 503, "initialized": False, "gnn_ready": False}
     SERVING = {"ready": 200, "diagnose": 200, "initialized": True, "gnn_ready": True}
 
@@ -611,12 +627,14 @@ class TestReadinessFollowsWhatIsServed:
         data_dir, checkpoint = workspace
         corrupt = tmp_path / "corrupt.pt"
         corrupt.write_bytes(b"not a checkpoint")
-        fields = ("pipeline", "kg", "model_version",
+        fields = ("pipeline", "kg",
                   "_current_data_dir", "_current_checkpoint_path", "is_ready")
 
         with self._start(api, monkeypatch, data_dir, checkpoint) as client:
             assert self._answers(client) == self.SERVING
             before = {field: getattr(api.app_state, field) for field in fields}
+            # What is served, as the status reports it (contract M3c).
+            identity = self._served_identity(client)
 
             result = self._reload(client, data_dir, corrupt)
 
@@ -626,6 +644,9 @@ class TestReadinessFollowsWhatIsServed:
                 assert getattr(api.app_state, field) is value, (
                     f"a refused reload changed app_state.{field}"
                 )
+            assert self._served_identity(client) == identity, (
+                "a refused reload changed what is served"
+            )
             assert self._answers(client) == self.SERVING
 
     def test_the_whole_way_back_in_one_lifetime(self, api, monkeypatch, workspace, tmp_path):
@@ -634,18 +655,22 @@ class TestReadinessFollowsWhatIsServed:
         and the restored service must survive a later refusal."""
         data_dir, checkpoint = workspace
         other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
-        fields = ("pipeline", "kg", "model_version",
+        fields = ("pipeline", "kg",
                   "_current_data_dir", "_current_checkpoint_path", "is_ready")
 
         with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
             assert self._answers(client) == self.NOT_SERVING
+            assert self._served_identity(client) is None
 
             assert self._reload(client, data_dir, other)["success"] is False
             assert self._answers(client) == self.NOT_SERVING
+            assert self._served_identity(client) is None
 
             assert self._reload(client, data_dir, checkpoint)["success"] is True
             assert self._answers(client) == self.SERVING
             restored = {field: getattr(api.app_state, field) for field in fields}
+            identity = self._served_identity(client)
+            assert identity["checkpoint"]["state"] == "verified"
 
             assert self._reload(client, data_dir, other)["success"] is False
             assert self._answers(client) == self.SERVING
@@ -653,6 +678,9 @@ class TestReadinessFollowsWhatIsServed:
                 assert getattr(api.app_state, field) is value, (
                     f"a refusal after recovery changed app_state.{field}"
                 )
+            assert self._served_identity(client) == identity, (
+                "a refusal after recovery changed what is served"
+            )
 
     def test_a_configured_graph_that_is_missing_is_not_ready(
         self, api, monkeypatch, tmp_path

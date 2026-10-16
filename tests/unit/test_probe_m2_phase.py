@@ -93,6 +93,17 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
     # each continued run; on CUDA the restore is checked (scaler_restore).
     for probe_id in ("M2", "M9"):
         assert facts[probe_id]["scaler_restore"].startswith("no gradient scaler")
+    # Contract M3c: M4's diagnosis names the resumed checkpoint by the digest
+    # M2 recorded, the table verified, the synthetic record, the device asked
+    # for -- and its evidence holds no path.
+    identity = facts["M4"]["served_identity"]
+    assert identity["checkpoint"] == {"state": "verified", "sha256": child}
+    assert identity["scoring_mode"] == "gnn_plus_shortest_path"
+    assert identity["shortest_paths"]["state"] == "verified"
+    assert identity["dataset_record"]["origin"] == "synthetic"
+    assert (identity["settings"]["device"], identity["settings"]["device_requested"]) == (
+        "cpu", "cpu")
+    assert str(tmp_path) not in json.dumps(identity)
 
 
 def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
@@ -143,6 +154,14 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
     )
     facts = {p.probe_id: p.facts for p in report.probes}
     assert facts["R6"]["sp_kg_binding"] == "verified"
+    # Contract M3c: R6's diagnosis names the checkpoint R4 trained and the
+    # record from files R1 verified.
+    identity = facts["R6"]["served_identity"]
+    assert identity["checkpoint"]["sha256"] == facts["R4"]["child_sha256"]
+    assert identity["graph"]["kg_sha256"] == facts["R1"]["kg_digest"]
+    assert identity["dataset_record"] == {
+        "state": "verified", "origin": "files",
+        "sha256": facts["R1"]["dataset_record"]["sha256"]}
     assert facts["R7"]["reference_refusal"] == "no record"
     assert facts["R4"]["child_optimizer_step"] > facts["R4"]["parent_optimizer_step"]
 

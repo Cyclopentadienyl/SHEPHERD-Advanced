@@ -30,7 +30,9 @@ design principles it must satisfy.
 - **Python 3.12+**
 - **[uv](https://docs.astral.sh/uv/)** for dependency management
 - **Platforms:** Windows x86-64, Linux x86-64, Linux aarch64 (NVIDIA DGX Spark)
-- **GPU:** optional. CUDA accelerates training; inference runs on CPU.
+- **GPU:** CUDA is required to train and to serve a model. An unset or `auto` device means CUDA and
+  is refused on a host without it; `cpu` (`--device cpu` for training, `SHEPHERD_DEVICE=cpu` for
+  serving) is an explicit choice for development, recorded as such (deployment guide §4.8).
 
 ## Install
 

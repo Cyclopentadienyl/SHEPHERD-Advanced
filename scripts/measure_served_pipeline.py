@@ -36,6 +36,16 @@ no phenotype ids. The server's own log goes to a directory named on stderr and
 is never part of the evidence; neither is the progress on stderr (`progress`):
 each phase's start and outcome, and every 20th request.
 
+**The subject is what the service says it served** (contract M3c, BACKLOG
+19.8): the served identity each repeat's service reports once ready, from the
+reads it built its pipeline from -- the checkpoint, `kg.json` and
+`split_manifest.json` by digest, the shortest-path table by `build_id`, the
+dataset record by origin and digest, the device the model ran on. Nothing here
+hashes those files by path before the service starts, which would cite bytes
+the service may not have loaded. Every response counted must carry that same
+identity, and every repeat must report the same one, so the readings cannot
+mix two pipelines.
+
 **Completing the readings is not passing a capacity gate** (§7.3). The numbers
 are recorded, not judged.
 
@@ -92,11 +102,19 @@ MAXIMUM_REQUESTS = 50
 #: Readiness, asserted before anything counts (§7.3), plus the scoring mode
 #: §7.1.1 says each reading asserts on the running service, and the device the
 #: model was moved to, which must be CUDA: a reading from a model served on the
-#: CPU would describe a deployment this project does not run.
+#: CPU would describe a deployment this project does not run. The table's
+#: state, the scoring mode and the device are read from the status's served
+#: identity (contract M3c): the device in effect, as the model's parameters
+#: are placed, not the device asked for.
 READY_TRUE_FIELDS = ("initialized", "gnn_ready", "has_model", "sp_ready")
-READY_BINDING = "verified"
+READY_SHORTEST_PATHS = "verified"
 READY_SCORING_MODE = "gnn_plus_shortest_path"
 READY_DEVICE_PREFIX = "cuda"
+
+#: A 200 /diagnose response whose served identity is not the subject's, or is
+#: null (the demo answer, given when no pipeline is configured): its own
+#: failure class, never counted as accepted (contract M3c).
+IDENTITY_MISMATCH = "served_identity_mismatch"
 
 #: Read raw from the server's /proc/<pid>/environ, each recorded as absent when
 #: absent (§7.3 "With the allocator the deployment runs").
@@ -600,30 +618,81 @@ def http_json(method: str, url: str, body: Any = None,
     return status, parsed, text
 
 
+def _part(value: Any, name: str) -> dict[str, Any]:
+    """`value[name]` when both are JSON objects, else an empty one."""
+    part = value.get(name) if isinstance(value, dict) else None
+    return part if isinstance(part, dict) else {}
+
+
 def readiness(status: dict[str, Any]) -> dict[str, Any]:
-    """The readiness fields, and whether they assert readiness."""
-    fields = {name: bool(status.get(name)) for name in READY_TRUE_FIELDS}
-    fields["sp_kg_binding"] = status.get("sp_kg_binding")
-    fields["scoring_mode"] = status.get("scoring_mode")
-    fields["sp_max_hops"] = status.get("sp_max_hops")
+    """The readiness fields, and whether they assert readiness.
+
+    **The table, the scoring mode and the device are the served identity's**
+    (contract M3c): the state the service gives the shortest-path table it
+    verified, the mode it scores in, and the device the model's parameters are
+    on. A status without a served identity asserts nothing.
+    """
+    identity = status.get("served_identity")
+    shortest_paths = _part(identity, "shortest_paths")
+    settings = _part(identity, "settings")
+    fields: dict[str, Any] = {name: bool(status.get(name)) for name in READY_TRUE_FIELDS}
+    fields["served_identity_reported"] = isinstance(identity, dict)
+    fields["shortest_paths_state"] = shortest_paths.get("state")
+    fields["scoring_mode"] = identity.get("scoring_mode") if isinstance(identity, dict) else None
+    fields["sp_max_hops"] = shortest_paths.get("max_hops")
     fields["kg_nodes"] = status.get("kg_nodes")
     fields["kg_edges"] = status.get("kg_edges")
     fields["fingerprint_warning_count"] = len(status.get("fingerprint_warnings") or [])
-    meta = status.get("checkpoint_meta")
-    fields["serving_device"] = meta.get("device") if isinstance(meta, dict) else None
+    fields["serving_device"] = settings.get("device")
+    fields["serving_device_requested"] = settings.get("device_requested")
     fields["asserted"] = (
         all(fields[name] for name in READY_TRUE_FIELDS)
-        and fields["sp_kg_binding"] == READY_BINDING
+        and fields["served_identity_reported"]
+        and fields["shortest_paths_state"] == READY_SHORTEST_PATHS
         and fields["scoring_mode"] == READY_SCORING_MODE
         and str(fields["serving_device"]).startswith(READY_DEVICE_PREFIX)
     )
     return fields
 
 
+def served_subject(identity: Any, schema) -> dict[str, Any] | None:
+    """The readings' subject, from the served identity the service reports;
+    None unless that identity names every input it was built from.
+
+    **The service's own reads** (contract M3c, BACKLOG 19.8): the identity is
+    built from the bytes the service loaded, so it cites what was measured.
+    It must be valid by the service's own response model and name a verified
+    checkpoint, graph and manifest, table and dataset record, each by its
+    digest or identifier, and the device in effect. Digests and identifiers
+    only; the identity holds no paths.
+    """
+    try:
+        schema.ServedIdentity.model_validate(identity)
+    except Exception:  # noqa: BLE001 -- any refusal by the model is "not identified"
+        return None
+    checkpoint, graph = identity["checkpoint"], identity["graph"]
+    table, record = identity["shortest_paths"], identity["dataset_record"]
+    if {checkpoint["state"], graph["state"], table["state"], record["state"]} != {"verified"}:
+        return None
+    subject = {
+        "checkpoint_sha256": checkpoint["sha256"],
+        "kg_sha256": graph["kg_sha256"],
+        "split_manifest_sha256": graph["split_manifest_sha256"],
+        "sp_build_id": table["build_id"],
+        "dataset_record_origin": record["origin"],
+        "dataset_record_sha256": record["sha256"],
+        "device": identity["settings"]["device"],
+    }
+    return subject if None not in subject.values() else None
+
+
 def run_workload(base: str, requests: Sequence[dict[str, Any]],
-                 defaults: dict[str, Any], schema, alive: Callable[[], bool]) -> dict[str, Any]:
+                 defaults: dict[str, Any], schema, alive: Callable[[], bool], *,
+                 identity: dict[str, Any]) -> dict[str, Any]:
     """Send the requests serially. A request counts only if it returns 200 with
-    a body the response model accepts; everything else is a failure, by class.
+    a body the response model accepts, answered by the pipeline the readings
+    are about (its `served_identity` equal to `identity`, the one the service
+    reported once ready); everything else is a failure, by class.
 
     **A request with no whole response ends the workload.** The client stopped
     waiting; the server may still be working on it. §7.3 never pauses the
@@ -661,7 +730,13 @@ def run_workload(base: str, requests: Sequence[dict[str, Any]],
             except Exception:  # noqa: BLE001 -- any refusal by the model is a failure
                 fail("schema_rejected")
             else:
-                accepted += 1
+                # **Answered by the subject, or not counted** (contract M3c): a
+                # response from another pipeline, or the demo answer's null,
+                # would put a second subject inside the same readings.
+                if body.get("served_identity") != identity:
+                    fail(IDENTITY_MISMATCH)
+                else:
+                    accepted += 1
         if sent % PROGRESS_EVERY == 0 or sent == len(requests):
             progress(f"R2: {sent}/{len(requests)} sent, {accepted} accepted")
     return {"planned": len(requests), "sent": sent, "accepted": accepted,
@@ -889,6 +964,11 @@ def run_repeat(
         r1["readiness"] = readiness(status)
         r1["serves_named_checkpoint"] = status.get("current_checkpoint_path") == str(checkpoint)
         r1["server_is_measured_pid"] = server_check(pid)
+        # What this service says it serves, from its own reads (contract M3c):
+        # the repeat's subject, which every counted response must carry.
+        identity = status.get("served_identity")
+        result["served_identity"] = identity if isinstance(identity, dict) else None
+        r1["subject_identified"] = served_subject(identity, schema) is not None
         phases["R1"] = r1
         environ = read_environ(pid)
         result["server_environment"] = {n: environ.get(n) for n in RECORDED_SERVER_VARS}
@@ -899,6 +979,10 @@ def run_repeat(
             r1.update(status="failed", reason="readiness not asserted")
         elif not r1["serves_named_checkpoint"]:
             r1.update(status="failed", reason="the service does not serve the named checkpoint")
+        elif not r1["subject_identified"]:
+            r1.update(status="failed", reason=(
+                "the served identity does not name a verified checkpoint, graph, "
+                "shortest-path table and dataset record"))
         else:
             r1["status"] = "completed"
         progress(f"R1: {r1['status']} after {r1['wall_seconds']:.0f} s"
@@ -911,7 +995,8 @@ def run_repeat(
         progress(f"R2: reset {reset['status']}; sending {len(workload)} requests")
         oom = read_oom_kills()
         t0 = time.monotonic()
-        outcome = run_workload(base_url, workload, defaults, schema, alive)
+        outcome = run_workload(base_url, workload, defaults, schema, alive,
+                               identity=result["served_identity"])
         t1 = time.monotonic()
         r2: dict[str, Any] = {"reset": reset, "workload": outcome,
                               **_window(sampler, t0, t1, base, oom)}
@@ -982,10 +1067,14 @@ def run_repeat(
             r3["readiness"] = readiness(status)
             r3["serves_named_checkpoint"] = (
                 status.get("current_checkpoint_path") == str(checkpoint))
+            # The reloaded pipeline is the subject again, by what it says it
+            # read (contract M3c), not only by the path it was given.
+            r3["serves_subject"] = status.get("served_identity") == result["served_identity"]
         else:
             r3["exit_status"] = r4["exit_status"] = process.returncode
         ready_again = (bool(r3.get("readiness", {}).get("asserted"))
-                       and bool(r3.get("serves_named_checkpoint")))
+                       and bool(r3.get("serves_named_checkpoint"))
+                       and bool(r3.get("serves_subject")))
         r3["status"] = _status(reset, alive(), complete=success and ready_again)
         r4["status"] = _status(reset, alive(), complete=success)
         phases["R3"], phases["R4"] = r3, r4
@@ -1153,13 +1242,41 @@ def summarise(repeats: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 def readings_complete(repeats: Sequence[dict[str, Any]], required: int = REPEATS) -> bool:
     """§7.3: complete when all four phases finish with readiness asserted, in
-    each of the three repeats, on a machine that met R0's precondition."""
-    return len(repeats) == required and all(
+    each of the three repeats, on a machine that met R0's precondition -- and,
+    since contract M3c, every repeat's service reported one served identity, so
+    the three repeats measured one subject."""
+    subject = repeats[0].get("served_identity") if repeats else None
+    return len(repeats) == required and subject is not None and all(
         r["phases"].get("R0", {}).get("measurement_precondition_met")
         and all(r["phases"].get(p, {}).get("status") == "completed"
                 for p in ("R1", "R2", "R3", "R4"))
+        and r.get("served_identity") == subject
         for r in repeats
     )
+
+
+def subject_of(repeats: Sequence[dict[str, Any]], schema) -> dict[str, Any]:
+    """The evidence's subject: the served identity the services reported, its
+    named parts, and whether every repeat reported the same one.
+
+    **From the service, not from the files** (contract M3c, BACKLOG 19.8): the
+    identity the first reporting repeat's service gave in its status at R1,
+    from the reads it built its pipeline from. The repeats that reported none
+    are counted, not guessed at; whether the readings are complete is
+    `readings_complete`'s to say.
+    """
+    reported = [r["served_identity"] for r in repeats if r.get("served_identity")]
+    identity = reported[0] if reported else None
+    return {
+        "reported_by": "each repeat's service, in /api/v1/pipeline/status at R1: the "
+                       "served identity it built from its own reads (contract M3c)",
+        **(served_subject(identity, schema) or {}),
+        "served_identity": identity,
+        "repeats_reporting": len(reported),
+        "same_in_every_repeat": (len(reported) == len(repeats)
+                                 and all(i == identity for i in reported)
+                                 if reported else None),
+    }
 
 
 # =============================================================================
@@ -1215,12 +1332,9 @@ def _run(args: argparse.Namespace) -> int:
     schema = load_diagnose_schema()
     defaults, limit = request_defaults(schema), max_phenotypes(schema)
     code, driver = code_version(), driver_version()
-    progress("digests and workload...")
-    subject = {
-        "graph_sha256": file_sha256(workspace / "kg.json"),
-        "checkpoint_sha256": file_sha256(checkpoint),
-        "sp_table_sha256": file_sha256(workspace / "shortest_paths.pt"),
-    }
+    # The subject is not hashed here: each repeat's service reports what it
+    # read (contract M3c), and the evidence cites that (`subject_of`).
+    progress("workload...")
     prepared = build_workload(workspace, args.seed, limit)
 
     repeats: list[dict[str, Any]] = []
@@ -1282,7 +1396,7 @@ def _run(args: argparse.Namespace) -> int:
                             if probe_failure(probe) else "ok"),
             "driver": driver,
         },
-        "subject": subject,
+        "subject": subject_of(repeats, schema),
         "start": {
             "through": "scripts/launch/shep_launch.py --no-auto-install --no-browser "
                        "-- --host 127.0.0.1 --port <free port>",
@@ -1299,9 +1413,13 @@ def _run(args: argparse.Namespace) -> int:
             "sample_interval_seconds": SAMPLE_INTERVAL_S, "stop_wait_seconds": STOP_WAIT_S,
             "reset_tries": RESET_TRIES, "r0_seconds": args.r0_seconds,
             "settle_seconds": args.settle_seconds,
-            "readiness": {"true": list(READY_TRUE_FIELDS), "sp_kg_binding": READY_BINDING,
+            "readiness": {"true": list(READY_TRUE_FIELDS),
+                          "read_from": "served_identity",
+                          "shortest_paths_state": READY_SHORTEST_PATHS,
                           "scoring_mode": READY_SCORING_MODE,
                           "serving_device_prefix": READY_DEVICE_PREFIX},
+            "counted_response": "HTTP 200, accepted by the service's response model, its "
+                                "served_identity equal to the repeat's subject",
         },
         "notes": {
             "system_in_use": "MemTotal - MemAvailable: a whole-machine pressure indicator, "

@@ -59,7 +59,10 @@ from src.kg.artifacts import (
 )
 from src.kg.storage.file_storage import read_graph_artifacts
 from src.utils.checkpoint_io import read_checkpoint
-from src.kg.phenotype_normalisation import normalise_phenotypes
+from src.kg.phenotype_normalisation import (
+    PHENOTYPE_NORMALISATION_VERSION,
+    normalise_phenotypes,
+)
 from src.core.types import (
     DataSource,
     DiagnosisCandidate,
@@ -69,6 +72,12 @@ from src.core.types import (
     NodeType,
     PatientPhenotypes,
     PhenotypeInputAccount,
+    ServedCheckpoint,
+    ServedDatasetRecord,
+    ServedGraph,
+    ServedIdentity,
+    ServedSettings,
+    ServedShortestPaths,
 )
 from src.reasoning import (
     PathReasoner,
@@ -237,6 +246,41 @@ class PipelineBuildError(RuntimeError):
     """
 
 
+class ServingDeviceUnavailable(PipelineBuildError):
+    """The device serving was asked to run the model on cannot be had here."""
+
+
+def resolve_serving_device(requested: Optional[str]) -> str:
+    """The device a checkpoint is served on, or a refusal (contract M3c, §5.2).
+
+    **`auto` means CUDA, and without CUDA it refuses**, as training's
+    (`scripts/train_model.py`, `resolve_training_device`) and measurement's do.
+    Unset (None or blank) is `auto`: that is what a deployment that names no
+    device asks for. It used to become CPU silently, after the checkpoint had
+    been read and the model built, so a service asked to run on the deployment's
+    hardware ran somewhere else and said so only in a log line. A literal
+    `"auto"` used to reach torch and fail there; it is the same request.
+
+    An explicit `cpu` stays available for development and is recorded as asked.
+    A request for CUDA on a host without it refuses here too, before any input
+    is read. Other device strings are handed to torch as given, as training's
+    are.
+    """
+    if requested is None or not str(requested).strip():
+        requested = "auto"
+    requested = str(requested).strip()
+    wants_cuda = requested in ("auto", "cuda") or requested.startswith("cuda:")
+    if wants_cuda and not (HAS_TORCH and torch.cuda.is_available()):
+        raise ServingDeviceUnavailable(
+            f"Serving device {requested!r} requires CUDA, which is not available "
+            "here. CUDA is a hard requirement of this project, so serving does "
+            "not substitute the CPU for it. Set SHEPHERD_DEVICE=cpu (or send "
+            "device 'cpu' with a reload) explicitly for development; the served "
+            "identity records the device asked for and the one in effect."
+        )
+    return "cuda" if requested == "auto" else requested
+
+
 # ==============================================================================
 # Diagnosis Pipeline
 # ==============================================================================
@@ -296,6 +340,19 @@ def _as_metric(value: Any) -> Optional[Union[float, str]]:
     return number if math.isfinite(number) else str(number)
 
 
+def _device_of(model: Any) -> Optional[str]:
+    """torch's name for the device a model's parameters are on, or None.
+
+    The device in effect, read from the model rather than from the request: a
+    `cuda` request serves on `cuda:0`, and that is what is recorded. None for a
+    model with no parameters to ask, which only an in-memory double is.
+    """
+    try:
+        return str(next(iter(model.parameters())).device)
+    except Exception:  # noqa: BLE001 — a model that cannot say states no device
+        return None
+
+
 class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
@@ -322,9 +379,6 @@ class DiagnosisPipeline:
         pipeline = DiagnosisPipeline(kg=knowledge_graph)
         result = pipeline.run(patient_phenotypes, top_k=10)
     """
-
-    # Version info
-    VERSION = "1.0.0"
 
     def __init__(
         self,
@@ -367,7 +421,10 @@ class DiagnosisPipeline:
                      does not enforce that pairing. An in-memory graph
                      (`kg`) has no source digest and is not pretended to have
                      one.
-            device: Device for GNN inference ("cpu", "cuda", or None for auto).
+            device: Device for a checkpoint's model: "cuda", "cuda:N", "cpu",
+                or None / "auto" for CUDA, refused without it
+                (`resolve_serving_device`). A model supplied in memory stays
+                on its own device when this is None.
         """
         from src.kg.graph import GraphRead
 
@@ -411,6 +468,16 @@ class DiagnosisPipeline:
         self._dataset_record: Optional[Any] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
+        #: SHA-256 of the one `split_manifest.json` read the workspace was
+        #: verified against (contract M3c); None when no workspace was verified.
+        self._manifest_sha256: Optional[str] = None
+        #: The device asked for, as given ("auto" when a checkpoint was loaded
+        #: with none named), and the one the model's parameters are on once it
+        #: is built. Both are part of the served identity (contract M3c).
+        self._device_requested: Optional[str] = (
+            str(device).strip() if device is not None and str(device).strip() else None
+        )
+        self._device_in_effect: Optional[str] = None
         self._gnn_ready = False
 
         # Shortest path lookup state (populated by _load_shortest_paths).
@@ -438,6 +505,9 @@ class DiagnosisPipeline:
         #: "verified" once a table has been accepted; an unrecorded binding is
         #: refused (contract M2.5), so nothing else is published.
         self._sp_kg_binding: Optional[str] = None
+        #: The `build_id` the accepted table and its sidecar share, published
+        #: with `_sp_ready`; part of the served identity (contract M3c).
+        self._sp_build_id: Optional[str] = None
         self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
         self._sp_ready = False
 
@@ -459,10 +529,10 @@ class DiagnosisPipeline:
 
         logger.info(
             f"DiagnosisPipeline initialized: "
-            f"version={self.VERSION}, "
             f"kg_nodes={len(self.kg._nodes)}, "
             f"has_model={self.model is not None}, "
-            f"gnn_ready={self._gnn_ready}"
+            f"gnn_ready={self._gnn_ready}, "
+            f"device={self._device_in_effect}"
         )
 
     def _init_reasoning_components(self) -> None:
@@ -530,6 +600,15 @@ class DiagnosisPipeline:
         if self.model is None and checkpoint_path is None:
             return
 
+        # **The device is settled before any input is read** (contract M3c,
+        # §5.2), as training's is: `auto` without CUDA refuses here, instead of
+        # after the workspace, the checkpoint and the model build, and instead of
+        # turning into the CPU. A model supplied in memory with no device named
+        # stays where it is; there is nothing to resolve for it.
+        if self.model is None:
+            device = resolve_serving_device(device)
+            self._device_requested = self._device_requested or "auto"
+
         # Step 1: Load graph data
         if self._graph_data is None and data_dir is not None:
             # **The clinical path is a graph consumer, and the costliest one.**
@@ -588,6 +667,9 @@ class DiagnosisPipeline:
             self._bound_digests = dict(bound)
             self._graph_kg_digest = bound["kg"]
             self._dataset_record = dataset_record
+            # The manifest's identity from the same one read, for the served
+            # identity (contract M3c); nothing hashes it again.
+            self._manifest_sha256 = manifest.identity.sha256
             # **Only after the check.** The reader omits a file that is absent,
             # and only the check turns that into a refusal.
             self._graph_data = graph_read.graph_data
@@ -657,10 +739,12 @@ class DiagnosisPipeline:
                 f"{missing or 'any node type'}. No pipeline is built."
             )
 
+        self._device_in_effect = _device_of(self.model)
         self._gnn_ready = True
         logger.info(
             f"GNN inference initialized successfully "
-            f"(sp_ready={self._sp_ready}, eta={self.config.eta})"
+            f"(sp_ready={self._sp_ready}, eta={self.config.eta}, "
+            f"device={self._device_in_effect})"
         )
 
     def _load_shortest_paths(self, data_dir: Path) -> None:
@@ -704,6 +788,7 @@ class DiagnosisPipeline:
         self._sp_lookup = None
         self._sp_hop_bound_source = None
         self._sp_kg_binding = None
+        self._sp_build_id = None
 
         from src.inference.scoring import validate_hop_bound
         from src.inference.sp_artifact import (
@@ -918,6 +1003,7 @@ class DiagnosisPipeline:
         self._sp_max_hops = max_hops
         self._sp_hop_bound_source = hop_bound_source
         self._sp_kg_binding = binding_state
+        self._sp_build_id = binding.build_id
         self._sp_lookup = lookup
         self._sp_ready = True
 
@@ -1067,10 +1153,14 @@ class DiagnosisPipeline:
         # fails where the response is encoded -- a serving concern created by a
         # training detail, discovered at the HTTP boundary. Converting at the
         # source is what keeps the boundary a formality.
+        # The device the caller settled (`resolve_serving_device`); the same
+        # rule again here, so a caller of this method cannot reach the move
+        # below with an unresolved `auto`.
+        device = resolve_serving_device(device)
         self._checkpoint_meta = {
             "epoch": _as_int(checkpoint.get("epoch")),
             "params": int(sum(p.numel() for p in model.parameters())),
-            "device": str(device) if device else "cpu",
+            "device": str(device),
         }
         # Extract best metrics from logs if available
         logs = checkpoint.get("logs", {})
@@ -1082,10 +1172,7 @@ class DiagnosisPipeline:
                         self._checkpoint_meta[key] = metric
 
         # Move to device
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
         model = model.to(device)
-        self._checkpoint_meta["device"] = str(device)
 
         # Kept for M2.4 and M3c; set only once the model it describes is built.
         self._checkpoint_identity = checkpoint_read.identity
@@ -1180,8 +1267,8 @@ class DiagnosisPipeline:
                 patient_id=patient_input.patient_id,
                 timestamp=datetime.now(),
                 candidates=[],
+                served_identity=self.served_identity(),
                 warnings=validation.errors,
-                model_version=self.VERSION,
                 inference_time_ms=(time.time() - start_time) * 1000,
                 phenotype_input=validation.phenotype_input,
             )
@@ -1258,9 +1345,8 @@ class DiagnosisPipeline:
             patient_id=patient_input.patient_id,
             timestamp=datetime.now(),
             candidates=candidates,
+            served_identity=self.served_identity(),
             summary_explanation=summary,
-            model_version=self.VERSION,
-            kg_version=getattr(self.kg, "version", "unknown"),
             inference_time_ms=inference_time,
             warnings=warnings,
             phenotype_input=validation.phenotype_input,
@@ -1897,27 +1983,100 @@ class DiagnosisPipeline:
             patient_id=patient_id,
             timestamp=datetime.now(),
             candidates=[],
+            served_identity=self.served_identity(),
             warnings=warnings,
-            model_version=self.VERSION,
             inference_time_ms=(time.time() - start_time) * 1000,
             phenotype_input=phenotype_input,
+        )
+
+    def _scoring_mode(self) -> Tuple[str, float]:
+        """The scoring mode in effect and the mixing weight it reports."""
+        if self._gnn_ready and self._sp_ready:
+            return "gnn_plus_shortest_path", self.config.eta
+        if self._gnn_ready:
+            return "gnn_only", 1.0
+        return "path_reasoning_fallback", 0.0
+
+    def served_identity(self) -> ServedIdentity:
+        """What this pipeline serves, part by part (contract M3c, R8).
+
+        **Built from the pipeline's own state, from the reads it took**: the
+        checkpoint's digest from the read the model was built from, the graph's
+        and the manifest's from the reads the workspace was verified with, the
+        shortest-path table's `build_id` from the tensor accepted, the dataset
+        record's origin from the record verified. Nothing is hashed again here.
+        Every result the pipeline returns carries this, built when the result
+        is produced, and `get_pipeline_config()` reports it from this same
+        method. A part with nothing to identify says so in its `state`.
+        """
+        scoring_mode, eta = self._scoring_mode()
+
+        if self.model is None or not self._gnn_ready:
+            checkpoint = ServedCheckpoint(state="absent")
+        elif self._checkpoint_identity is not None:
+            checkpoint = ServedCheckpoint(
+                state="verified", sha256=self._checkpoint_identity.sha256
+            )
+        else:
+            checkpoint = ServedCheckpoint(state="supplied_in_memory")
+
+        if self._bound_digests is not None:
+            graph = ServedGraph(
+                state="verified",
+                kg_sha256=self._graph_kg_digest,
+                split_manifest_sha256=self._manifest_sha256,
+            )
+        elif self._graph_identity is not None:
+            graph = ServedGraph(state="unverified", kg_sha256=self._graph_identity.sha256)
+        else:
+            graph = ServedGraph(state="in_memory")
+
+        if self._sp_ready:
+            shortest_paths = ServedShortestPaths(
+                state="verified", build_id=self._sp_build_id, max_hops=self._sp_max_hops
+            )
+        else:
+            shortest_paths = ServedShortestPaths(state="absent")
+
+        record = self._dataset_record
+        dataset_record = (
+            ServedDatasetRecord(
+                state="verified", origin=record.origin, sha256=record.identity.sha256
+            )
+            if record is not None
+            else ServedDatasetRecord(state="absent")
+        )
+
+        served_model = checkpoint.state != "absent"
+        settings = ServedSettings(
+            device=self._device_in_effect if served_model else None,
+            device_requested=self._device_requested if served_model else None,
+            eta=float(eta) if served_model else None,
+            max_path_length=self.config.max_path_length,
+            path_length_penalty=self.config.path_length_penalty,
+            aggregation_method=self.config.aggregation_method,
+            max_paths_per_candidate=self.config.max_paths_per_candidate,
+            use_direct_path_optimization=self.config.use_direct_path_optimization,
+            phenotype_normalisation_version=PHENOTYPE_NORMALISATION_VERSION,
+        )
+        return ServedIdentity(
+            scoring_mode=scoring_mode,
+            checkpoint=checkpoint,
+            graph=graph,
+            shortest_paths=shortest_paths,
+            dataset_record=dataset_record,
+            settings=settings,
         )
 
     def get_pipeline_config(self) -> Dict[str, Any]:
         """Get pipeline configuration as dictionary."""
         # Effective scoring mode reflects whether SP signal is contributing
-        if self._gnn_ready and self._sp_ready:
-            scoring_mode = "gnn_plus_shortest_path"
-            effective_eta = self.config.eta
-        elif self._gnn_ready:
-            scoring_mode = "gnn_only"
-            effective_eta = 1.0
-        else:
-            scoring_mode = "path_reasoning_fallback"
-            effective_eta = 0.0
+        scoring_mode, effective_eta = self._scoring_mode()
 
         return {
-            "version": self.VERSION,
+            # What is served, part by part (contract M3c): the same value every
+            # result carries, from the same builder.
+            "served_identity": self.served_identity().to_dict(),
             "max_path_length": self.config.max_path_length,
             "path_length_penalty": self.config.path_length_penalty,
             "aggregation_method": self.config.aggregation_method,

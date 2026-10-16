@@ -21,9 +21,16 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 >
 > | Loaded | Score used for ranking |
 > |---|---|
-> | Trained model **and** shortest-path table | `0.7 × model score + 0.3 × SP` (`src/inference/pipeline.py:1310`) |
+> | Trained model **and** shortest-path table | `0.7 × model score + 0.3 × SP` (`src/inference/pipeline.py:1707`) |
 > | Trained model only | Model score alone |
 > | No trained model | Path-reasoning score — **a different quantity written into the same field** |
+>
+> **Which row applies is stated with each result.** Every result says which artifacts produced it
+> (its *served identity*): the Diagnosis tab's "Produced by" line and its full-identity block, the
+> downloadable report's "What produced this result" section and the CSV's `served_` columns name
+> the trained model's checkpoint, the shortest-path table and the scoring mode —
+> `gnn_plus_shortest_path` (first row), `gnn_only` (second) or `path_reasoning_fallback` (third,
+> with a "NO TRAINED MODEL" banner).
 >
 > **Also today: candidates are discovered by path search before any scoring happens.** A disease
 > with no qualifying path from the patient's phenotypes is never scored at all, whatever the model

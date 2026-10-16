@@ -37,8 +37,49 @@ from tests.unit.test_graph_artifact_binding import (  # noqa: E402
     _workspace,
 )
 
+
+def _served_identity(digit: str, *, with_sp: bool) -> dict:
+    """A coherent served identity (contract M3c) whose digests are `digit`s.
+
+    Built through `src.core.types.ServedIdentity`, so its cross-part invariants
+    hold, and given as the JSON form a pipeline's configuration reports. The two
+    pipelines below differ in every digest, so a check that compares them cannot
+    pass by accident.
+    """
+    from src.core.types import (
+        ServedCheckpoint,
+        ServedDatasetRecord,
+        ServedGraph,
+        ServedIdentity,
+        ServedSettings,
+        ServedShortestPaths,
+    )
+
+    return ServedIdentity(
+        scoring_mode="gnn_plus_shortest_path" if with_sp else "gnn_only",
+        checkpoint=ServedCheckpoint(state="verified", sha256=digit * 64),
+        graph=ServedGraph(state="verified", kg_sha256=(digit + "1") * 32,
+                          split_manifest_sha256=(digit + "2") * 32),
+        shortest_paths=(
+            ServedShortestPaths(state="verified", build_id=f"build-{digit}", max_hops=3)
+            if with_sp else ServedShortestPaths(state="absent")
+        ),
+        dataset_record=ServedDatasetRecord(state="verified", origin="synthetic",
+                                           sha256=(digit + "3") * 32),
+        settings=ServedSettings(
+            device="cpu", device_requested="cpu", eta=0.7 if with_sp else 1.0,
+            max_path_length=4, path_length_penalty=0.9,
+            aggregation_method="weighted_sum", max_paths_per_candidate=10,
+            use_direct_path_optimization=True, phenotype_normalisation_version=1,
+        ),
+    ).to_dict()
+
+
+# **What is served is identified by the pipeline, not by app state** (contract
+# M3c): the version string these configurations carried, and the copy of it
+# app state kept, are gone. Each carries a served identity instead.
 SERVED_CONFIG = {
-    "version": "served-version",
+    "served_identity": _served_identity("a", with_sp=True),
     "scoring_mode": "served-mode",
     "gnn_ready": True,
     "sp_ready": True,
@@ -47,7 +88,7 @@ SERVED_CONFIG = {
     "has_model": True,
 }
 CANDIDATE_CONFIG = {
-    "version": "candidate-version",
+    "served_identity": _served_identity("b", with_sp=False),
     "scoring_mode": "candidate-mode",
     "gnn_ready": True,
     "sp_ready": False,
@@ -73,7 +114,6 @@ def _serving(monkeypatch, data_dir="/served/workspace", checkpoint="/served/ckpt
     kg = object()
     monkeypatch.setattr(api.app_state, "pipeline", served, raising=False)
     monkeypatch.setattr(api.app_state, "kg", kg, raising=False)
-    monkeypatch.setattr(api.app_state, "model_version", "served-version", raising=False)
     monkeypatch.setattr(api.app_state, "_current_data_dir", data_dir, raising=False)
     monkeypatch.setattr(
         api.app_state, "_current_checkpoint_path", checkpoint, raising=False
@@ -81,7 +121,6 @@ def _serving(monkeypatch, data_dir="/served/workspace", checkpoint="/served/ckpt
     return api, {
         "pipeline": served,
         "kg": kg,
-        "model_version": "served-version",
         "_current_data_dir": data_dir,
         "_current_checkpoint_path": checkpoint,
     }
@@ -92,6 +131,11 @@ def _assert_untouched(api, before):
         assert getattr(api.app_state, field) is value or getattr(
             api.app_state, field
         ) == value, f"reload changed app_state.{field} on a failed reload"
+    # What is served, read from the live pipeline (contract M3c).
+    assert (
+        api.app_state.pipeline.get_pipeline_config()["served_identity"]
+        == SERVED_CONFIG["served_identity"]
+    ), "a failed reload changed what is served"
 
 
 def _reload(**kwargs):
@@ -99,8 +143,14 @@ def _reload(**kwargs):
 
 
 def _candidate_workspace(monkeypatch, tmp_path, name="candidate"):
-    """A workspace the reload endpoint will accept as far as construction."""
+    """A workspace the reload endpoint will accept as far as construction.
+
+    `SHEPHERD_DEVICE=cpu`: a reload or startup that names no device asks for
+    CUDA and, on a host without it, is refused before the workspace is read
+    (contract M3c, §5.2). Every refusal these tests are about comes after that.
+    """
     reached: list = []
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     TestTheClinicalPathIsAGraphConsumer._pipeline_module(monkeypatch, reached)
     root = _workspace(tmp_path / name)
     (root / "ckpt.pt").write_bytes(b"weights")
@@ -236,6 +286,7 @@ class TestAFailedReloadReportsWhatIsStillServing:
         assert result.success is False
         assert result.status.initialized is True, "reported a down service"
         assert result.status.scoring_mode == SERVED_CONFIG["scoring_mode"]
+        assert result.status.served_identity.model_dump() == SERVED_CONFIG["served_identity"]
         assert result.status.current_data_dir == "/served/workspace"
         assert result.status.current_checkpoint_path == "/served/ckpt.pt"
 
@@ -298,7 +349,13 @@ class TestAnAcceptedCandidateReplacesAllOfIt:
         assert result.success is True
         assert api.app_state.pipeline is not before["pipeline"]
         assert api.app_state.kg is not before["kg"]
-        assert api.app_state.model_version == "candidate-version"
+        # What is served moved with the pipeline: read from the live pipeline
+        # and from the response, never from app state (contract M3c).
+        assert (
+            api.app_state.pipeline.get_pipeline_config()["served_identity"]
+            == CANDIDATE_CONFIG["served_identity"]
+        )
+        assert result.status.served_identity.model_dump() == CANDIDATE_CONFIG["served_identity"]
         assert api.app_state._current_data_dir == str(root)
         assert api.app_state._current_checkpoint_path == str(root / "ckpt.pt")
         assert result.status.scoring_mode == CANDIDATE_CONFIG["scoring_mode"]
@@ -349,7 +406,13 @@ def test_startup_records_which_workspace_it_published(monkeypatch, tmp_path):
     api.initialize_pipeline()
 
     assert api.app_state.pipeline is not None
-    assert api.app_state.model_version == "candidate-version"
+    # What is served is the published pipeline's to say (contract M3c); app
+    # state keeps no copy of it for a reload to leave behind.
+    assert (
+        api.app_state.pipeline.get_pipeline_config()["served_identity"]
+        == CANDIDATE_CONFIG["served_identity"]
+    )
+    assert not hasattr(api.app_state, "model_version")
     assert api.app_state._current_data_dir == str(root)
     assert api.app_state._current_checkpoint_path == str(root / "ckpt.pt")
 
@@ -402,7 +465,6 @@ def test_publication_formats_nothing_after_it_has_assigned(monkeypatch, tmp_path
     root, _ = _candidate_workspace(monkeypatch, tmp_path)
     monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
     monkeypatch.setattr(api.app_state, "kg", None, raising=False)
-    monkeypatch.setattr(api.app_state, "model_version", "unknown", raising=False)
     monkeypatch.setattr(
         pipeline.DiagnosisPipeline,
         "get_pipeline_config",
@@ -417,7 +479,6 @@ def test_publication_formats_nothing_after_it_has_assigned(monkeypatch, tmp_path
 
     assert api.app_state.pipeline is None, "published, then failed to announce it"
     assert api.app_state.kg is None
-    assert api.app_state.model_version == "unknown"
 
 
 # --------------------------------------------------------------------------

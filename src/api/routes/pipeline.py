@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
+from src.api.routes.diagnose import ServedIdentity
 from src.utils.file_modes import create_staging_file
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,9 @@ class PipelineStatusResponse(BaseModel):
     #: or "synthetic") apart, its digest, the sources it names and what it says
     #: it does not establish. None when no workspace was verified.
     dataset_record: Optional[Dict[str, Any]] = None
+    #: What the pipeline serves, part by part (contract M3c): the value every
+    #: diagnosis it answers carries. None when no pipeline is loaded.
+    served_identity: Optional[ServedIdentity] = None
     kg_nodes: int = 0
     kg_edges: int = 0
     has_model: bool = False
@@ -89,7 +93,10 @@ class PipelineReloadRequest(BaseModel):
     )
     device: Optional[str] = Field(
         None,
-        description="Device for inference (null = auto-detect).",
+        description="The model's device: null or 'auto' for CUDA, refused without "
+        "it (contract M3c); 'cuda' or 'cuda:N'; 'cpu' for development. Null falls "
+        "back to SHEPHERD_DEVICE first. The served identity records what was asked "
+        "for and what took effect.",
     )
 
 
@@ -190,6 +197,7 @@ def _status_of(
         sp_hop_bound_source=config.get("sp_hop_bound_source"),
         sp_kg_binding=config.get("sp_kg_binding"),
         dataset_record=config.get("dataset_record"),
+        served_identity=config.get("served_identity"),
         kg_nodes=config.get("kg_nodes", 0),
         kg_edges=config.get("kg_edges", 0),
         has_model=config.get("has_model", False),
@@ -307,6 +315,19 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             f"Missing required files in {data_dir}: {missing_required}", files
         )
 
+    # **The device before the scan** (contract M3c, §5.2). Every reload serves a
+    # checkpoint, so a device this host cannot provide refuses it whatever is
+    # chosen; settled here, it refuses before automatic selection reads every
+    # candidate in the run layout. The same resolution `build_pipeline` applies
+    # (the request, then SHEPHERD_DEVICE, then `auto`), and the request is still
+    # passed on as given, so the served identity records what was asked for.
+    from src.inference.pipeline import ServingDeviceUnavailable, resolve_serving_device
+
+    try:
+        resolve_serving_device(device or os.environ.get("SHEPHERD_DEVICE") or None)
+    except ServingDeviceUnavailable as exc:
+        return _refused(f"{str(exc).rstrip('.')}.{_still_serving()}", files)
+
     # Resolve which checkpoint to serve, from the run layout
     # ({data_dir}/runs/{conv_type}/{run}/checkpoints/, contract M3a-2). Priority:
     #   1. explicit checkpoint_path (any location; accepted by its bytes)
@@ -315,6 +336,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     #   3. auto -> the latest-trained run of any architecture, its best
     # Runs are not ranked against each other by metric. Checkpoints in an older
     # layout are NOT scanned here (see checkpoint_paths).
+    from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import (
         normalize_conv_type,
         ranking_score_detail,
@@ -326,15 +348,22 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # the filename, whose number's meaning is config-dependent). Higher is better.
     # Any read failure / missing metric returns None so one bad checkpoint can't
     # block the rest; if none score, selection falls back to last.pt -> newest.
+    #
+    # **Each read's digest is kept** (contract M3c, BACKLOG 19.1): the build
+    # reads the chosen file again, and only that read is served (M2.1 decision
+    # 4), so a file replaced in between is stated beside the reason below.
+    scored_digests: Dict[str, str] = {}
+
     def _checkpoint_score(path: Path) -> Optional[float]:
         try:
-            import torch
             # Tensors and plain data only (contract decision 10): this scan
             # reads files in a directory a request names.
-            ckpt = torch.load(path, map_location="cpu", weights_only=True)
+            scored = read_checkpoint(path, map_location="cpu", weights_only=True)
         except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
             logger.debug("checkpoint score read failed for %s: %s", path, exc)
             return None
+        scored_digests[str(path)] = scored.identity.sha256
+        ckpt = scored.checkpoint
         detail = ranking_score_detail(ckpt.get("logs") if isinstance(ckpt, dict) else None)
         return detail[1] if detail else None
 
@@ -343,6 +372,8 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     architecture: Optional[str] = None
     selection_reason: str = ""
     requested_conv = (request.conv_type or "auto").strip().lower()
+    #: The file automatic selection chose; None for an explicit path.
+    selected: Optional[Path] = None
 
     if checkpoint_path:
         selection_reason = "explicit checkpoint_path"
@@ -363,16 +394,6 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             )
         if selected is not None:
             checkpoint_path = str(selected)
-            # Record which metric/score chose it, so "why this one?" is answerable.
-            try:
-                import torch
-                _logs = torch.load(selected, map_location="cpu", weights_only=True).get("logs")
-                _detail = ranking_score_detail(_logs)
-            except Exception:  # noqa: BLE001
-                _detail = None
-            if _detail:
-                selection_reason += f"; best {_detail[0]}={_detail[1]:.4f}"
-            logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)
 
     if not checkpoint_path or not Path(checkpoint_path).exists():
         # If checkpoints exist outside the run layout, say so: they are not
@@ -429,6 +450,29 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             f"No pipeline could be built from {data_dir}. "
             f"Check server logs.{_still_serving()}", files
         )
+
+    if selected is not None:
+        # **The metric reported is the served read's** (contract M3c, BACKLOG
+        # 19.2), from the checkpoint metadata the build took from the bytes it
+        # loaded, never from another read of the path: chose A, reported B,
+        # served C is gone. The build's read is what is served (M2.1 decision
+        # 4); a file replaced after the scan chose it is still served as read,
+        # and the reason says so (19.1), so a choice made on other bytes is
+        # never presented as this model's.
+        detail = ranking_score_detail(candidate.config.get("checkpoint_meta"))
+        if detail:
+            selection_reason += f"; best {detail[0]}={detail[1]:.4f}"
+        served_identity = candidate.config.get("served_identity") or {}
+        served_sha = (served_identity.get("checkpoint") or {}).get("sha256")
+        scored_sha = scored_digests.get(str(selected))
+        if scored_sha is not None and scored_sha != served_sha:
+            selection_reason += (
+                f"; the file was replaced after it was scored (scored sha256 "
+                f"{scored_sha}, loaded sha256 {served_sha}): the choice was made "
+                "on the earlier bytes, and the metric shown is the loaded file's"
+            )
+            logger.warning("Auto-selected checkpoint replaced after scoring: %s", checkpoint_path)
+        logger.info("Auto-selected checkpoint (%s): %s", selection_reason, checkpoint_path)
 
     # **The whole response is built, validated and encoded before anything is
     # published.** `build_pipeline` obtains the configuration dictionary but

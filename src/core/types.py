@@ -450,6 +450,208 @@ class PhenotypeInputAccount:
     used: Tuple[str, ...]
 
 
+# =============================================================================
+# Served identity (contract M3c, R8)
+# =============================================================================
+#: The states each part of a served identity can be in. Every part says which
+#: one it is in words, so an absence is stated and never left as a blank or an
+#: "unknown" for a reader to interpret.
+SERVED_CHECKPOINT_STATES = ("verified", "supplied_in_memory", "absent")
+SERVED_GRAPH_STATES = ("verified", "unverified", "in_memory")
+SERVED_SHORTEST_PATHS_STATES = ("verified", "absent")
+SERVED_DATASET_RECORD_STATES = ("verified", "absent")
+SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback")
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _require_sha256(value: Any, what: str) -> None:
+    if not (isinstance(value, str) and len(value) == 64 and set(value) <= _HEX):
+        raise ValueError(f"{what} must be a lowercase hexadecimal SHA-256, not {value!r}")
+
+
+def _require_state(state: Any, allowed: Tuple[str, ...], what: str) -> None:
+    if state not in allowed:
+        raise ValueError(f"{what} state {state!r} is not one of {allowed}")
+
+
+@dataclass(frozen=True)
+class ServedCheckpoint:
+    """The model's checkpoint, or the stated absence of one."""
+
+    #: "verified": the model was built from one read of a checkpoint whose
+    #: record matched the served workspace's graph (contract M2.4); `sha256` is
+    #: that read's digest. "supplied_in_memory": a model object was handed to
+    #: the pipeline, so no checkpoint bytes were read and none is identified.
+    #: "absent": no model; candidates are ranked by path reasoning.
+    state: str
+    sha256: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _require_state(self.state, SERVED_CHECKPOINT_STATES, "checkpoint")
+        if self.state == "verified":
+            _require_sha256(self.sha256, "a verified checkpoint's sha256")
+        elif self.sha256 is not None:
+            raise ValueError(f"a checkpoint in state {self.state!r} carries no sha256")
+
+
+@dataclass(frozen=True)
+class ServedGraph:
+    """The graph served, and the workspace manifest it was verified against."""
+
+    #: "verified": `kg.json` and `split_manifest.json` were each read once and
+    #: the graph's digest matched the manifest's binding; both digests are of
+    #: those reads. "unverified": the graph was read from a file whose digest is
+    #: stated, and no workspace manifest was read to check it (path reasoning
+    #: only, BACKLOG 19.20). "in_memory": the graph was supplied in memory, with
+    #: no file and no digest.
+    state: str
+    kg_sha256: Optional[str] = None
+    split_manifest_sha256: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _require_state(self.state, SERVED_GRAPH_STATES, "graph")
+        if self.state == "in_memory":
+            if self.kg_sha256 is not None:
+                raise ValueError("a graph supplied in memory carries no kg_sha256")
+        else:
+            _require_sha256(self.kg_sha256, f"a {self.state} graph's kg_sha256")
+        if self.state == "verified":
+            _require_sha256(
+                self.split_manifest_sha256, "a verified graph's split_manifest_sha256"
+            )
+        elif self.split_manifest_sha256 is not None:
+            raise ValueError(
+                f"a graph in state {self.state!r} was checked against no manifest"
+            )
+
+
+@dataclass(frozen=True)
+class ServedShortestPaths:
+    """The shortest-path table, or the stated absence of one."""
+
+    #: "verified": the table and its sidecar carry one `build_id` and name the
+    #: served graph (contract M2.5); `max_hops` is the sidecar's hop bound.
+    #: "absent": no table contributes to the score.
+    state: str
+    build_id: Optional[str] = None
+    max_hops: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        _require_state(self.state, SERVED_SHORTEST_PATHS_STATES, "shortest_paths")
+        if self.state == "verified":
+            if not (isinstance(self.build_id, str) and self.build_id):
+                raise ValueError("a verified shortest-path table carries its build_id")
+            if not (isinstance(self.max_hops, int) and not isinstance(self.max_hops, bool)):
+                raise ValueError("a verified shortest-path table carries its max_hops")
+        elif self.build_id is not None or self.max_hops is not None:
+            raise ValueError("an absent shortest-path table carries no build_id or max_hops")
+
+
+@dataclass(frozen=True)
+class ServedDatasetRecord:
+    """The served workspace's dataset record (contract M3b), or its absence."""
+
+    #: "verified": the record bound by the workspace manifest, naming the graph
+    #: served; `origin` is "files" or "synthetic". "absent": no workspace was
+    #: verified, so no record was read.
+    state: str
+    origin: Optional[str] = None
+    sha256: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _require_state(self.state, SERVED_DATASET_RECORD_STATES, "dataset_record")
+        if self.state == "verified":
+            if self.origin not in ("files", "synthetic"):
+                raise ValueError(f"a verified dataset record's origin is {self.origin!r}")
+            _require_sha256(self.sha256, "a verified dataset record's sha256")
+        elif self.origin is not None or self.sha256 is not None:
+            raise ValueError("an absent dataset record carries no origin or sha256")
+
+
+@dataclass(frozen=True)
+class ServedSettings:
+    """The serving settings that change scores, as in effect."""
+
+    #: Where the model ran: torch's name for the device its parameters are on
+    #: ("cuda:0", "cpu"). None when no model is served, or when a model supplied
+    #: in memory does not say.
+    device: Optional[str]
+    #: What was asked for: "auto" (CUDA, refused without it), "cuda", "cuda:N"
+    #: or "cpu". None when no checkpoint was loaded and no device was given.
+    device_requested: Optional[str]
+    #: The mixing weight in effect between the GNN and shortest-path terms:
+    #: 1.0 with no table, None when no model is served (neither term exists).
+    eta: Optional[float]
+    #: Candidate discovery and path scoring, in effect in every mode: the
+    #: diseases ranked are those reached by these paths.
+    max_path_length: int
+    path_length_penalty: float
+    aggregation_method: str
+    max_paths_per_candidate: int
+    use_direct_path_optimization: bool
+    #: The phenotype-list rule applied before scoring
+    #: (`src/kg/phenotype_normalisation.py`).
+    phenotype_normalisation_version: int
+
+
+@dataclass(frozen=True)
+class ServedIdentity:
+    """What produced a diagnosis result: one structured value (contract M3c, R8).
+
+    **It replaces the two version strings** `InferenceResult` used to carry,
+    which were filled with a class constant and "unknown". Each part names what
+    was served by the digest or identifier of the bytes read, or says in its
+    `state` why there is none; nothing here is a version string to be parsed.
+
+    Built by the pipeline from its own state when the result is produced, and
+    reported by `get_pipeline_config()` from the same builder; the API copies
+    it from the result it answers with.
+    """
+
+    scoring_mode: str
+    checkpoint: ServedCheckpoint
+    graph: ServedGraph
+    shortest_paths: ServedShortestPaths
+    dataset_record: ServedDatasetRecord
+    settings: ServedSettings
+
+    def __post_init__(self) -> None:
+        _require_state(self.scoring_mode, SERVED_SCORING_MODES, "scoring_mode")
+        has_model = self.checkpoint.state != "absent"
+        if has_model == (self.scoring_mode == "path_reasoning_fallback"):
+            raise ValueError(
+                f"scoring_mode {self.scoring_mode!r} contradicts a checkpoint "
+                f"in state {self.checkpoint.state!r}"
+            )
+        with_sp = self.scoring_mode == "gnn_plus_shortest_path"
+        if with_sp != (self.shortest_paths.state == "verified"):
+            raise ValueError(
+                f"scoring_mode {self.scoring_mode!r} contradicts a shortest-path "
+                f"table in state {self.shortest_paths.state!r}"
+            )
+        if (self.dataset_record.state == "verified") != (self.graph.state == "verified"):
+            raise ValueError(
+                "a dataset record is verified exactly when the workspace graph is"
+            )
+        # A checkpoint is loaded, and a table bound, only over a graph verified
+        # from a workspace (contract M2.4, M2.5).
+        for part, state in (
+            ("checkpoint", self.checkpoint.state),
+            ("shortest-path table", self.shortest_paths.state),
+        ):
+            if state == "verified" and self.graph.state != "verified":
+                raise ValueError(
+                    f"a verified {part} is served only over a verified workspace graph"
+                )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """JSON primitives only, nested by part."""
+        from dataclasses import asdict
+
+        return asdict(self)
+
+
 @dataclass
 class InferenceResult:
     """
@@ -461,12 +663,14 @@ class InferenceResult:
     # Top candidates
     candidates: List[DiagnosisCandidate]
 
+    #: What produced this result (contract M3c). Required: every result the
+    #: pipeline returns, a refused request's included, says what answered it.
+    served_identity: ServedIdentity
+
     # Overall explanation
     summary_explanation: Optional[str] = None
 
     # Metadata
-    model_version: str = ""
-    kg_version: str = ""
     inference_time_ms: float = 0.0
 
     # Warnings

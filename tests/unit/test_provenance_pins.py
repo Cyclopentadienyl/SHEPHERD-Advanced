@@ -111,11 +111,6 @@ ALLOWED = {
         (1, "BACKLOG item 18 / 19.5: the ledger's stale-write guard"),
     ("src/evaluation/sidecar.py", "read_ledger", "json.loads"):
         (1, "BACKLOG item 18 / 19.5: the evaluation ledger's read"),
-    ("src/api/routes/pipeline.py", "reload_pipeline._checkpoint_score", "torch.load"):
-        (1, "M2.1 decision 4, BACKLOG 19.1: selection-time candidate scoring; the build "
-            "uses the final read_checkpoint"),
-    ("src/api/routes/pipeline.py", "reload_pipeline", "torch.load"):
-        (1, "M2.1 decision 4, BACKLOG 19.2: the reported metric's second read (M3c)"),
     ("src/api/services/training_manager.py", "TrainingManager.get_checkpoints", "torch.load"):
         (1, "M2.1 decision 4, BACKLOG 19.3: the training console's checkpoint list"),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):

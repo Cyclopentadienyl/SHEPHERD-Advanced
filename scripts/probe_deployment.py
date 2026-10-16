@@ -84,6 +84,15 @@ M3a's checks:
     The report's `m2_acceptance` says, per part, whether every required probe
     ran and passed; a missing, skipped or failed one leaves it incomplete, and
     the exit status is non-zero until both parts are complete.
+
+Contract M3c (what is served is identified) adds checks, not probes:
+    E1 requires the served identity to name the checkpoint D1 trained, the
+    workspace's graph, manifest and dataset record by the digests the probe's
+    own reads took, and the device asked for, in effect; E2 that the status
+    reports it unchanged; E5 that a refused reload leaves it as it was; E7 that
+    a diagnosis carries it. M4 and R6 require the same of a diagnosis served
+    with a verified shortest-path table, whose build_id is the sidecar's. The
+    identity holds no paths and is recorded in E1's, M4's and R6's facts.
 """
 from __future__ import annotations
 
@@ -374,6 +383,108 @@ def _record_facts(record) -> Dict[str, Any]:
                     for entry in summary["sources"]},
         "incomplete_by_design": summary["incomplete_by_design"],
     }
+
+
+def _sidecar_build_id(directory: Path) -> Optional[str]:
+    """The `build_id` the workspace's shortest-path sidecar declares, through
+    the sidecar's own reader and binding check (as R1 reads it); None when the
+    workspace holds no table. The tensor is not read here: that the table and
+    its sidecar are one pair is the service loader's verdict."""
+    from src.inference.sp_artifact import (
+        TENSOR_BUILD_ID_KEY,
+        read_binding,
+        read_sidecar,
+        sidecar_path,
+    )
+
+    table = directory / "shortest_paths.pt"
+    if not table.exists():
+        return None
+    assert sidecar_path(table).is_file(), "the workspace's table has no sidecar"
+    binding = read_binding(read_sidecar(table).meta, (TENSOR_BUILD_ID_KEY,), source=table.name)
+    assert binding.recorded, "the table's sidecar records no source binding"
+    return binding.build_id
+
+
+def _assert_served_identity(
+    identity: Any,
+    *,
+    checkpoint_sha256: str,
+    workspace_digests: Dict[str, str],
+    record: Any,
+    sp_build_id: Optional[str],
+    device: str,
+) -> Dict[str, Any]:
+    """What serving says it served is what this probe verified (contract M3c).
+
+    `identity` is the served identity in its JSON form, as
+    `get_pipeline_config()["served_identity"]` and the API report it. **Every
+    expected value comes from a read this probe already took**: the
+    checkpoint's digest from `_read_run_checkpoint`, the `kg.json` and
+    `split_manifest.json` digests from `verify_workspace`'s reads, the dataset
+    record that check verified, the `build_id` the table's sidecar declares
+    (None: the workspace has no table), and the device the probe asked for.
+    Nothing is hashed again here. Returns the identity for the report: states,
+    digests, identifiers and settings, and no paths.
+    """
+    from src.kg.artifacts import GRAPH_ARTIFACTS, MANIFEST_FILENAME
+
+    assert isinstance(identity, dict), "serving reports no served identity"
+    checkpoint = identity.get("checkpoint") or {}
+    assert checkpoint == {"state": "verified", "sha256": checkpoint_sha256}, (
+        f"the served identity names a checkpoint {checkpoint.get('state')} with digest "
+        f"{str(checkpoint.get('sha256'))[:12]}..., not the checkpoint this probe read "
+        f"({checkpoint_sha256[:12]}...)"
+    )
+    expected_graph = {
+        "state": "verified",
+        "kg_sha256": workspace_digests[GRAPH_ARTIFACTS["kg"]],
+        "split_manifest_sha256": workspace_digests[MANIFEST_FILENAME],
+    }
+    graph = identity.get("graph") or {}
+    assert graph == expected_graph, (
+        f"the served identity names a graph {graph.get('state')} (kg "
+        f"{str(graph.get('kg_sha256'))[:12]}..., manifest "
+        f"{str(graph.get('split_manifest_sha256'))[:12]}...), not the workspace this "
+        "probe verified"
+    )
+    summary = record.summary()
+    expected_record = {"state": "verified", "origin": summary["origin"],
+                       "sha256": summary["sha256"]}
+    dataset_record = identity.get("dataset_record") or {}
+    assert dataset_record == expected_record, (
+        f"the served identity names a dataset record {dataset_record.get('state')}, "
+        f"origin {dataset_record.get('origin')}, not the record the workspace check "
+        f"verified (origin {summary['origin']})"
+    )
+    shortest_paths = identity.get("shortest_paths") or {}
+    if sp_build_id is None:
+        expected_mode = "gnn_only"
+        assert shortest_paths == {"state": "absent", "build_id": None, "max_hops": None}, (
+            f"the served identity names a shortest-path table {shortest_paths.get('state')} "
+            "for a workspace that holds none"
+        )
+    else:
+        expected_mode = "gnn_plus_shortest_path"
+        assert (shortest_paths.get("state"), shortest_paths.get("build_id")) == (
+            "verified", sp_build_id), (
+            f"the served identity names a shortest-path table {shortest_paths.get('state')} "
+            f"with build_id {str(shortest_paths.get('build_id'))[:12]}..., not the table "
+            f"whose sidecar declares {sp_build_id[:12]}..."
+        )
+    assert identity.get("scoring_mode") == expected_mode, (
+        f"the served identity's scoring mode is {identity.get('scoring_mode')}, not "
+        f"{expected_mode}"
+    )
+    settings = identity.get("settings") or {}
+    # The device in effect is torch's name for where the parameters are
+    # ("cuda:0"); the one asked for is recorded as asked.
+    assert (str(settings.get("device")).split(":")[0], settings.get("device_requested")) == (
+        device, device), (
+        f"the served identity records device {settings.get('device')} in effect and "
+        f"{settings.get('device_requested')} requested, not the requested {device}"
+    )
+    return dict(identity)
 
 
 # =============================================================================
@@ -1146,10 +1257,24 @@ def phase_serving(
         config = bundle.config
         assert config.get("gnn_ready"), "the GNN did not come up"
         state["bundle"] = bundle
-        return "the pipeline built and the GNN is ready", {
+        # **What is served is identified by what this probe verified** (contract
+        # M3c): the checkpoint D1 trained, by its digest; the workspace's graph
+        # and manifest, by the digests the workspace check took; its dataset
+        # record; and the device asked for, in effect.
+        _, _, read, record = verify_workspace(sound)
+        identity = _assert_served_identity(
+            config.get("served_identity"),
+            checkpoint_sha256=_read_run_checkpoint(checkpoint)["sha256"],
+            workspace_digests=read,
+            record=record,
+            sp_build_id=_sidecar_build_id(sound),
+            device=device,
+        )
+        return "the pipeline built, the GNN is ready, and what it serves is identified", {
             "scoring_mode": config.get("scoring_mode"),
             "sp_ready": bool(config.get("sp_ready")),
             "kg_nodes": config.get("kg_nodes"),
+            "served_identity": identity,
         }
 
     built = report.run(
@@ -1167,7 +1292,12 @@ def phase_serving(
         allowed = (int, float, str, type(None))
         offenders = sorted(k for k, v in meta.items() if not isinstance(v, allowed))
         assert not offenders, f"checkpoint metadata is not JSON-primitive: {offenders}"
-        jsonable_encoder(_status_of(state["bundle"].config, None, None))
+        encoded = jsonable_encoder(_status_of(state["bundle"].config, None, None))
+        # The status reports the served identity through the response's strict
+        # model (contract M3c) and changes nothing in it on the way.
+        assert encoded.get("served_identity") == state["bundle"].config["served_identity"], (
+            "the status does not report the served identity the pipeline built"
+        )
         return "metadata is JSON-primitive and the status encodes", {
             "metadata_types": {k: type(v).__name__ for k, v in sorted(meta.items())},
             "recorded_device": meta.get("device"),
@@ -1269,7 +1399,10 @@ def phase_serving(
         before = {
             "pipeline": api.app_state.pipeline,
             "kg": api.app_state.kg,
-            "model_version": api.app_state.model_version,
+            # **What is served, from the live pipeline itself** (contract M3c),
+            # never from shared state a reload swaps: the service keeps no
+            # version beside the pipeline any more.
+            "served_identity": api.app_state.pipeline.get_pipeline_config()["served_identity"],
             "data_dir": api.app_state._current_data_dir,
             "checkpoint": api.app_state._current_checkpoint_path,
         }
@@ -1287,13 +1420,16 @@ def phase_serving(
         jsonable_encoder(result)
         assert api.app_state.pipeline is before["pipeline"], "the live pipeline was replaced"
         assert api.app_state.kg is before["kg"], "the live graph was replaced"
-        assert api.app_state.model_version == before["model_version"], "the version moved"
+        assert (api.app_state.pipeline.get_pipeline_config()["served_identity"]
+                == before["served_identity"]), "the served identity moved"
         assert api.app_state._current_data_dir == before["data_dir"], "the workspace moved"
         assert api.app_state._current_checkpoint_path == before["checkpoint"], (
             "the checkpoint moved"
         )
         shutil.rmtree(broken)
-        return "the refusal left every served field untouched", {}
+        return "the refusal left every served field untouched", {
+            "served_identity_unchanged": True,
+        }
 
     report.run(
         "E5", "serving",
@@ -1348,9 +1484,15 @@ def phase_serving(
             "a candidate came back with a non-finite confidence score"
         )
         assert scores == sorted(scores, reverse=True), "candidates came back unordered"
+        # **The result says what produced it** (contract M3c): the identity it
+        # carries, built when it was produced, is the one E1 verified.
+        assert result.served_identity.to_dict() == state["bundle"].config["served_identity"], (
+            "the diagnosis carries another served identity than the pipeline it ran on"
+        )
         return "a diagnosis ran end to end", {
             "candidates": len(candidates),
             "score_range": [round(min(scores), 4), round(max(scores), 4)],
+            "served_identity_is_the_built_pipelines": True,
         }
 
     report.run("E7", "serving", "a diagnosis runs on this machine", _diagnose)
@@ -1761,10 +1903,16 @@ def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
 
 
 def _serve_and_diagnose(
-    kg_path: Path, checkpoint: Path, data_dir: Path, device: str, record: Any
+    kg_path: Path, checkpoint: Path, data_dir: Path, device: str, record: Any,
+    workspace_digests: Dict[str, str],
 ) -> Dict[str, Any]:
     """The production serving build (`build_pipeline`), shortest paths verified
-    by its own loader, and one diagnosis through the built pipeline."""
+    by its own loader, and one diagnosis through the built pipeline.
+
+    `record` and `workspace_digests` are the dataset record and the per-file
+    digests the caller's workspace check (`verify_workspace`) took; the
+    diagnosis must say it was produced by those inputs (contract M3c).
+    """
     import math as _math
 
     import src.api.main as api
@@ -1799,6 +1947,22 @@ def _serve_and_diagnose(
     scores = [float(c.confidence_score) for c in getattr(result, "candidates", [])]
     assert scores, "the pipeline ranked nothing"
     assert all(_math.isfinite(score) for score in scores), "a non-finite score came back"
+    # **The diagnosis names what produced it** (contract M3c): the checkpoint
+    # this probe trained, by the digest of its own read; the graph and manifest
+    # the workspace check verified; the table whose sidecar the probe read,
+    # verified; the dataset record; the scoring mode; and the device in effect.
+    # The result's identity is the one serving reports, built from one state.
+    identity = _assert_served_identity(
+        result.served_identity.to_dict(),
+        checkpoint_sha256=_read_run_checkpoint(checkpoint)["sha256"],
+        workspace_digests=workspace_digests,
+        record=record,
+        sp_build_id=_sidecar_build_id(data_dir),
+        device=device,
+    )
+    assert identity == config.get("served_identity"), (
+        "the diagnosis carries another served identity than serving reports"
+    )
     return {
         "scoring_mode": config.get("scoring_mode"),
         "sp_kg_binding": config.get("sp_kg_binding"),
@@ -1808,6 +1972,7 @@ def _serve_and_diagnose(
                            "sha256": published["sha256"], "sources": len(published["sources"])},
         "parameter_devices": sorted(devices),
         "candidates": len(scores),
+        "served_identity": identity,
     }
 
 
@@ -1910,8 +2075,9 @@ def phase_m2_demo(
             cwd=project_root, capture_output=True, text=True, timeout=1800,
         )
         assert produced.returncode == 0, "the shortest-path producer failed"
+        _, _, read, record = verify_workspace(served)
         facts = _serve_and_diagnose(served / "kg.json", state["child"], served, device,
-                                    _kg_and_record(served)[1])
+                                    record, read)
         return "build, train, resume and serve, with the table verified", facts
 
     report.run("M4", "m2",
@@ -2248,7 +2414,7 @@ def phase_m2_real(
             sidecar_path,
         )
 
-        digests, cohorts, _, record = verify_workspace(real)
+        digests, cohorts, read, record = verify_workspace(real)
         # **Built from files, every input identified** (contract M3b): a real
         # workspace whose record were synthetic, or left an input unidentified,
         # would not be the real-data run this part claims.
@@ -2268,7 +2434,7 @@ def phase_m2_real(
         assert kg_binding_state(binding, digests["kg"], source=table.name) == "verified", (
             "the table's sidecar does not name this workspace's graph"
         )
-        state["kg"], state["record"] = digests["kg"], record
+        state["kg"], state["record"], state["read"] = digests["kg"], record, read
         return "the workspace's graph and training inputs verify", {
             "kg_digest": digests["kg"],
             "dataset_record": _record_facts(record),
@@ -2362,7 +2528,7 @@ def phase_m2_real(
     def _served() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "R4 did not pass"
         facts = _serve_and_diagnose(real / "kg.json", state["child"], real, device,
-                                    state["record"])
+                                    state["record"], state["read"])
         return "served with the table verified, and a diagnosis ran", facts
 
     report.run("R6", "real", "serving builds the new checkpoint, SP verified, and diagnoses",
