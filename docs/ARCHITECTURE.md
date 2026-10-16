@@ -266,7 +266,7 @@ EvidencePanel is run **after** scoring/ranking is complete. Toggling `include_ex
 
 PyTorch 2.9.0 + CUDA 13.0 unified across all platforms.
 
-**CUDA is the current deployment and acceptance scope, not a permanent architectural limit.** Another accelerator is adapted, and accepted, on the actual target hardware once one is chosen, with its own explicit device-selection rule (never a silent fallback); hardware differences stay in the existing entry points (device resolution, allocator, AMP, capability checks, environment facts) rather than vendor branches across training, measurement, serving and the UI; and every backend shares the provenance contract and the scoring semantics, so a converted model is recorded as derived from its source checkpoint, never presented as it. No multi-backend framework is built in advance (`docs/working/BACKLOG.md`, item 24).
+**Hardware acceleration is required; CUDA is currently the only supported backend** — the current deployment and acceptance scope, not a permanent architectural limit. Another accelerator is adapted, and accepted, on the actual target hardware once one is chosen, with its own explicit device-selection rule (never a silent fallback); hardware differences stay in the existing entry points (device resolution, allocator, AMP, capability checks, environment facts) rather than vendor branches across training, measurement, serving and the UI; and every backend shares the provenance contract and the scoring semantics, so a converted model is recorded as derived from its source checkpoint, never presented as it. No multi-backend framework is built in advance (`docs/working/BACKLOG.md`, item 24).
 
 ---
 

@@ -1498,17 +1498,19 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 任何 pipeline，`/api/v1/diagnose` 回 503；reload 被拒絕時，原本的 pipeline 繼續服務。
 拒絕訊息為：
 
-> Serving device 'auto' requires CUDA, which is not available here. CUDA is a
-> hard requirement of this project, so serving does not substitute the CPU for
-> it. Set SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly
-> for development; the served identity records the device asked for and the
-> one in effect.
+> Serving device 'auto' requires CUDA, which is not available here. Hardware
+> acceleration is a hard requirement for deployment and CUDA is currently the
+> only supported backend, so serving does not substitute the CPU for it. Set
+> SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly for
+> development; the served identity records the device asked for and the one in
+> effect.
 
 沒有 checkpoint 的 serving（只做路徑推理）不會決定任何裝置。
 
-這裡的 CUDA 是目前的部署與驗收範圍，不是永久的架構限制：拒絕訊息中的「hard requirement」
-指的就是這個範圍。其他加速硬體會在實際目標硬體到位時再適配並驗收，並有自己明確的選擇規則；
-在此之前不提供其他後端，也不會悄悄改用其他裝置（`docs/working/BACKLOG.md` 第 24 項）。
+**部署必須有硬體加速，目前唯一支援的後端是 CUDA（NVIDIA）。** 這是目前的範圍，不是永久的
+架構限制。torch 的 ROCm 版本也把裝置稱為 `cuda`，但這裡沒有驗證過。其他加速硬體會在實際目標
+硬體到位時再適配並驗收，並有自己明確的選擇規則；在此之前不提供其他後端，也不會悄悄改用其他
+裝置（`docs/working/BACKLOG.md` 第 24 項）。
 
 **served identity 兩者都記錄**（§4.7）：`settings.device_requested` 是所要求的（沒有指定
 時為 `auto`），`settings.device` 是實際生效的、模型參數所在的裝置（`cuda:0`，而不只是
