@@ -911,7 +911,8 @@ def resolve_training_device(requested: str) -> str:
     if wants_cuda and not torch.cuda.is_available():
         raise TrainingDeviceUnavailable(
             f"--device {requested} requires CUDA, which is not available here. "
-            "CUDA is a hard requirement of this project, so training does not "
+            "Hardware acceleration is a hard requirement for deployment and CUDA "
+            "is currently the only supported backend, so training does not "
             "substitute the CPU for it. Pass --device cpu explicitly for "
             "development; the run records the device it was given."
         )

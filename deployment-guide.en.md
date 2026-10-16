@@ -1083,13 +1083,20 @@ checkpoint. A refused
 startup publishes nothing and `/api/v1/diagnose` answers 503; a refused reload
 leaves the served pipeline serving. The refusal reads:
 
-> Serving device 'auto' requires CUDA, which is not available here. CUDA is a
-> hard requirement of this project, so serving does not substitute the CPU for
-> it. Set SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly
-> for development; the served identity records the device asked for and the
-> one in effect.
+> Serving device 'auto' requires CUDA, which is not available here. Hardware
+> acceleration is a hard requirement for deployment and CUDA is currently the
+> only supported backend, so serving does not substitute the CPU for it. Set
+> SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly for
+> development; the served identity records the device asked for and the one in
+> effect.
 
 Serving with no checkpoint — path reasoning alone — resolves no device.
+
+**Hardware acceleration is required for deployment, and CUDA (NVIDIA) is currently the only
+supported backend.** That is the present scope, not a permanent limit. torch's ROCm builds also
+name their device `cuda`, but they have not been verified here. Another accelerator would be
+adapted and accepted on its actual hardware, with its own selection rule; until then no other
+backend is offered, and none is substituted silently (`docs/working/BACKLOG.md`, item 24).
 
 **The served identity records both** (§4.7): `settings.device_requested` as
 asked (`auto` when nothing was named) and `settings.device` as in effect, the

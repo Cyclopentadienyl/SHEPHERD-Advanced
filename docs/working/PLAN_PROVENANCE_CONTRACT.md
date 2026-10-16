@@ -68,7 +68,8 @@ and code-reviewed with no P1 or P2 at `1246f0c` (2026-10-16)** (§4, "M3c as imp
 one P3 is fixed after it, and **its GB10 functional acceptance, within the scope agreed, is passed
 (2026-10-16)**: one run at `52152e4`, the demo and the real workspace, 75 of 75 probes, with a
 WebUI smoke and its exports, reviewed by the reviewer (§4, "M3c's acceptance on the GB10"). It is a
-functional acceptance, not a capacity, AMP, model-quality or clinical reading; nothing is merged. M4 and M5 are not
+functional acceptance, not a capacity, AMP, model-quality or clinical reading. The owner merged M3c
+into `main` afterwards (#124, `ed8f51d`, 2026-10-16). M4 and M5 are not
 implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -3286,15 +3287,25 @@ own.
 - That an environment difference never refuses is a provenance policy. It does not waive a
   check that the hardware can do what was asked.
 - Measurement already refuses `auto` without CUDA instead of substituting CPU
-  (`measure_scorer.py:157-188`), because CUDA is a stated project requirement.
+  (`measure_scorer.py:157-188`), because hardware acceleration is a stated project requirement,
+  and CUDA is currently its only supported backend.
 - Training and serving turned `auto` into CPU silently (`train_model.py:742-745` and
   `pipeline.py:1065-1066` at `0142436`; serving's at `pipeline.py:1085-1086` at `cbba015`). M3a
   and M3c align them with measurement: training refuses `auto` without CUDA since M3a
   (`resolve_training_device`, `scripts/train_model.py:897`), and serving refuses it since M3c, as
   training does (`resolve_serving_device`, `src/inference/pipeline.py:253`; applied before any
-  workspace input is read, `:609`, and in `build_pipeline` before `kg.json` is parsed,
-  `src/api/main.py:525`).
+  workspace input is read, `:619`, and in `build_pipeline` before `kg.json` is parsed,
+  `src/api/main.py:540`).
 - An explicit `cpu` stays available for development, and is recorded as such.
+- **Hardware acceleration is required for deployment; CUDA is currently the only supported
+  backend** — the current deployment and acceptance scope, not a permanent architectural limit
+  (BACKLOG item 24, the owner and the reviewer, 2026-10-16; the refusals of training, measurement
+  and serving say it in these words). A backend added later comes with its
+  own explicit selection rule, never an unannounced fallback, and is accepted on its actual
+  hardware. Every backend shares this contract: a model converted for another runtime (OpenVINO,
+  for one) is a new artifact whose record names the source checkpoint's digest and the
+  conversion settings, and the served identity names the artifact served, never a converted one
+  as the original checkpoint.
 
 ### 5.3 Environment facts
 

@@ -995,7 +995,8 @@ def test_cosine_matrix_rejects_wrong_rank(patients, candidates):
 
 
 # --- Accelerator coverage -------------------------------------------------
-# CUDA is a hard requirement of every deployment, so these are the configurations
+# Hardware acceleration is a hard requirement of every deployment and CUDA is
+# currently the only supported backend, so these are the configurations
 # that actually run in the hospital. They cannot be exercised in this
 # environment; the deployment's own verification covers the device and dtype.
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")

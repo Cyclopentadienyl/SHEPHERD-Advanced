@@ -270,7 +270,8 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
         if not torch.cuda.is_available():
             raise SystemExit(
                 "--device auto requires CUDA, which is not available here.\n"
-                "CUDA is a hard requirement of this project and every deployment "
+                "Hardware acceleration is a hard requirement for deployment, CUDA "
+                "is currently the only supported backend, and every deployment "
                 "environment has it, so a silent CPU fallback would produce a "
                 "number that reads as institutional but is not.\n"
                 "Pass --device cpu explicitly for development; the run is then "
