@@ -64,7 +64,9 @@ implemented"); **its GB10 functional acceptance, within the scope agreed, is pas
 probes, reviewed by the reviewer (§4, "M3b's acceptance on the GB10"). It is a functional
 acceptance, not a capacity, AMP, model-quality or clinical reading. The owner merged M3b into
 `main` afterwards (#123, `cbba015`, 2026-10-16). **M3c is implemented on the branch (2026-10-16)
-and awaits review** (§4, "M3c as implemented"); it has no GB10 acceptance yet. M4 and M5 are not
+and code-reviewed with no P1 or P2 at `1246f0c` (2026-10-16)** (§4, "M3c as implemented"); its
+one P3 is fixed after it, and its GB10 functional acceptance is next (§4, "How M3c's acceptance
+is run"). M4 and M5 are not
 implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -178,7 +180,7 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R5 | Workspace ↔ its dataset record (`kg.provenance.json`) | Written at build (`src/kg/provenance.py`); bound from the manifest | **Read by nothing in production**: `workspace_provenance_status` (`artifacts.py:208`) has no caller outside the module. Policy so far: "reported, not enforced" (`artifacts.py:123-137`; `docs/working/PLAN_ONTOLOGY_PROVENANCE.md:249-254`) | **M3b** (decision 2 reverses that policy for the formal pipeline) |
 | R6 | Model ↔ the training settings, code and environment in effect | `config` = `TrainerConfig` plus `model_config` (`src/training/trainer.py:937-981`). Not recorded: the loader and sampling settings (`DataLoaderConfig`, `train_model.py:585-592`), compile (`train_model.py:760-777`), the code revision, the environment | — | **M3a** |
 | R7 | Model ↔ its resume parent | The parent's digest (`train_model.py:558-559`), hashed by path after the parent was loaded (`:835`, `:854-860`) | **Nothing compared**: `load_checkpoint` restores state without looking at the parent's inputs or config (`trainer.py:1009-1044`). A missing parent only warns, and the run trains from scratch (`train_model.py:505-507`). The WebUI's default resume target is `last.pt` (`src/webui/components/training_console.py:398-404`), which `ModelCheckpoint` overwrites (`callbacks.py:271-274`) | **M2** (the parent's records, graph and data); M3a (overwrite guard) |
-| R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** (implemented 2026-10-16, awaiting review; §4, "M3c as implemented") |
+| R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** (implemented 2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`; §4, "M3c as implemented") |
 | R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** |
 | R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 |
 | R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement) |
@@ -3027,13 +3029,15 @@ stated here.
 - **BACKLOG 19.1 and 19.2, the reload's selection.** The scan reads each candidate with
   `read_checkpoint` (no bare `torch.load`) and keeps each read's digest; the second read for the
   metric is gone. After the build, the metric in `selection_reason` comes from the built
-  pipeline's `checkpoint_meta`, the served read (`src/api/routes/pipeline.py:475`): "; best
-  val_mrr=…" for a file the scan ranked by its metric, and for a fallback pick (no candidate
-  carries one) "; not ranked by metric …", with the loaded file's metric if it has one.
+  pipeline's `checkpoint_meta`, the served read (`src/api/routes/pipeline.py:476`): "; best
+  val_mrr=…" for a file the scan ranked by its metric and the build read unchanged; "; loaded
+  file val_mrr=…" for a file replaced after it was ranked (those bytes were never ranked against
+  the others), and for a fallback pick (no candidate carries one) after "; not ranked by metric
+  …".
   Under M2.1 decision 4 the build's read is what is served: when the selected file's scored digest
   differs from the served identity's checkpoint digest, the reload still succeeds and
   `selection_reason` states that the file was replaced after it was scored, with both digests
-  (`:491`). It is not a refusal. The two allowed pin entries for those `torch.load` sites are removed.
+  (`:493`). It is not a refusal. The two allowed pin entries for those `torch.load` sites are removed.
 - **BACKLOG 19.8, the measurement's subject.** `measure_served_pipeline.py` hashes no input by path
   for its subject: the subject is the served identity each repeat's service reports at R1, which
   must pass the service's own response model and name a verified checkpoint, graph and manifest,
@@ -3109,6 +3113,67 @@ stated here.
     that had compared a constant with itself made real;
   - documents: the CSV's "no empty cell" scoped to the identity columns, the old fallback's
     traces, and these citations.
+- **The reviewer's code review (2026-10-16) of `cbba015..1246f0c`** found no P1 or P2 and cleared
+  the GB10 functional acceptance; it is a code review, not that acceptance. Its one P3, a file
+  replaced after it was ranked still called "best" in `selection_reason`, is fixed in the commit
+  after `1246f0c` (the loaded file's metric is labelled as such; the choice and the replacement
+  are stated as before), with the affected tests. Its two clarifications: the loader's own device
+  check sits before the model is moved, not before the checkpoint is read (as above; the entry
+  points' checks come before any read), and `PLAN_B04_PRODUCTIONISATION.md` §7.3's sentence on a
+  failed reload serving the fallback is marked as history (M1 refuses it now).
+
+*How M3c's acceptance is run (prepared 2026-10-16):* through the same deployment probe and
+production entry points as M3b's (`scripts/probe_deployment.py --m2-acceptance --device cuda`,
+with `--real-workspace`, `--real-config` and `--real-reference-checkpoint` as M3b's run gave them,
+and `--work-dir` / `--report` under the evidence root), then a short manual smoke of the WebUI.
+One probe run, demo and real data together; no other runner, no extra training entry point.
+- **Locked:** the commit, the branch head that records this section, whose product code is the
+  reviewed `1246f0c` plus the P3 wording fix in `src/api/routes/pipeline.py` alone (`git diff
+  1246f0c..<head> -- src scripts` touches nothing else); the inputs, as M3b's: `hpo_2026_0929_5a`
+  (no rebuild: M3c changes no artifact), its `train_outputs/config.yaml` (SHA-256
+  `14bf8eea…970e`), its `checkpoints/hgt/model-02-0.1813.pt` (SHA-256 `33a7b39a…8b79`),
+  `kg.provenance.json` (`2c7abdb6…12ef`) and `split_manifest.json` (`131cdf81…f664`); the
+  allocator, the saved preset `cuda_async`, applied by the probe before torch's first import.
+  `SHEPHERD_DEVICE` is not set for the probe: its device is the explicit `--device cuda`.
+- **Evidence:** a new root per attempt, `/home/user/m3c-acceptance-<commit>-01/` (then `-02`, …,
+  every attempt kept), laid out as M3b's (`checkout-before.txt`, `input-sha256.txt`,
+  `console.log`, `exit.txt`, `checkout-restored.txt`, `work/` with the report
+  `work/m3c_report.json`), plus `webui/` for the smoke below. M3b's and earlier evidence is not
+  touched; the real workspace is read in place; the checkout is restored afterwards.
+- **Read by the report, not by the exit alone:** no probe failed or errored (E2 and E5 count
+  here though they are outside `M2_DEMO_REQUIRED`); `m2_acceptance.demo.complete` and
+  `.real_data.complete` true; the tested commit with `tracked_files_modified` false; CUDA,
+  `cudaMallocAsync` from the saved preset; every probe M3b's acceptance required, passing again.
+  What M3c's part shows, each identity part beside the probe's own read of the same input:
+  - **E1:** the served identity's checkpoint *verified* with the digest of the checkpoint D1
+    trained; graph *verified* with the `kg.json` and `split_manifest.json` digests the workspace
+    check took; the table as the workspace holds it (absent there: `gnn_only`); the dataset record
+    *verified*, `synthetic`, with its digest; `device_requested` `cuda` and `device` `cuda:0`,
+    recorded apart. **E2:** the status reports that identity unchanged. **E5:** a refused reload
+    leaves it. **E7:** a diagnosis carries it.
+  - **M4 (demo) and R6 (real):** a diagnosis served with the table *verified* carries the
+    sidecar's `build_id`, `gnn_plus_shortest_path`, the checkpoint the run trained (R6: R4's child),
+    the graph and manifest digests, and the record — `synthetic` for the demo; for the real
+    workspace `files` with SHA-256 `2c7abdb6…12ef`; the identity equals what serving reports.
+- **WebUI smoke, after the probe** (front end and exports; no further training): start the service
+  the way the deployment does, with `SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR` set to the real
+  workspace and `SHEPHERD_CHECKPOINT_PATH` to R4's child (under `work/real/resumed/`, its SHA-256 in
+  R4's facts), and `SHEPHERD_DEVICE` unset, so the identity shows `device_requested` `auto` and
+  `device` `cuda:0`. In the Diagnosis tab, diagnose one phenotype set: the "Produced by" line, the
+  closed full-identity block and the model status's Serving line name the same checkpoint, graph,
+  manifest, table and record digests; download the CSV and the Markdown report and check that
+  their `served_*` columns and "What produced this result" section equal
+  `GET /api/v1/pipeline/status`'s `served_identity` and the `/diagnose` response's for the same
+  phenotypes (saved beside them as JSON in `webui/`). Then reload from the tab with the same
+  workspace and the same checkpoint path (the field takes an explicit path; automatic selection
+  looks only in the workspace's own `runs/`): the result already on screen keeps the identity it
+  was produced with. A screenshot of the tab is
+  optional; the saved files are the evidence.
+- **Not part of it:** capacity, S10, the memory attribution, AMP comparisons, N2, HGT Edit 2,
+  model quality or a clinical benchmark; the short-training checkpoints are not a chosen serving
+  model.
+- **Complete** when the evidence is reviewed and every required probe and the WebUI checks
+  passed; until then M3c's functional acceptance is not passed.
 
 ### M4 — item 14, phase 1
 
@@ -3170,7 +3235,7 @@ own.
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
 | Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4) | M2, M3b, M4 |
 | Ledger | item 14's ledger v2 (`PLAN_TEST_RESULTS.md` §5), which takes the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`) | M4 |
-| `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect. M3c's part is implemented (2026-10-16, awaiting review): every result and the diagnose response carry the served identity, with the settings in effect, and `get_pipeline_config()` and the pipeline status report it for the loaded pipeline (§4, "M3c as implemented") | M3b, M3c |
+| `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect. M3c's part is implemented (2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`): every result and the diagnose response carry the served identity, with the settings in effect, and `get_pipeline_config()` and the pipeline status report it for the loaded pipeline (§4, "M3c as implemented") | M3b, M3c |
 
 ### 5.2 Required versus displayed
 

@@ -467,26 +467,28 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         # and the reason says so (19.1), so a choice made on other bytes is
         # never presented as this model's.
         #
-        # **"best" only for a file ranked by its metric.** When no candidate
-        # carries one, selection falls back to `last.pt`, else the newest file,
-        # and the reason says that instead; the loaded file's metric, if its
-        # metadata has one the scan's raw read did not rank, is shown as the
-        # loaded file's, never as a winner.
+        # **"best" only for the bytes that were ranked.** When no candidate
+        # carries a metric, selection falls back to `last.pt`, else the newest
+        # file, and the reason says that instead. When the file ranked best was
+        # replaced before the build read it, the loaded bytes were never ranked
+        # against the others. Either way the loaded file's metric, if its
+        # metadata has one, is shown as the loaded file's, never as a winner.
         detail = ranking_score_detail(candidate.config.get("checkpoint_meta"))
-        if str(selected) in scored_paths:
-            if detail:
-                selection_reason += f"; best {detail[0]}={detail[1]:.4f}"
-        else:
+        served_identity = candidate.config.get("served_identity") or {}
+        served_sha = (served_identity.get("checkpoint") or {}).get("sha256")
+        scored_sha = scored_digests.get(str(selected))
+        replaced = scored_sha is not None and scored_sha != served_sha
+        if str(selected) not in scored_paths:
             selection_reason += (
                 "; not ranked by metric (no candidate carries one): last.pt, "
                 "else the newest file"
             )
-            if detail:
-                selection_reason += f"; loaded file {detail[0]}={detail[1]:.4f}"
-        served_identity = candidate.config.get("served_identity") or {}
-        served_sha = (served_identity.get("checkpoint") or {}).get("sha256")
-        scored_sha = scored_digests.get(str(selected))
-        if scored_sha is not None and scored_sha != served_sha:
+        if detail:
+            ranked = str(selected) in scored_paths and not replaced
+            selection_reason += (
+                f"; {'best' if ranked else 'loaded file'} {detail[0]}={detail[1]:.4f}"
+            )
+        if replaced:
             selection_reason += (
                 f"; the file was replaced after it was scored (scored sha256 "
                 f"{scored_sha}, loaded sha256 {served_sha}): the choice was made "

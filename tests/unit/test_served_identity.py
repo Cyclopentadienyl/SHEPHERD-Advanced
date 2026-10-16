@@ -954,8 +954,11 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
     api, workspace, tmp_path, monkeypatch
 ):
     """Chose A, reported B, served C is gone: the metric shown comes from the
-    build's own read, and the reason says the choice was made on earlier bytes.
-    Catches a metric read from the scan, or from a second read of the path."""
+    build's own read, labelled as the loaded file's and not as the best (those
+    bytes were never ranked against the other candidates), and the reason says
+    the choice was made on earlier bytes. Catches a metric read from the scan,
+    or from a second read of the path, and a replaced file's metric called
+    best."""
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
     data_dir, checkpoint = workspace
@@ -974,7 +977,8 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
     result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
 
     assert result.success, result.message
-    assert "best val_mrr=0.8123" in result.selection_reason
+    assert "; loaded file val_mrr=0.8123" in result.selection_reason
+    assert "best" not in result.selection_reason
     assert "0.2500" not in result.selection_reason
     assert f"(scored sha256 {scored}, loaded sha256 {loaded})" in result.selection_reason
     assert result.selection_reason.endswith(

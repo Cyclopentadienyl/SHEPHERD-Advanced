@@ -951,10 +951,12 @@ same path.
 **Readiness is asserted before anything counts.** `GET /api/v1/pipeline/status`
 must show `initialized`, `gnn_ready`, `has_model` and `sp_ready`, and, since
 contract M3c, a served identity whose shortest-path table is `verified` (before
-M3c: `sp_kg_binding == "verified"`, the same check by its earlier field). A reload whose model fails to load still reports
-success and serves the fallback, the gap `DISEASE_SCORER_POLICY.md` §2 records
-as B-2. Without this check, a reading can come from a pipeline with no model in
-it.
+M3c: `sp_kg_binding == "verified"`, the same check by its earlier field). When
+this was written, a reload whose model failed to load still reported success and
+served the fallback, the gap `DISEASE_SCORER_POLICY.md` §2 records as B-2; since
+contract M1 such a reload is refused and the pipeline already serving stays. The
+check stays all the same: without it, a reading could come from a pipeline other
+than the one the procedure names.
 
 **The counters are defined here, because GB10 has one memory pool.**
 
