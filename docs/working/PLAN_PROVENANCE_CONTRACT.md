@@ -68,7 +68,8 @@ and code-reviewed with no P1 or P2 at `1246f0c` (2026-10-16)** (§4, "M3c as imp
 one P3 is fixed after it, and **its GB10 functional acceptance, within the scope agreed, is passed
 (2026-10-16)**: one run at `52152e4`, the demo and the real workspace, 75 of 75 probes, with a
 WebUI smoke and its exports, reviewed by the reviewer (§4, "M3c's acceptance on the GB10"). It is a
-functional acceptance, not a capacity, AMP, model-quality or clinical reading; nothing is merged. M4 and M5 are not
+functional acceptance, not a capacity, AMP, model-quality or clinical reading. The owner merged M3c
+into `main` afterwards (#124, `ed8f51d`, 2026-10-16). M4 and M5 are not
 implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
