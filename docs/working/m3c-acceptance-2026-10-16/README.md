@@ -76,16 +76,17 @@ not by a content hash of the workspace.
 |---|---|
 | `m3c_report.json` | The probe's report, byte for byte |
 | `exit.txt` | The probe's exit status |
-| `webui/diagnose-request.json`, `webui/diagnose.json` | The `/diagnose` request and answer captured over HTTP during the smoke |
-| `webui/diagnosis_m3c_smoke_sess_d6ac54f51afa.csv`, [`webui/diagnosis_m3c_smoke_sess_d6ac54f51afa_report.md`](webui/diagnosis_m3c_smoke_sess_d6ac54f51afa_report.md) | The tab's CSV and Markdown exports of that session, as downloaded |
+| `webui/diagnose-request.json`, `webui/diagnose.json` | The `/diagnose` request and answer captured over HTTP during the smoke, session `sess_989627198556` |
+| `webui/diagnosis_m3c_smoke_sess_d6ac54f51afa.csv`, [`webui/diagnosis_m3c_smoke_sess_d6ac54f51afa_report.md`](webui/diagnosis_m3c_smoke_sess_d6ac54f51afa_report.md) | The tab's CSV and Markdown exports, as downloaded, of the earlier diagnosis made in the tab, session `sess_d6ac54f51afa`. The two are separate requests with the same input (`HP:0001250`, `HP:0001263`, top 10) and the same served identity |
 | `screenshots/01-…`, `02-…`, `03-…` | The owner's screenshots of the model status, the candidates and the full identity, unmodified |
 | `SHA256SUMS` | The digests of the files above |
-| `.gitattributes` | Turns off the repository's line-ending normalisation here, so the files stay byte for byte (the CSV is written with CRLF line ends, as RFC 4180 has them) |
+| `.gitattributes` | Turns off the repository's line-ending normalisation here, so the files stay byte for byte (the CSV is written with CRLF line ends, as RFC 4180 has them), and tells `git diff --check` that a CR at a CSV line's end is not trailing whitespace |
 
 The rest stays on the homelab in `/home/user/m3c-acceptance-52152e4-01/` and in the reviewer's
 handoff package (`m3c-acceptance-52152e4-01-handoff.tar.gz`, SHA-256
 `c80d87cfbe613627df92c6705331a78ffb0ed45544bac3f56faac4fd8e5a4f23`, every file in it listed by
 size and SHA-256): the console log (`8f1e48f5…a9c0`), the server log (`dbc4c791…0011`), the
 status captures, screenshot 04 (`07ff5914…d137`), the run directories, measurements and
-inventories, and the four real-training checkpoints, kept in place and listed by digest. Those
-name local paths, which is why they are not copied here.
+inventories. Those name local paths, which is why they are not copied here. The four real-training
+checkpoints (about 192 MB) stay only on the homelab, in that directory: the package carries their
+SHA-256 and location, not their bytes.

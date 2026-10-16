@@ -1,2 +1,4 @@
 # Evidence is kept byte for byte (SHA256SUMS): no line-ending normalisation here.
 * -text
+# The CSV export ends its lines with CRLF, as RFC 4180 has them: not trailing whitespace.
+*.csv whitespace=cr-at-eol
