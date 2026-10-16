@@ -642,6 +642,28 @@ _CLAIM_BOUNDARY = (
     "person able to edit both files and records could alter."
 )
 _NOT_A_DEVICE = "Not a certified medical device; decision support for a qualified clinician."
+#: The qualifier under the boundary when nothing is marked ✓, in the words the
+#: demo answer has always carried.
+_NOTHING_CHECKED = (
+    "No relation is marked ✓ for this result: nothing in it was checked against a record."
+)
+#: The same said of the loaded pipeline, under the model status.
+_NOTHING_CHECKED_LOADED = (
+    "No relation is marked ✓ for the loaded pipeline: nothing it serves was "
+    "checked against a record."
+)
+_CHECKS_NOT_REPORTED = "The response did not say what produced it or what was checked."
+
+
+def _path_reasoning_over_a_verified_workspace():
+    """No checkpoint, over a verified workspace: the graph, its manifest and the
+    dataset record are marked ✓, the checkpoint and the table are absent."""
+    identity = _path_only_identity()
+    identity["graph"] = {"state": "verified", "kg_sha256": KG_SHA,
+                         "split_manifest_sha256": MANIFEST_SHA}
+    identity["dataset_record"] = {"state": "verified", "origin": "files", "sha256": RECORD_SHA}
+    return identity
+
 
 _IDENTITIES = {
     "verified_synthetic": _served_identity,
@@ -765,6 +787,29 @@ def test_with_nothing_marked_the_report_says_nothing_was_checked(name):
 
     assert "✓" not in "".join(row[1] for row in _table_rows(section))
     assert dp.IDENTITY_NOTHING_CHECKED in section
+
+
+def _without_an_identity(how):
+    result = _sample_result()
+    if how == "missing":
+        del result["served_identity"]
+    else:
+        result["served_identity"] = "not an object"
+    return result
+
+
+@pytest.mark.parametrize("how", ["missing", "not_an_object"])
+def test_a_response_without_an_identity_does_not_say_nothing_was_checked(how):
+    """Catches the report's qualifier asserting a negative the panel cannot
+    know: a response that carried no served identity (a server from before
+    contract M3c may well have checked its inputs) is reported as one that did
+    not say what was checked, never as one in which nothing was."""
+    section = _report_section(dp._build_results_report_md(_without_an_identity(how)))
+
+    assert "nothing in it was checked" not in section
+    assert dp.IDENTITY_CHECKS_NOT_REPORTED == _CHECKS_NOT_REPORTED
+    assert section.index(_CLAIM_BOUNDARY) < section.index(_CHECKS_NOT_REPORTED)
+    assert section.index(_CHECKS_NOT_REPORTED) < section.index(_NOT_A_DEVICE)
 
 
 def test_values_from_the_api_cannot_break_the_table():
@@ -916,6 +961,38 @@ def test_the_tab_marks_the_demo_answer(monkeypatch):
     assert "**Produced by:** demo answer" in shown
 
 
+def _details_block(shown):
+    return shown[shown.index("<details>"):shown.index("</details>")]
+
+
+def test_the_tab_does_not_say_nothing_was_checked_without_an_identity(monkeypatch):
+    """Catches the tab's identity block claiming nothing was checked for a
+    response that carried no served identity: like the report, it says the
+    response did not say, under the same claim boundary."""
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _without_an_identity("missing"))
+
+    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+
+    assert "nothing in it was checked" not in shown
+    details = _details_block(shown)
+    assert details.index(_CLAIM_BOUNDARY) < details.index(_CHECKS_NOT_REPORTED)
+
+
+def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch):
+    """Catches the not-reported wording spreading to the demo answer, where
+    nothing was served: its report and its tab block keep saying, in the same
+    words as before, that nothing in it was checked against a record."""
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
+
+    report = _report_section(dp._build_results_report_md(_result_with(None)))
+    details = _details_block(dp._on_diagnose("HP:0001250", "", 10)[0])
+
+    assert dp.IDENTITY_NOTHING_CHECKED == _NOTHING_CHECKED
+    for text in (report, details):
+        assert text.index(_CLAIM_BOUNDARY) < text.index(_NOTHING_CHECKED)
+        assert _CHECKS_NOT_REPORTED not in text
+
+
 def test_the_tab_shows_the_served_pipelines_own_identity(served):
     """End to end through the real route: a path-reasoning pipeline over an
     in-memory graph says so beside its result, and in its export."""
@@ -951,6 +1028,57 @@ def test_the_model_status_shows_what_the_loaded_pipeline_serves():
     assert f"SP table `{BUILD_ID[:12]}…` ✓" in serving
     assert _CLAIM_BOUNDARY in rendered
     assert "SYNTHETIC WORKSPACE" in rendered
+
+
+@pytest.mark.parametrize("name", ["path_only", "in_memory"])
+def test_a_status_with_nothing_marked_says_nothing_was_checked(name):
+    """Catches the model status showing the §6 line alone under an identity
+    with no part marked ✓, which reads as a claim that its graph file was
+    checked against a record; the report and the tab add the qualifier."""
+    rendered = dp._format_pipeline_status(_loaded_status(served_identity=_IDENTITIES[name]()))
+
+    serving = next(line for line in rendered.splitlines() if "**Serving:**" in line)
+    assert "✓" not in serving
+    after = rendered[rendered.index(serving):]
+    assert after.index(f"<sub>{_CLAIM_BOUNDARY}</sub>") < after.index(
+        f"<sub>{_NOTHING_CHECKED_LOADED}</sub>")
+    # Said of the loaded pipeline, not of a result: the status shows no result.
+    assert _NOTHING_CHECKED not in rendered
+    assert _CHECKS_NOT_REPORTED not in rendered
+
+
+@pytest.mark.parametrize("name", ["verified_synthetic", "verified_files", "gnn_only"])
+def test_a_status_with_a_verified_part_does_not_say_nothing_was_checked(name):
+    """Catches the qualifier being added to every status: where a part is
+    marked ✓, the §6 line refers to it and "nothing was checked" would be
+    false."""
+    rendered = dp._format_pipeline_status(_loaded_status(served_identity=_IDENTITIES[name]()))
+
+    assert f"<sub>{_CLAIM_BOUNDARY}</sub>" in rendered
+    assert "nothing in it was checked" not in rendered
+    assert _NOTHING_CHECKED_LOADED not in rendered
+    assert _CHECKS_NOT_REPORTED not in rendered
+
+
+_STATUS_IDENTITIES = {
+    **{name: make for name, make in _IDENTITIES.items() if name != "demo"},
+    "path_reasoning_verified_workspace": _path_reasoning_over_a_verified_workspace,
+}
+
+
+@pytest.mark.parametrize("name", sorted(_STATUS_IDENTITIES))
+def test_the_status_and_the_report_agree_on_whether_anything_was_checked(name):
+    """Catches the model status deciding "nothing checked" by a rule of its own
+    (for example from the checkpoint alone): for every served identity it adds
+    the qualifier exactly when the report's identity table does."""
+    make = _STATUS_IDENTITIES[name]
+    status = dp._format_pipeline_status(_loaded_status(served_identity=make()))
+    section = _report_section(dp._build_results_report_md(_result_with(make())))
+    nothing_marked = "✓" not in "".join(row[1] for row in _table_rows(section))
+
+    assert (_NOTHING_CHECKED in section) is nothing_marked
+    assert (_NOTHING_CHECKED_LOADED in status) is nothing_marked
+    assert _CLAIM_BOUNDARY in status and _CLAIM_BOUNDARY in section
 
 
 def test_a_status_without_an_identity_says_so():

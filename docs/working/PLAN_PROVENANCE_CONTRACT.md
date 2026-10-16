@@ -2948,11 +2948,12 @@ the base M3c was built on; the code that replaced them is cited in "M3c as imple
 - **Device.** Serving's `auto` without CUDA refuses (§5.2). Until M3c it turned into CPU silently
   (`pipeline.py:1085-1086`).
 
-**M3c as implemented (2026-10-16).** Implemented on the branch over `cbba015`, not yet reviewed;
-no GB10 acceptance yet. What differs from the text above, or was decided while building, is
+**M3c as implemented (2026-10-16).** Implemented on the branch over `cbba015`, internally
+reviewed (below) and awaiting the reviewer's review; no GB10 acceptance yet. Line citations here
+are at the head delivered for that review. What differs from the text above, or was decided while building, is
 stated here.
 
-- **One structured value, `ServedIdentity`** (`src/core/types.py:599`), frozen, with five parts
+- **One structured value, `ServedIdentity`** (`src/core/types.py:603`), frozen, with five parts
   and the scoring mode; `to_dict()` gives JSON primitives. Each part states its state in words,
   and a value is null only where that state says there is nothing to identify:
   - `checkpoint`: *verified* (the model built from one read of a checkpoint whose record matched
@@ -2983,13 +2984,13 @@ stated here.
     graph *unverified*, manifest, table and record *absent*, no device. Nothing in it is claimed
     verified, and M3c decides nothing about whether that mode stays.
 - **Built from the pipeline's own reads, never hashed again.** `DiagnosisPipeline.served_identity()`
-  (`src/inference/pipeline.py:2000`) reads the identity of the checkpoint read the model was built
+  (`src/inference/pipeline.py:2014`) reads the identity of the checkpoint read the model was built
   from, the bound graph digest and the manifest's identity from the one workspace reading (kept at
-  `:672`), the accepted table's `build_id` (`:1006`), the verified record, and the device the
-  model's parameters landed on (`:742`). Every `InferenceResult` carries it as a required field,
-  built when the result is produced: a scored result, an empty one and a refused request's
-  (`:1270`, `:1348`, `:1986`). `get_pipeline_config()["served_identity"]` reports it from the same
-  method (`:2079`). `InferenceResult.model_version` and `kg_version`, the class constant `VERSION`
+  `:686`), the accepted table's `build_id` (`:1020`), the verified record, and the device the
+  model's parameters landed on (`:756`). Every `InferenceResult` carries it as a required field,
+  built when the result is produced: a refused request's, a scored result and an empty one
+  (`:1280`, `:1358`, `:1996`). `get_pipeline_config()["served_identity"]` reports it from the same
+  method (`:2093`). `InferenceResult.model_version` and `kg_version`, the class constant `VERSION`
   and the configuration's `"version"` key are gone.
 - **Copied, never taken from shared state.** `DiagnoseResponse.served_identity`
   (`src/api/routes/diagnose.py:302`) is required and copied from the result the response answers
@@ -3010,23 +3011,29 @@ stated here.
   `auto` means CUDA and refuses without it (`ServingDeviceUnavailable`, a `PipelineBuildError`,
   whose message names `SHEPHERD_DEVICE=cpu`); `cuda` and `cuda:N` refuse without CUDA; `cpu` is
   permitted and recorded as asked; another string goes to torch as given, as training's does.
-  Applied whenever a checkpoint is to be loaded, after the PyTorch check and before any workspace
-  input is read (`:609`); in `build_pipeline` before `kg.json` is parsed (`src/api/main.py:525`);
-  and again before the model is moved (`pipeline.py:1159`). A model supplied in memory with no
-  device named stays where it is; path-only serving resolves no device. The reload's `device`
-  (null falls back to `SHEPHERD_DEVICE`) follows the same rule, and a refused reload leaves the
-  served pipeline. **The consequence for operators:** a CPU-only host that served with no device
+  Without PyTorch it names PyTorch, not the CPU remedy. Applied whenever a checkpoint is to be
+  loaded, after the PyTorch check and before any workspace input is read (`:619`); in
+  `build_pipeline` before `kg.json` is parsed (`src/api/main.py:540`); in the reload route right
+  after its file check, before automatic selection reads any candidate
+  (`src/api/routes/pipeline.py:328`); and again before the model is moved (`pipeline.py:1173`). A
+  model supplied in memory with no device named stays where it is; one with a device named gets
+  the same rule (`:622`); path-only serving resolves no device. The device asked for is the
+  request's, else `SHEPHERD_DEVICE`, blank counting as unset at both steps
+  (`requested_serving_device`, `src/api/main.py:417`), passed on as given so the identity records
+  it; a refused reload leaves the served pipeline. **The consequence for operators:** a CPU-only host that served with no device
   named, silently on the CPU, is refused now; development hosts set `SHEPHERD_DEVICE=cpu`. No
   device selector was added to the WebUI. `setup_demo.py` prints its serving command with
   `SHEPHERD_DEVICE` set to the device its demo trained on.
 - **BACKLOG 19.1 and 19.2, the reload's selection.** The scan reads each candidate with
   `read_checkpoint` (no bare `torch.load`) and keeps each read's digest; the second read for the
-  metric is gone. After the build, the metric in `selection_reason` ("; best val_mrr=…") comes
-  from the built pipeline's `checkpoint_meta`, the served read (`src/api/routes/pipeline.py:449`).
+  metric is gone. After the build, the metric in `selection_reason` comes from the built
+  pipeline's `checkpoint_meta`, the served read (`src/api/routes/pipeline.py:475`): "; best
+  val_mrr=…" for a file the scan ranked by its metric, and for a fallback pick (no candidate
+  carries one) "; not ranked by metric …", with the loaded file's metric if it has one.
   Under M2.1 decision 4 the build's read is what is served: when the selected file's scored digest
   differs from the served identity's checkpoint digest, the reload still succeeds and
-  `selection_reason` states that the file was replaced after it was scored, with both digests. It
-  is not a refusal. The two allowed pin entries for those `torch.load` sites are removed.
+  `selection_reason` states that the file was replaced after it was scored, with both digests
+  (`:491`). It is not a refusal. The two allowed pin entries for those `torch.load` sites are removed.
 - **BACKLOG 19.8, the measurement's subject.** `measure_served_pipeline.py` hashes no input by path
   for its subject: the subject is the served identity each repeat's service reports at R1, which
   must pass the service's own response model and name a verified checkpoint, graph and manifest,
@@ -3081,6 +3088,27 @@ stated here.
   for its device has not first read every candidate in the run layout. The structural-fingerprint
   warning (`src/utils/fingerprint.py`) no longer calls itself a "KG/data version mismatch": it
   compares structure, and says it is not the graph's identity.
+- **Internal review (2026-10-16) of `39aec16`.** Eight dimensions (the identity, the device rule,
+  the API contract, the WebUI, the scripts, test strength with mutations run in a scratch copy,
+  the documents, and architecture against this section), each finding put to independent skeptics
+  (three for P2, one for P3). None P1; 19 confirmed, all P3 once verified (the one raised as P2,
+  a startup refused for its device answering 503 with no test pinning it, was agreed P3 by all
+  three: the code was right); 5 refuted. Fixed in `fe36a72` and the commit after it:
+  - the device rule for a model supplied in memory with a device named, for a host without
+    PyTorch, and for a blank request (above);
+  - "best" said only of a file ranked by its metric, and the replaced-file note mentioning a
+    metric only when one is shown (above);
+  - the dataset origins as one named constant (`SERVED_DATASET_ORIGINS`), pinned equal to the
+    record reader's and the response model's;
+  - the model status adding "nothing checked" under the §6 line when no part is marked ✓, worded
+    for the loaded pipeline, by the same rule as the report and the tab; a response without an
+    identity saying it did not say what was checked, instead of "nothing was checked";
+  - tests that each kill the mutation they target: the 503 after a device-refused startup, the
+    device in effect read from the model, the request passed on as given, the empty result over
+    a full pipeline, every digest pattern, the probe's E2 and M4/R6 checks firing, and assertions
+    that had compared a constant with itself made real;
+  - documents: the CSV's "no empty cell" scoped to the identity columns, the old fallback's
+    traces, and these citations.
 
 ### M4 — item 14, phase 1
 

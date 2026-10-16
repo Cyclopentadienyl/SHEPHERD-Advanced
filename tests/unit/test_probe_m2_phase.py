@@ -95,7 +95,9 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
         assert facts[probe_id]["scaler_restore"].startswith("no gradient scaler")
     # Contract M3c: M4's diagnosis names the resumed checkpoint by the digest
     # M2 recorded, the table verified, the synthetic record, the device asked
-    # for -- and its evidence holds no path.
+    # for -- and its evidence holds no path. These are the probe's own facts, so
+    # they hold with its checks removed; that the checks in `_serve_and_diagnose`
+    # (M4, R6) fire is shown in test_probe_serving_phase.py.
     identity = facts["M4"]["served_identity"]
     assert identity["checkpoint"] == {"state": "verified", "sha256": child}
     assert identity["scoring_mode"] == "gnn_plus_shortest_path"

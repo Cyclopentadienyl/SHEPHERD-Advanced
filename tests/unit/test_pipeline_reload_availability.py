@@ -23,6 +23,7 @@ Module: tests/unit/test_pipeline_reload_availability.py
 from __future__ import annotations
 
 import asyncio
+import copy
 
 import pytest
 
@@ -30,6 +31,7 @@ pytest.importorskip("torch")
 
 from src.api.routes.pipeline import (  # noqa: E402
     PipelineReloadRequest,
+    _live_status,
     reload_pipeline,
 )
 from tests.unit.test_graph_artifact_binding import (  # noqa: E402
@@ -98,16 +100,42 @@ CANDIDATE_CONFIG = {
 }
 
 
+def _candidate_config(**changes):
+    """`CANDIDATE_CONFIG` with `changes`, built anew on every call, as a real
+    pipeline builds its configuration.
+
+    **Never the constant itself.** Handed out through a shallow copy, its nested
+    identity would be the constant's, so a reload that changed it in place would
+    change what every later test compares with, and a check would then pass or
+    fail by test order.
+    """
+    return {**copy.deepcopy(CANDIDATE_CONFIG), **changes}
+
+
 class _ServedPipeline:
-    """Stands in for the pipeline already answering clinical requests."""
+    """Stands in for the pipeline already answering clinical requests.
+
+    **Its configuration is its own**, a deep copy of `SERVED_CONFIG` handed out
+    shallowly, so a reload that changed what is served in place would change it
+    here, where the status route reads it, and not in the constant a test
+    compares with.
+    """
+
+    def __init__(self):
+        self._config = copy.deepcopy(SERVED_CONFIG)
 
     def get_pipeline_config(self):
-        return dict(SERVED_CONFIG)
+        return dict(self._config)
+
+
+#: The app-state fields that describe the served pipeline, all of which
+#: `publish_pipeline` writes.
+_PUBLISHED_FIELDS = ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path")
 
 
 def _serving(monkeypatch, data_dir="/served/workspace", checkpoint="/served/ckpt.pt"):
     """Put a healthy pipeline in app state and return a snapshot of every field
-    that describes it."""
+    that describes it, with a deep copy of the identity it serves."""
     import src.api.main as api
 
     served = _ServedPipeline()
@@ -123,18 +151,23 @@ def _serving(monkeypatch, data_dir="/served/workspace", checkpoint="/served/ckpt
         "kg": kg,
         "_current_data_dir": data_dir,
         "_current_checkpoint_path": checkpoint,
+        "served_identity": copy.deepcopy(served.get_pipeline_config()["served_identity"]),
     }
 
 
 def _assert_untouched(api, before):
-    for field, value in before.items():
+    for field in _PUBLISHED_FIELDS:
+        value = before[field]
         assert getattr(api.app_state, field) is value or getattr(
             api.app_state, field
         ) == value, f"reload changed app_state.{field} on a failed reload"
-    # What is served, read from the live pipeline (contract M3c).
+    # **What is served, as the status route reports it** (contract M3c): read
+    # off the live pipeline through the strict response model, against the deep
+    # copy taken when serving began. Compared with the module constant it was
+    # shallow-copied from, the identity was the constant's own dictionary, so no
+    # change a reload made to it could make the two differ.
     assert (
-        api.app_state.pipeline.get_pipeline_config()["served_identity"]
-        == SERVED_CONFIG["served_identity"]
+        _live_status().served_identity.model_dump() == before["served_identity"]
     ), "a failed reload changed what is served"
 
 
@@ -206,9 +239,10 @@ class TestARejectedCandidateCostsNothing:
 
         api, before = _serving(monkeypatch)
         root, _ = _candidate_workspace(monkeypatch, tmp_path)
-        bad = dict(CANDIDATE_CONFIG, kg_nodes="not an integer at all")
         monkeypatch.setattr(
-            pipeline.DiagnosisPipeline, "get_pipeline_config", lambda self: bad
+            pipeline.DiagnosisPipeline,
+            "get_pipeline_config",
+            lambda self: _candidate_config(kg_nodes="not an integer at all"),
         )
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
@@ -233,11 +267,10 @@ class TestARejectedCandidateCostsNothing:
 
         api, before = _serving(monkeypatch)
         root, _ = _candidate_workspace(monkeypatch, tmp_path)
-        unserialisable = dict(CANDIDATE_CONFIG, checkpoint_meta={"trained_on": object()})
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline,
             "get_pipeline_config",
-            lambda self: unserialisable,
+            lambda self: _candidate_config(checkpoint_meta={"trained_on": object()}),
         )
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
@@ -341,7 +374,7 @@ class TestAnAcceptedCandidateReplacesAllOfIt:
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline,
             "get_pipeline_config",
-            lambda self: dict(CANDIDATE_CONFIG),
+            lambda self: _candidate_config(),
         )
 
         result = _reload(data_dir=str(root), checkpoint_path=str(root / "ckpt.pt"))
@@ -349,13 +382,14 @@ class TestAnAcceptedCandidateReplacesAllOfIt:
         assert result.success is True
         assert api.app_state.pipeline is not before["pipeline"]
         assert api.app_state.kg is not before["kg"]
-        # What is served moved with the pipeline: read from the live pipeline
-        # and from the response, never from app state (contract M3c).
-        assert (
-            api.app_state.pipeline.get_pipeline_config()["served_identity"]
-            == CANDIDATE_CONFIG["served_identity"]
-        )
-        assert result.status.served_identity.model_dump() == CANDIDATE_CONFIG["served_identity"]
+        # What is served moved with the pipeline (contract M3c): in the response
+        # and in what the status route now reads off the live pipeline, both
+        # through the strict response model, never from app state. The constant
+        # is never handed to the code under test, so neither can match it by
+        # sharing it.
+        expected = CANDIDATE_CONFIG["served_identity"]
+        assert result.status.served_identity.model_dump() == expected
+        assert _live_status().served_identity.model_dump() == expected
         assert api.app_state._current_data_dir == str(root)
         assert api.app_state._current_checkpoint_path == str(root / "ckpt.pt")
         assert result.status.scoring_mode == CANDIDATE_CONFIG["scoring_mode"]
@@ -397,7 +431,7 @@ def test_startup_records_which_workspace_it_published(monkeypatch, tmp_path):
     monkeypatch.setattr(
         pipeline.DiagnosisPipeline,
         "get_pipeline_config",
-        lambda self: dict(CANDIDATE_CONFIG),
+        lambda self: _candidate_config(),
     )
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(root / "kg.json"))
     monkeypatch.setenv("SHEPHERD_DATA_DIR", str(root))
@@ -406,10 +440,11 @@ def test_startup_records_which_workspace_it_published(monkeypatch, tmp_path):
     api.initialize_pipeline()
 
     assert api.app_state.pipeline is not None
-    # What is served is the published pipeline's to say (contract M3c); app
-    # state keeps no copy of it for a reload to leave behind.
+    # What is served is the published pipeline's to say (contract M3c), as the
+    # status route reads it, through the strict response model; app state keeps
+    # no copy of it for a reload to leave behind.
     assert (
-        api.app_state.pipeline.get_pipeline_config()["served_identity"]
+        _live_status().served_identity.model_dump()
         == CANDIDATE_CONFIG["served_identity"]
     )
     assert not hasattr(api.app_state, "model_version")
@@ -468,7 +503,7 @@ def test_publication_formats_nothing_after_it_has_assigned(monkeypatch, tmp_path
     monkeypatch.setattr(
         pipeline.DiagnosisPipeline,
         "get_pipeline_config",
-        lambda self: dict(CANDIDATE_CONFIG, scoring_mode=_Hostile()),
+        lambda self: _candidate_config(scoring_mode=_Hostile()),
     )
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(root / "kg.json"))
     monkeypatch.setenv("SHEPHERD_DATA_DIR", str(root))
@@ -579,8 +614,8 @@ class TestNothingLeavesThisEndpointUnencodable:
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline,
             "get_pipeline_config",
-            lambda self: dict(
-                CANDIDATE_CONFIG, checkpoint_meta={"val_loss": torch.tensor(0.25)}
+            lambda self: _candidate_config(
+                checkpoint_meta={"val_loss": torch.tensor(0.25)}
             ),
         )
 

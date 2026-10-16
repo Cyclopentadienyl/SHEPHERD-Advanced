@@ -22,8 +22,9 @@ pinned here:
   the API copies it from the result it answers with, never from shared state a
   reload could swap; the demo answer carries none;
 - the reload route reports the metric of the checkpoint it served, from the
-  build's own read (BACKLOG 19.2), and says so when the file it chose was
-  replaced before that read (19.1).
+  build's own read (BACKLOG 19.2), calls it "best" only when the scan ranked the
+  file by it, and says so when the file it chose was replaced before that read
+  (19.1).
 
 The device rule itself (`resolve_serving_device`) is in
 `test_serving_device.py`.
@@ -35,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import shutil
 import typing
 
@@ -45,6 +47,7 @@ pytest.importorskip("fastapi")
 
 from src.core.types import (  # noqa: E402
     SERVED_CHECKPOINT_STATES,
+    SERVED_DATASET_ORIGINS,
     SERVED_DATASET_RECORD_STATES,
     SERVED_GRAPH_STATES,
     SERVED_SCORING_MODES,
@@ -442,14 +445,36 @@ def test_each_state_vocabulary_is_the_same_in_both_definitions():
         (diagnose.ServedShortestPaths, "state", SERVED_SHORTEST_PATHS_STATES),
         (diagnose.ServedDatasetRecord, "state", SERVED_DATASET_RECORD_STATES),
         (diagnose.ServedIdentity, "scoring_mode", SERVED_SCORING_MODES),
-        # The record's origin, against the record reader's own vocabulary.
+        # The record's origin, against the record reader's own vocabulary and
+        # the dataclass's copy of it.
         (diagnose.ServedDatasetRecord, "origin", ORIGINS),
+        (diagnose.ServedDatasetRecord, "origin", SERVED_DATASET_ORIGINS),
     ]
     for model, name, states in vocabularies:
         assert len(set(states)) == len(states), states
         assert _literal_values(model.model_fields[name].annotation) == set(states), (
             f"{model.__name__}.{name}"
         )
+
+
+def test_the_dataclass_accepts_exactly_the_record_readers_origins():
+    """`src.core` cannot import the record reader, so the dataclass checks
+    origins against a copy of `src.kg.provenance.ORIGINS`
+    (`SERVED_DATASET_ORIGINS`), the one state vocabulary not shared (contract
+    M3c). Catches an origin added to the reader and the API alone: the dataclass
+    would refuse it, so every identity over such a workspace would raise, and
+    every startup and reload over it would be refused. Also catches a dataclass
+    check that ignores the copy."""
+    from src.api.routes import diagnose
+    from src.kg.provenance import ORIGINS
+
+    assert SERVED_DATASET_ORIGINS == ORIGINS
+    assert set(SERVED_DATASET_ORIGINS) == _literal_values(
+        diagnose.ServedDatasetRecord.model_fields["origin"].annotation
+    )
+    for origin in ORIGINS:
+        record = ServedDatasetRecord(state="verified", origin=origin, sha256=SHA_D)
+        assert record.origin == origin
 
 
 def _nested_dicts(value, path=()):
@@ -502,15 +527,43 @@ def test_the_response_schema_requires_every_key():
                 ResponseIdentity.model_validate(tampered)
 
 
-def test_the_response_schema_refuses_a_digest_the_dataclass_refuses():
+#: Every digest the identity carries, by its path in the JSON form, with the
+#: dataclass part that holds it.
+DIGEST_PATHS = {
+    "checkpoint.sha256": (("checkpoint", "sha256"), ServedCheckpoint),
+    "graph.kg_sha256": (("graph", "kg_sha256"), ServedGraph),
+    "graph.split_manifest_sha256": (("graph", "split_manifest_sha256"), ServedGraph),
+    "dataset_record.sha256": (("dataset_record", "sha256"), ServedDatasetRecord),
+}
+#: Values that are not a lowercase hexadecimal SHA-256.
+BAD_DIGESTS = {
+    "uppercase": SHA_A.upper(),
+    "63 characters": "a" * 63,
+    "not hexadecimal": "g" * 64,
+}
+
+
+@pytest.mark.parametrize("value", sorted(BAD_DIGESTS))
+@pytest.mark.parametrize("digest", sorted(DIGEST_PATHS))
+def test_the_response_schema_refuses_a_digest_the_dataclass_refuses(digest, value):
+    """`scripts/measure_served_pipeline.py` checks a live service's identity
+    with this mirror before citing it as the readings' subject, so the digest
+    rule holds on every digest, as it does in the dataclass. Catches the pattern
+    dropped or loosened on any one field, which would let an uppercase,
+    truncated or non-hexadecimal digest through."""
     from pydantic import ValidationError
 
     from src.api.routes.diagnose import ServedIdentity as ResponseIdentity
 
+    path, part = DIGEST_PATHS[digest]
     identity = _identity(*LEGAL["gnn and table over a workspace"]).to_dict()
-    identity["checkpoint"]["sha256"] = SHA_A.upper()
-    with pytest.raises(ValidationError, match="checkpoint.sha256"):
+    _at(identity, path[:-1])[path[-1]] = BAD_DIGESTS[value]
+
+    with pytest.raises(ValueError, match="lowercase"):
+        part(**_at(identity, path[:-1]))
+    with pytest.raises(ValidationError, match=re.escape(digest)) as refusal:
         ResponseIdentity.model_validate(identity)
+    assert "String should match pattern" in str(refusal.value)
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +583,13 @@ def _settings_of(config, *, device, device_requested, eta):
     )
 
 
+#: Every path setting the identity records, each away from its default, so an
+#: identity built from the defaults instead of what is in effect cannot match.
+NON_DEFAULT_PATHS = dict(max_path_length=3, path_length_penalty=0.8,
+                         aggregation_method="max", max_paths_per_candidate=7,
+                         use_direct_path_optimization=False)
+
+
 def test_a_path_only_pipeline_over_a_graph_in_memory_states_every_absence():
     """No model, no file, no table, no workspace: each said in words. The path
     settings are the configuration's, since path search discovers the
@@ -537,9 +597,7 @@ def test_a_path_only_pipeline_over_a_graph_in_memory_states_every_absence():
     the defaults instead of what is in effect."""
     from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
 
-    config = PipelineConfig(max_path_length=3, path_length_penalty=0.8,
-                            aggregation_method="max", max_paths_per_candidate=7,
-                            use_direct_path_optimization=False)
+    config = PipelineConfig(**NON_DEFAULT_PATHS)
     pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg(), config=config)
 
     identity = pipeline.served_identity()
@@ -684,12 +742,17 @@ RESULT_PATHS = {
 @pytest.mark.parametrize("case", sorted(RESULT_PATHS))
 def test_every_result_path_carries_the_pipelines_identity(case):
     """Valid, empty and refused results are built in three places; catches one
-    of them returning without the identity, or with one built differently."""
+    of them returning without the identity, or with one built differently. The
+    path settings are the only values a path-only pipeline's identity has to
+    lose, so they are not the defaults: an identity built from a default
+    configuration differs."""
     from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
 
     validate, phenotypes, confidences, kind, warning = RESULT_PATHS[case]
-    pipeline = DiagnosisPipeline(kg=_kg_with_an_isolated_phenotype(),
-                                 config=PipelineConfig(validate_phenotypes=validate))
+    pipeline = DiagnosisPipeline(
+        kg=_kg_with_an_isolated_phenotype(),
+        config=PipelineConfig(validate_phenotypes=validate, **NON_DEFAULT_PATHS),
+    )
 
     result = pipeline.run(_patient(phenotypes, confidences), top_k=5)
 
@@ -699,19 +762,44 @@ def test_every_result_path_carries_the_pipelines_identity(case):
     assert isinstance(result.served_identity, ServedIdentity)
     assert result.served_identity == pipeline.served_identity()
     assert result.served_identity.to_dict() == pipeline.get_pipeline_config()["served_identity"]
+    assert result.served_identity.settings != _settings_of(
+        PipelineConfig(), device=None, device_requested=None, eta=None
+    ), "the path settings in effect are the defaults; this case cannot tell them apart"
 
 
-@pytest.mark.parametrize("phenotypes", [[PHENOTYPE], ["HP:9999999"]], ids=["scored", "refused"])
-def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, phenotypes):
+#: The same three places over the full pipeline: (validate_phenotypes,
+#: phenotypes, kind, warning fragment). Validation off lets an id the graph
+#: lacks reach the empty-result builder.
+FULL_RESULT_PATHS = {
+    "scored": (True, [PHENOTYPE], "scored", None),
+    "empty, no phenotype in the graph": (
+        False, ["HP:9999999"], "empty", "No valid phenotypes found in knowledge graph"),
+    "refused, no valid phenotype": (
+        True, ["HP:9999999"], "empty", "No valid phenotypes after validation"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FULL_RESULT_PATHS))
+def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, case):
     """The same over a checkpoint and a bound table, where every part has a
-    value to lose on the way to the result."""
+    value to lose on the way to the result. An answer that found nothing to rank
+    was still produced by the model and table served: catches an empty result
+    that says no model or table produced it, an identity legal over a verified
+    workspace, so no invariant refuses it."""
+    from src.inference.pipeline import PipelineConfig
+
+    validate, phenotypes, kind, warning = FULL_RESULT_PATHS[case]
     data_dir, checkpoint = served_workspace
     _with_table(data_dir)
-    pipeline = _full_pipeline(data_dir, checkpoint)
+    pipeline = _full_pipeline(data_dir, checkpoint,
+                              PipelineConfig(validate_phenotypes=validate))
 
     result = pipeline.run(_patient(phenotypes), top_k=5)
 
-    assert bool(result.candidates) == (phenotypes == [PHENOTYPE]), result.warnings
+    assert bool(result.candidates) == (kind == "scored"), result.warnings
+    if warning:
+        assert any(warning in line for line in result.warnings), result.warnings
+    assert result.served_identity == pipeline.served_identity()
     assert result.served_identity.scoring_mode == "gnn_plus_shortest_path"
     assert result.served_identity.to_dict() == pipeline.get_pipeline_config()["served_identity"]
 
@@ -889,8 +977,88 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
     assert "best val_mrr=0.8123" in result.selection_reason
     assert "0.2500" not in result.selection_reason
     assert f"(scored sha256 {scored}, loaded sha256 {loaded})" in result.selection_reason
+    assert result.selection_reason.endswith(
+        "the choice was made on the earlier bytes, and the metric shown is the loaded file's"
+    )
     assert result.status.served_identity.checkpoint.sha256 == loaded
     assert result.status.checkpoint_meta["val_mrr"] == pytest.approx(0.8123)
+
+
+def test_a_replacement_without_a_metric_is_not_said_to_show_one(
+    api, workspace, tmp_path, monkeypatch
+):
+    """The same replacement, with loaded bytes that carry no ranking metric:
+    nothing is shown, so the note does not say what the metric shown is, and
+    the scan's value for the earlier bytes is not reported as the loaded
+    file's. Catches the clause appended whether or not a metric was."""
+    from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
+
+    data_dir, checkpoint = workspace
+    selected = _with_val_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
+    scored = _sha(selected)
+    replacement = _with_val_mrr(checkpoint, tmp_path / "b.pt", None, shift=1.0)
+    real_build = api.build_pipeline
+
+    def replace_then_build(**kwargs):
+        shutil.copyfile(replacement, kwargs["checkpoint_path"])
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(api, "build_pipeline", replace_then_build)
+
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+
+    assert result.success, result.message
+    assert result.checkpoint_path == str(selected)
+    assert result.selection_reason.endswith(
+        f"(scored sha256 {scored}, loaded sha256 {_sha(replacement)}): "
+        "the choice was made on the earlier bytes"
+    )
+    assert "metric shown" not in result.selection_reason
+    assert "val_mrr" not in result.selection_reason
+    assert "val_mrr" not in result.status.checkpoint_meta
+
+
+#: Two candidates in one run, `model-a.pt` and `last.pt`, with these metrics in
+#: their logs: (model-a.pt's, last.pt's, the file served, how the reason ends).
+#: A 0-dim tensor is a metric the scan does not rank (it ranks Python numbers),
+#: and the build's metadata turns it into a float.
+SELECTIONS = {
+    "ranked by a float metric": (0.9, 0.1, "model-a.pt", "; best val_mrr=0.9000"),
+    "tensor metrics the scan does not rank": (
+        torch.tensor(0.9), torch.tensor(0.1), "last.pt",
+        "; not ranked by metric (no candidate carries one): last.pt, else the newest "
+        "file; loaded file val_mrr=0.1000"),
+    "no metric at all": (
+        None, None, "last.pt",
+        "; not ranked by metric (no candidate carries one): last.pt, else the newest "
+        "file"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(SELECTIONS))
+def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, workspace, case):
+    """BACKLOG 19.2: the reason states how the file was chosen. When no
+    candidate is ranked, selection falls back to `last.pt`, and the loaded
+    file's metric, which its metadata may still have, is shown as that file's,
+    never as the best: catches a fallback pick labelled best while a better
+    candidate existed (here 0.1 beside 0.9), the loaded file's metric left out,
+    and a ranked pick that loses "best"."""
+    from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
+
+    data_dir, checkpoint = workspace
+    first, last, served, ending = SELECTIONS[case]
+    run_dir = _run_checkpoint(data_dir).parent
+    _with_val_mrr(checkpoint, run_dir / "model-a.pt", first, shift=1.0)
+    _with_val_mrr(checkpoint, run_dir / "last.pt", last)
+
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+
+    assert result.success, result.message
+    assert result.checkpoint_path == str(run_dir / served)
+    assert result.status.served_identity.checkpoint.sha256 == _sha(run_dir / served)
+    assert result.selection_reason.endswith(ending), result.selection_reason
+    assert ("best" in result.selection_reason) == (served == "model-a.pt")
+    assert "replaced" not in result.selection_reason
 
 
 def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, workspace):

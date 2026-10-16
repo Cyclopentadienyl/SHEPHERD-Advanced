@@ -385,11 +385,15 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
         lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
 
     if identity is not None:
-        lines += [
-            f"- {_identity_summary_md('served', identity, lead='Serving')}",
-            "",
-            f"<sub>{IDENTITY_CLAIM_BOUNDARY}</sub>",
-        ]
+        lines.append(f"- {_identity_summary_md(_SERVED, identity, lead='Serving')}")
+        # **The boundary and its qualifier, by the identity block's rule.** A
+        # path-only or in-memory pipeline has nothing marked ✓, and the §6 line
+        # alone would then read as a claim that its graph file was checked
+        # against a record; `_claim_boundary_lines` adds what the report and
+        # the tab add for the same identity.
+        for sentence in _claim_boundary_lines(_SERVED, identity,
+                                              IDENTITY_NOTHING_CHECKED_LOADED):
+            lines += ["", f"<sub>{sentence}</sub>"]
     else:
         lines.append(
             "- **Serving:** not reported — the API's status did not say what the "
@@ -537,10 +541,22 @@ IDENTITY_CLAIM_BOUNDARY = (
     "on the relations marked ✓. Not checked: who changed them, or anything a "
     "person able to edit both files and records could alter."
 )
-#: Added under it when no row is marked ✓, so it is not read as a claim that
-#: something about this result was checked.
+#: Added under it when a served identity, or the demo answer, has no part marked
+#: ✓, so it is not read as a claim that something about this result was checked.
 IDENTITY_NOTHING_CHECKED = (
     "No relation is marked ✓ for this result: nothing in it was checked against a record."
+)
+#: The same, said of the loaded pipeline: the model status describes what is
+#: loaded now, not a result.
+IDENTITY_NOTHING_CHECKED_LOADED = (
+    "No relation is marked ✓ for the loaded pipeline: nothing it serves was "
+    "checked against a record."
+)
+#: Added under it, in place of the line above, for a response that carried no
+#: served identity: the panel was not told what was checked, so it can say
+#: neither that something was nor that nothing was.
+IDENTITY_CHECKS_NOT_REPORTED = (
+    "The response did not say what produced it or what was checked."
 )
 #: README's statement, carried by every report and identity block.
 NOT_A_MEDICAL_DEVICE = (
@@ -868,14 +884,35 @@ def _identity_rows(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tuple[
     return [(part, *build(identity)) for part, build in zip(_IDENTITY_PARTS, cells, strict=True)]
 
 
+def _claim_boundary_lines(kind: str, identity: Optional[Dict[str, Any]],
+                          nothing_checked: str = IDENTITY_NOTHING_CHECKED) -> List[str]:
+    """The §6 claim boundary and the sentence that qualifies it, if any.
+
+    The one rule for every surface that shows the boundary: the report and the
+    tab's identity block (through `_identity_table_lines`) and the model status,
+    which passes the sentence worded for the loaded pipeline.
+    "Nothing marked ✓" is read from `_identity_rows`, the rows the table shows.
+    """
+    lines = [IDENTITY_CLAIM_BOUNDARY]
+    # **Not reported is not "nothing checked".** A response without a served
+    # identity may come from a server that did check its inputs (one from
+    # before contract M3c, for example); the panel was only not told, so it
+    # says that. The demo answer keeps the line: nothing was served there.
+    if kind == IDENTITY_NOT_REPORTED:
+        lines.append(IDENTITY_CHECKS_NOT_REPORTED)
+    elif not any(state.startswith(_VERIFIED_MARK)
+                 for _, state, _ in _identity_rows(kind, identity)):
+        lines.append(nothing_checked)
+    return lines
+
+
 def _identity_table_lines(kind: str, identity: Optional[Dict[str, Any]]) -> List[str]:
     """The identity table, the claim boundary under it and the fixed statement."""
-    rows = _identity_rows(kind, identity)
     lines = ["| Part | State | Value |", "|------|-------|-------|"]
-    lines += [f"| {part} | {state} | {value} |" for part, state, value in rows]
-    lines += ["", IDENTITY_CLAIM_BOUNDARY]
-    if not any(state.startswith(_VERIFIED_MARK) for _, state, _ in rows):
-        lines += ["", IDENTITY_NOTHING_CHECKED]
+    lines += [f"| {part} | {state} | {value} |"
+              for part, state, value in _identity_rows(kind, identity)]
+    for sentence in _claim_boundary_lines(kind, identity):
+        lines += ["", sentence]
     lines += ["", NOT_A_MEDICAL_DEVICE]
     return lines
 
