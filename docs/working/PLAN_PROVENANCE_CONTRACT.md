@@ -58,8 +58,9 @@ round 02 at `c4a21b5` (demo A–E and M), the product code the same in both (§4
 acceptance is run"). It is a functional acceptance, not a capacity, model-quality or clinical
 benchmark reading; neither round's report is a complete single run; two P3 are tracked. The owner
 merged M3a into `main` afterwards (#122, `2049b64`, 2026-10-15).** **M3b is implemented
-(2026-10-15) and not yet reviewed** (§4, "M3b as implemented"); its GB10 acceptance follows the
-review. M3c, M4 and M5 are not implemented. Facts about the code are cited at `627ed08`, before M1;
+(2026-10-15) and code-reviewed with no P1 or P2 at `04ecf42` (2026-10-16)** (§4, "M3b as
+implemented"); **its GB10 functional acceptance is not yet run**. M3c, M4 and M5 are not
+implemented. Facts about the code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
 **Revision 2 (2026-10-06)** follows the review of `463a0df`.
@@ -2684,8 +2685,9 @@ building, is stated here.
     `INCOMPLETE_BY_DESIGN` lists parser versions, builder parameters and imports. Closing that
     gap is the KG record v2 (below).
 
-**M3b as implemented (2026-10-15).** Not yet reviewed. What differs from the text above, or was
-decided while building, is stated here.
+**M3b as implemented (2026-10-15).** Code-reviewed with no P1 or P2 (below, "The review of
+`04ecf42`"); the GB10 functional acceptance follows ("How M3b's acceptance is run"). What
+differs from the text above, or was decided while building, is stated here.
 
 - **One check, after the graph check.** `src.kg.artifacts.verify_dataset_record(manifest,
   kg_digest)` takes the run's one manifest reading and the `kg` digest its graph check returned
@@ -2772,10 +2774,69 @@ decided while building, is stated here.
   no rule names could stop the inventory; R5 and R6 compared only the binding and origin (now the
   whole record the workspace check verified). The ledger is the stated exception above.
 
-*How M3b's acceptance is run (prepared 2026-10-15; to be confirmed by the reviewer):* through the
-same deployment probe and production entry points (`scripts/probe_deployment.py --m2-acceptance
---device cuda`), with the inputs, allocator and evidence layout of M3a's acceptance, under a new
-evidence root (`/home/user/m3b-acceptance-20261015-01/`, then `-02`, …). What M3b's part shows:
+**The review of `04ecf42` (the reviewer, 2026-10-16; read only, range `2049b64..04ecf42`):** no
+P1 or P2; the GB10 functional acceptance may proceed. No unneeded parallel pipeline, old-format
+admission or CPU fallback was found. What the review established, in short:
+- the order and the reads: `verify_dataset_record` uses the caller's one manifest reading, checks
+  the given `kg` digest is that reading's, reads the record once (identity and parse from one
+  buffer), compares the binding before parsing, and refuses every other state; a `files` record
+  missing a role is refused with its binding kept as *verified*, and a synthetic record passes the
+  same binding checks, not a skipped one. Training, measurement (both cohort kinds) and serving
+  call it after their graph check and before a run directory, a checkpoint or the tensors; the
+  inventory and the move call the same verifier; a refused reload leaves the served pipeline;
+- the writers: one rule set for writer and reader (`validate_record`), digests taken while
+  serialising, one graph-export writer, the binding required before the manifest is written, and
+  no record invented for an older workspace;
+- the boundaries kept: path reasoning without a model and an in-memory graph and model handed in
+  by a program are existing interfaces that claim no persisted workspace, and a named checkpoint
+  that fails the checks still refuses; M3b is not an atomic workspace transaction and does not
+  show the sources are the releases an institution chose; the builder's annotation path digests
+  stay BACKLOG 19.13 (the KG record v2); the ledger is M4's. The tensors' new archive name means a
+  rebuild may differ in bytes for the same content, and no consumer admits a digest mismatch
+  because content looks the same;
+- tests: 823 relevant tests passed in a separate checkout on the homelab with CUDA disabled (not a
+  CUDA acceptance), import-linter 4 kept, `git diff --check` clean. One environment note: the
+  serving test file stalled inside the reviewer's sandbox at FastAPI's `TestClient.__enter__` and
+  passed outside it (22 tests, 2.92 s); the 823 is the union of completed files, not a claim for
+  the aborted batch.
+- **One P3, synced:** `PLAN_PHENOTYPE_NORMALISATION.md` and BACKLOG item 16 still made N2 ride on
+  an M3b manifest change and rebuild that M3b did not make. They now record N2 as not implemented
+  by M3b and not yet scheduled, its own change deciding how its manifest field is introduced; no
+  code, rebuild or compatibility path was added for it.
+- **The real workspace, checked read-only before the run** (the reviewer, at `04ecf42`, the
+  production `inventory_workspace`, CUDA disabled, on
+  `/home/user/Desktop/SHEPHERD-Advanced/data/workspaces/hpo_2026_0929_5a`): graph accepted;
+  training inputs accepted; `dataset_record` accepted, binding *verified*, origin `files`;
+  `kg.provenance.json` SHA-256 `2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef`;
+  `split_manifest.json` SHA-256
+  `131cdf81cfa20ab8b44609be78473d6dce3f3a18d4436fafd589c6221ddcf664`; the record's `kg_digest`
+  `6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43`; all four roles, both
+  ontologies declaring `2026-09-01` (read from the record, not re-checked at the source); the
+  table's source binding accepted and its serving not judged (the tensor is not loaded); its four
+  older checkpoints refused by M2 for want of a `kg` role, as before. So the workspace needs no
+  rebuild for M3b. What the record says it does not establish (imports, parser and builder
+  versions, construction parameters) stays unestablished and is not read as verified.
+
+*How M3b's acceptance is run (prepared 2026-10-15; confirmed by the reviewer, 2026-10-16):* through
+the same deployment probe and production entry points (`scripts/probe_deployment.py
+--m2-acceptance --device cuda`), with the inputs, allocator and evidence layout of M3a's
+acceptance; no other runner. One run, demo and real data together.
+- **Locked:** the commit, the branch head that records this review, documents only over `04ecf42`
+  (`git diff 04ecf42..<head> -- src scripts tests` empty); the inputs, as M2's and M3a's:
+  `hpo_2026_0929_5a`, its `train_outputs/config.yaml` (SHA-256 `14bf8eea…970e`), its
+  `checkpoints/hgt/model-02-0.1813.pt` (SHA-256 `33a7b39a…8b79`), given by path, with the
+  record and manifest digests above; the allocator, the saved preset `cuda_async`, applied by the
+  probe before torch's first import.
+- **Evidence:** a new root per attempt, `/home/user/m3b-acceptance-<commit>-01/` (then `-02`, …,
+  every attempt kept), holding `checkout-before.txt`, `input-sha256.txt`, `console.log`,
+  `exit.txt`, `checkout-restored.txt` and `work/` (`--work-dir`, absent or empty at the start;
+  the report `work/m3b_report.json`). The real workspace and its table are read in place; earlier
+  M2, M3a, S10 and diagnostic evidence is not touched. The checkout is restored afterwards to
+  what `checkout-before.txt` records.
+- **Read by the report, not by the exit alone:** no probe failed or errored;
+  `m2_acceptance.demo.complete` and `m2_acceptance.real_data.complete` true; the tested commit
+  recorded with `tracked_files_modified` false; CUDA, `cudaMallocAsync` from the saved preset.
+  What M3b's part shows:
 - **Demo:** C1, the demo workspace's record verified and synthetic; C5, each way a record can fail
   to bind refused with the state it establishes (missing → unverifiable; another workspace's
   record → mismatch; another graph's record rebound → mismatch; the binding removed →
@@ -2785,17 +2846,19 @@ evidence root (`/home/user/m3b-acceptance-20261015-01/`, then `-02`, …). What 
   manifest and the served configuration showing the record as verified and synthetic; M11,
   training, serving and measurement each refusing a workspace whose record is missing, with
   nothing written and the served pipeline unchanged. All are in `M2_DEMO_REQUIRED`.
-- **Real data:** R1, the real workspace's record verified with origin `files`, every source named
-  with its digest and declared version; R5 and R6, the measurement manifest and the served
-  configuration carrying that same record whole (equal to what R1 verified, digest and sources
-  included); F1 for a fresh real build, where run.
-- **Before the run:** the real workspace `hpo_2026_0929_5a` was built after the manifest began
-  binding the record (`ceb9c9c`, 2026-09-20), and the record's shape is unchanged since, so it is
-  expected to pass; this cannot be confirmed from the repository. The read-only inventory
-  (`scripts/audit_checkpoint_family.py --inventory`) shows its `dataset_record` verdict first. If
-  it is refused, decision 2 applies: the workspace is rebuilt, not admitted.
-- **Not shown:** that a record names the right releases. The record identifies the bytes a build
-  consumed; whether those are the intended releases is the operator's to read from it.
+- **Real data:** R1, the real workspace's record verified with origin `files` (its SHA-256 the
+  pre-check's `2c7abdb6…12ef`), every source named with its digest and declared version; R5 and
+  R6, the measurement manifest and the served configuration carrying that same record whole
+  (equal to what R1 verified, digest and sources included), R6 with the table verified by the
+  production loader; R2–R4 and R7 as in M2's and M3a's acceptance; R8, the inputs unchanged by
+  listing, size and modification time, which is not a content hash of the workspace. F1 is not
+  part of this run (no fresh real build is requested).
+- **Not shown:** that a record names the right releases; the record identifies the bytes a build
+  consumed, and whether those are the intended releases is the operator's to read from it. Not
+  part of it: capacity, S10, the memory attribution, AMP comparisons, HGT Edit 2, model quality or
+  a clinical benchmark.
+- **Complete** when the evidence is reviewed and every required probe passed; until then M3b's
+  functional acceptance is not passed.
 
 **M3c — what is served is identified (R8).**
 - **The checkpoint's digest comes from M2.1's read** of the bytes loaded.

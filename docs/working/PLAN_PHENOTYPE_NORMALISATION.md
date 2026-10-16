@@ -2,7 +2,8 @@
 
 **Status: revision 2. N1 is implemented, code-reviewed with no P1 or P2, and passed a GPU smoke
 test on the homelab at `af49bd3`** (2026-10-07; §8, "What N1 did" and "N1's acceptance on the
-homelab"). **N2 has not started**, and lands only with the contract's M2.1 and M3b (§8). The
+homelab"). **N2 has not started and is not implemented by the contract's M3b**, which shipped
+without a manifest change (§8, N2, "Since M3b"); N2 is its own change, not yet scheduled. The
 owner adopted the rule, and the reviewer closed this revision's corrections at `e9708cf`. Facts
 about this repository are cited at `15dfcb5`, before N1; N1's code is at `af49bd3`.
 
@@ -393,8 +394,11 @@ string-level semantics with it.
   - D6's mapped-version manifest and the split manifest carry `phenotype_normalisation`: the
     rule version, the number of cases affected and the number of repeats removed. The
     generator's are zero by construction.
-  - The split manifest field lands with the contract's M3b, whose manifest change rebuilds
-    workspaces anyway, so workspaces are rebuilt once, not twice.
+  - The split manifest field was to land with the contract's M3b, on the premise that its
+    manifest change would rebuild workspaces anyway. **That premise no longer holds** (§8, N2,
+    "Since M3b"): M3b kept split-manifest schema 3, and existing fully bound workspaces stay
+    usable. When N2 is scheduled, its own change decides how the field is introduced and whether
+    that requires a rebuild.
 - **Producers normalise; readers check.** Nothing normalises silently at run time and then
   records the input as though untouched.
   - The one run-time application is a served request, which has no file. Its result states the
@@ -541,6 +545,19 @@ compares the two.
     and measurement.
   - The manifest fields ride on M3b's manifest change.
   - The generator applies the function in the same change.
+  - **Since M3b (2026-10-16):** N2 has **not** been implemented, and M3b is not N2's delivery.
+    - M2.1 is implemented: `read_samples` is the one reader for training and measurement, so the
+      reader check's dependency is met.
+    - M3b made the dataset record required. It changed no manifest field and kept split-manifest
+      schema 3 (`PLAN_PROVENANCE_CONTRACT.md` §4, "M3b as implemented"), so there was no
+      manifest change for N2's fields to ride on and no rebuild for them to share.
+    - N2 is therefore its own change, delivered in its own increment and not yet scheduled. The
+      generator's normalisation, the manifest's `phenotype_normalisation` and the reader's check
+      land together in it.
+    - **Decided at that point, not here:** whether its manifest field is introduced with a schema
+      change and so a rebuild. Under the contract's decision 2 that would be a refusal of older
+      workspaces, not a migration or a compatibility path. Nothing is rebuilt, upgraded or
+      admitted in anticipation of it.
 - **The importer** would apply it from its first version (item 14 phase 1, step 1).
 
 **Not a remedy anywhere here:** a compatibility mode for files with repeats, or a CPU fallback.
