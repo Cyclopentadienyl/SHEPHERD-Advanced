@@ -3,15 +3,21 @@ The cohort registry: a source mapped to one graph, published as an immutable ver
 ====================================================================================
 Contract M4 (§0.1-§0.7, §2 of the design). What is pinned here:
 
-- **where** a registry may be (absolute, existing, never inside the repository);
-- **what a source is** (`shepherd-cases/1`, strict, every problem listed, OMIM
-  and ORPHA refused as a whole);
+- **where** a registry may be (absolute, existing, never inside the repository),
+  and that each directory below it is resolved again before it is written
+  into or a version read from it (a link out of the registry or into the
+  repository is refused; a stand-in repository takes the writes a missing
+  check would make);
+- **what a source is** (`shepherd-cases/1`, strict, every problem listed by
+  where it is and never by the value, case ids printable text, OMIM and ORPHA
+  refused as a whole);
 - **how cases map** (serving's lookup, then N1's `normalise_phenotypes`; the two
   exclusion categories with their precedence; both partial-phenotype policies);
 - **what a commit writes** (source verbatim and never overwritten, samples, the
   manifest last; nothing at all on a refusal) and that it publishes only the
   previewed version;
-- **how a version is read back** (one read of `cohort.json`, every refusal) and
+- **how a version is read back** (one read of `cohort.json`, every refusal,
+  counts present and consistent with each other and the version) and
   **compared with a run's graph** (§0.7);
 - the **registered-cohort fixture**: its checkpoint loads safely, matches the
   workspace's graph, carries a pipeline-shaped record, and Mode C ranks the
@@ -214,18 +220,25 @@ def test_a_malformed_top_level_is_refused(data, problem):
 
 @pytest.mark.parametrize("case, problem", [
     ("not a case", "cases[0] is not a JSON object"),
-    ({**GOOD_CASE, "case_id": ""}, "case_id must be a non-empty string"),
-    ({**GOOD_CASE, "case_id": 7}, "case_id must be a non-empty string"),
+    ({**GOOD_CASE, "case_id": ""}, "case_id must be a non-empty string, got an empty string"),
+    ({**GOOD_CASE, "case_id": 7}, "case_id must be a non-empty string, got a number"),
     ({"case_id": "c1", "phenotypes": ["HP:0000001"]}, "missing ['disease']"),
     ({**GOOD_CASE, "sex": "F"}, "keys this format does not define: ['sex']"),
-    ({**GOOD_CASE, "phenotypes": []}, "phenotypes must be a non-empty list"),
-    ({**GOOD_CASE, "phenotypes": "HP:0000001"}, "phenotypes must be a non-empty list"),
-    ({**GOOD_CASE, "phenotypes": ["HP:1"]}, "phenotypes[0] 'HP:1' is not an HPO id"),
-    ({**GOOD_CASE, "phenotypes": ["HP:0000001", 5]}, "phenotypes[1] 5 is not an HPO id"),
+    ({**GOOD_CASE, "phenotypes": []}, "phenotypes must be a non-empty list, got an empty list"),
+    ({**GOOD_CASE, "phenotypes": "HP:0000001"},
+     "phenotypes must be a non-empty list, got a string"),
+    ({**GOOD_CASE, "phenotypes": ["HP:1"]},
+     "cases[0] (case_id 'c1'): phenotypes[0] is not an HPO id (HP: and seven digits)"),
+    ({**GOOD_CASE, "phenotypes": ["HP:0000001", 5]},
+     "phenotypes[1] is a number, not an HPO id"),
+    ({**GOOD_CASE, "phenotypes": ["HP:0000001", ""]},
+     "phenotypes[1] is an empty string, not an HPO id"),
     ({**GOOD_CASE, "phenotypes": ["HP:١٢٣٤٥٦٧"]},
-     "is not an HPO id"),
-    ({**GOOD_CASE, "disease": "MONDO:12"}, "disease 'MONDO:12' is not a MONDO id"),
-    ({**GOOD_CASE, "disease": None}, "disease None is not a MONDO id"),
+     "phenotypes[0] is not an HPO id"),
+    ({**GOOD_CASE, "disease": "MONDO:12"},
+     "cases[0] (case_id 'c1'): disease is not a MONDO id (MONDO: and seven digits)"),
+    ({**GOOD_CASE, "disease": None}, "disease is null, not a MONDO id"),
+    ({**GOOD_CASE, "disease": ["MONDO:0000001"]}, "disease is a list, not a MONDO id"),
 ])
 def test_a_malformed_case_is_refused_by_index_and_id(case, problem):
     with pytest.raises(MalformedSource) as caught:
@@ -245,9 +258,65 @@ def test_every_problem_is_listed_not_only_the_first():
         ]))
     problems = caught.value.problems
     assert len(problems) == 3
-    assert "cases[1] (case_id 'c2'): phenotypes[0] 'bad'" in problems[0]
+    assert "cases[1] (case_id 'c2'): phenotypes[0] is not an HPO id" in problems[0]
     assert "cases[2] (case_id 'c1'): case_id repeats cases[0]" in problems[1]
-    assert "cases[3] (case_id 'c4'): disease 'nope'" in problems[2]
+    assert "cases[3] (case_id 'c4'): disease is not a MONDO id" in problems[2]
+
+
+def test_a_refusal_names_where_a_value_is_wrong_never_the_value():
+    """D7: a refusal is printed and may be kept in a console log, so it never
+    ties a phenotype list or a diagnosis to a case id. Each problem is located
+    by case index, case id, field and position, with the type or the rule."""
+    values = ["HP:0001250;HP:0001263;HP:0004322", "HP:1234", "MONDO 0011073 (Dravet)",
+              "Dravet syndrome", "MRN-0042-secret"]
+    with pytest.raises(MalformedSource) as caught:
+        parse_source(_source_bytes([
+            {"case_id": "pt-0042", "phenotypes": values[0], "disease": "MONDO:0011073"},
+            {"case_id": "pt-0043", "phenotypes": ["HP:0001250", values[1]],
+             "disease": values[2]},
+            {"case_id": "pt-0044", "phenotypes": ["HP:0001250"], "disease": values[3]},
+            {"case_id": {"mrn": values[4]}, "phenotypes": ["HP:0001250"],
+             "disease": "MONDO:0011073"},
+        ]), source="cases.json")
+    message = str(caught.value)
+    assert [value for value in values if value in message] == []
+    assert list(caught.value.problems) == [
+        "cases[0] (case_id 'pt-0042'): phenotypes must be a non-empty list, got a string",
+        "cases[1] (case_id 'pt-0043'): phenotypes[1] is not an HPO id (HP: and seven digits)",
+        "cases[1] (case_id 'pt-0043'): disease is not a MONDO id (MONDO: and seven digits)",
+        "cases[2] (case_id 'pt-0044'): disease is not a MONDO id (MONDO: and seven digits)",
+        "cases[3]: case_id must be a non-empty string, got an object",
+    ]
+
+
+@pytest.mark.parametrize("case_id", [
+    "\ud800x",                         # a lone surrogate: JSON's escape makes one
+    "c9\n  excluded          0 of 13",  # a newline that would forge a preview line
+    "c9\r", "c\tx", "c\x00", "c\x1b[31m", "c\x85", "c\u2028",
+    "c\u202e",                          # a right-to-left override (a format character)
+    "c\u00a0x",                         # a separator other than the space
+])
+def test_a_case_id_that_is_not_printable_text_is_refused_escaped(case_id):
+    """A case id is printed in the preview and kept as text in the version. One
+    the console cannot encode ended the preview in a traceback; one with a
+    newline forged lines in it. Refused here, shown escaped."""
+    data = json.dumps({"format": "shepherd-cases/1", "cases": [
+        {**GOOD_CASE, "case_id": case_id}]}).encode("ascii")
+    with pytest.raises(MalformedSource) as caught:
+        parse_source(data, source="cases.json")
+    message = str(caught.value)
+    assert caught.value.problems == (
+        f"cases[0]: case_id {ascii(case_id)} is not printable text (it holds a control or "
+        "format character, a separator other than the space, or a lone surrogate); a "
+        "case id is printed in the preview and kept as text",)
+    assert message.isascii()
+    assert [line for line in message.splitlines() if "excluded" in line and "0 of 13" in line
+            and not line.startswith("  - ")] == []
+
+
+def test_a_printable_case_id_beyond_ascii_is_accepted():
+    cases = parse_source(_source_bytes([{**GOOD_CASE, "case_id": "paciente-ñ 1"}]))
+    assert cases[0].case_id == "paciente-ñ 1"
 
 
 def test_a_case_stating_a_key_twice_is_refused():
@@ -661,14 +730,17 @@ def test_the_label_claim_is_atomic(registered, registry, monkeypatch):
     # Another import takes the label between the pre-check and the claim.
     real = cohort_registry._keep_source
 
-    def keep_then_race(sources, plan):
-        real(sources, plan)
+    def keep_then_race(root, plan):
+        sources = real(root, plan)
         (registry / "versions" / plan.label).mkdir(parents=True)
+        return sources
 
     monkeypatch.setattr(cohort_registry, "_keep_source", keep_then_race)
     plan = prepare_import(registry, registered.data_dir, registered.source, "v1", ROLE, "keep")
-    with pytest.raises(CohortVersionRefused, match="created by another import"):
+    with pytest.raises(CohortVersionRefused, match="created by another import") as caught:
         commit_import(plan, registry, plan.preview_id)
+    assert f"Only the source copy was written (under {registry.resolve() / 'sources'}" in \
+        str(caught.value)
     assert not (registry / "versions" / "v1" / "samples.json").exists()
 
 
@@ -745,6 +817,157 @@ def test_a_preview_refuses_a_registry_inside_the_repository(registered):
 
 
 # ---------------------------------------------------------------------------
+# Directories below the registry (D7): resolved again before each write
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def stand_in_repo(tmp_path, monkeypatch):
+    """A directory standing in for the repository, so a link "into the
+    repository" is a link into it: if a check below were missing, the files
+    would land here, never in the real tree."""
+    repo = tmp_path / "repo"
+    (repo / "data").mkdir(parents=True)
+    monkeypatch.setattr(cohort_registry, "REPO_ROOT", repo)
+    return repo
+
+
+def _files(root: Path) -> list:
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+
+
+def _swap_after_mkdir(monkeypatch, name: str, target: Path) -> None:
+    """After the real ``mkdir`` of a directory called `name` (or under a
+    ``reports`` directory, for `name` ``"<run>"``), replace it with a link to
+    `target`: another process swapping it in the moment after the claim."""
+    real = Path.mkdir
+
+    def mkdir(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        if self.name == name or (name == "<run>" and self.parent.name == "reports"):
+            self.rmdir()
+            self.symlink_to(target, target_is_directory=True)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+
+
+@pytest.mark.parametrize("linked", ["sources", "versions"])
+def test_a_registry_directory_linked_into_the_repository_is_refused(
+        linked, registered, registry, stand_in_repo):
+    plan = prepare_import(registry, registered.data_dir, registered.source, "v1", ROLE, "keep")
+    target = stand_in_repo / "data" / linked
+    target.mkdir()
+    (registry / linked).symlink_to(target, target_is_directory=True)
+    with pytest.raises(RegistryRefused, match="inside the repository") as caught:
+        commit_import(plan, registry, plan.preview_id, now=IMPORTED_AT)
+    message = str(caught.value)
+    assert str(registry / linked) in message and str(target) in message
+    assert _files(stand_in_repo) == []
+    if linked == "sources":
+        assert "Nothing was written." in message
+        assert _files(registry) == []
+    else:
+        # The source was kept before `versions/` was reached; the refusal says so.
+        assert "Only the source copy was written" in message
+        assert _files(registry) == [f"sources/{plan.source_sha256}.json"]
+
+
+def test_a_registry_directory_linked_outside_the_registry_is_refused(
+        registered, registry, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    plan = prepare_import(registry, registered.data_dir, registered.source, "v1", ROLE, "keep")
+    (registry / "versions").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(RegistryRefused, match=f"outside {re.escape(str(registry))}"):
+        commit_import(plan, registry, plan.preview_id, now=IMPORTED_AT)
+    assert _files(elsewhere) == []
+
+
+def test_a_version_directory_swapped_after_the_claim_is_not_written_into(
+        registered, registry, stand_in_repo, monkeypatch):
+    plan = prepare_import(registry, registered.data_dir, registered.source, "v1", ROLE, "keep")
+    target = stand_in_repo / "data" / "v1"
+    target.mkdir()
+    _swap_after_mkdir(monkeypatch, "v1", target)
+    with pytest.raises(RegistryRefused, match="inside the repository") as caught:
+        commit_import(plan, registry, plan.preview_id, now=IMPORTED_AT)
+    assert "nothing was written into it" in str(caught.value)
+    assert _files(stand_in_repo) == []
+
+
+def test_a_kept_source_is_written_through_the_resolved_directory(registered, registry):
+    # A link that stays inside the registry is followed, and the copy lands
+    # where it resolves.
+    inner = registry / "kept-sources"
+    inner.mkdir()
+    (registry / "sources").symlink_to(inner, target_is_directory=True)
+    version = import_version(registry, registered.data_dir, registered.source, label="v1")
+    assert _files(inner) == [f"{version.manifest['source']['sha256']}.json"]
+
+
+def test_resolving_refuses_a_version_directory_linked_into_the_repository(committed, tmp_path):
+    registry, version = committed
+    # Read-only: resolving reads, so a link into the real tree is safe here.
+    (registry / "versions" / "v2").symlink_to(REPO_ROOT / "docs", target_is_directory=True)
+    with pytest.raises(RegistryRefused, match="inside the repository") as caught:
+        resolve_version(registry, "v2")
+    assert "No version is read from there." in str(caught.value)
+
+
+def test_resolving_returns_the_resolved_version_directory(committed, tmp_path):
+    registry, version = committed
+    moved = registry / "versions" / "moved"
+    (registry / "versions" / "v1").rename(moved)
+    (registry / "versions" / "v1").symlink_to(moved, target_is_directory=True)
+    again = resolve_version(registry, "v1")
+    assert again.directory == moved.resolve()
+    assert again.samples_path == moved.resolve() / "samples.json"
+
+
+def test_a_reports_directory_linked_into_the_repository_is_refused(tmp_path, stand_in_repo):
+    version = _fake_version(tmp_path)
+    target = stand_in_repo / "data" / "reports"
+    target.mkdir()
+    (version.directory / "reports").symlink_to(target, target_is_directory=True)
+    with pytest.raises(RegistryRefused, match="inside the repository") as caught:
+        create_report_dir(version, "ab" * 32, IMPORTED_AT)
+    assert "Nothing was written." in str(caught.value)
+    assert list(target.iterdir()) == []
+
+
+def test_a_reports_directory_linked_out_of_its_version_is_refused(tmp_path):
+    version = _fake_version(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (version.directory / "reports").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(RegistryRefused, match="outside"):
+        create_report_dir(version, "ab" * 32, IMPORTED_AT)
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_version_directory_inside_the_repository_gets_no_report_directory(
+        tmp_path, stand_in_repo):
+    directory = stand_in_repo / "data" / "versions" / "v1"
+    directory.mkdir(parents=True)
+    version = CohortVersionRead({}, ReadIdentity(directory / "cohort.json", "0" * 64),
+                                directory, directory / "samples.json")
+    with pytest.raises(RegistryRefused, match="inside the repository") as caught:
+        create_report_dir(version, "ab" * 32, IMPORTED_AT)
+    # The version directory itself is named, not the reports/ below it.
+    assert str(caught.value).startswith(f"{directory} resolves to {directory.resolve()}, ")
+    assert list(directory.iterdir()) == []
+
+
+def test_a_run_directory_swapped_after_it_is_made_is_refused(tmp_path, stand_in_repo,
+                                                             monkeypatch):
+    version = _fake_version(tmp_path)
+    target = stand_in_repo / "data" / "run"
+    target.mkdir()
+    _swap_after_mkdir(monkeypatch, "<run>", target)
+    with pytest.raises(RegistryRefused, match="inside the repository") as caught:
+        create_report_dir(version, "ab" * 32, IMPORTED_AT)
+    assert "Only the empty run directory" in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
 # Reading a version back
 # ---------------------------------------------------------------------------
 @pytest.fixture
@@ -796,6 +1019,12 @@ def _without(manifest, key):
     return {k: v for k, v in manifest.items() if k != key}
 
 
+def _counts(manifest, **changes):
+    """The manifest with its counts changed; `None` removes a key."""
+    counts = {**manifest["counts"], **changes}
+    return {**manifest, "counts": {k: v for k, v in counts.items() if v is not None}}
+
+
 @pytest.mark.parametrize("edit, problem", [
     (lambda m: b"\xff not json", "not UTF-8 JSON"),
     (lambda m: [m], "not a JSON object"),
@@ -810,6 +1039,40 @@ def _without(manifest, key):
     (lambda m: {**m, "samples": {**m["samples"], "n": True}}, "samples must hold"),
     (lambda m: {**m, "role": "train"}, "generator's own split names"),
     (lambda m: {**m, "exclusions": {}}, "exclusions must be a list"),
+    # The counts a report and the ledger record as denominators (§2.3): present,
+    # whole, and consistent with each other and with the version.
+    (lambda m: {**m, "counts": []}, "counts must be an object"),
+    (lambda m: {**m, "counts": {}}, "counts.source_cases must be a whole number"),
+    (lambda m: _counts(m, ranked_eligible=None), "counts.ranked_eligible must be a whole number"),
+    (lambda m: _counts(m, n_excluded=True), "counts.n_excluded must be a whole number"),
+    (lambda m: _counts(m, source_cases=-1), "counts.source_cases must be a whole number"),
+    (lambda m: _counts(m, excluded=None), "counts.excluded must hold"),
+    (lambda m: _counts(m, excluded={"ground_truth_absent": 3}), "counts.excluded must hold"),
+    (lambda m: _counts(m, excluded={**m["counts"]["excluded"], "other": 0}),
+     "counts.excluded must hold"),
+    (lambda m: _counts(m, excluded={"ground_truth_absent": 2, "phenotype_unmappable": 1.0}),
+     "counts.excluded must hold"),
+    (lambda m: {**m, "samples": {**m["samples"], "n": 9}},
+     "counts.ranked_eligible (10) is not samples.n (9)"),
+    (lambda m: _counts(m, source_cases=14),
+     "counts.source_cases (14) is not ranked_eligible plus n_excluded (10 + 3)"),
+    (lambda m: {**m, "source": {**m["source"], "n_cases": 12}},
+     "counts.source_cases (13) is not source.n_cases (12)"),
+    (lambda m: {**m, "source": _without(m["source"], "n_cases")}, "source must hold n_cases"),
+    (lambda m: _counts(m, excluded={"ground_truth_absent": 3, "phenotype_unmappable": 1}),
+     "counts.n_excluded (3) is not the sum of counts.excluded (4)"),
+    (lambda m: {**m, "exclusions": m["exclusions"][:2]},
+     "counts.n_excluded (3) is not the number of exclusions listed (2)"),
+    # A damaged manifest that claims fewer source cases and no exclusions.
+    (lambda m: _counts(m, source_cases=10, n_excluded=0,
+                       excluded={"ground_truth_absent": 0, "phenotype_unmappable": 0}),
+     "counts.source_cases (10) is not source.n_cases (13); counts.n_excluded (0) is not the "
+     "number of exclusions listed (3)"),
+    # An edit consistent within the counts still contradicts the version.
+    (lambda m: _counts(m, source_cases=1000, n_excluded=990,
+                       excluded={"ground_truth_absent": 989, "phenotype_unmappable": 1}),
+     "counts.source_cases (1000) is not source.n_cases (13); counts.n_excluded (990) is not "
+     "the number of exclusions listed (3)"),
 ])
 def test_resolving_refuses_a_manifest_this_revision_does_not_read(committed, edit, problem):
     registry, version = committed

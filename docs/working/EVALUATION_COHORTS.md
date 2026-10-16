@@ -18,7 +18,9 @@ fixed; §6.8's audit built and run, its evidence committed (revision 28).
   directory may be read-only to whoever measures, is reconciled rather than removed: a refused
   `--record` keeps the report and exits 3. §6.1 notes that a supplied cohort is now a registered
   cohort version, so the cohort kind follows from the argument that names it, and §6.6 records
-  the read-only display.
+  the read-only display. Amended with M4's internal review fixes: `record_evaluation` names the
+  checkpoint file or its directory, and whichever way a report arrives the ledger is beside the
+  checkpoint's resolved path; a corroborating report does not update the record, and says so.
 - **30** — the Mode A/B retirement's R2 (2026-10-12): measurement runs Mode C only and records no
   seed and no loader fields. §1.7, §6.1 and §6.5's "As built" are amended in place; the two seed
   bullets of §6.1 are marked superseded rather than removed. The ledger reads only what the
@@ -1164,11 +1166,17 @@ Points where the implementation had to decide something this section left open:
 - **`metric_schema_version` is its own maintained field.** `canonical_tie_policy_version` versions
   how equal scores become ranks and cannot stand in for which metric names are emitted, what each
   denominator counts, which `K` values `hits@K` covers, or how per-sample values are aggregated.
-- **The ledger must be beside the weights it describes.** `record_evaluation` hashes the `.pt`
-  files in the target directory and refuses unless one matches the report's checkpoint digest.
-  Several files with identical bytes are fine — the digest is the identity, not the name.
-  `measure_scorer.py --record` (since M4) writes beside the checkpoint the measurement itself
-  read moments earlier, and trusts that read instead of hashing the directory again.
+- **The ledger must be beside the weights it describes.** `record_evaluation` is given either
+  the checkpoint file (`--checkpoint FILE`, under any name, whose bytes must be the report's
+  checkpoint) or its directory (`--checkpoint-dir DIR`, whose `*.pt` files are hashed until one
+  matches), and refuses otherwise. Several files with identical bytes are fine — the digest is
+  the identity, not the name. `measure_scorer.py --record` (since M4) writes beside the
+  checkpoint the measurement itself read moments earlier, and trusts that read instead of
+  hashing again. **Whichever way a report arrives, the ledger is beside the checkpoint's
+  resolved path**, which is where the read-only view looks: a symlinked checkpoint's ledger sits beside its target, so
+  one set of weights has one ledger, and a record registered by hand is one the service shows.
+  The measurement and the service read the checkpoint at its resolved path, so a link retargeted
+  later moves neither where a record is filed nor where it is looked up.
 - **Single-writer, and the boundary is stated rather than implied.** Atomic replace closes an
   interrupted write. The digest the reader saw is **best-effort stale-write detection**: it catches
   the ordinary accident — one writer read, another replaced, the first then wrote — and it does
@@ -1197,6 +1205,9 @@ Points where the implementation had to decide something this section left open:
   checkpoint measured again after a move — adds its digest to the first record's corroborating
   reports. Fields that legitimately differ between two runs of one measurement (R10's labels, the
   environment, the report's own digest) are excluded from the comparison, each with its reason.
+  So a corroborating report does not update the record: the record keeps its first report's R10
+  and environment, and when the later report's differ (a re-run that found R10 evidence the first
+  did not), the registration says so in one sentence and names the report that keeps them.
 
 A contradiction — one key, two metric sets — is refused rather than merged, and no override flag is
 offered: correcting a bad record means editing a readable JSON file, which leaves a diff, rather
@@ -1214,8 +1225,9 @@ two ways to reach it: automatically, when the person measuring passes `measure_s
 than a side effect. The read-only checkpoint directory is still provided for: every report is kept
 in the registry's report store whether or not it is registered, and a `--record` that cannot
 write the ledger is refused with nothing written there; the report stays, the run exits 3, and the
-message names the `record_evaluation.py` command with which whoever may write the directory
-registers that same report later. The ledger is still built from artifacts that already exist.
+message names the `record_evaluation.py` command, with the measured file as `--checkpoint`, with
+which whoever may write the directory registers that same report later. The ledger is still built
+from artifacts that already exist.
 
 ### 6.6 Order, and what is explicitly last
 

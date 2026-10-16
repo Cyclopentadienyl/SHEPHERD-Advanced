@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,22 @@ def _samples_removed(cohort):
     return "is missing, though"
 
 
+def _samples_not_the_count(cohort):
+    """Finding 15: one sample dropped and `cohort.json` re-pointed at the new
+    bytes by digest, its counts left as they were -- a manifest consistent with
+    itself whose denominators describe samples no run will read."""
+    samples = json.loads(cohort.version.samples_path.read_text())[:-1]
+    data = json.dumps(samples).encode("utf-8")
+    cohort.version.samples_path.write_bytes(data)
+    path = cohort.version.directory / "cohort.json"
+    manifest = json.loads(path.read_text())
+    manifest["samples"]["sha256"] = hashlib.sha256(data).hexdigest()
+    path.write_text(json.dumps(manifest))
+    n = manifest["samples"]["n"]
+    return (f"holds {len(samples)} samples, and .* records samples.n {n} and "
+            f"counts.ranked_eligible {manifest['counts']['ranked_eligible']}")
+
+
 def _pre_contract_checkpoint(cohort):
     contents = torch.load(cohort.checkpoint, map_location="cpu", weights_only=True)
     del contents["training_input_digests"]
@@ -175,7 +192,8 @@ def _unreadable_candidate(cohort, monkeypatch):
     return "R10 evidence candidate could not be read"
 
 
-@pytest.mark.parametrize("case", ["no_source_format", "samples_removed", "pre_contract",
+@pytest.mark.parametrize("case", ["no_source_format", "samples_removed",
+                                  "samples_not_the_count", "pre_contract",
                                   "unreadable_candidate"])
 def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
     """Refusals of the registered path's own and the shared checks it runs late:
@@ -189,6 +207,7 @@ def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
     else:
         message = {"no_source_format": _without_source_format,
                    "samples_removed": _samples_removed,
+                   "samples_not_the_count": _samples_not_the_count,
                    "pre_contract": _pre_contract_checkpoint}[case](cohort)
     monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
@@ -331,8 +350,9 @@ def test_record_registers_into_the_ledger_beside_the_checkpoint_without_rehashin
     (by the measurement), and the directory's checkpoints are not hashed."""
     import src.evaluation.registration as registration
 
-    monkeypatch.setattr(registration, "find_checkpoint",
-                        lambda *a, **k: pytest.fail("the checkpoints were hashed again"))
+    for name in ("find_checkpoint", "checkpoint_matches"):
+        monkeypatch.setattr(registration, name,
+                            lambda *a, **k: pytest.fail("the checkpoints were hashed again"))
 
     with count_opens() as opens:
         assert cli.main(_argv(cohort, "--record")) == 0
@@ -364,6 +384,40 @@ def test_record_files_the_ledger_beside_the_checkpoint_the_link_names(cli, cohor
 
     assert (cohort.checkpoint.parent / LEDGER).is_file()
     assert not (elsewhere / LEDGER).exists()
+
+
+def test_record_files_beside_the_bytes_read_though_the_link_is_retargeted_during_the_run(
+    cli, cohort, tmp_path, monkeypatch
+):
+    """Finding 5: the checkpoint is read at its resolved path, so the ledger's
+    directory is fixed when the weights are read. A link retargeted at another
+    run's checkpoint once this run has read through it (here, after the report
+    is kept) does not file this run's record beside those other weights."""
+    run_b = tmp_path / "run-b" / "checkpoints"
+    run_b.mkdir(parents=True)
+    (run_b / "best.pt").write_bytes(b"run B's weights")
+    link = tmp_path / "models" / "current.pt"
+    link.parent.mkdir()
+    link.symlink_to(cohort.checkpoint)
+    publish = cli._publish_to_store
+
+    def publish_then_retarget(result, inputs):
+        published = publish(result, inputs)
+        link.unlink()
+        link.symlink_to(run_b / "best.pt")
+        return published
+
+    monkeypatch.setattr(cli, "_publish_to_store", publish_then_retarget)
+    argv = _argv(cohort, "--record")
+    argv[argv.index(str(cohort.checkpoint))] = str(link)
+
+    assert cli.main(argv) == 0
+
+    (record,) = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert record["checkpoint_digest"] == cohort.checkpoint_sha256
+    assert not (run_b / LEDGER).exists()
+    assert _report(cohort)[1]["manifest"]["checkpoint_path"] == str(link), (
+        "the report keeps the path the operator gave")
 
 
 def test_the_same_inputs_measured_again_are_already_registered(cli, cohort, capsys):
@@ -406,8 +460,8 @@ def test_a_refused_registration_keeps_the_report_and_exits_3(
     err = capsys.readouterr().err
     assert fragment in err
     assert f"report is kept at {path}" in err
-    assert (f"python scripts/record_evaluation.py --report {path} --checkpoint-dir "
-            f"{cohort.checkpoint.parent}") in err
+    assert (f'python scripts/record_evaluation.py --report "{path}" '
+            f'--checkpoint "{cohort.checkpoint.resolve()}"') in err
     assert (ledger.read_bytes() if ledger.exists() else None) == before
 
 
@@ -420,7 +474,74 @@ def test_without_record_nothing_is_registered_and_the_command_is_printed(cli, co
     assert not (cohort.checkpoint.parent / LEDGER).exists()
     out = capsys.readouterr().out
     assert "Not registered (no --record)" in out
-    assert f"--report {path} --checkpoint-dir {cohort.checkpoint.parent}" in out
+    assert (f'python scripts/record_evaluation.py --report "{path}" '
+            f'--checkpoint "{cohort.checkpoint.resolve()}"') in out
+
+
+def test_the_register_later_command_quotes_each_path_for_every_shell():
+    """Finding 1: each path double-quoted, the form a POSIX shell, cmd and
+    PowerShell all read as one argument for an ordinary path; a POSIX shell
+    splits it into exactly the arguments `record_evaluation` takes."""
+    import shlex
+
+    import scripts.measure_scorer as cli
+
+    report = Path("/srv/My Registry/versions/l/reports/r/report.json")
+    checkpoint = Path("/home/op/My Models/best.ckpt")
+
+    line = cli.register_later_command(report, checkpoint)
+
+    assert line == ('python scripts/record_evaluation.py --report '
+                    '"/srv/My Registry/versions/l/reports/r/report.json" '
+                    '--checkpoint "/home/op/My Models/best.ckpt"')
+    assert shlex.split(line)[2:] == ["--report", str(report), "--checkpoint", str(checkpoint)]
+
+
+@pytest.mark.parametrize("record", ["pipeline", "graph_only"])
+def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitions_once(
+    cli, tmp_path, capsys, record
+):
+    """Finding 9: each label's state is rendered through `R10_STATE_TEXT`, an
+    unverifiable one through its scope's `R10_UNVERIFIABLE_REASON`, with no
+    number where there is no count; the four definitions are printed once, so
+    the console says that phenotype-set overlap ignores order and repetition and
+    that "none" is not evidence about data outside the recorded inputs. The
+    report keeps the raw states and no prose."""
+    from src.evaluation.caveats import (
+        R10_LABEL_TEXT,
+        R10_STATE_TEXT,
+        R10_UNVERIFIABLE_REASON,
+    )
+
+    cohort = build_registered_cohort(tmp_path / "root", training_record=record)
+
+    assert cli.main(_argv(cohort)) == 0
+
+    out = capsys.readouterr().out
+    path, report = _report(cohort)
+    r10 = report["manifest"]["r10"]
+    lines = out.splitlines()
+    for scope, labels in R10_LABEL_TEXT.items():
+        evidence = r10[scope]["evidence"]["state"]
+        for label, text in labels.items():
+            value = r10[scope][label]
+            words = (R10_UNVERIFIABLE_REASON[evidence] if value["state"] == "unverifiable"
+                     else R10_STATE_TEXT[value["state"]])
+            (line,) = [line for line in lines if line.strip().startswith(text["name"] + " ")]
+            shown = line.strip()[len(text["name"]):].strip()
+            assert shown.startswith(words), (line, words)
+            if value["k"] is None:
+                assert shown == words and not any(c.isdigit() for c in shown)
+            else:
+                assert f"{value['k']} of {value['n']}" in shown
+            assert out.count(f"{text['name']}: {text['definition']}.") == 1
+    assert "phenotype-set overlap ignores order and repetition, so the scoring inputs " \
+           "may differ" in out
+    assert out.count("not evidence about data outside them") >= 1
+    kept = path.read_text()
+    for prose in ("scoring inputs may differ", "not evidence about data", "there is no count",
+                  "distinct test diseases"):
+        assert prose not in kept, prose
 
 
 def test_no_patient_level_data_reaches_the_ledger(cli, cohort):

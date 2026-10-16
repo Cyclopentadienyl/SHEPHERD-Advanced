@@ -1139,6 +1139,15 @@ the repository**. A relative path, a path that does not exist, and a path that r
 the repository (through a symlink too) are refused. Nothing creates it for you, and no request,
 environment variable or configuration key names it.
 
+The directories below it are checked too. Each one (`sources/`, `versions/`, a version's
+directory, its `reports/` and each run directory) is resolved again just before anything is
+written into it or a version is read from it. It is refused when a link takes it into the
+repository, or outside the directory it belongs under: the registry, or for `reports/` and a
+run directory, the version's own directory. A link that stays inside the registry is
+followed. The refusal says what had already been written, for example only the source copy.
+These checks run just before each write, not atomically with it, so a link swapped in at that
+moment is not caught. The registry is yours, on this machine, with one writer at a time.
+
 It holds patient-level data — the source file kept verbatim, the mapped samples and the per-case
 ranks — so create it where only the accounts that run these commands can read it (for example
 `mkdir -m 700 /srv/shepherd/cohorts`). Its files are published as §4.6 describes: staged, then
@@ -1169,10 +1178,15 @@ The importer reads one format, owned by this project:
 }
 ```
 
-- Exactly these keys, at both levels. `case_id` is a non-empty string, unique in the file;
-  `phenotypes` a non-empty list of `HP:` + seven digits; `disease` `MONDO:` + seven digits.
+- Exactly these keys, at both levels. `case_id` is a non-empty string of printable text (no
+  control or format character, no separator other than the space, no lone surrogate), unique
+  in the file; `phenotypes` a non-empty list of `HP:` + seven digits; `disease` `MONDO:` +
+  seven digits.
 - **Anything that does not fit refuses the import as a whole**, with every problem listed by case
-  index and case id; nothing is written.
+  index and case id; nothing is written. A problem says where a value is wrong (the case, the
+  field, the position) and what type it was or which rule it broke, **never the value**, so a
+  refusal never prints a phenotype or a diagnosis. A case id that is not printable text is
+  shown escaped.
 - **A disease given as `OMIM:`, `ORPHA:` or `Orphanet:`** also refuses the import as a whole,
   naming the namespace and the number of cases: the graph's diseases are MONDO terms, and this
   revision does not translate. Real formats (MyGene2's, the institution's) are converted to this
@@ -1194,7 +1208,7 @@ binds, through the same readers and checks as training and serving, and prints:
 
 - the source cases, the cases eligible for ranking, and the excluded cases **by category, each
   with its case id and reasons** (on this machine only: case ids appear, phenotypes and diseases
-  do not):
+  do not; a case id that is not printable ASCII is printed escaped):
   - `ground_truth_absent` — the case's disease is not a disease node of this graph;
   - `phenotype_unmappable` — no term maps, or, with `--partial-phenotypes exclude`, some term does
     not;
@@ -1226,7 +1240,11 @@ python scripts/measure_scorer.py \
 ```
 
 Before anything is written the run checks, on the bytes it read: the version's `cohort.json` and
-its `samples.json` against the digest it binds; the workspace's graph files against its manifest
+its `samples.json` against the digest it binds; **the version's counts**, which become the
+report's and the ledger's denominators — they must be present and agree with each other and with
+the version (`ranked_eligible` = `samples.n`; `source_cases` = `ranked_eligible` + `n_excluded`
+= the source's case count; `n_excluded` = the sum of the categories = the exclusions listed),
+and the samples read must number `samples.n`; the workspace's graph files against its manifest
 and the dataset record (§4.4); **the version against this workspace** — its four graph digests and
 its dataset record must be this workspace's, or the run is refused before the checkpoint is read;
 then the checkpoint (read with `weights_only=True`) against the graph it was trained on. The
@@ -1239,10 +1257,28 @@ own `train_samples.json` and `val_samples.json`, then every `*_samples.json` dir
 `--training-evidence` directory (give the directory where the training run's workspace is, if it
 was trained elsewhere or the workspace has been rebuilt since). Only a file whose bytes have the
 recorded digest counts. Four labels: training and validation × disease overlap and phenotype-set
-overlap, each `overlap` (with its count and denominator), `none`, `unverifiable` (the recorded
-file was not found, or could not be read: **never shown as zero**), or, for validation, `no
-validation inputs recorded`. `none` is not proof of no leakage: it speaks only about the inputs
-the checkpoint records.
+overlap, each `overlap` (with its count and denominator), `none`, `unverifiable` (**never shown
+as zero**), or, for validation, `no validation inputs recorded` (the checkpoint records its
+training inputs and has no validation entry at all: training ran no validation pass).
+`unverifiable` gives its scope's reason:
+
+- **not found**: no file looked at holds the recorded bytes. Measure again with
+  `--training-evidence` naming the directory that holds them;
+- **found, not readable**: the file that holds them was found and does not parse;
+- **not recorded by the checkpoint**: it names no file to look for in this scope, and its
+  record is not one the pipeline wrote: every training run records its training inputs as a
+  digest, so a record without one, or with an entry that is there and is not a digest, cannot
+  come from it. `--training-evidence` cannot help.
+
+`none` is not proof of no leakage: it speaks only about the inputs the checkpoint records.
+
+**What refuses the run instead of giving a label.** A `--training-evidence` directory that does
+not exist, is not a directory, or cannot be listed (permission, an I/O error on a network mount)
+is refused before any candidate is read: a directory that is not looked in would report the
+inputs as not found. A candidate that exists but cannot be read (permission, an I/O error)
+refuses the run, and nothing is written, because it may be the evidence; make it readable, or
+leave its directory out of `--training-evidence`. Candidates are read only until every recorded
+digest has been found, so an unreadable file after the match is never reached.
 
 **Where the report is kept.** In the registry, under the version:
 `<registry>/versions/<label>/reports/<UTC time>-<first 12 hex of the checkpoint digest>-<8 random
@@ -1251,34 +1287,56 @@ hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) an
 report is kept whether or not it is registered. `--output` is refused with `--cohort`.
 
 The console prints Mode C's metrics, the coverage (`N ranked of M source cases; K excluded`, with
-each category), the four R10 labels, the report's path and the run id.
+each category), the four R10 labels in the words the Diagnosis tab uses (an `unverifiable` label
+with its reason), the label definitions once, the report's path and the run id. The report itself
+keeps the states and holds no prose.
 
 ### Record
 
-- **`--record`** registers the report right after the run. **Without it**, the run prints the
-  command that registers it later:
+- **`--record`** registers the report right after the run. **Without it**, and when `--record`
+  is refused (exit 3), the run prints the command that registers it later, on one line, naming
+  the file it measured:
 
   ```bash
-  python scripts/record_evaluation.py \
-      --report <registry>/versions/<label>/reports/<run id>/report.json \
-      --checkpoint-dir data/workspaces/<ws>/runs/<arch>/<run>/checkpoints
+  python scripts/record_evaluation.py --report "<registry>/versions/<label>/reports/<run id>/report.json" --checkpoint "data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt"
   ```
 
-  `record_evaluation.py` requires a file in `--checkpoint-dir` whose bytes are the checkpoint the
-  report measured. Both ways go through the same function, so the record is the same.
-- **The ledger** is `evaluations.json` in the directory of the checkpoint's **resolved** path —
-  under the run layout `data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/evaluations.json`. A
+  The checkpoint is the file the run read, at its resolved path, so the command works whatever
+  the file is named. Each path is double-quoted, so a path with a space stays one argument in a
+  POSIX shell, cmd or PowerShell. A path holding `"`, `$`, a backtick, `%` or `!` is expanded by
+  one shell or another and has to be quoted by hand.
+- **`record_evaluation.py` names the checkpoint with exactly one of two arguments** (neither or
+  both is a rejected command line):
+  - `--checkpoint FILE`: that one file, under any name, must hold the bytes the report measured;
+  - `--checkpoint-dir DIR`: a `*.pt` file directly in DIR must hold them.
+
+  Otherwise nothing is written. `--record` and `record_evaluation.py` go through the same
+  function, so the record is the same.
+- **The ledger** is `evaluations.json` in the directory of the checkpoint's **resolved** path,
+  whichever way the report arrives: `--record`, `--checkpoint FILE`, or `--checkpoint-dir DIR`
+  (beside the matching file's resolved path, which is not DIR when that file is a link). Under the
+  run layout it is `data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/evaluations.json`. A
   symlinked checkpoint files its ledger beside the link's target, which is where the service
-  looks.
+  looks, so one set of weights never gets a second ledger beside a link. The measurement and the
+  service both read the checkpoint at its resolved path, so the directory is settled when the file
+  is read. A link retargeted during a run, or after a load without a reload, does not move where
+  that run's record is filed or where the loaded model's records are looked up. No directory is
+  created for a ledger.
 - **Outcomes:** registered (with its sequence number); already held (the same report again:
   nothing written); agrees with an existing record (the report's digest is added to that record's
-  corroborating reports). A report that contradicts a record with the same key — same checkpoint,
-  cohort version and measurement settings, different results — is refused, naming the fields
-  that differ. There is no override flag; a wrong record is corrected by editing the readable
-  JSON file, which leaves a diff.
-- **What is shown later:** `python scripts/record_evaluation.py --checkpoint-dir <dir> --show
-  <checkpoint sha256>`. An empty answer means this ledger holds no result for those weights, not
-  that they were never evaluated.
+  corroborating reports). R10 and the environment are not compared, because each is true of its
+  own report. When a corroborating report's R10 or environment differ from the record's (say, a
+  re-run with `--training-evidence` found evidence the first run did not), **the record keeps
+  its own values and is not updated**. The registration says so in one line, naming the report,
+  which keeps the later run's R10. A report that contradicts a record with the same key — same
+  checkpoint, cohort version and measurement settings, different results — is refused, naming
+  the fields that differ. There is no override flag; a wrong record is corrected by editing the
+  readable JSON file, which leaves a diff.
+- **What is shown later:** `python scripts/record_evaluation.py --checkpoint <file> --show
+  <checkpoint sha256>` reads the ledger the service reads for that file, beside its resolved
+  path. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
+  directory, which for a directory of links is not the one the service reads. An empty answer
+  means this ledger holds no result for those weights, not that they were never evaluated.
 - **One writer at a time.** A registration that finds the ledger changed since it read it is
   refused rather than overwriting; this is not a lock, so do not register into one directory from
   two places at once.
@@ -1290,11 +1348,12 @@ each category), the four R10 labels, the report's path and the run id.
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
 | `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run before anything was written; Python prints a traceback ending in the message (unchanged from before M4) | the command line was rejected, including an argument of the other kind of cohort | **measured and the report kept, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later |
-| `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected | — |
-| `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`) | — |
+| `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
+| `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
 A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,
-and whoever may write that directory registers it with `record_evaluation.py`.
+and whoever may write that directory registers it with the `record_evaluation.py` command the run
+printed.
 
 ### What the Diagnosis tab shows
 
@@ -1304,24 +1363,30 @@ The model status (Model Configuration), under its "Serving" line, adds **"Record
 digest, not its file name: after another model is loaded the previous model's results are never
 shown, and a checkpoint moved with its ledger and unchanged bytes still finds them.
 
-- Every record is introduced by **"Disease ranking by the model, approved scorer policy (Mode
-  C)."** and the note **"This is the model's own Mode C disease ranking. Until B-1 ships, the
-  Diagnosis tab ranks by the legacy GNN+SP mixture behind the path gate, so this number does not
-  describe the tab's current ranking."**
-- Per record: role · label; Mode C's metrics over the cases ranked (its MRR is labelled apart
-  from the trainer's "Val MRR" on the Checkpoint line); coverage (`ranked/source` with each
-  exclusion count); the relations checked (✓ or not applicable); the four R10 labels —
-  `unverifiable` and `no validation inputs recorded` are shown as words, **never as zero or a
-  number**; the environment class (CUDA with deterministic algorithms on or off, or CPU) and the
-  GPU; the dataset origin (a synthetic workspace is called out); the registration's sequence and
-  time and the number of corroborating reports.
+- The records are introduced once, above the first, by **"Disease ranking by the model,
+  approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease
+  ranking. Until B-1 ships, the Diagnosis tab ranks by the legacy GNN+SP mixture behind the path
+  gate, so this number does not describe the tab's current ranking."** The R10 label definitions
+  and the line on what was and was not checked follow the last record, once.
+- Per record: role · label with the version's manifest digest (`version sha256:<first 12>…`),
+  so two imports of one label, in a recreated or a second registry, read as two versions; Mode
+  C's metrics over the cases ranked (its MRR is labelled apart from the trainer's "Val MRR" on
+  the Checkpoint line); coverage (`ranked/source` with each exclusion count); the relations
+  checked (✓ or not applicable); the four R10 labels — `unverifiable` (with its scope's reason,
+  as the console gives it) and `no validation inputs recorded` are shown as words, **never as
+  zero or a number**; the environment class (CUDA with deterministic algorithms on or off, or
+  CPU) and the GPU; the dataset origin (a synthetic workspace is called out); the registration's
+  sequence and time and the number of corroborating reports.
 - Instead of records, a sentence: no ledger beside the loaded checkpoint; the ledger was not read,
-  with the reason (for example a schema 2 file, below); this ledger holds no result for these
-  weights; some records not shown because they do not have the shape registration writes; or "The
-  loaded model changed while its recorded results were read; refresh the page."
+  with the reason, which names the file and never its directory (for example a schema 2 file,
+  below); this ledger holds no result for these weights; some records not shown because they do
+  not have the shape registration writes; or "The loaded model changed while its recorded results
+  were read; refresh the page."
 - **The route** takes no parameters, reads the ledger beside the loaded checkpoint on every
-  request, writes nothing, and returns no path, case id or rank. It is mounted on its own router,
-  not the pipeline router, so a deployment that unmounts or protects the pipeline routes
+  request, writes nothing, and returns no path, case id or rank. "Beside" is the directory of the
+  checkpoint's resolved path as the pipeline read it at load, so a link retargeted since, without
+  a reload, does not move the lookup away from the served bytes' ledger. It is mounted on its
+  own router, not the pipeline router, so a deployment that unmounts or protects the pipeline routes
   (`docs/working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`, B2) keeps it.
 
 ### Behaviour changes (M4)
@@ -1338,14 +1403,19 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
   existing `--output` is still replaced.
 - **Ledger schema 3.** An existing `evaluations.json` of schema 1 or 2 is refused — by
   `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the model status, which
-  reports the ledger as not read. Nothing migrates it: **archive it by hand**, for example
-  `mv evaluations.json evaluations.v2.json`, read it with the revision that wrote it, and
-  re-measure what you need. A report written before M4 is refused too, with an instruction to
-  re-measure.
+  reports the ledger as not read. Nothing migrates it and its results are not carried over:
+  **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it with the
+  revision that wrote it, and re-measure what you need with this revision, then register the new
+  reports (the refusal says the same). A report written before M4 is refused too, with an
+  instruction to re-measure.
+- **`record_evaluation.py`** takes `--checkpoint FILE` or `--checkpoint-dir DIR`, exactly one.
+  With either, the ledger is written beside the checkpoint's resolved path. For a directory whose
+  checkpoint is a link, that is beside the link's target, no longer in the directory named.
 - **`scripts/audit_split_overlap.py`**: `--evaluation-cohort-kind` is removed; a test cohort is
-  audited with `--registry DIR --cohort LABEL` (and `--splits` beside it is refused). The version's
-  graph and dataset record digests are compared with those this workspace's manifest records,
-  without loading tensors; only `train` is read. The report's `schema_version` is 6.
+  audited with `--registry DIR --cohort LABEL`. `--registry` without `--cohort` (or the reverse),
+  and `--splits` beside `--cohort`, are rejected command lines (exit 2, with the usage line). The
+  version's graph and dataset record digests are compared with those this workspace's manifest
+  records, without loading tensors; only `train` is read. The report's `schema_version` is 6.
 
 ---
 

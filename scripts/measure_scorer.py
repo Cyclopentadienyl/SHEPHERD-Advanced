@@ -245,8 +245,11 @@ def read_measurement_inputs(
     The graph tensors load on CPU (`map_location="cpu"`, the shared reader's
     default and what this run passed before); `encode_full_graph` moves them.
     The checkpoint keeps this site's options: `map_location` the run's device,
-    `weights_only=True`. It is read after the workspace checks, so a refused
-    workspace reads no checkpoint, and its recorded graph roles are compared
+    `weights_only=True`. It is read at its resolved path, so the read's identity
+    is the file measured and `--record` files the ledger beside it (M4 decision
+    15) even if a link to it is retargeted during the run. It is read after the
+    workspace checks, so a refused workspace reads no checkpoint, and its
+    recorded graph roles are compared
     with `bound` (`verify_training_record`, contract M2.4): a checkpoint from
     before the contract, or from a same-shaped other graph, is refused here.
     """
@@ -293,7 +296,10 @@ def read_measurement_inputs(
     # it is not resident while the checkpoint is read.
     del checked
 
-    read = read_checkpoint(checkpoint, map_location=device, weights_only=True)
+    # **Read at its resolved path**, so the read's identity names the file whose
+    # bytes were measured, and `--record`'s ledger directory is fixed now: a link
+    # retargeted during the run cannot move this run's record beside other weights.
+    read = read_checkpoint(Path(checkpoint).resolve(), map_location=device, weights_only=True)
     # **The model scored must have been trained on this graph** (contract M2.4):
     # the checkpoint's recorded graph roles against `bound`, whose `kg` is the
     # manifest-bound source graph and whose tensor digests equal this run's
@@ -302,7 +308,7 @@ def read_measurement_inputs(
         read.checkpoint,
         bound,
         tuple(GRAPH_ARTIFACTS),
-        recorded_by=f"checkpoint {read.identity.path}",
+        recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
     r10 = None if version is None else _r10(read, samples, candidates)
@@ -366,13 +372,19 @@ def _read_version_samples(version: CohortVersionRead) -> SamplesRead:
     A mismatch or a missing file means the registry was altered after the
     import, since a committed version's files are never rewritten; either is
     refused naming both files.
+
+    **The samples read are the count the version records.** `cohort.json`'s
+    `samples.n` and `counts.ranked_eligible` become the report's and the ledger's
+    denominators, so they must be the number of samples this run read and will
+    rank; a `cohort.json` edited after the import, whose samples digest still
+    matches, is otherwise recorded with counts that describe no run.
     """
     from src.evaluation.cohort_registry import CohortVersionRefused
     from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
 
     bound = version.manifest["samples"]["sha256"]
     try:
-        return read_samples_file(version.samples_path, expected_sha256=bound)
+        samples = read_samples_file(version.samples_path, expected_sha256=bound)
     except SamplesDigestMismatch as exc:
         raise CohortVersionRefused(
             f"{version.samples_path} is not the samples {version.identity.path} binds "
@@ -385,6 +397,17 @@ def _read_version_samples(version: CohortVersionRead) -> SamplesRead:
             f"{version.samples_path} is missing, though {version.identity.path} binds it: "
             "the registry was altered after the import. Nothing was written."
         ) from None
+    n_read = len(samples.samples)
+    recorded_n = version.manifest["samples"]["n"]
+    ranked_eligible = version.manifest["counts"]["ranked_eligible"]
+    if not n_read == recorded_n == ranked_eligible:
+        raise CohortVersionRefused(
+            f"{version.samples_path} holds {n_read} samples, and {version.identity.path} "
+            f"records samples.n {recorded_n!r} and counts.ranked_eligible "
+            f"{ranked_eligible!r}: the registry was altered after the import, and its "
+            "counts would be recorded as this run's denominators. Nothing was written."
+        )
+    return samples
 
 
 def _verify_generated(
@@ -730,28 +753,51 @@ def _publish_to_store(result: ModeResult, inputs: MeasurementInputs) -> Tuple[st
     return run_id, report_path
 
 
+def register_later_command(report_path: Path, checkpoint: Path) -> str:
+    """The command that registers a kept report later, printed for the operator
+    to paste.
+
+    **`--checkpoint` names the file this run measured**: its read's path,
+    resolved when it was read. `record_evaluation.py` then hashes that one file
+    against the report, whatever its name (a directory is searched for `*.pt`
+    files only), and files the ledger beside it, where the service reads it.
+
+    **Each path is double-quoted**, so a path with a space (a Windows user
+    profile, "My Models") stays one argument whether the line is pasted into a
+    POSIX shell, cmd or PowerShell. `shlex.quote` would be right for POSIX
+    shells only: cmd does not understand its single quotes. Double quotes
+    protect ordinary paths; a path holding a double quote, `$`, a backtick, `%`
+    or `!` is expanded by one shell or another and has to be quoted by hand.
+    """
+    return (f'python scripts/record_evaluation.py --report "{report_path}" '
+            f'--checkpoint "{checkpoint}"')
+
+
 def _register(report_path: Path, inputs: MeasurementInputs) -> int:
     """`--record`: the kept report into the ledger beside the checkpoint read.
 
     Through `register_report`, the function `record_evaluation.py --report`
-    uses. The ledger's directory is the measurement's own checkpoint read's
-    (M4 decision 15), and the checkpoints there are not hashed again: this run
-    read those weights moments ago. A refusal keeps the report, names it and the
-    command that registers it later, and returns `EXIT_NOT_REGISTERED`.
+    uses. The ledger is beside the file this run's checkpoint read names, read
+    at its resolved path (M4 decision 15), and that file is not hashed again:
+    this run read those weights moments ago (``measured_read``). A refusal keeps
+    the report, names it and the command that registers it later, and returns
+    `EXIT_NOT_REGISTERED`.
     """
-    from src.evaluation.registration import RegistrationRefused, register_report
+    from src.evaluation.registration import (
+        RegistrationRefused,
+        corroboration_note,
+        register_report,
+    )
 
-    ledger_dir = Path(inputs.checkpoint.identity.path).resolve().parent
+    measured = Path(inputs.checkpoint.identity.path)
     try:
-        registered = register_report(report_path, ledger_dir=ledger_dir,
-                                     verify_checkpoint_beside=False)
+        registered = register_report(report_path, checkpoint=measured, measured_read=True)
     except RegistrationRefused as exc:
         print(
             f"\nNOT REGISTERED. {exc}\n"
             f"The measurement succeeded and its report is kept at {report_path}.\n"
             "Register it later with:\n"
-            f"  python scripts/record_evaluation.py --report {report_path} "
-            f"--checkpoint-dir {ledger_dir}",
+            f"  {register_later_command(report_path, measured)}",
             file=sys.stderr,
         )
         return EXIT_NOT_REGISTERED
@@ -763,15 +809,49 @@ def _register(report_path: Path, inputs: MeasurementInputs) -> int:
                          "its corroborating reports"),
     }[registered.outcome]
     print(f"\n{said} in {registered.ledger_path}")
+    note = corroboration_note(registered, report_path)
+    if note is not None:
+        print(note)
     return 0
+
+
+def _r10_label_text(label: str, value: Mapping[str, Any], evidence_state: str) -> str:
+    """One R10 label's state in the caveats' words, with its count and
+    denominator only where the state has one -- the words the Diagnosis panel
+    shows for the record.
+
+    **"unverifiable" and "no validation inputs recorded" are words, never a
+    number,** and an unverifiable label gives its scope's reason
+    (`R10_UNVERIFIABLE_REASON`): bytes not found, found and not readable, or a
+    checkpoint that names no such file, which no `--training-evidence` can help.
+    **"none" says it is not evidence about data outside the recorded inputs.**
+    The raw state stays in the report, which holds no prose.
+    """
+    from src.evaluation.caveats import R10_STATE_TEXT, R10_UNVERIFIABLE_REASON
+
+    state = value["state"]
+    words = R10_STATE_TEXT[state]
+    if state == "unverifiable":
+        words = R10_UNVERIFIABLE_REASON.get(evidence_state, words)
+    if state not in ("overlap", "none"):
+        return words
+    if label == "disease_overlap":
+        return (f"{words} — {value['k']} of {value['n']} distinct test diseases; "
+                f"{value['cases']} test cases with one of them")
+    return f"{words} — {value['k']} of {value['n']} test cases"
 
 
 def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run_id: str,
                               report_path: Path) -> None:
     """Which version, its coverage with every denominator, and R10's labels.
 
+    Each R10 label is shown in the caveats' words (`_r10_label_text`), then the
+    four label definitions once, as the Diagnosis panel shows them: the operator
+    reading the console is told what a phenotype-set overlap compares and what
+    "none" does not establish, without either being written into the report.
+
     Aggregates and paths on the operator's machine only; no case id."""
-    from src.evaluation.caveats import R10_LABEL_TEXT
+    from src.evaluation.caveats import R10_LABEL_TEXT, R10_STATE_TEXT
     from src.evaluation.r10 import R10_LABELS, R10_SCOPES
 
     block = inputs.cohort_version
@@ -789,14 +869,14 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
         problem = f" ({evidence['problem']})" if evidence["problem"] else ""
         print(f"  {scope} evidence: {evidence['state']}{where}{problem}")
         for label in R10_LABELS:
-            value = entry[label]
             name = R10_LABEL_TEXT[scope][label]["name"]
-            if value["k"] is None:
-                # No count for a label without evidence: never shown as a number.
-                print(f"    {name:34s} {value['state']}")
-                continue
-            cases = f", {value['cases']} cases" if value.get("cases") is not None else ""
-            print(f"    {name:34s} {value['state']}: {value['k']} of {value['n']}{cases}")
+            print(f"    {name:34s} {_r10_label_text(label, entry[label], evidence['state'])}")
+    print("\nR10 labels:")
+    for scope, _ in R10_SCOPES:
+        for label in R10_LABELS:
+            text = R10_LABEL_TEXT[scope][label]
+            print(f"  {text['name']}: {text['definition']}.")
+    print(f'  A "none" label: {R10_STATE_TEXT["none"]}.')
     print(f"\nReport: {report_path}\nRun id: {run_id}")
 
 
@@ -872,10 +952,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     _print_registered_summary(inputs, result, run_id, report_path)
     if args.record:
         return _register(report_path, inputs)
-    ledger_dir = Path(inputs.checkpoint.identity.path).resolve().parent
+    measured = Path(inputs.checkpoint.identity.path)
     print("\nNot registered (no --record). Register it with:\n"
-          f"  python scripts/record_evaluation.py --report {report_path} "
-          f"--checkpoint-dir {ledger_dir}\n")
+          f"  {register_later_command(report_path, measured)}\n")
     return 0
 
 

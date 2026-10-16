@@ -30,10 +30,12 @@ and *none* need the evidence found and parsed, and carry `k`. Two states carry
 leakage":
 - *unverifiable*: the recorded bytes were not found, or could not be parsed, or
   the record names no training file at all, so it is not one the pipeline wrote;
-- *no_validation_inputs_recorded*: the record names a training file and no
-  validation file, because training ran no validation pass. With neither file
-  recorded, validation is *unverifiable* instead: such a record cannot show that
-  training skipped validation.
+- *no_validation_inputs_recorded*: the record names a training file and has no
+  `val_samples` entry at all, because training ran no validation pass. With
+  neither file recorded, validation is *unverifiable* instead: such a record
+  cannot show that training skipped validation. So is a `val_samples` entry
+  that is there and is not a digest: it names validation inputs, which may be
+  the ones early stopping used, and no file can be looked for by it.
 
 `n` is the test cohort's own size and is always given.
 
@@ -55,7 +57,8 @@ the test keys it contains and released before the next candidate is read.
 
 **What the block holds.** Digests, counts, states, the path of each evidence
 file and, for an unreadable one, a problem that names what its bytes failed to
-parse as, never a row of them. The block is copied into the report and into the
+parse as, never a row of them; for a role recorded with a value that is not a
+digest, a problem naming the role and the value's kind, never the value. The block is copied into the report and into the
 ledger beside the checkpoint, and a checkpoint can sit inside the repository
 tree.
 
@@ -63,6 +66,8 @@ Module: src/evaluation/r10.py
 """
 from __future__ import annotations
 
+import fnmatch
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Tuple
@@ -106,6 +111,10 @@ R10_SCOPES: Tuple[Tuple[str, str], ...] = (
 #: The two labels of each scope, in the block's order.
 R10_LABELS: Tuple[str, ...] = ("disease_overlap", "phenotype_set_overlap")
 
+#: The role whose absence, beside a recorded training file, means training ran
+#: no validation pass.
+_VALIDATION_ROLE = dict(R10_SCOPES)["validation"]
+
 #: The measurement workspace's own candidates, looked at first.
 _WORKSPACE_CANDIDATES: Tuple[str, ...] = ("train_samples.json", "val_samples.json")
 #: What counts as a candidate inside an evidence directory (non-recursive).
@@ -131,6 +140,13 @@ def evidence_candidates(data_dir: Path, evidence_dirs: Sequence[Path]) -> List[P
     **An evidence directory that does not exist or is not a directory is
     refused,** before any directory is listed: the operator named it as a place
     to look, and skipping it would turn their mistake into "not found".
+
+    **So is one that cannot be listed** (permission, an I/O error on a network
+    mount), before any candidate is read. Each directory is listed with
+    `os.scandir` rather than `Path.glob`, which swallows the error and yields
+    nothing: the archive's files would become "not found" although none of them
+    was looked at, while one unreadable file inside a listable directory refuses
+    the run (`compute_r10`).
     """
     directories = [Path(directory) for directory in evidence_dirs]
     for directory in directories:
@@ -142,7 +158,7 @@ def evidence_candidates(data_dir: Path, evidence_dirs: Sequence[Path]) -> List[P
             )
     listed = [Path(data_dir) / name for name in _WORKSPACE_CANDIDATES]
     for directory in directories:
-        listed.extend(sorted(directory.glob(_EVIDENCE_PATTERN)))
+        listed.extend(directory / name for name in _evidence_names(directory))
     candidates: List[Path] = []
     seen = set()
     for path in listed:
@@ -155,6 +171,25 @@ def evidence_candidates(data_dir: Path, evidence_dirs: Sequence[Path]) -> List[P
     return candidates
 
 
+def _evidence_names(directory: Path) -> List[str]:
+    """The names in `directory` that match `_EVIDENCE_PATTERN`, sorted, or a
+    refusal naming the directory when it cannot be listed."""
+    try:
+        with os.scandir(directory) as entries:
+            names = [entry.name for entry in entries
+                     if fnmatch.fnmatchcase(entry.name, _EVIDENCE_PATTERN)]
+    except OSError as exc:
+        reason = exc.strerror or (f"errno {exc.errno}" if exc.errno is not None
+                                  else "no reason given")
+        raise ValueError(
+            f"Training evidence directory {directory} could not be listed "
+            f"({type(exc).__name__}: {reason}); nothing was read or written. A "
+            "directory that is not looked in would report the checkpoint's inputs as "
+            "not found; name one this process can list."
+        ) from exc
+    return sorted(names)
+
+
 def compute_r10(
     recorded: Optional[Mapping[str, Any]],
     test_samples: Sequence[DiagnosisSample],
@@ -164,8 +199,11 @@ def compute_r10(
 
     Args:
         recorded: the checkpoint's `training_input_digests`, as read (`None` when
-            it has none). A role whose value is not a non-empty string counts as
-            not recorded.
+            it has none). A role whose value is not a non-empty string names no
+            digest to look for: its evidence is `not_recorded`, with a problem
+            naming the role when the role is there at all. Only an absent
+            `val_samples` beside a recorded `train_samples` is *no validation
+            inputs recorded*; a malformed one leaves validation *unverifiable*.
         test_samples: the test cohort's samples, as Mode C reads them.
         candidates: the files to look at, from `evidence_candidates`.
 
@@ -200,8 +238,9 @@ def compute_r10(
     test_case_set = frozenset(test_cases)
 
     evidence: Dict[str, Dict[str, Any]] = {
-        scope: _evidence("not_recorded" if digest is None else "not_found")
-        for scope, digest in wanted.items()
+        scope: (_evidence("not_found") if wanted[scope] is not None
+                else _evidence("not_recorded", problem=_not_a_digest(record, role)))
+        for scope, role in R10_SCOPES
     }
     found: Dict[str, Tuple[FrozenSet[int], FrozenSet[_CaseKey]]] = {}
     examined = 0
@@ -236,7 +275,12 @@ def compute_r10(
             evidence[scope] = _evidence("found", path=str(identity.path))
             found[scope] = keys
 
-    train_recorded = wanted["training"] is not None
+    # Only an absent entry says training ran no validation pass. One that is
+    # there and is not a digest names validation inputs that cannot be looked
+    # for, and "none recorded" would say more than the record does.
+    no_validation_pass = (
+        wanted["training"] is not None and _VALIDATION_ROLE not in record
+    )
     block: Dict[str, Any] = {
         "definition_version": R10_DEFINITION_VERSION,
         "candidates_examined": examined,
@@ -244,7 +288,7 @@ def compute_r10(
     for scope, _ in R10_SCOPES:
         if scope in found:
             state = None  # each label's state is counted from the evidence
-        elif wanted[scope] is None and scope == "validation" and train_recorded:
+        elif scope == "validation" and no_validation_pass:
             state = "no_validation_inputs_recorded"
         else:
             state = "unverifiable"
@@ -260,6 +304,25 @@ def _recorded_digest(value: Any) -> Optional[str]:
     """The recorded digest, or `None` when the role is absent or not a non-empty
     string (the same test as `verify_training_record`'s `if not recorded`)."""
     return value if isinstance(value, str) and value else None
+
+
+def _not_a_digest(record: Mapping[str, Any], role: str) -> Optional[str]:
+    """The problem for a role that is recorded with a value that is not a
+    digest, or `None` when the role is absent. Names the role and the value's
+    kind, never the value: it is not one the pipeline writes."""
+    if role not in record:
+        return None
+    value = record[role]
+    if isinstance(value, str):
+        kind = "an empty string"
+    elif value is None:
+        kind = "null"
+    else:
+        kind = f"a value of type {type(value).__name__}"
+    return (
+        f"the checkpoint records {role} as {kind}, not a SHA-256 string, so no file "
+        "can be looked for by it; it is not a record the pipeline wrote"
+    )
 
 
 def _evidence(state: str, *, path: Optional[str] = None,

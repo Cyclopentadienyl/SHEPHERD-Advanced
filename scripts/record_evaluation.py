@@ -17,17 +17,28 @@ was, and re-asserting any of that here would let the ledger describe a run that
 did not happen. Only a registered cohort version's report is registered; a
 generated split's is refused.
 
-**The ledger has to be beside the weights.** `--checkpoint-dir` must hold a file
-whose bytes are the checkpoint the report measured; otherwise nothing is written.
+**The ledger has to be beside the weights.** Name the checkpoint with exactly one
+of `--checkpoint FILE`, which must hold the bytes the report measured (any file
+name), or `--checkpoint-dir DIR`, which must hold such a `*.pt` file; otherwise
+nothing is written. **The ledger is `evaluations.json` in the directory of that
+file's resolved path**, as for `measure_scorer.py --record` and the read-only
+view: a checkpoint reached through a link files its ledger beside the file the
+link names, which is where the service looks.
 
 Usage:
     python scripts/record_evaluation.py \\
         --report <registry>/versions/<label>/reports/<run>/report.json \\
+        --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt
+
+    python scripts/record_evaluation.py \\
+        --report <registry>/versions/<label>/reports/<run>/report.json \\
         --checkpoint-dir <workspace>/runs/<arch>/<run>/checkpoints
 
-    # what does this ledger hold for one set of weights?
+    # what does a ledger hold for one set of weights? With --checkpoint, the
+    # ledger the service reads for that file; with --checkpoint-dir, the one in
+    # that directory.
     python scripts/record_evaluation.py \\
-        --checkpoint-dir <workspace>/runs/<arch>/<run>/checkpoints \\
+        --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \\
         --show <checkpoint sha256>
 
 Every refusal exits non-zero with one message that says nothing was written.
@@ -48,7 +59,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.evaluation.caveats import RECORD_ABSENCE  # noqa: E402
-from src.evaluation.registration import RegistrationRefused, register_report  # noqa: E402
+from src.evaluation.registration import (  # noqa: E402
+    RegistrationRefused,
+    corroboration_note,
+    register_report,
+)
 from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -56,12 +71,20 @@ logger = logging.getLogger(__name__)
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Record or read evaluation results beside a checkpoint directory"
+        description="Record or read evaluation results in the ledger beside a checkpoint"
     )
-    parser.add_argument("--checkpoint-dir", type=Path, required=True,
-                        help=f"Directory holding the checkpoint, under the run layout "
-                             f"<workspace>/runs/<arch>/<run>/checkpoints. The ledger "
-                             f"is {LEDGER_FILENAME} inside it.")
+    where = parser.add_mutually_exclusive_group(required=True)
+    where.add_argument("--checkpoint", type=Path, default=None, metavar="FILE",
+                       help=f"The checkpoint file the report measured, under any name. "
+                            f"It must hold the report's checkpoint bytes. The ledger is "
+                            f"{LEDGER_FILENAME} in the directory of its resolved path, "
+                            f"where the service reads it.")
+    where.add_argument("--checkpoint-dir", type=Path, default=None, metavar="DIR",
+                       help=f"A directory holding the checkpoint as a *.pt file, under "
+                            f"the run layout <workspace>/runs/<arch>/<run>/checkpoints. "
+                            f"With --report, the ledger is {LEDGER_FILENAME} in the "
+                            f"directory of the matching file's resolved path; with "
+                            f"--show, the {LEDGER_FILENAME} inside DIR is read.")
     parser.add_argument("--report", type=Path, default=None,
                         help="A measurement report of a registered cohort version, as "
                              "scripts/measure_scorer.py keeps it in the registry's "
@@ -80,11 +103,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if (args.report is None) == (args.show is None):
         raise SystemExit("pass exactly one of --report and --show")
 
-    checkpoint_dir = args.checkpoint_dir.resolve()
-
     if args.show is not None:
         # The same single read a registration makes; nothing is written.
-        ledger_path = checkpoint_dir / LEDGER_FILENAME
+        if args.checkpoint is not None:
+            ledger_path = args.checkpoint.resolve().parent / LEDGER_FILENAME
+        else:
+            ledger_path = args.checkpoint_dir.resolve() / LEDGER_FILENAME
         try:
             ledger, _ = read_ledger(ledger_path)
         except (OSError, ValueError) as exc:
@@ -97,7 +121,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         result = register_report(
-            args.report, ledger_dir=checkpoint_dir, verify_checkpoint_beside=True,
+            args.report, checkpoint=args.checkpoint, checkpoint_dir=args.checkpoint_dir,
         )
     except RegistrationRefused as exc:
         raise SystemExit(str(exc)) from exc
@@ -113,6 +137,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.info("This report agrees with record %d (%s) in %s; its digest was added "
                     "to that record's corroborating reports.",
                     sequence, where, result.ledger_path)
+        note = corroboration_note(result, args.report)
+        if note is not None:
+            logger.info("%s", note)
     else:
         logger.info("Registered record %d (%s) -> %s", sequence, where, result.ledger_path)
     return 0

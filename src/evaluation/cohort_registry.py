@@ -28,7 +28,10 @@ naming the directory for the operator to remove. Nothing here deletes anything.
 **Patient-level data never enters the repository tree** (D7). The registry is a
 path the operator gives on the command line; it must be absolute, must already
 exist, and is refused when it resolves inside the repository. Nothing creates a
-registry root, and no request ever names one.
+registry root, and no request ever names one. Each directory below the root is
+resolved again right before content is written into it, or a version is read
+from it, and refused when a link takes it outside the registry or into the
+repository.
 
 **One mapping rule.** A phenotype maps when ``hpo:<term>`` is a phenotype node
 and a disease when ``mondo:<term>`` is a disease node -- serving's lookup -- and
@@ -74,8 +77,9 @@ if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord
 
 #: The repository this module is part of. A registry resolving inside it is
-#: refused (D7). Computed from this file, as `src/config/runtime_presets.py`
-#: does, and compared after `resolve()`, so a symlink into the tree is caught.
+#: refused (D7), and so is a directory below a registry that resolves inside it.
+#: Computed from this file, as `src/config/runtime_presets.py` does, and
+#: compared after `resolve()`, so a symlink into the tree is caught.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: The one source format this revision reads. Synthetic and owned by this
@@ -251,8 +255,17 @@ def validate_registry(path: Any) -> Path:
     **Existing,** because the operator creates the registry; a mistyped path
     must not become a new registry nobody chose.
 
-    Returns the resolved path, which every later step uses, so a link swapped
-    after this check cannot move what is written.
+    Returns the resolved path, which every later step joins onto, so the root
+    link swapped after this check cannot move what is written.
+
+    **This checks the root only.** Each directory below it that content is
+    written into (``sources/``, ``versions/``, ``versions/<label>/``, its
+    ``reports/`` and a run directory), and the version directory a reader
+    returns, is resolved again right before that use by `_registry_directory`,
+    which refuses one that a link takes outside the registry or into the
+    repository. Those checks run just before each write, not atomically with
+    it: a link swapped in the moment between is not caught. The registry is the
+    operator's, on the machine, and one writer at a time (D7).
     """
     if not isinstance(path, (str, os.PathLike)):
         raise RegistryRefused(f"the registry must be a path, got {path!r}")
@@ -278,6 +291,45 @@ def validate_registry(path: Any) -> Path:
             "cannot become a new registry."
         )
     return resolved
+
+
+def _registry_directory(path: Path, *, within: Optional[Path], done: str) -> Path:
+    """`path` resolved, or a refusal: a directory below the registry, checked
+    right before content is written into it or a version is read from it.
+
+    `validate_registry` checks the root, and joining plain names onto it does
+    not stay below it: a ``sources``, ``versions``, ``versions/<label>`` or
+    ``reports`` that is a link (made by hand, or kept by a copy of an older
+    registry) would carry the source bytes, the mapped samples and the
+    per-case ranks wherever it points, the repository included, while every
+    root check passed. So each such directory is resolved again and refused
+    when it resolves inside the repository (D7) or outside `within`, the
+    resolved directory it belongs under (the registry root, or a version
+    directory that was itself checked against the root); `within` is `None`
+    only for a directory whose own place is all there is to check.
+
+    Returns the resolved path, which the caller then writes through. `done`
+    says what was written before this refusal, so the operator's message is
+    true at every step.
+    """
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before Python 3.13
+        raise RegistryRefused(
+            f"{path} cannot be resolved ({type(exc).__name__}: {exc}). {done}"
+        ) from None
+    repo = REPO_ROOT.resolve()
+    if resolved == repo or repo in resolved.parents:
+        where = (f"inside the repository ({repo}). Patient-level data is never kept in the "
+                 "repository tree (D7)")
+    elif within is not None and resolved != within and within not in resolved.parents:
+        where = f"outside {within}, the directory it belongs under"
+    else:
+        return resolved
+    raise RegistryRefused(
+        f"{path} resolves to {resolved}, {where}: a link inside the registry would carry "
+        f"patient-level files there. Replace the link with a directory. {done}"
+    )
 
 
 def validate_label(label: Any) -> str:
@@ -360,15 +412,63 @@ def _unsupported_namespace(disease: Any) -> Optional[str]:
     return namespace if colon and namespace in UNSUPPORTED_DISEASE_NAMESPACES else None
 
 
+def _json_kind(value: Any) -> str:
+    """What a JSON value is, without the value itself."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, (int, float)):
+        return "a number"
+    if isinstance(value, str):
+        return "a string" if value else "an empty string"
+    if isinstance(value, list):
+        return "a list" if value else "an empty list"
+    if isinstance(value, dict):
+        return "an object"
+    return type(value).__name__
+
+
+def _not_an_id(value: Any, rule: str) -> str:
+    """How a refusal describes a phenotype term or disease that is not an id:
+    by its type, or the rule a string broke -- never by the value, which is a
+    patient's data (D7)."""
+    if isinstance(value, str) and value:
+        return f"is not {rule}"
+    return f"is {_json_kind(value)}, not {rule}"
+
+
+def _printable_text(value: str) -> bool:
+    """Printable and encodable as UTF-8: no control or format character, no
+    separator but the space, and no lone surrogate (which JSON's ``\\ud800``
+    escape makes). A case id is printed in the preview and kept as text in
+    the version; a newline in one could forge a line of the preview, and a lone
+    surrogate cannot be printed at all."""
+    if not value.isprintable():
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def parse_source(data: bytes, *, source: Any = "the source") -> List[SourceCase]:
     """Parse a `SOURCE_FORMAT` source strictly (§0.4).
 
     ``{"format": "shepherd-cases/1", "cases": [{"case_id", "phenotypes",
     "disease"}, ...]}`` with exactly these keys at both levels: `case_id` a
-    non-empty string, unique; `phenotypes` a non-empty list of ``HP:`` ids;
-    `disease` a ``MONDO:`` id. **Every problem is collected before refusing,**
-    so an operator fixes a file in one pass, not one error at a time. A disease
-    in `UNSUPPORTED_DISEASE_NAMESPACES` is not malformed and is counted apart.
+    non-empty string of printable text, unique; `phenotypes` a non-empty list
+    of ``HP:`` ids; `disease` a ``MONDO:`` id. **Every problem is collected
+    before refusing,** so an operator fixes a file in one pass, not one error
+    at a time. A disease in `UNSUPPORTED_DISEASE_NAMESPACES` is not malformed
+    and is counted apart.
+
+    **A problem names, never echoes, a case's data** (D7): each is located by
+    case index, case id, field and position, and says what type the value was
+    or which rule it broke. A refusal is printed, and may be kept in a console
+    log, so it never ties a phenotype list or a diagnosis to a case id. A case
+    id that is not printable text is shown escaped (`ascii`).
 
     `source` names the file in messages; `data` is the bytes of its one read.
 
@@ -412,14 +512,22 @@ def parse_source(data: bytes, *, source: Any = "the source") -> List[SourceCase]
             problems.append(f"{where} is not a JSON object ({type(case).__name__})")
             continue
         case_id = case.get("case_id")
-        if isinstance(case_id, str) and case_id:
+        case_id_ok = isinstance(case_id, str) and bool(case_id) and _printable_text(case_id)
+        if case_id_ok:
             where = f"cases[{index}] (case_id {case_id!r})"
             if case_id in first_index:
                 problems.append(f"{where}: case_id repeats cases[{first_index[case_id]}]")
             else:
                 first_index[case_id] = index
+        elif isinstance(case_id, str) and case_id:
+            problems.append(
+                f"{where}: case_id {ascii(case_id)} is not printable text (it holds a control "
+                "or format character, a separator other than the space, or a lone "
+                "surrogate); a case id is printed in the preview and kept as text"
+            )
         else:
-            problems.append(f"{where}: case_id must be a non-empty string, got {case_id!r}")
+            problems.append(f"{where}: case_id must be a non-empty string, got "
+                            f"{_json_kind(case_id)}")
         missing = sorted(_CASE_KEYS - set(case))
         extra = sorted(set(case) - _CASE_KEYS)
         if missing:
@@ -435,13 +543,12 @@ def parse_source(data: bytes, *, source: Any = "the source") -> List[SourceCase]
                 bad = [(position, term) for position, term in enumerate(phenotypes)
                        if not (isinstance(term, str) and _HPO_TERM.fullmatch(term))]
                 for position, term in bad:
-                    problems.append(f"{where}: phenotypes[{position}] {term!r} is not an HPO "
-                                    "id (HP: and seven digits)")
+                    problems.append(f"{where}: phenotypes[{position}] "
+                                    f"{_not_an_id(term, 'an HPO id (HP: and seven digits)')}")
                 phenotypes_ok = not bad
             else:
-                problems.append(
-                    f"{where}: phenotypes must be a non-empty list, got {phenotypes!r}"
-                )
+                problems.append(f"{where}: phenotypes must be a non-empty list, got "
+                                f"{_json_kind(phenotypes)}")
 
         disease = case.get("disease")
         disease_ok = isinstance(disease, str) and bool(_MONDO_TERM.fullmatch(disease))
@@ -450,10 +557,10 @@ def parse_source(data: bytes, *, source: Any = "the source") -> List[SourceCase]
             foreign[namespace] += 1
         elif "disease" in case and not disease_ok:
             problems.append(
-                f"{where}: disease {disease!r} is not a MONDO id (MONDO: and seven digits)"
+                f"{where}: disease {_not_an_id(disease, 'a MONDO id (MONDO: and seven digits)')}"
             )
 
-        if phenotypes_ok and disease_ok and isinstance(case_id, str) and case_id:
+        if phenotypes_ok and disease_ok and case_id_ok:
             result.append(SourceCase(case_id, tuple(phenotypes), disease))
 
     if problems:
@@ -734,16 +841,21 @@ def _utc(now: datetime, pattern: str) -> str:
     return now.astimezone(timezone.utc).strftime(pattern)
 
 
-def _keep_source(sources: Path, plan: ImportPlan) -> None:
-    """Keep the source bytes as ``sources/<sha256>.json``, never overwriting.
+def _keep_source(root: Path, plan: ImportPlan) -> Path:
+    """Keep the source bytes as ``sources/<sha256>.json``, never overwriting,
+    and return the resolved ``sources/`` directory.
 
-    A file already there must hash to its name -- the same source imported
-    before -- and is then left as it is. Anything else means the registry was
-    altered, and nothing is written over it.
+    ``sources/`` is resolved before anything is read from or written into it
+    (`_registry_directory`), then created when absent. A file already there
+    must hash to its name -- the same source imported before -- and is then
+    left as it is. Anything else means the registry was altered, and nothing is
+    written over it.
     """
     from src.utils.file_modes import publish_bytes
     from src.utils.fingerprint import read_once
 
+    sources = _registry_directory(root / SOURCES_DIR, within=root, done="Nothing was written.")
+    sources.mkdir(exist_ok=True)
     target = sources / f"{plan.source_sha256}.json"
     try:
         existing = read_once(target)
@@ -756,8 +868,9 @@ def _keep_source(sources: Path, plan: ImportPlan) -> None:
                 f"{existing.sha256[:12]}...). A kept source is never overwritten; "
                 "nothing was written. Investigate the registry before importing again."
             )
-        return
+        return sources
     publish_bytes(target, plan.source_bytes)
+    return sources
 
 
 def commit_import(
@@ -776,7 +889,11 @@ def commit_import(
     directory is claimed with ``mkdir(exist_ok=False)``, ``samples.json`` is
     published, and ``cohort.json`` -- the commit point -- last, with the
     ``imported`` block (when, and `code_revision(REPO_ROOT)`, both taken before
-    the first write). A failure after the claim leaves a directory without
+    the first write). ``sources/``, ``versions/`` and, after the claim, the
+    version directory are each resolved again before anything is written into
+    them, and refused when a link takes one outside the registry or into the
+    repository (`_registry_directory`); the refusal says what was already
+    written. A failure after the claim leaves a directory without
     ``cohort.json``, which every reader refuses as incomplete.
 
     `now` is the time recorded as ``imported.at``; the current time when omitted.
@@ -830,11 +947,13 @@ def commit_import(
     }
     manifest_bytes = encode_json(manifest)
 
-    sources = root / SOURCES_DIR
-    sources.mkdir(exist_ok=True)
-    _keep_source(sources, plan)
+    # Each directory is resolved again before it is written into: a link below
+    # the root would otherwise carry the files wherever it points (D7).
+    sources = _keep_source(root, plan)
+    kept = (f"Only the source copy was written (under {sources}, named by its digest, which "
+            "is harmless to keep).")
 
-    versions = root / VERSIONS_DIR
+    versions = _registry_directory(root / VERSIONS_DIR, within=root, done=kept)
     versions.mkdir(exist_ok=True)
     directory = versions / label
     try:
@@ -842,9 +961,14 @@ def commit_import(
     except FileExistsError:
         raise CohortVersionRefused(
             f"{directory} was created by another import while this one ran, so the label "
-            f"{label!r} is taken. Only the source copy was written (under {sources}, named "
-            "by its digest, which is harmless to keep)."
+            f"{label!r} is taken. {kept}"
         ) from None
+    directory = _registry_directory(
+        directory, within=root,
+        done=(f"Only the source copy (under {sources}) and the empty directory {directory}, "
+              "which claimed the label, were written; nothing was written into it. Every "
+              "reader refuses it as an interrupted import; remove it to reuse the label."),
+    )
 
     publish_bytes(directory / VERSION_SAMPLES, plan.samples_bytes)
     publish_bytes(directory / VERSION_MANIFEST, manifest_bytes)
@@ -854,10 +978,67 @@ def commit_import(
 # ---------------------------------------------------------------------------
 # Reading a version back
 # ---------------------------------------------------------------------------
+def _is_count(value: Any) -> bool:
+    """A whole number of at least 0, and not a boolean (`True` is an `int`)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _counts_problems(manifest: Dict[str, Any], samples_n: Any) -> List[str]:
+    """The counts a report and the ledger record as the version's denominators
+    (§2.3), present and consistent with each other and with the version.
+
+    A measurement copies ``counts`` into its report and the ledger as they
+    are, and prints coverage from them; so the keys must be there, and the
+    equalities the importer writes must still hold: ``ranked_eligible ==
+    samples.n``; ``source_cases == ranked_eligible + n_excluded ==
+    source.n_cases``; ``n_excluded == sum(excluded) == len(exclusions)``. A
+    manifest edited or damaged after the import is refused here, before
+    anything is measured or written, rather than recorded as coverage that
+    does not describe the cohort.
+    """
+    counts = manifest["counts"]
+    if not isinstance(counts, dict):
+        return ["counts must be an object"]
+    problems = [f"counts.{key} must be a whole number of at least 0"
+                for key in ("source_cases", "ranked_eligible", "n_excluded")
+                if not _is_count(counts.get(key))]
+    excluded = counts.get("excluded")
+    if not (isinstance(excluded, dict) and set(excluded) == set(EXCLUSION_CATEGORIES)
+            and all(_is_count(n) for n in excluded.values())):
+        problems.append(f"counts.excluded must hold a whole number of at least 0 for exactly "
+                        f"{list(EXCLUSION_CATEGORIES)}")
+    if problems:
+        return problems
+
+    source_cases, ranked = counts["source_cases"], counts["ranked_eligible"]
+    n_excluded = counts["n_excluded"]
+    if _is_count(samples_n) and ranked != samples_n:
+        problems.append(f"counts.ranked_eligible ({ranked}) is not samples.n ({samples_n})")
+    if source_cases != ranked + n_excluded:
+        problems.append(f"counts.source_cases ({source_cases}) is not ranked_eligible plus "
+                        f"n_excluded ({ranked} + {n_excluded})")
+    source = manifest["source"]
+    n_cases = source.get("n_cases") if isinstance(source, dict) else None
+    if not _is_count(n_cases):
+        problems.append("source must hold n_cases, a whole number of at least 0")
+    elif source_cases != n_cases:
+        problems.append(f"counts.source_cases ({source_cases}) is not source.n_cases "
+                        f"({n_cases})")
+    if n_excluded != sum(excluded.values()):
+        problems.append(f"counts.n_excluded ({n_excluded}) is not the sum of counts.excluded "
+                        f"({sum(excluded.values())})")
+    exclusions = manifest["exclusions"]
+    if isinstance(exclusions, list) and n_excluded != len(exclusions):
+        problems.append(f"counts.n_excluded ({n_excluded}) is not the number of exclusions "
+                        f"listed ({len(exclusions)})")
+    return problems
+
+
 def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     """What a reader relies on, beyond the field list: the four graph digests,
     the dataset record's digest, the samples' digest and count, the source's
-    digest, and a role that is still a role."""
+    digest, counts that are present and consistent (`_counts_problems`), and a
+    role that is still a role."""
     problems = [f"missing {name}" for name in REQUIRED_VERSION_FIELDS if name not in manifest]
     if problems:
         return problems
@@ -873,14 +1054,14 @@ def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
             problems.append(f"{block} must hold a sha256")
     samples = manifest["samples"]
     n = samples.get("n") if isinstance(samples, dict) else None
-    if not (isinstance(samples, dict) and is_sha(samples.get("sha256"))
-            and isinstance(n, int) and not isinstance(n, bool) and n >= 0):
+    if not (isinstance(samples, dict) and is_sha(samples.get("sha256")) and _is_count(n)):
         problems.append("samples must hold a sha256 and a count n")
-    for block in ("mapping", "counts", "unmappable_terms", "imported"):
+    for block in ("mapping", "unmappable_terms", "imported"):
         if not isinstance(manifest[block], dict):
             problems.append(f"{block} must be an object")
     if not isinstance(manifest["exclusions"], list):
         problems.append("exclusions must be a list")
+    problems += _counts_problems(manifest, n)
     try:
         validate_role(manifest["role"])
     except CohortVersionRefused as exc:
@@ -895,19 +1076,26 @@ def resolve_version(registry: Any, label: str) -> CohortVersionRead:
     Does not read ``samples.json``: its path is returned, and the caller reads
     it once, comparing the read's digest with ``manifest["samples"]["sha256"]``.
 
+    The version directory is resolved before anything is read from it, and the
+    resolved path is the one returned, so a caller writing reports under it
+    writes where this check looked (`_registry_directory`).
+
     Raises:
-        RegistryRefused: the registry path is refused (`validate_registry`).
+        RegistryRefused: the registry path is refused (`validate_registry`), or
+            the version directory resolves outside it or inside the repository.
         CohortVersionRefused: the label is invalid; there is no such version;
             the directory has no ``cohort.json`` (an interrupted import); the
             manifest cannot be read or parsed, is not an object, is not schema
             `VERSION_SCHEMA_VERSION`, names another label than its directory,
-            or lacks a required field.
+            lacks a required field, or holds counts that are missing or
+            contradict each other or the version (`_counts_problems`).
     """
     from src.utils.fingerprint import read_once
 
     root = validate_registry(registry)
     label = validate_label(label)
-    directory = root / VERSIONS_DIR / label
+    directory = _registry_directory(root / VERSIONS_DIR / label, within=root,
+                                    done="No version is read from there.")
     path = directory / VERSION_MANIFEST
     if not directory.is_dir():
         raise CohortVersionRefused(
@@ -951,7 +1139,7 @@ def resolve_version(registry: Any, label: str) -> CohortVersionRead:
     problems = _version_shape_problems(manifest)
     if problems:
         raise CohortVersionRefused(
-            f"{path} is not a complete version manifest: {'; '.join(problems)}."
+            f"{path} is not a complete, consistent version manifest: {'; '.join(problems)}."
         )
     return CohortVersionRead(manifest, identity, directory, directory / VERSION_SAMPLES)
 
@@ -1011,15 +1199,32 @@ def create_report_dir(
     by time, readable as which weights, and unique without a lock. ``reports/``
     is created when absent; the run directory is created with
     ``exist_ok=False``, so two runs never share one.
+
+    **Every directory is resolved before it is written into**
+    (`_registry_directory`): the version directory must not resolve inside the
+    repository, ``reports/`` must resolve inside the version directory, and the
+    run directory inside ``reports/``. `resolve_version` checked the version
+    directory against its registry, so the report lands inside the registry
+    and never in the repository, whatever links are below it. The resolved run
+    directory is returned, and the caller writes through it.
     """
     if not (isinstance(checkpoint_sha256, str) and _SHA256.fullmatch(checkpoint_sha256)):
         raise ValueError(f"{checkpoint_sha256!r} is not a SHA-256 hexdigest")
     run_id = (f"{_utc(now, '%Y%m%dT%H%M%SZ')}-{checkpoint_sha256[:12]}-"
               f"{secrets.token_hex(4)}")
-    reports = version.directory / REPORTS_DIR
+    # The resolved version directory is what reports/ must stay inside; one in
+    # the repository is refused here, naming it rather than its reports/.
+    directory = _registry_directory(version.directory, within=None,
+                                    done="Nothing was written.")
+    reports = _registry_directory(directory / REPORTS_DIR, within=directory,
+                                  done="Nothing was written.")
     reports.mkdir(parents=True, exist_ok=True)
     run_dir = reports / run_id
     run_dir.mkdir(exist_ok=False)
+    run_dir = _registry_directory(
+        run_dir, within=reports,
+        done=f"Only the empty run directory {run_dir} was created; nothing was written into it.",
+    )
     return run_id, run_dir
 
 

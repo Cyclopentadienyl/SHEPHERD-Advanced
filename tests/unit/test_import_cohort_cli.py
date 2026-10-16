@@ -10,8 +10,9 @@ The importer's command line: a preview that writes nothing, a commit that repeat
   directory and manifest digest;
 - every refusal exits non-zero with one message and no traceback, says nothing
   was written, and leaves the registry as it was;
-- no case's phenotypes or disease are printed: case ids and aggregate counts
-  only (D7).
+- no case's phenotypes or disease are printed, by the preview or by the refusal
+  of a malformed source: case ids and aggregate counts only (D7); and a case
+  id that is not printable text never reaches the console raw.
 
 Module: tests/unit/test_import_cohort_cli.py
 """
@@ -253,7 +254,8 @@ def _omim(tmp_path):
     (lambda reg, ws, src, tmp: {"registry": REPO_ROOT / "data" / "no-such-registry"},
      "inside the repository"),
     (lambda reg, ws, src, tmp: {"registry": tmp / "missing"}, "does not exist"),
-    (lambda reg, ws, src, tmp: {"source": _malformed(tmp)}, "phenotypes[0] 'HP:1'"),
+    (lambda reg, ws, src, tmp: {"source": _malformed(tmp)},
+     "cases[0] (case_id 'c1'): phenotypes[0] is not an HPO id"),
     (lambda reg, ws, src, tmp: {"source": _omim(tmp)}, "OMIM: 1"),
     (lambda reg, ws, src, tmp: {"source": tmp / "absent.json"}, "No such file"),
     (lambda reg, ws, src, tmp: {"role": "train"}, "generator's own split names"),
@@ -291,3 +293,70 @@ def test_a_source_nothing_of_which_maps_previews_but_offers_no_commit(workspace,
     _assert_one_refusal(captured.err)
     assert "nothing to commit" in captured.err
     assert list(registry.iterdir()) == []
+
+
+def test_a_malformed_source_is_refused_without_printing_its_case_data(workspace, registry,
+                                                                      tmp_path, capsys):
+    """D7 holds for a refusal too: every problem is located by case index, case
+    id, field and position, and no phenotype list, term or disease string is
+    printed beside a case id."""
+    data_dir, _ = workspace
+    values = ["HP:0001250;HP:0001263;HP:0004322", "HP:1234", "MONDO 0011073 (Dravet)",
+              "Dravet syndrome"]
+    source = write_source(tmp_path / "bad.json", [
+        {"case_id": "pt-0042", "phenotypes": values[0], "disease": "MONDO:0011073"},
+        {"case_id": "pt-0043", "phenotypes": ["HP:0001250", values[1]], "disease": values[2]},
+        {"case_id": "pt-0044", "phenotypes": ["HP:0001250"], "disease": values[3]},
+    ])
+    assert import_cohort.main(_args(registry, data_dir, source)) == 1
+    captured = capsys.readouterr()
+    _assert_one_refusal(captured.err)
+    printed = captured.out + captured.err
+    assert [value for value in values if value in printed] == []
+    assert "cases[0] (case_id 'pt-0042'): phenotypes must be a non-empty list, got a string" \
+        in captured.err
+    assert "cases[1] (case_id 'pt-0043'): phenotypes[1] is not an HPO id" in captured.err
+    assert "cases[1] (case_id 'pt-0043'): disease is not a MONDO id" in captured.err
+    assert "cases[2] (case_id 'pt-0044'): disease is not a MONDO id" in captured.err
+    assert "Nothing was written" in captured.err
+    assert list(registry.iterdir()) == []
+
+
+@pytest.mark.parametrize("case_id", ["\ud800x", "c9\n  excluded          0 of 13"])
+def test_a_case_id_that_is_not_printable_text_is_refused_not_previewed(
+        case_id, workspace, registry, tmp_path, capsys):
+    """An excluded case whose id is a lone surrogate ended the preview in a
+    traceback; one with a newline forged a line of it. Both are refused, as one
+    message with the id escaped."""
+    data_dir, source = workspace
+    cases = json.loads(source.read_text())["cases"]
+    cases[-1]["case_id"] = case_id  # case-13, excluded
+    bad = tmp_path / "bad.json"
+    bad.write_bytes(json.dumps({"format": "shepherd-cases/1", "cases": cases}).encode("ascii"))
+    assert import_cohort.main(_args(registry, data_dir, bad)) == 1
+    captured = capsys.readouterr()
+    _assert_one_refusal(captured.err)
+    assert f"case_id {ascii(case_id)} is not printable text" in captured.err
+    assert captured.out == ""
+    assert list(registry.iterdir()) == []
+
+
+def test_the_preview_prints_a_case_id_escaped_unless_it_is_printable_ascii(
+        workspace, registry):
+    """The second line behind `parse_source`: whatever id reaches the preview,
+    it cannot forge a line or fail to encode."""
+    from src.evaluation.cohort_registry import prepare_import
+
+    data_dir, source = workspace
+    plan = prepare_import(registry, data_dir, source, "v1", "demo", "keep")
+    forged = "c9\n  excluded          0 of 13"
+    exclusions = [{**entry, "case_id": case_id} for entry, case_id in
+                  zip(plan.manifest["exclusions"], [forged, "\ud800x", "paciente-\u00f1"])]
+    lines = import_cohort.format_preview(plan._replace(
+        manifest={**plan.manifest, "exclusions": exclusions}))
+    text = "\n".join(lines)
+    text.encode("ascii")  # nothing a console could fail to encode
+    assert len(text.splitlines()) == len(lines)
+    assert f"      {ascii(forged)}: " in text
+    assert "      '\\ud800x': " in text
+    assert "      'paciente-\\xf1': " in text

@@ -16,6 +16,10 @@ phase 1 step 2). What is pinned here:
     interleaving that erased a record (writer A reads, writer B appends, A
     writes) is refused by the stale-write guard. The guard is a path hash at
     write time and its window stays open: this is not compare-and-swap;
+  - **where the ledger is**: beside the checkpoint file's resolved path,
+    whether the caller names the file (`--checkpoint`, any name), a directory
+    searched by digest (`--checkpoint-dir`) or the measurement's own read; a
+    linked checkpoint files beside the file the link names;
   - **the CLI**: the checkpoint must be beside the ledger, every refusal exits
     non-zero with one message and no traceback, and `--show` reads the ledger
     once;
@@ -40,11 +44,13 @@ import pytest
 from src.evaluation.registration import (
     RegistrationRefused,
     RegistrationResult,
+    corroboration_note,
     register_report,
 )
 from src.evaluation.sidecar import empty_ledger, read_ledger, write_ledger
 from tests.unit.test_evaluation_sidecar import (
     generated_report,
+    r10_block,
     registered_manifest,
     registered_report,
 )
@@ -78,10 +84,16 @@ def _report(tmp_path, name="report.json", **overrides) -> Path:
     return path
 
 
-def _register(report_path, ledger_dir, **kwargs) -> RegistrationResult:
-    kwargs.setdefault("verify_checkpoint_beside", False)
+def _register(report_path, ledger_dir, *, beside=False, **kwargs) -> RegistrationResult:
+    """Through the one registration function: as `--record` registers -- the
+    file the run read, `ledger_dir/best.pt`, not hashed again -- or, with
+    `beside`, as `record_evaluation --checkpoint-dir` does, searching the
+    directory by the report's digest."""
     kwargs.setdefault("registered_at", WHEN)
-    return register_report(report_path, ledger_dir=ledger_dir, **kwargs)
+    if beside:
+        return register_report(report_path, checkpoint_dir=ledger_dir, **kwargs)
+    return register_report(report_path, checkpoint=Path(ledger_dir) / "best.pt",
+                           measured_read=True, **kwargs)
 
 
 def _listing(directory: Path):
@@ -107,8 +119,8 @@ def test_a_report_is_registered_and_the_record_returned(tmp_path, checkpoints):
 def test_the_time_of_registration_is_now_unless_given(tmp_path, checkpoints):
     from datetime import datetime, timezone
 
-    result = register_report(_report(tmp_path), ledger_dir=checkpoints,
-                             verify_checkpoint_beside=False)
+    result = register_report(_report(tmp_path), checkpoint=checkpoints / "best.pt",
+                             measured_read=True)
 
     when = datetime.strptime(result.record["registration"]["registered_at"],
                              "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -155,8 +167,61 @@ def test_another_report_with_the_same_result_corroborates(tmp_path, checkpoints)
     assert result.outcome == "corroborated"
     assert result.record["source_artifact_digest"] == first.record["source_artifact_digest"]
     assert result.record["corroborating_reports"] == [_sha(other)]
+    assert result.excluded_differences == ("environment",)
+    assert result.record["environment"] == first.record["environment"], "the record keeps its own"
     ledger, _ = read_ledger(result.ledger_path)
     assert len(ledger["records"]) == 1
+
+
+def test_a_corroboration_says_which_uncompared_fields_this_report_measured_differently(
+    tmp_path, checkpoints
+):
+    """Finding 3: a re-run that found the training evidence the first did not
+    (and ran under another driver) corroborates, and the record keeps its own
+    R10 and environment -- so the result names both fields, and the one note
+    both entry points print says the record kept its own values and names the
+    report holding this run's. A re-run that agrees on them too has nothing to
+    say."""
+    report = _report(tmp_path)
+    first = _register(report, checkpoints)
+    same = _register(_report(tmp_path, "same.json", data_dir="/elsewhere"), checkpoints)
+    environment = registered_manifest()["environment"]
+    environment["facts"]["gpu"]["driver"] = "999.0"
+    other = _report(tmp_path, "found.json", data_dir="/again",
+                    r10=r10_block(training_state="overlap"), environment=environment)
+
+    result = _register(other, checkpoints)
+
+    assert same.outcome == result.outcome == "corroborated"
+    assert same.excluded_differences == ()
+    assert result.excluded_differences == ("r10", "environment")
+    assert result.record["r10"] == first.record["r10"], "the record keeps its own labels"
+    assert corroboration_note(result, other) == (
+        "This report's r10 and environment differ from record 1's; they are not "
+        f"compared, so the record keeps its own and this report's are in {other}.")
+    assert corroboration_note(same, tmp_path / "same.json") is None
+    assert corroboration_note(first, report) is None
+
+
+def test_the_cli_prints_the_note_when_a_corroborating_report_found_other_r10(
+    tmp_path, checkpoints, caplog
+):
+    import logging
+
+    import scripts.record_evaluation as record_evaluation
+
+    _register(_report(tmp_path), checkpoints)
+    other = _report(tmp_path, "found.json", data_dir="/again",
+                    r10=r10_block(training_state="overlap"))
+
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                                       "--report", str(other)]) == 0
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("This report agrees with record 1") for m in said)
+    assert (f"This report's r10 differ from record 1's; they are not compared, so the "
+            f"record keeps its own and this report's are in {other}.") in said
 
 
 def test_a_contradiction_is_refused_naming_what_differs_and_the_ledger_stays(
@@ -252,7 +317,7 @@ def test_a_report_of_other_weights_is_refused_when_they_must_be_beside(tmp_path,
     (checkpoints / "best.pt").write_bytes(b"other weights")
 
     with pytest.raises(RegistrationRefused, match="holds no checkpoint whose bytes"):
-        _register(_report(tmp_path), checkpoints, verify_checkpoint_beside=True)
+        _register(_report(tmp_path), checkpoints, beside=True)
     assert not (checkpoints / "evaluations.json").exists()
 
 
@@ -266,6 +331,7 @@ def test_the_measurements_own_registration_does_not_rehash_the_directory(
         raise AssertionError("the checkpoints were hashed again")
 
     monkeypatch.setattr(registration, "find_checkpoint", forbidden)
+    monkeypatch.setattr(registration, "checkpoint_matches", forbidden)
 
     assert _register(_report(tmp_path), checkpoints).outcome == "registered"
 
@@ -448,6 +514,125 @@ def test_duplicate_checkpoint_bytes_are_acceptable(tmp_path, checkpoints):
     assert record_evaluation.main(["--checkpoint-dir", str(checkpoints),
                                    "--report", str(_report(tmp_path))]) == 0
     assert (checkpoints / "evaluations.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Where the ledger is: beside the checkpoint file's resolved path (decision 15)
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def linked(tmp_path, checkpoints):
+    """`served/best.pt`, a link to the run's checkpoint, in a directory that
+    holds no real weights: a deployment's view of them."""
+    served = tmp_path / "served"
+    served.mkdir()
+    (served / "best.pt").symlink_to(checkpoints / "best.pt")
+    return served
+
+
+@pytest.mark.parametrize("named", ["checkpoint_dir", "checkpoint", "measured_read"])
+def test_a_linked_checkpoint_files_its_ledger_beside_the_file_the_link_names(
+    tmp_path, checkpoints, linked, named
+):
+    """Findings 0/2/13/24/25: whether the link's directory, the link, or a
+    measurement's read of it is named, the ledger is the one the read-only view
+    reads for a model served through the link -- the directory of its resolved
+    path -- never a second ledger beside the link."""
+    where = {"checkpoint_dir": {"checkpoint_dir": linked},
+             "checkpoint": {"checkpoint": linked / "best.pt"},
+             "measured_read": {"checkpoint": linked / "best.pt", "measured_read": True}}[named]
+
+    result = register_report(_report(tmp_path), registered_at=WHEN, **where)
+
+    assert result.outcome == "registered"
+    assert result.ledger_path == checkpoints.resolve() / "evaluations.json"
+    assert result.ledger_path.is_file()
+    assert not (linked / "evaluations.json").exists()
+
+
+@pytest.mark.parametrize("flag", ["--checkpoint-dir", "--checkpoint"])
+def test_the_cli_files_a_linked_checkpoints_ledger_beside_its_target(
+    tmp_path, checkpoints, linked, capsys, flag
+):
+    """The same through the CLI, and `--show --checkpoint <link>` reads that
+    ledger, the one the service reads for the link."""
+    import scripts.record_evaluation as record_evaluation
+
+    named = linked if flag == "--checkpoint-dir" else linked / "best.pt"
+    assert record_evaluation.main([flag, str(named), "--report", str(_report(tmp_path))]) == 0
+
+    assert (checkpoints / "evaluations.json").is_file()
+    assert not (linked / "evaluations.json").exists()
+    capsys.readouterr()
+    assert record_evaluation.main(["--checkpoint", str(linked / "best.pt"),
+                                   "--show", DIGEST]) == 0
+    assert len(json.loads(capsys.readouterr().out)) == 1
+
+
+def test_the_cli_registers_against_a_named_file_whatever_its_name(tmp_path, checkpoints):
+    """Finding 14: `--checkpoint` hashes that one file against the report, so a
+    checkpoint not named `*.pt` -- which a directory search does not consider --
+    is registered, beside itself."""
+    import scripts.record_evaluation as record_evaluation
+
+    renamed = checkpoints / "best.ckpt"
+    (checkpoints / "best.pt").rename(renamed)
+    report = _report(tmp_path)
+    with pytest.raises(SystemExit, match="holds no checkpoint whose bytes"):
+        record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--report", str(report)])
+
+    assert record_evaluation.main(["--checkpoint", str(renamed), "--report", str(report)]) == 0
+
+    ledger, _ = read_ledger(checkpoints / "evaluations.json")
+    assert [r["source_artifact_digest"] for r in ledger["records"]] == [_sha(report)]
+
+
+@pytest.mark.parametrize("case", ["other-weights", "missing", "a-directory"])
+def test_the_cli_refuses_a_named_file_that_is_not_the_reports_checkpoint(
+    tmp_path, checkpoints, case
+):
+    """A ledger beside other weights is a record filed under the wrong address:
+    the named file must hold the report's checkpoint bytes, and nothing is
+    written otherwise."""
+    import scripts.record_evaluation as record_evaluation
+
+    named = checkpoints / {"other-weights": "other.pt", "missing": "absent.pt",
+                           "a-directory": "sub"}[case]
+    if case == "other-weights":
+        named.write_bytes(b"other weights")
+    elif case == "a-directory":
+        named.mkdir()
+    fragment = {"other-weights": "does not hold the weights", "missing": "does not exist",
+                "a-directory": "is not a file"}[case]
+
+    with pytest.raises(SystemExit, match=fragment) as refused:
+        record_evaluation.main(["--checkpoint", str(named), "--report", str(_report(tmp_path))])
+
+    assert str(refused.value.code).endswith(
+        f"Nothing was written to {checkpoints.resolve() / 'evaluations.json'}.")
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_call_naming_neither_or_both_places_is_a_callers_error(tmp_path, checkpoints):
+    """Exactly one of the checkpoint file and the directory names where the
+    ledger goes, and a directory is always searched by hashing."""
+    report = _report(tmp_path)
+    with pytest.raises(TypeError, match="exactly one"):
+        register_report(report)
+    with pytest.raises(TypeError, match="exactly one"):
+        register_report(report, checkpoint=checkpoints / "best.pt", checkpoint_dir=checkpoints)
+    with pytest.raises(TypeError, match="measured_read applies to checkpoint= only"):
+        register_report(report, checkpoint_dir=checkpoints, measured_read=True)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+@pytest.mark.parametrize("where", [[], ["--checkpoint", "x.pt", "--checkpoint-dir", "."]],
+                         ids=["neither", "both"])
+def test_the_cli_needs_exactly_one_of_checkpoint_and_checkpoint_dir(tmp_path, where):
+    import scripts.record_evaluation as record_evaluation
+
+    with pytest.raises(SystemExit) as refused:
+        record_evaluation.main([*where, "--show", DIGEST])
+    assert refused.value.code == 2
 
 
 def test_the_cli_records_and_then_reads_back(tmp_path, checkpoints, capsys):

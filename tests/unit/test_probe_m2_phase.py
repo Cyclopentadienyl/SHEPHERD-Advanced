@@ -390,6 +390,53 @@ def test_a_registry_inside_the_repository_fails_the_import_in_the_probe_s_words(
     assert not registry.exists()
 
 
+def test_a_relative_work_dir_outside_the_repository_reaches_the_importer_absolute(
+    tmp_path, monkeypatch
+):
+    """A --work-dir given relative but outside the repository (`../m4-acceptance/
+    work` from the checkout) is resolved in `main`, so what the phases derive from
+    it is absolute -- M4's registry included, which the importer refuses as a
+    relative path. Without that, T1 and RT1 failed after the training runs had
+    been spent, and the report named no cause. Through `main`, on the CPU: the
+    phases before T1 are stood in for, the workspace is written under the work
+    directory where phase B writes it, and T1's import runs through
+    `_import_version` on the registry path phase_m2_demo derives."""
+    from tests.fixtures.registered_cohort import write_demo_workspace
+
+    probe = _probe()
+    monkeypatch.chdir(tmp_path)                 # outside the repository
+    given = Path("acceptance") / "work"
+    seen = {}
+
+    def writer(report, work):
+        seen["work"] = work
+        return write_demo_workspace(work / "sound_workspace")
+
+    def t1_import(report, work, sound, checkpoint, device):
+        m4_dir = (work / "m2").parent / "m4"   # phase_m2_demo's derivation
+        registry = m4_dir / "registry"
+        registry.mkdir(parents=True)
+        source = probe._write_cohort_source(m4_dir / "cases.json", probe._m4_demo_cases(sound))
+        seen["version"], _ = probe._import_version(registry, sound, source,
+                                                   probe.M4_DEMO_LABEL)
+
+    monkeypatch.setattr(probe, "phase_environment",
+                        lambda report, device, **kwargs: {"resolved_device": "cuda"})
+    monkeypatch.setattr(probe, "phase_writer", writer)
+    monkeypatch.setattr(probe, "phase_workspace", lambda *args: None)
+    monkeypatch.setattr(probe, "phase_training", lambda *args: Path("not-trained.pt"))
+    monkeypatch.setattr(probe, "phase_serving", lambda *args: None)
+    monkeypatch.setattr(probe, "phase_m2_demo", t1_import)
+
+    # Incomplete, as it must be: only T1's import ran.
+    assert probe.main(["--work-dir", str(given), "--m2-acceptance", "--device", "cuda"]) == 1
+
+    assert seen["work"] == tmp_path.resolve() / given
+    assert seen["version"].manifest["counts"]["ranked_eligible"] > 0
+    assert (given / "m4" / "registry" / "versions" / probe.M4_DEMO_LABEL).is_dir()
+    assert (given / "probe_report.json").is_file()
+
+
 def test_a_preview_that_writes_or_prints_no_id_is_caught(tmp_path, monkeypatch):
     """`_import_version`'s two checks fire: a preview that left something in the
     registry, and a preview that printed no id."""

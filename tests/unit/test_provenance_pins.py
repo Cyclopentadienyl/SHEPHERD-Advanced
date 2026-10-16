@@ -107,9 +107,11 @@ ALLOWED = {
         (1, "S9 allowlist: the SP producer's end-of-run comparison, a warning that records "
             "nothing; the sidecar records the digest of the bytes traversed"),
     # --- The evaluation ledger and registration (BACKLOG 18 done in M4) ------
-    ("src/evaluation/sidecar.py", "find_checkpoint", "file_sha256"):
+    ("src/evaluation/sidecar.py", "checkpoint_matches", "file_sha256"):
         (1, "BACKLOG 19.7: identifies a checkpoint nobody is about to parse (M2.1's own "
-            "allowance for file_sha256)"),
+            "allowance for file_sha256); the one comparison find_checkpoint makes for each "
+            "candidate and register_report for the file record_evaluation --checkpoint "
+            "names; records nothing"),
     ("src/evaluation/sidecar.py", "ledger_digest", "file_sha256"):
         (1, "the ledger's stale-write guard: compares the file by path at write time with "
             "the digest read_ledger returned for the bytes it parsed (BACKLOG item 18 done); "

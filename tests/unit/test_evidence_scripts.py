@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -358,16 +359,21 @@ def test_an_empty_cohort_version_is_refused_rather_than_reported_as_no_overlap(
     zero overlap would be cited later as "no contamination".
 
     The importer never commits such a version, so this one is forged
-    consistently: `samples.json` is an empty list and `cohort.json` binds it.
-    An emptied *generated* split fails the manifest binding first, because the
-    file no longer hashes to what the manifest records — a stricter and earlier
-    refusal for the same workspace.
+    consistently: `samples.json` is an empty list, `cohort.json` binds it, and
+    its counts say what the importer would for a source whose every case was
+    excluded (the version reader refuses counts that disagree with the
+    samples). An emptied *generated* split fails the manifest binding first,
+    because the file no longer hashes to what the manifest records — a stricter
+    and earlier refusal for the same workspace.
     """
     data_dir, registry = _copy(registered, tmp_path)
     (_version_dir(registry) / "samples.json").write_bytes(b"[]")
 
     def empty(manifest):
         manifest["samples"] = {"sha256": hashlib.sha256(b"[]").hexdigest(), "n": 0}
+        counts = manifest["counts"]
+        counts["ranked_eligible"] = 0
+        counts["source_cases"] = manifest["source"]["n_cases"] = counts["n_excluded"]
 
     _edit_version(registry, empty)
     out = tmp_path / "m4.json"
@@ -450,23 +456,35 @@ def test_a_version_without_its_samples_file_is_refused(registered, tmp_path):
 
 
 @pytest.mark.parametrize("given", ["--registry", "--cohort"])
-def test_registry_and_cohort_are_given_together(registered, tmp_path, given):
+def test_registry_and_cohort_are_given_together(registered, tmp_path, given, capsys):
+    """An incomplete command line, not a refused workspace: exit 2 with the usage
+    line, as the guide's exit-code table and measure_scorer have it."""
     value = {"--registry": str(registered.registry), "--cohort": "demo-test-1"}[given]
     out = tmp_path / "m4.json"
 
-    with pytest.raises(SystemExit, match="go together.*Nothing was written"):
+    with pytest.raises(SystemExit) as refused:
         _run("audit_split_overlap", ["--data-dir", str(registered.data_dir),
                                      "--output", str(out), given, value])
+
+    assert refused.value.code == 2
+    err = capsys.readouterr().err
+    assert err.startswith("usage:")
+    assert re.search(r"go together.*Nothing was written", err, re.DOTALL)
     assert not out.exists()
 
 
-def test_splits_are_refused_beside_a_cohort(registered, tmp_path):
+def test_splits_are_refused_beside_a_cohort(registered, tmp_path, capsys):
     """--splits names two generated splits; beside --cohort one of them would be
-    silently ignored."""
+    silently ignored. Exit 2: the command line alone is wrong."""
     out = tmp_path / "m4.json"
 
-    with pytest.raises(SystemExit, match="Pass one or the other"):
+    with pytest.raises(SystemExit) as refused:
         _registered(registered, out, "--splits", "train", "val")
+
+    assert refused.value.code == 2
+    err = capsys.readouterr().err
+    assert err.startswith("usage:")
+    assert "Pass one or the other" in err
     assert not out.exists()
 
 

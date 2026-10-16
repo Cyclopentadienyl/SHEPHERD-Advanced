@@ -23,11 +23,22 @@ with a plausible value.
 the read-only view and D4's comparison need: the key, the scoring semantics and
 the numerical regime, the cohort version's identity and aggregate counts, the
 metrics, the relation states, R10 and the environment. The full report stays the
-source: the record names it by digest, and the rest of the manifest (the run's
-paths among it), the rank file and anything at case level stay there. **No prose is stored in a record:** a
-wording change between revisions would make an identical re-registration look
-like a contradiction, so the surfaces render the standing text from
-`src/evaluation/caveats.py` instead.
+source: the record names it by digest, and the rest of the manifest, the rank
+file and anything at case level stay there.
+
+- **No run paths.** The manifest's `checkpoint_path` and `data_dir` stay in the
+  report: they say where one run happened to find its files, and a checkpoint
+  measured again from another place is the same measurement.
+- **R10's evidence paths are kept.** The `r10` block is copied as the report
+  has it (`src/evaluation/r10.py`), so each scope's `evidence.path` -- the file
+  on the measuring machine whose bytes the checkpoint records, when one was
+  found -- is in the record. The read-only view strips it
+  (`src/api/routes/evaluations.py`); `record_evaluation.py --show` prints the
+  record as it is, on the operator's machine.
+- **No case ids.** The cohort block is aggregates only (`COHORT_VERSION_FIELDS`).
+- **No prose.** A wording change between revisions would make an identical
+  re-registration look like a contradiction, so the surfaces render the
+  standing text from `src/evaluation/caveats.py` instead.
 
 **Not a registry, and deliberately not becoming one.** No parent/child graph, no
 lineage walk, no cross-file joins. The registration sequence orders the records
@@ -311,6 +322,14 @@ RECORD_EXCLUDED_FIELDS: Dict[str, str] = {
     "registration": "when and in what order this ledger registered the record",
 }
 
+#: The excluded fields each report measures for itself. When a report
+#: corroborates a record, the record keeps its first report's values of these,
+#: so a re-run that found R10 evidence the first did not, or ran under another
+#: driver, changes nothing in the ledger. A registration says so when this
+#: report's values differ (`RegistrationResult.excluded_differences`), naming
+#: the report that holds them, rather than reporting plain agreement.
+CORROBORATION_KEEPS_FIRST: Tuple[str, ...] = ("r10", "environment")
+
 #: What ``append_record`` can do with a record, by name.
 REGISTRATION_OUTCOMES: Tuple[str, ...] = ("registered", "already_registered", "corroborated")
 
@@ -438,11 +457,16 @@ def read_ledger(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
         )
     version = ledger.get("schema_version")
     if type(version) is int and version in (1, 2):
+        # **Not "register again".** No report written before schema 3 can be
+        # registered under it (`build_record` refuses its manifest), and this text
+        # is shown where no current report is at hand (the model status,
+        # `--show`), so it says what can be done: re-measure.
         raise ValueError(
             f"{path} is ledger schema {version}; this code reads schema "
             f"{LEDGER_SCHEMA_VERSION}. Archive it, for example as "
-            f"evaluations.v{version}.json, and register again; it is read with the "
-            "revision that wrote it."
+            f"evaluations.v{version}.json; it is read with the revision that wrote "
+            "it. Its results are not carried over: re-measure with this revision "
+            "and register the new reports."
         )
     if type(version) is not int or version != LEDGER_SCHEMA_VERSION:
         raise ValueError(
@@ -767,13 +791,33 @@ def find_checkpoint(directory: Path, digest: str) -> Optional[Path]:
     so the full scan is paid only when there is no match — the case that ends in a
     refusal anyway. Several files with identical bytes are fine: the digest is the
     identity, not the name.
+
+    A match may be a link: its bytes are its target's. Where the ledger then goes
+    is the caller's to decide (`register_report` files it beside the target).
+    """
+    for candidate in sorted(directory.glob("*.pt")):
+        if checkpoint_matches(candidate, digest):
+            return candidate
+    return None
+
+
+def checkpoint_matches(path: Path, digest: str) -> bool:
+    """Whether the file at ``path`` holds exactly the bytes ``digest`` names.
+
+    The one comparison by which a later registration ties a report to weights on
+    disk: `find_checkpoint` makes it for each candidate in a directory, and
+    `register_report` for the one file ``record_evaluation.py --checkpoint``
+    names, whatever its name. One hashing site, so the two cannot come to
+    disagree about what "these weights" means.
+
+    A path hash of a file nobody is about to parse (M2.1's allowance for
+    `file_sha256`): the registration records the report's digest of the weights,
+    never this one. A path that is not a regular file (missing, or a directory)
+    does not match; a link matches by its target's bytes.
     """
     from src.utils.fingerprint import file_sha256
 
-    for candidate in sorted(directory.glob("*.pt")):
-        if candidate.is_file() and file_sha256(candidate) == digest:
-            return candidate
-    return None
+    return path.is_file() and file_sha256(path) == digest
 
 
 def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str, Any]]:
@@ -888,6 +932,7 @@ def write_ledger(
 
 __all__ = [
     "COHORT_VERSION_FIELDS",
+    "CORROBORATION_KEEPS_FIRST",
     "ENVIRONMENT_CLASSES",
     "KEY_FIELDS",
     "LEDGER_FILENAME",
@@ -903,6 +948,7 @@ __all__ = [
     "SEMANTIC_MANIFEST_FIELDS",
     "append_record",
     "build_record",
+    "checkpoint_matches",
     "empty_ledger",
     "environment_class",
     "find_checkpoint",

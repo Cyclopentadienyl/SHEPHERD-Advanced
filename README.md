@@ -96,7 +96,7 @@ recorded beside it (provenance contract M4; deployment guide §4.9):
 |---|---|---|
 | 1. Import a cohort | `scripts/import_cohort.py`: a preview, then `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
 | 2. Measure | `scripts/measure_scorer.py --cohort <label> --registry <dir>` | a Mode C report, kept in the registry's report store |
-| 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report` | a record in `evaluations.json` beside the checkpoint |
+| 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
 
 The Diagnosis tab's model status shows the loaded checkpoint's recorded results, read through
 `GET /api/v1/evaluations/loaded-model`. They are the model's own Mode C disease ranking: until

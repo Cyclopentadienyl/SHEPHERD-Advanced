@@ -51,6 +51,7 @@ from src.evaluation.caveats import (
     PRE_B1_NOTE,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
+    R10_UNVERIFIABLE_REASON,
     RECORD_ABSENCE,
     RELATION_DISPLAY_NAMES,
 )
@@ -1194,16 +1195,23 @@ def _relations_text(relations: Any) -> str:
     return " · ".join(parts) or "none reported"
 
 
-def _r10_label_text(label: str, name: str, part: Any) -> str:
+def _r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
     """One R10 label: its state in the caveats' words, and its count with the
     denominator only where the state has one.
 
     **"unverifiable" and "no validation inputs recorded" are words, never a
     number:** neither a 0 that would read as "no overlap" nor a denominator that
     would read as a count.
+
+    **An unverifiable label gives its scope's reason** (`evidence`, the scope's
+    evidence state): bytes not found, found and not readable, or a checkpoint
+    that names no such file, which no evidence directory can help. The generic
+    words are used only when the evidence state is not one of those.
     """
     state = _field(part, "state")
     words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
+    if state == "unverifiable" and isinstance(evidence, str):
+        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
     if words is None:
         return f"{name}: not reported"
     if state not in ("overlap", "none"):
@@ -1219,7 +1227,7 @@ def _r10_scope_text(scope: str, labels: Dict[str, Dict[str, str]], part: Any) ->
     evidence = _field(_field(part, "evidence"), "state")
     found = _R10_EVIDENCE_WORDS.get(evidence) if isinstance(evidence, str) else None
     return f"R10, {scope} inputs (evidence {found or 'not reported'}): " + " · ".join(
-        _r10_label_text(label, text["name"], _field(part, label))
+        _r10_label_text(label, text["name"], _field(part, label), evidence)
         for label, text in labels.items()
     )
 
@@ -1261,11 +1269,20 @@ def _registration_text(record: Any) -> str:
 
 def _recorded_result_lines(record: Any) -> List[str]:
     """One record: the cohort role and version, the Mode C metrics over the cases
-    ranked, then coverage, relations, R10, environment, dataset and registration."""
+    ranked, then coverage, relations, R10, environment, dataset and registration.
+
+    **The version is shown by its manifest digest, beside its label.** A label is
+    unique only within one registry: the same source imported again under the
+    same label, in a recreated or second registry, is another version with
+    another manifest digest, and so another record key. Without the digest the
+    two records would read as one cohort measured twice.
+    """
     cohort = _field(record, "cohort")
+    version = _field(cohort, "version_manifest_sha256")
     lines = [
         f"- **{_record_text(_field(cohort, 'role'))} · "
-        f"{_record_text(_field(cohort, 'label'))}** — "
+        f"{_record_text(_field(cohort, 'label'))}** "
+        f"(version {'not reported' if version is _MISSING else _md_short(version)}) — "
         f"{_metrics_text(_field(record, 'metrics'))}, over "
         f"{_record_text(_field(record, 'n_ranked'))} ranked cases",
         f"  - {_coverage_text(record)}",

@@ -16,7 +16,9 @@ that id, so what is committed is what the operator saw.
 
 **What it prints is for the machine it runs on** (D7): case ids appear, as the
 operator needs them to check the exclusions; no case's phenotypes or disease are
-printed, only aggregate counts and the terms that did not map.
+printed, only aggregate counts and the terms that did not map. A refusal of a
+malformed source names each problem by case index, case id, field and position
+and says what type the value was or which rule it broke, never the value.
 
 Usage:
     python scripts/import_cohort.py \\
@@ -101,6 +103,16 @@ def _entry(entry: Optional[Dict[str, Any]]) -> str:
     return f"digest {entry['digest']}, declared version {entry['declared_version'] or 'none'}"
 
 
+def _shown_id(case_id: str) -> str:
+    """A case id as the preview prints it: as it is when it is printable ASCII,
+    escaped (`ascii`) otherwise.
+
+    `parse_source` already refuses an id that is not printable text; this is
+    the second line, so an id with a newline can never forge a preview line and
+    one the console cannot encode never ends the preview in a traceback."""
+    return case_id if case_id.isascii() and case_id.isprintable() else ascii(case_id)
+
+
 def format_preview(plan: ImportPlan) -> List[str]:
     """The preview, as lines: counts with their denominators, each exclusion by
     case id with its reasons, the unmappable terms, and what the version binds."""
@@ -119,7 +131,7 @@ def format_preview(plan: ImportPlan) -> List[str]:
         lines.append(f"    {category}: {counts['excluded'][category]}")
         for entry in entries:
             lines.append(
-                f"      {entry['case_id']}: {', '.join(entry['reasons'])} "
+                f"      {_shown_id(entry['case_id'])}: {', '.join(entry['reasons'])} "
                 f"({entry['terms_unmappable']} of {entry['terms_total']} terms unmappable)"
             )
     terms = manifest["unmappable_terms"]

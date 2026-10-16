@@ -184,11 +184,40 @@ R10_STATE_TEXT = {
         "none in the inputs this checkpoint records (not evidence about data "
         "outside them)"
     ),
+    # The reason a surface gives only when it does not know the scope's evidence
+    # state; otherwise it gives `R10_UNVERIFIABLE_REASON[evidence state]`.
     "unverifiable": (
         "unverifiable: the inputs this checkpoint records were not found or could "
-        "not be read, so there is no count"
+        "not be read, or it names no such inputs, so there is no count"
     ),
     "no_validation_inputs_recorded": "no validation inputs recorded",
+}
+
+#: What an *unverifiable* label says, by its scope's evidence state (the
+#: `EVIDENCE_STATES` of `src/evaluation/r10.py` other than "found"): contract
+#: §5.4's three reasons. Each is the whole text for the label, in
+#: `R10_STATE_TEXT`'s form, rendered in place of `R10_STATE_TEXT["unverifiable"]`.
+#:
+#: **One reason per state, because they call for different actions.** Bytes
+#: that were not found may be found by measuring again with the directory that
+#: holds them (`--training-evidence`); bytes found and not readable need the file
+#: repaired. A checkpoint that names no such file at all is not a record the
+#: pipeline wrote, and no directory can supply evidence for a digest that was
+#: never recorded: telling that operator the inputs "were not found" sends them
+#: looking for files that cannot help.
+R10_UNVERIFIABLE_REASON = {
+    "not_found": (
+        "unverifiable: no file looked at holds the bytes this checkpoint records, "
+        "so there is no count"
+    ),
+    "unreadable": (
+        "unverifiable: the file holding the bytes this checkpoint records was found "
+        "and could not be read, so there is no count"
+    ),
+    "not_recorded": (
+        "unverifiable: this checkpoint names no such file, and its record is not one "
+        "the pipeline wrote, so --training-evidence cannot help; there is no count"
+    ),
 }
 
 #: What an empty answer from a ledger means (`src/evaluation/sidecar.py`).

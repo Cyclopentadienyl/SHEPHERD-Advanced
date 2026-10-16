@@ -402,24 +402,34 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "vocabulary rather than free text: the schema forbids "
                              "operator and host names, and cannot then accept an "
                              "arbitrary string. Unverified by design.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    _refuse_mixed_arguments(parser, args)
+    return args
+
+
+def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a combination of arguments that cannot describe one audit, before
+    anything is read. These look at the command line alone, so they are the
+    guide's "command line was rejected" (exit 2, with the usage line), not a
+    refusal of a workspace or a version (exit 1); `parser.error` gives that, as
+    measure_scorer's equivalent checks do."""
+    if (args.registry is None) != (args.cohort is None):
+        parser.error(
+            "--registry and --cohort go together: --cohort names a registered cohort "
+            "version and --registry the directory that keeps it. Nothing was written."
+        )
+    if args.cohort is not None and args.splits is not None:
+        parser.error(
+            "--splits names two of the generator's splits; with --cohort the evaluation "
+            f"side is the registered version and it is compared with {TRAINING_SPLIT}. "
+            "Pass one or the other. Nothing was written."
+        )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args(argv)
 
-    if (args.registry is None) != (args.cohort is None):
-        raise SystemExit(
-            "--registry and --cohort go together: --cohort names a registered cohort "
-            "version and --registry the directory that keeps it. Nothing was written."
-        )
-    if args.cohort is not None and args.splits is not None:
-        raise SystemExit(
-            "--splits names two of the generator's splits; with --cohort the evaluation "
-            f"side is the registered version and it is compared with {TRAINING_SPLIT}. "
-            "Pass one or the other. Nothing was written."
-        )
     if args.output.exists() and not args.overwrite:
         raise SystemExit(f"{args.output} exists. Pass --overwrite or write elsewhere.")
 

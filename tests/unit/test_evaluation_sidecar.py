@@ -28,6 +28,7 @@ from dataclasses import asdict
 import pytest
 
 from src.evaluation.sidecar import (
+    CORROBORATION_KEEPS_FIRST,
     ENVIRONMENT_CLASSES,
     KEY_FIELDS,
     LEDGER_SCHEMA_VERSION,
@@ -40,6 +41,7 @@ from src.evaluation.sidecar import (
     SEMANTIC_MANIFEST_FIELDS,
     append_record,
     build_record,
+    checkpoint_matches,
     empty_ledger,
     environment_class,
     find_checkpoint,
@@ -254,7 +256,12 @@ def test_an_unknown_schema_version_is_refused_rather_than_reinterpreted(tmp_path
 @pytest.mark.parametrize("version", [1, 2])
 def test_an_earlier_schema_is_refused_naming_the_file_and_what_to_do(tmp_path, version):
     """A schema 2 record is keyed by a samples digest and lacks the relation
-    states, counts and registration; it is archived, not read beside schema 3."""
+    states, counts and registration; it is archived, not read beside schema 3.
+
+    **What to do is what can be done** (finding 20): no report written before
+    schema 3 can be registered under it, and this text reaches the model status
+    and `--show`, where no current report is at hand -- so it says the results
+    are not carried over and to re-measure, never "register again"."""
     path = tmp_path / "evaluations.json"
     path.write_text(json.dumps({"schema_version": version, "records": []}))
 
@@ -262,9 +269,12 @@ def test_an_earlier_schema_is_refused_naming_the_file_and_what_to_do(tmp_path, v
         read_ledger(path)
 
     message = str(refused.value)
-    assert str(path) in message
-    assert f"schema {version}" in message
-    assert f"evaluations.v{version}.json" in message and "register again" in message
+    assert message == (
+        f"{path} is ledger schema {version}; this code reads schema 3. Archive it, for "
+        f"example as evaluations.v{version}.json; it is read with the revision that "
+        "wrote it. Its results are not carried over: re-measure with this revision and "
+        "register the new reports.")
+    assert "register again" not in message
 
 
 def test_a_boolean_schema_version_is_not_read_as_one(tmp_path):
@@ -596,22 +606,75 @@ def test_a_completed_record_is_key_compared_and_excluded_fields_exactly():
     assert all(len(reason) > 20 for reason in RECORD_EXCLUDED_FIELDS.values())
 
 
+def test_what_a_corroboration_keeps_from_the_first_report_is_excluded_and_measured():
+    """`CORROBORATION_KEEPS_FIRST` names excluded fields a report measures for
+    itself -- never one the ledger assigns, nor a compared one, which could not
+    differ on a corroboration."""
+    record = build_record(registered_report(), REPORT_A)
+
+    assert CORROBORATION_KEEPS_FIRST == ("r10", "environment")
+    assert set(CORROBORATION_KEEPS_FIRST) <= set(RECORD_EXCLUDED_FIELDS)
+    assert set(CORROBORATION_KEEPS_FIRST) <= set(record)
+
+
 def test_build_record_leaves_the_registration_to_the_ledger():
     record = build_record(registered_report(), REPORT_A)
 
     assert "corroborating_reports" not in record and "registration" not in record
 
 
-def test_the_record_keeps_no_prose_no_paths_and_no_case_ids():
-    """The report stays the source: paths and case-level data stay there, and
-    standing text is rendered from `caveats.py`, never stored."""
-    report = registered_report()
-    text = json.dumps(build_record(report, REPORT_A))
+def _strings(value, at=()):
+    """Every string in a JSON value, with the keys and indices that lead to it."""
+    if isinstance(value, str):
+        yield at, value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(item, (*at, key))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _strings(item, (*at, index))
 
-    assert "why_this_is_here" not in text
+
+def _path_like(text: str) -> bool:
+    """An absolute path on either platform, a home- or dot-relative path, or a
+    Windows separator: what a run's location looks like in a string."""
+    import re
+
+    return (text.startswith(("/", "~", "./", "../")) or "\\" in text
+            or re.match(r"^[A-Za-z]:[\\/]", text) is not None)
+
+
+def test_the_record_keeps_no_run_paths_no_prose_and_no_case_ids():
+    """Finding 28: what the sidecar's docstring says a record keeps, exactly.
+
+    - **No run paths:** the manifest's `checkpoint_path` and `data_dir` stay in
+      the report.
+    - **R10's evidence paths are kept** (the read-only view strips them): every
+      string in the record is walked, and a path-like one is allowed only at
+      `r10.<scope>.evidence.path`, so a path copied anywhere else fails here.
+    - **No prose:** neither the manifest's explanation nor any standing text.
+    - **No case ids.**
+    """
+    from src.evaluation import caveats
+
+    report = registered_report(r10=r10_block(training_state="overlap"))
+    record = build_record(report, REPORT_A)
+    text = json.dumps(record)
+
+    paths = {at: value for at, value in _strings(record) if _path_like(value)}
+    assert paths == {("r10", "training", "evidence", "path"): "/abs/train_samples.json"}
+    assert all(len(at) == 4 and at[0] == "r10" and at[2:] == ("evidence", "path")
+               for at in paths)
     assert report["manifest"]["checkpoint_path"] not in text
     assert report["manifest"]["data_dir"] not in text
-    assert "manifest" not in build_record(report, REPORT_A)
+    assert "manifest" not in record
+    assert "why_this_is_here" not in text
+    standing = [caveats.MODE_C_RESULT_LABEL, caveats.PRE_B1_NOTE, caveats.RECORD_ABSENCE,
+                *caveats.R10_STATE_TEXT.values(), *caveats.R10_UNVERIFIABLE_REASON.values(),
+                *(label["definition"] for labels in caveats.R10_LABEL_TEXT.values()
+                  for label in labels.values())]
+    assert not [words for words in standing if len(words) > 20 and words in text]
+    assert "case_id" not in text and "exclusions" not in text
 
 
 def test_a_cohort_version_naming_a_field_nobody_classified_is_refused():
@@ -1024,6 +1087,36 @@ def test_the_write_guard_is_a_path_hash_of_the_file_now(tmp_path):
 
     assert ledger_digest(path) == read_ledger(path)[1]
     assert ledger_digest(tmp_path / "absent.json") is None
+
+
+def test_checkpoint_matches_compares_one_file_by_its_bytes_whatever_its_name(tmp_path):
+    """The one comparison `find_checkpoint` and `record_evaluation --checkpoint`
+    share: any file name, a link by its target's bytes, nothing that is not a
+    regular file."""
+    weights = tmp_path / "best.ckpt"
+    weights.write_bytes(b"the weights")
+    link = tmp_path / "served.pt"
+    link.symlink_to(weights)
+    digest = hashlib.sha256(b"the weights").hexdigest()
+
+    assert checkpoint_matches(weights, digest)
+    assert checkpoint_matches(link, digest)
+    assert not checkpoint_matches(weights, "0" * 64)
+    assert not checkpoint_matches(tmp_path / "absent.pt", digest)
+    assert not checkpoint_matches(tmp_path, digest)
+
+
+def test_find_checkpoint_compares_through_checkpoint_matches(tmp_path, monkeypatch):
+    import src.evaluation.sidecar as sidecar
+
+    (tmp_path / "a.pt").write_bytes(b"x")
+    (tmp_path / "b.pt").write_bytes(b"y")
+    seen = []
+    monkeypatch.setattr(sidecar, "checkpoint_matches",
+                        lambda path, digest: seen.append(path.name) or path.name == "b.pt")
+
+    assert find_checkpoint(tmp_path, "0" * 64) == tmp_path / "b.pt"
+    assert seen == ["a.pt", "b.pt"]
 
 
 def test_find_checkpoint_identifies_the_weights_by_their_bytes(tmp_path):

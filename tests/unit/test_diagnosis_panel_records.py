@@ -7,10 +7,12 @@ The model status shows the loaded model's recorded results (M4; PLAN_TEST_RESULT
 
 - each state the API answers with renders its sentence, and an answer about
   another checkpoint than the status names is said to be one, never shown;
-- a record shows its role and version, Mode C metrics over the cases ranked,
-  coverage with every denominator, relation states, R10's four labels (an
-  unverifiable label as words, never a number), environment class and GPU,
-  dataset origin (synthetic called out), registration and corroboration;
+- a record shows its role and version (the label and the version's manifest
+  digest, so two imports of one label read as two versions), Mode C metrics
+  over the cases ranked, coverage with every denominator, relation states,
+  R10's four labels (an unverifiable label as words, never a number, with the
+  reason its scope's evidence state gives), environment class and GPU, dataset
+  origin (synthetic called out), registration and corroboration;
 - the Mode C MRR is labelled apart from the trainer's "Val MRR", the §6 line is
   shown once for the block, and nothing says "nothing was checked";
 - a records read that fails never breaks the status, and with no pipeline loaded
@@ -35,6 +37,7 @@ from src.evaluation.caveats import (  # noqa: E402
     MODE_C_RESULT_LABEL,
     PRE_B1_NOTE,
     R10_STATE_TEXT,
+    R10_UNVERIFIABLE_REASON,
     RECORD_ABSENCE,
 )
 from src.evaluation.sidecar import append_record, build_record, empty_ledger  # noqa: E402
@@ -194,8 +197,10 @@ def test_a_record_shows_every_part():
     assert block.startswith(f"{HEADING} for checkpoint `sha256:{CHECKPOINT_SHA[:12]}…`")
     assert f"{MODE_C_RESULT_LABEL}. {PRE_B1_NOTE}" in block
     head = _line(block, "**mygene2 · mygene2-2026-10**")
-    assert ("Mode C MRR (untruncated) 0.5000 · Mode C mean rank 3.0000 · "
-            "Mode C Hits@1 0.2500 · Mode C Hits@10 0.7500, over 80 ranked cases") in head
+    assert head == (
+        f"**mygene2 · mygene2-2026-10** (version `sha256:{'a' * 12}…`) — "
+        "Mode C MRR (untruncated) 0.5000 · Mode C mean rank 3.0000 · "
+        "Mode C Hits@1 0.2500 · Mode C Hits@10 0.7500, over 80 ranked cases")
     assert _line(block, "Coverage:") == (
         "Coverage: 80 of 100 source cases ranked (80 eligible) · 20 excluded: "
         "ground truth absent 12 · phenotype unmappable 8")
@@ -292,13 +297,88 @@ def test_unverifiable_is_a_word_never_a_number():
     training, validation = _line(block, "R10, training"), _line(block, "R10, validation")
     assert training == (
         "R10, training inputs (evidence not found): Training disease overlap: "
-        f"{R10_STATE_TEXT['unverifiable']} · Training phenotype-set overlap: "
-        f"{R10_STATE_TEXT['unverifiable']}")
+        f"{R10_UNVERIFIABLE_REASON['not_found']} · Training phenotype-set overlap: "
+        f"{R10_UNVERIFIABLE_REASON['not_found']}")
     assert validation == (
         "R10, validation inputs (evidence not recorded by the checkpoint): Validation "
         "disease overlap: no validation inputs recorded · Validation phenotype-set "
         "overlap: no validation inputs recorded")
     assert not re.search(r"\d", training.removeprefix("R10") + validation.removeprefix("R10"))
+
+
+def _computed_r10(tmp_path, situation):
+    """An R10 block from `compute_r10` itself, in one of the situations whose
+    *unverifiable* has its own reason (contract §5.4)."""
+    import hashlib
+
+    from src.evaluation.r10 import compute_r10
+    from src.kg.data_loader import DiagnosisSample
+
+    test = [DiagnosisSample(patient_id="t0", phenotype_ids=[10], disease_id=1)]
+    if situation == "graph roles only":
+        recorded = {"kg": "1" * 64, "node_features": "2" * 64, "edge_indices": "3" * 64,
+                    "num_nodes": "4" * 64}
+        return compute_r10(recorded, test, [])
+    if situation == "not found":
+        return compute_r10({"train_samples": "a" * 64, "val_samples": "b" * 64}, test, [])
+    assert situation == "unreadable"
+    path = tmp_path / "train_samples.json"
+    path.write_bytes(b"not json")
+    digest = hashlib.sha256(b"not json").hexdigest()
+    return compute_r10({"train_samples": digest, "val_samples": digest}, test, [path])
+
+
+@pytest.mark.parametrize("situation, evidence", [
+    ("graph roles only", "not_recorded"), ("not found", "not_found"),
+    ("unreadable", "unreadable"),
+])
+def test_an_unverifiable_label_gives_its_scopes_reason(tmp_path, situation, evidence):
+    """Contract §5.4 gives three reasons, and they call for different actions.
+    A checkpoint that records only the graph roles names no samples file, so
+    --training-evidence can never help; the line must not tell the operator the
+    recorded inputs "were not found". Catches one wording for every
+    *unverifiable*, which contradicted the scope's own evidence words."""
+    block = _block(_answer("records", [_record(r10=_computed_r10(tmp_path, situation))]))
+
+    for scope, name in (("training", "Training"), ("validation", "Validation")):
+        line = _line(block, f"R10, {scope}")
+        reason = R10_UNVERIFIABLE_REASON[evidence]
+        assert line == (
+            f"R10, {scope} inputs (evidence {dp._R10_EVIDENCE_WORDS[evidence]}): "
+            f"{name} disease overlap: {reason} · {name} phenotype-set overlap: {reason}")
+        assert R10_STATE_TEXT["unverifiable"] not in line
+        if evidence == "not_recorded":
+            assert "not found" not in line and "could not be read" not in line
+            assert "--training-evidence cannot help" in line
+
+
+def test_the_three_unverifiable_reasons_are_the_evidence_states_without_evidence():
+    """One reason for each evidence state that leaves a label unverifiable, and
+    none of them a number."""
+    from src.evaluation.r10 import EVIDENCE_STATES
+
+    assert set(R10_UNVERIFIABLE_REASON) == set(EVIDENCE_STATES) - {"found"}
+    for reason in R10_UNVERIFIABLE_REASON.values():
+        assert reason.startswith("unverifiable: ") and "no count" in reason
+        assert not re.search(r"\d", reason)
+
+
+def test_two_imports_of_one_label_read_as_two_versions():
+    """A label is unique only within one registry. Two records on two imports of
+    it have the same role, label, samples and source and different manifest
+    digests; the cohort line shows the digest, so they do not read as one
+    cohort measured twice."""
+    records = [_record(), _record(cohort_version=cohort_version(manifest_sha256="9" * 64),
+                                  sequence=2)]
+
+    block = _block(_answer("records", records))
+
+    heads = [line.lstrip("- ") for line in block.splitlines()
+             if line.startswith("- **mygene2 · mygene2-2026-10**")]
+    assert [head.split(" — ")[0] for head in heads] == [
+        f"**mygene2 · mygene2-2026-10** (version `sha256:{'a' * 12}…`)",
+        f"**mygene2 · mygene2-2026-10** (version `sha256:{'9' * 12}…`)",
+    ]
 
 
 def test_the_mode_c_mrr_is_labelled_apart_from_the_trainers_val_mrr(monkeypatch):

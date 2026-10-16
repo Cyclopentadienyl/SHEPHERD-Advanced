@@ -7,14 +7,17 @@ digest. What is pinned here, on the real application and real served pipelines,
 over ledgers written by the real registration (`register_report`):
 
 - every state: no pipeline, a pipeline serving no model, a model supplied in
-  memory, no ledger, a ledger that is not read (schema 2, damaged, unopenable),
-  no records for these weights, records;
+  memory, no ledger, a ledger that is not read (schema 2, damaged, unopenable,
+  with no server directory in its problem whatever the directory's name), no
+  records for these weights, records;
 - a record that does not have the shape registration writes is counted and not
   shown, never a 500, and never hides a good one;
 - records are found by digest: a model replaced by other bytes never shows its
   predecessor's records, and the same bytes moved with their ledger find theirs;
 - the ledger is the one beside the served read, not beside a path in application
-  state, and a reload landing mid-request cannot mix two models;
+  state, its directory settled when the checkpoint was read (a link retargeted
+  since moves nothing), and a reload landing mid-request cannot mix two models;
+- two imports of one label are shown as two versions, by their manifest digests;
 - aggregates only: no path, no case id, no rank in any answer, and no query
   parameter selects anything;
 - the route reads the ledger once and opens nothing else, writes nothing, and is
@@ -112,8 +115,10 @@ def _register(report, checkpoint_dir, reports_dir, *, name="report.json", beside
     reports_dir.mkdir(parents=True, exist_ok=True)
     path = reports_dir / name
     path.write_text(json.dumps(report, indent=indent, sort_keys=True))
-    return register_report(path, ledger_dir=checkpoint_dir,
-                           verify_checkpoint_beside=beside, registered_at=WHEN)
+    if beside:
+        return register_report(path, checkpoint_dir=checkpoint_dir, registered_at=WHEN)
+    return register_report(path, checkpoint=checkpoint_dir / "best.pt", measured_read=True,
+                           registered_at=WHEN)
 
 
 def _edit_ledger(path: Path, edit) -> None:
@@ -152,7 +157,7 @@ def test_the_served_read_is_the_one_the_model_was_built_from(served):
 
     assert read is not None
     assert read.sha256 == _sha(checkpoint)
-    assert Path(read.path) == checkpoint
+    assert Path(read.path) == checkpoint.resolve()
     assert pipeline.served_identity().checkpoint.sha256 == read.sha256
     assert opens.opens(checkpoint) == 0, "no I/O: nothing is read or hashed again"
 
@@ -266,7 +271,9 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path):
     assert view["cohort"] == {
         "label": "mygene2-2026-10", "role": "mygene2", "kind": "supplied",
         "samples_sha256": "5" * 64, "source_sha256": "b" * 64,
+        "version_manifest_sha256": record["cohort_digest"],
     }
+    assert record["cohort_digest"] == "a" * 64
     assert view["counts"] == {
         "source_cases": 100, "ranked_eligible": 80,
         "excluded": {"ground_truth_absent": 12, "phenotype_unmappable": 8}, "n_excluded": 20,
@@ -335,6 +342,25 @@ def test_records_are_sorted_by_registration_sequence(app, served, tmp_path):
         "mygene2-2026-10", "mygene2-2026-11"]
 
 
+def test_two_imports_of_one_label_are_shown_as_two_versions(app, served, tmp_path):
+    """The same source imported under the same label into a recreated registry
+    is another version: another manifest digest, so another record key. Catches
+    a view that leaves the digest out, under which the two records read as one
+    cohort measured twice (identical label, role, samples and source)."""
+    _, _, checkpoint = served
+    digest = _sha(checkpoint)
+    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports", name="a.json")
+    _register(_report_for(digest, cohort_version=cohort_version(manifest_sha256="9" * 64)),
+              checkpoint.parent, tmp_path / "reports", name="b.json")
+
+    first, second = _get(app)["records"]
+
+    assert ({**first["cohort"], "version_manifest_sha256": None}
+            == {**second["cohort"], "version_manifest_sha256": None})
+    assert first["cohort"]["version_manifest_sha256"] == "a" * 64
+    assert second["cohort"]["version_manifest_sha256"] == "9" * 64
+
+
 def test_a_corroborating_report_is_counted(app, served, tmp_path):
     """The same result from other report bytes is corroboration (D5): one record,
     one corroborating report."""
@@ -382,7 +408,7 @@ def test_an_earlier_schema_ledger_is_not_read_and_shows_nothing(app, served):
     assert body["records"] == [] and body["records_not_shown"] == 0
     problem = body["ledger"]["problem"]
     assert problem.startswith("evaluations.json is ledger schema 2")
-    assert "evaluations.v2.json" in problem and "register again" in problem
+    assert "evaluations.v2.json" in problem and "re-measure with this revision" in problem
     assert str(checkpoint.parent) not in json.dumps(body)
     assert body["ledger"]["sha256"] is None
 
@@ -419,6 +445,32 @@ def test_a_ledger_that_cannot_be_opened_is_not_read(app, served):
     assert str(checkpoint.parent) not in json.dumps(body)
 
 
+@pytest.mark.parametrize("directory", ["back\\slash", "new\nline", "tab\tdir"],
+                         ids=["backslash", "newline", "tab"])
+def test_an_unopenable_ledger_names_no_directory_whatever_its_name(
+    app, served_workspace, tmp_path, monkeypatch, directory
+):
+    """`str(OSError)` quotes the filename with ``repr``, which escapes these
+    characters, so replacing the path in it left the server's directory in the
+    answer. Catches a problem built from `str(exc)`."""
+    data_dir, checkpoint = served_workspace
+    base = tmp_path / directory
+    base.mkdir()
+    shutil.copy2(checkpoint, base / "best.pt")
+    (base / "evaluations.json").mkdir()
+    monkeypatch.setattr(app.app_state, "pipeline", _full_pipeline(data_dir, base / "best.pt"))
+
+    response = _client(app).get(ROUTE)
+    body = response.json()
+
+    assert body["state"] == "ledger_not_read"
+    assert body["ledger"]["problem"] == (
+        "evaluations.json could not be read (IsADirectoryError: Is a directory)")
+    for form in (str(tmp_path), repr(str(tmp_path))[1:-1], json.dumps(str(tmp_path))[1:-1]):
+        assert form not in response.text
+    assert directory not in json.dumps(body) and repr(directory)[1:-1] not in response.text
+
+
 # ---------------------------------------------------------------------------
 # 5. A record of the wrong shape is counted, not shown, never a 500
 # ---------------------------------------------------------------------------
@@ -442,6 +494,8 @@ def _delete(*path):
 
 MALFORMED = {
     "no cohort": _delete("cohort"),
+    "no cohort digest": _delete("cohort_digest"),
+    "cohort digest not hex": _set(("cohort_digest",), "a" * 63),
     "cohort a list": _set(("cohort",), []),
     "cohort kind generated": _set(("cohort", "kind"), "generated"),
     "samples digest not hex": _set(("cohort", "samples_sha256"), "not-a-digest"),
@@ -559,6 +613,10 @@ def _computed_r10(tmp_path, situation):
     if situation == "no validation inputs recorded":
         return compute_r10({"train_samples": _samples_file(train, [("p", [20], 2)])},
                            test, [train])
+    if situation == "validation entry not a digest":
+        recorded = {"train_samples": _samples_file(train, [("p", [20], 2)]),
+                    "val_samples": {"sha256": "b" * 64}}
+        return compute_r10(recorded, test, [train])
     if situation == "evidence not found":
         return compute_r10({"train_samples": "a" * 64, "val_samples": "b" * 64}, test, [])
     if situation == "evidence unreadable":
@@ -571,8 +629,9 @@ def _computed_r10(tmp_path, situation):
 
 
 @pytest.mark.parametrize("situation", [
-    "found, overlap and none", "no validation inputs recorded", "evidence not found",
-    "evidence unreadable", "nothing recorded",
+    "found, overlap and none", "no validation inputs recorded",
+    "validation entry not a digest", "evidence not found", "evidence unreadable",
+    "nothing recorded",
 ])
 def test_every_block_r10_computes_is_shown_as_computed(tmp_path, situation):
     """The view's R10 rules are R10's own: a block `compute_r10` writes is never
@@ -685,6 +744,38 @@ def test_a_symlinked_checkpoint_reads_the_ledger_beside_its_target(app, served_w
     body = _get(app)
 
     assert body["state"] == "records"
+
+
+def test_a_link_retargeted_without_a_reload_still_finds_the_served_models_ledger(
+    app, served_workspace, tmp_path, monkeypatch
+):
+    """The directory is settled when the checkpoint is read. The model is served
+    through `current.pt -> run A`, then the link is pointed at run B to prepare
+    the next reload, and nothing is reloaded: A is still served, so A's ledger
+    is still the one read. Catches a lookup that resolves the link again on each
+    request, which would answer `no_ledger` for A's intact records."""
+    data_dir, checkpoint_a = served_workspace
+    run_b = tmp_path / "run_b"
+    run_b.mkdir()
+    checkpoint_b = _checkpoint_for(data_dir, run_b / "best.pt", val_mrr=0.25)
+    assert _sha(checkpoint_b) != _sha(checkpoint_a)
+    _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent, tmp_path / "reports")
+    current = tmp_path / "models" / "current.pt"
+    current.parent.mkdir()
+    current.symlink_to(checkpoint_a)
+    pipeline = _full_pipeline(data_dir, current)
+    monkeypatch.setattr(app.app_state, "pipeline", pipeline)
+    assert Path(pipeline.served_checkpoint_read().path) == checkpoint_a.resolve()
+    assert _get(app)["state"] == "records", "control: A's records while the link names A"
+
+    current.unlink()
+    current.symlink_to(checkpoint_b)
+    body = _get(app)
+
+    assert body["checkpoint_sha256"] == _sha(checkpoint_a), "A is still the served model"
+    assert body["state"] == "records"
+    assert body["ledger"]["sha256"] == _sha(checkpoint_a.parent / "evaluations.json")
+    assert len(body["records"]) == 1
 
 
 def test_a_reload_landing_mid_request_cannot_mix_two_models(app, served, tmp_path,

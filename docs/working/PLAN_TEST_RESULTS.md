@@ -2,8 +2,9 @@
 
 **Status: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16), awaiting its bounded GPU acceptance through the deployment probe and
-then external review** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented"). It
-is not accepted and not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
+then external review** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented"). Its
+internal review's 29 findings (none P1, two P2) are fixed in the review-fix commit on top of `cceca4b`. It is not accepted and
+not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
@@ -195,9 +196,12 @@ last one says what M4 changed.
   registered cohort version's report is recorded. `register_report`
   (`src/evaluation/registration.py`) is the one registration function, used by
   `measure_scorer.py --record` and `record_evaluation.py --report`, and parses and identifies the
-  report and the ledger each from one read (BACKLOG item 18). The ledger stays single-writer. The
-  read-only route `GET /api/v1/evaluations/loaded-model` reads it for the Diagnosis tab's model
-  status. The contract's §4, "M4 as implemented", has the detail.
+  report and the ledger each from one read (BACKLOG item 18). The ledger stays single-writer, and
+  sits beside the checkpoint's resolved path on every write path (`--record`, and
+  `record_evaluation.py` with `--checkpoint FILE` or `--checkpoint-dir DIR`) and on the read
+  side, so a symlinked checkpoint's ledger is beside the link's target. The read-only route
+  `GET /api/v1/evaluations/loaded-model` reads it for the Diagnosis tab's model status. The
+  contract's §4, "M4 as implemented", has the detail.
 
 ### 2.2 The measurement engine, and what each mode measures
 
@@ -620,8 +624,10 @@ excluded ones are `RECORD_EXCLUDED_FIELDS`, each with its reason (`r10`, `enviro
 `source_artifact_digest`, `corroborating_reports`, `registration`). `n_ground_truth_absent` is not
 carried: it is 0 in every written report. The same report again is a no-op; another report
 agreeing on every compared field is added to the first record's corroborating reports; anything
-else is refused, naming the fields that differ. The disagreement block, contested states and
-investigation notes are phase 2.
+else is refused, naming the fields that differ. A corroborating report does not update the
+record: the record keeps its first report's R10 and environment, and when the later report's
+differ, the registration says so in one sentence naming the report that keeps them. The
+disagreement block, contested states and investigation notes are phase 2.
 
 ### D6 — How a test cohort is imported, identified and versioned
 
@@ -684,8 +690,12 @@ two about the data (questions 3 and 4).
 - **They are stored outside the repository tree**, at a path set by server configuration and
   never by a request (SPEC_4: a client-supplied path is not trusted). *As implemented in M4:*
   phase 1 is CLI only, so the registry is the operator's `--registry DIR` on the machine: an
-  existing absolute directory, refused when it resolves inside the repository. No request can
-  name it, and no configuration key is read for it yet; phase 2's controls need the server
+  existing absolute directory, refused when it resolves inside the repository. Each directory
+  below it is resolved again right before it is written into or a version is read from it, and
+  refused when a link takes it into the repository or outside the registry; those checks are not
+  atomic with the write (one writer, the operator's machine). A refusal of a malformed source
+  names where a value is wrong, never a phenotype or a diagnosis. No request can name the
+  registry, and no configuration key is read for it yet; phase 2's controls need the server
   configuration this rule names.
 - **Every run on the acceptance cohort is in its usage history** (D4): when it ran, on which
   checkpoint, and its result. Condition 6 is the institution's rule. The history makes its
@@ -903,8 +913,10 @@ This is one pipeline extended, not a second one.
       had no direct hash since S9;
     - `scripts/audit_generator_fidelity.py`: generated splits only, through the two-argument
       `resolve_cohort`; its digests come from its reads since S9;
-    - `src/evaluation/cohort.py` has no overlap reader of its own; the line that named one was
-      wrong.
+    - `src/evaluation/cohort.py`'s overlap reader (`verify_generated_cohorts`, which at `1cab39f`
+      hashed each generated split by path and read it again through `read_samples` to measure
+      train/val disjointness) has compared only, with no read of its own, since M2.1
+      (`verify_cohort_reads`). It covers generated splits only, so M4 had nothing to move.
 
     A supplied cohort's argument changed from a split name to a registered cohort version, and
     `--cohort-kind` is gone. The tests that passed `--split test --cohort-kind supplied`, or
@@ -958,7 +970,9 @@ This is one pipeline extended, not a second one.
     question of how an earlier record compares with a schema 3 one.
   - Registering into a directory that holds an earlier ledger is refused, naming the file. The
     operator archives it deliberately, for example as `evaluations.v2.json` (`read_ledger`'s
-    message names the schema it found).
+    message names the schema it found, and says its results are not carried over: re-measure
+    with this revision and register the new reports, since no earlier report can be registered
+    under schema 3).
   - The archived file stays readable with the revision that wrote it, under its original name:
     that revision's `record_evaluation.py` reads `evaluations.json`. Its results are re-measured
     through the new path if they are wanted.
@@ -1076,18 +1090,27 @@ the behaviour changes, what is not claimed, and the acceptance pending.
   the cohort↔graph binding on the bytes read (R2 is a generated split's, recorded as not
   applicable), records R10, the environment and every denominator, keeps every report in the
   report store, and registers it with `--record` or later with `record_evaluation.py --report`
-  through one function. A refused `--record` keeps the report and exits 3.
+  (naming the checkpoint with `--checkpoint FILE` or `--checkpoint-dir DIR`) through one
+  function, into the ledger beside the checkpoint's resolved path. A refused `--record` keeps the
+  report, prints the `--checkpoint` command that registers it later, and exits 3.
 - **Step 3:** the Diagnosis tab's model status shows the loaded checkpoint's records, found by
-  its digest through `GET /api/v1/evaluations/loaded-model`, with D3's label and the note that
-  until B-1 the tab ranks by the legacy mixture.
+  its digest through `GET /api/v1/evaluations/loaded-model`. D3's label and the note that until
+  B-1 the tab ranks by the legacy mixture introduce the records once, and the R10 definitions and
+  the contract's §6 line follow them once: once per block, not per record.
 - **Step 4:** the deployment guides' §4.9 and EC §6.5 (F4 included) are written. **Pending:**
   one bounded GPU acceptance through the deployment probe's formal run, then external review.
   MyGene2 waits for its data and terms, and the institutional test for data, terms and a
   declared protocol (§4.9).
 - **Differs from the text above, by decision:** the registry is a CLI argument, not server
   configuration (D7, as implemented); a generated split's report is not registrable (§4.9, M4
-  question 6); the new format is ledger schema 3. **Not built in phase 1:** version listing, the
+  question 6); the new format is ledger schema 3; step 3's label, note and §6 line are shown once
+  per block rather than with each record. **Not built in phase 1:** version listing, the
   usage history, finding disagreements by key, investigation notes (all phase 2).
+- **Internal review:** ten dimensions, each finding put to independent skeptics; 29 kept (none
+  P1; two P2, the ledger split for a symlinked checkpoint and links below the registry root; the
+  rest P3), one refuted, all 29 fixed in the review-fix commit on top of `cceca4b`. The contract's §4, "M4 as implemented",
+  "Internal review", lists them. It is not the external review, and the GPU acceptance is still
+  pending.
 
 ### Phase 2 — the operating interface (contract M5)
 

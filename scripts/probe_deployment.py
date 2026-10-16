@@ -2817,9 +2817,11 @@ def phase_m2_demo(
 
         assert "report" in m4, "the measurement (T2) is not available"
         before = snapshot(measured.parent, include_dirs=True)
+        # The later registration in the form measure_scorer prints for it:
+        # `--report` and `--checkpoint FILE`, the file the run measured.
         with _logged(record_evaluation.logger) as said:
             code = record_evaluation.main(["--report", str(m4["report"]),
-                                           "--checkpoint-dir", str(measured.parent)])
+                                           "--checkpoint", str(measured)])
         assert code == 0, f"registering the same report again exited {code}"
         assert any("already holds this report" in line for line in said), (
             "registering the same report again was not already_registered")
@@ -2830,7 +2832,7 @@ def phase_m2_demo(
         damaged.parent.mkdir(parents=True)
         damaged.write_bytes(data[: len(data) // 2])
         refuses(lambda: record_evaluation.main(["--report", str(damaged),
-                                                "--checkpoint-dir", str(measured.parent)]),
+                                                "--checkpoint", str(measured)]),
                 SystemExit, ("is not a measurement report", "Nothing was written"))
         assert_untouched(before, measured.parent, "a refused registration", include_dirs=True)
         return "already registered and a damaged copy refused; the ledger unchanged", {
@@ -3777,7 +3779,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-    work = args.work_dir
+    # **Absolute from here on.** Every path the phases write is joined onto
+    # `work`, and some of them go where a relative path changes meaning or is
+    # refused: M4's cohort registry (`<work>/m4/registry`, and the real part's
+    # under `<work>/real`) must be absolute or the importer refuses it, after
+    # the training runs have already been spent; and a subprocess run with the
+    # repository as its working directory would read a relative path against
+    # the repository. Resolved as parse_args' containment checks resolve it.
+    work = args.work_dir = args.work_dir.resolve()
     if work.exists() and any(work.iterdir()):
         # **Refuse rather than clean.** The operator names this directory, and a
         # probe that emptied whatever it was pointed at would be one typo away

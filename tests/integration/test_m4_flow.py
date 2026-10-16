@@ -27,7 +27,10 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,6 +55,7 @@ from tests.fixtures.registered_cohort import (  # noqa: E402
 from tests.fixtures.replacement import HOWS, replace_after_read  # noqa: E402
 
 LEDGER = "evaluations.json"
+REPO = Path(__file__).resolve().parents[2]
 
 
 def _sha(path) -> str:
@@ -164,6 +168,46 @@ def _records(cohort):
 
 def _r10(report):
     return json.loads(Path(report).read_text())["manifest"]["r10"]
+
+
+def _printed_command(text: str) -> str:
+    """The register-later line a run printed, as the operator would copy it."""
+    lines = text.splitlines()
+    (index,) = [i for i, line in enumerate(lines) if line.rstrip().endswith("Register it with:")
+                or line.rstrip() == "Register it later with:"]
+    command = lines[index + 1].strip()
+    assert command.startswith("python scripts/record_evaluation.py "), command
+    return command
+
+
+def _run_as_printed(command: str) -> subprocess.CompletedProcess:
+    """The printed line pasted into a POSIX shell at the repository root, with
+    this interpreter for `python`."""
+    line = shlex.quote(sys.executable) + command[len("python"):]
+    return subprocess.run(line, shell=True, cwd=REPO, capture_output=True, text=True,
+                          timeout=120)
+
+
+def _served_view(monkeypatch, cohort, served: Path) -> dict:
+    """`GET /api/v1/evaluations/loaded-model` as the server answers it, with a
+    real pipeline loaded from `served` -- the path a deployment configures --
+    published."""
+    from fastapi.testclient import TestClient
+
+    from src.api import main as api_main
+    from src.inference.pipeline import DiagnosisPipeline
+    from src.kg.graph import KnowledgeGraph
+
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    pipeline = DiagnosisPipeline(graph=KnowledgeGraph.read_json(cohort.data_dir / "kg.json"),
+                                 data_dir=str(cohort.data_dir), checkpoint_path=str(served),
+                                 device="cpu")
+    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api_main.app_state, "pipeline", pipeline, raising=False)
+    response = TestClient(api_main.app).get("/api/v1/evaluations/loaded-model")
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _nothing_written(cohort, label=LABEL):
@@ -348,10 +392,12 @@ def test_record_into_a_read_only_checkpoint_directory_keeps_the_report_and_exits
     report = _only_report(cohort)
     err = capsys.readouterr().err
     assert "NOT REGISTERED" in err and "Permission denied" in err
-    assert f"--report {report} --checkpoint-dir {cohort.checkpoint.parent}" in err
+    command = _printed_command(err)
+    assert f'--report "{report}" --checkpoint "{cohort.checkpoint.resolve()}"' in command
     assert not _ledger(cohort).exists()
     monkeypatch.setattr(sidecar, "create_staging_file", real)
-    assert _record(report, cohort.checkpoint.parent) == 0
+    done = _run_as_printed(command)
+    assert done.returncode == 0, done.stderr
     assert len(_records(cohort)) == 1
 
 
@@ -395,6 +441,88 @@ def test_arguments_of_the_other_kind_of_cohort_are_refused(
     assert fragment in capsys.readouterr().err
     assert not (tmp_path / "out.json").exists()
     assert _nothing_written(cohort)
+
+
+@pytest.mark.parametrize("folder, name", [("My Models", "best.pt"), ("weights", "best.ckpt")],
+                         ids=["space-in-path", "not-named-pt"])
+def test_the_printed_command_run_as_printed_registers_the_measured_file(
+    cohort, tmp_path, capsys, folder, name
+):
+    """Findings 1 and 14: the command a run without `--record` prints, pasted
+    into a shell as printed, registers the report -- for a checkpoint whose
+    path holds a space, and for one not named `*.pt`, which `--checkpoint`
+    names directly -- in the ledger beside the measured file."""
+    measured = tmp_path / folder / name
+    measured.parent.mkdir()
+    shutil.copy2(cohort.checkpoint, measured)
+    assert _measure(cohort, checkpoint=measured) == 0
+    command = _printed_command(capsys.readouterr().out)
+
+    done = _run_as_printed(command)
+
+    assert done.returncode == 0, done.stderr
+    report = _only_report(cohort)
+    (record,) = json.loads((measured.parent / LEDGER).read_text())["records"]
+    assert record["source_artifact_digest"] == _sha(report)
+    assert record["checkpoint_digest"] == cohort.checkpoint_sha256
+
+
+@pytest.mark.parametrize("flag", ["--checkpoint-dir", "--checkpoint"])
+def test_a_report_registered_through_a_link_is_shown_for_the_model_served_through_it(
+    cohort, tmp_path, monkeypatch, flag
+):
+    """Findings 0/2/13/24/25: the deployment serves `served/best.pt`, a link to
+    the run's checkpoint. Registering the kept report through the link's
+    directory or the link itself files the ledger beside the file the link
+    names -- where the service looks -- so the model status shows the record;
+    no second ledger is made beside the link."""
+    assert _measure(cohort) == 0
+    served = tmp_path / "served"
+    served.mkdir()
+    (served / "best.pt").symlink_to(cohort.checkpoint)
+
+    assert _record_through(_only_report(cohort), flag,
+                           served if flag == "--checkpoint-dir" else served / "best.pt") == 0
+
+    assert len(_records(cohort)) == 1
+    assert not (served / LEDGER).exists()
+    view = _served_view(monkeypatch, cohort, served / "best.pt")
+    assert view["state"] == "records"
+    assert view["checkpoint_sha256"] == cohort.checkpoint_sha256
+    assert len(view["records"]) == 1
+
+
+def _record_through(report, flag, named):
+    import scripts.record_evaluation as record_evaluation
+
+    return record_evaluation.main(["--report", str(report), flag, str(named)])
+
+
+def test_a_corroborating_rerun_that_found_r10_evidence_says_the_record_keeps_its_own(
+    cohort, tmp_path, capsys
+):
+    """Finding 3: measured with `--record` from a re-sampled workspace (R10
+    unverifiable), then again with the training workspace as evidence: the
+    second run corroborates, the record keeps its own unverifiable labels, and
+    the console says so, naming the report that holds the labels this run
+    found, rather than reporting plain agreement."""
+    resampled = write_demo_workspace(tmp_path / "resampled", sample_seed=7)
+    assert _measure(cohort, "--record", data_dir=resampled) == 0
+    capsys.readouterr()
+
+    assert _measure(cohort, "--record", "--training-evidence", str(cohort.data_dir),
+                    data_dir=resampled) == 0
+
+    out = capsys.readouterr().out
+    second = _reports(cohort)[-1]
+    assert "Agrees with record 1" in out
+    assert re.search(
+        r"This report's r10( and environment)? differ from record 1's; they are not "
+        r"compared, so the record keeps its own and this report's are in "
+        + re.escape(str(second)) + r"\.", out), out
+    (record,) = _records(cohort)
+    _unverifiable_everywhere(record["r10"])
+    assert _r10(second)["training"]["evidence"]["state"] == "found"
 
 
 # ---------------------------------------------------------------------------

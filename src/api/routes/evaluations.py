@@ -23,8 +23,11 @@ the digest of the status it read. Because records are found by digest and not by
 file name, a model replaced by other bytes never shows its predecessor's records,
 and the same bytes moved together with their ledger still find theirs.
 
-**The ledger beside the checkpoint**, ``Path(read.path).resolve().parent /
-evaluations.json``: the rule `register_report` writes by. It is read on every
+**The ledger beside the checkpoint**, ``Path(read.path).parent /
+evaluations.json``, where the read's path is the checkpoint's resolved path as
+the pipeline read it: the rule `register_report` writes by
+(``Path(checkpoint).resolve().parent``), with the directory settled when the
+checkpoint was read, not on each request. It is read on every
 request through `read_ledger`, the one ledger reader, so a registration made
 after a page loaded appears on the next load. Nothing comes from the client: no
 query parameter, no path, no digest.
@@ -112,6 +115,11 @@ class RecordCohort(_Strict):
     kind: Literal["supplied"]
     samples_sha256: _Digest
     source_sha256: _Digest
+    version_manifest_sha256: _Digest = Field(
+        ..., description="SHA-256 of the cohort version's manifest (`cohort.json`) the "
+        "run read: the record's cohort digest, a key field. A label is unique only "
+        "within one registry, so two imports of one label are two versions, and "
+        "differ here")
 
 
 class RecordCounts(_Strict):
@@ -330,8 +338,13 @@ def _record_view(record: Dict[str, Any]) -> RecordView:
     if record.get("cohort_role") != _at(record, "cohort", "role"):
         raise ValueError("its cohort_role is not its cohort's role")
     r10 = record.get("r10")
+    # The version's manifest digest is the record's key field, not a field of its
+    # cohort block; a record lacking it is refused like any other missing field.
+    cohort = _pick(_at(record, "cohort"), RecordCohort.model_fields)
+    if isinstance(cohort, dict):
+        cohort = {**cohort, "version_manifest_sha256": _at(record, "cohort_digest")}
     return RecordView(
-        cohort=_pick(_at(record, "cohort"), RecordCohort.model_fields),
+        cohort=cohort,
         counts=_pick(_at(record, "cohort", "counts"), RecordCounts.model_fields),
         metrics=_at(record, "metrics"),
         n_ranked=_at(record, "n_ranked"),
@@ -363,18 +376,38 @@ def _ledger_view(sha256: Optional[str] = None, problem: Optional[str] = None) ->
 
 def _ledger_problem(exc: Exception, ledger_path: Path) -> str:
     """Why the ledger was not read, with its directory left out: the response
-    names no path on the server, and the file is the one beside the checkpoint."""
+    names no path on the server, and the file is the one beside the checkpoint.
+
+    **An `OSError` is described by its type and its error text only, never
+    `str(exc)`,** which quotes the filename with ``repr``: a directory name with
+    a backslash, a newline or a byte that is not UTF-8 is escaped there, the
+    quoted text no longer equals the path, and replacing the path would leave
+    the server's directory in the answer. `read_ledger`'s own refusals name the
+    path as written, so replacing it is enough for them.
+    """
     if isinstance(exc, OSError):
-        text = f"{LEDGER_FILENAME} could not be read ({type(exc).__name__}: {exc})"
-    else:
-        text = str(exc)
-    return text.replace(str(ledger_path), LEDGER_FILENAME)
+        if exc.strerror:
+            reason = f": {exc.strerror}"
+        elif exc.errno is not None:
+            reason = f": errno {exc.errno}"
+        else:
+            reason = ""
+        return f"{LEDGER_FILENAME} could not be read ({type(exc).__name__}{reason})"
+    return str(exc).replace(str(ledger_path), LEDGER_FILENAME)
 
 
 def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
-    """What the ledger beside one checkpoint read holds for its digest."""
+    """What the ledger beside one checkpoint read holds for its digest.
+
+    **The directory was fixed when the checkpoint was read:** the pipeline reads
+    the checkpoint at its resolved path (`_load_model_from_checkpoint`), so
+    ``read.path`` is the file whose bytes were loaded, and its parent is the
+    directory they were in. It is not resolved again here: a link retargeted
+    since, without a reload, would move the lookup away from the served bytes'
+    ledger while the digest stayed theirs.
+    """
     digest = read.sha256
-    ledger_path = Path(read.path).resolve().parent / LEDGER_FILENAME
+    ledger_path = Path(read.path).parent / LEDGER_FILENAME
     try:
         ledger, ledger_sha = read_ledger(ledger_path)
     except (OSError, ValueError) as exc:

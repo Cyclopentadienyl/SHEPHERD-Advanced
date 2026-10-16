@@ -19,13 +19,14 @@ file covers every row of §5.4's acceptance list that a function can show:
 M2.3's, at training; it has no R10 function to test.)
 
 And the states and the reader: the four states, `k`/`cases` `None` whenever a
-label is not *overlap*/*none*; no recorded validation file means *no validation
-inputs recorded*; neither file recorded leaves both scopes *unverifiable*;
+label is not *overlap*/*none*; no `val_samples` entry means *no validation
+inputs recorded*, and one that is there and is not a digest leaves validation
+*unverifiable*; neither file recorded leaves both scopes *unverifiable*;
 matching evidence that does not parse is *unverifiable* with a problem that
 holds no row data; a candidate that is not even JSON is skipped without a parse
 error; each candidate is opened once even while both scopes are unmatched; the
-raw buffers and the matching samples are released before the next read; a
-non-directory evidence directory is refused.
+raw buffers and the matching samples are released before the next read; an
+evidence directory that is not a directory, or cannot be listed, is refused.
 
 Module: tests/unit/test_r10.py
 """
@@ -187,6 +188,41 @@ class TestEvidenceCandidates:
             evidence_candidates(root, [good, named])
 
         assert str(named) in str(refused.value)
+
+    @pytest.mark.parametrize("error, says", [
+        (PermissionError(13, "Permission denied"), "PermissionError: Permission denied"),
+        (OSError(5, "Input/output error"), "OSError: Input/output error"),
+    ], ids=["permission", "io-error"])
+    def test_an_evidence_directory_that_cannot_be_listed_is_refused(
+        self, tmp_path, workspace, monkeypatch, error, says
+    ):
+        """A mode-0700 archive of another account, or a stale network mount:
+        `is_dir()` passes and the listing fails. `Path.glob` swallows that error
+        and yields nothing, so the checkpoint's inputs, which the archive holds,
+        would be recorded as not found although it was never looked in. Catches a
+        listing that does not refuse."""
+        root, _, _ = workspace
+        archive = tmp_path / "archive"
+        _write(archive / "run7_train_samples.json", TEST)
+        good = tmp_path / "good"
+        _write(good / "a_samples.json", TEST)
+        real_scandir = os.scandir
+
+        def scandir(path="."):
+            if os.fspath(path) == os.fspath(archive):
+                raise error
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", scandir)
+
+        with count_opens() as opens, pytest.raises(ValueError) as refused:
+            evidence_candidates(root, [good, archive])
+
+        message = str(refused.value)
+        assert message.startswith(
+            f"Training evidence directory {archive} could not be listed ({says}); "
+            "nothing was read or written.")
+        assert sum(opens.counts.values()) == 0, "no candidate is read"
 
 
 # ---------------------------------------------------------------------------
@@ -497,19 +533,60 @@ def test_a_recorded_validation_file_without_a_training_file(workspace):
     assert block["validation"]["disease_overlap"]["state"] == "none"
 
 
-@pytest.mark.parametrize("value", ["", None, 123, ["a" * 64], {"sha256": "a" * 64}])
-def test_a_recorded_value_that_is_not_a_non_empty_string_counts_as_not_recorded(
-    workspace, value
+NOT_DIGESTS = [
+    ("", "an empty string"),
+    (None, "null"),
+    (123, "a value of type int"),
+    (["a" * 64], "a value of type list"),
+    ({"sha256": "a" * 64}, "a value of type dict"),
+]
+
+
+@pytest.mark.parametrize("value, kind", NOT_DIGESTS)
+def test_a_val_samples_entry_that_is_not_a_digest_is_unverifiable_not_unrecorded(
+    workspace, value, kind
 ):
+    """§5.4 allows *no validation inputs recorded* only when the checkpoint
+    records no `val_samples`, because training ran no validation pass. An entry
+    that is there and is not a digest names validation inputs (perhaps the ones
+    early stopping used) that no file can be matched against: *unverifiable*,
+    with a problem naming the role and the value's kind, never the value.
+    Catches the earlier rule, which counted it as not recorded."""
     root, train, _ = workspace
 
     block = compute_r10({"train_samples": train, "val_samples": value}, TEST,
                         evidence_candidates(root, []))
 
     _assert_well_formed(block)
-    assert block["validation"]["recorded_sha256"] is None
-    assert block["validation"]["evidence"]["state"] == "not_recorded"
-    assert block["validation"]["disease_overlap"]["state"] == "no_validation_inputs_recorded"
+    validation = block["validation"]
+    assert validation["recorded_sha256"] is None
+    assert validation["evidence"] == {
+        "state": "not_recorded", "path": None,
+        "problem": f"the checkpoint records val_samples as {kind}, not a SHA-256 string, "
+                   "so no file can be looked for by it; it is not a record the pipeline "
+                   "wrote",
+    }
+    for label in R10_LABELS:
+        assert validation[label]["state"] == "unverifiable"
+    assert block["training"]["evidence"]["state"] == "found"
+
+
+@pytest.mark.parametrize("value, kind", NOT_DIGESTS[:2])
+def test_a_train_samples_entry_that_is_not_a_digest_names_its_problem(workspace, value, kind):
+    """Training was already *unverifiable* for such an entry; its evidence now
+    says why. With `val_samples` absent, validation stays *unverifiable* too:
+    the record is not the pipeline's, so it cannot show validation was skipped."""
+    root, _, _ = workspace
+
+    block = compute_r10({"train_samples": value}, TEST, evidence_candidates(root, []))
+
+    _assert_well_formed(block)
+    assert block["training"]["evidence"]["problem"].startswith(
+        f"the checkpoint records train_samples as {kind}, not a SHA-256 string")
+    assert block["validation"]["evidence"]["problem"] is None, "absent, not malformed"
+    for scope in ("training", "validation"):
+        for label in R10_LABELS:
+            assert block[scope][label]["state"] == "unverifiable"
 
 
 def test_training_and_validation_recording_the_same_bytes_are_both_found_from_one_read(
