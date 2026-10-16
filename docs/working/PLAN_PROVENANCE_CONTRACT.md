@@ -3292,9 +3292,16 @@ own.
   and M3c align them with measurement: training refuses `auto` without CUDA since M3a
   (`resolve_training_device`, `scripts/train_model.py:897`), and serving refuses it since M3c, as
   training does (`resolve_serving_device`, `src/inference/pipeline.py:253`; applied before any
-  workspace input is read, `:609`, and in `build_pipeline` before `kg.json` is parsed,
-  `src/api/main.py:525`).
+  workspace input is read, `:619`, and in `build_pipeline` before `kg.json` is parsed,
+  `src/api/main.py:540`).
 - An explicit `cpu` stays available for development, and is recorded as such.
+- **CUDA is the current deployment and acceptance scope, not a permanent architectural limit**
+  (BACKLOG item 24, the owner and the reviewer, 2026-10-16). A backend added later comes with its
+  own explicit selection rule, never an unannounced fallback, and is accepted on its actual
+  hardware. Every backend shares this contract: a model converted for another runtime (OpenVINO,
+  for one) is a new artifact whose record names the source checkpoint's digest and the
+  conversion settings, and the served identity names the artifact served, never a converted one
+  as the original checkpoint.
 
 ### 5.3 Environment facts
 

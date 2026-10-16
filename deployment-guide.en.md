@@ -1091,6 +1091,11 @@ leaves the served pipeline serving. The refusal reads:
 
 Serving with no checkpoint — path reasoning alone — resolves no device.
 
+CUDA here is the current deployment and acceptance scope, not a permanent limit: the refusal's
+"hard requirement" means that scope. Another accelerator would be adapted and accepted on its
+actual hardware, with its own selection rule; until then no other backend is offered, and none
+is substituted silently (`docs/working/BACKLOG.md`, item 24).
+
 **The served identity records both** (§4.7): `settings.device_requested` as
 asked (`auto` when nothing was named) and `settings.device` as in effect, the
 device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
