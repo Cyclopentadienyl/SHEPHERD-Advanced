@@ -16,6 +16,9 @@ Purpose:
       line and a full identity table under the results, banners for a synthetic
       workspace, a missing model or the demo answer, and the same identity in
       the CSV and Markdown exports and in the model status
+    - The loaded model's recorded test results (Mode C) under the model status,
+      read from the read-only `/api/v1/evaluations/loaded-model` and shown only
+      for the checkpoint the status names
 
 Architecture Note:
     This component calls the /api/v1/diagnose endpoint via HTTP (requests),
@@ -43,6 +46,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import gradio as gr
 import requests
 
+from src.evaluation.caveats import (
+    MODE_C_RESULT_LABEL,
+    PRE_B1_NOTE,
+    R10_LABEL_TEXT,
+    R10_STATE_TEXT,
+    RECORD_ABSENCE,
+    RELATION_DISPLAY_NAMES,
+)
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 
 logger = logging.getLogger(__name__)
@@ -233,33 +244,46 @@ def _refusal_line(entry: Dict[str, Any]) -> Optional[str]:
 
 # =============================================================================
 # Formatting helpers
-def _get_pipeline_status() -> Dict[str, Any]:
-    """Get pipeline status from API.
+def _api_get(path: str) -> Tuple[Any, Optional[str]]:
+    """One GET to this server's API: ``(body, None)``, or ``(None, reason)``.
 
-    A failure carries its real reason: the status line shows it instead of
-    "Pipeline not loaded", so an answer that did arrive -- an HTTP error, a body
-    that is not JSON -- is not reported as an API that could not be reached.
+    The reason is the real one, so an answer that did arrive -- an HTTP error, a
+    body that is not JSON -- is not reported as an API that could not be reached.
+    Shared by the status read and the recorded-results read, so the two cannot
+    describe one failure two ways.
     """
     try:
-        resp = _self_request("GET", "/api/v1/pipeline/status", timeout=5)
+        resp = _self_request("GET", path, timeout=5)
         resp.raise_for_status()
-        return resp.json()
+        return resp.json(), None
     except ServerAddressUnknownError as e:
-        return {"initialized": False, "error": str(e)}
+        return None, str(e)
     except requests.ConnectionError:
         # ConnectTimeout is a ConnectionError too: the connection was never made.
-        return {"initialized": False, "error": "API not reachable"}
+        return None, "API not reachable"
     except requests.Timeout:
         # Connected, but no answer in time -- a reload holds the server meanwhile.
-        return {"initialized": False, "error": "API did not answer within 5 s"}
+        return None, "API did not answer within 5 s"
     except requests.HTTPError as e:
-        return {"initialized": False, "error": f"API error {e.response.status_code}"}
+        return None, f"API error {e.response.status_code}"
     except requests.exceptions.InvalidJSONError:
         # Narrower than ValueError, which requests also uses for a malformed URL
         # or header -- a request that was never sent is not a reply.
-        return {"initialized": False, "error": "the API's reply was not JSON"}
+        return None, "the API's reply was not JSON"
     except Exception as e:
-        return {"initialized": False, "error": f"unexpected error: {e}"}
+        return None, f"unexpected error: {e}"
+
+
+def _get_pipeline_status() -> Dict[str, Any]:
+    """Get pipeline status from API.
+
+    A failure carries its real reason (`_api_get`): the status line shows it
+    instead of "Pipeline not loaded".
+    """
+    body, error = _api_get("/api/v1/pipeline/status")
+    if error is not None:
+        return {"initialized": False, "error": error}
+    return body
 
 
 def _reload_pipeline(
@@ -798,6 +822,14 @@ def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     return _NOT_REPORTED_CELLS
 
 
+#: What a dataset record's origin means, wherever the panel names one: the
+#: served identity and the recorded results.
+_DATASET_ORIGIN_MEANING = {
+    "synthetic": "a generated stand-in, not a clinical knowledge graph",
+    "files": "built from identified source files",
+}
+
+
 def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     part = _field(identity, "dataset_record")
     state = _field(part, "state")
@@ -805,10 +837,7 @@ def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
         origin = _field(part, "origin")
         # **Never "verified" alone for a synthetic record** (contract M3b): the
         # binding and the origin are stated together.
-        meaning = {
-            "synthetic": "a generated stand-in, not a clinical knowledge graph",
-            "files": "built from identified source files",
-        }.get(origin, "not described by this page")
+        meaning = _DATASET_ORIGIN_MEANING.get(origin, "not described by this page")
         return (f"{_VERIFIED_MARK} verified · {_md_text(origin)}",
                 f"{_md_digest(_field(part, 'sha256'))} — origin {_md_text(origin)}: {meaning}")
     if state == "absent":
@@ -1012,6 +1041,338 @@ def _identity_details_md(kind: str, identity: Optional[Dict[str, Any]]) -> str:
         "",
         "</details>",
     ])
+
+
+# =============================================================================
+# Recorded test results for the loaded model (PLAN_TEST_RESULTS D8; M4)
+# =============================================================================
+# **Read from the API, worded by the caveats.** The records come from
+# `GET /api/v1/evaluations/loaded-model`, never from the ledger file: this tab
+# reads nothing in its own process (architecture note above). What every record
+# says beside its numbers -- the Mode C label, the B-1 note, R10's label names,
+# states and definitions, what an empty ledger means, the relation names -- is the
+# text in `src/evaluation/caveats.py`, rendered and never reworded here. The block
+# is appended to the model status Markdown (`_status_with_recorded_results`), so
+# the load and reload events keep their one output component.
+
+#: The block's heading.
+RECORDED_RESULTS_HEADING = "Recorded test results (Mode C)"
+#: Said instead of the records when they describe another checkpoint than the
+#: status read just before them: a reload landed between the two reads.
+RECORDS_MODEL_CHANGED = (
+    "The loaded model changed while its recorded results were read; refresh the page."
+)
+#: The states the API answers with (`src/api/routes/evaluations.py`).
+_RECORD_STATES = (
+    "no_model", "not_identified", "no_ledger", "ledger_not_read", "no_records", "records",
+)
+_R10_EVIDENCE_WORDS = {
+    "found": "found",
+    "not_found": "not found",
+    "unreadable": "found, not readable",
+    "not_recorded": "not recorded by the checkpoint",
+}
+#: A relation named by its contract number (R1, R2, ...), shown with it.
+_NUMBERED_RELATION_RE = re.compile(r"R\d+")
+
+
+def _get_loaded_model_evaluations() -> Dict[str, Any]:
+    """The loaded model's recorded results, from one GET.
+
+    Any failure is ``{"state": "unavailable", "error": <reason>}``, with the
+    reason `_api_get` gives: the records are read beside the model status, and
+    failing to read them must never become a failure of the status.
+    """
+    body, error = _api_get("/api/v1/evaluations/loaded-model")
+    if error is None and not isinstance(body, dict):
+        error = "the API's reply was not an object"
+    if error is not None:
+        return {"state": "unavailable", "error": error}
+    return body
+
+
+def _served_checkpoint_sha(status_data: Dict[str, Any]) -> Optional[str]:
+    """The checkpoint digest a status names as served, or ``None`` where it
+    names none (no model, a model supplied in memory, no identity reported)."""
+    checkpoint = _field(_field(status_data, "served_identity"), "checkpoint")
+    sha = _field(checkpoint, "sha256")
+    if _field(checkpoint, "state") == "verified" and _is_sha256(sha):
+        return sha
+    return None
+
+
+def _record_text(value: Any) -> str:
+    """A value from the records reply as Markdown-safe text; "not reported" for
+    one the reply left out."""
+    return "not reported" if value is _MISSING else _md_text(value)
+
+
+def _metric_order(name: str) -> Tuple[int, int, str]:
+    """MRR, mean rank, Hits@k by k, then anything else by name."""
+    if name == "untruncated_mrr":
+        return (0, 0, name)
+    if name == "mean_rank":
+        return (1, 0, name)
+    k = name[len("hits@"):]
+    if name.startswith("hits@") and k.isdigit():
+        return (2, int(k), name)
+    return (3, 0, name)
+
+
+def _mode_c_metric_label(name: str) -> str:
+    """``untruncated_mrr`` -> ``Mode C MRR (untruncated)``; ``hits@10`` ->
+    ``Mode C Hits@10``.
+
+    **Always "Mode C".** The Checkpoint line above shows the trainer's "Val MRR",
+    a top-20 metric on the selection split; a recorded result read under the same
+    name would be quoted as that number, or that number as this one.
+    """
+    if name == "untruncated_mrr":
+        return "Mode C MRR (untruncated)"
+    if name == "mean_rank":
+        return "Mode C mean rank"
+    if name.startswith("hits@"):
+        return f"Mode C Hits@{_md_text(name[len('hits@'):])}"
+    return f"Mode C {_md_text(name)}"
+
+
+def _metrics_text(metrics: Any) -> str:
+    if not isinstance(metrics, dict) or not metrics:
+        return "no metrics recorded"
+    parts = []
+    for name in sorted((str(key) for key in metrics), key=_metric_order):
+        value = metrics[name]
+        number = isinstance(value, (int, float)) and not isinstance(value, bool)
+        parts.append(f"{_mode_c_metric_label(name)} "
+                     f"{f'{value:.4f}' if number else _md_text(value)}")
+    return " · ".join(parts)
+
+
+def _coverage_text(record: Any) -> str:
+    """Ranked of source, and every exclusion with its count (D6): the
+    denominators a coverage figure needs."""
+    counts = _field(record, "counts")
+    excluded = _field(counts, "excluded")
+    if isinstance(excluded, dict):
+        reasons = " · ".join(
+            f"{_md_text(str(name).replace('_', ' '))} {_record_text(count)}"
+            for name, count in excluded.items()
+        ) or "none"
+    else:
+        reasons = "not reported"
+    return (
+        f"Coverage: {_record_text(_field(record, 'n_ranked'))} of "
+        f"{_record_text(_field(counts, 'source_cases'))} source cases ranked "
+        f"({_record_text(_field(counts, 'ranked_eligible'))} eligible) · "
+        f"{_record_text(_field(counts, 'n_excluded'))} excluded: {reasons}"
+    )
+
+
+def _relations_text(relations: Any) -> str:
+    """Each relation's state on the bytes the measurement read: ✓ where it was
+    verified, "not applicable" where it does not apply to this kind of cohort."""
+    if not isinstance(relations, dict):
+        return "not reported"
+    names = [*(name for name in RELATION_DISPLAY_NAMES if name in relations),
+             *(name for name in relations if name not in RELATION_DISPLAY_NAMES)]
+    parts = []
+    for name in names:
+        display = RELATION_DISPLAY_NAMES.get(name)
+        if display is None:
+            label = _md_text(name)
+        elif _NUMBERED_RELATION_RE.fullmatch(name):
+            label = f"{name} {display}"
+        else:
+            label = display
+        state = relations[name]
+        if state == "verified":
+            parts.append(f"{label} {_VERIFIED_MARK}")
+        elif state == "not_applicable":
+            parts.append(f"{label}: not applicable")
+        else:
+            parts.append(f"{label}: {_md_text(state)}")
+    return " · ".join(parts) or "none reported"
+
+
+def _r10_label_text(label: str, name: str, part: Any) -> str:
+    """One R10 label: its state in the caveats' words, and its count with the
+    denominator only where the state has one.
+
+    **"unverifiable" and "no validation inputs recorded" are words, never a
+    number:** neither a 0 that would read as "no overlap" nor a denominator that
+    would read as a count.
+    """
+    state = _field(part, "state")
+    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
+    if words is None:
+        return f"{name}: not reported"
+    if state not in ("overlap", "none"):
+        return f"{name}: {words}"
+    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
+    count = f"{_record_text(_field(part, 'k'))} of {_record_text(_field(part, 'n'))} {unit}"
+    if label == "disease_overlap":
+        count += f"; {_record_text(_field(part, 'cases'))} test cases with one of them"
+    return f"{name}: {words} — {count}"
+
+
+def _r10_scope_text(scope: str, labels: Dict[str, Dict[str, str]], part: Any) -> str:
+    evidence = _field(_field(part, "evidence"), "state")
+    found = _R10_EVIDENCE_WORDS.get(evidence) if isinstance(evidence, str) else None
+    return f"R10, {scope} inputs (evidence {found or 'not reported'}): " + " · ".join(
+        _r10_label_text(label, text["name"], _field(part, label))
+        for label, text in labels.items()
+    )
+
+
+def _environment_text(record: Any) -> str:
+    text = _record_text(_field(record, "environment_class"))
+    gpu = _field(record, "gpu")
+    if isinstance(gpu, dict):
+        name, driver = _field(gpu, "name"), _field(gpu, "driver")
+        text += (f" · GPU {_md_text(name) if isinstance(name, str) else 'name not read'}, "
+                 f"driver {_md_text(driver) if isinstance(driver, str) else 'not read'}")
+    return text
+
+
+def _dataset_origin_text(origin: Any) -> str:
+    meaning = _DATASET_ORIGIN_MEANING.get(origin) if isinstance(origin, str) else None
+    if meaning is None:
+        return _record_text(origin)
+    # Called out, as the synthetic banner calls out the served workspace.
+    word = f"**{origin}**" if origin == "synthetic" else origin
+    return f"{word} — {meaning}"
+
+
+def _registration_text(record: Any) -> str:
+    registration = _field(record, "registration")
+    n = _field(record, "n_corroborating")
+    if isinstance(n, int) and not isinstance(n, bool):
+        corroborating = ("no corroborating report" if n == 0
+                         else f"{n} corroborating report{'s' if n != 1 else ''}")
+    else:
+        corroborating = "corroborating reports not reported"
+    report = _field(record, "source_artifact_digest")
+    return (
+        f"Registered #{_record_text(_field(registration, 'sequence'))} at "
+        f"{_record_text(_field(registration, 'registered_at'))} · {corroborating} · "
+        f"from report {'not reported' if report is _MISSING else _md_short(report)}"
+    )
+
+
+def _recorded_result_lines(record: Any) -> List[str]:
+    """One record: the cohort role and version, the Mode C metrics over the cases
+    ranked, then coverage, relations, R10, environment, dataset and registration."""
+    cohort = _field(record, "cohort")
+    lines = [
+        f"- **{_record_text(_field(cohort, 'role'))} · "
+        f"{_record_text(_field(cohort, 'label'))}** — "
+        f"{_metrics_text(_field(record, 'metrics'))}, over "
+        f"{_record_text(_field(record, 'n_ranked'))} ranked cases",
+        f"  - {_coverage_text(record)}",
+        f"  - Relations: {_relations_text(_field(record, 'relations'))}",
+    ]
+    r10 = _field(record, "r10")
+    lines += [f"  - {_r10_scope_text(scope, labels, _field(r10, scope))}"
+              for scope, labels in R10_LABEL_TEXT.items()]
+    lines += [
+        f"  - Environment: {_environment_text(record)}",
+        f"  - Dataset: {_dataset_origin_text(_field(record, 'dataset_origin'))}",
+        f"  - {_registration_text(record)}",
+    ]
+    return lines
+
+
+def _recorded_records_lines(evals: Dict[str, Any]) -> List[str]:
+    """The "records" state: the label and note, each record shown, the count of
+    those not shown, and once for the block the R10 definitions and the §6 line."""
+    records = _field(evals, "records")
+    records = records if isinstance(records, list) else []
+    not_shown = _field(evals, "records_not_shown")
+    lines: List[str] = []
+    if records:
+        lines += [f"{MODE_C_RESULT_LABEL}. {PRE_B1_NOTE}", ""]
+        for record in records:
+            lines += _recorded_result_lines(record)
+    if isinstance(not_shown, int) and not isinstance(not_shown, bool) and not_shown > 0:
+        many = not_shown != 1
+        lines += ["", (
+            f"{not_shown} record{'s' if many else ''} for these weights "
+            f"{'are' if many else 'is'} not shown: {'they do' if many else 'it does'} "
+            "not have the shape registration writes (the server's log says why)."
+        )]
+    if records:
+        definitions = " · ".join(
+            f"{text['name']}: {text['definition']}"
+            for labels in R10_LABEL_TEXT.values() for text in labels.values()
+        )
+        # Once for the block, not per record: the boundary is the same claim for
+        # every record, and the relations it refers to are the ones marked ✓.
+        lines += ["", f"<sub>R10 labels. {definitions}.</sub>",
+                  "", f"<sub>{IDENTITY_CLAIM_BOUNDARY}</sub>"]
+    return lines
+
+
+def _format_recorded_results(evals: Dict[str, Any], served_sha: Optional[str]) -> str:
+    """The recorded-results block for the model status, in Markdown.
+
+    ``served_sha`` is the checkpoint digest of the status read just before
+    (`_served_checkpoint_sha`). **The block is shown only for that digest:** the
+    API echoes the digest it filtered the ledger by, and an answer about another
+    checkpoint -- a reload landed between the two reads -- is said to be one,
+    never shown under this status.
+    """
+    heading = f"**{RECORDED_RESULTS_HEADING}**"
+    state = _field(evals, "state")
+    if state == "unavailable":
+        return f"⚠️ {heading} could not be read: {_record_text(_field(evals, 'error'))}"
+    echoed = _field(evals, "checkpoint_sha256")
+    if state not in _RECORD_STATES or echoed is _MISSING:
+        return f"⚠️ {heading}: the API's reply was not in a shape this page reads."
+    if echoed != served_sha:
+        return f"⚠️ {heading}: {RECORDS_MODEL_CHANGED}"
+    if state == "no_model":
+        return (f"{heading}: no trained model is loaded, so there are no recorded "
+                "results to look up.")
+    if state == "not_identified":
+        return (f"{heading}: the loaded model was supplied in memory, not read from a "
+                "checkpoint file, so it has no digest to look recorded results up by.")
+
+    ledger = _field(evals, "ledger")
+    name = _field(ledger, "file")
+    file = _md_code(name, in_table=False) if isinstance(name, str) else "not reported"
+    lines = [f"{heading} for checkpoint {_md_short(echoed)}", ""]
+    if state == "no_ledger":
+        lines.append(
+            f"No ledger ({file}) is beside the loaded checkpoint, so no recorded result "
+            "can be shown; that does not mean these weights were never evaluated."
+        )
+    elif state == "ledger_not_read":
+        lines.append(
+            f"The ledger ({file}) beside the loaded checkpoint was not read, so none of "
+            f"its records are shown: {_record_text(_field(ledger, 'problem'))}"
+        )
+    elif state == "no_records":
+        lines.append(RECORD_ABSENCE)
+    else:
+        lines += _recorded_records_lines(evals)
+    return "\n".join(lines)
+
+
+def _status_with_recorded_results(status_data: Dict[str, Any]) -> str:
+    """The model status, with the loaded model's recorded results under it.
+
+    The status is read first and the records second, and the block is shown only
+    for the checkpoint the status names (`_format_recorded_results`). With no
+    pipeline loaded, or no status read, nothing is looked up: there is no loaded
+    model to have results, and no second error line to add.
+    """
+    rendered = _format_pipeline_status(status_data)
+    if not status_data.get("initialized", False):
+        return rendered
+    block = _format_recorded_results(
+        _get_loaded_model_evaluations(), _served_checkpoint_sha(status_data)
+    )
+    return f"{rendered}\n\n{block}"
 
 
 # =============================================================================
@@ -1497,7 +1858,10 @@ def _on_reload_pipeline(
     status_md = ""
     if result.get("success"):
         status = result.get("status", {})
-        status_md = _format_pipeline_status(status)
+        # The new model's recorded results, or the stated absence of any: a
+        # status naming the new checkpoint over the previous one's records
+        # would be the one thing this block must never show.
+        status_md = _status_with_recorded_results(status)
         if status.get("initialized") and not status.get("gnn_ready"):
             # Attached to the load action rather than to the status renderer:
             # the renderer also runs on the initial page render, and a toast that
@@ -1542,10 +1906,11 @@ def _on_load_status() -> str:
     """Read the pipeline status for a page that has just loaded.
 
     Wired to the Blocks' load event, so every page opened shows the server's
-    status at that moment rather than what it was while the app was being built.
+    status at that moment rather than what it was while the app was being built,
+    with the loaded model's recorded results under it in the same Markdown.
     """
     status_data = _get_pipeline_status()
-    return _format_pipeline_status(status_data)
+    return _status_with_recorded_results(status_data)
 
 
 # =============================================================================

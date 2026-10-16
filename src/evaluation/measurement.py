@@ -31,7 +31,10 @@ __all__ = [
     "EncodedGraph",
     "MeasurementManifest",
     "ModeResult",
+    "RELATION_NAMES",
+    "RELATION_STATES",
     "canonical_ranking",
+    "expected_relations",
     "ranks_of_truth",
     "encode_full_graph",
     "run_mode_c",
@@ -335,6 +338,40 @@ def assert_manifest_describes_regime(
 #: rule change. Lives beside `_authoritative`, which is what it versions.
 METRIC_SCHEMA_VERSION = 1
 
+#: The relations a Mode C run checks on the bytes it read, by the names its
+#: manifest records them under (contract §5; `PLAN_TEST_RESULTS.md` §6, phase 1,
+#: step 2): R1 the graph files against the workspace manifest, R2 a generated
+#: split's samples against the same manifest, R3 the checkpoint's recorded graph
+#: against the graph read, R5 the workspace's dataset record, and `cohort_graph` a
+#: registered cohort version's graph and dataset record against the ones read.
+#:
+#: **Recorded per relation because a report used to keep only R5's state.** R1 and
+#: R3 refused or passed and left nothing behind, so a reader could not tell from
+#: the report which relations had been checked on it.
+RELATION_NAMES = ("R1", "R2", "R3", "R5", "cohort_graph")
+
+#: The only states a written manifest holds for a relation. **There is no
+#: "failed" and no "not checked":** a relation that applies and does not hold
+#: refuses the run before a manifest exists, so a report can only say that a
+#: relation was verified on its bytes or that it does not apply to its cohort.
+RELATION_STATES = ("verified", "not_applicable")
+
+
+def expected_relations(*, registered: bool) -> Dict[str, str]:
+    """The relation states a run earns, by the kind of cohort it measured.
+
+    A generated split is bound to the workspace manifest by its sample digests
+    (R2) and has no cohort version to bind; a registered cohort version is bound
+    to the graph by its own manifest (`cohort_graph`) and was cut by no allocation
+    of this workspace, so R2 does not apply. R1, R3 and R5 apply to both.
+
+    A fresh dict each call, so a caller that keeps or edits it cannot change what
+    the next manifest is checked against.
+    """
+    states = {name: "verified" for name in RELATION_NAMES}
+    states["R2" if registered else "cohort_graph"] = "not_applicable"
+    return states
+
 
 @dataclass(frozen=True)
 class MeasurementManifest:
@@ -455,6 +492,71 @@ class MeasurementManifest:
     deterministic_algorithms: bool
     cudnn_deterministic: Optional[bool]
     cudnn_benchmark: Optional[bool]
+    # which cohort version, the relations checked, R10, and the environment (M4)
+    cohort_version: Optional[Dict[str, Any]]
+    """The registered cohort version this run scored, or `None` for a generated
+    split.
+
+    For a version: its label and role, the digest of its manifest as this run
+    read it (`manifest_sha256`, the ledger's cohort identity), the source, samples
+    and dataset record digests and the graph digests it was mapped against, and
+    its mapping policy and counts with their denominators. **Aggregates only:**
+    no case id, which stays in the version on the operator's machine (D7)."""
+    relations: Dict[str, str]
+    """Each relation in `RELATION_NAMES` and its state on this run's bytes, one of
+    `RELATION_STATES`. Fixed by the kind of cohort (`expected_relations`); any
+    other combination is refused when the manifest is built."""
+    r10: Optional[Dict[str, Any]]
+    """How the cohort relates to the training and validation inputs the
+    checkpoint records (contract §5.4): two scopes, two labels each, with the
+    evidence that decided each scope. `None` for a generated split, whose
+    relation to training is the allocation's."""
+    environment: Dict[str, Any]
+    """The facts a run was produced under (contract §5.3), from the one collector
+    training uses: `facts` is `collect_environment` for the device in effect,
+    `code` is `code_revision` of the repository, dirty state included.
+
+    **Recorded, never enforced** (R11). The facts that can move a number are
+    semantic fields above; the GPU model, driver, cuDNN, TF32 and PyG facts inform
+    an investigation of two disagreeing runs and do not key them."""
+
+    def __post_init__(self) -> None:
+        """Refuse a manifest whose relation states are not the ones its run earned.
+
+        **So a report cannot carry a state no check produced.** The states are
+        decided by the kind of cohort, not passed through from whatever a caller
+        assembled: a generated split with no cohort version, or a supplied cohort
+        with one. A supplied cohort without a version is refused here because
+        nothing binds its samples to the graph scored, so its report could not
+        state that relation at all.
+        """
+        registered = self.cohort_version is not None
+        if registered and self.cohort_kind != "supplied":
+            raise ValueError(
+                f"a registered cohort version is a supplied cohort; this manifest "
+                f"records cohort_kind {self.cohort_kind!r} beside one"
+            )
+        if not registered and self.cohort_kind != "generated":
+            raise ValueError(
+                f"a {self.cohort_kind!r} cohort with no registered cohort version: "
+                "nothing binds its samples to the graph scored, so no report can "
+                "state that relation. Measure a supplied cohort as a version "
+                "registered against this graph (--cohort LABEL --registry DIR)"
+            )
+        expected = expected_relations(registered=registered)
+        if not isinstance(self.relations, dict) or self.relations != expected:
+            raise ValueError(
+                f"relation states {self.relations!r} are not the ones a "
+                f"{'registered cohort version' if registered else 'generated split'} "
+                f"run earns ({expected}); a relation that does not hold refuses the "
+                "run, so no other state is written"
+            )
+        if registered != (self.r10 is not None):
+            raise ValueError(
+                "R10 is recorded for a registered cohort version and only for one; "
+                f"this manifest has cohort_version {'set' if registered else 'None'} "
+                f"and r10 {'None' if self.r10 is None else 'set'}"
+            )
 
 
 @dataclass(frozen=True)

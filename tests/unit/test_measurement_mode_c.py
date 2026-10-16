@@ -74,8 +74,14 @@ def world(tmp_path_factory):
     inputs = read_measurement_inputs(checkpoint_path, data_dir, "test", "supplied", device)
     digests = measurement_input_digests(inputs)
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
+    # **The manifest describes a generated split.** Since M4 a supplied cohort has
+    # a manifest only as a registered cohort version (`MeasurementManifest`
+    # refuses one without, since nothing binds its samples to the graph), and
+    # Mode C's scoring reads no part of the cohort's description, so what these
+    # tests check of the numbers is unchanged. Until this fixture reads a
+    # registered version, the samples scored are the workspace's `test` cohort.
     args = argparse.Namespace(
-        checkpoint=checkpoint_path, data_dir=data_dir, split="test", cohort_kind="supplied",
+        checkpoint=checkpoint_path, data_dir=data_dir, split="val", cohort_kind="generated",
         batch_size=BATCH_SIZE,
     )
     production_model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
@@ -337,6 +343,35 @@ def test_the_mode_c_manifest_records_what_makes_the_number_mean_something(mode_c
     # Recorded even when absent, so a reader can tell "no CUDA" from "not asked".
     assert manifest.device == "cpu"
     assert manifest.amp_enabled is False
+
+
+def test_the_mode_c_manifest_records_its_environment_from_the_one_collector(mode_c):
+    """M4 (contract §5.3): the facts and the code revision from
+    `collect_environment` and `code_revision`, the collectors training uses, and
+    `software_revision` is that revision rather than a second `git` call."""
+    from scripts.measure_scorer import PROJECT_ROOT
+    from src.utils.run_environment import code_revision
+
+    manifest = mode_c.manifest
+
+    assert set(manifest.environment) == {"facts", "code"}
+    assert manifest.environment["facts"]["gpu"] is None, "a CPU run has no GPU facts"
+    assert manifest.environment["facts"]["torch"] == str(torch.__version__)
+    assert manifest.environment["code"]["revision"] == code_revision(PROJECT_ROOT)["revision"]
+    assert manifest.software_revision == manifest.environment["code"]["revision"]
+
+
+def test_a_generated_split_manifest_has_no_cohort_version_and_no_r10(mode_c):
+    """Its relation states are a generated split's: R2 verified, the cohort
+    version's binding not applicable."""
+    from src.evaluation.measurement import expected_relations
+
+    manifest = mode_c.manifest
+
+    assert manifest.cohort_version is None and manifest.r10 is None
+    assert manifest.relations == expected_relations(registered=False)
+    assert manifest.relations["R2"] == "verified"
+    assert manifest.relations["cohort_graph"] == "not_applicable"
 
 
 def test_the_mode_c_manifest_records_the_numeric_regime_not_only_the_boolean(mode_c):

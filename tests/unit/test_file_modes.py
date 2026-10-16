@@ -272,3 +272,76 @@ def test_a_rewritten_artifact_keeps_its_mode(publisher, existing, umask022, tmp_
         os.chmod(path, existing)
     for path in PUBLISHERS[publisher](tmp_path):
         assert _mode(path) == existing, (publisher, path.name, oct(_mode(path)))
+
+
+# ------------------------------------------------------------------ publish_bytes
+# The one publish sequence for bytes already in memory (M4): stage, write, flush,
+# fsync, rename, unlink the staged file on failure, and the digest of exactly the
+# bytes written.
+def test_publish_bytes_writes_the_bytes_and_returns_their_digest(tmp_path):
+    import hashlib
+
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "out.json"
+    data = b'{"a": 1}'
+    assert publish_bytes(target, data) == hashlib.sha256(data).hexdigest()
+    assert target.read_bytes() == data
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out.json"]
+
+
+def test_publish_bytes_replaces_a_target_and_keeps_its_mode(umask022, tmp_path):
+    import hashlib
+
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o640)
+    assert publish_bytes(target, b"new") == hashlib.sha256(b"new").hexdigest()
+    assert target.read_bytes() == b"new"
+    assert _mode(target) == 0o640
+
+
+def test_publish_bytes_gives_a_new_target_what_open_would(umask, tmp_path):
+    from src.utils.file_modes import publish_bytes
+
+    expected = _open_would_give(tmp_path)
+    publish_bytes(tmp_path / "new.bin", b"x")
+    assert _mode(tmp_path / "new.bin") == expected
+
+
+def test_publish_bytes_creates_no_directories(tmp_path):
+    from src.utils.file_modes import publish_bytes
+
+    with pytest.raises(FileNotFoundError):
+        publish_bytes(tmp_path / "missing" / "out.json", b"x")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("fail_at", ["fsync", "replace"])
+def test_a_failed_publish_leaves_the_target_and_no_staged_file(fail_at, tmp_path, monkeypatch):
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+
+    def _fail(*args, **kwargs):
+        raise OSError(f"{fail_at} failed")
+
+    monkeypatch.setattr(file_modes.os, fail_at, _fail)
+    with pytest.raises(OSError, match=fail_at):
+        publish_bytes(target, b"new")
+    assert target.read_bytes() == b"old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out.json"]
+
+
+@pytest.mark.parametrize("data", ["text", bytearray(b"mutable")], ids=["str", "bytearray"])
+def test_publish_bytes_refuses_anything_but_bytes_before_staging(data, tmp_path):
+    # A bytearray could change between the hash and the write, so the digest
+    # would not be of the bytes written; nothing is created either way.
+    from src.utils.file_modes import publish_bytes
+
+    with pytest.raises(TypeError, match="nothing was written"):
+        publish_bytes(tmp_path / "out.json", data)
+    assert list(tmp_path.iterdir()) == []

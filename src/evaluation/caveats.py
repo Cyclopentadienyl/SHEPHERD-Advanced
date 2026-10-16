@@ -87,3 +87,108 @@ SPLIT_ARGUMENT_HELP = (
     + " (3) "
     + SUPPLIED_COHORT_OVERLAP
 )
+
+
+# ---------------------------------------------------------------------------
+# Recorded test results (M4): what the API, the UI and the CLI render beside a
+# ledger record. Constants only; each surface renders them, none rewords them.
+# ---------------------------------------------------------------------------
+
+#: D3's label for a recorded result: what was ranked, by what, under which
+#: policy. Shown with every recorded number so it cannot be quoted as another.
+MODE_C_RESULT_LABEL = "Disease ranking by the model, approved scorer policy (Mode C)"
+
+#: Why a recorded Mode C number is not the Diagnosis tab's performance yet.
+#:
+#: **Until B-1 the tab does not rank by Mode C.** The served scorer still mixes
+#: the GNN score with the shortest-path term behind the path gate
+#: (`docs/DISEASE_SCORER_POLICY.md`), so a Mode C number describes the model,
+#: not what the tab shows a user. Removed when B-1 lands, not reworded.
+PRE_B1_NOTE = (
+    "This is the model's own Mode C disease ranking. Until B-1 ships, the Diagnosis "
+    "tab ranks by the legacy GNN+SP mixture behind the path gate, so this number "
+    "does not describe the tab's current ranking."
+)
+
+#: R10's four labels (contract §5.4), keyed as a record's `r10` block is: scope,
+#: then label. Each has the name a surface shows and its one-line definition.
+#:
+#: **The definitions say what is counted and what is not.** Disease overlap counts
+#: distinct diseases; phenotype-set overlap compares sets, so a case listing a term
+#: twice and one listing it once are the same set but not the same scoring input.
+R10_LABEL_TEXT = {
+    "training": {
+        "disease_overlap": {
+            "name": "Training disease overlap",
+            "definition": (
+                "distinct test diseases that are also the disease of a case in the "
+                "training inputs this checkpoint records, of all distinct test "
+                "diseases, and the test cases whose disease is among them"
+            ),
+        },
+        "phenotype_set_overlap": {
+            "name": "Training phenotype-set overlap",
+            "definition": (
+                "test cases with the same disease and the same set of phenotypes as a "
+                "case in the training inputs this checkpoint records, of all test "
+                "cases; phenotype-set overlap ignores order and repetition, so the "
+                "scoring inputs may differ"
+            ),
+        },
+    },
+    "validation": {
+        "disease_overlap": {
+            "name": "Validation disease overlap",
+            "definition": (
+                "distinct test diseases that are also the disease of a case in the "
+                "validation inputs this checkpoint records, of all distinct test "
+                "diseases, and the test cases whose disease is among them"
+            ),
+        },
+        "phenotype_set_overlap": {
+            "name": "Validation phenotype-set overlap",
+            "definition": (
+                "test cases with the same disease and the same set of phenotypes as a "
+                "case in the validation inputs this checkpoint records, of all test "
+                "cases; phenotype-set overlap ignores order and repetition, so the "
+                "scoring inputs may differ"
+            ),
+        },
+    },
+}
+
+#: What each R10 state says, and what it does not.
+#:
+#: **"none" is not "no leakage", and "unverifiable" is not a number.** Both are
+#: statements about the inputs the checkpoint records and the evidence found for
+#: them; a surface that shows a count for an unverifiable label, or reads "none"
+#: as proof the model never saw these cases, says more than was measured.
+R10_STATE_TEXT = {
+    "overlap": "overlap",
+    "none": (
+        "none in the inputs this checkpoint records (not evidence about data "
+        "outside them)"
+    ),
+    "unverifiable": (
+        "unverifiable: the inputs this checkpoint records were not found or could "
+        "not be read, so there is no count"
+    ),
+    "no_validation_inputs_recorded": "no validation inputs recorded",
+}
+
+#: What an empty answer from a ledger means (`src/evaluation/sidecar.py`).
+RECORD_ABSENCE = (
+    "This ledger holds no result for these weights; that does not mean they were "
+    "never evaluated."
+)
+
+#: How each relation a report records (`RELATION_NAMES` in
+#: `src/evaluation/measurement.py`) is named where a person reads it. Keyed by
+#: those names; `tests/unit/test_registration.py` fails if the two differ.
+RELATION_DISPLAY_NAMES = {
+    "R1": "graph files match the workspace manifest",
+    "R2": "generated split's samples match the workspace manifest",
+    "R3": "model trained on this graph",
+    "R5": "dataset record bound to this graph",
+    "cohort_graph": "cohort version mapped against this graph",
+}

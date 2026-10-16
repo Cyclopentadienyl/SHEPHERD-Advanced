@@ -15,10 +15,11 @@ in contract M2.1's S6 and S8, and `scripts/setup_demo.py` reads through
 training. `scripts/build_index.py` and `scripts/spikes/validate_fast_subgraph.py`
 still have their own; migrating them belongs to P1 and is not smuggled in here.
 
-**No abstraction beyond the two readers below.** No `Storage` Protocol, no
+**No abstraction beyond the readers below.** No `Storage` Protocol, no
 backend registry, no adapter hierarchy, no migration framework. The package name
 says "backends" plural and that plural is aspirational; the shape a second
-backend needs will be known when there is one.
+backend needs will be known when there is one. `read_samples_file` is the one
+samples parser; `read_samples` only names a workspace split's file for it.
 
 **Each file is parsed from one read, and its digest comes from that read**
 (contract M2.1). A reader returns what it parsed and a `ReadIdentity`, never the
@@ -26,19 +27,36 @@ bytes; each buffer is released before the next file is read, which the release
 check in `tests/fixtures/release.py` shows. Torch files are parsed through this
 module's own `BytesIO`, which that check replaces to watch the wrapper.
 
+**A caller that knows which bytes it wants says so, and the comparison comes
+before the parse** (M4, R10). `read_samples_file(..., expected_sha256=...)`
+compares the digest of its one read with the digests given and refuses other
+bytes undecoded (`SamplesDigestMismatch`), so a file that is not the one asked
+for never fails as a parse error. A file that was read and does not parse is
+refused as `UnparseableFile`, which carries that read's identity, so a caller
+that asked for several digests knows which one the unparseable bytes were.
+
 Module: src/kg/storage/file_storage.py
 """
 from __future__ import annotations
 
 import json
+from collections.abc import Set as AbstractSet
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Tuple
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Tuple, Union
 
 from src.kg.artifacts import GRAPH_ARTIFACTS
 from src.utils.fingerprint import ReadIdentity
 
-__all__ = ["GraphArtifactsRead", "SamplesRead", "read_graph_artifacts", "read_samples"]
+__all__ = [
+    "GraphArtifactsRead",
+    "SamplesDigestMismatch",
+    "SamplesRead",
+    "UnparseableFile",
+    "read_graph_artifacts",
+    "read_samples",
+    "read_samples_file",
+]
 
 
 class GraphArtifactsRead(NamedTuple):
@@ -54,13 +72,61 @@ class GraphArtifactsRead(NamedTuple):
 
 
 class SamplesRead(NamedTuple):
-    """One split's samples, and the identity of the file they were parsed from."""
+    """One samples file's samples, and the identity of the file they were parsed from."""
 
     samples: List[Any]
     identity: ReadIdentity
 
 
-def _unparseable(path: Path, what: str, exc: Exception) -> ValueError:
+class SamplesDigestMismatch(ValueError):
+    """A samples file whose bytes are not one of the digests the caller asked for.
+
+    Raised **before the bytes are decoded or parsed**, from the same read whose
+    digest was compared, and after that read's buffer is released, so neither
+    the refusal nor its traceback keeps the bytes.
+
+    **Why before the parse.** R10 reads every candidate file to find the one a
+    checkpoint names, and most candidates are not it: another workspace's split,
+    another cohort's format, a file that is not JSON at all. Parsing first would
+    turn each of those into a parse error that answers a question nobody asked,
+    and would end the search at the first stranger. `expected` is a frozenset
+    because such a caller may still want two files (training and validation)
+    from one read of each candidate.
+    """
+
+    def __init__(self, path: Path, sha256: str, expected: FrozenSet[str]) -> None:
+        self.path = path
+        self.sha256 = sha256
+        self.expected = expected
+        wanted = " or ".join(sorted(expected))
+        super().__init__(
+            f"{path}: its SHA-256 is {sha256}, not {wanted}; its bytes were neither "
+            "decoded nor parsed"
+        )
+
+
+class UnparseableFile(ValueError):
+    """A file that was read but does not parse, refused under its own name.
+
+    `identity` is the read's: the file was read and its digest taken, so a caller
+    that asked for several digests can tell which file it was. `what` names what
+    the bytes failed to parse as ("UTF-8 JSON", "a samples file (a list of sample
+    rows)", ...), without any of their content, for a caller that records the
+    failure where row data must not go (R10's evidence problem).
+
+    "Parse" is the reader's whole parse, from bytes to the objects it returns,
+    including the integer-id check that makes a samples row usable.
+    """
+
+    def __init__(self, message: str, *, identity: ReadIdentity, what: str) -> None:
+        super().__init__(message)
+        self.identity = identity
+        self.what = what
+
+
+def _unparseable(
+    path: Path, what: str, exc: Exception, identity: ReadIdentity
+) -> UnparseableFile:
     """A file that was read but does not parse, refused under its own name.
 
     **Why the readers say this, not the caller.** An entry point reads, then
@@ -69,22 +135,37 @@ def _unparseable(path: Path, what: str, exc: Exception) -> ValueError:
     or json's own message (`pop from empty list`, `Expecting value`) names
     nothing. The cause stays chained for whoever debugs it.
     """
-    return ValueError(f"{path} could not be parsed as {what} ({type(exc).__name__}: {exc})")
+    return UnparseableFile(
+        f"{path} could not be parsed as {what} ({type(exc).__name__}: {exc})",
+        identity=identity,
+        what=what,
+    )
 
 
-def _read_json(path: Path) -> Tuple[Any, ReadIdentity]:
+def _read_json(
+    path: Path, expected_sha256: Optional[FrozenSet[str]] = None
+) -> Tuple[Any, ReadIdentity]:
     """Decoded as UTF-8, as the workspace writers write it; the bytes are released
-    before the text is parsed."""
+    before the text is parsed.
+
+    With `expected_sha256`, the digest of this read is compared first: bytes that
+    are none of those digests are released and refused (`SamplesDigestMismatch`)
+    without being decoded, so the comparison and the parse are of one buffer and
+    a stranger's bytes never reach the decoder.
+    """
     from src.utils.fingerprint import read_once
 
     read = read_once(path)
     identity = read.identity
+    if expected_sha256 is not None and identity.sha256 not in expected_sha256:
+        del read
+        raise SamplesDigestMismatch(path, identity.sha256, expected_sha256)
     try:
         text = read.data.decode("utf-8")
         del read
         parsed = json.loads(text)
     except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are both ValueErrors
-        raise _unparseable(path, "UTF-8 JSON", exc) from exc
+        raise _unparseable(path, "UTF-8 JSON", exc, identity) from exc
     return parsed, identity
 
 
@@ -106,9 +187,9 @@ def _read_tensors(path: Path, map_location: Any) -> Tuple[Any, ReadIdentity]:
         # allocate memory"), and a device raises `torch.OutOfMemoryError`.
         if isinstance(exc, torch.OutOfMemoryError) or "can't allocate memory" in str(exc):
             raise
-        raise _unparseable(path, "a tensor file", exc) from exc
+        raise _unparseable(path, "a tensor file", exc, read.identity) from exc
     except Exception as exc:  # noqa: BLE001 — torch raises a different type for each kind of junk
-        raise _unparseable(path, "a tensor file", exc) from exc
+        raise _unparseable(path, "a tensor file", exc, read.identity) from exc
     return tensors, read.identity
 
 
@@ -156,9 +237,10 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
     training reads,** `candidate_disease_ids` and `gene_ids`. Measurement and
     the verifiers read the three default fields; training passes its two extra
     fields explicitly.
-    """
-    from src.kg.data_loader import DiagnosisSample
 
+    The file is parsed by `read_samples_file`, the one samples parser; this
+    function only names a workspace split's file and explains its absence.
+    """
     path = data_dir / f"{split}_samples.json"
     if not path.exists():
         available = sorted(
@@ -175,10 +257,42 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
             else "this workspace has no *_samples.json files at all"
         )
         raise FileNotFoundError(f"Samples file not found: {path} — {detail}")
+    return read_samples_file(path, training_fields=training_fields)
 
-    entries, identity = _read_json(path)
+
+def read_samples_file(
+    path: Path,
+    *,
+    training_fields: bool = False,
+    expected_sha256: Union[str, AbstractSet[str], None] = None,
+) -> SamplesRead:
+    """Load one samples file, a JSON list of sample rows, as `DiagnosisSample` objects.
+
+    The one samples parser: `read_samples` (a workspace split), the registered
+    cohort version's `samples.json` and R10's evidence candidates all come here.
+    One `read_once`; the identity returned is the digest of the bytes parsed.
+
+    **`expected_sha256` compares before it parses.** Given a digest or a set of
+    them, bytes whose digest is not among them raise `SamplesDigestMismatch`
+    before they are decoded, from the same read. Bytes that match, or every
+    file when nothing is expected, are parsed and checked exactly as
+    `read_samples` always has, and refused as `UnparseableFile` under the file's
+    name. An empty expectation is refused before anything is read: nothing could
+    match it, so the read could only be thrown away.
+
+    Missing is `FileNotFoundError` naming the path, never an empty list.
+    `training_fields` is as `read_samples` describes.
+    """
+    from src.kg.data_loader import DiagnosisSample
+
+    expected = _expected_digests(path, expected_sha256)
+    try:
+        entries, identity = _read_json(path, expected)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Samples file not found: {path}") from exc
     # A file that is JSON but not a list of sample rows is refused under its
-    # name too: the entry point compares digests only after this parse.
+    # name too: without `expected_sha256`, the entry point compares digests only
+    # after this parse.
     try:
         if training_fields:
             samples = [
@@ -201,12 +315,38 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
                 for entry in entries
             ]
     except (KeyError, TypeError, AttributeError) as exc:
-        raise _unparseable(path, "a samples file (a list of sample rows)", exc) from exc
-    _refuse_non_integer_ids(path, samples)
+        raise _unparseable(path, "a samples file (a list of sample rows)", exc, identity) from exc
+    _refuse_non_integer_ids(path, samples, identity)
     return SamplesRead(samples, identity)
 
 
-def _refuse_non_integer_ids(path: Path, samples: List[Any]) -> None:
+def _expected_digests(
+    path: Path, expected_sha256: Union[str, AbstractSet[str], None]
+) -> Optional[FrozenSet[str]]:
+    """`None` (parse whatever is read), or the non-empty set of digests to accept.
+
+    A bare string is one digest. Anything else, an empty set or a value that is
+    not a non-empty string, is a caller's error and refused before the read.
+    """
+    if expected_sha256 is None:
+        return None
+    if isinstance(expected_sha256, str):
+        expected_sha256 = {expected_sha256}
+    elif not isinstance(expected_sha256, AbstractSet):
+        raise TypeError(
+            f"expected_sha256 for {path} must be a digest string or a set of them, "
+            f"not {type(expected_sha256).__name__}; nothing was read"
+        )
+    digests = frozenset(expected_sha256)
+    if not digests or not all(isinstance(d, str) and d for d in digests):
+        raise ValueError(
+            f"expected_sha256 for {path} names no usable digest ({sorted(map(repr, digests))}); "
+            "nothing could match it, so nothing was read"
+        )
+    return digests
+
+
+def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdentity) -> None:
     """Every id a sample row carries must be a JSON integer; anything else is
     refused under the file's name and the patient's.
 
@@ -219,12 +359,17 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any]) -> None:
     function, so the check comes before any of them converts. It says nothing
     about range, which needs the graph: Mode C's `_assert_ids_in_range` and the
     training loader's truth check (D3) stay where they are.
+
+    The refusal is an `UnparseableFile` carrying the read's identity; its `what`
+    names the rule, never the patient or the value, which only the message does.
     """
     def refuse(index: int, sample: Any, field: str, value: Any, what: str) -> None:
-        raise ValueError(
+        raise UnparseableFile(
             f"{path}: sample {index} (patient {sample.patient_id!r}) has {field} "
             f"{value!r}, which is not {what}. Ids are refused rather than converted: "
-            "a float or a boolean turned into an index names a different node"
+            "a float or a boolean turned into an index names a different node",
+            identity=identity,
+            what="a samples file with integer ids",
         )
 
     def is_id(value: Any) -> bool:

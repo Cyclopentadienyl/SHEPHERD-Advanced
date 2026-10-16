@@ -2083,6 +2083,25 @@ class DiagnosisPipeline:
             settings=settings,
         )
 
+    def served_checkpoint_read(self) -> Optional["ReadIdentity"]:
+        """The checkpoint read the served model was built from, or ``None``.
+
+        For a reader that needs the read's path as well as its digest: the
+        recorded results view finds the ledger beside the checkpoint and filters
+        it by digest (`src/api/routes/evaluations.py`). Both come from this one
+        identity, so the directory looked in and the digest looked up cannot
+        belong to two different loads, which a path taken from application state
+        beside a digest taken from here could during a reload.
+
+        **Returned exactly when `served_identity()` reports the checkpoint
+        verified**, by asking it rather than restating its condition, so the two
+        cannot drift apart: a model supplied in memory, or no model at all, has
+        no read to return. Nothing is hashed or read here.
+        """
+        if self.served_identity().checkpoint.state != "verified":
+            return None
+        return self._checkpoint_identity
+
     def get_pipeline_config(self) -> Dict[str, Any]:
         """Get pipeline configuration as dictionary."""
         # Effective scoring mode reflects whether SP signal is contributing

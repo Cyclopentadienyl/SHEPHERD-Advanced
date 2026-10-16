@@ -29,7 +29,6 @@ import argparse
 import json
 import logging
 import platform
-import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Tuple
@@ -283,16 +282,6 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
     return device, device.type == "cuda"
 
 
-def _software_revision() -> Optional[str]:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=5, check=True,
-        ).stdout.strip()
-    except Exception:  # noqa: BLE001 — a missing revision is recorded as None, not fatal
-        return None
-
-
 def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    n_samples: int, device: torch.device, *,
                    digests: Mapping[str, str],
@@ -319,15 +308,27 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     `torch_compile_wrapped=None` — "not observed", which is deliberately not the
     same claim as "not compiled". Neither value says a compiled graph executed;
     see `observe_torch_compile_wrapper`.
+
+    **The environment comes from the one collector training uses**
+    (`collect_environment` for the device in effect, `code_revision` of this
+    repository), and `software_revision` is that revision: the same commit
+    `git rev-parse HEAD` names, so taking it from there changes no semantics
+    digest. Recorded, never enforced (contract §5.3).
+
+    A generated split has no cohort version and no R10, and its relation states
+    are a generated split's (`expected_relations`); the manifest refuses any
+    other combination when it is built.
     """
     from src.evaluation.measurement import (
         METRIC_SCHEMA_VERSION,
         MeasurementManifest,
+        expected_relations,
         observe_torch_compile_wrapper,
     )
     from src.utils.fingerprint import compute_fingerprint
+    from src.utils.run_environment import code_revision, collect_environment
 
-
+    code = code_revision(PROJECT_ROOT)
     return MeasurementManifest(
         mode="C",
         split=args.split,
@@ -347,7 +348,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_executed=(
             device.type == "cuda" if cuda_executed is None else cuda_executed
         ),
-        software_revision=_software_revision(),
+        software_revision=code["revision"],
         torch_version=torch.__version__,
         cuda_version=torch.version.cuda,
         device=str(device),
@@ -361,6 +362,10 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         cudnn_deterministic=torch.backends.cudnn.deterministic if torch.cuda.is_available() else None,
         cudnn_benchmark=torch.backends.cudnn.benchmark if torch.cuda.is_available() else None,
+        cohort_version=None,
+        relations=expected_relations(registered=False),
+        r10=None,
+        environment={"facts": collect_environment(str(device)), "code": code},
     )
 
 

@@ -31,11 +31,17 @@ caller's rename, as it could with ``tempfile``. The mode is set through the
 open descriptor, so such an account cannot redirect that; the directories
 themselves must not be writable by accounts that are not trusted.
 
+``publish_bytes`` is the whole publish sequence for bytes already in memory --
+stage, write, flush, fsync, rename, and remove the staged file on any failure --
+returning the digest of exactly the bytes written. Each writer that predates it
+repeats that sequence itself; they are not migrated here.
+
 Module: src/utils/file_modes.py
 """
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import secrets
 import stat
@@ -116,4 +122,44 @@ def create_staging_file(
     return handle, str(path)
 
 
-__all__ = ["create_staging_file"]
+def publish_bytes(target: str | os.PathLike[str], data: bytes) -> str:
+    """Write `data` to `target` whole, and return the SHA-256 of exactly those bytes.
+
+    The bytes go to a staging file beside `target` (`create_staging_file`: an
+    unused name, the mode ``open()`` would give, an existing target's mode
+    kept), are flushed to disk and renamed over `target`. A failure anywhere
+    leaves `target` as it was and removes the staged file, so a reader sees the
+    old file or the new one and never a part of either.
+
+    **The digest is of the bytes written, not of the file read back** (the
+    writers' rule since contract M3b): a manifest that binds this file can take
+    it without a second read, and a file replaced after the rename is not the
+    one recorded. `data` must be `bytes`, which cannot change between the hash
+    and the write; anything else is refused before a staging file exists.
+
+    **Creates no directories.** A missing parent raises `FileNotFoundError`:
+    where a file is published is the caller's decision, and a directory made
+    here would be one nobody chose. ``os.replace`` overwrites an existing
+    target; a caller that must not overwrite refuses before calling this.
+    """
+    if not isinstance(data, bytes):
+        raise TypeError(
+            f"publish_bytes takes bytes, got {type(data).__name__}; nothing was written to "
+            f"{target}"
+        )
+    digest = hashlib.sha256(data).hexdigest()
+    target = Path(target)
+    handle, staged = create_staging_file(target, binary=True)
+    try:
+        with handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, target)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
+    return digest
+
+
+__all__ = ["create_staging_file", "publish_bytes"]

@@ -48,6 +48,9 @@ ENTRY_POINTS = ("scripts/train_model.py", "scripts/measure_scorer.py",
                 "scripts/compute_shortest_paths.py")
 MOVED_IN_S9 = ("scripts/probe_deployment.py", "scripts/audit_split_overlap.py",
                "scripts/audit_generator_fidelity.py")
+#: M4's CLIs. They read and hash nothing themselves: the registry, the samples reader
+#: and the registration function do, and each of those sites is listed below.
+M4_SCRIPTS = ("scripts/import_cohort.py", "scripts/record_evaluation.py")
 
 #: Deleted in S9. Named nowhere in scope, so neither a caller nor a copy survives.
 REMOVED = ("verify_graph_artifacts", "verify_generated_cohorts", "verify_graph_source",
@@ -103,14 +106,30 @@ ALLOWED = {
     ("scripts/compute_shortest_paths.py", "main", "file_sha256"):
         (1, "S9 allowlist: the SP producer's end-of-run comparison, a warning that records "
             "nothing; the sidecar records the digest of the bytes traversed"),
-    # --- Deferred out of M2.1, each with its home (BACKLOG items 18, 19) -----
+    # --- The evaluation ledger and registration (BACKLOG 18 done in M4) ------
     ("src/evaluation/sidecar.py", "find_checkpoint", "file_sha256"):
         (1, "BACKLOG 19.7: identifies a checkpoint nobody is about to parse (M2.1's own "
             "allowance for file_sha256)"),
     ("src/evaluation/sidecar.py", "ledger_digest", "file_sha256"):
-        (1, "BACKLOG item 18 / 19.5: the ledger's stale-write guard"),
-    ("src/evaluation/sidecar.py", "read_ledger", "json.loads"):
-        (1, "BACKLOG item 18 / 19.5: the evaluation ledger's read"),
+        (1, "the ledger's stale-write guard: compares the file by path at write time with "
+            "the digest read_ledger returned for the bytes it parsed (BACKLOG item 18 done); "
+            "identifies nothing parsed; its window to the rename stays open — single-writer, "
+            "not compare-and-swap"),
+    ("src/evaluation/sidecar.py", "read_ledger", "read_once"): (1, _READER),
+    ("src/evaluation/sidecar.py", "read_ledger", "json.loads"): (1, _READER),
+    ("src/evaluation/registration.py", "_read_report", "read_once"): (1, _READER),
+    ("src/evaluation/registration.py", "_read_report", "json.loads"): (1, _READER),
+    # --- The cohort registry (contract M4) ------------------------------------
+    ("src/evaluation/cohort_registry.py", "prepare_import", "read_once"):
+        (1, "M4: the cohort source file, parsed by parse_source and kept verbatim from the "
+            "bytes of this one read; its digest names the kept copy and the version manifest"),
+    ("src/evaluation/cohort_registry.py", "parse_source", "json.loads"):
+        (1, "M4: parses the source bytes prepare_import read once; opens no file itself"),
+    ("src/evaluation/cohort_registry.py", "_keep_source", "read_once"):
+        (1, "M4: the no-clobber check of a kept source: an existing sources/<sha256>.json "
+            "must hash to its name before an import relies on it; records nothing"),
+    ("src/evaluation/cohort_registry.py", "resolve_version", "read_once"): (1, _READER),
+    ("src/evaluation/cohort_registry.py", "resolve_version", "json.loads"): (1, _READER),
     ("src/api/services/training_manager.py", "TrainingManager.get_checkpoints", "torch.load"):
         (1, "M2.1 decision 4, BACKLOG 19.3: the training console's checkpoint list"),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
@@ -120,8 +139,15 @@ ALLOWED = {
         (1, "KG build, unchanged by M2.1: one pass over an ontology file feeds both its "
             "digest and its identity scan"),
     # --- Digests of values in memory, not of files ---------------------------
-    ("src/evaluation/sidecar.py", "measurement_semantics_digest", "hashlib.sha256"):
-        (1, _IN_MEMORY.format(what="a canonical string")),
+    ("src/evaluation/sidecar.py", "_canonical_digest", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="a canonical JSON string of manifest fields; the "
+                                   "semantics and scoring-semantics digests share it")),
+    ("src/evaluation/cohort_registry.py", "_sha256", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the mapped samples about to be written and the canonical "
+                                   "form of a would-be version manifest (the preview id)")),
+    ("src/utils/file_modes.py", "publish_bytes", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the bytes publish_bytes is about to write, returned as "
+                                   "the writer's digest of what it wrote (contract M4)")),
     ("src/kg/disease_allocation.py", "disease_set_digest", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="a disease set")),
     ("src/kg/disease_allocation.py", "universe_digest", "hashlib.sha256"):
@@ -189,7 +215,7 @@ _NAMED = ("file_sha256", "read_once", "load_json")
 def _scope():
     for path in sorted((REPO / "src").rglob("*.py")):
         yield path
-    for name in (*ENTRY_POINTS, *MOVED_IN_S9):
+    for name in (*ENTRY_POINTS, *MOVED_IN_S9, *M4_SCRIPTS):
         yield REPO / name
 
 

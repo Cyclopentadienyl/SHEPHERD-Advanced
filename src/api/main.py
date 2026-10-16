@@ -330,10 +330,13 @@ async def readiness_check() -> Dict[str, Any]:
 # =============================================================================
 # Import and Register Routes
 # =============================================================================
-from src.api.routes import diagnose, search, disease, training, system, pipeline
+from src.api.routes import diagnose, search, disease, training, system, pipeline, evaluations
 
 app.include_router(diagnose.router, prefix="/api/v1", tags=["Diagnosis"])
 app.include_router(pipeline.router, prefix="/api/v1", tags=["Pipeline"])
+# A router of its own, outside `pipeline.router`: a deployment that unmounts or
+# protects that router (SPEC_4 B2, the C3 class) keeps this read-only view.
+app.include_router(evaluations.router, prefix="/api/v1", tags=["Evaluations"])
 app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])
