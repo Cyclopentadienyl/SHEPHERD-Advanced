@@ -2864,8 +2864,9 @@ acceptance; no other runner. One run, demo and real data together.
   functional acceptance is not passed.
 
 **M3b's acceptance on the GB10 (2026-10-16, at `c80c1e4`; evidence
-`/home/user/m3b-acceptance-c80c1e4-01/`, kept on the homelab, not in the repository; reviewed by
-the reviewer).** **Passed, within the scope agreed.** The report (SHA-256
+`/home/user/m3b-acceptance-c80c1e4-01/` on the homelab, its report, exit status and the
+reviewer's cross-checks in [`m3b-acceptance-2026-10-16/`](m3b-acceptance-2026-10-16/README.md);
+reviewed by the reviewer).** **Passed, within the scope agreed.** The report (SHA-256
 `9038a235907ff03b18f4a153bffc64f79b36657b9e8264dfecce58c6246ef489`, generated
 2026-10-16 13:05 +08:00) and what the reviewer checked, read only, without training again:
 - **Run:** the tested commit recorded and equal to the checked-out head, `tracked_files_modified`
@@ -2911,8 +2912,10 @@ the reviewer).** **Passed, within the scope agreed.** The report (SHA-256
   `val`: its numbers are not a MyGene2 or institutional held-out result. N2, M3c and M4 are not
   completed by this. The evidence and `work/` stay where they are; no rerun or rebuild is needed.
 - **The homelab checkout restored (2026-10-16, the operator):** back on `main` at `9fe5113`, the
-  state `checkout-before.txt` records; at the review it was still detached at `c80c1e4` with the
-  tracked files clean, which is the state before the restore.
+  state `checkout-before.txt` records; the reviewer's evidence package found `checkout-before.txt`
+  and `checkout-restored.txt` byte-identical, the tracked files clean and the four named inputs
+  rechecked equal. At the review it was still detached at `c80c1e4`, the state before the
+  restore.
 
 **M3c — what is served is identified (R8).**
 - **The checkpoint's digest comes from M2.1's read** of the bytes loaded.
