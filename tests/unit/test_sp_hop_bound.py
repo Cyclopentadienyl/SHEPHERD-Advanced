@@ -312,6 +312,8 @@ class TestTheProvenanceReachesACaller:
         tests green — the docstring asserted coverage the test did not have.
         """
         from src.api.routes.pipeline import _status_of
+        from src.kg.artifacts import DatasetRecord
+        from src.utils.fingerprint import ReadIdentity
 
         pipeline, data_dir = _loader(
             tmp_path, distances=[1, 2, 3], sidecar={"max_hops": 3}
@@ -321,9 +323,29 @@ class TestTheProvenanceReachesACaller:
         # The rest of `get_pipeline_config` reads attributes a full
         # initialisation sets; supplying them is what lets the real method run
         # here instead of a dict standing in for it.
+        #
+        # **A coherent pipeline, as the served identity requires** (contract
+        # M3c): a GNN with a table is a model built from a verified checkpoint,
+        # over a graph verified from a workspace whose dataset record was read,
+        # on a device asked for and in effect. The builder refuses any other
+        # combination, so these are the attributes it reads, set as a full
+        # initialisation sets them; `_sp_build_id` is the loader's, set above.
         pipeline._gnn_ready = True
         pipeline.kg = None
-        pipeline.model = None
+        pipeline.model = object()
+        pipeline._checkpoint_identity = ReadIdentity(
+            path=data_dir / "ckpt.pt", sha256="d" * 64)
+        pipeline._graph_identity = ReadIdentity(
+            path=data_dir / "kg.json", sha256=GRAPH_DIGEST)
+        pipeline._bound_digests = {"kg": GRAPH_DIGEST, "node_features": "1" * 64,
+                                   "edge_indices": "2" * 64, "num_nodes": "3" * 64}
+        pipeline._manifest_sha256 = "e" * 64
+        pipeline._dataset_record = DatasetRecord(
+            record={"origin": "synthetic", "sources": [], "incomplete_by_design": []},
+            identity=ReadIdentity(path=data_dir / "kg.provenance.json", sha256="f" * 64),
+        )
+        pipeline._device_requested = "cpu"
+        pipeline._device_in_effect = "cpu"
 
         config = pipeline.get_pipeline_config()
 
@@ -333,6 +355,10 @@ class TestTheProvenanceReachesACaller:
         status = _status_of(config, data_dir=None, checkpoint_path=None)
         assert status.sp_max_hops == 3
         assert status.sp_hop_bound_source == "sidecar"
+        # The served identity carries the same table: its build and its bound.
+        assert status.served_identity.shortest_paths.model_dump() == {
+            "state": "verified", "build_id": BUILD_ID, "max_hops": 3,
+        }
 
 
 class TestTheLoaderRefusesAPresentButUnusableTable:

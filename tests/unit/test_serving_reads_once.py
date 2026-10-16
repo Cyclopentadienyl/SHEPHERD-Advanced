@@ -325,10 +325,13 @@ def test_a_workspace_build_without_the_graph_read_is_refused(workspace, monkeypa
 
     data_dir, checkpoint = workspace
 
+    # `device="cpu"`: with none named a checkpoint asks for CUDA and, on a host
+    # without it, is refused first (contract M3c, §5.2). This test is about the
+    # graph= refusal, so it names the development device to reach it.
     with count_opens() as opens:
         with pytest.raises(ValueError, match="requires graph="):
             DiagnosisPipeline(kg=KnowledgeGraph(), data_dir=str(data_dir),
-                              checkpoint_path=str(checkpoint))
+                              checkpoint_path=str(checkpoint), device="cpu")
 
     assert not [path for path in data_dir.iterdir() if opens.opens(path)]
 
@@ -411,6 +414,11 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     assert result.success, result.message
     assert api.app_state.pipeline._checkpoint_identity.sha256 == replacement
     assert result.status.checkpoint_meta["epoch"] == 9
+    # Contract M3c (BACKLOG 19.1, 19.2): the served identity names the bytes the
+    # build read, and the reason says the choice was made on earlier bytes.
+    assert result.status.served_identity.checkpoint.sha256 == replacement
+    assert "replaced after it was scored" in result.selection_reason
+    assert f"loaded sha256 {replacement}" in result.selection_reason
 
 
 def test_a_checkpoint_holding_arbitrary_objects_is_refused(api, workspace, tmp_path):

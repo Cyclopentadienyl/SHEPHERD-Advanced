@@ -30,10 +30,10 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +188,108 @@ class DiagnosisCandidate(BaseModel):
     confidence_label: Optional[str] = Field(None, description="Clinician-facing label: Strong path support / Weak path support / Analogy-based / Insufficient evidence")
 
 
+# -----------------------------------------------------------------------------
+# The served identity (contract M3c, R8)
+# -----------------------------------------------------------------------------
+# The response's form of `src.core.types.ServedIdentity`, defined here rather
+# than imported: this module is loaded by file, without the application, by
+# `scripts/measure_served_pipeline.py`, which validates every response it counts
+# against it. `tests/unit/test_served_identity.py` pins the two to one shape and
+# one set of states. Every key is required, and its value may be null where the
+# state says there is nothing to identify; an unknown key is refused, so the two
+# definitions cannot drift apart unnoticed.
+_SHA256 = r"^[0-9a-f]{64}$"
+
+
+class _Strict(BaseModel):
+    """An unknown key is refused: the shape is the contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ServedCheckpoint(_Strict):
+    """The model's checkpoint, or the stated absence of one."""
+
+    state: Literal["verified", "supplied_in_memory", "absent"] = Field(
+        ..., description="verified: built from one read of a checkpoint trained on "
+        "the served graph; supplied_in_memory: a model object, no checkpoint bytes; "
+        "absent: no model, path reasoning ranks the candidates")
+    sha256: Optional[str] = Field(
+        ..., pattern=_SHA256, description="SHA-256 of the checkpoint bytes read; "
+        "null unless verified")
+
+
+class ServedGraph(_Strict):
+    """The graph served, and the workspace manifest it was verified against."""
+
+    state: Literal["verified", "unverified", "in_memory"] = Field(
+        ..., description="verified: kg.json checked against the workspace's "
+        "split_manifest.json; unverified: read from a file, checked against no "
+        "manifest; in_memory: no file")
+    kg_sha256: Optional[str] = Field(
+        ..., pattern=_SHA256, description="SHA-256 of the kg.json bytes read; null "
+        "for a graph supplied in memory")
+    split_manifest_sha256: Optional[str] = Field(
+        ..., pattern=_SHA256, description="SHA-256 of the split_manifest.json bytes "
+        "read; null unless verified")
+
+
+class ServedShortestPaths(_Strict):
+    """The shortest-path table, or the stated absence of one."""
+
+    state: Literal["verified", "absent"] = Field(
+        ..., description="verified: the table names the served graph; absent: no "
+        "table contributes to the score")
+    build_id: Optional[str] = Field(
+        ..., description="The build_id the table and its sidecar share; null when absent")
+    max_hops: Optional[int] = Field(
+        ..., description="The sidecar's hop bound; null when absent")
+
+
+class ServedDatasetRecord(_Strict):
+    """The served workspace's dataset record, or its absence."""
+
+    state: Literal["verified", "absent"] = Field(
+        ..., description="verified: the record the workspace manifest binds, naming "
+        "the served graph; absent: no workspace was verified")
+    origin: Optional[Literal["files", "synthetic"]] = Field(
+        ..., description="files: built from identified source files; synthetic: a "
+        "generated stand-in, not a clinical knowledge graph")
+    sha256: Optional[str] = Field(
+        ..., pattern=_SHA256, description="SHA-256 of the kg.provenance.json bytes read")
+
+
+class ServedSettings(_Strict):
+    """The serving settings that change scores, as in effect."""
+
+    device: Optional[str] = Field(
+        ..., description="Where the model ran (torch's name, e.g. cuda:0, cpu); null "
+        "when no model is served")
+    device_requested: Optional[str] = Field(
+        ..., description="What was asked for: auto (CUDA, refused without it), cuda, "
+        "cuda:N or cpu; null when no model is served")
+    eta: Optional[float] = Field(
+        ..., description="Mixing weight in effect between the GNN and shortest-path "
+        "terms (1.0 with no table); null when no model is served")
+    max_path_length: int
+    path_length_penalty: float
+    aggregation_method: str
+    max_paths_per_candidate: int
+    use_direct_path_optimization: bool
+    phenotype_normalisation_version: int
+
+
+class ServedIdentity(_Strict):
+    """What produced a result, part by part (contract M3c)."""
+
+    scoring_mode: Literal["gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback"]
+    checkpoint: ServedCheckpoint
+    graph: ServedGraph
+    shortest_paths: ServedShortestPaths
+    dataset_record: ServedDatasetRecord
+    settings: ServedSettings
+
+
 class DiagnoseResponse(BaseModel):
     """Diagnosis response model"""
 
@@ -197,7 +299,15 @@ class DiagnoseResponse(BaseModel):
     candidates: List[DiagnosisCandidate] = Field(..., description="Ranked diagnosis candidates")
     summary: Optional[str] = Field(None, description="Summary explanation")
     inference_time_ms: float = Field(..., description="Processing time in milliseconds")
-    model_version: str = Field(..., description="Model version used")
+    served_identity: Optional[ServedIdentity] = Field(
+        ...,
+        description="What produced this result: the checkpoint, graph, workspace "
+        "manifest, shortest-path table and dataset record by digest or identifier, "
+        "the scoring mode and the settings in effect, each part stating its state "
+        "(contract M3c). Taken from the result this response answers with. Null "
+        "only for the demo answer given when no pipeline is configured: no model, "
+        "graph or table produced those candidates.",
+    )
     warnings: List[str] = Field(default_factory=list, description="Any warnings")
 
     model_config = {"json_schema_extra": {
@@ -218,7 +328,24 @@ class DiagnoseResponse(BaseModel):
                 }
             ],
             "inference_time_ms": 2.5,
-            "model_version": "1.0.0",
+            "served_identity": {
+                "scoring_mode": "gnn_plus_shortest_path",
+                "checkpoint": {"state": "verified", "sha256": "4f80" + "0" * 60},
+                "graph": {"state": "verified", "kg_sha256": "9a1c" + "0" * 60,
+                          "split_manifest_sha256": "131c" + "0" * 60},
+                "shortest_paths": {"state": "verified",
+                                   "build_id": "0123456789abcdef0123456789abcdef",
+                                   "max_hops": 5},
+                "dataset_record": {"state": "verified", "origin": "files",
+                                   "sha256": "2c7a" + "0" * 60},
+                "settings": {"device": "cuda:0", "device_requested": "auto",
+                             "eta": 0.7, "max_path_length": 4,
+                             "path_length_penalty": 0.9,
+                             "aggregation_method": "weighted_sum",
+                             "max_paths_per_candidate": 10,
+                             "use_direct_path_optimization": True,
+                             "phenotype_normalisation_version": 1},
+            },
         }
     }}
 
@@ -268,6 +395,10 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     # What the pipeline actually scored. Stays None on the mock path, which has
     # no pipeline to say so.
     phenotype_input = None
+    # What produced the answer (contract M3c), copied from the result below and
+    # never read from shared state a reload could swap. Stays None on the mock
+    # path, where nothing was served.
+    served_identity = None
 
     # Reserved, accepted, ignored — and the caller is told so on every path
     # below, because the field is equally inert in the mock fallback.
@@ -382,6 +513,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             if result.warnings:
                 warnings.extend(result.warnings)
             phenotype_input = result.phenotype_input
+            served_identity = result.served_identity.to_dict()
 
     except HTTPException:
         # **Deliberate statuses pass through.** `HTTPException` is an
@@ -405,7 +537,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         candidates=candidates,
         summary=_summary(len(candidates), len(request.phenotypes), phenotype_input),
         inference_time_ms=inference_time_ms,
-        model_version="1.0.0",
+        served_identity=served_identity,
         warnings=warnings,
     )
 

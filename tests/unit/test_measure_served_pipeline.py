@@ -33,6 +33,43 @@ from pathlib import Path
 from scripts import measure_served_pipeline as msp
 
 
+def _identity() -> dict:
+    """A served identity as a ready deployment reports it (contract M3c), built
+    through the core type so it satisfies every invariant the service's does."""
+    from src.core.types import (
+        ServedCheckpoint,
+        ServedDatasetRecord,
+        ServedGraph,
+        ServedIdentity,
+        ServedSettings,
+        ServedShortestPaths,
+    )
+
+    return ServedIdentity(
+        scoring_mode="gnn_plus_shortest_path",
+        checkpoint=ServedCheckpoint(state="verified", sha256="c" * 64),
+        graph=ServedGraph(state="verified", kg_sha256="a" * 64,
+                          split_manifest_sha256="b" * 64),
+        shortest_paths=ServedShortestPaths(state="verified", build_id="d" * 32, max_hops=5),
+        dataset_record=ServedDatasetRecord(state="verified", origin="files", sha256="e" * 64),
+        settings=ServedSettings(device="cuda:0", device_requested="cuda", eta=0.7,
+                                max_path_length=4, path_length_penalty=0.9,
+                                aggregation_method="weighted_sum", max_paths_per_candidate=10,
+                                use_direct_path_optimization=True,
+                                phenotype_normalisation_version=1),
+    ).to_dict()
+
+
+IDENTITY = _identity()
+
+
+def _with(identity, part, **values):
+    """A copy of `identity` with `values` set in `part` (top level for None)."""
+    copy = json.loads(json.dumps(identity))
+    (copy if part is None else copy[part]).update(values)
+    return copy
+
+
 # ------------------------------------------------------------------- helpers
 def _fake_proc(tmp_path, pid=4242, *, stat=None, status=None, cmdline=None, environ=None,
                meminfo=None, vmstat=None):
@@ -286,12 +323,21 @@ def test_the_loaded_schema_accepts_a_response_and_refuses_a_malformed_one():
     schema = msp.load_diagnose_schema()
     body = {"session_id": "s", "patient_id": "p", "timestamp": "t", "candidates": [
         {"rank": 1, "disease_id": "d", "disease_name": "n", "confidence_score": 0.5}],
-        "inference_time_ms": 1.0, "model_version": "1.0.0"}
+        "inference_time_ms": 1.0, "served_identity": IDENTITY}
     schema.DiagnoseResponse.model_validate(body)
+    # The demo answer's null passes the schema; the workload still does not
+    # count it (`test_a_response_counts_only_if_the_subject_answered_it`).
+    schema.DiagnoseResponse.model_validate({**body, "served_identity": None})
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         schema.DiagnoseResponse.model_validate({**body, "candidates": [{"rank": 1}]})
+    # Contract M3c: the identity is required, and its shape is the contract.
+    for malformed in ({k: v for k, v in body.items() if k != "served_identity"},
+                      {**body, "served_identity": _with(IDENTITY, "graph", path="/x")},
+                      {**body, "served_identity": {"version": "1.0.0"}}):
+        with pytest.raises(ValidationError):
+            schema.DiagnoseResponse.model_validate(malformed)
 
 
 # -------------------------------------------------------------- the workload
@@ -413,19 +459,86 @@ def test_the_shell_cannot_turn_the_preset_into_an_override(tmp_path):
 
 
 def test_readiness_needs_every_field_the_procedure_names():
+    # The table's state, the scoring mode and the device come from the served
+    # identity (contract M3c); no top-level copy of them is consulted.
     ready = {"initialized": True, "gnn_ready": True, "has_model": True, "sp_ready": True,
-             "sp_kg_binding": "verified", "scoring_mode": "gnn_plus_shortest_path",
              "fingerprint_warnings": ["w"], "current_data_dir": "/secret/path",
-             "checkpoint_meta": {"device": "cuda:0", "params": 1}}
+             "served_identity": IDENTITY}
     reading = msp.readiness(ready)
     assert reading["asserted"] and reading["fingerprint_warning_count"] == 1
-    assert reading["serving_device"] == "cuda:0"
+    assert (reading["serving_device"], reading["serving_device_requested"]) == ("cuda:0", "cuda")
+    assert (reading["shortest_paths_state"], reading["scoring_mode"], reading["sp_max_hops"]) == (
+        "verified", "gnn_plus_shortest_path", 5)
     assert "/secret/path" not in json.dumps(reading)
     for change in ({"sp_ready": False}, {"has_model": False}, {"initialized": False},
-                   {"sp_kg_binding": "unrecorded"}, {"scoring_mode": "gnn_only"},
-                   {"checkpoint_meta": {"device": "cpu"}}, {"checkpoint_meta": {}},
-                   {"checkpoint_meta": None}):
+                   {"served_identity": None}, {"served_identity": "verified"},
+                   {"served_identity": _with(IDENTITY, "shortest_paths", state="absent",
+                                             build_id=None, max_hops=None)},
+                   {"served_identity": _with(IDENTITY, None, scoring_mode="gnn_only")},
+                   {"served_identity": _with(IDENTITY, "settings", device="cpu")},
+                   {"served_identity": _with(IDENTITY, "settings", device=None)},
+                   {"served_identity": {k: v for k, v in IDENTITY.items() if k != "settings"}}):
         assert not msp.readiness({**ready, **change})["asserted"], change
+    absent = msp.readiness({**ready, "served_identity": None})
+    assert absent["served_identity_reported"] is False and absent["serving_device"] is None
+
+
+# ------------------------------------------------------------- the subject
+def test_the_subject_is_the_served_identitys_named_parts():
+    schema = msp.load_diagnose_schema()
+    assert msp.served_subject(IDENTITY, schema) == {
+        "checkpoint_sha256": "c" * 64, "kg_sha256": "a" * 64,
+        "split_manifest_sha256": "b" * 64, "sp_build_id": "d" * 32,
+        "dataset_record_origin": "files", "dataset_record_sha256": "e" * 64,
+        "device": "cuda:0"}
+
+
+@pytest.mark.parametrize("identity", [
+    None,
+    "verified",
+    _with(IDENTITY, None, extra="x"),                       # refused by the service's model
+    _with(IDENTITY, "checkpoint", sha256="not a digest"),
+    _with(IDENTITY, "checkpoint", state="supplied_in_memory", sha256=None),
+    _with(IDENTITY, "graph", state="unverified", split_manifest_sha256=None),
+    _with(IDENTITY, "shortest_paths", state="absent", build_id=None, max_hops=None),
+    _with(IDENTITY, "dataset_record", state="absent", origin=None, sha256=None),
+    _with(IDENTITY, "checkpoint", sha256=None),             # "verified" naming nothing
+    _with(IDENTITY, "settings", device=None),
+])
+def test_an_identity_that_does_not_name_every_input_is_no_subject(identity):
+    assert msp.served_subject(identity, msp.load_diagnose_schema()) is None
+
+
+def test_the_evidence_subject_says_whether_every_repeat_served_one_identity():
+    schema = msp.load_diagnose_schema()
+    other = _with(IDENTITY, "checkpoint", sha256="f" * 64)
+    same = msp.subject_of([{"served_identity": IDENTITY}] * 3, schema)
+    assert same["checkpoint_sha256"] == "c" * 64 and same["served_identity"] == IDENTITY
+    assert (same["repeats_reporting"], same["same_in_every_repeat"]) == (3, True)
+    mixed = msp.subject_of([{"served_identity": IDENTITY}, {"served_identity": other}], schema)
+    assert mixed["same_in_every_repeat"] is False
+    partial = msp.subject_of([{"served_identity": IDENTITY}, {"served_identity": None}], schema)
+    assert (partial["repeats_reporting"], partial["same_in_every_repeat"]) == (1, False)
+    none = msp.subject_of([{"phases": {}}], schema)
+    assert none["served_identity"] is None and none["same_in_every_repeat"] is None
+    assert "checkpoint_sha256" not in none
+
+
+def test_a_response_counts_only_if_the_subject_answered_it(monkeypatch):
+    schema = msp.load_diagnose_schema()
+    body = {"session_id": "s", "patient_id": "p", "timestamp": "t", "candidates": [],
+            "inference_time_ms": 1.0, "served_identity": IDENTITY}
+    answers = iter([
+        (200, body, ""),
+        (200, {**body, "served_identity": _with(IDENTITY, "graph", kg_sha256="f" * 64)}, ""),
+        (200, {**body, "served_identity": None}, ""),       # the demo answer
+        (200, {**body, "served_identity": _with(IDENTITY, None, extra="x")}, ""),
+    ])
+    monkeypatch.setattr(msp, "http_json", lambda *a, **k: next(answers))
+    outcome = msp.run_workload("http://x", [{"phenotypes": ["HP:1"]}] * 4, {}, schema,
+                               alive=lambda: True, identity=IDENTITY)
+    assert outcome["accepted"] == 1
+    assert outcome["failures"] == {msp.IDENTITY_MISMATCH: 2, "schema_rejected": 1}
 
 
 # ------------------------------------------------------------------ allocator
@@ -454,10 +567,11 @@ def test_which_allocator_governs_is_torchs_answer(values, backends, governing):
 
 # ----------------------------------------------------------------- summaries
 def _repeat(r1="completed", r2="completed", r3="completed", r4="completed", precondition=True,
-            wall=1.0):
+            wall=1.0, identity=IDENTITY):
     return {"phases": {"R0": {"measurement_precondition_met": precondition},
                        "R1": {"status": r1, "wall_seconds": wall, "vm_hwm_bytes": 10},
-                       "R2": {"status": r2}, "R3": {"status": r3}, "R4": {"status": r4}}}
+                       "R2": {"status": r2}, "R3": {"status": r3}, "R4": {"status": r4}},
+            "served_identity": identity}
 
 
 def test_readings_are_complete_only_with_three_repeats_all_completed():
@@ -465,6 +579,15 @@ def test_readings_are_complete_only_with_three_repeats_all_completed():
     assert not msp.readings_complete([_repeat()] * 2)
     assert not msp.readings_complete([_repeat()] * 2 + [_repeat(r4="inconclusive")])
     assert not msp.readings_complete([_repeat()] * 2 + [_repeat(precondition=False)])
+    assert not msp.readings_complete([])
+
+
+def test_readings_of_two_subjects_are_never_complete():
+    """Contract M3c: three repeats that served two pipelines measured neither."""
+    other = _with(IDENTITY, "checkpoint", sha256="f" * 64)
+    assert not msp.readings_complete([_repeat()] * 2 + [_repeat(identity=other)])
+    assert not msp.readings_complete([_repeat(identity=None)] * 3)
+    assert not msp.readings_complete([_repeat(identity=None)] + [_repeat()] * 2)
 
 
 def test_the_summary_is_median_and_maximum_over_completed_phases():
@@ -480,6 +603,8 @@ FAKE_SERVER = textwrap.dedent('''\
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     MODE = os.environ.get("FAKE_MODE", "ready")
+    IDENTITY = json.loads(__IDENTITY_JSON__)
+    STATE = {"reloaded": False}
     if MODE == "exit":
         sys.exit(3)
     if os.environ.get("FAKE_PIDFILE"):
@@ -495,6 +620,19 @@ FAKE_SERVER = textwrap.dedent('''\
 
         signal.signal(signal.SIGTERM, _graceful)
 
+    def identity():
+        """What the service says it serves (contract M3c), by mode."""
+        if MODE == "no_identity":
+            return None
+        served = json.loads(json.dumps(IDENTITY))
+        if MODE == "cpu":
+            served["settings"].update(device="cpu", device_requested="cpu")
+        if MODE == "in_memory_model":
+            served["checkpoint"] = {"state": "supplied_in_memory", "sha256": None}
+        if MODE == "reload_other" and STATE["reloaded"]:
+            served["checkpoint"]["sha256"] = "f" * 64
+        return served
+
     def status():
         return {"initialized": True, "gnn_ready": True, "has_model": True,
                 "sp_ready": MODE != "not_ready", "sp_kg_binding": "verified",
@@ -502,7 +640,8 @@ FAKE_SERVER = textwrap.dedent('''\
                 "current_data_dir": os.environ["SHEPHERD_DATA_DIR"],
                 "current_checkpoint_path": ("/elsewhere.pt" if MODE == "other_checkpoint"
                                             else os.environ["SHEPHERD_CHECKPOINT_PATH"]),
-                "checkpoint_meta": {"device": "cpu" if MODE == "cpu" else "cuda"}}
+                "checkpoint_meta": {"device": "cpu" if MODE == "cpu" else "cuda"},
+                "served_identity": identity()}
 
     class Handler(BaseHTTPRequestHandler):
         def send(self, code, obj):
@@ -534,18 +673,24 @@ FAKE_SERVER = textwrap.dedent('''\
                 if MODE == "oom" and len(body["phenotypes"]) > 2:
                     self.send(500, {"error": "CUDA out of memory"})
                     return
+                answered_by = identity()
+                if MODE == "other_identity":
+                    answered_by["graph"]["kg_sha256"] = "f" * 64
+                if MODE == "null_identity":
+                    answered_by = None
                 self.send(200, {"session_id": "s", "patient_id": "p", "timestamp": "t",
                                 "candidates": [], "inference_time_ms": 1.0,
-                                "model_version": "1.0.0"})
+                                "served_identity": answered_by})
             else:
                 ok = body["checkpoint_path"] == os.environ["SHEPHERD_CHECKPOINT_PATH"]
+                STATE["reloaded"] = True
                 self.send(200, {"success": ok, "message": "m", "status": status()})
 
         def log_message(self, *args):
             pass
 
     ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
-''')
+''').replace("__IDENTITY_JSON__", repr(json.dumps(IDENTITY)))
 
 
 @pytest.fixture
@@ -581,8 +726,12 @@ def test_a_whole_repeat_runs_r0_to_r4_and_records_no_paths(fake_repeat, tmp_path
     assert [phases[p]["status"] for p in ("R2", "R3", "R4")] == [expected] * 3
     assert phases["R2"]["workload"] == {"planned": 2, "sent": 2, "accepted": 2,
                                         "failures": {}, "ended_without_response": False}
-    assert phases["R1"]["readiness"]["serving_device"] == "cuda"
+    assert phases["R1"]["readiness"]["serving_device"] == "cuda:0"
     assert phases["R3"]["success"] and phases["R3"]["readiness"]["asserted"]
+    # Contract M3c: the repeat's subject is what the service reported, every
+    # counted response carried it, and the reload served it again.
+    assert result["served_identity"] == IDENTITY and phases["R1"]["subject_identified"]
+    assert phases["R3"]["serves_subject"]
     assert result["server_environment"]["PYTORCH_ALLOC_CONF"] is None
     assert result["server_exit_status"] is not None
     assert "error" not in result
@@ -653,7 +802,17 @@ def test_the_whole_script_writes_evidence_without_paths(workspace, tmp_path, mon
     assert evidence["allocator"]["server_environment_raw"]["PYTORCH_ALLOC_CONF"] is None
     assert evidence["allocator"]["governing_variable"] is None
     assert evidence["code"]["commit"]
-    assert evidence["subject"]["checkpoint_sha256"]
+    # Contract M3c, BACKLOG 19.8: the subject is the identity the service
+    # reported from its own reads, never a digest taken here of the files.
+    import hashlib
+
+    subject = evidence["subject"]
+    assert subject["served_identity"] == IDENTITY
+    assert subject["checkpoint_sha256"] == "c" * 64 != hashlib.sha256(b"ck").hexdigest()
+    assert subject["sp_build_id"] == "d" * 32 and subject["device"] == "cuda:0"
+    assert (subject["repeats_reporting"], subject["same_in_every_repeat"]) == (1, True)
+    assert not {"graph_sha256", "sp_table_sha256"} & set(subject)
+    assert evidence["repeats"][0]["phases"]["R2"]["workload"]["accepted"] == 5
     with pytest.raises(SystemExit, match="exists"):
         msp.main(args)
 
@@ -695,6 +854,42 @@ def test_a_model_served_on_the_cpu_is_not_a_reading(fake_repeat):
     r1 = fake_repeat(mode="cpu")["phases"]["R1"]
     assert r1["status"] == "failed" and r1["reason"] == "readiness not asserted"
     assert r1["readiness"]["serving_device"] == "cpu"
+
+
+# ------------------------------------------------- the served identity (M3c)
+def test_a_status_without_a_served_identity_is_not_ready(fake_repeat):
+    result = fake_repeat(mode="no_identity")
+    r1 = result["phases"]["R1"]
+    assert (r1["status"], r1["reason"]) == ("failed", "readiness not asserted")
+    assert r1["readiness"]["served_identity_reported"] is False
+    assert result["served_identity"] is None and "R2" not in result["phases"]
+
+
+def test_an_identity_that_names_no_checkpoint_read_is_no_subject(fake_repeat):
+    result = fake_repeat(mode="in_memory_model")
+    r1 = result["phases"]["R1"]
+    assert r1["readiness"]["asserted"] and not r1["subject_identified"]
+    assert r1["status"] == "failed" and "does not name a verified checkpoint" in r1["reason"]
+    assert "R2" not in result["phases"]
+
+
+@pytest.mark.parametrize("mode", ["other_identity", "null_identity"])
+def test_responses_another_pipeline_answered_are_a_failure_class_of_their_own(fake_repeat,
+                                                                              mode):
+    r2 = fake_repeat(mode=mode)["phases"]["R2"]
+    assert r2["workload"]["accepted"] == 0
+    assert r2["workload"]["failures"] == {msp.IDENTITY_MISMATCH: 2}
+    assert r2["status"] in ("incomplete", "inconclusive")
+
+
+def test_a_reload_that_serves_another_subject_does_not_complete_r3(fake_repeat):
+    phases = fake_repeat(mode="reload_other")["phases"]
+    assert phases["R3"]["success"] and phases["R3"]["readiness"]["asserted"]
+    assert phases["R3"]["serves_named_checkpoint"] and not phases["R3"]["serves_subject"]
+    assert phases["R3"]["status"] in ("incomplete", "inconclusive")
+    # The reload itself succeeded: R4's reading of it stands.
+    reset_ok = phases["R4"]["reset"]["status"] == "confirmed"
+    assert phases["R4"]["status"] == ("completed" if reset_ok else "inconclusive")
 
 
 # ------------------------------------------- requests whose outcome is unknown
@@ -1173,7 +1368,7 @@ def test_progress_never_raises(kind, monkeypatch):
 
 
 def test_the_workload_reports_every_twentieth_request_and_the_last(monkeypatch, capfd):
-    answers = iter([(500, {}, "error")] + [(200, {"ok": True}, "")] * 44)
+    answers = iter([(500, {}, "error")] + [(200, {"served_identity": IDENTITY}, "")] * 44)
     monkeypatch.setattr(msp, "http_json", lambda *a, **k: next(answers))
 
     class Schema:
@@ -1183,7 +1378,7 @@ def test_the_workload_reports_every_twentieth_request_and_the_last(monkeypatch, 
                 return body
 
     outcome = msp.run_workload("http://x", [{"phenotypes": ["HP:1"]}] * 45, {}, Schema,
-                               alive=lambda: True)
+                               alive=lambda: True, identity=IDENTITY)
     assert outcome["accepted"] == 44
     assert _lines(capfd.readouterr().err) == [
         "R2: 20/45 sent, 19 accepted", "R2: 40/45 sent, 39 accepted",

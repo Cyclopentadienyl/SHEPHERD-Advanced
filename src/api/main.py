@@ -85,8 +85,10 @@ class AppState:
         #: startup restores it, and a refused reload leaves the flag as it was.
         self.is_ready = False
         self.start_time = None
+        #: The service's own version. What a diagnosis was produced by is not
+        #: kept here: each result carries its served identity (contract M3c),
+        #: and shared state a reload swaps cannot say which pipeline answered.
         self.version = "1.0.0"
-        self.model_version = "unknown"
         # Which workspace and checkpoint the loaded pipeline was built from.
         # Declared here rather than attached by whoever loaded it, so "what is
         # being served?" has an answer from the first moment it can be asked —
@@ -412,6 +414,21 @@ def get_app_state() -> AppState:
     return app_state
 
 
+def requested_serving_device(device: Optional[str]) -> Optional[str]:
+    """The device a build is asked for: the request's, else `SHEPHERD_DEVICE`,
+    else None (`auto`).
+
+    **Blank is unset at both steps**, so `""` and `"  "` defer to the
+    deployment's setting alike, as `resolve_serving_device` treats them alike
+    (contract M3c). The value is passed on as given, not resolved: the served
+    identity records what was asked for beside what took effect.
+    """
+    for value in (device, os.environ.get("SHEPHERD_DEVICE")):
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
 class PipelineBundle(NamedTuple):
     """A constructed, fully checked pipeline that nothing is serving yet.
 
@@ -451,7 +468,9 @@ def build_pipeline(
             ``data_dir/kg.json`` is then not read
         SHEPHERD_CHECKPOINT_PATH: Path to model checkpoint
         SHEPHERD_DATA_DIR: Path to processed graph data directory
-        SHEPHERD_DEVICE: Inference device (cpu/cuda)
+        SHEPHERD_DEVICE: The model's device: unset or ``auto`` for CUDA,
+            refused without it; ``cuda``, ``cuda:N``, or ``cpu`` for development
+            (contract M3c, `resolve_serving_device`)
 
     Args:
         kg_path: Path to KG JSON file (overrides env var)
@@ -474,7 +493,7 @@ def build_pipeline(
         checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH") or None
     )
     data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR") or None
-    device = device or os.environ.get("SHEPHERD_DEVICE") or None
+    device = requested_serving_device(device)
 
     if not kg_path:
         if checkpoint_path:
@@ -507,7 +526,18 @@ def build_pipeline(
 
     try:
         from src.kg.graph import KnowledgeGraph
-        from src.inference.pipeline import create_diagnosis_pipeline
+        from src.inference.pipeline import (
+            create_diagnosis_pipeline,
+            resolve_serving_device,
+        )
+
+        # **The device is settled before the graph is read** (contract M3c):
+        # `auto` without CUDA refuses before a multi-gigabyte kg.json is parsed
+        # for a model that cannot be served here. The pipeline applies the same
+        # rule itself; the request is passed on as given, so the served identity
+        # records what was asked for beside what took effect.
+        if checkpoint_path:
+            resolve_serving_device(device)
 
         # Step 1: Load knowledge graph
         kg_file = Path(kg_path)
@@ -589,11 +619,9 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
         f"gnn_ready={bundle.config.get('gnn_ready')}, "
         f"sp_ready={bundle.config.get('sp_ready')}"
     )
-    model_version = bundle.config.get("version", "unknown")
 
     app_state.kg = bundle.kg
     app_state.pipeline = bundle.pipeline
-    app_state.model_version = model_version
     app_state._current_data_dir = bundle.data_dir
     app_state._current_checkpoint_path = bundle.checkpoint_path
     app_state.is_ready = True

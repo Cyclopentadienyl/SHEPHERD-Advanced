@@ -120,18 +120,20 @@ column is implemented.
 | Concern | Current behaviour | Approved target | Implementation status |
 |---|---|---|---|
 | **Candidate universe** | BFS path discovery gates scoring. Two order-dependent caps truncate it: `max_paths_per_source = 100` (`src/reasoning/path_reasoning.py:105`) and `max_genes = 100` per phenotype (`:507`), both applied to unordered neighbour lists | Every disease in the configured KG universe is scored; no discovery gate | **Not implemented** — work item B-1, gated |
-| **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`src/inference/pipeline.py:1310`) | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
+| **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`src/inference/pipeline.py:1707`) | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
 | **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
-| **GNN-unavailable fallback** | `confidence_score = reasoning_score` (`src/inference/pipeline.py:1224`) — a different quantity written into the same field with no per-result discriminator | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Not implemented** — the rest of B-2: discriminated semantics, and whether serving with no model configured needs an opt-in |
+| **GNN-unavailable fallback** | `confidence_score = reasoning_score` (`src/inference/pipeline.py:1613`) — a different quantity written into the same field. The field itself carries no discriminator; since provenance contract M3c each result states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, awaiting review): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Not implemented** — the rest of B-2: discriminated semantics, and whether serving with no model configured needs an opt-in |
 
 Two further current behaviours, for completeness:
 
 - When a checkpoint is loaded but `shortest_paths.pt` is absent, scoring degrades to pure GNN
   (`_calculate_combined_score` returns the embedding score, effective η = 1.0).
 - `get_pipeline_config()` reports a `scoring_mode` of `gnn_plus_shortest_path`, `gnn_only` or
-  `path_reasoning_fallback`. This is a **pipeline-level** report; it is not attached to individual
-  results or candidates.
+  `path_reasoning_fallback`. Since provenance contract M3c (implemented 2026-10-16, awaiting review)
+  every result carries it too, in its served identity, beside the checkpoint, graph and
+  shortest-path table that produced it. It is not attached to individual candidates, and it does
+  not change what `confidence_score` holds.
 
 ---
 
@@ -304,6 +306,12 @@ B-1 implementation may not begin until all three clear:
   came to hold two incompatible quantities, and repeating it with more fields would scale the defect
   rather than fix it. Whichever work item lands first defines the union and its first variants; the
   second adds variants rather than widening a shared record.
+  - **Provenance contract M3c changed the result type first** (implemented 2026-10-16, awaiting
+    review), and is not that union. It replaced the two version strings with one required served
+    identity: what produced the result, each part stating its state in words, a value null only
+    where its state says there is nothing to identify. It selects no required or forbidden score
+    fields and leaves `confidence_score` as it was. Its `scoring_mode` describes the result; whether
+    the union's discriminator builds on it is B-1's or B-2's decision, not M3c's.
 - The clinician-facing guide's status box and the SP presentation change together with the code, not
   before it.
 

@@ -165,6 +165,16 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     assert f"Val Loss: {logs['val_loss']:.4f}" in rendered
     assert f"Train Loss: {logs['train_loss']:.4f}" in rendered
 
+    # The same status names what the loaded pipeline serves (contract M3c),
+    # taken from the pipeline's own served identity: the digest of the
+    # checkpoint read it was built from, and the workspace's synthetic origin.
+    served = pipeline.served_identity()
+    assert served.checkpoint.state == "verified"
+    assert f"checkpoint `sha256:{served.checkpoint.sha256[:12]}…` ✓" in rendered
+    assert "dataset synthetic ✓" in rendered
+    assert "SYNTHETIC WORKSPACE: not a clinical result." in rendered
+    assert panel.IDENTITY_CLAIM_BOUNDARY in rendered
+
 
 def test_the_status_line_labels_the_metrics_and_skips_the_descriptive_ones():
     pytest.importorskip("gradio")

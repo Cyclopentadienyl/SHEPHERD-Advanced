@@ -412,8 +412,9 @@ def verify_fingerprint(
     if warnings:
         warnings.insert(
             0,
-            "KG/data version mismatch detected between checkpoint and "
-            "current data. Inference results may be incorrect."
+            "Graph structure differs from the checkpoint's structural "
+            "fingerprint (a diagnostic, not the graph's identity). Inference "
+            "results may be incorrect."
         )
 
     return warnings
