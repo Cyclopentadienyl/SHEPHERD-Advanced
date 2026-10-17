@@ -74,9 +74,10 @@ into `main` afterwards (#124, `ed8f51d`, 2026-10-16). **M4 is implemented on the
 of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `59f519d..f3108c4`
 (2026-10-17) found one P2 and no P1, fixed in `29c3d1f`; its incremental review of
 `f3108c4..29c3d1f` closed the P2 with no new P1 or P2 and found one P3, fixed in the commit after
-it. **Next, the bounded GB10 functional acceptance through the deployment probe, on the final
-commit** (§4, "M4 as implemented", "The reviewer's code review"). It is not accepted and not
-merged. M5 is not implemented. Facts about the
+it (`2c94a4e`). **Its GB10 functional acceptance, within the scope agreed, passed at `2c94a4e`**
+(2026-10-17; §4, "M4's acceptance on the GB10"; evidence
+[`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)): 84 of 84 probes, demo and
+real data. Not merged. M5 is not implemented. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -3601,7 +3602,7 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
   no retry. The review also checked the six questions of `PLAN_TEST_RESULTS.md` §4.9 against the
   literature; its recommendations are recorded there. Next: the acceptance below on the final
   commit.
-- **Acceptance pending.** One bounded GB10 functional acceptance through the deployment probe's
+- **The acceptance, as planned.** One bounded GB10 functional acceptance through the deployment probe's
   formal run (`scripts/probe_deployment.py --m2-acceptance --device cuda`, as M3c's, with a
   `--work-dir` outside the repository, where the probe's registry lives; a relative one is
   resolved first, so the registry is an absolute path). Its M4 probes, added in this stage (T1–T6
@@ -3617,6 +3618,42 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
   written, and read back through the view. The probe's report and its review are the record of
   what ran; then external review. It is a functional acceptance, not a capacity, AMP,
   model-quality or clinical reading.
+
+**M4's acceptance on the GB10 (2026-10-17, at `2c94a4e`; evidence
+[`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)).** **Passed, within the scope
+agreed**, as the reviewer's final review of the evidence found. Run by the owner with the
+reviewer's runbook, on the commit that holds M4 as code-reviewed with the review's P2 and the
+incremental review's P3 fixed.
+- **The probe:** 84 passed, 0 failed, 0 errors, 0 skipped; probe and `tee` exit 0;
+  `m2_acceptance` demo, real data and overall complete, T1–T6 and RT1–RT3 required and passed;
+  `tested_commit` `2c94a4e` with no tracked file modified; NVIDIA GB10, CUDA, `cudaMallocAsync`
+  from the saved preset before torch's first import; the four named inputs equal before and
+  after, and again when the evidence was packaged.
+- **M4's part, on the demo:** a 12-case source previewed (nothing written) and committed as
+  `probe-demo-1` (`a1f6068d…1d16`; 10 ranked, 1 ground truth absent, 1 with no mappable
+  phenotype, 1 repeat removed); measured on CUDA with `--record`, report `47f2b207…f30c` kept with
+  its ranks, R10 evidence found in the workspace for both scopes, one record beside checkpoint
+  `83ace3b2…257d`; the same report again already held and a damaged copy refused, the ledger
+  untouched; a version over M1's other graph refused before any checkpoint read; the view showing
+  the record for the measured checkpoint and `no_records` for another beside the same ledger; the
+  overlap audit on the version.
+- **On the real workspace:** 20 validation cases imported with no exclusion (`1fa612e3…13b0`);
+  R4's checkpoint `d1819b3b…41b1` measured on CUDA with `--record`, report `cc8f8f24…9620` kept,
+  one record; training disease overlap *none* (0 of 20), validation phenotype-set overlap 20 of
+  20, both scopes' evidence found in the real workspace; the view showing that record. R8 ran
+  after them.
+- **Checked from the saved artifacts:** in both parts one schema 3 record whose checkpoint,
+  cohort version, samples, report and ranks digests are the bytes kept, its metrics and R10 the
+  report's, the source kept under its digest, and the view accepting the record (the reviewer at
+  packaging; again with this repository's readers when the evidence was recorded).
+- **The checkout** was restored: `checkout-before.txt` and `checkout-restored.txt`
+  byte-identical (`main` at `9fe5113`), tracked and staged files clean.
+- **Not shown:** model quality (the checkpoints are untrained or a short training's, and the real
+  cohort is the validation cases by design), capacity, AMP, a browser session, or an
+  institutional test; the same-key contradiction and the corroborating re-measurement are covered
+  by the test suite, not by this run. R8 compares the workspace by listing, size and modification
+  time, not by a content hash. The institution's evaluation rules and the data's terms stay open
+  (`PLAN_TEST_RESULTS.md` §4.9). M5 and N2 are not part of it.
 
 ### M5 — item 14, phase 2
 

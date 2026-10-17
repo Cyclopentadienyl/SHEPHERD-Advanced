@@ -4,8 +4,10 @@
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
 Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
 review of `59f519d..f3108c4` (2026-10-17) found one P2, fixed in `29c3d1f`, and its incremental
-review closed it and found one P3, fixed after it. **Next: the bounded GPU acceptance through the
-deployment probe, on the final commit.** It is not accepted and not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
+review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acceptance, within
+the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
+contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
+institutional test. Not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
