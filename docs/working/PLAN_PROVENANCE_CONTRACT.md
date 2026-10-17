@@ -77,7 +77,8 @@ of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `5
 it (`2c94a4e`). **Its GB10 functional acceptance, within the scope agreed, passed at `2c94a4e`**
 (2026-10-17; §4, "M4's acceptance on the GB10"; evidence
 [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)): 84 of 84 probes, demo and
-real data. Not merged. M5 is not implemented. Facts about the
+real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 is not
+implemented. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
