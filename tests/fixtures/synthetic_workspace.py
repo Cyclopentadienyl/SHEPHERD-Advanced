@@ -100,6 +100,37 @@ def _samples(
     ]
 
 
+#: The generated cut: two diseases for training, the next two for validation.
+#: Disjoint, as the allocation step guarantees, and inside the smallest graph
+#: this fixture builds.
+GENERATED_TRAIN_DISEASES = (0, 1)
+GENERATED_VAL_DISEASES = (2, 3)
+#: Cases per disease in each generated split: enough that a Mode C run over
+#: `val` (four cases) spans more than one chunk at the tests' batch size of 3.
+GENERATED_CASES_PER_DISEASE = 2
+
+
+def _generated_diseases(n_diseases: int) -> Tuple[List[int], List[int]]:
+    if n_diseases <= max(GENERATED_VAL_DISEASES):
+        raise ValueError(
+            f"the generated cut needs at least {max(GENERATED_VAL_DISEASES) + 1} diseases, "
+            f"got {n_diseases}"
+        )
+    return list(GENERATED_TRAIN_DISEASES), list(GENERATED_VAL_DISEASES)
+
+
+def _generated_samples(split: str, disease_ids: List[int], n_phenotypes: int) -> List[dict]:
+    """Rows whose ids are nodes of this graph, two per disease, deterministic.
+    The patient ids carry `SECRET` like the generated fixture's, so a leak of one
+    into an artifact is findable."""
+    return [
+        {"patient_id": f"SECRET-{split}-{d}-{j}",
+         "phenotype_ids": [(d + j) % n_phenotypes, (d + j + 1) % n_phenotypes],
+         "disease_id": d}
+        for d in disease_ids for j in range(GENERATED_CASES_PER_DISEASE)
+    ]
+
+
 def build_workspace(
     root: Path,
     split: str = "test",
@@ -132,19 +163,25 @@ def build_workspace(
         json.dumps(_samples(n_phenotypes, n_diseases, n_samples))
     )
 
-    # **A supplied cohort still lives in a workspace whose graph is bound.** This
-    # fixture's `test` split is a supplied cohort -- it was never cut from a
-    # disease allocation -- but it is scored against the tensors above exactly as a
-    # generated one is, so the workspace has to carry the manifest that binds them.
-    # Writing a bare `kg.json` and two small generated cohorts beside them is what
-    # a real deployment holds; the measurement paths under test read neither.
+    # **The graph is bound by a real manifest, and the generated cohorts fit it.**
+    # The `test` file above is a plain samples file the readers and the Trainer's
+    # tests read directly; it is no cohort a measurement resolves (a supplied
+    # cohort is a registered version since M4, which needs a `kg.json` it can map
+    # against, `tests/fixtures/registered_cohort.py`). The generated `train` and
+    # `val` beside it are cut by `write_generated_workspace`, bound by the
+    # manifest, and hold ids inside this graph, so `--split val` measures them.
     from tests.fixtures.generated_workspace import graph_record, write_generated_workspace
 
     (data_dir / "kg.json").write_text(json.dumps({"synthetic": True}))
+    train_ids, val_ids = _generated_diseases(n_diseases)
     write_generated_workspace(
         data_dir,
-        train_ids=list(range(min(2, n_diseases))),
-        val_ids=[n_diseases + 1],
+        train_ids=train_ids,
+        val_ids=val_ids,
+        profiles={d: {"phenotype_ids": [d % n_phenotypes], "gene_ids": [d % N_GENES]}
+                  for d in train_ids + val_ids},
+        train_samples=_generated_samples("train", train_ids, n_phenotypes),
+        val_samples=_generated_samples("val", val_ids, n_phenotypes),
     )
 
     metadata = (list(num_nodes_dict), list(edge_index_dict))

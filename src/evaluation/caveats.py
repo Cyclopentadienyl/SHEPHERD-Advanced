@@ -53,37 +53,186 @@ GENERATED_VAL_IS_DISEASE_DISJOINT = (
 )
 
 #: Why a supplied cohort's relationship to training is measured, not assumed.
+#:
+#: **Since M4 every measurement of a registered cohort version takes it** (R10,
+#: contract §5.4): the report records the cohort's disease and phenotype-set
+#: overlap with the training and validation inputs the checkpoint names, found
+#: by digest, so the number travels with the result it qualifies.
 SUPPLIED_COHORT_OVERLAP = (
     "**A supplied cohort's overlap with training is a measurement, not a "
     "contract.** An institutional or external patient set was not cut from this "
     "project's disease universe, so how much of it the model has labelled examples "
     "for is an open number — the upstream team reported 109 of 319 UDN diseases "
-    "present in their simulated cohort. Establish it for yours with "
-    "`scripts/audit_split_overlap.py`; it bounds what the cohort can be evidence "
-    "of about unseen diseases."
+    "present in their simulated cohort. Each measurement of a registered cohort "
+    "version records it as R10: disease and phenotype-set overlap with the training "
+    "and validation inputs the checkpoint names, found by their digests in the "
+    "workspace's own splits and then in each --training-evidence directory, and "
+    "unverifiable, never zero, when those bytes are not found. "
+    "`scripts/audit_split_overlap.py` audits a version against a workspace's "
+    "generated splits. The overlap bounds what the cohort can be evidence of about "
+    "unseen diseases."
 )
 
-#: Help for the cohort-kind argument, shared by every entry point that takes one.
-COHORT_KIND_HELP = (
-    "Whether this split was produced by this project's generator or supplied from "
-    "outside. `generated` covers `train` and `val` and requires the workspace's "
-    "`split_manifest.json`; `supplied` covers an institutional or external cohort, "
-    "which carries no allocation and may not use a generated split's name. Stated "
-    "rather than inferred from whether a manifest happens to be present, because "
-    "that test cannot tell a supplied cohort from a workspace built before the "
-    "allocation step."
-)
-
-#: The full `--split` help text. Assembled once so the two measurement entry
-#: points cannot drift apart.
+#: The full `--split` help text: the generator's own splits, and nothing else.
+#:
+#: **A supplied cohort is no longer a split** (contract M4, decision 8). The loose
+#: `<split>_samples.json` a workspace used to carry, and the `--cohort-kind` flag
+#: that told the two apart, are gone: the kind of cohort is decided by which
+#: argument names it, `--split` or `--cohort`, so it cannot be stated wrongly.
 SPLIT_ARGUMENT_HELP = (
-    "Which samples file to measure. **Required — there is no default.** "
-    "Generated workspaces contain train and val only; a supplied cohort exists "
-    "only where an evaluation protocol provided one, and must carry its own name. "
-    "Two distinct limits apply, and they are not the same limit. (1) "
+    "Which of the generator's splits to measure: train or val. Exactly one of "
+    "--split and --cohort is required; there is no default. Needs --output. An "
+    "institutional or external cohort is not a split of the workspace: it is "
+    "imported as a registered cohort version (scripts/import_cohort.py) and "
+    "measured with --cohort. A generated split's report is not registered in the "
+    "ledger. Two distinct limits apply, and they are not the same limit. (1) "
     + SELECTION_CONTAMINATION
     + " (2) "
     + GENERATED_VAL_IS_DISEASE_DISJOINT
-    + " (3) "
+)
+
+#: The full `--cohort` help text: a registered test cohort version (contract M4).
+COHORT_ARGUMENT_HELP = (
+    "The label of a registered test cohort version to measure "
+    "(scripts/import_cohort.py), with --registry. Its samples are read once and "
+    "must be the bytes its cohort.json binds, and the version must have been mapped "
+    "against this workspace's graph and dataset record, or the run is refused "
+    "before the checkpoint is read. The report is kept in the registry's report "
+    "store, <registry>/versions/<label>/reports/<run id>/, so --output does not "
+    "apply. "
     + SUPPLIED_COHORT_OVERLAP
 )
+
+
+# ---------------------------------------------------------------------------
+# Recorded test results (M4): what the API, the UI and the CLI render beside a
+# ledger record. Constants only; each surface renders them, none rewords them.
+# ---------------------------------------------------------------------------
+
+#: D3's label for a recorded result: what was ranked, by what, under which
+#: policy. Shown with every recorded number so it cannot be quoted as another.
+MODE_C_RESULT_LABEL = "Disease ranking by the model, approved scorer policy (Mode C)"
+
+#: Why a recorded Mode C number is not the Diagnosis tab's performance yet.
+#:
+#: **Until B-1 the tab does not rank by Mode C.** The served scorer still mixes
+#: the GNN score with the shortest-path term behind the path gate
+#: (`docs/DISEASE_SCORER_POLICY.md`), so a Mode C number describes the model,
+#: not what the tab shows a user. Removed when B-1 lands, not reworded.
+PRE_B1_NOTE = (
+    "This is the model's own Mode C disease ranking. Until B-1 ships, the Diagnosis "
+    "tab ranks by the legacy GNN+SP mixture behind the path gate, so this number "
+    "does not describe the tab's current ranking."
+)
+
+#: R10's four labels (contract §5.4), keyed as a record's `r10` block is: scope,
+#: then label. Each has the name a surface shows and its one-line definition.
+#:
+#: **The definitions say what is counted and what is not.** Disease overlap counts
+#: distinct diseases; phenotype-set overlap compares sets, so a case listing a term
+#: twice and one listing it once are the same set but not the same scoring input.
+R10_LABEL_TEXT = {
+    "training": {
+        "disease_overlap": {
+            "name": "Training disease overlap",
+            "definition": (
+                "distinct test diseases that are also the disease of a case in the "
+                "training inputs this checkpoint records, of all distinct test "
+                "diseases, and the test cases whose disease is among them"
+            ),
+        },
+        "phenotype_set_overlap": {
+            "name": "Training phenotype-set overlap",
+            "definition": (
+                "test cases with the same disease and the same set of phenotypes as a "
+                "case in the training inputs this checkpoint records, of all test "
+                "cases; phenotype-set overlap ignores order and repetition, so the "
+                "scoring inputs may differ"
+            ),
+        },
+    },
+    "validation": {
+        "disease_overlap": {
+            "name": "Validation disease overlap",
+            "definition": (
+                "distinct test diseases that are also the disease of a case in the "
+                "validation inputs this checkpoint records, of all distinct test "
+                "diseases, and the test cases whose disease is among them"
+            ),
+        },
+        "phenotype_set_overlap": {
+            "name": "Validation phenotype-set overlap",
+            "definition": (
+                "test cases with the same disease and the same set of phenotypes as a "
+                "case in the validation inputs this checkpoint records, of all test "
+                "cases; phenotype-set overlap ignores order and repetition, so the "
+                "scoring inputs may differ"
+            ),
+        },
+    },
+}
+
+#: What each R10 state says, and what it does not.
+#:
+#: **"none" is not "no leakage", and "unverifiable" is not a number.** Both are
+#: statements about the inputs the checkpoint records and the evidence found for
+#: them; a surface that shows a count for an unverifiable label, or reads "none"
+#: as proof the model never saw these cases, says more than was measured.
+R10_STATE_TEXT = {
+    "overlap": "overlap",
+    "none": (
+        "none in the inputs this checkpoint records (not evidence about data "
+        "outside them)"
+    ),
+    # The reason a surface gives only when it does not know the scope's evidence
+    # state; otherwise it gives `R10_UNVERIFIABLE_REASON[evidence state]`.
+    "unverifiable": (
+        "unverifiable: the inputs this checkpoint records were not found or could "
+        "not be read, or it names no such inputs, so there is no count"
+    ),
+    "no_validation_inputs_recorded": "no validation inputs recorded",
+}
+
+#: What an *unverifiable* label says, by its scope's evidence state (the
+#: `EVIDENCE_STATES` of `src/evaluation/r10.py` other than "found"): contract
+#: §5.4's three reasons. Each is the whole text for the label, in
+#: `R10_STATE_TEXT`'s form, rendered in place of `R10_STATE_TEXT["unverifiable"]`.
+#:
+#: **One reason per state, because they call for different actions.** Bytes
+#: that were not found may be found by measuring again with the directory that
+#: holds them (`--training-evidence`); bytes found and not readable need the file
+#: repaired. A checkpoint that names no such file at all is not a record the
+#: pipeline wrote, and no directory can supply evidence for a digest that was
+#: never recorded: telling that operator the inputs "were not found" sends them
+#: looking for files that cannot help.
+R10_UNVERIFIABLE_REASON = {
+    "not_found": (
+        "unverifiable: no file looked at holds the bytes this checkpoint records, "
+        "so there is no count"
+    ),
+    "unreadable": (
+        "unverifiable: the file holding the bytes this checkpoint records was found "
+        "and could not be read, so there is no count"
+    ),
+    "not_recorded": (
+        "unverifiable: this checkpoint names no such file, and its record is not one "
+        "the pipeline wrote, so --training-evidence cannot help; there is no count"
+    ),
+}
+
+#: What an empty answer from a ledger means (`src/evaluation/sidecar.py`).
+RECORD_ABSENCE = (
+    "This ledger holds no result for these weights; that does not mean they were "
+    "never evaluated."
+)
+
+#: How each relation a report records (`RELATION_NAMES` in
+#: `src/evaluation/measurement.py`) is named where a person reads it. Keyed by
+#: those names; `tests/unit/test_registration.py` fails if the two differ.
+RELATION_DISPLAY_NAMES = {
+    "R1": "graph files match the workspace manifest",
+    "R2": "generated split's samples match the workspace manifest",
+    "R3": "model trained on this graph",
+    "R5": "dataset record bound to this graph",
+    "cohort_graph": "cohort version mapped against this graph",
+}

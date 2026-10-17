@@ -17,6 +17,9 @@ Endpoints:
     POST /api/v1/diagnose     - Run diagnosis on patient phenotypes
     GET  /api/v1/hpo/search   - Search HPO terms
     GET  /api/v1/disease/{id} - Get disease information
+    GET  /api/v1/evaluations/loaded-model
+                              - The loaded checkpoint's recorded test results
+                                (read-only; contract M4)
     GET  /health              - Health check
     GET  /ready               - Readiness probe
 
@@ -330,10 +333,13 @@ async def readiness_check() -> Dict[str, Any]:
 # =============================================================================
 # Import and Register Routes
 # =============================================================================
-from src.api.routes import diagnose, search, disease, training, system, pipeline
+from src.api.routes import diagnose, search, disease, training, system, pipeline, evaluations
 
 app.include_router(diagnose.router, prefix="/api/v1", tags=["Diagnosis"])
 app.include_router(pipeline.router, prefix="/api/v1", tags=["Pipeline"])
+# A router of its own, outside `pipeline.router`: a deployment that unmounts or
+# protects that router (SPEC_4 B2, the C3 class) keeps this read-only view.
+app.include_router(evaluations.router, prefix="/api/v1", tags=["Evaluations"])
 app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])

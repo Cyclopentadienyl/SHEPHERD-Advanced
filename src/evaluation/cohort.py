@@ -27,10 +27,14 @@ recorded as generated, inherit the manifest of a cut it was never part of, and
 look like an ordinary validation number. Refusing the name is what makes §6.7's
 role hazard unrepresentable rather than merely discouraged.
 
-The kind is an operator assertion in the same sense as
-`src/utils/provenance.py`'s deployment relationship — a bounded vocabulary, and
-one no code can verify — but unlike that one it has checkable consequences, and
-this module checks every one of them.
+**Since contract M4 a supplied cohort is a registered cohort version.** It is
+imported, mapped to one graph and published by `src/evaluation/cohort_registry.py`,
+and measured and audited from there. The loose `<split>_samples.json` written into
+a workspace, which this module used to resolve as `supplied`, is gone with its
+`kind` argument: `resolve_cohort` resolves the generator's own splits only, and a
+supplied cohort has one resolver, the registry's (`PLAN_TEST_RESULTS.md` §5,
+"one resolver"). `COHORT_KINDS` stays as the vocabulary a measurement manifest
+records.
 
 Module: src/evaluation/cohort.py
 """
@@ -86,29 +90,22 @@ GENERATED_SPLITS: Tuple[str, ...] = ("train", "val")
 #: newline, so ``"mygene2\n"`` would pass an alphabet that does not contain one.
 SPLIT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 
-#: What a caller may assert a cohort is.
+#: What a measurement manifest records a cohort as: `generated` for the
+#: generator's own splits, resolved here; `supplied` for a registered cohort
+#: version, resolved by `src/evaluation/cohort_registry.py`.
 COHORT_KINDS: Tuple[str, ...] = ("generated", "supplied")
-
-#: The default. Chosen so that the dangerous direction is the one that has to be
-#: stated: a supplied cohort under a reserved name is refused either way, and a
-#: generated one needs no ceremony.
-DEFAULT_COHORT_KIND = "generated"
-
 
 
 class CohortProvenance(NamedTuple):
-    """One split, resolved: what it is and what describes it."""
+    """One generated split, resolved: what it is and what describes it."""
 
     kind: str
     split: str
     samples: Path
-    split_manifest: Optional[Path]
-    """The manifest for a generated cohort; ``None`` for a supplied one.
-
-    ``None`` here means "this kind of cohort has no allocation", which is a
-    positive fact, not a missing file. A generated cohort whose manifest is
-    absent never reaches this field — it is refused.
-    """
+    split_manifest: Path
+    """The workspace's manifest, which records the cut the split came from. A
+    generated cohort whose manifest is absent never reaches this field — it is
+    refused."""
 
     @property
     def is_generated(self) -> bool:
@@ -147,60 +144,40 @@ def validate_split_name(split: Any) -> str:
     return split
 
 
-def validate_kind(kind: Any) -> str:
-    if kind not in COHORT_KINDS:
-        raise ValueError(f"cohort kind must be one of {COHORT_KINDS}, got {kind!r}")
-    return kind
+def resolve_cohort(data_dir: Path, split: str) -> CohortProvenance:
+    """Check that a split is one of the generator's own, and locate it.
 
-
-def resolve_cohort(
-    data_dir: Path, split: str, kind: str = DEFAULT_COHORT_KIND
-) -> CohortProvenance:
-    """Check that a split is the kind of cohort it is claimed to be.
+    A supplied cohort is not resolved here: it is a registered cohort version
+    (`src/evaluation/cohort_registry.resolve_version`), so a name this module
+    does not know is refused with a pointer there rather than read as a loose
+    file in the workspace.
 
     Raises:
-        ValueError: on an unknown kind, a reserved name used for a supplied
-            cohort, a non-reserved name claimed as generated, a missing samples
-            file, or a generated cohort with no manifest.
+        ValueError: on a name that is not an identifier, a name that is not one
+            of the generator's splits, a missing samples file, or a workspace
+            with no manifest.
     """
-    validate_kind(kind)
     validate_split_name(split)
-    samples = data_dir / f"{split}_samples.json"
-    if not samples.is_file():
-        raise ValueError(f"{samples} does not exist")
-
-    if kind == "supplied":
-        # Compared through casefold as well, defensively: the alphabet already
-        # rules uppercase out, so this cannot fire today — and it is the check
-        # that would still hold if the alphabet were ever widened.
-        if split.casefold() in {name.casefold() for name in GENERATED_SPLITS}:
-            raise ValueError(
-                f"{split!r} is one of the generator's own split names "
-                f"({', '.join(GENERATED_SPLITS)}), so a supplied cohort may not use "
-                "it. Written there it would inherit the manifest of a cut it was "
-                "never part of and be recorded as a generated cohort. Give it its "
-                "own name, such as test_samples.json."
-            )
-        return CohortProvenance(kind, split, samples, None)
-
     if split not in GENERATED_SPLITS:
         raise ValueError(
             f"{split!r} is not one of the generator's splits "
             f"({', '.join(GENERATED_SPLITS)}), so it was not produced by "
-            "src/kg/sample_generator.py. If it is an institutional or external "
-            "cohort, say so with cohort kind 'supplied'."
+            "src/kg/sample_generator.py. An institutional or external cohort is "
+            "imported as a registered cohort version (scripts/import_cohort.py) and "
+            "measured with --cohort LABEL --registry DIR, not read from the workspace."
         )
+    samples = data_dir / f"{split}_samples.json"
+    if not samples.is_file():
+        raise ValueError(f"{samples} does not exist")
     manifest = data_dir / MANIFEST_FILENAME
     if not manifest.is_file():
         raise ValueError(
             f"{data_dir} has no {MANIFEST_FILENAME}, so its {split} cohort was "
             "generated before the disease allocation step and its disease sets "
             "overlap. Nothing reads such a workspace any more; rebuild it with "
-            "scripts/build_knowledge_graph.py --generate-samples. If this is an "
-            "external cohort, it is a supplied one and must not use a generated "
-            "split name."
+            "scripts/build_knowledge_graph.py --generate-samples."
         )
-    return CohortProvenance(kind, split, samples, manifest)
+    return CohortProvenance("generated", split, samples, manifest)
 
 
 class GeneratedCohorts(NamedTuple):
@@ -237,7 +214,7 @@ def verify_cohort_reads(
     mean something, and it runs at every entry point that consumes generated
     cohorts, not only in the audits.
 
-    **Scoped to what the caller consumes.** A supplied-cohort overlap audit binds
+    **Scoped to what the caller consumes.** A registered-cohort overlap audit binds
     generated ``train`` and never reads generated ``val``; requiring ``val`` there
     would let a missing or corrupt file block an institutional measurement for a
     reason unrelated to it. Everything that *does* consume both — training,
@@ -260,7 +237,7 @@ def verify_cohort_reads(
     4. **The cohorts are disjoint** — both the measurement and the manifest's own
        ``disjoint`` claim, and **both only when both cohorts are in scope**. That
        field describes the generated train/val relationship, which a
-       train-versus-supplied overlap does not consume.
+       train-versus-registered overlap does not consume.
 
     **Compares, and reads nothing** (contract M2.1). `manifest` is the run's one
     reading of its manifest and `samples` maps each generated split in scope to
@@ -360,7 +337,7 @@ def _check_disjointness(
 
     **Both disjointness checks are scoped, not just the measurement.** The
     manifest's `disjoint` field describes the generated train/val relationship.
-    A train-versus-supplied overlap audit consumes neither that relationship nor
+    A train-versus-registered overlap audit consumes neither that relationship nor
     `val`, so refusing it on that field would block an institutional measurement
     on the state of an input it never reads — the same over-validation the
     scoping was introduced to remove, arriving through a claim instead of a file.
@@ -387,7 +364,6 @@ def _check_disjointness(
 
 __all__ = [
     "COHORT_KINDS",
-    "DEFAULT_COHORT_KIND",
     "GENERATED_SPLITS",
     "MANIFEST_FILENAME",
     "CohortProvenance",
@@ -396,5 +372,4 @@ __all__ = [
     "resolve_cohort",
     "validate_split_name",
     "verify_cohort_reads",
-    "validate_kind",
 ]

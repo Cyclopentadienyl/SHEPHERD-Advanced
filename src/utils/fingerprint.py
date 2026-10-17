@@ -28,10 +28,14 @@ compatibility check.
 returns the bytes and the digest of those same bytes, so what a reader parses and
 what a record names cannot come from two different reads (contract M2.1).
 `file_sha256` identifies a file nobody is about to parse. Within the static
-pin's scope (`src/**`, the entry points and the scripts M2.1's S9 moved), every
-remaining caller is a named exception in `tests/unit/test_provenance_pins.py`;
-BACKLOG item 19's scripts outside that scope still hash by path, each with its
-home there.
+pin's scope (`src/**`, the entry points, the scripts M2.1's S9 moved and M4's
+`import_cohort.py` and `record_evaluation.py`), every remaining caller is a
+named exception in `tests/unit/test_provenance_pins.py`. Since contract M4 the
+evaluation ledger and the report a record is derived from are each parsed and
+identified from one read (BACKLOG item 18); the ledger's stale-write guard still
+compares the file by path just before replacing it, and the ledger stays
+single-writer. BACKLOG item 19's other scripts outside that scope still hash by
+path, each with its home there.
 
 When a checkpoint is saved during training, the fingerprint of the
 graph data used is embedded in the checkpoint. At inference load time,

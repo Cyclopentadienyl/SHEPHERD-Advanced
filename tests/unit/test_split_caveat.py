@@ -2,13 +2,18 @@
 The `--split` caveat has to reach the person running the command.
 =================================================================
 Backlog item 2. The measurement entry point warns that `val` is not held-out
-data. The warning named two reasons; it now names **three**, and one of them
-changed direction. The split still selects the checkpoint. The overlap reason is
-gone — generation consumes a disease allocation and `src/evaluation/cohort.py`
-refuses a workspace without a manifest, so a pre-allocation cohort cannot reach a
-measurement at all, and the help states disjointness as the contract it now is.
-In its place are the channel a disease-level cut does not close, and the fact
-that a *supplied* cohort's overlap with training is an open measurement.
+data. The split still selects the checkpoint. The overlap reason is gone —
+generation consumes a disease allocation and `src/evaluation/cohort.py` refuses a
+workspace without a manifest, so a pre-allocation cohort cannot reach a
+measurement at all, and the help states disjointness as the contract it now is,
+with the channel a disease-level cut does not close.
+
+**Since M4 a supplied cohort is not a split** (decision 8): `--split` names the
+generator's `train` and `val` only, and an institutional or external cohort is a
+registered version named by `--cohort`. The third limit -- that a supplied
+cohort's overlap with training is an open measurement -- moved with it to the
+`--cohort` help, where it now says the measurement takes that overlap (R10).
+`--cohort-kind` is gone: the argument that names the cohort decides its kind.
 
 **Why this file exists at all.** The caveat lives in argparse `help=` text, which
 nothing rendered until now — and argparse interpolates that text with
@@ -39,8 +44,8 @@ if str(REPO_ROOT) not in sys.path:
 ENTRY_POINTS = ("measure_scorer",)
 
 
-def _split_help(script: str) -> str:
-    """The rendered `--split` help, through argparse's own formatter."""
+def _option_help(script: str, option: str):
+    """The rendered help and one option's help, through argparse's own formatter."""
     module = importlib.import_module(f"scripts.{script}")
     parser = None
     # `parse_args` builds the parser; borrow it by parsing nothing and catching
@@ -62,9 +67,17 @@ def _split_help(script: str) -> str:
         argparse.ArgumentParser.parse_args = original
 
     assert parser is not None, f"{script} did not build an ArgumentParser"
-    action = next(a for a in parser._actions if "--split" in a.option_strings)
+    action = next(a for a in parser._actions if option in a.option_strings)
     # `format_help()` is what `--help` runs, interpolation included.
     return parser.format_help(), action.help
+
+
+def _split_help(script: str):
+    return _option_help(script, "--split")
+
+
+def _cohort_help(script: str):
+    return _option_help(script, "--cohort")
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
@@ -76,14 +89,14 @@ def test_help_renders_at_all(script):
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_caveat_names_three_distinct_limits(script):
+def test_the_split_caveat_names_two_distinct_limits(script):
     """They are not the same limit and must not blur together.
 
     (1) `val` cannot be an independent evaluation, because it selects the
     checkpoint. (2) `val` *is* disease-disjoint, so it carries unseen-disease
     evidence -- but not for two diseases with identical phenotype content on
-    opposite sides. (3) A supplied cohort's overlap with training is measured,
-    never assumed.
+    opposite sides. And a supplied cohort is pointed at the registered path,
+    since it is no split of the workspace.
     """
     _, help_text = _split_help(script)
 
@@ -92,8 +105,28 @@ def test_the_caveat_names_three_distinct_limits(script):
     assert "identical" in help_text and "phenotype content" in help_text, (
         "the channel the disease-level cut does not close"
     )
+    assert "train or val" in help_text, "the generator's splits only"
+    assert "--cohort" in help_text and "import_cohort.py" in help_text, (
+        "where a supplied cohort goes instead"
+    )
+    assert "not registered" in help_text, "a generated split's report is not registrable"
+
+
+@pytest.mark.parametrize("script", ENTRY_POINTS)
+def test_the_cohort_help_says_the_overlap_is_measured_and_never_zero_without_evidence(script):
+    """The third limit, where a supplied cohort is now named: its overlap with
+    training is a measurement, which every registered run takes as R10 from the
+    bytes the checkpoint names, and which is unverifiable rather than zero when
+    those bytes are not found."""
+    rendered, help_text = _cohort_help(script)
+
+    assert "--cohort" in rendered
     assert "measurement, not a contract" in help_text, "supplied cohorts"
-    assert "audit_split_overlap.py" in help_text, "how to measure a supplied cohort"
+    assert "R10" in help_text
+    assert "--training-evidence" in help_text
+    assert "unverifiable, never zero" in help_text
+    assert "audit_split_overlap.py" in help_text, "the audit of a version"
+    assert "report store" in help_text and "--output does not" in help_text
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
@@ -118,14 +151,17 @@ def test_the_caveat_no_longer_hedges_about_which_regime_it_describes(script):
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_cohort_kind_help_says_why_it_is_stated_rather_than_inferred(script):
-    """The presence test it replaces cannot tell a supplied cohort from a
-    workspace built before the allocation step."""
-    _, _ = _split_help(script)
-    from src.evaluation.caveats import COHORT_KIND_HELP
+def test_the_cohort_kind_is_decided_by_the_argument_not_stated(script):
+    """`--cohort-kind` stated what the argument now decides: `--split` is always
+    generated and `--cohort` always a registered (supplied) version, so the kind
+    cannot be stated wrongly. The flag is refused, and its help text is gone."""
+    import src.evaluation.caveats as caveats
 
-    assert "may not use a generated split's name" in COHORT_KIND_HELP
-    assert "before the allocation step" in COHORT_KIND_HELP
+    module = importlib.import_module(f"scripts.{script}")
+    with pytest.raises(SystemExit):
+        module.parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                           "--output", "o.json", "--cohort-kind", "generated"])
+    assert not hasattr(caveats, "COHORT_KIND_HELP")
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
@@ -140,8 +176,9 @@ def test_the_help_string_survives_argparse_interpolation(script):
     edit adding a second percent fails here whether or not the rendering test
     happens to exercise the same path.
     """
-    _, help_text = _split_help(script)
+    for help_of in (_split_help, _cohort_help):
+        _, help_text = help_of(script)
 
-    # No named references are used, so an empty mapping is the whole contract:
-    # this raises ValueError on a bare %, and returns the text on %%.
-    help_text % {}
+        # No named references are used, so an empty mapping is the whole contract:
+        # this raises ValueError on a bare %, and returns the text on %%.
+        help_text % {}

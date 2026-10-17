@@ -8,6 +8,13 @@ phase must pass. Also: the acceptance is complete only when every required probe
 of both parts ran and passed, the CLI cannot turn the acceptance into a CPU run,
 and a snapshot that includes directories sees an empty one left behind.
 
+Contract M4's flow rides on the same phases (T1-T6 after M11, RT1-RT3 before
+R8): the importer, the measurement on a registered version with --record,
+record_evaluation, the reload route and the read-only view, and the overlap
+audit, each through its entry point. The tests check the probes' evidence
+against what those entry points left on disk, that the report carries no path,
+and that a registry inside the repository fails T1 in the probe's own words.
+
 Module: tests/unit/test_probe_m2_phase.py
 """
 from __future__ import annotations
@@ -64,7 +71,46 @@ def _statuses(report, prefix):
             if p.probe_id.startswith(prefix)}
 
 
-def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
+M4_DEMO_PROBES = ["T1", "T2", "T3", "T4", "T5", "T6"]
+M4_REAL_PROBES = ["RT1", "RT2", "RT3"]
+
+
+@pytest.fixture
+def served_state(monkeypatch):
+    """T5 and RT3 reload into the service's shared state and read it through the
+    application; this puts the served fields and the recorded server address
+    back after the test (the flags are the conftest's)."""
+    import src.api.main as api
+    import src.utils.server_address as server_address
+
+    for name in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
+        monkeypatch.setattr(api.app_state, name, getattr(api.app_state, name, None),
+                            raising=False)
+    monkeypatch.setattr(server_address, "_address", server_address._address)
+    return api
+
+
+def _ledger_records(directory):
+    import json
+
+    return json.loads((directory / "evaluations.json").read_text())["records"]
+
+
+def test_the_m4_probes_are_required_in_both_parts():
+    probe = _probe()
+    assert set(M4_DEMO_PROBES) <= set(probe.M2_DEMO_REQUIRED)
+    assert set(M4_REAL_PROBES) <= set(probe.M2_REAL_REQUIRED)
+    assert len(set(probe.M2_DEMO_REQUIRED)) == len(probe.M2_DEMO_REQUIRED)
+    assert len(set(probe.M2_REAL_REQUIRED)) == len(probe.M2_REAL_REQUIRED)
+    report = probe.Report()
+    for probe_id in probe.M2_DEMO_REQUIRED:
+        report.probes.append(probe.Probe(probe_id, "m2", "x", status="passed"))
+    report.probes = [p for p in report.probes if p.probe_id != "T5"]
+    assert probe.m2_acceptance(report, False)["demo"]["not_passed"] == {"T5": "not run"}
+    assert "M4" in probe.m2_acceptance(report, False)["scope"]
+
+
+def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_state):
     probe = _probe()
     report = probe.Report()
     sound = probe.phase_writer(report, tmp_path)
@@ -107,8 +153,56 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path):
         "cpu", "cpu")
     assert str(tmp_path) not in json.dumps(identity)
 
+    # ---- Contract M4's flow (T1-T6), after M11, every probe passed.
+    m4 = _statuses(report, "T")
+    assert list(m4) == M4_DEMO_PROBES
+    assert {k: v[0] for k, v in m4.items()} == dict.fromkeys(m4, "passed"), (
+        {k: v[1] for k, v in m4.items() if v[0] != "passed"}
+    )
+    # The evidence holds no path (the work directory, the workspace, a report).
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in M4_DEMO_PROBES})
+    # T1: the counts the probe's source was built to give, and the version on
+    # disk under the work directory is the one the facts name.
+    import hashlib
 
-def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
+    registry = tmp_path / "m4" / "registry"
+    version = registry / "versions" / probe.M4_DEMO_LABEL
+    assert facts["T1"]["counts"] == probe.M4_DEMO_COUNTS
+    assert facts["T1"]["manifest_sha256"] == hashlib.sha256(
+        (version / "cohort.json").read_bytes()).hexdigest()
+    # T2: the one kept report is what the one record names, beside the copy of
+    # D1's checkpoint (the bytes D1 trained), and R10's evidence was found.
+    (kept,) = (version / "reports").glob("*/report.json")
+    checkpoints = tmp_path / "m4" / "checkpoints"
+    (record,) = _ledger_records(checkpoints)
+    assert record["source_artifact_digest"] == facts["T2"]["report_sha256"] == hashlib.sha256(
+        kept.read_bytes()).hexdigest()
+    assert record["checkpoint_digest"] == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    assert (checkpoints / "measured.pt").read_bytes() == checkpoint.read_bytes()
+    for scope in ("training", "validation"):
+        assert facts["T2"]["r10"][scope]["evidence"] == "found"
+        assert facts["T2"]["r10"][scope]["disease_overlap"]["k"] is not None
+    # T3 and T4 wrote nothing: still the one record, and no report for the
+    # version mapped against M1's graph (its import itself is on disk).
+    assert facts["T3"]["same_report_again"] == "already_registered"
+    assert len(_ledger_records(checkpoints)) == 1
+    assert (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "cohort.json").is_file()
+    assert not (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "reports").exists()
+    assert "kg" in facts["T4"]["differing_roles"]
+    # T5: the record for the measured checkpoint, none for M2's beside it.
+    assert facts["T5"]["measured"]["state"] == "records"
+    assert facts["T5"]["measured"]["checkpoint_sha256"] == record["checkpoint_digest"]
+    assert facts["T5"]["other"]["state"] == "no_records"
+    assert facts["T5"]["other"]["checkpoint_sha256"] == child
+    # T6: the audit recorded the version the import committed, and its shared
+    # diseases are R10's training disease overlap: two production computations
+    # over the same train bytes and the same version samples.
+    assert facts["T6"]["cohort_version"]["manifest_sha256"] == facts["T1"]["manifest_sha256"]
+    training = facts["T2"]["r10"]["training"]["disease_overlap"]
+    assert facts["T6"]["overlap"] == f"{training['k']} of {training['n']}"
+
+
+def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, served_state):
     import shutil
 
     import yaml
@@ -166,6 +260,29 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path):
         "sha256": facts["R1"]["dataset_record"]["sha256"]}
     assert facts["R7"]["reference_refusal"] == "no record"
     assert facts["R4"]["child_optimizer_step"] > facts["R4"]["parent_optimizer_step"]
+
+    # ---- Contract M4's flow on the (stand-in) real workspace: RT1-RT3 run
+    # after R7 and before R8, whose comparison therefore covers them.
+    order = [p.probe_id for p in report.probes]
+    assert order[order.index("R7") + 1:] == [*M4_REAL_PROBES, "R8"]
+    import json
+
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in M4_REAL_PROBES})
+    n = facts["RT1"]["val_cases_written"]
+    assert n == min(probe.M4_REAL_CASES, probe.NUM_VAL)        # the demo names every node
+    assert facts["RT1"]["counts"]["n_excluded"] == 0
+    r10 = facts["RT2"]["r10"]
+    assert r10["training"]["disease_overlap"]["state"] == "none"
+    assert r10["validation"]["phenotype_set_overlap"] == {"state": "overlap", "k": n, "n": n}
+    # The ledger is beside R4's checkpoint, under the work directory; the
+    # registry and its report too. Nothing of M4's is in the workspace.
+    resumed = work / "real" / "resumed" / "checkpoints"
+    (record,) = _ledger_records(resumed)
+    assert record["checkpoint_digest"] == facts["R4"]["child_sha256"]
+    assert record["source_artifact_digest"] == facts["RT2"]["report_sha256"]
+    assert facts["RT3"]["state"] == "records"
+    assert facts["RT3"]["checkpoint_sha256"] == facts["R4"]["child_sha256"]
+    assert not list(real.rglob("evaluations.json")) and not (real / "registry").exists()
 
 
 def test_an_architecture_other_than_the_reference_s_is_refused(tmp_path):
@@ -253,6 +370,179 @@ def test_a_snapshot_with_directories_sees_an_empty_one(tmp_path):
         probe.assert_untouched(before, tmp_path, "x", include_dirs=True)
 
 
+def test_a_registry_inside_the_repository_fails_the_import_in_the_probe_s_words(
+    tmp_path, capsys
+):
+    """A --work-dir inside the repository puts M4's registry there: the importer
+    refuses it, and T1's failure says so without the paths its message names.
+    Nothing is created (the registry's location is refused before it exists)."""
+    probe = _probe()
+    registry = REPO / "tests" / "probe-registry-never-created"
+    source = probe._write_cohort_source(tmp_path / "cases.json", [
+        {"case_id": "c1", "phenotypes": ["HP:0001250"], "disease": "MONDO:0011073"}])
+
+    with pytest.raises(AssertionError, match="inside the repository") as failed:
+        probe._import_version(registry, tmp_path / "workspace", source, probe.M4_DEMO_LABEL)
+
+    assert "--work-dir outside the repository" in str(failed.value)
+    assert str(REPO) not in str(failed.value), "the failure carries a path"
+    assert "inside the repository" in capsys.readouterr().err   # the importer's own message
+    assert not registry.exists()
+
+
+def test_a_relative_work_dir_outside_the_repository_reaches_the_importer_absolute(
+    tmp_path, monkeypatch
+):
+    """A --work-dir given relative but outside the repository (`../m4-acceptance/
+    work` from the checkout) is resolved in `main`, so what the phases derive from
+    it is absolute -- M4's registry included, which the importer refuses as a
+    relative path. Without that, T1 and RT1 failed after the training runs had
+    been spent, and the report named no cause. Through `main`, on the CPU: the
+    phases before T1 are stood in for, the workspace is written under the work
+    directory where phase B writes it, and T1's import runs through
+    `_import_version` on the registry path phase_m2_demo derives."""
+    from tests.fixtures.registered_cohort import write_demo_workspace
+
+    probe = _probe()
+    monkeypatch.chdir(tmp_path)                 # outside the repository
+    given = Path("acceptance") / "work"
+    seen = {}
+
+    def writer(report, work):
+        seen["work"] = work
+        return write_demo_workspace(work / "sound_workspace")
+
+    def t1_import(report, work, sound, checkpoint, device):
+        m4_dir = (work / "m2").parent / "m4"   # phase_m2_demo's derivation
+        registry = m4_dir / "registry"
+        registry.mkdir(parents=True)
+        source = probe._write_cohort_source(m4_dir / "cases.json", probe._m4_demo_cases(sound))
+        seen["version"], _ = probe._import_version(registry, sound, source,
+                                                   probe.M4_DEMO_LABEL)
+
+    monkeypatch.setattr(probe, "phase_environment",
+                        lambda report, device, **kwargs: {"resolved_device": "cuda"})
+    monkeypatch.setattr(probe, "phase_writer", writer)
+    monkeypatch.setattr(probe, "phase_workspace", lambda *args: None)
+    monkeypatch.setattr(probe, "phase_training", lambda *args: Path("not-trained.pt"))
+    monkeypatch.setattr(probe, "phase_serving", lambda *args: None)
+    monkeypatch.setattr(probe, "phase_m2_demo", t1_import)
+
+    # Incomplete, as it must be: only T1's import ran.
+    assert probe.main(["--work-dir", str(given), "--m2-acceptance", "--device", "cuda"]) == 1
+
+    assert seen["work"] == tmp_path.resolve() / given
+    assert seen["version"].manifest["counts"]["ranked_eligible"] > 0
+    assert (given / "m4" / "registry" / "versions" / probe.M4_DEMO_LABEL).is_dir()
+    assert (given / "probe_report.json").is_file()
+
+
+def test_a_preview_that_writes_or_prints_no_id_is_caught(tmp_path, monkeypatch):
+    """`_import_version`'s two checks fire: a preview that left something in the
+    registry, and a preview that printed no id."""
+    import scripts.import_cohort as import_cohort
+
+    probe = _probe()
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    def writes(argv):
+        (registry / "left-behind").write_text("x")
+        print("Preview id: 0123456789abcdef")
+        return 0
+
+    monkeypatch.setattr(import_cohort, "main", writes)
+    with pytest.raises(AssertionError, match="the import preview created"):
+        probe._import_version(registry, tmp_path, tmp_path / "cases.json", "x")
+
+    monkeypatch.setattr(import_cohort, "main", lambda argv: 0)
+    with pytest.raises(AssertionError, match="printed no preview id"):
+        probe._import_version(tmp_path / "empty", tmp_path, tmp_path / "cases.json", "x")
+
+
+def test_the_m4_evidence_checks_fire(tmp_path):
+    """The checks T2, T5, RT2 and RT3 rest on, each shown to fail: ranks that
+    are not the bytes the report names, a ledger record from another report or
+    a second record, and a view that shows another report's record or none."""
+    import json
+    from types import SimpleNamespace
+
+    probe = _probe()
+    run = tmp_path / "registry" / "versions" / "v" / "reports" / "run"
+    run.mkdir(parents=True)
+    (run / "ranks.json").write_text(json.dumps([{"sample_id": "a", "rank": 1}]))
+    (run / "report.json").write_text(json.dumps(
+        {"n_ranked": 1, "ranks": {"file": "ranks.json", "sha256": "0" * 64}}))
+    with pytest.raises(AssertionError, match="not the bytes the report names"):
+        probe._kept_report(tmp_path / "registry", "v")
+
+    record = {"checkpoint_digest": "c", "cohort_digest": "v", "source_artifact_digest": "r",
+              "corroborating_reports": [], "registration": {"sequence": 1},
+              "cohort": {"label": "l", "role": "o"}, "n_ranked": 1}
+    version = SimpleNamespace(identity=SimpleNamespace(sha256="v"))
+
+    def ledger(*records):
+        (tmp_path / "evaluations.json").write_text(
+            json.dumps({"schema_version": 3, "records": list(records)}))
+
+    ledger(record)
+    assert probe._the_record(tmp_path, SimpleNamespace(sha256="r"), "c", version)[0] == record
+    with pytest.raises(AssertionError, match="not built from the kept report's bytes"):
+        probe._the_record(tmp_path, SimpleNamespace(sha256="another"), "c", version)
+    ledger(record, dict(record, cohort_digest="w"))
+    with pytest.raises(AssertionError, match="2 records, not one"):
+        probe._the_record(tmp_path, SimpleNamespace(sha256="r"), "c", version)
+
+    view = {"source_artifact_digest": "r", "registration": {"sequence": 1},
+            "cohort": {"label": "l", "role": "o"}, "n_ranked": 1,
+            "r10": {"validation": {"evidence": {"state": "found"}}},
+            "environment_class": "CPU"}
+    answer = {"state": "records", "checkpoint_sha256": "c", "ledger": {"sha256": "L"},
+              "records": [view], "records_not_shown": 0}
+    assert probe._the_view_shows(answer, record, "L", ("validation",))["records"] == 1
+    for broken, message in (
+        (dict(answer, records=[dict(view, source_artifact_digest="x")]), "another report"),
+        (dict(answer, state="no_records", records=[]), "state is no_records"),
+        (dict(answer, ledger={"sha256": "M"}), "another ledger"),
+        (dict(answer, records=[dict(view, r10={"validation": {"evidence": {"state":
+                                                                         "not_found"}}})]),
+         "as not found"),
+    ):
+        with pytest.raises(AssertionError, match=message):
+            probe._the_view_shows(broken, record, "L", ("validation",))
+
+
+def test_a_checkpoint_read_is_observed_and_the_reader_put_back(tmp_path):
+    """T4's observation: a read through the one checkpoint reader, imported when
+    it runs as the measurement imports it, is noted; afterwards the reader is
+    the original again."""
+    import torch
+
+    import src.utils.checkpoint_io as checkpoint_io
+
+    probe = _probe()
+    path = tmp_path / "tiny.pt"
+    torch.save({"x": torch.zeros(1)}, path)
+    original, reads = checkpoint_io.read_checkpoint, []
+    with probe._observing_checkpoint_reads(reads):
+        from src.utils.checkpoint_io import read_checkpoint
+
+        read_checkpoint(path, map_location="cpu", weights_only=True)
+    assert reads == ["tiny.pt"]
+    assert checkpoint_io.read_checkpoint is original
+
+
+@pytest.mark.parametrize("node, node_type, term", [
+    ("hpo:HP:0001250", "phenotype", "HP:0001250"),
+    ("mondo:MONDO:0011073", "disease", "MONDO:0011073"),
+    ("mondo:MONDO:0011073", "phenotype", None),      # not the node an HP term maps to
+    ("hpo:HP:12345", "phenotype", None),             # not a term the importer accepts
+    ("orphanet:ORPHA:558", "disease", None),
+])
+def test_a_node_is_named_by_the_term_the_importer_maps_back_to_it(node, node_type, term):
+    assert _probe()._node_term(node, node_type) == term
+
+
 def test_without_cuda_the_acceptance_stops_after_the_device_check(tmp_path):
     """The entry point itself: `--device cuda` on a host with no CUDA fails A2,
     runs nothing after it on CPU, and reports every required probe as not run."""
@@ -271,7 +561,7 @@ def test_without_cuda_the_acceptance_stops_after_the_device_check(tmp_path):
 
     report = json.loads(report_path.read_text())
     ran = {p["id"] for p in report["probes"]}
-    assert not {p for p in ran if p[0] in "BCDEMR"}, sorted(ran)
+    assert not {p for p in ran if p[0] in "BCDEMRT"}, sorted(ran)
     assert {p["id"]: p["status"] for p in report["probes"]}["A2"] == "failed"
     acceptance = report["m2_acceptance"]
     assert acceptance["complete"] is False

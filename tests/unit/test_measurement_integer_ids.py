@@ -7,9 +7,12 @@ turns sample ids into an index tensor, which truncates `3.7` to `3` and reads
 the reader every caller shares, refuses such an id before any caller converts
 it, naming the file, the patient and the field.
 
-Shown at the Mode C entry point (`main`): the run is refused before a model is
-built or anything is written. The training fields go through the same reader
-and are shown on it directly.
+Shown at the Mode C entry point (`main`) on the generated `val` split: the run
+is refused before a model is built or anything is written. A registered cohort
+version's samples cannot carry such an id: the importer writes integers, and a
+`samples.json` edited afterwards is refused by the digest its `cohort.json`
+binds before it is parsed, so the id is never converted there either. The
+training fields go through the same reader and are shown on it directly.
 
 Module: tests/unit/test_measurement_integer_ids.py
 """
@@ -48,7 +51,7 @@ def test_mode_c_refuses_a_sample_id_that_is_not_an_integer(tmp_path, monkeypatch
     import src.models.gnn.shepherd_gnn as shepherd_gnn
 
     data_dir, checkpoint = build_workspace(tmp_path / "ws")
-    samples_path = data_dir / "test_samples.json"
+    samples_path = data_dir / "val_samples.json"
     patient = _rewrite_first_sample(samples_path, field, value)
 
     def built(*args, **kwargs):
@@ -60,8 +63,7 @@ def test_mode_c_refuses_a_sample_id_that_is_not_an_integer(tmp_path, monkeypatch
     with pytest.raises(ValueError) as refused:
         cli.main([
             "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
-            "--device", "cpu",
+            "--split", "val", "--output", str(output), "--device", "cpu",
         ])
 
     message = str(refused.value)
@@ -81,10 +83,36 @@ def test_integer_ids_still_measure(tmp_path):
 
     assert cli.main([
         "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "test", "--cohort-kind", "supplied", "--output", str(output),
-        "--device", "cpu",
+        "--split", "val", "--output", str(output), "--device", "cpu",
     ]) == 0
     assert json.loads(output.read_text())["n_ranked"] > 0
+
+
+@pytest.mark.parametrize("field, value", [("disease_id", 1.0), ("phenotype_ids", [True])])
+def test_a_versions_samples_edited_to_a_non_integer_id_are_refused_by_digest(
+    tmp_path, monkeypatch, field, value
+):
+    """The registered path's form of the rule: the edit changes the bytes, so the
+    version's `samples.json` is refused against the digest its `cohort.json`
+    binds, before it is parsed or any id converted, and nothing is written."""
+    import scripts.measure_scorer as cli
+    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    from tests.fixtures.registered_cohort import build_registered_cohort
+
+    cohort = build_registered_cohort(tmp_path / "root")
+    _rewrite_first_sample(cohort.version.samples_path, field, value)
+    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+                        lambda *a, **k: pytest.fail("a model was built"))
+
+    with pytest.raises(ValueError, match="is not the samples") as refused:
+        cli.main([
+            "--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(cohort.registry),
+            "--device", "cpu",
+        ])
+
+    assert "refused rather than converted" not in str(refused.value), "it was parsed"
+    assert not (cohort.version.directory / "reports").exists()
 
 
 @pytest.mark.parametrize("field, value", [

@@ -161,12 +161,14 @@ Layer 4 (Models):      src/models/        GNN, encoders, decoders, attention
 Layer 5 (Reasoning):   src/reasoning/     path_reasoning (auxiliary), explanation
 Layer 6 (Training):    src/training/      trainer, loss_functions
 Layer 7 (Inference):   src/inference/      pipeline (GNN-primary scoring)
+Layer 7b (Evaluation): src/evaluation/    Mode C measurement, test cohort registry, R10, evaluation ledger
 Layer 8 (Interface):   src/api/           FastAPI REST endpoints
                        src/webui/         Gradio dashboard
 ```
 
 **Import rules** (enforced by import-linter):
-- Lower layers cannot import higher layers
+- Lower layers cannot import higher layers; `src/evaluation` sits above `src/inference` and below
+  the interface (`.import-linter.ini`)
 - `src/webui` cannot directly import `src/training` (use subprocess/API)
 
 ---
@@ -184,6 +186,11 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints
 | PathReasoner | `src/reasoning/path_reasoning.py` | BFS evidence path enumeration |
 | Knowledge Graph | `src/kg/graph.py` | KG data structure with PyG export |
 | Vector Index | `src/retrieval/vector_index.py` | Standalone ANN index. **Detached from diagnosis** — retained for planned vector-mapping work, not on any inference path |
+| Measurement (Mode C) | `src/evaluation/measurement.py`; CLI `scripts/measure_scorer.py` | The formal Test's measurement: every disease ranked by the model's raw cosine, on a registered test cohort version or a generated split |
+| Test cohort registry | `src/evaluation/cohort_registry.py`; CLI `scripts/import_cohort.py` | Immutable cohort versions mapped to one graph and bound to its digests, kept outside the repository (provenance contract M4) |
+| R10 | `src/evaluation/r10.py` | A test cohort's disease and phenotype-set overlap with the training and validation inputs a checkpoint records, found by digest |
+| Evaluation ledger | `src/evaluation/sidecar.py`, `src/evaluation/registration.py`; CLI `scripts/record_evaluation.py` | Test results beside the checkpoint, keyed by its digest (ledger schema 3); one registration function for `--record` and `record_evaluation` |
+| Recorded results view | `src/api/routes/evaluations.py` | Read-only `GET /api/v1/evaluations/loaded-model`: the loaded checkpoint's records, shown on the Diagnosis tab's model status |
 
 ---
 

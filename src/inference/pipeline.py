@@ -1080,9 +1080,17 @@ class DiagnosisPipeline:
         # so a path a client names cannot run code here. The trainer's payload
         # loads this way; a file that does not is refused like any unreadable
         # one, with no second attempt.
+        #
+        # **Read at its resolved path** (M4 decision 15), so the identity kept is
+        # the file whose bytes were loaded and its directory is settled now.
+        # The recorded results view looks for the ledger beside that read
+        # (`served_checkpoint_read`); a symlink given here and retargeted later,
+        # without a reload, would otherwise move the lookup to another run's
+        # directory while the digest stayed this model's. Messages keep the path
+        # as it was given, which is what the operator named.
         try:
             checkpoint_read = read_checkpoint(
-                ckpt_path, map_location="cpu", weights_only=True
+                ckpt_path.resolve(), map_location="cpu", weights_only=True
             )
         except Exception as exc:  # noqa: BLE001 — any unreadable file is the same refusal
             raise PipelineBuildError(
@@ -2082,6 +2090,28 @@ class DiagnosisPipeline:
             dataset_record=dataset_record,
             settings=settings,
         )
+
+    def served_checkpoint_read(self) -> Optional["ReadIdentity"]:
+        """The checkpoint read the served model was built from, or ``None``.
+
+        For a reader that needs the read's path as well as its digest: the
+        recorded results view finds the ledger beside the checkpoint and filters
+        it by digest (`src/api/routes/evaluations.py`). Both come from this one
+        identity, so the directory looked in and the digest looked up cannot
+        belong to two different loads, which a path taken from application state
+        beside a digest taken from here could during a reload. The path is the
+        checkpoint's resolved path, as it was read (`_load_model_from_checkpoint`),
+        so its directory is the one the loaded bytes were in, whatever a link
+        named at load time points to now.
+
+        **Returned exactly when `served_identity()` reports the checkpoint
+        verified**, by asking it rather than restating its condition, so the two
+        cannot drift apart: a model supplied in memory, or no model at all, has
+        no read to return. Nothing is hashed or read here.
+        """
+        if self.served_identity().checkpoint.state != "verified":
+            return None
+        return self._checkpoint_identity
 
     def get_pipeline_config(self) -> Dict[str, Any]:
         """Get pipeline configuration as dictionary."""

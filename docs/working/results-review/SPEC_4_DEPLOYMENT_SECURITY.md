@@ -12,7 +12,7 @@ Every claim here was read from the source, not inferred.
 
 | Fact | Location |
 |---|---|
-| Six routers mounted. **No mounted route or router applies an authentication or authorisation dependency.** An unused `Depends` import exists in `diagnose.py:35` and is not a control | `src/api/main.py:277-283` |
+| Six routers mounted. **No mounted route or router applies an authentication or authorisation dependency.** An unused `Depends` import exists in `diagnose.py:35` and is not a control. *Since contract M4 (2026-10-16), seven:* the seventh, `src/api/routes/evaluations.py`, serves one read-only route, `GET /api/v1/evaluations/loaded-model` (the loaded checkpoint's recorded test results; no parameters, no write), on its own router outside `pipeline.router`, and applies no authentication dependency either. The note adds no route class to §2 | `src/api/main.py:277-283`; since M4 `src/api/main.py:333-343` |
 | The deployed launcher binds `0.0.0.0` | `scripts/launch/shep_launch.py:17` |
 | API CLI entry point binds `0.0.0.0` | `src/api/main.py:466` |
 | Supplied systemd unit binds `0.0.0.0` (and names a module path that does not exist: `app.main:app`) | `scripts/service/systemd/shepherd.service:9` |

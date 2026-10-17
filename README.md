@@ -87,6 +87,22 @@ the KG-independent models in `models/pretrained/`. See
 > needs it. It is not part of building a model. See
 > [`docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md).
 
+## Test a model
+
+A checkpoint is tested from the CLI on a registered test cohort version, and its result is
+recorded beside it (provenance contract M4; deployment guide §4.9):
+
+| Step | Command | Produces |
+|---|---|---|
+| 1. Import a cohort | `scripts/import_cohort.py`: a preview, then `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
+| 2. Measure | `scripts/measure_scorer.py --cohort <label> --registry <dir>` | a Mode C report, kept in the registry's report store |
+| 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
+
+The Diagnosis tab's model status shows the loaded checkpoint's recorded results, read through
+`GET /api/v1/evaluations/loaded-model`. They are the model's own Mode C disease ranking: until
+work item B-1 ships, the tab itself ranks by the GNN + shortest-path mixture above, so a recorded
+number does not describe the tab's ranking.
+
 ## Development
 
 The development tooling — pytest, ruff, mypy, import-linter — is in the `dev` extra, which
