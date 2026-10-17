@@ -140,8 +140,8 @@ Not decided here, and deliberately not worked around:
 
 Rejecting 4 and 5 was right. It did not license inventing 6.
 
-**The result's identity took option 3** (provenance contract M3c, implemented 2026-10-16, awaiting
-review). The Diagnosis CSV carries what produced the result — the checkpoint, graph, manifest,
+**The result's identity took option 3** (provenance contract M3c, implemented 2026-10-16, merged
+as #124). The Diagnosis CSV carries what produced the result — the checkpoint, graph, manifest,
 shortest-path table and dataset record by digest or identifier, the scoring mode and the settings
 in effect — as 21 `served_*` metadata columns appended after the candidate columns, the same on
 every row, under the one header row: no preamble, no sidecar, no log file, and no blank identity

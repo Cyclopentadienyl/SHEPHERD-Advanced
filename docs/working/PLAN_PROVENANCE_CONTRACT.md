@@ -77,7 +77,8 @@ of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `5
 it (`2c94a4e`). **Its GB10 functional acceptance, within the scope agreed, passed at `2c94a4e`**
 (2026-10-17; §4, "M4's acceptance on the GB10"; evidence
 [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)): 84 of 84 probes, demo and
-real data. Not merged. M5 is not implemented. Facts about the
+real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 is not
+implemented. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -198,9 +199,9 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R6 | Model ↔ the training settings, code and environment in effect | `config` = `TrainerConfig` plus `model_config` (`src/training/trainer.py:937-981`). Not recorded: the loader and sampling settings (`DataLoaderConfig`, `train_model.py:585-592`), compile (`train_model.py:760-777`), the code revision, the environment | — | **M3a** |
 | R7 | Model ↔ its resume parent | The parent's digest (`train_model.py:558-559`), hashed by path after the parent was loaded (`:835`, `:854-860`) | **Nothing compared**: `load_checkpoint` restores state without looking at the parent's inputs or config (`trainer.py:1009-1044`). A missing parent only warns, and the run trains from scratch (`train_model.py:505-507`). The WebUI's default resume target is `last.pt` (`src/webui/components/training_console.py:398-404`), which `ModelCheckpoint` overwrites (`callbacks.py:271-274`) | **M2** (the parent's records, graph and data); M3a (overwrite guard) |
 | R8 | A diagnosis result ↔ the model, graph and SP table that produced it | `InferenceResult.model_version` / `kg_version` exist (`src/core/types.py:448-449`) | Filled with a class version and `"unknown"` (`pipeline.py:1062, 1129-1130, 1703`). The API answers with the literal `"1.0.0"` (`src/api/routes/diagnose.py:351`) | **M3c** (implemented 2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`, its GB10 functional acceptance passed at `52152e4`; §4, "M3c as implemented") |
-| R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** (implemented on the branch 2026-10-16, awaiting its GB10 acceptance and review; §4, "M4 as implemented") |
-| R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 (implemented on the branch 2026-10-16, awaiting its GB10 acceptance and review; §4, "M4 as implemented") |
-| R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement; implemented on the branch 2026-10-16, §4, "M4 as implemented") |
+| R9 | Test result ↔ model, cohort and measurement settings | Measurement manifest (`measure_scorer.py:135-155, 342-390`); ledger (`src/evaluation/sidecar.py:291-319`) | R1 and R2 are checked; R3 is not (above) | M2 (R3), **M4** (implemented 2026-10-16, code-reviewed, its functional acceptance passed at `2c94a4e`, merged as #126; §4, "M4 as implemented") |
+| R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 (implemented 2026-10-16, code-reviewed, its functional acceptance passed at `2c94a4e`, merged as #126; §4, "M4 as implemented") |
+| R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement; implemented 2026-10-16, merged as #126; §4, "M4 as implemented") |
 
 **What the table shows.** The links inside a workspace refuse today (R1, R2), and so does a
 broken SP pair. Every link with the model on one side is checked by structure only, or recorded
@@ -2968,8 +2969,9 @@ the base M3c was built on; the code that replaced them is cited in "M3c as imple
 - **Device.** Serving's `auto` without CUDA refuses (§5.2). Until M3c it turned into CPU silently
   (`pipeline.py:1085-1086`).
 
-**M3c as implemented (2026-10-16).** Implemented on the branch over `cbba015`, internally
-reviewed (below) and awaiting the reviewer's review; no GB10 acceptance yet. Line citations here
+**M3c as implemented (2026-10-16).** Implemented on the branch over `cbba015` and internally
+reviewed (below); at the time it awaited the reviewer's review and had no GB10 acceptance, both
+since done (below; merged as #124, `ed8f51d`). Line citations here
 are at the head delivered for that review. What differs from the text above, or was decided while building, is
 stated here.
 
@@ -3249,10 +3251,12 @@ manifest's new fields, ledger schema 3, the registration function, the read-only
 `d3d6ce7` (stage 2: the measurement's registered path, the report store, the overlap audit, the
 tests moved off the removed path), followed by the probe's M4 probes and these documents, then the
 internal review's fixes in `f3108c4` (below). The full suite passed at `d3d6ce7`: 3751 passed, 14
-skipped. **Awaiting its acceptance: one bounded GB10
-functional acceptance through the deployment probe, then external review.** It is not accepted
-and not merged. Citations here name functions. `PLAN_TEST_RESULTS.md` holds the plan, its §4.9
-the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
+skipped. When this was written it awaited one bounded GB10 functional acceptance through the
+deployment probe and external review; **both are done**: the reviewer's code review and
+incremental review (below; one P2 and one P3, fixed in `29c3d1f` and `2c94a4e`) and the
+acceptance at `2c94a4e`, 84 of 84 (below, "M4's acceptance on the GB10"). Merged as #126
+(`d2d31dd`, 2026-10-17). Citations here name functions. `PLAN_TEST_RESULTS.md` holds the plan,
+its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
 
 - **One flow, from the CLI on the machine.** `scripts/import_cohort.py` previews, then commits, a
   cohort version bound to the graph → `scripts/measure_scorer.py --cohort LABEL --registry DIR`
@@ -3565,8 +3569,9 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
     guides now say; `PLAN_TEST_RESULTS.md` §5 keeps the history of `cohort.py`'s overlap reader;
     the record's R10 evidence paths are stated (`src/evaluation/sidecar.py`).
 
-  This is the author's internal review, not the external one: M4 is still not accepted and not
-  merged, and its GPU acceptance is pending.
+  This was the author's internal review, not the external one: at the time M4 was not accepted
+  and not merged, and its GPU acceptance was pending (the reviewer's reviews and the acceptance
+  follow below).
 - **The reviewer's code review (2026-10-17) of `59f519d..f3108c4`**, read-only, found no P1 and
   one P2: **`--record` did not bind the report it read back to the run.** `_publish_to_store`
   dropped the digest `publish_bytes` returned, and the registration, told only that the run had
