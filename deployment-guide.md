@@ -1571,7 +1571,8 @@ registry 中的東西。
 
 ### 來源檔：`shepherd-cases/1`
 
-匯入工具只讀一種格式，由本專案所定義：
+匯入工具只讀一種格式：本專案共用的匯入格式。格式名稱只說明檔案的排列方式，不說明病例的來源：
+合成 cohort 與轉換後的真實資料都以同一種格式寫成（真實來源會有一個轉接器，輸出這種格式）：
 
 ```json
 {
@@ -1725,12 +1726,19 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
-| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查在寫入任何東西之前拒絕了這次執行；Python 印出以該訊息結尾的 traceback（與 M4 之前相同） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測、報告已保留，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令 |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查在寫入任何東西之前拒絕了這次執行；Python 印出以該訊息結尾的 traceback（與 M4 之前相同） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
 | `record_evaluation.py` | 已登錄、已存在、一致，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 
 若 checkpoint 目錄對你而言是唯讀的，量測會以結束碼 3 結束：報告會保留，由可以寫入該目錄的人
 用這次執行印出的 `record_evaluation.py` 指令登錄。
+
+**`--record` 只登錄這次執行發佈的報告，且必須是這次執行讀取的 checkpoint。** 執行會保留它寫入的
+報告位元組的 digest，以及這次 checkpoint 讀取的 identity；登錄時重新讀取報告並核對兩者。若報告檔在
+這之間被替換或修改——即使換成另一份合法報告（另一個 checkpoint 的，或另一個 cohort 版本的）——
+就不登錄任何東西，以結束碼 3 結束，並說明該路徑上的檔案已不是它發佈的報告，因此這次執行自己的報告
+可能已不存在：請重新量測以登錄這次量測。之後用 `record_evaluation.py` 登錄時，仍照舊以指定的
+checkpoint 檔核對報告。
 
 ### Diagnosis 分頁顯示什麼
 

@@ -42,11 +42,14 @@ from pathlib import Path
 import pytest
 
 from src.evaluation.registration import (
+    MeasuredRun,
     RegistrationRefused,
     RegistrationResult,
+    ReportNotAsPublished,
     corroboration_note,
     register_report,
 )
+from src.utils.fingerprint import ReadIdentity
 from src.evaluation.sidecar import empty_ledger, read_ledger, write_ledger
 from tests.unit.test_evaluation_sidecar import (
     generated_report,
@@ -84,16 +87,25 @@ def _report(tmp_path, name="report.json", **overrides) -> Path:
     return path
 
 
+def _measured(report_path, ledger_dir, *, checkpoint_sha256=DIGEST) -> MeasuredRun:
+    """What `--record` passes: the run's read of `ledger_dir/best.pt` and the
+    digest of the report it published (here, the report file as it is; a path
+    that is not a file has no bytes, and the registration refuses it on reading
+    before any digest is compared)."""
+    published = _sha(report_path) if Path(report_path).is_file() else "0" * 64
+    return MeasuredRun(ReadIdentity(Path(ledger_dir) / "best.pt", checkpoint_sha256),
+                       published)
+
+
 def _register(report_path, ledger_dir, *, beside=False, **kwargs) -> RegistrationResult:
     """Through the one registration function: as `--record` registers -- the
-    file the run read, `ledger_dir/best.pt`, not hashed again -- or, with
-    `beside`, as `record_evaluation --checkpoint-dir` does, searching the
-    directory by the report's digest."""
+    run's own checkpoint read and published report, `ledger_dir/best.pt` not
+    hashed again -- or, with `beside`, as `record_evaluation --checkpoint-dir`
+    does, searching the directory by the report's digest."""
     kwargs.setdefault("registered_at", WHEN)
     if beside:
         return register_report(report_path, checkpoint_dir=ledger_dir, **kwargs)
-    return register_report(report_path, checkpoint=Path(ledger_dir) / "best.pt",
-                           measured_read=True, **kwargs)
+    return register_report(report_path, measured=_measured(report_path, ledger_dir), **kwargs)
 
 
 def _listing(directory: Path):
@@ -119,8 +131,8 @@ def test_a_report_is_registered_and_the_record_returned(tmp_path, checkpoints):
 def test_the_time_of_registration_is_now_unless_given(tmp_path, checkpoints):
     from datetime import datetime, timezone
 
-    result = register_report(_report(tmp_path), checkpoint=checkpoints / "best.pt",
-                             measured_read=True)
+    report = _report(tmp_path)
+    result = register_report(report, measured=_measured(report, checkpoints))
 
     when = datetime.strptime(result.record["registration"]["registered_at"],
                              "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -394,13 +406,16 @@ def test_the_report_and_the_ledger_are_each_read_once(tmp_path, checkpoints):
     ledger = checkpoints / "evaluations.json"
     write_ledger(ledger, empty_ledger(), None)
 
+    measured = _measured(report, checkpoints)  # the run's own digest, taken before
     with count_opens() as opens:
-        assert _register(report, checkpoints).outcome == "registered"
+        assert register_report(report, measured=measured,
+                               registered_at=WHEN).outcome == "registered"
     assert opens.opens(report) == 1
     assert opens.opens(ledger) == 2, "the read, and the write guard"
 
     with count_opens() as opens:
-        assert _register(report, checkpoints).outcome == "already_registered"
+        assert register_report(report, measured=measured,
+                               registered_at=WHEN).outcome == "already_registered"
     assert opens.opens(report) == 1
     assert opens.opens(ledger) == 1, "nothing written, so no guard"
 
@@ -529,7 +544,7 @@ def linked(tmp_path, checkpoints):
     return served
 
 
-@pytest.mark.parametrize("named", ["checkpoint_dir", "checkpoint", "measured_read"])
+@pytest.mark.parametrize("named", ["checkpoint_dir", "checkpoint", "measured"])
 def test_a_linked_checkpoint_files_its_ledger_beside_the_file_the_link_names(
     tmp_path, checkpoints, linked, named
 ):
@@ -537,11 +552,14 @@ def test_a_linked_checkpoint_files_its_ledger_beside_the_file_the_link_names(
     measurement's read of it is named, the ledger is the one the read-only view
     reads for a model served through the link -- the directory of its resolved
     path -- never a second ledger beside the link."""
+    report = _report(tmp_path)
     where = {"checkpoint_dir": {"checkpoint_dir": linked},
              "checkpoint": {"checkpoint": linked / "best.pt"},
-             "measured_read": {"checkpoint": linked / "best.pt", "measured_read": True}}[named]
+             # A run that read the link resolves it when it reads (M4 decision 15).
+             "measured": {"measured": _measured(report, (linked / "best.pt").resolve().parent)},
+             }[named]
 
-    result = register_report(_report(tmp_path), registered_at=WHEN, **where)
+    result = register_report(report, registered_at=WHEN, **where)
 
     assert result.outcome == "registered"
     assert result.ledger_path == checkpoints.resolve() / "evaluations.json"
@@ -620,8 +638,14 @@ def test_a_call_naming_neither_or_both_places_is_a_callers_error(tmp_path, check
         register_report(report)
     with pytest.raises(TypeError, match="exactly one"):
         register_report(report, checkpoint=checkpoints / "best.pt", checkpoint_dir=checkpoints)
-    with pytest.raises(TypeError, match="measured_read applies to checkpoint= only"):
-        register_report(report, checkpoint_dir=checkpoints, measured_read=True)
+    with pytest.raises(TypeError, match="exactly one"):
+        register_report(report, checkpoint_dir=checkpoints,
+                        measured=_measured(report, checkpoints))
+    with pytest.raises(TypeError, match="exactly one"):
+        register_report(report, checkpoint=checkpoints / "best.pt",
+                        measured=_measured(report, checkpoints))
+    with pytest.raises(TypeError, match="MeasuredRun"):
+        register_report(report, measured=(checkpoints / "best.pt", _sha(report)))
     assert not (checkpoints / "evaluations.json").exists()
 
 
@@ -795,3 +819,72 @@ def test_the_result_label_the_pre_b1_note_and_the_absence_sentence():
     assert RECORD_ABSENCE == (
         "This ledger holds no result for these weights; that does not mean they were "
         "never evaluated.")
+
+
+# ---------------------------------------------------------------------------
+# An automatic registration is bound to its own run (reviewer's P2, 2026-10-17)
+# ---------------------------------------------------------------------------
+def test_a_run_registers_only_the_report_bytes_it_published(tmp_path, checkpoints):
+    """`--record` passes the digest `publish_bytes` returned. A file at the
+    report's path holding any other bytes -- here a valid report of the same
+    checkpoint, written over it after publication -- is refused as not the
+    run's report, before it is interpreted, and nothing is written."""
+    published = _report(tmp_path)
+    measured = _measured(published, checkpoints)
+    replacement = json.loads(published.read_text())
+    replacement["authoritative_metrics"]["hits@1"] = (
+        replacement["authoritative_metrics"]["hits@1"] / 2 + 0.25)
+    published.write_text(json.dumps(replacement, indent=1))
+    assert _sha(published) != measured.report_sha256
+
+    with pytest.raises(ReportNotAsPublished) as refused:
+        register_report(published, measured=measured, registered_at=WHEN)
+
+    message = str(refused.value)
+    assert "is not the report this run published" in message
+    assert measured.report_sha256[:12] in message and _sha(published)[:12] in message
+    assert "re-measure" in message
+    assert message.endswith(
+        f"Nothing was written to {checkpoints.resolve() / 'evaluations.json'}.")
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_run_registers_only_a_report_of_the_checkpoint_it_read(tmp_path, checkpoints):
+    """The report's bytes are the published ones, but it names other weights
+    than the run's checkpoint read: refused as filed under the wrong address,
+    not as a replaced file, and nothing is written."""
+    report = _report(tmp_path)
+    other = hashlib.sha256(b"other weights").hexdigest()
+
+    with pytest.raises(RegistrationRefused) as refused:
+        register_report(report, measured=_measured(report, checkpoints,
+                                                   checkpoint_sha256=other),
+                        registered_at=WHEN)
+
+    assert not isinstance(refused.value, ReportNotAsPublished)
+    message = str(refused.value)
+    assert f"names checkpoint {DIGEST[:12]}" in message
+    assert f"this run read {other[:12]}" in message
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_run_whose_report_and_checkpoint_are_its_own_registers_without_hashing(
+    tmp_path, checkpoints, monkeypatch
+):
+    """The control: the published bytes and the run's read agree, the record is
+    filed beside the read, and the checkpoint is not hashed again."""
+    import src.evaluation.registration as registration
+
+    def no_hashing(*args, **kwargs):
+        raise AssertionError("a run's own checkpoint read is not hashed again")
+
+    monkeypatch.setattr(registration, "checkpoint_matches", no_hashing)
+    monkeypatch.setattr(registration, "find_checkpoint", no_hashing)
+    report = _report(tmp_path)
+
+    result = register_report(report, measured=_measured(report, checkpoints),
+                             registered_at=WHEN)
+
+    assert result.outcome == "registered"
+    assert result.record["source_artifact_digest"] == _sha(report)
+    assert result.ledger_path == checkpoints.resolve() / "evaluations.json"

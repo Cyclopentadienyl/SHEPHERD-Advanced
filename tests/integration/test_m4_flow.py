@@ -344,6 +344,106 @@ def test_a_report_replaced_while_it_is_registered_cannot_be_paired(
     assert _sha(report) != record["source_artifact_digest"]
 
 
+def _other_checkpoint(cohort, root: Path) -> Path:
+    """Another valid checkpoint over the same verified graph: the fixture's
+    weights with one tensor and the epoch changed, written by the production
+    writer, so its digest differs and measurement accepts it."""
+    from src.utils.checkpoint_io import read_checkpoint, write_checkpoint
+
+    payload = read_checkpoint(cohort.checkpoint, map_location="cpu",
+                              weights_only=True).checkpoint
+    payload["epoch"] = int(payload.get("epoch", 0)) + 1
+    next(v for v in payload["state_dict"].values() if v.is_floating_point()).add_(0.125)
+    path = root / "another-model" / "best.pt"
+    digest = write_checkpoint(payload, path)
+    assert digest != cohort.checkpoint_sha256
+    return path
+
+
+def _swap_after_publication(monkeypatch, data: bytes, how: str) -> list:
+    """Replace the report `--record` is about to register, right after the run
+    published it and before the registration reads it: by atomic rename (a new
+    inode) or by rewriting the same file in place."""
+    import scripts.measure_scorer as measure_scorer
+
+    publish = measure_scorer._publish_to_store
+    swapped = []
+
+    def publish_then_replace(result, inputs):
+        run_id, path, digest = publish(result, inputs)
+        if how == "rename":
+            staged = path.with_name(path.name + ".replacement")
+            staged.write_bytes(data)
+            os.replace(staged, path)
+        else:
+            with open(path, "r+b") as handle:
+                handle.write(data)
+                handle.truncate()
+        swapped.append(path)
+        return run_id, path, digest
+
+    monkeypatch.setattr(measure_scorer, "_publish_to_store", publish_then_replace)
+    return swapped
+
+
+@pytest.mark.parametrize("how", HOWS)
+@pytest.mark.parametrize("whose", ["another_checkpoint", "another_cohort_version"])
+def test_record_registers_only_the_report_this_run_published(
+    cohort, tmp_path, monkeypatch, capsys, whose, how
+):
+    """The reviewer's P2 (2026-10-17): the report `--record` reads back is
+    replaced, after its publication and before the registration, by another
+    valid report -- another checkpoint's on this version, or this checkpoint's
+    on another version of the same source. The run measured, so it exits 3, and
+    nothing is registered: no ledger beside the measured checkpoint or the
+    other one, and no claim that the run's report is kept."""
+    if whose == "another_checkpoint":
+        other = _other_checkpoint(cohort, tmp_path)
+        assert _measure(cohort, checkpoint=other) == 0
+        replacement = _only_report(cohort)
+    else:
+        _preview_and_commit(cohort.registry, cohort.data_dir, cohort.source, "demo-test-2")
+        assert _measure(cohort, label="demo-test-2") == 0
+        (replacement,) = _reports(cohort, label="demo-test-2")
+    data = replacement.read_bytes()
+    capsys.readouterr()
+    swapped = _swap_after_publication(monkeypatch, data, how)
+
+    assert _measure(cohort, "--record") == 3
+
+    (path,) = swapped
+    assert path.read_bytes() == data, "the injected replacement is what was read"
+    assert not _ledger(cohort).exists()
+    assert not (tmp_path / "another-model" / LEDGER).exists()
+    err = capsys.readouterr().err
+    assert "is not the report this run published" in err
+    assert "re-measure" in err
+    assert "Register it later with" not in err, (
+        "a replaced file is not offered for a later registration in the run's name")
+
+
+def test_record_after_the_swap_check_still_registers_an_untouched_report(cohort, monkeypatch):
+    """The control for the test above: the same wrapper, replacing nothing,
+    leaves the published bytes in place, and `--record` registers them."""
+    import scripts.measure_scorer as measure_scorer
+
+    publish = measure_scorer._publish_to_store
+    digests = []
+
+    def publish_and_note(result, inputs):
+        run_id, path, digest = publish(result, inputs)
+        digests.append((path, digest))
+        return run_id, path, digest
+
+    monkeypatch.setattr(measure_scorer, "_publish_to_store", publish_and_note)
+    assert _measure(cohort, "--record") == 0
+    ((path, digest),) = digests
+    assert _sha(path) == digest, "publish_bytes returned the digest of the bytes written"
+    (record,) = _records(cohort)
+    assert record["source_artifact_digest"] == digest
+    assert record["checkpoint_digest"] == cohort.checkpoint_sha256
+
+
 def test_not_registering_keeps_the_report_for_a_later_registration(cohort):
     assert _measure(cohort) == 0
 

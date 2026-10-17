@@ -70,10 +70,12 @@ one P3 is fixed after it, and **its GB10 functional acceptance, within the scope
 WebUI smoke and its exports, reviewed by the reviewer (§4, "M3c's acceptance on the GB10"). It is a
 functional acceptance, not a capacity, AMP, model-quality or clinical reading. The owner merged M3c
 into `main` afterwards (#124, `ed8f51d`, 2026-10-16). **M4 is implemented on the branch
-(2026-10-16) over `59f519d`, awaiting its bounded GB10 functional acceptance through the
-deployment probe and then external review** (§4, "M4 as implemented"); its internal review's 29
-findings, two of them P2 and none P1, are fixed in the review-fix commit on top of `cceca4b` (§4, "M4 as implemented",
-"Internal review"). It is not accepted and not merged. M5 is not implemented. Facts about the
+(2026-10-16) over `59f519d`** (§4, "M4 as implemented"); its internal review's 29 findings, two
+of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `59f519d..f3108c4`
+(2026-10-17) found one P2 and no P1, fixed in the commit after it; **next, the reviewer's
+incremental review of that fix, then the bounded GB10 functional acceptance through the
+deployment probe** (§4, "M4 as implemented", "The reviewer's code review"). It is not accepted
+and not merged. M5 is not implemented. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -3244,7 +3246,7 @@ above; product code the reviewed `1246f0c` plus the review's P3 fix.
 manifest's new fields, ledger schema 3, the registration function, the read-only view) and
 `d3d6ce7` (stage 2: the measurement's registered path, the report store, the overlap audit, the
 tests moved off the removed path), followed by the probe's M4 probes and these documents, then the
-internal review's fixes in the review-fix commit on top of `cceca4b` (below). The full suite passed at `d3d6ce7`: 3751 passed, 14
+internal review's fixes in `f3108c4` (below). The full suite passed at `d3d6ce7`: 3751 passed, 14
 skipped. **Awaiting its acceptance: one bounded GB10
 functional acceptance through the deployment probe, then external review.** It is not accepted
 and not merged. Citations here name functions. `PLAN_TEST_RESULTS.md` holds the plan, its §4.9
@@ -3289,7 +3291,8 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
   - **Immutable.** A label is claimed by `mkdir(exist_ok=False)`. A directory without
     `cohort.json` is an interrupted import: every reader refuses it, and the importer names it
     for the operator to remove. Nothing is deleted by code.
-  - **The source format, `shepherd-cases/1`**, synthetic and owned by this project:
+  - **The source format, `shepherd-cases/1`**, the project's shared import format (its name
+    says how a file is laid out, not whether its cases are synthetic or real):
     `{"format": "shepherd-cases/1", "cases": [{"case_id", "phenotypes": ["HP:nnnnnnn", …],
     "disease": "MONDO:nnnnnnn"}, …]}`, strict at both levels; another key, a key stated twice, an
     empty case list, a repeated case id, or a case id that is not printable text (a control or
@@ -3406,15 +3409,22 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
   than erased. The write keeps its path-hash stale-write guard and that guard's window to the
   rename: single-writer, not compare-and-swap, no claim for concurrent writers. **The ledger is
   `evaluations.json` beside the checkpoint file's resolved path on every write path and on the
-  read side** (`_ledger_beside`). `register_report` takes exactly one of `checkpoint=` and
-  `checkpoint_dir=`:
+  read side** (`_ledger_beside`). `register_report` takes exactly one of `checkpoint=`,
+  `checkpoint_dir=` and `measured=`:
   - `record_evaluation.py --checkpoint FILE` (`checkpoint=`): that one file, under any name,
     must hold the report's checkpoint bytes (`checkpoint_matches`);
   - `record_evaluation.py --checkpoint-dir DIR` (`checkpoint_dir=`): a `*.pt` file in DIR must
     hold them (`find_checkpoint`), and the ledger goes beside the match's resolved path, so a
     directory of links files it beside their targets;
-  - `measure_scorer.py --record` (`checkpoint=` with `measured_read=True`): the file the
-    measurement read, at its resolved path, not hashed again.
+  - `measure_scorer.py --record` (`measured=MeasuredRun(checkpoint read identity, published
+    report digest)`): the file the measurement read, at its resolved path, not hashed again. **The
+    report read back is bound to the run** (the reviewer's P2 of 2026-10-17): it must be the bytes
+    `publish_bytes` returned the digest of when the run wrote it (`ReportNotAsPublished`
+    otherwise, checked before the bytes are interpreted), and it must name the checkpoint that run
+    read. A report replaced after publication by another valid report, of another checkpoint or
+    of another cohort version, is refused with exit 3 and nothing written, and the run says its
+    own report may no longer exist rather than offering the replaced file for a later
+    registration.
 
   `checkpoint_matches` is the one hashing site for both later forms. So a checkpoint reached
   through a link files its ledger where the view reads it, and the same weights never get a
@@ -3530,8 +3540,7 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
   and the view used the checkpoint's resolved path, so a record registered by hand was never
   shown and one set of weights could get two ledgers), and **links below the registry root**
   (a `sources/`, `versions/` or `reports/` linked elsewhere carried patient-level files past the
-  root's D7 check, into the repository included). The rest P3. All are fixed in the review-fix
-  commit on top of `cceca4b`, each code fix with a regression test that fails with the fix
+  root's D7 check, into the repository included). The rest P3. All are fixed in `f3108c4`, each code fix with a regression test that fails with the fix
   undone:
   - the ledger beside the checkpoint's resolved path on every write path and the read side,
     `record_evaluation.py --checkpoint FILE`, and the register-later command naming the file
@@ -3556,6 +3565,26 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
 
   This is the author's internal review, not the external one: M4 is still not accepted and not
   merged, and its GPU acceptance is pending.
+- **The reviewer's code review (2026-10-17) of `59f519d..f3108c4`**, read-only, found no P1 and
+  one P2: **`--record` did not bind the report it read back to the run.** `_publish_to_store`
+  dropped the digest `publish_bytes` returned, and the registration, told only that the run had
+  read the checkpoint, skipped every comparison; a report replaced between its publication and
+  that read -- by another checkpoint's valid report -- was registered, exit 0, beside the
+  measured checkpoint (reproduced through the production importer, Mode C entry and
+  registration; a later registration by hand refused the same file). **Fixed:** the run passes
+  `MeasuredRun` (its checkpoint read's identity and the published report's digest); the report
+  read back must be those bytes (`ReportNotAsPublished`, before it is interpreted) and name that
+  checkpoint; a refusal exits 3 with nothing written and says the run's own report may be gone
+  instead of offering the replaced file for a later registration. Regression tests through
+  `measure_scorer.main(... --record)`: another checkpoint's and another cohort version's valid
+  report, each by atomic rename and by rewrite in place, refused with the ledger untouched;
+  unit tests for each comparison; each fails with its comparison removed. No checkpoint is
+  hashed again, no reader is added, the scoring is unchanged, and no lock, signature or second
+  writer is introduced. The review also recommended accepting the six defaults of
+  `PLAN_TEST_RESULTS.md` §4.9 as recorded (the owner's decision), and calling `shepherd-cases/1`
+  the project's shared import format, whose name does not say whether a file's cases are
+  synthetic or real (done). Next: the reviewer's incremental review of the fix, then the
+  acceptance below on the final commit.
 - **Acceptance pending.** One bounded GB10 functional acceptance through the deployment probe's
   formal run (`scripts/probe_deployment.py --m2-acceptance --device cuda`, as M3c's, with a
   `--work-dir` outside the repository, where the probe's registry lives; a relative one is

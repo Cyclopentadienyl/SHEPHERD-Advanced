@@ -1,10 +1,11 @@
 # PLAN — backlog item 14: test results recorded by the pipeline, shown where a model is chosen
 
 **Status: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
-this branch (2026-10-16), awaiting its bounded GPU acceptance through the deployment probe and
-then external review** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented"). Its
-internal review's 29 findings (none P1, two P2) are fixed in the review-fix commit on top of `cceca4b`. It is not accepted and
-not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
+this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
+Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
+review of `59f519d..f3108c4` (2026-10-17) found one P2, fixed after it. **Next: the reviewer's
+incremental review of that fix, then the bounded GPU acceptance through the deployment probe.**
+It is not accepted and not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
@@ -855,7 +856,8 @@ default M4 runs on and a concrete example. An answer changes a default; it adds 
    default the case is ranked on its other terms. *Recommendation:* keep counting them until real
    data shows how many there are; the preview lists them by term before anything is committed.
 5. **Real file formats** (MyGene2, the institution's). *Default:* only `shepherd-cases/1` is
-   read, a synthetic format this project owns; a real format gets an adapter that writes it,
+   read, the project's shared import format (its name says how a file is laid out, not whether
+   its cases are synthetic or real); a real format gets an adapter that writes it,
    once de-identified samples exist. *Example:* a phenopacket or a CSV of case id, HPO list and
    diagnosis is converted to `{"format": "shepherd-cases/1", "cases": [...]}` before import.
    Which formats, and who supplies a sample to build the adapter against? *Recommendation:* one
@@ -1108,7 +1110,7 @@ the behaviour changes, what is not claimed, and the acceptance pending.
   usage history, finding disagreements by key, investigation notes (all phase 2).
 - **Internal review:** ten dimensions, each finding put to independent skeptics; 29 kept (none
   P1; two P2, the ledger split for a symlinked checkpoint and links below the registry root; the
-  rest P3), one refuted, all 29 fixed in the review-fix commit on top of `cceca4b`. The contract's §4, "M4 as implemented",
+  rest P3), one refuted, all 29 fixed in `f3108c4`. The contract's §4, "M4 as implemented",
   "Internal review", lists them. It is not the external review, and the GPU acceptance is still
   pending.
 

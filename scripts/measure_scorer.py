@@ -725,7 +725,9 @@ def _publish_generated(result: ModeResult, output: Path) -> Tuple[Path, Path]:
     return output, ranks_path
 
 
-def _publish_to_store(result: ModeResult, inputs: MeasurementInputs) -> Tuple[str, Path]:
+def _publish_to_store(
+    result: ModeResult, inputs: MeasurementInputs
+) -> Tuple[str, Path, str]:
     """A registered version's report in a new run directory of its report store.
 
     Encoded as every registry file is (`encode_json`) and checked to encode
@@ -733,7 +735,9 @@ def _publish_to_store(result: ModeResult, inputs: MeasurementInputs) -> Tuple[st
     `report.json` last, carrying ``"ranks": {"file", "sha256"}`` with the digest
     `publish_bytes` returned for the bytes it wrote: the report is the commit
     point, and a run directory without one is an interrupted write that nothing
-    registers. Returns the run id and the report's path.
+    registers. Returns the run id, the report's path, and the digest
+    `publish_bytes` returned for the report bytes it wrote: `--record` registers
+    only a report that still holds exactly those bytes (`MeasuredRun`).
     """
     from datetime import datetime, timezone
 
@@ -749,8 +753,8 @@ def _publish_to_store(result: ModeResult, inputs: MeasurementInputs) -> Tuple[st
     ranks_sha256 = publish_bytes(run_dir / RANKS_FILE, ranks_bytes)
     report["ranks"] = {"file": RANKS_FILE, "sha256": ranks_sha256}
     report_path = run_dir / REPORT_FILE
-    publish_bytes(report_path, encode_json(report))
-    return run_id, report_path
+    report_sha256 = publish_bytes(report_path, encode_json(report))
+    return run_id, report_path, report_sha256
 
 
 def register_later_command(report_path: Path, checkpoint: Path) -> str:
@@ -773,25 +777,45 @@ def register_later_command(report_path: Path, checkpoint: Path) -> str:
             f'--checkpoint "{checkpoint}"')
 
 
-def _register(report_path: Path, inputs: MeasurementInputs) -> int:
-    """`--record`: the kept report into the ledger beside the checkpoint read.
+def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) -> int:
+    """`--record`: the report this run published into the ledger beside the
+    checkpoint this run read.
 
     Through `register_report`, the function `record_evaluation.py --report`
-    uses. The ledger is beside the file this run's checkpoint read names, read
-    at its resolved path (M4 decision 15), and that file is not hashed again:
-    this run read those weights moments ago (``measured_read``). A refusal keeps
-    the report, names it and the command that registers it later, and returns
-    `EXIT_NOT_REGISTERED`.
+    uses, given what this run holds about itself (`MeasuredRun`): its checkpoint
+    read's identity -- the path read at its resolved form (M4 decision 15) and
+    the digest of those bytes, so the weights are not hashed again -- and the
+    digest of the report bytes it published. The report is read back, and
+    registered only if it still holds those bytes and names that checkpoint; a
+    file replaced after publication is refused, not filed in this run's name.
+
+    A refusal returns `EXIT_NOT_REGISTERED` with the reason. When the report is
+    still the one published, it is kept and the command that registers it later
+    is printed; when the file no longer holds it (`ReportNotAsPublished`), the
+    run's own report may be gone, and the operator is told to re-measure.
     """
     from src.evaluation.registration import (
+        MeasuredRun,
         RegistrationRefused,
+        ReportNotAsPublished,
         corroboration_note,
         register_report,
     )
 
     measured = Path(inputs.checkpoint.identity.path)
     try:
-        registered = register_report(report_path, checkpoint=measured, measured_read=True)
+        registered = register_report(
+            report_path,
+            measured=MeasuredRun(inputs.checkpoint.identity, report_sha256),
+        )
+    except ReportNotAsPublished as exc:
+        print(
+            f"\nNOT REGISTERED. {exc}\n"
+            "The measurement itself succeeded; nothing at that path is offered for a "
+            "later registration in this run's name.",
+            file=sys.stderr,
+        )
+        return EXIT_NOT_REGISTERED
     except RegistrationRefused as exc:
         print(
             f"\nNOT REGISTERED. {exc}\n"
@@ -926,7 +950,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         report_path, ranks_path = _publish_generated(result, args.output)
         logger.info("Mode C -> %s, %s", report_path, ranks_path)
     else:
-        run_id, report_path = _publish_to_store(result, inputs)
+        run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
         logger.info("Mode C -> %s", report_path)
 
     print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
@@ -951,7 +975,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     _print_registered_summary(inputs, result, run_id, report_path)
     if args.record:
-        return _register(report_path, inputs)
+        return _register(report_path, report_sha256, inputs)
     measured = Path(inputs.checkpoint.identity.path)
     print("\nNot registered (no --record). Register it with:\n"
           f"  {register_later_command(report_path, measured)}\n")

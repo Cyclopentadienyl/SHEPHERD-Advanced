@@ -45,7 +45,8 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("fastapi")
 
-from src.evaluation.registration import register_report  # noqa: E402
+from src.evaluation.registration import MeasuredRun, register_report  # noqa: E402
+from src.utils.fingerprint import ReadIdentity  # noqa: E402
 from src.evaluation.sidecar import REGISTERED_RELATIONS  # noqa: E402
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.phenotype_kg import build_two_phenotype_kg  # noqa: E402
@@ -117,8 +118,14 @@ def _register(report, checkpoint_dir, reports_dir, *, name="report.json", beside
     path.write_text(json.dumps(report, indent=indent, sort_keys=True))
     if beside:
         return register_report(path, checkpoint_dir=checkpoint_dir, registered_at=WHEN)
-    return register_report(path, checkpoint=checkpoint_dir / "best.pt", measured_read=True,
-                           registered_at=WHEN)
+    # As `--record` registers: the run's read of the checkpoint and the digest
+    # of the report it published, so nothing is hashed against the directory.
+    measured = MeasuredRun(
+        ReadIdentity(checkpoint_dir / "best.pt",
+                     report["manifest"]["artifact_digests"]["checkpoint"]),
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+    return register_report(path, measured=measured, registered_at=WHEN)
 
 
 def _edit_ledger(path: Path, edit) -> None:

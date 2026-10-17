@@ -82,8 +82,10 @@ if TYPE_CHECKING:
 #: compared after `resolve()`, so a symlink into the tree is caught.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The one source format this revision reads. Synthetic and owned by this
-#: project; a real format gets an adapter to it when samples exist (OWNER Q5).
+#: The one source format this revision reads: the project's shared import
+#: format. Its name says how a file is laid out, not whether its cases are
+#: synthetic or real; a real format gets an adapter to it when samples exist
+#: (OWNER Q5).
 SOURCE_FORMAT = "shepherd-cases/1"
 
 #: Bumped when the version manifest's shape changes in a way an old reader

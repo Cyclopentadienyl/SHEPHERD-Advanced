@@ -1167,7 +1167,9 @@ it before reusing the label. No command deletes anything in the registry.
 
 ### The source file: `shepherd-cases/1`
 
-The importer reads one format, owned by this project:
+The importer reads one format, the project's shared import format. Its name says how a file is
+laid out, not where its cases come from: a synthetic cohort and a converted real one are written
+the same way (a real source gets an adapter that writes this format):
 
 ```json
 {
@@ -1347,13 +1349,22 @@ keeps the states and holds no prose.
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run before anything was written; Python prints a traceback ending in the message (unchanged from before M4) | the command line was rejected, including an argument of the other kind of cohort | **measured and the report kept, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later |
+| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run before anything was written; Python prints a traceback ending in the message (unchanged from before M4) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
 A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,
 and whoever may write that directory registers it with the `record_evaluation.py` command the run
 printed.
+
+**`--record` registers only the report this run published, of the checkpoint this run read.** The
+run keeps the digest of the report bytes it wrote and the identity of its checkpoint read, and the
+registration reads the report back and compares both. If the file was replaced or changed in
+between -- even by another valid report, of another checkpoint or of another cohort version --
+nothing is registered, the run exits 3, and it says the report at that path is no longer the one it
+published, so the run's own report may not exist any more: measure again to register this
+measurement. A later registration with `record_evaluation.py` checks the checkpoint file it is
+given against the report, as before.
 
 ### What the Diagnosis tab shows
 
