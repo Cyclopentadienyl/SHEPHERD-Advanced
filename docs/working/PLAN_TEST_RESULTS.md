@@ -3,9 +3,9 @@
 **Status: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
 Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
-review of `59f519d..f3108c4` (2026-10-17) found one P2, fixed after it. **Next: the reviewer's
-incremental review of that fix, then the bounded GPU acceptance through the deployment probe.**
-It is not accepted and not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
+review of `59f519d..f3108c4` (2026-10-17) found one P2, fixed in `29c3d1f`, and its incremental
+review closed it and found one P3, fixed after it. **Next: the bounded GPU acceptance through the
+deployment probe, on the final commit.** It is not accepted and not merged. Phase 2 (M5) is not implemented. §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
@@ -870,6 +870,81 @@ default M4 runs on and a concrete example. An answer changes a default; it adds 
    `val` is the selection split, and D3 labels a result by cohort role and version. Confirm.
    *Recommendation:* confirm; a `val` number stays in its own report as checkpoint-selection
    data.
+
+**Checked against the literature (the reviewer, 2026-10-17).** The reviewer checked the six
+questions against the SHEPHERD paper and its code [S1–S3], PhEval [S4], STARD 2015 [S5], Mondo
+[S6], the OBO format guide [S7] and the Phenopacket schema [S8]. **The owner found the
+recommendations reasonable (2026-10-17).** They keep M4's defaults above for its functional
+acceptance and add no gate to it. They are not the institution's protocol: its target
+population, primary metric, denominators, mapping and exclusion policy, model choice and pass
+threshold are still declared before its first result, and a paper does not set a threshold or
+license data. MyGene2's terms were not checked. Questions 2–4 describe today's behaviour as a
+support limit, not a permanent best practice. Per question:
+
+1. **Keep.** The SHEPHERD code scores only the positive phenotypes its mapping holds
+   (`dataset.py:118`) [S2], and PhEval tests robustness with perturbed, less precise
+   phenotypes [S4]. Normalise ids where a rule is certain (question 4), score on what maps, record
+   the terms and cases lost, and treat a case with nothing mappable as unrankable. Keep or
+   exclude is fixed before results are seen, never chosen by score; keep reduces selective
+   exclusion and is not shown to be best on every dataset.
+2. **Two denominators in a formal evaluation.** Keep Mode C's metrics over `n_ranked` with
+   coverage and each exclusion reason, as M4 does. A formal end-to-end evaluation adds a second
+   denominator: the cases eligible beforehand with a determinable truth, in which a case the
+   system could not rank contributes zero. STARD asks that missing results and exclusions be
+   accounted for, without prescribing zero [S5]; a case with no reliable truth, a duplicate or an
+   ineligible case is not a model error. *Example:* 100 eligible cases with truth, 80 ranked
+   first, 20 unrankable by the system: conditional MRR 1.0, coverage 80%, end-to-end MRR 0.8,
+   shown side by side. MRR and hits@k follow from the recorded aggregates times coverage only when
+   that denominator and zero rule are exactly the ones used; mean rank does not, and no formal
+   figure is computed from rounded display values. A display, if added, reads the same report and
+   scorer, not a second evaluator.
+3. **MONDO inside is right; refusing OMIM and ORPHA is a support limit.** The SHEPHERD paper maps
+   UDN's OMIM diagnoses to MONDO [S1], and Mondo distinguishes exact equivalence from related
+   mappings [S6]. With a real cohort that needs it: the ontology version the workspace's dataset
+   record verifies; only an exact, unique mapping to a disease in the graph accepted
+   automatically; ambiguous and unmapped cases excluded under their own reasons. Never the last
+   match, a fuzzy name or a hand edit. No format is guessed before a real sample exists.
+4. **Deterministic HPO normalisation belongs to preparing real-data import.** The SHEPHERD
+   preprocessing maps old HPO ids to current nodes (`preprocess_patients_and_kg.py:113-115,
+   146-147`) [S3], and the OBO guide separates `alt_id`, `replaced_by` and `consider` [S7]. With
+   the verified HPO release: an `alt_id` to its unique primary id; an obsolete id only when its
+   `replaced_by` chain is unique, acyclic and ends at a graph node; `consider`, several targets or
+   none stay unresolved; no ancestor or semantic expansion. The original id, the result and the
+   rule and source versions are kept, then the existing dedup by node runs. It goes in the same
+   import and mapping layer. Until then the exact lookup is not "full support for historical HPO
+   ids".
+5. **One shared import format, thin adapters.** PhEval standardises cases as Phenopackets [S4],
+   which keep positive and excluded phenotypes apart, beside fields such as onset and severity
+   [S8]. `shepherd-cases/1` stays the project's exchange format; a CSV or Phenopacket adapter is
+   written once a de-identified sample exists, into the same importer, mapping and Mode C.
+   Positive and excluded phenotypes are never mixed, and information the format cannot express
+   gets an explicit rule. A format's name says nothing of whether data is real, independent or
+   licensed.
+6. **Keep train and val out of the test record.** The SHEPHERD paper selects hyperparameters on
+   simulated validation, apart from its UDN evaluation [S1]. Train and val stay measured and
+   tested, not registered as an independent test; an independent synthetic test cohort can be
+   registered. Renaming or importing `val` does not make it independent, R10 keeps disclosing the
+   overlap, and the probe's `val`-derived cohort shows only that the flow works.
+
+Sources, consulted by the reviewer on 2026-10-17:
+- [S1] SHEPHERD, *npj Digital Medicine* (2025), Methods (cohort preprocessing, hyperparameter
+  selection): https://www.nature.com/articles/s41746-025-01749-1 (full text:
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC12181314/). Its tasks differ; the causal-gene task's
+  numbers are not an acceptance threshold for Mode C's disease ranking.
+- [S2] SHEPHERD code at `e95433a`, `shepherd/dataset.py:118`:
+  https://github.com/mims-harvard/SHEPHERD/blob/e95433a/shepherd/dataset.py#L118
+- [S3] SHEPHERD preprocessing at `e95433a`, `data_prep/preprocess_patients_and_kg.py:113, 146`:
+  https://github.com/mims-harvard/SHEPHERD/blob/e95433a/data_prep/preprocess_patients_and_kg.py#L113
+- [S4] Bridges et al., PhEval, *BMC Bioinformatics* 26:87 (2025):
+  https://doi.org/10.1186/s12859-025-06105-4
+- [S5] Cohen et al., STARD 2015 explanation and elaboration, *BMJ Open* (2016), items 15, 16, 19:
+  https://doi.org/10.1136/bmjopen-2016-012799 (a reporting guideline for diagnostic accuracy
+  studies, borrowed for its transparency requirements; it does not define MRR).
+- [S6] Mondo, "About" and "How was Mondo created": https://mondo.monarchinitiative.org/
+- [S7] OBO Flat File Format Guide 1.4 (`alt_id`, `replaced_by`, `consider`; a companion draft, not
+  a normative standard): https://owlcollab.github.io/oboformat/doc/GO.format.obo-1_4.html
+- [S8] GA4GH Phenopacket schema 2.0, PhenotypicFeature:
+  https://phenopacket-schema.readthedocs.io/en/2.0.0/phenotype.html
 
 **Not asked again — decided:** the repeat rule (above), no legacy compatibility path (contract
 decision 2), no silent CPU fallback (contract §5.2). **Still open, and not engineering:** the

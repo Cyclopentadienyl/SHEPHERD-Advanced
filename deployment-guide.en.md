@@ -1359,11 +1359,14 @@ printed.
 
 **`--record` registers only the report this run published, of the checkpoint this run read.** The
 run keeps the digest of the report bytes it wrote and the identity of its checkpoint read, and the
-registration reads the report back and compares both. If the file was replaced or changed in
-between -- even by another valid report, of another checkpoint or of another cohort version --
-nothing is registered, the run exits 3, and it says the report at that path is no longer the one it
-published, so the run's own report may not exist any more: measure again to register this
-measurement. A later registration with `record_evaluation.py` checks the checkpoint file it is
+registration reads the report back and compares the digest of that read before anything in it is
+decoded, then the checkpoint it names. If the file was replaced, changed, damaged, removed or
+cannot be read in between -- even when it now holds another valid report, of another checkpoint or
+of another cohort version -- nothing is registered, the run exits 3, and it says the report at that
+path is not the one it published (or is gone), so the run's own report may not exist any more:
+measure again to register this measurement. The command for a later registration is printed only
+when the report read back is the one published and something else refused it, such as the
+ledger. A later registration with `record_evaluation.py` checks the checkpoint file it is
 given against the report, as before.
 
 ### What the Diagnosis tab shows

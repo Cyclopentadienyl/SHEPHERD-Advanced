@@ -422,6 +422,62 @@ def test_record_registers_only_the_report_this_run_published(
         "a replaced file is not offered for a later registration in the run's name")
 
 
+def _lose_after_publication(monkeypatch, how: str) -> list:
+    """Damage or remove the report `--record` is about to register, right after
+    the run published it."""
+    import scripts.measure_scorer as measure_scorer
+
+    publish = measure_scorer._publish_to_store
+    lost = []
+
+    def publish_then_lose(result, inputs):
+        run_id, path, digest = publish(result, inputs)
+        if how == "missing":
+            path.unlink()
+        else:
+            staged = path.with_name(path.name + ".replacement")
+            staged.write_bytes(b"{broken")
+            os.replace(staged, path)
+        lost.append(path)
+        return run_id, path, digest
+
+    monkeypatch.setattr(measure_scorer, "_publish_to_store", publish_then_lose)
+    return lost
+
+
+@pytest.mark.parametrize("how", ["damaged_json", "missing"])
+def test_record_never_calls_a_lost_report_kept(cohort, monkeypatch, capsys, how):
+    """The reviewer's P3 (2026-10-17): a published report damaged or removed
+    before `--record` reads it is refused (exit 3, no ledger), and the run
+    neither says its report is kept nor prints a command to register it later."""
+    lost = _lose_after_publication(monkeypatch, how)
+
+    assert _measure(cohort, "--record") == 3
+
+    assert len(lost) == 1
+    assert not _ledger(cohort).exists()
+    err = capsys.readouterr().err
+    assert "re-measure" in err
+    assert "is kept at" not in err
+    assert "Register it later with" not in err
+
+
+def test_a_ledger_refusal_of_the_published_report_keeps_it_for_later(cohort, capsys):
+    """The control: when the report is the one published and the ledger is
+    what refuses (here a schema 2 ledger beside the checkpoint), the report is
+    kept and the run prints the command that registers it later."""
+    ledger = _ledger(cohort)
+    ledger.write_text(json.dumps({"schema_version": 2, "records": []}))
+    before = ledger.read_bytes()
+
+    assert _measure(cohort, "--record") == 3
+
+    assert ledger.read_bytes() == before
+    err = capsys.readouterr().err
+    assert f"its report is kept at {_only_report(cohort)}" in err
+    assert "Register it later with" in err
+
+
 def test_record_after_the_swap_check_still_registers_an_untouched_report(cohort, monkeypatch):
     """The control for the test above: the same wrapper, replacing nothing,
     leaves the published bytes in place, and `--record` registers them."""

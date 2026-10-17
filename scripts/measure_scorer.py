@@ -791,7 +791,8 @@ def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) 
 
     A refusal returns `EXIT_NOT_REGISTERED` with the reason. When the report is
     still the one published, it is kept and the command that registers it later
-    is printed; when the file no longer holds it (`ReportNotAsPublished`), the
+    is printed; when the file no longer holds it -- replaced, changed, damaged,
+    removed or unreadable (`ReportNotAsPublished`) -- the
     run's own report may be gone, and the operator is told to re-measure.
     """
     from src.evaluation.registration import (

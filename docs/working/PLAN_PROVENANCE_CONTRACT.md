@@ -72,10 +72,11 @@ functional acceptance, not a capacity, AMP, model-quality or clinical reading. T
 into `main` afterwards (#124, `ed8f51d`, 2026-10-16). **M4 is implemented on the branch
 (2026-10-16) over `59f519d`** (§4, "M4 as implemented"); its internal review's 29 findings, two
 of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `59f519d..f3108c4`
-(2026-10-17) found one P2 and no P1, fixed in the commit after it; **next, the reviewer's
-incremental review of that fix, then the bounded GB10 functional acceptance through the
-deployment probe** (§4, "M4 as implemented", "The reviewer's code review"). It is not accepted
-and not merged. M5 is not implemented. Facts about the
+(2026-10-17) found one P2 and no P1, fixed in `29c3d1f`; its incremental review of
+`f3108c4..29c3d1f` closed the P2 with no new P1 or P2 and found one P3, fixed in the commit after
+it. **Next, the bounded GB10 functional acceptance through the deployment probe, on the final
+commit** (§4, "M4 as implemented", "The reviewer's code review"). It is not accepted and not
+merged. M5 is not implemented. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -3583,8 +3584,23 @@ the owner questions, and its "Phase 1 as implemented" the step-by-step summary.
   writer is introduced. The review also recommended accepting the six defaults of
   `PLAN_TEST_RESULTS.md` §4.9 as recorded (the owner's decision), and calling `shepherd-cases/1`
   the project's shared import format, whose name does not say whether a file's cases are
-  synthetic or real (done). Next: the reviewer's incremental review of the fix, then the
-  acceptance below on the final commit.
+  synthetic or real (done). Fixed in `29c3d1f`.
+- **The reviewer's incremental review (2026-10-17) of `f3108c4..29c3d1f`** closed the P2 with no
+  new P1 or P2, and found one P3: the published digest was compared after `_read_report` had
+  decoded and parsed the bytes, so a report damaged, removed or unreadable after publication fell
+  to the ordinary refusal, and the run then said its report was kept and printed the command to
+  register it later (no wrong record was written). **Fixed:** `_read_report` compares an expected
+  digest on the bytes of its one read before decoding them; for a run's own report every way of
+  not getting the published bytes back -- other bytes, damaged JSON, a missing file, an
+  unreadable one -- is `ReportNotAsPublished`, so the run never calls it kept, and the command
+  for a later registration is printed only when the report read back is the published one and
+  something else, such as the ledger, refused it. Regression tests through `measure_scorer.main`
+  (damaged and missing, and the control: a schema 2 ledger refusing the published report, which
+  is kept and offered for later) and unit tests (bytes that are not UTF-8, damaged JSON, a
+  missing file, a directory), each failing on the previous code. Same reader, same refusal path,
+  no retry. The review also checked the six questions of `PLAN_TEST_RESULTS.md` §4.9 against the
+  literature; its recommendations are recorded there. Next: the acceptance below on the final
+  commit.
 - **Acceptance pending.** One bounded GB10 functional acceptance through the deployment probe's
   formal run (`scripts/probe_deployment.py --m2-acceptance --device cuda`, as M3c's, with a
   `--work-dir` outside the repository, where the probe's registry lives; a relative one is

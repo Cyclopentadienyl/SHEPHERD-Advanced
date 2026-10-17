@@ -888,3 +888,39 @@ def test_a_run_whose_report_and_checkpoint_are_its_own_registers_without_hashing
     assert result.outcome == "registered"
     assert result.record["source_artifact_digest"] == _sha(report)
     assert result.ledger_path == checkpoints.resolve() / "evaluations.json"
+
+
+@pytest.mark.parametrize("lost", ["not_utf8", "damaged_json", "missing", "a_directory"])
+def test_a_run_never_gets_back_a_lost_report_as_kept(tmp_path, checkpoints, lost):
+    """The reviewer's P3 (2026-10-17): whatever stands at the report's path
+    instead of the published bytes -- bytes that are not even UTF-8, damaged
+    JSON, nothing, or a directory -- an automatic registration refuses it as not
+    the run's report (`ReportNotAsPublished`), compared before anything is
+    decoded, so no entry point calls it kept. Nothing is written."""
+    published = _report(tmp_path)
+    measured = _measured(published, checkpoints)
+    published.unlink()
+    if lost == "not_utf8":
+        published.write_bytes(b"\xff\xfe\x00 not a report")
+    elif lost == "damaged_json":
+        published.write_bytes(b"{broken")
+    elif lost == "a_directory":
+        published.mkdir()
+
+    with pytest.raises(ReportNotAsPublished) as refused:
+        register_report(published, measured=measured, registered_at=WHEN)
+
+    message = str(refused.value)
+    assert "parse" not in message, "the bytes were compared, not decoded"
+    assert "re-measure" in message
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_later_registration_still_names_a_missing_report_plainly(tmp_path, checkpoints):
+    """A registration by hand has no run behind it: a missing report is the
+    ordinary refusal, not a run's lost report."""
+    with pytest.raises(RegistrationRefused) as refused:
+        register_report(tmp_path / "absent.json", checkpoint=checkpoints / "best.pt",
+                        registered_at=WHEN)
+    assert not isinstance(refused.value, ReportNotAsPublished)
+    assert "re-measure" not in str(refused.value)

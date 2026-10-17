@@ -70,9 +70,20 @@ class RegistrationRefused(ValueError):
 
 
 class ReportNotAsPublished(RegistrationRefused):
-    """An automatic registration found the report file holding other bytes than
-    the run published: replaced after its publication. Nothing was written, and
-    the report the run published may no longer exist."""
+    """An automatic registration could not read back the bytes the run
+    published: the report file holds other bytes (replaced or changed after
+    its publication, damaged included), is gone, or cannot be read. Nothing was
+    written, and the report the run published may no longer exist, so it is not
+    offered for a later registration."""
+
+
+class _NotTheExpectedBytes(Exception):
+    """`_read_report` read bytes whose digest is not the one expected; raised
+    before they are decoded."""
+
+    def __init__(self, sha256: str) -> None:
+        super().__init__(sha256)
+        self.sha256 = sha256
 
 
 class MeasuredRun(NamedTuple):
@@ -122,8 +133,13 @@ def corroboration_note(result: RegistrationResult, report_path: Path) -> Optiona
     )
 
 
-def _read_report(path: Path) -> Tuple[Any, str]:
+def _read_report(path: Path, expected_sha256: Optional[str] = None) -> Tuple[Any, str]:
     """A report parsed from one read, and the digest of exactly those bytes.
+
+    With ``expected_sha256``, the digest of that read is compared **before the
+    bytes are decoded or parsed**, and other bytes raise `_NotTheExpectedBytes`:
+    a file that is not the expected report is never interpreted, whether it is
+    another valid report or damaged JSON.
 
     Decoded as UTF-8, as the measurement writes it; the bytes are released before
     the text is parsed. Not UTF-8 or not JSON is a ``ValueError``; whether what
@@ -133,6 +149,9 @@ def _read_report(path: Path) -> Tuple[Any, str]:
 
     read = read_once(path)
     digest = read.sha256
+    if expected_sha256 is not None and digest != expected_sha256:
+        del read
+        raise _NotTheExpectedBytes(digest)
     try:
         text = read.data.decode("utf-8")
         del read
@@ -237,28 +256,38 @@ def register_report(
     elif not ledger_path.parent.is_dir():
         raise not_a_directory(ledger_path.parent)
 
+    # **For a run's own report, every way of not getting back the published
+    # bytes is one refusal** (`ReportNotAsPublished`): the run cannot vouch that
+    # its report still exists, so it is never described as kept.
+    lost = ReportNotAsPublished if measured is not None else RegistrationRefused
+    lost_tail = (" The run's own report may no longer exist; re-measure to register "
+                 "this measurement." if measured is not None else "")
     try:
-        report, source_digest = _read_report(report_path)
+        report, source_digest = _read_report(
+            report_path, measured.report_sha256 if measured is not None else None
+        )
+    except _NotTheExpectedBytes as exc:
+        # Compared on the bytes just read, before they are decoded: whatever the
+        # file now holds -- another report or damaged JSON -- it is not the
+        # report this run wrote, so nothing it says is registered in its name.
+        raise refused(
+            f"{report_path} is not the report this run published: it holds bytes "
+            f"{exc.sha256[:12]}..., and the run wrote {measured.report_sha256[:12]}... "
+            "The file was replaced or changed after it was written." + lost_tail,
+            lost,
+        ) from None
     except FileNotFoundError as exc:
-        raise refused(f"{report_path} does not exist.") from exc
+        gone = (f"{report_path} does not exist: the run's own report is gone; re-measure to "
+                "register this measurement." if measured is not None
+                else f"{report_path} does not exist.")
+        raise refused(gone, lost) from exc
     except OSError as exc:
         raise refused(
-            f"{report_path} could not be read ({type(exc).__name__}: {exc})."
+            f"{report_path} could not be read ({type(exc).__name__}: {exc})." + lost_tail,
+            lost,
         ) from exc
     except ValueError as exc:
         raise refused(f"{report_path} is not a measurement report: {exc}.") from exc
-    if measured is not None and source_digest != measured.report_sha256:
-        # Checked on the bytes just read, before they are interpreted: whatever
-        # the file now holds, it is not the report this run wrote, so nothing it
-        # says is registered in this run's name.
-        problem = (
-            f"{report_path} is not the report this run published: it holds bytes "
-            f"{source_digest[:12]}..., and the run wrote {measured.report_sha256[:12]}... "
-            "The file was replaced or changed after it was written, so the run's "
-            "own report may no longer exist; re-measure to register this "
-            "measurement."
-        )
-        raise refused(problem, ReportNotAsPublished)
     try:
         record = build_record(report, source_digest)
     except ValueError as exc:
