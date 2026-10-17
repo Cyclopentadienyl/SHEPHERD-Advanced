@@ -877,7 +877,7 @@ plan could not then produce one.
 and the choices it makes where this section left one open, are at the end of
 this section.*
 
-*Amended for contract M3c (2026-10-16, awaiting review), with the script in the
+*Amended for contract M3c (2026-10-16, merged as #124), with the script in the
 same change (BACKLOG 19.8): readiness reads the table's state, the scoring mode
 and the device from the status's served identity; the subject is the served
 identity each repeat's service reports from its own reads, not three files hashed

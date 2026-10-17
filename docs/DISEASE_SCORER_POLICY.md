@@ -306,8 +306,8 @@ B-1 implementation may not begin until all three clear:
   came to hold two incompatible quantities, and repeating it with more fields would scale the defect
   rather than fix it. Whichever work item lands first defines the union and its first variants; the
   second adds variants rather than widening a shared record.
-  - **Provenance contract M3c changed the result type first** (implemented 2026-10-16, awaiting
-    review), and is not that union. It replaced the two version strings with one required served
+  - **Provenance contract M3c changed the result type first** (implemented 2026-10-16,
+    merged as #124), and is not that union. It replaced the two version strings with one required served
     identity: what produced the result, each part stating its state in words, a value null only
     where its state says there is nothing to identify. It selects no required or forbidden score
     fields and leaves `confidence_score` as it was. Its `scoring_mode` describes the result; whether
