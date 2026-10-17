@@ -9,10 +9,10 @@ fixed; §6.8's audit built and run, its evidence committed (revision 28).
 <details>
 <summary><b>Revision history</b></summary>
 
-- **31** — the provenance contract's M4, item 14's phase 1 (implemented on the branch
-  2026-10-16, awaiting its GPU acceptance and review). §6.5's "As built" is amended in place:
-  the key is stated as the code has it (`PLAN_TEST_RESULTS.md` F4), the ledger is schema 3 and
-  sits beside the checkpoint under the run layout, and recording is one function reached
+- **31** — the provenance contract's M4, item 14's phase 1 (implemented 2026-10-16, its
+  functional acceptance passed at `2c94a4e`, merged as #126). §6.5's "As built" is amended in
+  place: the key is stated as the code has it (`PLAN_TEST_RESULTS.md` F4), the ledger is schema
+  3 and sits beside the checkpoint under the run layout, and recording is one function reached
   automatically with `measure_scorer.py --record` or later with `record_evaluation.py`. The
   earlier statement that recording is only a separate entry point, because the checkpoint
   directory may be read-only to whoever measures, is reconciled rather than removed: a refused
@@ -1241,9 +1241,9 @@ from artifacts that already exist.
 
 **Status:** steps 1–3 and 5 are done, step 4 is half delivered and half deferred (below), and step
 6 is outside this project's scope as BACKLOG 11i stands; BACKLOG item 14 would reopen it for one
-surface. *Since M4 (item 14's phase 1, on the branch 2026-10-16, awaiting its GPU acceptance and
-review)* it has, read-only: the Diagnosis tab's model status shows the loaded checkpoint's
-recorded results, and no UI control changes a cohort's role or records a result (§6.7).
+surface. *Since M4 (item 14's phase 1, merged as #126, 2026-10-17)* it has, read-only: the
+Diagnosis tab's model status shows the loaded checkpoint's recorded results, and no UI control
+changes a cohort's role or records a result (§6.7).
 
 **Not built:** `synthetic_test_unseen`, refit siblings, allocation generations for burned synthetic
 cohorts, and any surface that attributes one checkpoint's numbers to another. §5 closed the

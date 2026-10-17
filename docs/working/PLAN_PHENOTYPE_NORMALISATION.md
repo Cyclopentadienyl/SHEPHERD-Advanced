@@ -6,7 +6,7 @@ homelab"). **N2 has not started and is not implemented by the contract's M3b**, 
 without a manifest change (§8, N2, "Since M3b"); N2 is its own change, not yet scheduled. The
 owner adopted the rule, and the reviewer closed this revision's corrections at `e9708cf`. Facts
 about this repository are cited at `15dfcb5`, before N1; N1's code is at `af49bd3`. **Since the
-contract's M4 (implemented on the branch 2026-10-16, awaiting its GPU acceptance and review), the
+contract's M4 (implemented 2026-10-16, its functional acceptance passed, merged as #126), the
 D6 importer is a second caller of N1's function** (§5, §8): it removes repeats after mapping,
 keeps the source bytes and records the rule's version and counts. That is N1's rule applied at a
 new entry point, not N2: the generator, the shared reader's check and the workspace manifest are
@@ -411,7 +411,7 @@ string-level semantics with it.
   - The one run-time application is a served request, which has no file. Its result states the
     repeats removed.
   - Its served identity (contract M3c) carries the rule version, as one of the serving settings
-    that change scores. **Since M3c (implemented 2026-10-16, awaiting review) it does:**
+    that change scores. **Since M3c (implemented 2026-10-16, merged as #124) it does:**
     `settings.phenotype_normalisation_version`, the version the served request was normalised
     with (`PHENOTYPE_NORMALISATION_VERSION`, currently 1, N1's rule). N2 is still not started:
     no stored sample file or manifest records the rule yet.
@@ -576,7 +576,7 @@ compares the two.
       file with repeats would fail to parse, and R10 would report that scope *unverifiable*
       rather than count it (contract §5.4).
 - **The importer** applies it from its first version (item 14 phase 1, step 1). **Since the
-  contract's M4** (implemented on the branch 2026-10-16, awaiting its GPU acceptance and review):
+  contract's M4** (implemented 2026-10-16, its functional acceptance passed, merged as #126):
   `map_cases` (`src/evaluation/cohort_registry.py`) maps HPO terms to phenotype nodes, then calls
   `normalise_phenotypes` with the source positions kept; the source file is kept verbatim under
   its digest, and the version manifest records the rule version and its counts. M4 has no N2

@@ -193,7 +193,7 @@ last one says what M4 changed.
   beside the checkpoint's resolved path.
 - **Readers.** Nothing reads it except `record_evaluation.py --show`. No API route, UI or
   serving code does.
-- **Since M4 (implemented on this branch, 2026-10-16):** ledger schema 3 (§5). The cohort digest
+- **Since M4 (merged as #126, 2026-10-17):** ledger schema 3 (§5). The cohort digest
   in the key is the registered cohort version's manifest digest; D5's duplicate rule replaces
   whole-record equality (a second agreeing report is added to the first record's corroborating
   reports); a schema 1 or 2 file is refused and archived by hand, never read or migrated; only a
@@ -256,7 +256,7 @@ last one says what M4 changed.
 - **No binding to a graph.** A supplied cohort records no graph digest. An index that is in
   range but belongs to a *different* graph or index order is detected nowhere.
 - **No version label.** No such field exists for cohorts, or for workspaces.
-- **Since M4 (on this branch, 2026-10-16)** each of these is closed for test cohorts:
+- **Since M4 (merged as #126, 2026-10-17)** each of these is closed for test cohorts:
   `scripts/import_cohort.py` maps a `shepherd-cases/1` source (HPO phenotypes, MONDO diseases)
   against the graph a workspace manifest binds and publishes an immutable version with a label
   and a role, bound to the four graph digests and the dataset record, in a registry outside the
@@ -1155,13 +1155,15 @@ The aim is that an operator can do all of this from the CLI:
 
 ### Phase 1 as implemented (2026-10-16)
 
-**Implemented on this branch, awaiting review and its GPU acceptance; not accepted and not
-merged.** Built over `main` at `59f519d` in `6e37208` (the registry and importer, R10, ledger
-schema 3, the registration function, the read-only view) and `d3d6ce7` (the measurement's
+**Implemented 2026-10-16; code-reviewed, its functional acceptance passed on the GB10 at
+`2c94a4e` (84 of 84), merged as #126 (`d2d31dd`, 2026-10-17).** Built over `main` at `59f519d`
+in `6e37208` (the registry and importer, R10, ledger schema 3, the registration function, the
+read-only view) and `d3d6ce7` (the measurement's
 registered path, the report store, the audits, the tests moved), with the probe's M4 probes and
 these documents after them. The full suite passed at `d3d6ce7` (3751 passed, 14 skipped). The
 contract's §4, "M4 as implemented", is the record: what was built and where, the decisions taken,
-the behaviour changes, what is not claimed, and the acceptance pending.
+the behaviour changes, what is not claimed, the reviews, and the acceptance ("M4's acceptance on
+the GB10").
 
 - **Step 1:** `scripts/import_cohort.py` previews, then commits by preview id, an immutable
   version in a registry outside the repository, mapped through N1's rule; tests use synthetic
@@ -1177,8 +1179,10 @@ the behaviour changes, what is not claimed, and the acceptance pending.
   its digest through `GET /api/v1/evaluations/loaded-model`. D3's label and the note that until
   B-1 the tab ranks by the legacy mixture introduce the records once, and the R10 definitions and
   the contract's §6 line follow them once: once per block, not per record.
-- **Step 4:** the deployment guides' §4.9 and EC §6.5 (F4 included) are written. **Pending:**
-  one bounded GPU acceptance through the deployment probe's formal run, then external review.
+- **Step 4:** the deployment guides' §4.9 and EC §6.5 (F4 included) are written. **Done since
+  (2026-10-17):** the reviewer's code review and incremental review (one P2 and one P3, fixed in
+  `29c3d1f` and `2c94a4e`) and the bounded GPU acceptance through the deployment probe's formal
+  run, passed at `2c94a4e`.
   MyGene2 waits for its data and terms, and the institutional test for data, terms and a
   declared protocol (§4.9).
 - **Differs from the text above, by decision:** the registry is a CLI argument, not server
@@ -1189,8 +1193,9 @@ the behaviour changes, what is not claimed, and the acceptance pending.
 - **Internal review:** ten dimensions, each finding put to independent skeptics; 29 kept (none
   P1; two P2, the ledger split for a symlinked checkpoint and links below the registry root; the
   rest P3), one refuted, all 29 fixed in `f3108c4`. The contract's §4, "M4 as implemented",
-  "Internal review", lists them. It is not the external review, and the GPU acceptance is still
-  pending.
+  "Internal review", lists them. It was not the external review, and at the time the GPU
+  acceptance was still pending; both have since been done (the reviewer's reviews, and the
+  acceptance at `2c94a4e`).
 
 ### Phase 2 — the operating interface (contract M5)
 
