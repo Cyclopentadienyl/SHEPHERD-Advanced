@@ -93,11 +93,11 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
     browser threads started, pip installs attempted, and main's status.
     """
     launcher = _launcher()
-    record = {"exec": [], "run": [], "browsers": 0, "installs": []}
+    record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": []}
 
     class _Thread:
         def __init__(self, *args, **kwargs):
-            pass
+            record["threads"].append(kwargs)
 
         def start(self):
             record["browsers"] += 1
@@ -183,6 +183,12 @@ def test_without_no_browser_the_launcher_waits_and_opens_one(monkeypatch):
     assert done["run"] and not done["exec"]
     assert done["browsers"] == 1
     assert done["status"] == 0
+    # A daemon: the opener waits for /health with no deadline, so only the
+    # process ending when the server exits ends it.
+    (opener,) = done["threads"]
+    assert opener["daemon"] is True
+    assert opener["target"].__name__ == "_open_browser_when_ready"
+    assert opener["args"] == ("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health")
 
 
 def test_where_exec_would_change_the_pid_the_launcher_waits(monkeypatch):
