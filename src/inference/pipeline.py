@@ -91,6 +91,7 @@ from src.reasoning import (
     create_path_reasoner,
     create_explanation_generator,
     create_evidence_panel,
+    find_matching_phenotypes,
 )
 from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
 
@@ -1338,6 +1339,17 @@ class DiagnosisPipeline:
             top_k=top_k,
             include_ortholog_evidence=include_ortholog_evidence,
         )
+
+        # Step 4b: The phenotypes the graph annotates directly to each candidate
+        # returned, from the list as used. **Not gated on explanations**: a
+        # caller that turns them off still reads the field, and it costs one scan
+        # of each returned disease's incoming edges. The explanation's "Matching
+        # Phenotypes" section comes from the same helper and the same list, so
+        # the two agree.
+        for candidate in candidates:
+            candidate.matching_phenotypes = find_matching_phenotypes(
+                candidate.disease_id, patient_input.phenotypes, self.kg
+            )
 
         # Step 5: Generate explanations + Step C evidence packages
         if include_explanations:

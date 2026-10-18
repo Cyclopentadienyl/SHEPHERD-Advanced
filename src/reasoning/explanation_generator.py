@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from src.core.types import (
     DataSource,
@@ -110,6 +110,50 @@ class EvidenceSummary:
                 "literature": [e.to_dict() for e in self.literature_evidence],
             },
         }
+
+
+# ==============================================================================
+# Matching Phenotypes
+# ==============================================================================
+def find_matching_phenotypes(
+    disease_id: NodeID,
+    phenotypes: Sequence[str],
+    kg: "KnowledgeGraph",
+) -> List[str]:
+    """The phenotypes the knowledge graph annotates directly to this disease.
+
+    **One definition for the candidate field and the explanation.** The pipeline
+    fills `DiagnosisCandidate.matching_phenotypes` with this, and the
+    explanation's "Matching Phenotypes" section lists the same ids (the first
+    ten), so the field and the explanation cannot disagree.
+
+    A phenotype matches when the graph has a `phenotype_of_disease` edge from
+    that exact term to the disease. An ontology ancestor or descendant of an
+    annotated term does not match, and neither does a phenotype linked to the
+    disease only through a gene, however short that path. An empty list
+    therefore does not mean the case and the disease share no clinical features.
+
+    `phenotypes` are HPO ids, kept in their order and spelling. The pipeline
+    passes the request's phenotypes as used — known to the graph, repeats
+    removed, in the request's spelling (`DiagnosisPipeline.validate_input`) —
+    so what comes back is a subset of the request. Repeats are not removed
+    here; that is the phenotype rule's job, applied before scoring.
+
+    Cost: one scan of the disease's incoming edges.
+    """
+    annotated = {
+        str(pheno_id)
+        for pheno_id, _ in kg.get_neighbors(
+            disease_id,
+            edge_types=[EdgeType.PHENOTYPE_OF_DISEASE],
+            direction="in",
+        )
+    }
+    return [
+        hpo_id
+        for hpo_id in phenotypes
+        if str(NodeID(source=DataSource.HPO, local_id=hpo_id)) in annotated
+    ]
 
 
 # ==============================================================================
@@ -327,35 +371,17 @@ class ExplanationGenerator:
         kg: "KnowledgeGraph",
     ) -> List[Tuple[str, str]]:
         """
-        Find patient phenotypes that match the disease.
+        Find patient phenotypes that match the disease, as
+        `find_matching_phenotypes` defines a match, with their names.
 
         Returns:
             List of (phenotype_id, phenotype_name)
         """
         matching = []
-
-        # Get disease's known phenotypes
-        disease_phenotypes = set()
-        neighbors = kg.get_neighbors(
-            disease_id,
-            edge_types=[EdgeType.PHENOTYPE_OF_DISEASE],
-            direction="in",
-        )
-        for pheno_id, _ in neighbors:
-            disease_phenotypes.add(str(pheno_id))
-
-        # Check which patient phenotypes match
-        # PatientPhenotypes.phenotypes contains HPO ID strings like "HP:0001"
-        for hpo_id in phenotypes.phenotypes:
-            # Convert string HPO ID to NodeID for KG lookup
-            pheno_node_id = NodeID(source=DataSource.HPO, local_id=hpo_id)
-            pheno_str = str(pheno_node_id)
-
-            if pheno_str in disease_phenotypes:
-                pheno_node = kg.get_node(pheno_node_id)
-                pheno_name = pheno_node.name if pheno_node else hpo_id
-                matching.append((hpo_id, pheno_name))
-
+        for hpo_id in find_matching_phenotypes(disease_id, phenotypes.phenotypes, kg):
+            pheno_node = kg.get_node(NodeID(source=DataSource.HPO, local_id=hpo_id))
+            pheno_name = pheno_node.name if pheno_node else hpo_id
+            matching.append((hpo_id, pheno_name))
         return matching
 
     def _find_connecting_genes(

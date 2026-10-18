@@ -415,6 +415,11 @@ class DiagnosisCandidate:
     supporting_genes: List[str] = field(default_factory=list)
     reasoning_paths: List[List[NodeID]] = field(default_factory=list)
     evidence_sources: List[EvidenceSource] = field(default_factory=list)
+    # The request's phenotypes as used that the graph annotates directly to this
+    # disease, on the exact term: no ontology ancestors or descendants, no
+    # gene-mediated links, so an empty list does not mean no clinical overlap.
+    # Defined by `src.reasoning.explanation_generator.find_matching_phenotypes`.
+    matching_phenotypes: List[str] = field(default_factory=list)
 
     # Ortholog evidence (同源基因證據)
     ortholog_evidence: Optional[List[OrthologMapping]] = None

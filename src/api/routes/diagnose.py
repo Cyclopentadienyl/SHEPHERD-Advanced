@@ -180,7 +180,18 @@ class DiagnosisCandidate(BaseModel):
     gnn_score: Optional[float] = Field(None, description="GNN embedding similarity score")
     reasoning_score: Optional[float] = Field(None, description="Path reasoning score (fallback only)")
     sp_score: Optional[float] = Field(None, description="Shortest-path similarity score")
-    matching_phenotypes: List[str] = Field(default_factory=list, description="Matched HPO terms")
+    matching_phenotypes: List[str] = Field(
+        default_factory=list,
+        description=(
+            "The request's phenotypes as used (known to the graph, repeats "
+            "removed, in the request's spelling) that the knowledge graph "
+            "annotates directly to this disease by a phenotype_of_disease edge "
+            "on the exact term; not ontology ancestors or descendants, not "
+            "gene-mediated. An empty list does not mean no clinical overlap. "
+            "Filled whether or not explanations are requested; empty in the "
+            "demo answer given when no pipeline is configured."
+        ),
+    )
     supporting_genes: List[str] = Field(default_factory=list, description="Supporting gene evidence")
     explanation: Optional[str] = Field(None, description="Human-readable explanation")
     reasoning_paths: Optional[List[List[str]]] = Field(None, description="Reasoning paths through KG")
@@ -498,6 +509,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                     gnn_score=c.gnn_score,
                     reasoning_score=c.reasoning_score,
                     sp_score=c.sp_score,
+                    matching_phenotypes=c.matching_phenotypes,
                     supporting_genes=c.supporting_genes,
                     explanation=c.explanation if request.include_explanations else None,
                     reasoning_paths=(
@@ -594,7 +606,10 @@ def _generate_mock_candidates(
             confidence_score=max(0.1, score),
             gnn_score=max(0.1, score + 0.02),
             reasoning_score=max(0.1, score - 0.02),
-            matching_phenotypes=phenotypes[:min(3, len(phenotypes))],
+            # No graph was consulted, so nothing is annotated to these invented
+            # diseases. This used to echo the first three request phenotypes,
+            # which read as matches and meant nothing.
+            matching_phenotypes=[],
             supporting_genes=genes,
             explanation=f"Candidate diagnosis based on {len(phenotypes)} phenotypes. "
                         f"Key supporting genes: {', '.join(genes)}."

@@ -53,6 +53,7 @@ from src.reasoning.explanation_generator import (
     EvidenceSummary,
     EvidenceItem,
     create_explanation_generator,
+    find_matching_phenotypes,
 )
 from src.reasoning.evidence_panel import (
     EvidencePanel,
@@ -76,6 +77,7 @@ __all__ = [
     "EvidenceSummary",
     "EvidenceItem",
     "create_explanation_generator",
+    "find_matching_phenotypes",
     # Evidence panel (Step C)
     "EvidencePanel",
     "EvidencePanelConfig",

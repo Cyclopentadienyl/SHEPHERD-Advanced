@@ -768,6 +768,7 @@ by the author).
     provenance contract.
 - **Found during the run, not caused by N1** (backlog item 17):
   - the model-configuration fields show the saved UI preferences, not the loaded pipeline;
-  - `matching_phenotypes` is always empty on the real path;
+  - `matching_phenotypes` was always empty on the real path (since filled, F6: the request's
+    phenotypes as used that the graph annotates directly to the disease, exact term only);
   - the launcher stops waiting to open a browser after 60 s, while a startup that loads this
     SP table takes about 84 s.
