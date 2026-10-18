@@ -122,7 +122,8 @@ the code was unchanged at `463a0df`. §1 records decisions already made; §4 is 
     `schema_version` was already 2 (§5.1);
   - §4, "M4 as implemented", records what was built.
 - **Amended 2026-10-18, with N2:** §5.4 records the reader's check and the generator's call as
-  delivered, and the workspace manifest's field as deferred; an evidence file with a repeat is
+  implemented on the development branch (batch B; awaiting review, not merged), and the
+  workspace manifest's field as deferred; an evidence file with a repeat is
   *unverifiable*. Decision 2 is unchanged: no compatibility path was added, and split-manifest
   schema 3 is kept.
 
@@ -3823,7 +3824,8 @@ evidence.
     (`map_cases` calls `normalise_phenotypes`, `src/kg/phenotype_normalisation.py`), which keeps
     the source bytes verbatim and records the rule's version and its counts in the version
     manifest;
-  - **N2 is delivered without its manifest field** (2026-10-18): the generator applies the rule,
+  - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
+    batch B; awaiting review, not merged): the generator applies the rule,
     and the shared reader refuses a stored case that is not in normal form, as a file that does
     not parse. The workspace manifest's field is deferred to the next split-manifest schema
     change or the first change of the rule's version (`PLAN_PHENOTYPE_NORMALISATION.md` §6).

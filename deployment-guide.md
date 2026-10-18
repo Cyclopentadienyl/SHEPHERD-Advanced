@@ -1422,8 +1422,11 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分，
   並另以一行列出正在服務的 workspace 與 checkpoint 檔。載入 pipeline 後，Data Directory
   與 Checkpoint 欄位顯示這兩個路徑（自動選出的檔案也照實顯示），因此 Load / Reload 重新載入的
-  就是正在服務的內容；清空 Checkpoint 欄位即讓伺服器重新自動選擇。未載入任何 pipeline 時，
-  欄位顯示 Save Config 儲存的值。
+  就是正在服務的 checkpoint 檔；清空 Checkpoint 欄位即讓伺服器重新自動選擇。有兩種情況不同：
+  沒有服務任何 checkpoint 時，Checkpoint 欄位是空白的，重新載入會自動選擇一個（workspace 裡
+  沒有時則被拒絕）；只以 `SHEPHERD_KG_PATH` 啟動時，Data Directory 是空白的，重新載入需要先
+  填入 workspace。未載入任何 pipeline 時，欄位顯示服務啟動時 Save Config 已儲存的路徑；新的
+  儲存自下次啟動起生效。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。

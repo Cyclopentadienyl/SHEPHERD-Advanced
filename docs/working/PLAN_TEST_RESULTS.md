@@ -27,6 +27,12 @@ changes a default without adding a second path.
 - §2.1's ledger location follows the run layout; citations in the sections touched name
   functions rather than lines.
 
+**Amended 2026-10-18, with N2:** §4.9, question 2, records N2 as implemented on the development
+branch without its manifest field (batch B; awaiting review, not merged): the shared reader
+refuses a stored case that lists a phenotype twice, the generator applies the rule, and the
+split manifest's field is deferred (`PLAN_PHENOTYPE_NORMALISATION.md` §6). The 2026-10-16
+bullet above is the record as it stood.
+
 **Revision 4 (2026-10-06)** follows the review of `627ed08` and the provenance contract
 (`docs/working/PLAN_PROVENANCE_CONTRACT.md`, "the contract" below), which now carries the
 relations that a test result depends on.
@@ -807,7 +813,8 @@ gates phase 2; question 4 is answered:
        keeps the source bytes verbatim, and records the rule's version
        (`mapping.phenotype_normalisation_version`) and its counts (`repeats_removed`,
        `cases_with_repeats`) in the version manifest;
-     - **N2 is delivered without its manifest field** (2026-10-18, BACKLOG item 16): the
+     - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
+       BACKLOG item 16, batch B; awaiting review, not merged): the
        generator applies the rule, and the shared reader refuses a stored samples file with a
        repeated phenotype, naming its producer. The workspace manifest's field is deferred to
        the next split-manifest schema change or the first change of the rule's version

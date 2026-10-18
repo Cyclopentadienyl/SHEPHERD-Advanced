@@ -996,9 +996,14 @@ The WebUI shows **the result's own identity**, never the status's:
   identity on its "Serving" line, and names the served workspace and
   checkpoint file on one line. Once a pipeline is loaded, the Data Directory
   and Checkpoint fields show those two paths, a file chosen automatically
-  included, so Load / Reload reloads what is served; clear the Checkpoint
-  field to let the server choose again. With nothing loaded they show the
-  values Save Config stored.
+  included, so Load / Reload reloads the checkpoint file that is served;
+  clear the Checkpoint field to let the server choose again. Two cases
+  differ: with no checkpoint served the Checkpoint field is blank, and a
+  reload then chooses one automatically (or is refused when the workspace
+  has none); after a start from `SHEPHERD_KG_PATH` alone, Data Directory is
+  blank and a reload needs a workspace typed. With nothing loaded the fields
+  show the paths Save Config had stored when the service started; a Save
+  takes effect from the next start.
 - **The Markdown report** has a "What produced this result" section before the
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
