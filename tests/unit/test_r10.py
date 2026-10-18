@@ -13,7 +13,8 @@ file covers every row of §5.4's acceptance list that a function can show:
 - disjoint phenotype sets with overlapping diseases: phenotype-set *none*,
   disease *overlap* with its counts;
 - a training case `[0, 1]` and a test case `[0, 0, 1]` of one disease are a
-  phenotype-set *overlap*.
+  phenotype-set *overlap*; evidence that itself lists a phenotype twice is
+  refused by the shared reader (N2), so its scope is *unverifiable*, not counted.
 
 (The resume row, "a resume over other sample files is refused at training", is
 M2.3's, at training; it has no R10 function to test.)
@@ -264,13 +265,14 @@ def test_disjoint_phenotype_sets_with_overlapping_diseases(tmp_path):
 
 @pytest.mark.parametrize("train_set, test_set", [
     ([0, 1], [0, 0, 1]),        # §5.4's case: repetition in the test cohort
-    ([0, 0, 1], [1, 0]),        # repetition in the evidence, order reversed
-    ([1, 1, 0], [0, 1, 1, 0]),  # both
+    ([1, 0], [0, 1, 1, 0]),     # repetition in the test cohort, order reversed
 ])
 def test_a_training_case_0_1_and_a_test_case_0_0_1_of_one_disease_overlap(
     tmp_path, train_set, test_set
 ):
-    """§5.4: order and repetition are ignored, so these are one phenotype set."""
+    """§5.4: order and repetition are ignored, so these are one phenotype set.
+    The repetition is on the test side, which R10 is handed as samples; evidence
+    with one does not parse (N2, below)."""
     train = tmp_path / "train_samples.json"
     digest = _write(train, [_s("train-0", train_set, 5)])
     test = [_s("test-0", test_set, 5)]
@@ -281,6 +283,37 @@ def test_a_training_case_0_1_and_a_test_case_0_0_1_of_one_disease_overlap(
     assert block["training"]["phenotype_set_overlap"] == {"state": "overlap", "k": 1, "n": 1}
     assert block["training"]["disease_overlap"] == {"state": "overlap", "k": 1, "n": 1,
                                                     "cases": 1}
+
+
+@pytest.mark.parametrize("train_set, test_set", [
+    ([0, 0, 1], [1, 0]),        # repetition in the evidence, order reversed
+    ([1, 1, 0], [0, 1, 1, 0]),  # both
+])
+def test_evidence_that_lists_a_phenotype_twice_is_unreadable_not_counted(
+    tmp_path, train_set, test_set
+):
+    """N2: the shared reader refuses a stored case that is not in phenotype
+    normal form, so the file holding the recorded bytes does not parse. Its scope
+    is *unverifiable* with no count, not the overlap a set comparison would find,
+    and the problem names the rule and nothing of the row."""
+    train = tmp_path / "train_samples.json"
+    digest = _write(train, [_s("PATIENT-SECRET-7", train_set, 5)])
+    test = [_s("test-0", test_set, 5)]
+
+    block = compute_r10({"train_samples": digest}, test, [train])
+
+    _assert_well_formed(block)
+    training = block["training"]
+    assert training["evidence"] == {
+        "state": "unreadable",
+        "path": str(train),
+        "problem": "the recorded bytes could not be parsed as a samples file in phenotype "
+                   "normal form",
+    }
+    for label in R10_LABELS:
+        assert training[label]["state"] == "unverifiable"
+        assert training[label]["k"] is None
+    assert training["disease_overlap"]["cases"] is None
 
 
 def test_the_same_set_under_another_disease_is_not_a_phenotype_set_overlap(tmp_path):

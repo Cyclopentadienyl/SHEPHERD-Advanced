@@ -870,9 +870,11 @@ def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(tmp_path)
 
 def test_r10_counts_a_phenotype_set_whatever_its_order_and_repetition(tmp_path):
     """`[0, 1]` in training and `[0, 0, 1]` in the test cohort, one disease: the
-    same set, so phenotype-set overlap counts it, though Mode C may score the two
-    differently. The importer removes repeats, so this case is shown on
-    `compute_r10` directly."""
+    same set, so phenotype-set overlap counts it, though Mode C would score the
+    two differently. No stored file can hold the repeat: the importer removes it
+    from a test cohort, and the shared reader refuses a samples file with one
+    (N2; the next test). So this case is shown on `compute_r10` directly, with
+    the test cohort in memory."""
     from src.evaluation.r10 import compute_r10
     from src.kg.data_loader import DiagnosisSample
 
@@ -884,3 +886,37 @@ def test_r10_counts_a_phenotype_set_whatever_its_order_and_repetition(tmp_path):
 
     assert r10["training"]["phenotype_set_overlap"] == {"state": "overlap", "k": 1, "n": 1}
     assert r10["validation"]["disease_overlap"]["state"] == "no_validation_inputs_recorded"
+
+
+def test_r10_evidence_not_in_phenotype_normal_form_is_unverifiable_and_the_run_completes(
+    cohort, tmp_path
+):
+    """N2, through the CLI: the training file the checkpoint names lists a
+    phenotype twice. The shared reader refuses it as `UnparseableFile`, so R10
+    records that scope's evidence *unreadable* and its labels *unverifiable*, and
+    the measurement completes rather than being refused. Training refuses such a
+    file, so no run records one; the record is rewritten here by hand."""
+    from src.utils.checkpoint_io import read_checkpoint, write_checkpoint
+
+    rows = json.loads((cohort.data_dir / "train_samples.json").read_text())
+    rows[0]["phenotype_ids"].append(rows[0]["phenotype_ids"][0])
+    evidence = tmp_path / "kept-inputs" / "run7_train_samples.json"
+    evidence.parent.mkdir()
+    evidence.write_text(json.dumps(rows))
+    payload = read_checkpoint(cohort.checkpoint, map_location="cpu",
+                              weights_only=True).checkpoint
+    payload["training_input_digests"]["train_samples"] = _sha(evidence)
+    write_checkpoint(payload, cohort.checkpoint)
+
+    assert _measure(cohort, "--training-evidence", str(evidence.parent)) == 0
+
+    r10 = _r10(_only_report(cohort))
+    assert r10["training"]["evidence"] == {
+        "state": "unreadable",
+        "path": str(evidence),
+        "problem": "the recorded bytes could not be parsed as a samples file in phenotype "
+                   "normal form",
+    }
+    assert set(_states(r10["training"]).values()) == {"unverifiable"}
+    assert r10["training"]["disease_overlap"]["k"] is None
+    assert r10["validation"]["evidence"]["state"] == "found", "the other scope carries on"

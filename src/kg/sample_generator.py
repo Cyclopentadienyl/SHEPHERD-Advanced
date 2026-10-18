@@ -40,6 +40,7 @@ from src.kg.disease_allocation import (
     validate_allocation,
 )
 from src.kg.graph import KnowledgeGraph
+from src.kg.phenotype_normalisation import normalise_phenotypes
 from src.utils.file_modes import create_staging_file
 from src.utils.fingerprint import file_sha256
 
@@ -713,9 +714,15 @@ def _generate_partition(
         n_keep = retained_phenotype_count(
             len(all_phenos), min_phenotypes, max_phenotypes, phenotype_drop_rate
         )
+        # **The shared rule, applied rather than assumed** (N2). A draw without
+        # replacement from a profile of distinct ids is already in normal form,
+        # so this keeps every id in draw order and draws nothing from `rng`: the
+        # bytes written are unchanged, and so is `GENERATION_ALGORITHM_VERSION`.
+        # The generator then writes what the rule's one definition keeps, which
+        # is what the shared reader checks every stored case against.
         sample: Dict[str, Any] = {
             "patient_id": f"sim_{id_prefix}_{index:06d}",
-            "phenotype_ids": rng.sample(all_phenos, n_keep),
+            "phenotype_ids": list(normalise_phenotypes(rng.sample(all_phenos, n_keep)).kept),
             "disease_id": disease_idx,
         }
         if profile["gene_ids"]:

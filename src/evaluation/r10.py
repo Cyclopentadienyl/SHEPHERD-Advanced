@@ -51,6 +51,13 @@ supersets) are not counted, and no normalisation is applied: the frozenset is
 already free of order and repetition, and `normalise_phenotypes` keeps the same
 set, so applying it would change nothing and would be a second rule.
 
+**Since N2, no repeat reaches the comparison from a file.** The shared reader
+refuses a case that lists a phenotype twice, so an evidence file holding one
+does not parse: its scope is *unverifiable*, not counted as the overlap a set
+would find. A registered test cohort holds none either, since the importer
+removes them. Ignoring repetition still matters for samples handed in directly,
+which is how the `[0, 0, 1]` case is tested.
+
 **Memory.** A training file can hold hundreds of thousands of rows. The test
 cohort's keys are built first, and each matching evidence file is reduced to
 the test keys it contains and released before the next candidate is read.

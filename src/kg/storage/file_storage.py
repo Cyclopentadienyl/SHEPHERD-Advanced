@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Tuple, Union
 
 from src.kg.artifacts import GRAPH_ARTIFACTS
+from src.kg.phenotype_normalisation import PHENOTYPE_NORMALISATION_VERSION, normalise_phenotypes
 from src.utils.fingerprint import ReadIdentity
 
 __all__ = [
@@ -115,7 +116,8 @@ class UnparseableFile(ValueError):
     failure where row data must not go (R10's evidence problem).
 
     "Parse" is the reader's whole parse, from bytes to the objects it returns,
-    including the integer-id check that makes a samples row usable.
+    including the integer-id check that makes a samples row usable and the
+    phenotype normal-form check (N2) that a stored case lists each phenotype once.
     """
 
     def __init__(self, message: str, *, identity: ReadIdentity, what: str) -> None:
@@ -317,6 +319,7 @@ def read_samples_file(
     except (KeyError, TypeError, AttributeError) as exc:
         raise _unparseable(path, "a samples file (a list of sample rows)", exc, identity) from exc
     _refuse_non_integer_ids(path, samples, identity)
+    _refuse_phenotype_repeats(path, samples, identity)
     return SamplesRead(samples, identity)
 
 
@@ -388,3 +391,43 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdenti
             for value in values:
                 if not is_id(value):
                     refuse(index, sample, field, value, "an integer id")
+
+
+def _refuse_phenotype_repeats(path: Path, samples: List[Any], identity: ReadIdentity) -> None:
+    """Every sample's `phenotype_ids` must be in phenotype normal form (N2); a file
+    with a case that lists one phenotype twice is refused under the file's name
+    and the patient's.
+
+    **Checked, never normalised here.** Producers normalise and readers check
+    (`docs/working/PLAN_PHENOTYPE_NORMALISATION.md` §6): the generator and the
+    importer write each case's phenotypes once, and training and measurement
+    record the digest of the bytes this read parsed. Removing a repeat on the way
+    would score a list other than the one recorded. The rule is
+    `normalise_phenotypes`, called rather than restated, so this check and the
+    producers cannot disagree about what a repeat is. Only `phenotype_ids` is a
+    phenotype list (§4.1): `gene_ids` and `candidate_disease_ids` are not checked.
+
+    **After the integer check, never before it.** The rule compares identities in
+    a set, where `True` and `1` are one entry, so a boolean id would be reported
+    as a repeat instead of as the id that is not an integer.
+
+    The refusal is an `UnparseableFile` carrying the read's identity, as the
+    integer check's is, so R10 records such evidence as unreadable rather than
+    refusing its run; its `what` names the rule, never the patient or the count,
+    which only the message does.
+    """
+    for index, sample in enumerate(samples):
+        repeats = normalise_phenotypes(sample.phenotype_ids).repeats_removed
+        if repeats:
+            raise UnparseableFile(
+                f"{path}: sample {index} (patient {sample.patient_id!r}) is not in "
+                f"phenotype normal form: its phenotype_ids repeat an id already listed "
+                f"{repeats} {'time' if repeats == 1 else 'times'} (rule version "
+                f"{PHENOTYPE_NORMALISATION_VERSION}: each phenotype once, first occurrence "
+                "kept). A stored file is refused rather than normalised on read, because "
+                "its digest is what a run records. Rebuild it with its producer: "
+                "scripts/build_knowledge_graph.py --generate-samples for a workspace split, "
+                "scripts/import_cohort.py for a test cohort version",
+                identity=identity,
+                what="a samples file in phenotype normal form",
+            )

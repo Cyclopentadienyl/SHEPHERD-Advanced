@@ -807,10 +807,13 @@ gates phase 2; question 4 is answered:
        keeps the source bytes verbatim, and records the rule's version
        (`mapping.phenotype_normalisation_version`) and its counts (`repeats_removed`,
        `cases_with_repeats`) in the version manifest;
-     - **N2 is not delivered** — the generator's normalisation, the reader's check and the
-       workspace manifest's field — and is its own change, not yet scheduled (BACKLOG item 16).
-       M4 rebuilt no workspace and has no N2 dependency: the importer normalises through N1's
-       function, Mode C reads the mapped samples, and R10 compares sets.
+     - **N2 is delivered without its manifest field** (2026-10-18, BACKLOG item 16): the
+       generator applies the rule, and the shared reader refuses a stored samples file with a
+       repeated phenotype, naming its producer. The workspace manifest's field is deferred to
+       the next split-manifest schema change or the first change of the rule's version
+       (`PLAN_PHENOTYPE_NORMALISATION.md` §6). M4 rebuilt no workspace and has no N2
+       dependency: the importer normalises through N1's function, Mode C reads the mapped
+       samples, and R10 compares sets; since N2, R10 evidence with a repeat is *unverifiable*.
    - MyGene2's terms of use. **Open, and not an engineering question.**
 3. **Operators and access.**
    - Who may import, run and register, above all on the institutional cohort?

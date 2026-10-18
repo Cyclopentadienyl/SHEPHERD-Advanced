@@ -121,6 +121,10 @@ the code was unchanged at `463a0df`. §1 records decisions already made; §4 is 
   - the ledger format M4 introduces is **ledger schema 3**, not "v2": the file's
     `schema_version` was already 2 (§5.1);
   - §4, "M4 as implemented", records what was built.
+- **Amended 2026-10-18, with N2:** §5.4 records the reader's check and the generator's call as
+  delivered, and the workspace manifest's field as deferred; an evidence file with a repeat is
+  *unverifiable*. Decision 2 is unchanged: no compatibility path was added, and split-manifest
+  schema 3 is kept.
 
 **What this is.** The project's goal for this stage, in the owner's words: the model must always
 match the exact setup that trained it, dataset version and every other stage's settings included,
@@ -3794,8 +3798,9 @@ evidence.
   - Repetition is not neutral. Mode C averages over every listed position (`masked_mean_pool`
     in `run_mode_c`, `src/evaluation/measurement.py`), and nothing on the stored-file path
     removes a repeated id on the way (`read_samples_file` in `src/kg/storage/file_storage.py`,
-    `DiagnosisDataset` in `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`);
-    that check is N2's, not delivered (below).
+    `DiagnosisDataset` in `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`).
+    *Since N2 (2026-10-18)* `read_samples_file` refuses a stored case that lists a phenotype
+    twice, so none reaches Mode C or training from a file; it still removes nothing (below).
   - So two cases with the same set can be scored differently. A training case `[0, 1]` and a
     test case `[0, 0, 1]` average to different patient vectors, and can rank the true disease
     differently.
@@ -3813,12 +3818,15 @@ evidence.
     (`map_cases` calls `normalise_phenotypes`, `src/kg/phenotype_normalisation.py`), which keeps
     the source bytes verbatim and records the rule's version and its counts in the version
     manifest;
-  - **N2 is not delivered**: the generator's normalisation, the reader's check and the
-    workspace manifest's field are its own change, not yet scheduled. M4 has no N2 dependency
-    and rebuilt no workspace.
+  - **N2 is delivered without its manifest field** (2026-10-18): the generator applies the rule,
+    and the shared reader refuses a stored case that is not in normal form, as a file that does
+    not parse. The workspace manifest's field is deferred to the next split-manifest schema
+    change or the first change of the rule's version (`PLAN_PHENOTYPE_NORMALISATION.md` §6).
+    M4 had no N2 dependency and rebuilt no workspace; N2 rebuilt none either.
 
-  A test cohort imported since M4 therefore holds no repeat; a stored training file is checked
-  for none until N2, though the current generator writes none. R10 removes nothing either way.
+  A test cohort imported since M4 therefore holds no repeat, and since N2 a stored training or
+  validation file with one is refused by the reader: R10 records such evidence as *unreadable*,
+  its scope *unverifiable*, rather than counting it. R10 removes nothing either way.
 - **The patient id is not part of a case.** Generated patient ids are labels, not identities.
 - **Near-duplicates are not counted** — subsets, supersets, a term or two apart — and the
   label's name states the rule.

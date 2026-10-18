@@ -15,6 +15,9 @@ digests given and refuses other bytes before decoding them. This file shows:
 - matching bytes are parsed and refused exactly as `read_samples` always has,
   and every refusal of a read file carries that read's identity, with a `what`
   that holds none of the file's content;
+- a case that lists a phenotype twice is refused (N2) by the shared rule, after
+  the integer check, naming the producer that rebuilds the file; a file in
+  normal form is read as written;
 - a missing file names its path; an empty or mistyped expectation is refused
   before anything is read;
 - `read_samples` keeps its message for a missing split and delegates.
@@ -29,6 +32,7 @@ import json
 import pytest
 
 from src.kg.data_loader import DiagnosisSample
+from src.kg.phenotype_normalisation import PHENOTYPE_NORMALISATION_VERSION, normalise_phenotypes
 from src.kg.storage import file_storage
 from src.kg.storage.file_storage import (
     SamplesDigestMismatch,
@@ -258,6 +262,92 @@ def test_a_non_integer_id_is_refused_and_what_names_no_patient(tmp_path, field, 
     assert refused.value.identity.sha256 == digest
     assert refused.value.what == "a samples file with integer ids"
     assert "PATIENT-SECRET-7" not in refused.value.what and repr(value) not in refused.value.what
+
+
+# ---------------------------------------------------------------------------
+# Phenotype normal form (N2): the shared rule, checked after the integer check
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("phenotypes, repeats", [([0, 1, 0], 1), ([5, 5, 5, 7, 7], 3)])
+def test_a_case_that_lists_a_phenotype_twice_is_refused_naming_its_producers(
+    tmp_path, phenotypes, repeats
+):
+    """The message names the file, the sample, the patient, the count, the rule's
+    version and the producer of each kind of samples file; `what` names the rule
+    alone, since R10 copies it into the report and the ledger."""
+    rows = [{"patient_id": "p0", "phenotype_ids": [0, 1], "disease_id": 2},
+            {"patient_id": "PATIENT-SECRET-7", "phenotype_ids": phenotypes, "disease_id": 2}]
+    path = tmp_path / "train_samples.json"
+    path.write_text(json.dumps(rows))
+    digest = _sha(path)
+
+    with pytest.raises(UnparseableFile, match="not in phenotype normal form") as refused:
+        read_samples_file(path, expected_sha256=digest)
+
+    message = str(refused.value)
+    assert str(path) in message
+    assert "sample 1 (patient 'PATIENT-SECRET-7')" in message
+    assert f"repeat an id already listed {repeats} time" in message
+    assert f"rule version {PHENOTYPE_NORMALISATION_VERSION}" in message
+    assert "scripts/build_knowledge_graph.py --generate-samples for a workspace split" in message
+    assert "scripts/import_cohort.py for a test cohort version" in message
+    assert refused.value.identity == ReadIdentity(path=path, sha256=digest)
+    assert refused.value.what == "a samples file in phenotype normal form"
+    assert "PATIENT-SECRET-7" not in refused.value.what
+
+
+def test_the_check_is_the_shared_rule_on_phenotype_ids_only(monkeypatch, tmp_path):
+    """The reader calls `normalise_phenotypes` and names its version constant, so
+    the rule has one definition (plan §7), and gives it each sample's
+    `phenotype_ids` and nothing else (§4.1): a repeated gene or candidate id is
+    not a repeated phenotype."""
+    given = []
+
+    def rule(identities):
+        given.append(list(identities))
+        return normalise_phenotypes(identities)
+
+    monkeypatch.setattr(file_storage, "normalise_phenotypes", rule)
+    monkeypatch.setattr(file_storage, "PHENOTYPE_NORMALISATION_VERSION", 7)
+    path = tmp_path / "train_samples.json"
+    path.write_text(json.dumps([
+        {"patient_id": "p", "phenotype_ids": [3, 4], "disease_id": 1,
+         "candidate_disease_ids": [1, 1], "gene_ids": [9, 9]},
+        {"patient_id": "q", "phenotype_ids": [4, 4], "disease_id": 1},
+    ]))
+
+    with pytest.raises(UnparseableFile, match="rule version 7"):
+        read_samples_file(path, training_fields=True)
+
+    assert given == [[3, 4], [4, 4]]
+
+
+@pytest.mark.parametrize("phenotypes", [[1, True], [True, 1], [1, 1.0]])
+def test_an_id_that_is_not_an_integer_is_reported_as_such_not_as_a_repeat(tmp_path, phenotypes):
+    """`True == 1` and `1.0 == 1`, so the rule alone would count either pair as one
+    phenotype listed twice. The integer check runs first and names the id."""
+    path = tmp_path / "train_samples.json"
+    path.write_text(json.dumps([{"patient_id": "p", "phenotype_ids": phenotypes,
+                                 "disease_id": 2}]))
+
+    with pytest.raises(UnparseableFile, match="refused rather than converted") as refused:
+        read_samples_file(path)
+
+    assert refused.value.what == "a samples file with integer ids"
+    assert "normal form" not in str(refused.value)
+
+
+def test_a_file_in_normal_form_is_read_as_written(tmp_path):
+    """Checked, never normalised: each case keeps the file's ids in the file's
+    order, which is not sorted."""
+    samples = [DiagnosisSample(patient_id="p0", phenotype_ids=[9, 3, 5], disease_id=2),
+               DiagnosisSample(patient_id="p1", phenotype_ids=[3], disease_id=2)]
+    path = tmp_path / "train_samples.json"
+    digest = _write(path, samples)
+
+    result = read_samples_file(path, expected_sha256=digest)
+
+    assert result.samples == samples
+    assert result.identity == ReadIdentity(path=path, sha256=digest)
 
 
 def test_read_samples_refusals_carry_the_identity_too(tmp_path):

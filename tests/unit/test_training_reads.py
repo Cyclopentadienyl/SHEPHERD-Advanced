@@ -23,7 +23,8 @@ is built only from the reads. The acceptance shown here, at the real entry point
   check takes (it records nothing), the run completes and no poison reaches the
   record;
 - a workspace with no validation samples records none; an unrelated split is
-  never opened; an empty training split is refused before anything is written;
+  never opened; an empty training split is refused before anything is written,
+  and so is a split with a case not in phenotype normal form (N2);
 - training trains on both optional sample fields (`training_fields=True`);
 - a parent that does not parse leaves no run artifact (it is read at the top
   since M2.3), after a line that names it;
@@ -273,6 +274,27 @@ def test_json_that_is_not_samples_replacing_a_split_is_refused_naming_it(
     assert record.fired == 1
     assert str(target) in str(refused.value)
     assert _run_artifacts(run) == []
+
+
+def test_a_split_not_in_phenotype_normal_form_is_refused_before_anything_is_written(
+    train_model, workspace, monkeypatch, tmp_path
+):
+    """N2: a case that lists a phenotype twice fails training's parse in the
+    shared reader, before any run artifact, naming the file and the producer that
+    rebuilds it. The repeat is never removed on the way."""
+    _forbid_stages(monkeypatch, train_model)
+    target = workspace / "train_samples.json"
+    rows = json.loads(target.read_text(encoding="utf-8"))
+    rows[0]["phenotype_ids"].append(rows[0]["phenotype_ids"][0])
+    target.write_text(json.dumps(rows), encoding="utf-8")
+    run = tmp_path / "run"
+
+    with pytest.raises(ValueError, match="not in phenotype normal form") as refused:
+        train_model.train(_config(train_model, workspace, run))
+
+    assert str(target) in str(refused.value)
+    assert "scripts/build_knowledge_graph.py --generate-samples" in str(refused.value)
+    assert _run_artifacts(run) == [], "a run artifact was written before the refusal"
 
 
 @pytest.mark.parametrize("how", HOWS)
