@@ -402,6 +402,35 @@ def test_after_publishing_only_a_stdout_that_failed_is_redirected(cli, monkeypat
         os.close(read_end)
 
 
+def test_with_record_a_console_gone_before_registering_registers_nothing(
+    cli, cohort, monkeypatch
+):
+    """stdout a buffered pipe whose reader is gone, so the summary only fills
+    the buffer. The console is found gone before the ledger is touched, as an
+    unbuffered one is at its first print: nothing is registered, and the line
+    that offers the registration is true. Found after `_register`, it used to
+    follow a refusal ("nothing at that path is offered") with that offer."""
+    import src.evaluation.registration as registration
+
+    monkeypatch.setattr(registration, "register_report",
+                        lambda *a, **k: pytest.fail("registered for a console that had gone"))
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    stdout = open(write_end, "w", encoding="utf-8")  # buffered, as a pipe is
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        assert cli._run_as_program(_registered(cohort, "--record")) == 1
+    stdout.close()  # the interpreter's last flush, which must not fail
+
+    err = stderr.getvalue()
+    line = _one_line(err, NOT_FINISHED)
+    (report,) = (cohort.version.directory / "reports").glob("*/report.json")
+    assert f"The report was written: {report}." in line
+    assert f'record_evaluation.py --report "{report}"' in line
+    assert "NOT REGISTERED" not in err
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
 # ---------------------------------------------------------------------------
 # A checkpoint that does not parse is refused naming it
 # ---------------------------------------------------------------------------
@@ -545,4 +574,23 @@ def test_run_as_a_program_a_closed_console_after_publication_names_the_report(
     line = _one_line(completed.stderr, NOT_FINISHED)
     assert line.endswith(f"The report was written: {output}.")
     assert "Exception ignored" not in completed.stderr
+    assert output.is_file()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="closes a POSIX descriptor in the child")
+def test_run_as_a_program_with_no_stdout_measures_and_exits_0(workspace, tmp_path):
+    """Started with descriptor 1 closed (`>&-`, a detached launch), Python sets
+    `sys.stdout` to None and `print` writes nothing: the run measures and
+    exits 0, with no traceback from flushing a stream that is not there."""
+    data_dir, checkpoint = workspace
+    output = tmp_path / "out" / "measurement.json"
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "measure_scorer.py"),
+         *_generated(data_dir, checkpoint, output)],
+        cwd=str(REPO_ROOT), stderr=subprocess.PIPE, text=True, timeout=300,
+        preexec_fn=lambda: os.close(1),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
     assert output.is_file()

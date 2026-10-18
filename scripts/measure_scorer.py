@@ -1134,7 +1134,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             _print_registered_summary(inputs, result, run_id, report_path)
             if args.record:
+                # **Flushed before the ledger is touched**, so a console that
+                # has gone is found here whatever stdout's buffering, as an
+                # unbuffered one is at its first print: the run registers
+                # nothing, and the failure's line offers the registration.
+                _flush_stdout()
                 status = _register(report_path, report_sha256, inputs)
+                if status != 0:
+                    # Decided, and said on stderr: a refusal writes nothing to
+                    # stdout, and `_run_as_program` settles it, so this status
+                    # stands rather than becoming a failure after the fact.
+                    return status
             else:
                 measured = Path(inputs.checkpoint.identity.path)
                 print("\nNot registered (no --record). Register it with:\n"
@@ -1143,10 +1153,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         # **Flushed here**: on a pipe or a file stdout is buffered, and a closed
         # console would otherwise fail only when the interpreter flushes at exit,
         # outside this handler.
-        sys.stdout.flush()
+        _flush_stdout()
         return status
     except (ValueError, OSError) as exc:
         raise _failure_after_publishing(exc, inputs, report_path) from exc
+
+
+def _flush_stdout() -> None:
+    """Flush stdout, if there is one: started with its descriptor closed, Python
+    sets `sys.stdout` to None, and `print` then writes nothing."""
+    if sys.stdout is not None:
+        sys.stdout.flush()
 
 
 def _settle_stdout() -> None:
@@ -1159,8 +1176,10 @@ def _settle_stdout() -> None:
     failed is redirected**: one that still works (a registration raised, stdout
     on a file) is flushed instead, so the summary buffered in it is kept, ahead
     of the failure's line. A stdout with no file descriptor (an in-process
-    caller's capture) is left as it is.
+    caller's capture), or none at all, is left as it is.
     """
+    if sys.stdout is None:
+        return
     try:
         sys.stdout.flush()
     except (OSError, ValueError):
@@ -1193,10 +1212,12 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     and is printed in its own words, also with exit 1. Anything else keeps its
     traceback -- an out-of-memory error, a regime mismatch -- and `SystemExit`
     (exit 2 for the command line, 1 for the device check) and the status `main`
-    returns (3 for a refused registration) pass through as they are.
+    returns (3 for a refused registration) pass through as they are; stdout is
+    settled first, so output a closed console could not take cannot turn that
+    status into 120 at the interpreter's last flush.
     """
     try:
-        return main(argv)
+        status = main(argv)
     except ReportNotWritten as exc:
         print(f"measure_scorer: measured, but the report was not written: {exc}",
               file=sys.stderr)
@@ -1211,6 +1232,8 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
             message += " Nothing was written."
         print(f"measure_scorer: refused: {message}", file=sys.stderr)
         return 1
+    _settle_stdout()
+    return status
 
 
 if __name__ == "__main__":

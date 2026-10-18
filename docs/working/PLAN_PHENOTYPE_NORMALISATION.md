@@ -37,7 +37,8 @@ and rebuilt no workspace.
 - N1's scope is settled (§8).
 
 **Amended 2026-10-18, with N2** (the check and the call now, the manifest field later):
-- **delivered:** the shared reader's check and the generator's call (§5, §8, "As implemented");
+- **implemented on the development branch** (batch B; awaiting review, not merged): the shared
+  reader's check and the generator's call (§5, §8, "As implemented");
 - **deferred:** the split manifest's field, to the next split-manifest schema change or the first
   change of the rule's version. The generator's counts are zero by construction, and a schema
   bump now would refuse every existing workspace and every earlier checkpoint's resume (§6);
@@ -625,7 +626,8 @@ compares the two.
       files as evidence through the shared reader. Once the reader's check lands, an evidence
       file with repeats would fail to parse, and R10 would report that scope *unverifiable*
       rather than count it (contract §5.4).
-  - **As implemented (2026-10-18):** the reader's check and the generator's call landed; the
+  - **As implemented (2026-10-18, on the development branch; awaiting review, not merged):** the
+    reader's check and the generator's call landed; the
     manifest's `phenotype_normalisation` did not. So they did not land together, as "Since M3b"
     expected.
     - **The check** is in `read_samples_file`, after the integer-id check, and refuses as
