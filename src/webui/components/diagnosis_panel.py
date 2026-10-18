@@ -310,6 +310,16 @@ def _reload_pipeline(
 
 CONFIG_FILE = Path(".shepherd_ui_config.json")
 DEFAULT_WORKSPACE = "data/workspaces/default"
+#: Said by Save. The saved paths are read once, when the app is built, and fill
+#: the fields only until a page load finds a pipeline loaded (`_on_load_status`).
+CONFIG_SAVED = (
+    "Saved the paths shown; from the next start they pre-fill these fields only "
+    "while no pipeline is loaded."
+)
+#: The Data Directory field while a pipeline started from ``SHEPHERD_KG_PATH``
+#: alone is served. There is no workspace to show, and the saved preference
+#: would name one that is not served.
+PATH_ONLY_PLACEHOLDER = "(no workspace: graph served from SHEPHERD_KG_PATH)"
 
 
 def _load_saved_config() -> Dict[str, Any]:
@@ -328,7 +338,7 @@ def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
     try:
         with open(CONFIG_FILE, "w") as f:
             json.dump({"data_dir": data_dir, "checkpoint_path": checkpoint_path or None}, f, indent=2)
-        return "Configuration saved."
+        return CONFIG_SAVED
     except Exception as e:
         return f"Failed to save: {e}"
 
@@ -348,6 +358,34 @@ STATUS_CHECKING = "⏳ Checking pipeline status…"
 def _checkpoint_metric_label(key: str) -> str:
     """``val_mrr`` -> ``Val MRR``; ``val_hits@10`` -> ``Val Hits@10``."""
     return " ".join("MRR" if w == "mrr" else w[:1].upper() + w[1:] for w in key.split("_"))
+
+
+def _served_paths_line(status_data: Dict[str, Any]) -> str:
+    """The workspace and checkpoint file a loaded pipeline was built from, as one
+    status line (BACKLOG 17, F5).
+
+    The Data Directory and Checkpoint fields show the same paths after a page
+    load, but they are inputs the user edits; this line keeps naming what is
+    served whatever they hold. A path the status did not report is said to be
+    one, never guessed.
+    """
+    data_dir = _field(status_data, "current_data_dir")
+    if data_dir is _MISSING:
+        workspace = "Workspace not reported"
+    elif data_dir is None:
+        # A start from SHEPHERD_KG_PATH without SHEPHERD_DATA_DIR: a reload
+        # always names a workspace, so this is the one way to have none.
+        workspace = "No workspace: graph served from `SHEPHERD_KG_PATH`"
+    else:
+        workspace = f"Workspace {_md_code(data_dir, in_table=False)}"
+    checkpoint = _field(status_data, "current_checkpoint_path")
+    if checkpoint is _MISSING:
+        model = "checkpoint file not reported"
+    elif checkpoint is None:
+        model = "no checkpoint file"
+    else:
+        model = f"Checkpoint file {_md_code(checkpoint, in_table=False)}"
+    return f"- {workspace} · {model}"
 
 
 def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
@@ -387,6 +425,7 @@ def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
     lines += [
         f"🟢 **Pipeline loaded** | Mode: `{mode}`",
         f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
+        _served_paths_line(status_data),
     ]
 
     # Checkpoint training info
@@ -1054,7 +1093,7 @@ def _identity_details_md(kind: str, identity: Optional[Dict[str, Any]]) -> str:
 # states and definitions, what an empty ledger means, the relation names -- is the
 # text in `src/evaluation/caveats.py`, rendered and never reworded here. The block
 # is appended to the model status Markdown (`_status_with_recorded_results`), so
-# the load and reload events keep their one output component.
+# the status stays one output component of the load and reload events.
 
 #: The block's heading.
 RECORDED_RESULTS_HEADING = "Recorded test results (Mode C)"
@@ -1859,12 +1898,52 @@ def _on_candidate_select(
     return _format_evidence_detail(target), _format_full_explanation(target)
 
 
+def _served_path_updates(status_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Updates for the Data Directory and Checkpoint fields from one status
+    (BACKLOG 17, F5).
+
+    **The fields are what Load / Reload sends**, so while they showed the saved
+    preferences rather than the served paths, pressing it could switch the
+    service to another workspace than the one it was serving. With a pipeline
+    loaded they name what it was built from, an automatically chosen checkpoint
+    included, so Reload reloads exactly that; clearing the Checkpoint field asks
+    for automatic selection again. With nothing loaded, or no status read, both
+    are left alone: the saved preferences stand, and an unreadable status says
+    nothing about what is served. A path the status did not report leaves its
+    field alone too.
+    """
+    if not status_data.get("initialized", False):
+        return gr.update(), gr.update()
+    data_dir = _field(status_data, "current_data_dir")
+    if data_dir is _MISSING:
+        data_dir_update = gr.update()
+    elif data_dir is None:
+        # Served from SHEPHERD_KG_PATH with no workspace (`_served_paths_line`):
+        # blank, never the saved preference, which would name one not served.
+        data_dir_update = gr.update(value="", placeholder=PATH_ONLY_PLACEHOLDER)
+    else:
+        # The placeholder is cleared in case a path-only status set it earlier
+        # in this session; Gradio drops an update's None, so "" rather than None.
+        data_dir_update = gr.update(value=data_dir, placeholder="")
+    checkpoint = _field(status_data, "current_checkpoint_path")
+    checkpoint_update = (
+        gr.update() if checkpoint is _MISSING else gr.update(value=checkpoint or "")
+    )
+    return data_dir_update, checkpoint_update
+
+
 def _on_reload_pipeline(
     data_dir: str, checkpoint_path: str, conv_type: str
-) -> Tuple[str, str]:
-    """Handle Reload Pipeline button click."""
+) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
+    """Handle Reload Pipeline button click.
+
+    Returns the status, the message, and updates for the Data Directory and
+    Checkpoint fields: after a reload that succeeded they name what is now
+    served (`_served_path_updates`); after a refusal they keep what the user
+    typed, so it can be corrected and sent again.
+    """
     if not data_dir or not data_dir.strip():
-        return "⚠️ Data directory is required.", ""
+        return "⚠️ Data directory is required.", "", gr.update(), gr.update()
 
     result = _reload_pipeline(
         data_dir.strip(),
@@ -1873,12 +1952,14 @@ def _on_reload_pipeline(
     )
 
     status_md = ""
+    fields = (gr.update(), gr.update())
     if result.get("success"):
         status = result.get("status", {})
         # The new model's recorded results, or the stated absence of any: a
         # status naming the new checkpoint over the previous one's records
         # would be the one thing this block must never show.
         status_md = _status_with_recorded_results(status)
+        fields = _served_path_updates(status)
         if status.get("initialized") and not status.get("gnn_ready"):
             # Attached to the load action rather than to the status renderer:
             # the renderer also runs on the initial page render, and a toast that
@@ -1906,11 +1987,12 @@ def _on_reload_pipeline(
         status_md += "\n\n**Files:**\n" + "\n".join(file_lines)
 
     msg = result.get("message", "")
-    return status_md, msg
+    return status_md, msg, *fields
 
 
 def _on_save_config(data_dir: str, checkpoint_path: str) -> str:
-    """Handle Save Config button click."""
+    """Handle Save Config button click: saves what the fields show, which with
+    a pipeline loaded is the served paths (`CONFIG_SAVED`)."""
     return _save_config_to_file(data_dir, checkpoint_path)
 
 
@@ -1919,15 +2001,18 @@ def _on_reset_defaults() -> Tuple[str, str, str]:
     return DEFAULT_WORKSPACE, "", "Paths reset to defaults."
 
 
-def _on_load_status() -> str:
+def _on_load_status() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     """Read the pipeline status for a page that has just loaded.
 
     Wired to the Blocks' load event, so every page opened shows the server's
     status at that moment rather than what it was while the app was being built,
     with the loaded model's recorded results under it in the same Markdown.
+    Returns that Markdown and the Data Directory and Checkpoint field updates
+    (`_served_path_updates`), **all from one status read**: two reads could
+    describe two pipelines if a reload landed between them.
     """
     status_data = _get_pipeline_status()
-    return _status_with_recorded_results(status_data)
+    return (_status_with_recorded_results(status_data), *_served_path_updates(status_data))
 
 
 # =============================================================================
@@ -1937,8 +2022,9 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
     """
     Build the Diagnosis Panel tab inside a gr.Blocks context.
 
-    ``blocks`` is the enclosing app, which the model status refreshes from on
-    every page load (`_on_load_status`).
+    ``blocks`` is the enclosing app, which the model status and the Data
+    Directory and Checkpoint fields refresh from on every page load
+    (`_on_load_status`).
 
     Layout:
         Left column (input):
@@ -1958,7 +2044,9 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
     results_state = gr.State(None)
 
     # === MODEL CONFIGURATION (top accordion) ===
-    # Load saved config for default values
+    # The saved preferences are only the fields' starting values: a page load
+    # that finds a pipeline loaded replaces them with its paths
+    # (`_served_path_updates`).
     saved_cfg = _load_saved_config()
 
     with gr.Accordion("Model Configuration", open=False):
@@ -1974,7 +2062,8 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
                 label="Checkpoint Path (optional)",
                 value=saved_cfg.get("checkpoint_path") or "",
                 placeholder="(auto-detect from data directory)",
-                info="Explicit .pt path. Leave blank to auto-select by architecture.",
+                info="Explicit .pt path; shows the served file while a pipeline is "
+                "loaded. Clear it to auto-select by architecture.",
             )
             arch_input = gr.Dropdown(
                 label="Architecture",
@@ -2118,13 +2207,18 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
 
     # === Model config event wiring ===
     # Read on each page load, not once at build time: the app is built before
-    # the server is serving, so a status computed then is stale on arrival.
-    blocks.load(fn=_on_load_status, inputs=[], outputs=[config_status_md])
+    # the server is serving, so a status computed then is stale on arrival. The
+    # fields Reload sends are set from the same read.
+    blocks.load(
+        fn=_on_load_status,
+        inputs=[],
+        outputs=[config_status_md, data_dir_input, checkpoint_input],
+    )
 
     reload_btn.click(
         fn=_on_reload_pipeline,
         inputs=[data_dir_input, checkpoint_input, arch_input],
-        outputs=[config_status_md, config_msg],
+        outputs=[config_status_md, config_msg, data_dir_input, checkpoint_input],
     )
 
     save_cfg_btn.click(

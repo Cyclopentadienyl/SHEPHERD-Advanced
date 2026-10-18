@@ -339,6 +339,8 @@ def test_the_model_status_is_not_read_while_the_app_is_built(monkeypatch):
 
 
 def test_the_model_status_is_read_on_every_page_load(monkeypatch):
+    """One load event writes the status and the two path fields (BACKLOG 17,
+    F5), from the one status read `_on_load_status` makes."""
     demo = _build_tab(monkeypatch)
 
     on_load = [
@@ -346,18 +348,27 @@ def test_the_model_status_is_read_on_every_page_load(monkeypatch):
         if fn.fn is dp._on_load_status and (demo._id, "load") in fn.targets
     ]
     assert len(on_load) == 1
-    (status_md,) = on_load[0].outputs
+    status_md, data_dir, checkpoint = on_load[0].outputs
     assert isinstance(status_md, gr.Markdown) and status_md.value == dp.STATUS_CHECKING
+    assert isinstance(data_dir, gr.Textbox) and data_dir.label == "Data Directory"
+    assert isinstance(checkpoint, gr.Textbox)
+    assert checkpoint.label == "Checkpoint Path (optional)"
 
 
 def test_the_reload_button_still_writes_the_same_status(monkeypatch):
     """Reload already refreshed the status; the load event targets the same
-    component rather than a second copy of it."""
+    component rather than a second copy of it. The path fields the page load
+    sets are the ones Reload sends and, after it, sets."""
     demo = _build_tab(monkeypatch)
 
     (on_load,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_load_status]
     (on_reload,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_reload_pipeline]
     assert on_reload.outputs[0] is on_load.outputs[0]
+    _, data_dir, checkpoint = on_load.outputs
+    _, _, set_dir, set_checkpoint = on_reload.outputs
+    sent_dir, sent_checkpoint, _ = on_reload.inputs
+    assert set_dir is data_dir and set_checkpoint is checkpoint
+    assert sent_dir is data_dir and sent_checkpoint is checkpoint
 
 
 # ------------------------------------------------- the phenotype list and the API
