@@ -417,7 +417,8 @@ string-level semantics with it.
     "Since M3b"): M3b kept split-manifest schema 3, and existing fully bound workspaces stay
     usable. When N2 is scheduled, its own change decides how the field is introduced and whether
     that requires a rebuild.
-  - **Decided with N2 (2026-10-18): the field is deferred.** It is added at the next
+  - **Chosen in N2's build (2026-10-18), on the map's recommendation, and reported to the
+    owner: the field is deferred.** It is added at the next
     split-manifest schema change, or at the first change of the rule's version, whichever comes
     first. Until then nothing records the rule for a generated workspace, and the reader's check
     enforces it on every stored file whatever the manifest says. Why not now:
@@ -767,8 +768,11 @@ by the author).
     acceptance for other GPUs or operating systems, for arbitrary cases, or for the
     provenance contract.
 - **Found during the run, not caused by N1** (backlog item 17):
-  - the model-configuration fields show the saved UI preferences, not the loaded pipeline;
+  - the model-configuration fields show the saved UI preferences, not the loaded pipeline
+    (since fixed, F5: once a pipeline is loaded they show the served workspace and checkpoint
+    file, and the model status names both on one line);
   - `matching_phenotypes` was always empty on the real path (since filled, F6: the request's
     phenotypes as used that the graph annotates directly to the disease, exact term only);
   - the launcher stops waiting to open a browser after 60 s, while a startup that loads this
-    SP table takes about 84 s.
+    SP table takes about 84 s (since fixed, F7: the launcher waits until `/health` answers,
+    with no deadline).

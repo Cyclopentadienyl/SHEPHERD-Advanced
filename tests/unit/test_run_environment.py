@@ -190,7 +190,8 @@ def test_a_file_name_that_does_not_decode_is_counted_not_fatal(repo):
 
     assert record["state"] == "recorded"
     assert record["untracked"] == 1 and record["dirty"] is True
-    assert "caf" not in json.dumps(record)
+    # The revision is a commit id, whose hex digits can spell "caf" by chance.
+    assert "caf" not in json.dumps({k: v for k, v in record.items() if k != "revision"})
 
 
 def test_output_that_is_not_a_commit_id_is_unrecorded(tmp_path, monkeypatch):

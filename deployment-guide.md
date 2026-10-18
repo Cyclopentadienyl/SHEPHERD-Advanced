@@ -1419,7 +1419,11 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - 結果下方的 **「Produced by」一行**（digest 縮短顯示），以及一個預設收合的區塊
   「What produced this result — full identity」，內含完整表格、宣稱界線與
   "Not a certified medical device; decision support for a qualified clinician."。
-- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分。
+- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分，
+  並另以一行列出正在服務的 workspace 與 checkpoint 檔。載入 pipeline 後，Data Directory
+  與 Checkpoint 欄位顯示這兩個路徑（自動選出的檔案也照實顯示），因此 Load / Reload 重新載入的
+  就是正在服務的內容；清空 Checkpoint 欄位即讓伺服器重新自動選擇。未載入任何 pipeline 時，
+  欄位顯示 Save Config 儲存的值。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
@@ -1642,8 +1646,8 @@ python scripts/measure_scorer.py \
 而且讀到的樣本數必須等於 `samples.n`；workspace 的圖檔是否符合其 manifest 與 dataset
 record（§4.4）；**版本是否屬於這個 workspace**——它的四個圖 digest 與 dataset record 必須是這個
 workspace 的，否則在讀取 checkpoint 之前就拒絕；接著是 checkpoint（以 `weights_only=True` 讀取）
-是否與它訓練所用的圖相符。裝置依 §4.8：`auto` 需要 CUDA，`cpu` 是開發用的執行，會如實記錄，
-而且與 CUDA 的量測是不同的量測。
+是否與它訓練所用的圖相符。裝置依 §4.8：`auto` 與 `cuda` 需要 CUDA，沒有時在讀取任何東西之前
+就會被拒絕；`cpu` 是開發用的執行，會如實記錄，而且與 CUDA 的量測是不同的量測。
 
 **R10——與模型訓練及驗證資料的重疊。** 這次執行會尋找 checkpoint 所記錄 digest 的訓練與驗證
 樣本檔：先找 workspace 自己的 `train_samples.json` 與 `val_samples.json`，再找每個
@@ -1656,7 +1660,8 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 
 - **找不到**：看過的檔案中沒有一個具有所記錄的位元組。請以 `--training-evidence` 指出存放它們的
   目錄，再量測一次；
-- **找到、但讀不了**：存放它們的檔案找到了，但無法解析；
+- **找到、但讀不了**：存放它們的檔案找到了，但無法解析（例如 id 不是整數，或某個病例重複列出
+  同一個表型）；
 - **checkpoint 沒有記錄**：它在這個範圍沒有指出任何可找的檔案，而且它的紀錄不是 pipeline 寫出
   的：每次訓練都會以 digest 記錄其訓練輸入，所以沒有這個 digest 的紀錄，或條目在、卻不是 digest
   的紀錄，都不可能出自 pipeline。`--training-evidence` 也幫不上忙。
