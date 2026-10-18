@@ -267,11 +267,17 @@ def test_a_non_integer_id_is_refused_and_what_names_no_patient(tmp_path, field, 
 # ---------------------------------------------------------------------------
 # Phenotype normal form (N2): the shared rule, checked after the integer check
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("phenotypes, repeats", [([0, 1, 0], 1), ([5, 5, 5, 7, 7], 3)])
+@pytest.mark.parametrize("phenotypes, counted", [
+    ([0, 1, 0], "1 entry of its phenotype_ids repeats"),
+    # Two ids listed twice each: two repeated entries, not one id listed thrice.
+    ([1, 1, 2, 2], "2 entries of its phenotype_ids repeat"),
+    ([5, 5, 5, 7, 7], "3 entries of its phenotype_ids repeat"),
+])
 def test_a_case_that_lists_a_phenotype_twice_is_refused_naming_its_producers(
-    tmp_path, phenotypes, repeats
+    tmp_path, phenotypes, counted
 ):
-    """The message names the file, the sample, the patient, the count, the rule's
+    """The message names the file, the sample, the patient, the number of
+    repeated entries (every one after an id's first, whichever id), the rule's
     version and the producer of each kind of samples file; `what` names the rule
     alone, since R10 copies it into the report and the ledger."""
     rows = [{"patient_id": "p0", "phenotype_ids": [0, 1], "disease_id": 2},
@@ -286,7 +292,7 @@ def test_a_case_that_lists_a_phenotype_twice_is_refused_naming_its_producers(
     message = str(refused.value)
     assert str(path) in message
     assert "sample 1 (patient 'PATIENT-SECRET-7')" in message
-    assert f"repeat an id already listed {repeats} time" in message
+    assert f"{counted} an id listed earlier in the case" in message
     assert f"rule version {PHENOTYPE_NORMALISATION_VERSION}" in message
     assert "scripts/build_knowledge_graph.py --generate-samples for a workspace split" in message
     assert "scripts/import_cohort.py for a test cohort version" in message

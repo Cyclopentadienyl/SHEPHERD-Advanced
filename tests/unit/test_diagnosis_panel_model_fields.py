@@ -15,7 +15,8 @@ and pressing Reload would have switched to the one shown. What is pinned here:
 - a reload that succeeded sets both fields to what is now served; a refused
   one keeps what the user typed, even though its response carries the live
   pipeline's status;
-- the status names the served paths on one line;
+- the status names the served paths on one line; after a reload that line is
+  the only place it names the checkpoint, with how it was chosen below;
 - Save writes what the fields show and says when saved paths are used.
 
 Module: tests/unit/test_diagnosis_panel_model_fields.py
@@ -169,6 +170,23 @@ def test_a_successful_reload_sets_both_fields_to_what_is_served(monkeypatch):
     assert data_dir == gr.update(value=WORKSPACE, placeholder="")
     assert checkpoint == gr.update(value=CHOSEN)
     assert f"Workspace `{WORKSPACE}` · Checkpoint file `{CHOSEN}`" in status_md
+
+
+def test_a_successful_reload_names_its_checkpoint_once_and_how_it_was_chosen(monkeypatch):
+    """The response's `checkpoint_path` is the string the status's served-paths
+    line already names; the status adds the selection reason, not the path a
+    second time (BACKLOG 27: clean and uncrowded)."""
+    reason = "auto: latest run 'run-1' (hgt); best val_mrr=0.4100"
+    _reload_answering(monkeypatch, {
+        "success": True, "message": f"Pipeline reloaded successfully. ({reason})",
+        "status": _served(), "checkpoint_path": CHOSEN, "selection_reason": reason,
+    })
+
+    status_md, *_ = dp._on_reload_pipeline(WORKSPACE, "", "auto")
+
+    assert status_md.count(CHOSEN) == 1
+    assert _path_line(status_md) == f"- Workspace `{WORKSPACE}` · Checkpoint file `{CHOSEN}`"
+    assert f"<sub>Checkpoint selection: {reason}</sub>" in status_md.splitlines()
 
 
 def test_an_automatically_chosen_checkpoint_is_shown_and_reloaded_as_shown(monkeypatch):

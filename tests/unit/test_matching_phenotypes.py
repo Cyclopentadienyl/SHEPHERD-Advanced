@@ -12,7 +12,8 @@ tests pin the definition the field now states:
   - **the list as used**: unknown ids dropped, repeats removed, the request's
     spelling and order kept;
   - filled whether or not explanations are asked for, by the helper the
-    explanation's section uses, so the two agree;
+    explanation's section uses: the section lists the first ten of the field,
+    in its order, and says how many more there are;
   - carried by the API and the WebUI's CSV, and empty in the demo answer.
 
 Module: tests/unit/test_matching_phenotypes.py
@@ -28,6 +29,7 @@ import pytest
 
 from src.core.types import (
     DataSource,
+    DiagnosisCandidate,
     Edge,
     EdgeType,
     Node,
@@ -35,7 +37,7 @@ from src.core.types import (
     NodeType,
     PatientPhenotypes,
 )
-from src.reasoning import find_matching_phenotypes
+from src.reasoning import ExplanationGenerator, find_matching_phenotypes
 
 SEIZURE = "HP:0001250"
 ATAXIA = "HP:0001251"
@@ -117,16 +119,21 @@ def _matches(result):
     return {str(c.disease_id): c.matching_phenotypes for c in result.candidates}
 
 
-def _listed_in_explanation(explanation):
+_ENTRY = re.compile(r"- .+ \((HP:\d{7})\)")
+
+
+def _matching_section(explanation):
     """The ids under the explanation's "### Matching Phenotypes" heading, which
-    lists them one per line as "- <name> (<id>)" until a blank line."""
+    lists them one per line as "- <name> (<id>)" until a blank line, and the
+    last line when it is not an entry (the count of the rest), else None."""
     lines = explanation.splitlines()
     if "### Matching Phenotypes" not in lines:
-        return []
-    section = itertools.takewhile(
+        return [], None
+    section = list(itertools.takewhile(
         bool, lines[lines.index("### Matching Phenotypes") + 1:]
-    )
-    return [re.fullmatch(r"- .+ \((HP:\d{7})\)", line).group(1) for line in section]
+    ))
+    more = section.pop() if section and not _ENTRY.fullmatch(section[-1]) else None
+    return [_ENTRY.fullmatch(line).group(1) for line in section], more
 
 
 #: What a request for SEIZURE, ATAXIA and DELAY matches, by disease.
@@ -174,15 +181,75 @@ def test_the_matches_come_from_the_list_as_used(pipeline):
     assert _matches(result)[str(D2)] == [ATAXIA]
 
 
-def test_the_explanation_lists_exactly_the_field(pipeline):
+def test_the_explanation_lists_all_of_a_field_of_ten_or_fewer(pipeline):
     result = _run(pipeline, [DELAY, ATAXIA, SEIZURE, ATAXIA], include_explanations=True)
 
     assert result.candidates
     for candidate in result.candidates:
-        assert _listed_in_explanation(candidate.explanation) == (
-            candidate.matching_phenotypes
+        assert _matching_section(candidate.explanation) == (
+            candidate.matching_phenotypes, None
         ), candidate.disease_id
     assert _matches(result)[str(D1)] == [ATAXIA, SEIZURE]
+
+
+#: A disease annotated directly with every phenotype it is built with.
+D_MANY = NodeID(source=DataSource.MONDO, local_id="MONDO:0000004")
+
+
+def _kg_annotating(phenotypes):
+    from src.kg import KnowledgeGraph
+
+    kg = KnowledgeGraph()
+    kg.add_node(Node(id=D_MANY, node_type=NodeType.DISEASE, name="many",
+                     data_sources={DataSource.MONDO}))
+    for hpo_id in phenotypes:
+        node_id = NodeID(source=DataSource.HPO, local_id=hpo_id)
+        kg.add_node(Node(id=node_id, node_type=NodeType.PHENOTYPE, name=f"Term {hpo_id}",
+                         data_sources={DataSource.HPO}))
+        kg.add_edge(Edge(source_id=node_id, target_id=D_MANY,
+                         edge_type=EdgeType.PHENOTYPE_OF_DISEASE, weight=0.9))
+    return kg
+
+
+#: Twelve terms, requested in an order that is not the ids' own.
+_TWELVE = [f"HP:{n:07d}" for n in range(3012, 3000, -1)]
+
+
+@pytest.mark.parametrize("count, more", [
+    (10, None), (11, "- …and 1 more"), (12, "- …and 2 more"),
+])
+def test_the_explanation_lists_the_first_ten_of_the_field_and_how_many_more(count, more):
+    """A request carries up to 100 phenotypes and the field every match; the
+    section lists the first ten in the field's order, then says how many it
+    left out, rather than cutting the list without a word."""
+    from src.inference.pipeline import DiagnosisPipeline
+
+    requested = _TWELVE[:count]
+    result = _run(DiagnosisPipeline(kg=_kg_annotating(requested)), requested,
+                  include_explanations=True)
+
+    (candidate,) = [c for c in result.candidates if c.disease_id == D_MANY]
+    assert candidate.matching_phenotypes == requested
+    assert _matching_section(candidate.explanation) == (requested[:10], more)
+
+
+def test_the_evidence_summary_holds_the_first_ten_with_no_marker():
+    """The structured summary keeps its documented cap and adds no "…and N
+    more" entry, since a program reads each entry as a phenotype; the field
+    holds them all."""
+    kg = _kg_annotating(_TWELVE)
+    candidate = DiagnosisCandidate(
+        rank=1, disease_id=D_MANY, disease_name="many", confidence_score=0.5,
+        gnn_score=0.0, reasoning_score=0.5,
+    )
+
+    summary = ExplanationGenerator().generate_evidence_summary(
+        candidate, kg, phenotypes=PatientPhenotypes(patient_id="f6", phenotypes=_TWELVE)
+    )
+
+    assert summary.matching_phenotypes == [
+        f"Term {hpo_id} ({hpo_id})" for hpo_id in _TWELVE[:10]
+    ]
 
 
 # ------------------------------------------------------------------ the API

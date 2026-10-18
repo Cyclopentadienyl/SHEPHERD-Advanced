@@ -421,8 +421,10 @@ def _refuse_phenotype_repeats(path: Path, samples: List[Any], identity: ReadIden
         if repeats:
             raise UnparseableFile(
                 f"{path}: sample {index} (patient {sample.patient_id!r}) is not in "
-                f"phenotype normal form: its phenotype_ids repeat an id already listed "
-                f"{repeats} {'time' if repeats == 1 else 'times'} (rule version "
+                f"phenotype normal form: {repeats} "
+                f"{'entry' if repeats == 1 else 'entries'} of its phenotype_ids "
+                f"{'repeats' if repeats == 1 else 'repeat'} an id listed earlier in "
+                f"the case (rule version "
                 f"{PHENOTYPE_NORMALISATION_VERSION}: each phenotype once, first occurrence "
                 "kept). A stored file is refused rather than normalised on read, because "
                 "its digest is what a run records. Rebuild it with its producer: "

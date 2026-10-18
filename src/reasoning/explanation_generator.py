@@ -91,7 +91,7 @@ class EvidenceSummary:
     ortholog_evidence: List[EvidenceItem] = field(default_factory=list)
     literature_evidence: List[EvidenceItem] = field(default_factory=list)
 
-    matching_phenotypes: List[str] = field(default_factory=list)
+    matching_phenotypes: List[str] = field(default_factory=list)  # the first ten
     key_genes: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -124,8 +124,9 @@ def find_matching_phenotypes(
 
     **One definition for the candidate field and the explanation.** The pipeline
     fills `DiagnosisCandidate.matching_phenotypes` with this, and the
-    explanation's "Matching Phenotypes" section lists the same ids (the first
-    ten), so the field and the explanation cannot disagree.
+    explanation's "Matching Phenotypes" section lists the first ten of the same
+    ids, in the same order, then how many more the field holds: the section is
+    cut for reading, never silently.
 
     A phenotype matches when the graph has a `phenotype_of_disease` edge from
     that exact term to the disease. An ontology ancestor or descendant of an
@@ -182,6 +183,10 @@ class ExplanationGenerator:
     HIGH_CONFIDENCE_THRESHOLD = 0.7
     MEDIUM_CONFIDENCE_THRESHOLD = 0.4
 
+    # Matching phenotypes listed by name in the explanation and the evidence
+    # summary; `DiagnosisCandidate.matching_phenotypes` carries all of them.
+    MATCHING_PHENOTYPES_LISTED = 10
+
     def __init__(
         self,
         include_ortholog_evidence: bool = True,
@@ -237,8 +242,13 @@ class ExplanationGenerator:
         )
         if matching:
             sections.append("### Matching Phenotypes")
-            for pheno_id, pheno_name in matching[:10]:
+            for pheno_id, pheno_name in matching[: self.MATCHING_PHENOTYPES_LISTED]:
                 sections.append(f"- {pheno_name} ({pheno_id})")
+            # A cut list must say it was cut: the field, and the WebUI's CSV
+            # from it, carry every match.
+            unlisted = len(matching) - self.MATCHING_PHENOTYPES_LISTED
+            if unlisted > 0:
+                sections.append(f"- …and {unlisted} more")
             sections.append("")
 
         # Key genes
@@ -300,6 +310,11 @@ class ExplanationGenerator:
         """
         Generate a structured evidence summary.
 
+        Its lists are capped. `matching_phenotypes` holds the first ten
+        matches, as "name (id)" in the field's order, with no "…and N more"
+        entry as the explanation has: a program reads every entry as a
+        phenotype. `DiagnosisCandidate.matching_phenotypes` holds them all.
+
         Args:
             candidate: Diagnosis candidate
             kg: Knowledge graph
@@ -340,7 +355,8 @@ class ExplanationGenerator:
                 candidate.disease_id, phenotypes, kg
             )
             summary.matching_phenotypes = [
-                f"{name} ({pid})" for pid, name in matching[:10]
+                f"{name} ({pid})"
+                for pid, name in matching[: self.MATCHING_PHENOTYPES_LISTED]
             ]
 
         # Find key genes

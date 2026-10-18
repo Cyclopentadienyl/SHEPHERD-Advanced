@@ -1906,11 +1906,16 @@ def _served_path_updates(status_data: Dict[str, Any]) -> Tuple[Dict[str, Any], D
     preferences rather than the served paths, pressing it could switch the
     service to another workspace than the one it was serving. With a pipeline
     loaded they name what it was built from, an automatically chosen checkpoint
-    included, so Reload reloads exactly that; clearing the Checkpoint field asks
-    for automatic selection again. With nothing loaded, or no status read, both
-    are left alone: the saved preferences stand, and an unreadable status says
-    nothing about what is served. A path the status did not report leaves its
-    field alone too.
+    included, so when a checkpoint file is served from a workspace Reload
+    reloads exactly that; clearing the Checkpoint field asks for automatic
+    selection again. Otherwise Reload cannot rebuild what is served: with no
+    checkpoint served the Checkpoint field is blank, so Reload selects one
+    automatically (serving a GNN checkpoint where none was served, or refused
+    when the workspace holds no run); after a start from `SHEPHERD_KG_PATH`
+    alone Data Directory is blank, and Reload needs a workspace typed. With
+    nothing loaded, or no status read, both are left alone: the saved
+    preferences stand, and an unreadable status says nothing about what is
+    served. A path the status did not report leaves its field alone too.
     """
     if not status_data.get("initialized", False):
         return gr.update(), gr.update()
@@ -1959,6 +1964,12 @@ def _on_reload_pipeline(
         # status naming the new checkpoint over the previous one's records
         # would be the one thing this block must never show.
         status_md = _status_with_recorded_results(status)
+        # How the checkpoint was chosen (auto must not be opaque). Its path is
+        # on the status's served-paths line, the same string as the response's
+        # `checkpoint_path`, so it is not named a second time.
+        sel_reason = result.get("selection_reason")
+        if sel_reason:
+            status_md += f"\n\n<sub>Checkpoint selection: {sel_reason}</sub>"
         fields = _served_path_updates(status)
         if status.get("initialized") and not status.get("gnn_ready"):
             # Attached to the load action rather than to the status renderer:
@@ -1967,14 +1978,6 @@ def _on_reload_pipeline(
             gr.Warning(GNN_UNAVAILABLE_TOAST, duration=20)
     else:
         status_md = f"❌ {result.get('message', 'Unknown error')}"
-
-    # Which checkpoint was actually loaded (auto must not be opaque).
-    sel_path = result.get("checkpoint_path")
-    sel_reason = result.get("selection_reason")
-    if sel_path:
-        status_md += f"\n\n**Loaded checkpoint:** `{sel_path}`"
-        if sel_reason:
-            status_md += f"  \n<sub>{sel_reason}</sub>"
 
     # Format file check results
     files = result.get("files_found", {})
