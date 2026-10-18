@@ -5,7 +5,7 @@ import argparse, json, os, platform, subprocess, sys, textwrap, threading, time,
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import shlex
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 from urllib.error import URLError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # scripts/launch -> scripts -> REPO_ROOT
@@ -33,6 +33,15 @@ def log(msg: str) -> None:
 def run(cmd: List[str], check: bool = False) -> subprocess.CompletedProcess:
     log("$ " + " ".join(cmd))
     return subprocess.run(cmd, check=check)
+
+# No proxy, the environment's or the Windows system one: an operator's
+# http_proxy (the deployment guide sets one for downloads) would take the
+# loopback /health poll, and no_proxy=localhost does not cover 127.0.0.1.
+_LOCAL_OPENER = build_opener(ProxyHandler({}))
+
+def urlopen(url: str, timeout: float):
+    """Open ``url`` on this host's own server, never through a proxy."""
+    return _LOCAL_OPENER.open(url, timeout=timeout)
 
 def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0) -> None:
     """Poll ``health_url`` until it answers, then open ``url`` once.

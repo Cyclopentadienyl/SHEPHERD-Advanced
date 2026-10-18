@@ -61,6 +61,7 @@ import argparse
 import copy
 import json
 import logging
+import os
 import platform
 import re
 import sys
@@ -1129,16 +1130,47 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if inputs.version is None:
             print(f"\nReport: {report_path}\n")
-            return 0
-        _print_registered_summary(inputs, result, run_id, report_path)
-        if args.record:
-            return _register(report_path, report_sha256, inputs)
-        measured = Path(inputs.checkpoint.identity.path)
-        print("\nNot registered (no --record). Register it with:\n"
-              f"  {register_later_command(report_path, measured)}\n")
-        return 0
+            status = 0
+        else:
+            _print_registered_summary(inputs, result, run_id, report_path)
+            if args.record:
+                status = _register(report_path, report_sha256, inputs)
+            else:
+                measured = Path(inputs.checkpoint.identity.path)
+                print("\nNot registered (no --record). Register it with:\n"
+                      f"  {register_later_command(report_path, measured)}\n")
+                status = 0
+        # **Flushed here**: on a pipe or a file stdout is buffered, and a closed
+        # console would otherwise fail only when the interpreter flushes at exit,
+        # outside this handler.
+        sys.stdout.flush()
+        return status
     except (ValueError, OSError) as exc:
         raise _failure_after_publishing(exc, inputs, report_path) from exc
+
+
+def _settle_stdout() -> None:
+    """Flush stdout, or point it at the null device when it cannot be written.
+
+    Python flushes stdout once more at exit, outside every handler: output
+    still buffered for a closed console fails there, prints "Exception ignored
+    ... BrokenPipeError", and exit 120 replaces the status returned. The
+    redirect is the recipe in Python's note on SIGPIPE. **Only a stdout that
+    failed is redirected**: one that still works (a registration raised, stdout
+    on a file) is flushed instead, so the summary buffered in it is kept, ahead
+    of the failure's line. A stdout with no file descriptor (an in-process
+    caller's capture) is left as it is.
+    """
+    try:
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        try:
+            fd = sys.stdout.fileno()
+        except (OSError, ValueError):  # io.UnsupportedOperation is both
+            return
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, fd)
+        os.close(devnull)
 
 
 def _run_as_program(argv: Optional[List[str]] = None) -> int:
@@ -1170,6 +1202,7 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
               file=sys.stderr)
         return 1
     except FailedAfterPublishing as exc:
+        _settle_stdout()
         print(f"measure_scorer: measured, but the run did not finish: {exc}", file=sys.stderr)
         return 1
     except (ValueError, OSError) as exc:

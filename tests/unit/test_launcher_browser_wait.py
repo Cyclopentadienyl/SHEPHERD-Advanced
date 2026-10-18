@@ -6,13 +6,18 @@ about 84 s, so the browser never opened (BACKLOG 17, F7). uvicorn binds only
 after the lifespan, where that load runs, so the first `/health` answer is the
 end of startup and there is no deadline to guess.
 
-Nothing here waits or opens a socket. The launcher's own `time`, `urlopen` and
-`webbrowser` names are replaced by a simulated clock and recorders, and the
-poll runs in the test's thread, not in a real daemon thread. A poll that would
-not end on its own is ended by the simulated clock raising.
+Nothing here waits, and only the last test opens a socket. The launcher's own
+`time`, `urlopen` and `webbrowser` names are replaced by a simulated clock and
+recorders, and the poll runs in the test's thread, not in a real daemon thread.
+A poll that would not end on its own is ended by the simulated clock raising.
+The last test keeps the real `urlopen` and polls a real loopback server with a
+proxy set in the environment: the poll must reach the server, not the proxy.
 """
+import http.server
 import importlib.util
 import re
+import threading
+import time
 import types
 from pathlib import Path
 from urllib.error import URLError
@@ -144,3 +149,49 @@ def test_it_does_not_open_while_health_never_answers(monkeypatch, capsys):
     assert "opening browser" not in out
     assert "WARNING" not in out
     assert len(PROGRESS.findall(out)) == hours // 30 - 1
+
+
+class _Health(http.server.BaseHTTPRequestHandler):
+    """Answers every GET with 200, recording its path on the server."""
+
+    def do_GET(self):
+        self.server.paths.append(self.path)
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def _first_attempt_only(seconds):
+    raise _SimulationEndedError("the first /health attempt did not answer")
+
+
+def test_the_poll_reaches_the_local_server_past_an_operators_proxy(monkeypatch, capsys):
+    # The deployment guide sets http_proxy for downloads. Through it the poll
+    # never reached the server: "still starting" for the server's whole life,
+    # and no browser. Port 9 (discard) is a proxy that answers nothing, and
+    # with no no_proxy nothing exempts 127.0.0.1.
+    for name in ("http_proxy", "HTTP_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Health)
+    server.paths = []
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    launcher = _launcher()
+    opened = []
+    monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(open=opened.append))
+    clock = types.SimpleNamespace(monotonic=time.monotonic, sleep=_first_attempt_only)
+    monkeypatch.setattr(launcher, "time", clock)
+    try:
+        launcher._open_browser_when_ready(f"{base}/ui", f"{base}/health")
+    finally:
+        server.shutdown()
+        server.server_close()
+        serving.join(timeout=5)
+    assert opened == [f"{base}/ui"]
+    assert server.paths == ["/health"]
+    assert "Server still starting" not in capsys.readouterr().out

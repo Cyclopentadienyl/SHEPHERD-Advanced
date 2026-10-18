@@ -11,7 +11,8 @@ the tests and the deployment probe that call it in process; the script's entry
 - a publication failure, after the first write may have happened, says what
   may be on disk and never that nothing was written; `create_report_dir`'s own
   refusal keeps its own text, which says what it created; a failure after the
-  report was written names it;
+  report was written names it, also when the console closed under a buffered
+  stdout (exit 1, not Python's exit 120 at shutdown);
 - the command line (exit 2), the device check (now `--device cuda` without
   CUDA too, before anything is read) and a refused registration (exit 3) pass
   through as they were, and so does anything else: an out-of-memory error keeps
@@ -20,7 +21,7 @@ the tests and the deployment probe that call it in process; the script's entry
   naming the file, as the graph readers name a tensor file; a failed allocation
   and the device's own errors are not converted.
 
-One subprocess run pins the `__main__` wiring.
+Two subprocess runs pin the `__main__` wiring and the closed console.
 
 Module: tests/unit/test_measure_scorer_program.py
 """
@@ -28,9 +29,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import errno
 import inspect
 import io
+import os
 import re
 import subprocess
 import sys
@@ -49,6 +52,7 @@ from tests.fixtures.synthetic_workspace import build_workspace  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFUSED = "measure_scorer: refused: "
 NOT_WRITTEN = "measure_scorer: measured, but the report was not written: "
+NOT_FINISHED = "measure_scorer: measured, but the run did not finish: "
 LEDGER = "evaluations.json"
 
 
@@ -358,7 +362,7 @@ def test_a_failure_after_the_report_was_written_says_where_it_is(cli, cohort, mo
     assert cli._run_as_program(_registered(cohort, "--record")) == 1
 
     err = capsys.readouterr().err
-    line = _one_line(err, "measure_scorer: measured, but the run did not finish: ")
+    line = _one_line(err, NOT_FINISHED)
     (report,) = (cohort.version.directory / "reports").glob("*/report.json")
     assert f"The report was written: {report}." in line
     assert f'record_evaluation.py --report "{report}"' in line
@@ -367,6 +371,35 @@ def test_a_failure_after_the_report_was_written_says_where_it_is(cli, cohort, mo
     with pytest.raises(cli.FailedAfterPublishing) as failed:
         cli.main(_registered(cohort))
     assert isinstance(failed.value.__cause__, BrokenPipeError)
+
+
+@pytest.mark.parametrize("reader", ["gone", "reading"])
+def test_after_publishing_only_a_stdout_that_failed_is_redirected(cli, monkeypatch, reader):
+    """stdout here is a real, buffered pipe. Its reader gone, it is pointed at
+    the null device, so the interpreter's last flush (the write after the
+    return) cannot fail and turn exit 1 into 120. Its reader still there, as
+    when a registration raised with stdout on a file, it first gets what it
+    buffered: an unconditional redirect would throw the summary away."""
+    read_end, write_end = os.pipe()
+    if reader == "gone":
+        os.close(read_end)
+
+    def summary_then_failure(argv):
+        print("the summary")
+        raise cli.FailedAfterPublishing("The report was written: r.json.")
+
+    monkeypatch.setattr(cli, "main", summary_then_failure)
+    stdout = open(write_end, "w", encoding="utf-8")  # buffered, as a pipe is
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        assert cli._run_as_program([]) == 1
+    stdout.write("at exit\n")
+    stdout.close()
+
+    assert stderr.getvalue() == f"{NOT_FINISHED}The report was written: r.json.\n"
+    if reader == "reading":
+        assert os.read(read_end, 4096) == b"the summary\nat exit\n"
+        os.close(read_end)
 
 
 # ---------------------------------------------------------------------------
@@ -483,3 +516,33 @@ def test_run_as_a_program_a_refusal_prints_no_traceback(tmp_path):
     assert "'test' is not one of the generator's splits" in line
     assert line.endswith("Nothing was written.")
     assert not output.parent.exists()
+
+
+def test_run_as_a_program_a_closed_console_after_publication_names_the_report(
+    workspace, tmp_path
+):
+    """stdout on a pipe whose reader is gone (a `tee` that died with its SSH
+    session), buffered as an operator's is: no PYTHONUNBUFFERED, which this
+    sandbox sets. The summary used to sit in the buffer until the interpreter's
+    exit, which printed "Exception ignored ... BrokenPipeError" and exited 120,
+    with no line naming the report."""
+    data_dir, checkpoint = workspace
+    output = tmp_path / "out" / "measurement.json"
+    env = {name: value for name, value in os.environ.items() if name != "PYTHONUNBUFFERED"}
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "measure_scorer.py"),
+             *_generated(data_dir, checkpoint, output)],
+            cwd=str(REPO_ROOT), env=env, stdout=write_end, stderr=subprocess.PIPE,
+            text=True, timeout=300,
+        )
+    finally:
+        os.close(write_end)
+
+    assert completed.returncode == 1, completed.stderr
+    line = _one_line(completed.stderr, NOT_FINISHED)
+    assert line.endswith(f"The report was written: {output}.")
+    assert "Exception ignored" not in completed.stderr
+    assert output.is_file()
