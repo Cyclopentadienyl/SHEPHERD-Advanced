@@ -3513,7 +3513,12 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
     `--show --checkpoint-dir DIR` reads DIR's own;
   - `measure_scorer.py` exits 3 when it measured and kept a report whose `--record` was refused.
     A check refusal still raises a `ValueError` (a traceback ending in one message, exit 1), as
-    before M4;
+    before M4. *Superseded by BACKLOG 26 (2026-10-18):* run as a program, a refusal prints one
+    message, saying nothing was written, with exit 1 and no traceback (`_run_as_program`);
+    `main` still raises it, typed, for the tests and the probe. A report that could not be
+    written exits 1 with a message saying what may be on disk (a run that fails after writing
+    it, with one naming it), and `--device cuda` without CUDA is refused before anything is
+    read;
   - `audit_split_overlap.py`: `--evaluation-cohort-kind` is removed, `--splits` beside
     `--cohort` and `--registry` without `--cohort` (or the reverse) are refused as argument
     errors (exit 2), and its report schema is 6;
