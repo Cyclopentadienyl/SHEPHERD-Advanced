@@ -3,7 +3,8 @@
 **Status: revision 2. N1 is implemented, code-reviewed with no P1 or P2, and passed a GPU smoke
 test on the homelab at `af49bd3`** (2026-10-07; §8, "What N1 did" and "N1's acceptance on the
 homelab"). **N2 is implemented on the development branch without its manifest field
-(2026-10-18, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged):** the shared reader refuses a stored case
+(2026-10-18, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19),
+not merged):** the shared reader refuses a stored case
 that is not in normal form, and the generator applies the rule; the split
 manifest's `phenotype_normalisation` is deferred to the next split-manifest schema change or the
 first change of the rule's version (§6; §8, N2, "As implemented"). It was not implemented by the

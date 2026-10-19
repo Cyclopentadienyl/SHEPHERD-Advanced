@@ -1257,6 +1257,19 @@ The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 abov
 contract and BACKLOG stay the record, and no new planning document is added.
 
 - **Deployment:** mode M1 (§4.9 question 3; D8 above).
+- **Several frontends stay possible** (the reviewer's advice on the owner's question, relayed by
+  the owner, 2026-10-19). M5 is built for mode M1 and opens nothing on the LAN, but keeps the
+  architecture able to serve several frontends through the shared API from one inference
+  backend:
+  - every frontend reaches the one real pipeline through the shared API: no local-only or
+    LAN-only inference, and nothing that assumes a single browser;
+  - a case, its result and its exports belong to their own request or session, never to a
+    global "current patient" or "latest result". A random session id separates requests;
+    it is not access isolation and is never claimed as such;
+  - administrative operations are restricted in the backend, never only by hiding controls;
+  - each diagnosis uses one consistent pipeline and identity: a reload never mixes two models
+    within a running request, and never rewrites a produced result's served identity.
+  LAN inference itself is BACKLOG item 28.
 - **Scope (steps 5–7):**
   - **one job runner**, reshaped from `training_manager`, for training and tests alike; a test
     runs the real `measure_scorer`, never a second evaluator;
