@@ -203,6 +203,13 @@ decision. **Do not keep shipping a known-broken service unit while a bind decisi
 | C1 | Correct the **host values** in `setup_demo.py` (the `0.0.0.0` commands and the contradictory line 29), `src/api/__init__.py`, and the systemd unit |
 | C2 | Document the actual deployment contract; withdraw the concurrency-safety claim wherever it appears |
 
+**Decided 2026-10-19** (the reviewer's decisions, relayed by the owner, 2026-10-19; `PLAN_TEST_RESULTS.md` §4.9 question 3 and §6,
+"M5's boundaries"): M5's first version runs under M1, and **B1 is taken: the bind defaults to
+`127.0.0.1`**. Another address stays possible by explicit configuration under §3.1, never
+lifting the operator controls' checks (D8); deployments that relied on the old default get
+migration notes. LAN inference for several frontends is kept possible, not built (BACKLOG item
+28). The question below is the record as it stood.
+
 **One operational answer decides group B:** *does anyone reach the WebUI by the server's LAN address
 rather than through SSH?*
 
@@ -222,11 +229,22 @@ or synchronisation contract in the module. **Concurrency safety is unverified.**
 with an in-flight diagnosis has no defined behaviour. Any multi-user deployment requires an explicit
 concurrency model — locking or serialised execution — plus load testing.
 
+*Observed 2026-10-19 (the multi-frontend audit for M5, BACKLOG item 28):* the routes are `async`
+and call the pipeline on the event loop, so two diagnoses never overlap and a reload waits behind
+a diagnosis; a running diagnosis keeps the pipeline and identity it started with. That is
+serialisation by a blocked event loop, not a bounded queue: nothing reports busy or bounds the
+wait, and `/health` stalls meanwhile. The bounded queue and a reload-while-busy rule are BACKLOG
+item 28's, before any LAN opening. Managed training and evaluation jobs share one GPU lock
+(`PLAN_TEST_RESULTS.md` §6); inference is not scheduled by it.
+
 ---
 
 ## 6. Multi-user target state (P4) — not designed here
 
-Recorded so the answer is not re-derived, not to be built.
+Recorded so the answer is not re-derived, not to be built. *Since 2026-10-19:* BACKLOG item 28
+records LAN inference for several frontends as kept possible (inference apart from management, a
+candidate first version, the acceptance before opening), and `PLAN_TEST_RESULTS.md` §6 the
+boundaries M5 keeps for it.
 
 The front/back boundary is already HTTP: the WebUI calls the API rather than importing the pipeline
 (`src/webui/components/diagnosis_panel.py:18, 116-117`), which makes separate deployment tractable.

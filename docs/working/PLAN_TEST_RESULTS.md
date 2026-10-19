@@ -28,6 +28,13 @@ changes a default without adding a second path.
 - §2.1's ledger location follows the run layout; citations in the sections touched name
   functions rather than lines.
 
+**Amended 2026-10-19, later:** the reviewer's six decisions, relayed by the owner: D8 gates every
+administrative operation, training start and stop included, with no exceptions left; ordering by
+test score is answered (§4.9 question 1); import sources come from a server intake directory
+(D7); registration takes reports from the registry's report store only (D5); and §6, "M5's
+boundaries", adds the loopback default bind and one GPU lock for managed training and
+evaluation jobs.
+
 **Amended 2026-10-19:** §4.9 question 3 is answered (deployment mode M1), and §6 records M5's
 boundaries ("M5's boundaries"), both from the reviewer's M5 boundaries as the owner relayed
 them; N2's bullet in §4.9 records the reviewer's review of batch B (no P1 or P2).
@@ -549,6 +556,16 @@ The owner's semantics, followed as stated:
   the Test tab, as a **whole report**.
 - **"By hand" means choosing which report, never what it says.** No metric is typed, edited or
   copied in by hand.
+- **Registration takes a report from the registry's report store only** (the reviewer's decisions, relayed by the owner, 2026-10-19).
+  Checking for disagreeing reports under the key needs the store, which an outside copy cannot
+  give, so `--record`, the Test tab and `record_evaluation.py --report` all go through the one
+  registration function on a report the store holds. Its place in the store is not taken as
+  proof: the source is located through the registry's own structure and refused when that
+  cannot be established, never guessed and never falling back to a copy; the digest,
+  checkpoint and cohort checks all stay; and a registry moved as a whole still works, so no
+  original absolute path becomes a permanent identity. A copy can still be shared and read; it
+  is not an entry point for registration. No database, signature or second writer is added.
+  This narrows M4's `record_evaluation.py --report`, which accepted a report anywhere.
 - **No status gate.** Revision 1 required a candidate→baseline promotion before recording; that
   is dropped. A cohort version is usable once it is imported and verified. "Baseline" may be
   shown as a label. Setting it writes no data and clears no usage history.
@@ -702,6 +719,15 @@ two about the data (questions 3 and 4).
   are the source file, the mapped samples, and the per-patient rank and prediction files.
 - **The UI shows aggregate metrics only.** The import preview lists excluded cases by their
   case identifier only, on the machine.
+- **Sources come from a server intake directory** (the reviewer's decisions, relayed by the owner, 2026-10-19). The operator places a
+  `shepherd-cases/1` file in it and chooses it from the Test tab's list; the same importer
+  previews and commits it. The intake directory and the registry are both outside the
+  repository and set by server configuration; the backend checks the chosen file again and
+  refuses any other path or a link that leaves the directory. The browser preview shows only
+  the exclusion reasons and their counts; the per-case exclusion detail stays in a controlled
+  record on the machine, for troubleshooting. **No browser upload in M5:** that is this
+  round's scope, not a judgement that an upload is unsafe; it would later feed the same
+  importer once a controlled staging area and its cleanup exist (BACKLOG item 25).
 - **They are stored outside the repository tree**, at a path set by server configuration and
   never by a request (SPEC_4: a client-supplied path is not trusted). *As implemented in M4:*
   phase 1 is CLI only, so the registry is the operator's `--registry DIR` on the machine: an
@@ -786,6 +812,20 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   - **the Training Console's resume dropdown** calls the same listing function (§6 step 5) and
     stays ungated with the rest of the Console. It is a C3 listing outside D8 until SPEC_4's
     C3 and C4 are addressed.
+- **Since 2026-10-19 there are no such exceptions** (the reviewer's decisions, relayed by the owner, 2026-10-19). Administrative
+  operations are restricted in the backend (§6, "M5's boundaries"), so one check covers, in M5:
+  - import, test start, registration and the checkpoint list, as above;
+  - **training start and stop**, through the Training Console, the API routes and the Gradio
+    events alike; the stop stays per job type;
+  - **the operations the multi-frontend audit found ungated:** pipeline reload, the UI
+    configuration save, Runtime Settings' restart and apply, the training-path save, and
+    loading a model from Model Management;
+  - the Training Console's workspace comes from the server's list; a parent checkpoint for
+    resume or extend, if still typed, only locates an item the server lists and is checked
+    like the rest. The CLI keeps its typed paths: it runs on the machine.
+  The check reads the triggering request's own arrival: a WebUI handler that reaches the API
+  through a loopback self-call is checked in the handler, never by the API's view of that
+  self-call.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
 machine where the controls are enabled. *Answered 2026-10-19:* deployment mode M1, operated by
@@ -804,7 +844,19 @@ gates phase 2; question 4 is answered:
    - For the institutional cohort: which metrics, and which acceptance rule, are declared
      before the first result (EC §4.1)? **Open, and not an engineering question:** it is the
      institution's, and it is declared before the first institutional result.
-   - Is ordering by its score offered (D4)? Phase 2.
+   - Is ordering by its score offered (D4)? Phase 2. **Answered 2026-10-19** (the reviewer's decisions, relayed by the owner, 2026-10-19):
+     - a cohort version whose declared purpose is exploration, comparison and model selection
+       offers ordering; the purpose is its role, never inferred from the source's name;
+     - `institutional_acceptance` does not, until the institution's formal evaluation rules
+       exist;
+     - only records of one cohort version with comparable scoring semantics are ordered
+       together, and a contested record (D5) is left out;
+     - "Load this model" from that list is offered, gated by D8 and recorded in the usage
+       history; no model is ever chosen automatically by its test score;
+     - **a cohort whose scores were used to choose a model has taken part in model selection**,
+       so it is no longer an independent final test for that model; a manual choice is no
+       different, and its record in the usage history does not undo that. The UI says so where
+       ordering is offered.
 2. **The data.**
    - The actual file formats: M4 question 5 below.
    - D6's exclusion rules: a case with some lost phenotype terms (M4 question 1), and whether
@@ -1257,6 +1309,20 @@ The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 abov
 contract and BACKLOG stay the record, and no new planning document is added.
 
 - **Deployment:** mode M1 (§4.9 question 3; D8 above).
+- **The default bind is `127.0.0.1`** (the reviewer's decisions, relayed by the owner, 2026-10-19; SPEC_4 B1, §3.1). Another address
+  stays possible by explicit configuration, under SPEC_4's rules, and never lifts D8's checks on
+  operator controls; a deployment that relied on the old `0.0.0.0` default gets migration notes.
+  No account system or institutional SSO is added.
+- **One GPU lock for managed training and evaluation jobs** (the reviewer's decisions, relayed by the owner, 2026-10-19). Jobs the
+  WebUI or the API start and the formal training and evaluation CLIs (`train_model.py`,
+  `measure_scorer.py`) take the same lock, one per deployment whatever the workspace; a busy
+  lock is refused with who holds it, never queued. The lock covers the working process's whole
+  life, with tests for a stop, an abnormal exit and a parent and child process. What is claimed
+  is exactly that: managed training and evaluation jobs exclude each other. `flock` is
+  released only when every descriptor of its file is closed, which a child can inherit, and it
+  is cooperative, so a GPU process that does not take it is not stopped; the resident
+  inference service may still hold memory. No cross-process inference scheduling, multi-GPU
+  allocation or automatic model unloading is added.
 - **Several frontends stay possible** (the reviewer's advice on the owner's question, relayed by
   the owner, 2026-10-19). M5 is built for mode M1 and opens nothing on the LAN, but keeps the
   architecture able to serve several frontends through the shared API from one inference

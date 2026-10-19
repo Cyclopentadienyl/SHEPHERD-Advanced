@@ -3683,7 +3683,9 @@ deployment mode M1 under SPEC_4/D8, §4.9 question 3):
 **Training start's explicit `checkpoint_dir`** is honoured verbatim today. **Superseded by M3a-2
 (2026-10-15):** every run writes into its own run directory, the listing moves with it, and an
 explicitly given output path obeys the same protection. What phase 2 adds here is the network-side
-restriction of the operations that start training.
+restriction of the operations that start training. *Since 2026-10-19* that is D8's one check,
+which gates training start and stop like the test controls, with no exception left
+(`PLAN_TEST_RESULTS.md` D8).
 
 ### Not prerequisites
 
