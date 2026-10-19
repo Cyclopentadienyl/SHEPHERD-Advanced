@@ -3672,7 +3672,8 @@ incremental review's P3 fixed.
 
 ### M5 — item 14, phase 2
 
-All of it is in `PLAN_TEST_RESULTS.md`:
+All of it is in `PLAN_TEST_RESULTS.md` (its §6, "M5's boundaries", since 2026-10-19, with
+deployment mode M1 under SPEC_4/D8, §4.9 question 3):
 - the Test tab;
 - the job runner, with progress and cancellation;
 - the model list;
@@ -3825,7 +3826,7 @@ evidence.
     the source bytes verbatim and records the rule's version and its counts in the version
     manifest;
   - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
-    batch B; awaiting review, not merged): the generator applies the rule,
+    batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged): the generator applies the rule,
     and the shared reader refuses a stored case that is not in normal form, as a file that does
     not parse. The workspace manifest's field is deferred to the next split-manifest schema
     change or the first change of the rule's version (`PLAN_PHENOTYPE_NORMALISATION.md` §6).

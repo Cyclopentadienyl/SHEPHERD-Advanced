@@ -3,7 +3,7 @@
 **Status: revision 2. N1 is implemented, code-reviewed with no P1 or P2, and passed a GPU smoke
 test on the homelab at `af49bd3`** (2026-10-07; §8, "What N1 did" and "N1's acceptance on the
 homelab"). **N2 is implemented on the development branch without its manifest field
-(2026-10-18, batch B; awaiting review, not merged):** the shared reader refuses a stored case
+(2026-10-18, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged):** the shared reader refuses a stored case
 that is not in normal form, and the generator applies the rule; the split
 manifest's `phenotype_normalisation` is deferred to the next split-manifest schema change or the
 first change of the rule's version (§6; §8, N2, "As implemented"). It was not implemented by the
@@ -660,6 +660,11 @@ compares the two.
 
       It prints both splits' sizes, or raises naming the first case with a repeat; such a
       workspace is rebuilt by its producer.
+    - **Confirmed on the homelab** (the reviewer, 2026-10-19, read-only, with this change's
+      `read_samples` at `2e099b6`): `hpo_2026_0929_5a`'s train split, 80,000 cases (SHA-256
+      `5d2f4936…a7d3`), and its val split, 15,000 cases (`27a28f3a…d48d`), both pass. That
+      shows these two files meet the reader's rule; it is not a provenance acceptance of the
+      workspace or a model. N2 needs no rebuild of them.
 - **The importer** applies it from its first version (item 14 phase 1, step 1). **Since the
   contract's M4** (implemented 2026-10-16, its functional acceptance passed, merged as #126):
   `map_cases` (`src/evaluation/cohort_registry.py`) maps HPO terms to phenotype nodes, then calls

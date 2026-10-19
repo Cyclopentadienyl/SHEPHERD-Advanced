@@ -8,7 +8,8 @@ review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acc
 the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
 contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
 institutional test. Merged into `main` by the owner (#126, `d2d31dd`, 2026-10-17). Phase 2 (M5)
-is not implemented. §4 lists the decisions; phase 1
+is not implemented; its boundaries are recorded (§6, "M5's boundaries", 2026-10-19), and it runs
+under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
@@ -26,6 +27,10 @@ changes a default without adding a second path.
   step 5).
 - §2.1's ledger location follows the run layout; citations in the sections touched name
   functions rather than lines.
+
+**Amended 2026-10-19:** §4.9 question 3 is answered (deployment mode M1), and §6 records M5's
+boundaries ("M5's boundaries"), both from the reviewer's M5 boundaries as the owner relayed
+them; N2's bullet in §4.9 records the reviewer's review of batch B (no P1 or P2).
 
 **Amended 2026-10-18, with N2:** §4.9, question 2, records N2 as implemented on the development
 branch without its manifest field (batch B; awaiting review, not merged): the shared reader
@@ -783,7 +788,8 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
     C3 and C4 are addressed.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
-machine where the controls are enabled.
+machine where the controls are enabled. *Answered 2026-10-19:* deployment mode M1, operated by
+the owner or a designated technician (§4.9).
 
 ### 4.9 What is asked of the owner
 
@@ -814,7 +820,7 @@ gates phase 2; question 4 is answered:
        (`mapping.phenotype_normalisation_version`) and its counts (`repeats_removed`,
        `cases_with_repeats`) in the version manifest;
      - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
-       BACKLOG item 16, batch B; awaiting review, not merged): the
+       BACKLOG item 16, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged): the
        generator applies the rule, and the shared reader refuses a stored samples file with a
        repeated phenotype, naming its producer. The workspace manifest's field is deferred to
        the next split-manifest schema change or the first change of the rule's version
@@ -828,6 +834,14 @@ gates phase 2; question 4 is answered:
      revision only deployment mode M1 enables them today: mode M3 does not unlock them, and
      mode M2 does not exist yet. These are SPEC_4's deployment modes (D8), not the contract's
      milestones.
+   - **Answered (2026-10-19; the reviewer's M5 boundaries, relayed by the owner):** M5's first
+     version runs under SPEC_4/D8's deployment mode **M1**: the owner or a designated
+     technician operates it, on the machine or through controlled SSH forwarding. The
+     institution's multi-user remote operation is planned separately, and this is not asked
+     again unless the deployment changes. D8's rules hold as written (the check in each
+     handler, on the triggering request's own arrival, never a loopback self-call made by the
+     WebUI; server-side lists; the named exceptions recorded as exceptions), and no claim is
+     made that the system's access control as a whole is complete.
 4. **Existing ledgers — answered by the owner's decision (contract §1, decision 2).**
    Old-pipeline artifacts are not supported. Any earlier `evaluations.json` (schema 1, or 2
    since R2) describes old-pipeline models, and is archived with them. Schema 3 starts clean
@@ -1236,6 +1250,85 @@ the GB10").
 
 D3's shared-scorer constraint goes to B-1's plan. Mode D and B-1 are separate items, and
 neither is a prerequisite here.
+
+### M5's boundaries (2026-10-19)
+
+The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 above; this plan, the
+contract and BACKLOG stay the record, and no new planning document is added.
+
+- **Deployment:** mode M1 (§4.9 question 3; D8 above).
+- **Scope (steps 5–7):**
+  - **one job runner**, reshaped from `training_manager`, for training and tests alike; a test
+    runs the real `measure_scorer`, never a second evaluator;
+  - **the Test tab** on M4's flow: the import preview and commit, the version choice, start,
+    progress, cancel, the report and registration;
+  - **Model Management** on the shared model list, keeping Trainer validation figures and each
+    cohort's Mode C results apart;
+  - **D4 and D5 as planned:** ordering, disagreement and contested states, usage history, the
+    deterministic-execution switch, with no change to scoring semantics;
+  - **the Diagnosis tab's integration:** the shared layout, the identity display and the
+    recorded results;
+  - **the Training Console:** only its move onto the job runner and what shared components
+    need, not a redesign of its forms.
+- **Layout and help** (BACKLOG item 27): in an ordinary window at normal text size, with no
+  details expanded, the main operations fit on one screen as far as possible, clear and
+  uncrowded. Text is never shrunk, content never clipped and warnings never hidden to avoid
+  scrolling. The layout follows the browser's usable width and height, not the monitor's
+  resolution.
+  - **Wide:** the Diagnosis tab is input, candidate list and the selected candidate's details;
+    selecting a candidate updates one fixed details area instead of adding content below.
+  - **Narrow or portrait:** candidates and details can be switched, and the necessary vertical
+    scrolling is allowed, without nested scroll containers.
+  - **Help:** an ordinary field's help sits behind one shared "i" control that works with the
+    mouse, the keyboard and a click, can be dismissed, and stays readable when the pointer
+    moves into the bubble. Long explanations go into the details area. A refusal's reason, a
+    job's state, a synthetic workspace and an unverified source stay visible as short text.
+- **The served identity is shown together, never merged.** The identity serving now and each
+  result's own identity are kept apart. One shared block shows a readable summary by default;
+  expanded, it shows either one in full, with its digests to copy. Beside a result, one of
+  three states:
+
+  | State | Shown as |
+  |---|---|
+  | The full identities are equal | The result's source is what is served now |
+  | They differ | The result came from an earlier pipeline; the differing parts can be viewed |
+  | What is served cannot be read | What is served cannot be checked yet |
+
+  The whole structure is compared, never a checkpoint or a short digest alone. A reload never
+  rewrites a result's source, and the CSV and Markdown exports always use the identity the
+  result kept. A status that could not be read, or is stale, never leaves "equal" showing; the
+  status is refreshed through the existing flow, with no second provenance system.
+- **Acceptance:**
+  - the UI and the CLI share the import, measurement, registration and provenance checks: no
+    second reader, scorer or ledger, and no fallback to the old pipeline;
+  - GPU jobs exclude each other; a stop affects only its job type; a failed or cancelled job is
+    never shown as a success;
+  - whether a report was kept and whether it was registered is said as the publication contract
+    defines, never inferred from the job's exit alone;
+  - a direct call to a gated API route or Gradio event meets the same D8 check;
+  - the chosen model and cohort are checked again by the provenance contract when the job
+    starts, never trusted from an earlier preview;
+  - after a model switch no other model's records show; validation, Mode C, coverage, R10 and
+    provenance states stay apart, and *unverifiable* is never shown as zero;
+  - "A produces a result, B is reloaded, A's result is viewed and exported" keeps A's source;
+  - the layout is checked landscape and portrait, at high DPI and zoom, with long disease names,
+    many results and warnings, recording the viewport and zoom used; neither content nor the
+    main operations are clipped.
+  The GPU acceptance uses the existing tools and a qualified model, centred on starting and
+  stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
+  memory investigation are not rerun unless a related regression appears.
+- **Two checkpoints:** the layout direction, confirmed once on a thin, operable prototype in the
+  existing Gradio, showing representative wide and narrow layouts and the identity switch (a
+  static image may help, but cannot stand in for zoom, scrolling and keyboard checks); then M5's
+  delivery for review, once. The owner asks for a mockup before UI work starts and screenshots
+  at its completion for acceptance (2026-10-19). Component choices, spacing and wording are
+  engineering's; a question is raised only for new product behaviour, a data-format or
+  compatibility change, going beyond the deployment boundary, or a conflict with a decision.
+- **Not in M5:** a new frontend framework, a site rewrite, a generic UI platform or job
+  scheduler; the institution's multi-user remote deployment, a reverse proxy, accounts and
+  permissions; real institutional data, MyGene2's terms, clinical metrics and acceptance
+  thresholds; a new scorer, Mode D or B-1, choosing a model by test score; branch training,
+  the AMP study, HGT Edit 2, other hardware backends and the memory attribution.
 
 ## 7. Out of scope
 
