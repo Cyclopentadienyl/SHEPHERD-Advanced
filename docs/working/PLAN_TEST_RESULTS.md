@@ -539,7 +539,9 @@ so the aim is to make that use visible and comparable, not to forbid it.
 
   Nothing removes an entry: not a rename, re-map, relabel or "baseline" label. The history
   makes use for selection visible; it does not pretend to prevent it.
-- **Per role.** Ordering is offered for research roles, MyGene2 among them. For the
+- **Per role.** Ordering is offered for research roles, MyGene2 among them. *Since 2026-10-19
+  (§4.9 question 1):* by the cohort version's declared purpose, its role, never by the source's
+  name; a MyGene2 cohort offers ordering only when its role declares that purpose. For the
   institutional acceptance role, ordering by its score *is* selecting by it.
   **Recommendation:** off by default there, unless the institution decides otherwise (§4.9
   question 1).
@@ -1348,7 +1350,47 @@ contract and BACKLOG stay the record, and no new planning document is added.
   - **the Diagnosis tab's integration:** the shared layout, the identity display and the
     recorded results;
   - **the Training Console:** only its move onto the job runner and what shared components
-    need, not a redesign of its forms.
+    need, not a redesign of its forms. *Amended at the owner's request (2026-10-19, second
+    mockup round):* its move onto the job runner; D8 on start and stop; the workspace chosen
+    from the server list; its controls in a top run bar; the dataset identity shown at all
+    times; a start refused when that dataset changed after it was shown; and the metric charts
+    replaced by zoomable ones, with the Epoch Window removed. Its parameter fields are not
+    redesigned;
+  - **added at the owner's request (2026-10-19):**
+    - **navigation in two levels**: "Diagnosis (clinical)" and "Research (pre-clinical)";
+      under Research one row of tabs in two labelled groups, Prepare (Datasets, Training) and
+      Evaluate (Test, Models); Settings at the header's right; Diagnosis is the first screen;
+    - **the Diagnosis tab's "Model in use" card**, directly above Run Diagnosis, so the model
+      is known before a diagnosis, with "Change model…": a drawer on the one shared model list
+      and the one gated Load that Models also uses (one component, two views, no second
+      implementation); it replaces the Model Configuration accordion and the header's
+      "Serving now" strip, so the identity is shown once;
+    - **Run Diagnosis greyed out and not clickable while no model is loaded**, with a bubble on
+      hover saying no model is loaded; the API's demo answer for API clients is unchanged;
+    - **the dataset identity**: the workspace name, its build time and one fingerprint, the
+      first 12 hex digits of the SHA-256 of its `split_manifest.json` (compared in full,
+      never by the short form), which binds the graph files, both sample files and the dataset
+      record, so two different dataset builds always differ;
+    - **the build time is recorded from now on** (the owner, 2026-10-19): the workspace builder
+      writes a `workspace_build.json` beside the manifest (`built_at` in UTC and the code
+      revision), descriptive and not bound by the manifest, so two byte-identical builds keep
+      one fingerprint; a workspace built before it shows "build time not recorded" with its
+      sources' declared releases, never a file modification time;
+    - **a read-only Datasets page** over the server's workspace list;
+    - **the charts**: axis-aware wheel zoom (over the X axis only X, over the Y axis only Y,
+      inside the plot both, centred on the cursor), drag to pan, one-click and double-click
+      reset, keyboard equivalents, and the view kept across the periodic refresh. Neither
+      Gradio 5.29.1 nor 6.30.0 does this with its own components (tested in a browser: the
+      native plots have no wheel or Y zoom, and `gr.Plot` rebuilds the chart on every data
+      change), so a small vendored chart library (uPlot, MIT) with the project's own interaction
+      code is used, loading nothing from the network;
+    - **the Epoch Window's two defects** fixed with its removal: returning to "All" never
+      cleared the locked range (Gradio drops `x_lim=None` from an update), and the refresh
+      cache shared by every browser session left a reloaded page or a second browser showing
+      "IDLE" and empty charts.
+    Recorded for later, not in M5: dataset building and management in the WebUI, a release
+    designation for diagnosis, model comparison and housekeeping, navigation follow-ups, and
+    exporting and importing a model with its dataset (BACKLOG items 29 to 33).
 - **Layout and help** (BACKLOG item 27): in an ordinary window at normal text size, with no
   details expanded, the main operations fit on one screen as far as possible, clear and
   uncrowded. Text is never shrunk, content never clipped and warnings never hidden to avoid
