@@ -993,7 +993,17 @@ The WebUI shows **the result's own identity**, never the status's:
   table, the claim boundary and "Not a certified medical device; decision
   support for a qualified clinician."
 - **The model status** (Model Configuration) shows the loaded pipeline's
-  identity on its "Serving" line.
+  identity on its "Serving" line, and names the served workspace and
+  checkpoint file on one line. Once a pipeline is loaded, the Data Directory
+  and Checkpoint fields show those two paths, a file chosen automatically
+  included, so Load / Reload reloads the checkpoint file that is served;
+  clear the Checkpoint field to let the server choose again. Two cases
+  differ: with no checkpoint served the Checkpoint field is blank, and a
+  reload then chooses one automatically (or is refused when the workspace
+  has none); after a start from `SHEPHERD_KG_PATH` alone, Data Directory is
+  blank and a reload needs a workspace typed. With nothing loaded the fields
+  show the paths Save Config had stored when the service started; a Save
+  takes effect from the next start.
 - **The Markdown report** has a "What produced this result" section before the
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
@@ -1250,8 +1260,9 @@ and the samples read must number `samples.n`; the workspace's graph files agains
 and the dataset record (§4.4); **the version against this workspace** — its four graph digests and
 its dataset record must be this workspace's, or the run is refused before the checkpoint is read;
 then the checkpoint (read with `weights_only=True`) against the graph it was trained on. The
-device follows §4.8: `auto` needs CUDA, and `cpu` is a development run, recorded as such and a
-different measurement from a CUDA one.
+device follows §4.8: `auto` and `cuda` need CUDA and are refused without it before anything is
+read, and `cpu` is a development run, recorded as such and a different measurement from a CUDA
+one.
 
 **R10 — overlap with what the model was trained and validated on.** The run looks for the
 training and validation sample files whose digests the checkpoint records: first the workspace's
@@ -1266,7 +1277,8 @@ training inputs and has no validation entry at all: training ran no validation p
 
 - **not found**: no file looked at holds the recorded bytes. Measure again with
   `--training-evidence` naming the directory that holds them;
-- **found, not readable**: the file that holds them was found and does not parse;
+- **found, not readable**: the file that holds them was found and does not parse (for example
+  a non-integer id, or a case that lists a phenotype twice);
 - **not recorded by the checkpoint**: it names no file to look for in this scope, and its
   record is not one the pipeline wrote: every training run records its training inputs as a
   digest, so a record without one, or with an entry that is there and is not a digest, cannot
@@ -1349,7 +1361,7 @@ keeps the states and holds no prose.
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run before anything was written; Python prints a traceback ending in the message (unchanged from before M4) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
+| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 

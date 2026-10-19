@@ -16,7 +16,8 @@ The model status shows the loaded model's recorded results (M4; PLAN_TEST_RESULT
 - the Mode C MRR is labelled apart from the trainer's "Val MRR", the §6 line is
   shown once for the block, and nothing says "nothing was checked";
 - a records read that fails never breaks the status, and with no pipeline loaded
-  nothing is looked up; the load and reload events keep their one output.
+  nothing is looked up; the status stays one Markdown output of the load and
+  reload events.
 
 The answers are built by the route's own conversion from records the sidecar
 builds, so these tests render the shape the API sends. The route itself is in
@@ -388,7 +389,7 @@ def test_the_mode_c_mrr_is_labelled_apart_from_the_trainers_val_mrr(monkeypatch)
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
                         lambda: _answer("records", [_record()]))
 
-    rendered = dp._on_load_status()
+    rendered, _, _ = dp._on_load_status()
 
     status_part, block = rendered.split(HEADING)
     assert "Val MRR: 0.4200" in status_part
@@ -503,7 +504,7 @@ def _serve(monkeypatch, status, evaluations):
 def test_the_records_are_one_get_after_the_status(monkeypatch):
     calls = _serve(monkeypatch, _loaded_status(), _Response(_answer("no_records")))
 
-    rendered = dp._on_load_status()
+    rendered, _, _ = dp._on_load_status()
 
     assert isinstance(rendered, str)
     assert calls == [("GET", "/api/v1/pipeline/status"),
@@ -520,7 +521,7 @@ def test_the_records_are_one_get_after_the_status(monkeypatch):
 def test_nothing_is_looked_up_without_a_loaded_pipeline(monkeypatch, status):
     calls = _serve(monkeypatch, status, AssertionError("no records read is expected"))
 
-    rendered = dp._on_load_status()
+    rendered, _, _ = dp._on_load_status()
 
     assert calls == [("GET", "/api/v1/pipeline/status")]
     assert rendered == dp._format_pipeline_status(status)
@@ -540,7 +541,7 @@ def test_a_records_read_that_fails_never_breaks_the_status(monkeypatch, failure,
     missing. Catches a failure that would replace the status with an error."""
     _serve(monkeypatch, _loaded_status(), failure)
 
-    rendered = dp._on_load_status()
+    rendered, _, _ = dp._on_load_status()
 
     assert rendered == (f"{dp._format_pipeline_status(_loaded_status())}\n\n"
                         f"⚠️ {HEADING} could not be read: {dp._md_text(reason)}")
@@ -567,14 +568,14 @@ def test_a_reload_shows_the_new_models_records(monkeypatch):
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
                         lambda: _answer("records", [_record(checkpoint=OTHER_SHA)], sha=OTHER_SHA))
 
-    status_md, _ = dp._on_reload_pipeline("data", "", "auto")
+    status_md, *_ = dp._on_reload_pipeline("data", "", "auto")
 
     assert f"{HEADING} for checkpoint `sha256:{OTHER_SHA[:12]}…`" in status_md
     assert "**mygene2 · mygene2-2026-10**" in status_md
 
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
                         lambda: _answer("records", [_record()]))
-    status_md, _ = dp._on_reload_pipeline("data", "", "auto")
+    status_md, *_ = dp._on_reload_pipeline("data", "", "auto")
 
     assert dp.RECORDS_MODEL_CHANGED in status_md
     assert "**mygene2 · " not in status_md
@@ -589,6 +590,6 @@ def test_a_refused_reload_reads_no_records(monkeypatch):
 
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations", no_read)
 
-    status_md, message = dp._on_reload_pipeline("data", "", "auto")
+    status_md, message, *_ = dp._on_reload_pipeline("data", "", "auto")
 
     assert status_md == "❌ refused" and message == "refused"

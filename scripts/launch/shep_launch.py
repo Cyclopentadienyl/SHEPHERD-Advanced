@@ -5,7 +5,7 @@ import argparse, json, os, platform, subprocess, sys, textwrap, threading, time,
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import shlex
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 from urllib.error import URLError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # scripts/launch -> scripts -> REPO_ROOT
@@ -34,10 +34,34 @@ def run(cmd: List[str], check: bool = False) -> subprocess.CompletedProcess:
     log("$ " + " ".join(cmd))
     return subprocess.run(cmd, check=check)
 
-def _open_browser_when_ready(url: str, health_url: str, timeout: float = 60.0) -> None:
-    """Poll health endpoint, then open browser. Runs in a daemon thread."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+# No proxy, the environment's or the Windows system one: an operator's
+# http_proxy (the deployment guide sets one for downloads) would take the
+# loopback /health poll, and no_proxy=localhost does not cover 127.0.0.1.
+_LOCAL_OPENER = build_opener(ProxyHandler({}))
+
+def urlopen(url: str, timeout: float):
+    """Open ``url`` on this host's own server, never through a proxy."""
+    return _LOCAL_OPENER.open(url, timeout=timeout)
+
+def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0) -> None:
+    """Poll ``health_url`` until it answers, then open ``url`` once.
+
+    Runs in a daemon thread beside the server. **There is no deadline.**
+    uvicorn runs the app's lifespan, where an eager pipeline build loads,
+    before it binds the socket, so the first answer is the end of startup
+    however long the load takes. A fixed 60 s bound only guessed that time,
+    and gave up on a start that loads a large SP table eagerly (about 84 s
+    on a GB10; BACKLOG item 17). The wait cannot outlive the server: when it
+    exits, ``run`` returns, ``main`` exits and this daemon thread ends with
+    the process. A line about every ``progress_every`` seconds says the
+    server is still starting.
+
+    ``/health``, not ``/ready``: ``/ready`` stays 503 after a failed startup,
+    and the dashboard is where an operator then reloads a pipeline.
+    """
+    started = time.monotonic()
+    next_progress = progress_every
+    while True:
         try:
             resp = urlopen(health_url, timeout=3)
             if resp.status == 200:
@@ -46,8 +70,11 @@ def _open_browser_when_ready(url: str, health_url: str, timeout: float = 60.0) -
                 return
         except (URLError, OSError):
             pass
+        elapsed = time.monotonic() - started
+        if elapsed >= next_progress:
+            log(f"Server still starting ({elapsed:.0f} s); the browser opens when {health_url} answers")
+            next_progress = elapsed + progress_every
         time.sleep(1.0)
-    log("WARNING: Server did not become ready within timeout; skipping browser open")
 
 def apply_allocator(env, settings: Dict[str, Any]) -> List[str]:
     """Put the CUDA allocator into ``env`` and return what to log.
@@ -446,7 +473,7 @@ def main() -> int:
     # place as it would a bare uvicorn start.
     if args.no_browser and can_hand_over():
         return exec_server(cmd)
-    # Auto-open browser once server is ready (polls /health endpoint)
+    # Auto-open browser once server is ready (polls /health until it answers)
     if not args.no_browser:
         opener = threading.Thread(
             target=_open_browser_when_ready,

@@ -121,6 +121,11 @@ the code was unchanged at `463a0df`. §1 records decisions already made; §4 is 
   - the ledger format M4 introduces is **ledger schema 3**, not "v2": the file's
     `schema_version` was already 2 (§5.1);
   - §4, "M4 as implemented", records what was built.
+- **Amended 2026-10-18, with N2:** §5.4 records the reader's check and the generator's call as
+  implemented on the development branch (batch B; awaiting review, not merged), and the
+  workspace manifest's field as deferred; an evidence file with a repeat is
+  *unverifiable*. Decision 2 is unchanged: no compatibility path was added, and split-manifest
+  schema 3 is kept.
 
 **What this is.** The project's goal for this stage, in the owner's words: the model must always
 match the exact setup that trained it, dataset version and every other stage's settings included,
@@ -3509,7 +3514,12 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
     `--show --checkpoint-dir DIR` reads DIR's own;
   - `measure_scorer.py` exits 3 when it measured and kept a report whose `--record` was refused.
     A check refusal still raises a `ValueError` (a traceback ending in one message, exit 1), as
-    before M4;
+    before M4. *Superseded by BACKLOG 26 (2026-10-18):* run as a program, a refusal prints one
+    message, saying nothing was written, with exit 1 and no traceback (`_run_as_program`);
+    `main` still raises it, typed, for the tests and the probe. A report that could not be
+    written exits 1 with a message saying what may be on disk (a run that fails after writing
+    it, with one naming it), and `--device cuda` without CUDA is refused before anything is
+    read;
   - `audit_split_overlap.py`: `--evaluation-cohort-kind` is removed, `--splits` beside
     `--cohort` and `--registry` without `--cohort` (or the reverse) are refused as argument
     errors (exit 2), and its report schema is 6;
@@ -3662,7 +3672,8 @@ incremental review's P3 fixed.
 
 ### M5 — item 14, phase 2
 
-All of it is in `PLAN_TEST_RESULTS.md`:
+All of it is in `PLAN_TEST_RESULTS.md` (its §6, "M5's boundaries", since 2026-10-19, with
+deployment mode M1 under SPEC_4/D8, §4.9 question 3):
 - the Test tab;
 - the job runner, with progress and cancellation;
 - the model list;
@@ -3794,8 +3805,9 @@ evidence.
   - Repetition is not neutral. Mode C averages over every listed position (`masked_mean_pool`
     in `run_mode_c`, `src/evaluation/measurement.py`), and nothing on the stored-file path
     removes a repeated id on the way (`read_samples_file` in `src/kg/storage/file_storage.py`,
-    `DiagnosisDataset` in `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`);
-    that check is N2's, not delivered (below).
+    `DiagnosisDataset` in `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`).
+    *Since N2 (2026-10-18)* `read_samples_file` refuses a stored case that lists a phenotype
+    twice, so none reaches Mode C or training from a file; it still removes nothing (below).
   - So two cases with the same set can be scored differently. A training case `[0, 1]` and a
     test case `[0, 0, 1]` average to different patient vectors, and can rank the true disease
     differently.
@@ -3813,12 +3825,16 @@ evidence.
     (`map_cases` calls `normalise_phenotypes`, `src/kg/phenotype_normalisation.py`), which keeps
     the source bytes verbatim and records the rule's version and its counts in the version
     manifest;
-  - **N2 is not delivered**: the generator's normalisation, the reader's check and the
-    workspace manifest's field are its own change, not yet scheduled. M4 has no N2 dependency
-    and rebuilt no workspace.
+  - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
+    batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged): the generator applies the rule,
+    and the shared reader refuses a stored case that is not in normal form, as a file that does
+    not parse. The workspace manifest's field is deferred to the next split-manifest schema
+    change or the first change of the rule's version (`PLAN_PHENOTYPE_NORMALISATION.md` §6).
+    M4 had no N2 dependency and rebuilt no workspace; N2 rebuilt none either.
 
-  A test cohort imported since M4 therefore holds no repeat; a stored training file is checked
-  for none until N2, though the current generator writes none. R10 removes nothing either way.
+  A test cohort imported since M4 therefore holds no repeat, and since N2 a stored training or
+  validation file with one is refused by the reader: R10 records such evidence as *unreadable*,
+  its scope *unverifiable*, rather than counting it. R10 removes nothing either way.
 - **The patient id is not part of a case.** Generated patient ids are labels, not identities.
 - **Near-duplicates are not counted** — subsets, supersets, a term or two apart — and the
   label's name states the rule.

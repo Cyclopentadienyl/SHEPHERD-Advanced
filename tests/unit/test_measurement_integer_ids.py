@@ -14,6 +14,9 @@ version's samples cannot carry such an id: the importer writes integers, and a
 binds before it is parsed, so the id is never converted there either. The
 training fields go through the same reader and are shown on it directly.
 
+The same reader refuses a case that lists a phenotype twice (N2), checked after
+the ids are known to be integers; one test shows it at this entry point.
+
 Module: tests/unit/test_measurement_integer_ids.py
 """
 from __future__ import annotations
@@ -71,6 +74,34 @@ def test_mode_c_refuses_a_sample_id_that_is_not_an_integer(tmp_path, monkeypatch
     assert repr(patient) in message
     assert field in message
     assert "refused rather than converted" in message
+    assert not output.parent.exists()
+
+
+def test_mode_c_refuses_a_case_not_in_phenotype_normal_form(tmp_path, monkeypatch):
+    """N2, through the same reader: a case that lists a phenotype twice is refused,
+    not normalised on the way, before a model is built or anything is written,
+    naming the file, the patient and the producer that rebuilds it."""
+    import scripts.measure_scorer as cli
+    import src.models.gnn.shepherd_gnn as shepherd_gnn
+
+    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    samples_path = data_dir / "val_samples.json"
+    phenotypes = json.loads(samples_path.read_text())[0]["phenotype_ids"]
+    patient = _rewrite_first_sample(samples_path, "phenotype_ids", phenotypes * 2)
+    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+                        lambda *a, **k: pytest.fail("a model was built"))
+    output = tmp_path / "out" / "measurement.json"
+
+    with pytest.raises(ValueError, match="not in phenotype normal form") as refused:
+        cli.main([
+            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--split", "val", "--output", str(output), "--device", "cpu",
+        ])
+
+    message = str(refused.value)
+    assert str(samples_path) in message
+    assert repr(patient) in message
+    assert "scripts/build_knowledge_graph.py --generate-samples" in message
     assert not output.parent.exists()
 
 

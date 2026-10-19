@@ -45,9 +45,13 @@ the report and exits 3.
 beside it, both staged and renamed into place; an existing `--output` is
 replaced, as it always was.
 
-Exit status: 0 measured (and, with `--record`, registered or already held);
-non-zero for a refusal, raised before anything is written; 3 measured and kept,
-but not registered.
+Exit status, run as a program (`_run_as_program`): 0 measured (and, with
+`--record`, registered or already held); 1 refused before anything was written,
+with one message and no traceback, or measured but the report could not be
+written, with a message saying what may be on disk (or the run failed after
+writing it, with a message naming it); 2 the command line was rejected; 3
+measured and kept, but not registered. `main` itself raises its refusals, typed,
+for the tests and the deployment probe that call it.
 
 Module: scripts/measure_scorer.py
 """
@@ -57,7 +61,9 @@ import argparse
 import copy
 import json
 import logging
+import os
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -94,9 +100,43 @@ RANKS_FILE = "ranks.json"
 REPORT_FILE = "report.json"
 
 #: The exit status of a run that measured and kept its report but whose
-#: `--record` registration was refused: not a refusal before writing (non-zero
-#: from an exception), and not a success, since the ledger holds nothing new.
+#: `--record` registration was refused: not a refusal before writing (exit 1,
+#: one message), and not a success, since the ledger holds nothing new.
 EXIT_NOT_REGISTERED = 3
+
+#: How a refusal says nothing was written, in the words this codebase uses
+#: ("Nothing was written.", R10's "nothing was read or written"), so the
+#: program entry adds the sentence only to a message that does not say it.
+_SAYS_NOTHING_WRITTEN = re.compile(r"nothing was (?:read or )?written", re.IGNORECASE)
+
+
+class UnparseableCheckpoint(ValueError):
+    """A checkpoint that was read but does not load as a weights-only
+    checkpoint, refused under the name it was given (`path`); torch's error is
+    chained, and its text kept on one line."""
+
+    def __init__(self, path: Path, exc: Exception) -> None:
+        reason = " ".join(str(exc).split())
+        cause = f"{type(exc).__name__}: {reason}" if reason else type(exc).__name__
+        super().__init__(f"{path} could not be parsed as a weights-only checkpoint ({cause})")
+        self.path = path
+
+
+class ReportNotWritten(Exception):
+    """The measurement ran, and publishing its report failed.
+
+    **Neither a `ValueError` nor an `OSError`, on purpose.** Those are the
+    refusals `main` raises before anything is written, which the program entry
+    prints as such, with "Nothing was written." A publication failure comes
+    after the first write may have happened, so its message says what may be on
+    disk instead (`_publication_failure`), and the cause is chained.
+    """
+
+
+class FailedAfterPublishing(Exception):
+    """The report was published, and what followed it failed: the console, or a
+    registration that raised rather than refused. Not a refusal either, for the
+    same reason as `ReportNotWritten`; its message says where the report is."""
 
 
 class MeasurementInputs(NamedTuple):
@@ -251,7 +291,9 @@ def read_measurement_inputs(
     workspace checks, so a refused workspace reads no checkpoint, and its
     recorded graph roles are compared
     with `bound` (`verify_training_record`, contract M2.4): a checkpoint from
-    before the contract, or from a same-shaped other graph, is refused here.
+    before the contract, or from a same-shaped other graph, is refused here. A
+    file that does not load as a weights-only checkpoint is refused naming it
+    (`_read_checkpoint`).
     """
     from src.kg.artifacts import (
         GRAPH_ARTIFACTS,
@@ -261,7 +303,6 @@ def read_measurement_inputs(
         verify_graph_reads,
     )
     from src.kg.storage.file_storage import read_graph_artifacts
-    from src.utils.checkpoint_io import read_checkpoint
     from src.utils.fingerprint import verify_training_record
 
     if (split is None) == (cohort is None):
@@ -299,7 +340,7 @@ def read_measurement_inputs(
     # **Read at its resolved path**, so the read's identity names the file whose
     # bytes were measured, and `--record`'s ledger directory is fixed now: a link
     # retargeted during the run cannot move this run's record beside other weights.
-    read = read_checkpoint(Path(checkpoint).resolve(), map_location=device, weights_only=True)
+    read = _read_checkpoint(checkpoint, device)
     # **The model scored must have been trained on this graph** (contract M2.4):
     # the checkpoint's recorded graph roles against `bound`, whose `kg` is the
     # manifest-bound source graph and whose tensor digests equal this run's
@@ -432,6 +473,41 @@ def _verify_version_binding(
     verify_cohort_binding(version.manifest, bound, dataset_record.identity.sha256)
 
 
+def _read_checkpoint(checkpoint: Path, device: torch.device) -> CheckpointRead:
+    """The checkpoint, one read at its resolved path, or a refusal naming it.
+
+    `read_checkpoint` passes on whatever torch raises for the bytes, as its
+    contract says, and for bytes that are not a weights-only checkpoint that is
+    a different type for each kind of junk (`UnpicklingError`; a `KeyError` or
+    an `IndexError` for text; an `EOFError` for an empty file; a `RuntimeError`
+    for a truncated archive) whose message names no file. So the measurement
+    names it, as the graph readers do for a tensor file (`_read_tensors`), with
+    torch's error chained (`UnparseableCheckpoint`). A file that cannot be read
+    keeps the read's own `OSError`, which names it.
+    """
+    from src.utils.checkpoint_io import read_checkpoint
+
+    try:
+        return read_checkpoint(Path(checkpoint).resolve(), map_location=device, weights_only=True)
+    except (OSError, MemoryError):
+        # A MemoryError is not a property of the file. Converting it would send
+        # a capacity shortfall to whoever reads the message as a corrupt file.
+        raise
+    except RuntimeError as exc:
+        # Neither is torch's own report of a failed allocation (c10's CPU
+        # allocator raises a plain RuntimeError, a device `torch.OutOfMemoryError`),
+        # nor, since the checkpoint is loaded onto the run's device, the
+        # device's: a CUDA error (`torch.AcceleratorError`), or a CUDA device
+        # on a host without CUDA, which `_resolve_device` refuses first for `main`.
+        if (isinstance(exc, (torch.OutOfMemoryError, torch.AcceleratorError))
+                or "can't allocate memory" in str(exc)
+                or (device.type == "cuda" and not torch.cuda.is_available())):
+            raise
+        raise UnparseableCheckpoint(checkpoint, exc) from exc
+    except Exception as exc:  # noqa: BLE001 — torch raises a different type for each kind of junk
+        raise UnparseableCheckpoint(checkpoint, exc) from exc
+
+
 def _r10(read: CheckpointRead, samples: SamplesRead, candidates: Sequence[Path]) -> Dict[str, Any]:
     """R10 from the checkpoint's own record (its one read) and the candidates.
 
@@ -514,6 +590,10 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
     so a development number cannot later be quoted as one produced on the
     deployment hardware.
 
+    An explicit `cuda` on a host without CUDA is refused here too, before
+    anything is read, rather than by torch when the checkpoint is loaded onto
+    the device after every workspace check has run.
+
     The boolean means only "this ran on CUDA". Whether the run is acceptable to
     the institution depends on which artifacts it consumed, which is checked by a
     person against the recorded digests, not here.
@@ -530,6 +610,12 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
                 "recorded as cuda_executed=false."
             )
         return torch.device("cuda"), True
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise SystemExit(
+            "--device cuda requires CUDA, which is not available here.\n"
+            "Pass --device cpu explicitly for development; the run is then "
+            "recorded as cuda_executed=false."
+        )
 
     device = torch.device(requested)
     return device, device.type == "cuda"
@@ -757,6 +843,67 @@ def _publish_to_store(
     return run_id, report_path, report_sha256
 
 
+def _sentence(exc: BaseException) -> str:
+    """`exc`'s message ending in a full stop, so a sentence can follow it: an
+    `OSError`'s never does ("[Errno 28] No space left on device: '...'")."""
+    text = str(exc).rstrip()
+    return text if text.endswith(".") else f"{text}."
+
+
+def _publication_failure(
+    exc: Exception, inputs: MeasurementInputs, output: Optional[Path]
+) -> ReportNotWritten:
+    """A failed publication, saying what it may have left on disk.
+
+    `publish_bytes` leaves its target as it was, and each kind of cohort
+    publishes its report last, so a failure leaves at most what was published
+    before it: for a generated split, the ranks beside `output` (whatever was
+    there before, or nothing); for a registered version, a new run directory,
+    empty or holding only `RANKS_FILE`, with no report to commit it. Which of
+    those happened depends on the step that failed, so the message says "may".
+
+    **`create_report_dir`'s own refusal is kept as it is.** Its text already
+    says what it created ("Nothing was written." before the run directory, or
+    "Only the empty run directory ... was created" after it), and is the only
+    `RegistryRefused` publication raises.
+    """
+    from src.evaluation.cohort_registry import REPORTS_DIR, RegistryRefused
+
+    if isinstance(exc, RegistryRefused):
+        return ReportNotWritten(str(exc))
+    if inputs.version is None:
+        ranks = output.with_name(f"{output.stem}_ranks.json")
+        return ReportNotWritten(
+            f"{_sentence(exc)} {output} was left as it was (whatever was there before, or "
+            f"no file), and {ranks} may already hold this run's ranks, so the two may not "
+            "belong to one run. Measure again to write both."
+        )
+    return ReportNotWritten(
+        f"{_sentence(exc)} No {REPORT_FILE} was published, so this run kept no report and "
+        f"nothing can register it. A new run directory in "
+        f"{inputs.version.directory / REPORTS_DIR} may exist, empty or holding only "
+        f"{RANKS_FILE}: an interrupted write, which nothing registers. Measure again to "
+        "keep a report."
+    )
+
+
+def _failure_after_publishing(
+    exc: Exception, inputs: MeasurementInputs, report_path: Path
+) -> FailedAfterPublishing:
+    """A failure after the report was published, saying where it is.
+
+    For a registered version, whether `--record` got as far as the ledger is
+    not known here, so the message gives the command that registers the report
+    later: run for a report already registered, it says so and writes nothing.
+    """
+    said = f"{_sentence(exc)} The report was written: {report_path}."
+    if inputs.version is not None:
+        measured = Path(inputs.checkpoint.identity.path)
+        said += (" To register it, or to see that it already is: "
+                 f"{register_later_command(report_path, measured)}")
+    return FailedAfterPublishing(said)
+
+
 def register_later_command(report_path: Path, checkpoint: Path) -> str:
     """The command that registers a kept report later, printed for the operator
     to paste.
@@ -947,41 +1094,147 @@ def main(argv: Optional[List[str]] = None) -> int:
         batch_size=args.batch_size,
     )
 
-    if inputs.version is None:
-        report_path, ranks_path = _publish_generated(result, args.output)
-        logger.info("Mode C -> %s, %s", report_path, ranks_path)
-    else:
-        run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
-        logger.info("Mode C -> %s", report_path)
+    # **Publication is the first write**, so a failure in it is no refusal: the
+    # run measured, and what it published before failing may be on disk. It is
+    # re-raised saying so (`ReportNotWritten`), never as a ValueError or OSError,
+    # which the program entry prints as a refusal before anything was written.
+    try:
+        if inputs.version is None:
+            report_path, ranks_path = _publish_generated(result, args.output)
+            logger.info("Mode C -> %s, %s", report_path, ranks_path)
+        else:
+            run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
+            logger.info("Mode C -> %s", report_path)
+    except (ValueError, OSError) as exc:
+        raise _publication_failure(exc, inputs, args.output) from exc
 
-    print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
-    for name, value in result.authoritative_metrics.items():
-        print(f"  {name:38s} {value:.6f}")
-    print(f"  {'candidate diseases per patient':38s} "
-          f"{result.sampler_evidence['candidate_columns']['max']}")
+    # Nor is a failure after it (the console closed under the run, say): it is
+    # re-raised saying the report was written (`FailedAfterPublishing`).
+    try:
+        print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
+        for name, value in result.authoritative_metrics.items():
+            print(f"  {name:38s} {value:.6f}")
+        print(f"  {'candidate diseases per patient':38s} "
+              f"{result.sampler_evidence['candidate_columns']['max']}")
 
-    # **The number says what its graph was built from** (contract M3b), here as
-    # in the manifest: binding state and origin apart.
-    record = inputs.dataset_record
-    print(f"\nDataset record: binding {record.binding}, origin {record.origin}")
-    if record.origin == "synthetic":
-        print("SYNTHETIC WORKSPACE — this number is not over a graph built from real files.")
-    if not cuda_executed:
-        print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
-    print("\nWhether this is the institution's number depends on the checkpoint and\n"
-          "cohort it consumed, which a person checks against the recorded digests.")
+        # **The number says what its graph was built from** (contract M3b), here
+        # as in the manifest: binding state and origin apart.
+        record = inputs.dataset_record
+        print(f"\nDataset record: binding {record.binding}, origin {record.origin}")
+        if record.origin == "synthetic":
+            print("SYNTHETIC WORKSPACE — this number is not over a graph built from real files.")
+        if not cuda_executed:
+            print("\nNOT ON CUDA — development run. Recorded as cuda_executed=false.")
+        print("\nWhether this is the institution's number depends on the checkpoint and\n"
+              "cohort it consumed, which a person checks against the recorded digests.")
 
-    if inputs.version is None:
-        print(f"\nReport: {report_path}\n")
-        return 0
-    _print_registered_summary(inputs, result, run_id, report_path)
-    if args.record:
-        return _register(report_path, report_sha256, inputs)
-    measured = Path(inputs.checkpoint.identity.path)
-    print("\nNot registered (no --record). Register it with:\n"
-          f"  {register_later_command(report_path, measured)}\n")
-    return 0
+        if inputs.version is None:
+            print(f"\nReport: {report_path}\n")
+            status = 0
+        else:
+            _print_registered_summary(inputs, result, run_id, report_path)
+            if args.record:
+                # **Flushed before the ledger is touched**, so a console that
+                # has gone is found here whatever stdout's buffering, as an
+                # unbuffered one is at its first print: the run registers
+                # nothing, and the failure's line offers the registration.
+                _flush_stdout()
+                status = _register(report_path, report_sha256, inputs)
+                if status != 0:
+                    # Decided, and said on stderr: a refusal writes nothing to
+                    # stdout, and `_run_as_program` settles it, so this status
+                    # stands rather than becoming a failure after the fact.
+                    return status
+            else:
+                measured = Path(inputs.checkpoint.identity.path)
+                print("\nNot registered (no --record). Register it with:\n"
+                      f"  {register_later_command(report_path, measured)}\n")
+                status = 0
+        # **Flushed here**: on a pipe or a file stdout is buffered, and a closed
+        # console would otherwise fail only when the interpreter flushes at exit,
+        # outside this handler.
+        _flush_stdout()
+        return status
+    except (ValueError, OSError) as exc:
+        raise _failure_after_publishing(exc, inputs, report_path) from exc
+
+
+def _flush_stdout() -> None:
+    """Flush stdout, if there is one: started with its descriptor closed, Python
+    sets `sys.stdout` to None, and `print` then writes nothing."""
+    if sys.stdout is not None:
+        sys.stdout.flush()
+
+
+def _settle_stdout() -> None:
+    """Flush stdout, or point it at the null device when it cannot be written.
+
+    Python flushes stdout once more at exit, outside every handler: output
+    still buffered for a closed console fails there, prints "Exception ignored
+    ... BrokenPipeError", and exit 120 replaces the status returned. The
+    redirect is the recipe in Python's note on SIGPIPE. **Only a stdout that
+    failed is redirected**: one that still works (a registration raised, stdout
+    on a file) is flushed instead, so the summary buffered in it is kept, ahead
+    of the failure's line. A stdout with no file descriptor (an in-process
+    caller's capture), or none at all, is left as it is.
+    """
+    if sys.stdout is None:
+        return
+    try:
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        try:
+            fd = sys.stdout.fileno()
+        except (OSError, ValueError):  # io.UnsupportedOperation is both
+            return
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, fd)
+        os.close(devnull)
+
+
+def _run_as_program(argv: Optional[List[str]] = None) -> int:
+    """`main` as the operator runs it: a refusal is one message on stderr and
+    exit 1, not a traceback (BACKLOG 26).
+
+    **Only here.** `main` keeps raising its typed refusals, because the tests
+    and the deployment probe call it in process and read them and their fields
+    (`TrainingRecordMismatch`, `DatasetRecordRefused.binding`,
+    `CohortBindingMismatch.roles`); a `SystemExit` raised inside `main` would
+    also escape the probe's `refuses`, which catches `Exception`.
+
+    **Exactly `ValueError` and `OSError`**, as `import_cohort.py` and
+    `audit_split_overlap.py` catch them: the refusals `main` raises before
+    anything is written, every check's and a file that cannot be read.
+    "Nothing was written." is added unless the message already says so. A
+    ValueError that is really a bug becomes one line too, without its
+    traceback; nothing had been written when it was raised. A failure in or
+    after publication is neither (`ReportNotWritten`, `FailedAfterPublishing`)
+    and is printed in its own words, also with exit 1. Anything else keeps its
+    traceback -- an out-of-memory error, a regime mismatch -- and `SystemExit`
+    (exit 2 for the command line, 1 for the device check) and the status `main`
+    returns (3 for a refused registration) pass through as they are; stdout is
+    settled first, so output a closed console could not take cannot turn that
+    status into 120 at the interpreter's last flush.
+    """
+    try:
+        status = main(argv)
+    except ReportNotWritten as exc:
+        print(f"measure_scorer: measured, but the report was not written: {exc}",
+              file=sys.stderr)
+        return 1
+    except FailedAfterPublishing as exc:
+        _settle_stdout()
+        print(f"measure_scorer: measured, but the run did not finish: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, OSError) as exc:
+        message = _sentence(exc)
+        if not _SAYS_NOTHING_WRITTEN.search(message):
+            message += " Nothing was written."
+        print(f"measure_scorer: refused: {message}", file=sys.stderr)
+        return 1
+    _settle_stdout()
+    return status
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run_as_program())

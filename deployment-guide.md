@@ -1419,7 +1419,14 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - 結果下方的 **「Produced by」一行**（digest 縮短顯示），以及一個預設收合的區塊
   「What produced this result — full identity」，內含完整表格、宣稱界線與
   "Not a certified medical device; decision support for a qualified clinician."。
-- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分。
+- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分，
+  並另以一行列出正在服務的 workspace 與 checkpoint 檔。載入 pipeline 後，Data Directory
+  與 Checkpoint 欄位顯示這兩個路徑（自動選出的檔案也照實顯示），因此 Load / Reload 重新載入的
+  就是正在服務的 checkpoint 檔；清空 Checkpoint 欄位即讓伺服器重新自動選擇。有兩種情況不同：
+  沒有服務任何 checkpoint 時，Checkpoint 欄位是空白的，重新載入會自動選擇一個（workspace 裡
+  沒有時則被拒絕）；只以 `SHEPHERD_KG_PATH` 啟動時，Data Directory 是空白的，重新載入需要先
+  填入 workspace。未載入任何 pipeline 時，欄位顯示服務啟動時 Save Config 已儲存的路徑；新的
+  儲存自下次啟動起生效。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
@@ -1642,8 +1649,8 @@ python scripts/measure_scorer.py \
 而且讀到的樣本數必須等於 `samples.n`；workspace 的圖檔是否符合其 manifest 與 dataset
 record（§4.4）；**版本是否屬於這個 workspace**——它的四個圖 digest 與 dataset record 必須是這個
 workspace 的，否則在讀取 checkpoint 之前就拒絕；接著是 checkpoint（以 `weights_only=True` 讀取）
-是否與它訓練所用的圖相符。裝置依 §4.8：`auto` 需要 CUDA，`cpu` 是開發用的執行，會如實記錄，
-而且與 CUDA 的量測是不同的量測。
+是否與它訓練所用的圖相符。裝置依 §4.8：`auto` 與 `cuda` 需要 CUDA，沒有時在讀取任何東西之前
+就會被拒絕；`cpu` 是開發用的執行，會如實記錄，而且與 CUDA 的量測是不同的量測。
 
 **R10——與模型訓練及驗證資料的重疊。** 這次執行會尋找 checkpoint 所記錄 digest 的訓練與驗證
 樣本檔：先找 workspace 自己的 `train_samples.json` 與 `val_samples.json`，再找每個
@@ -1656,7 +1663,8 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 
 - **找不到**：看過的檔案中沒有一個具有所記錄的位元組。請以 `--training-evidence` 指出存放它們的
   目錄，再量測一次；
-- **找到、但讀不了**：存放它們的檔案找到了，但無法解析；
+- **找到、但讀不了**：存放它們的檔案找到了，但無法解析（例如 id 不是整數，或某個病例重複列出
+  同一個表型）；
 - **checkpoint 沒有記錄**：它在這個範圍沒有指出任何可找的檔案，而且它的紀錄不是 pipeline 寫出
   的：每次訓練都會以 digest 記錄其訓練輸入，所以沒有這個 digest 的紀錄，或條目在、卻不是 digest
   的紀錄，都不可能出自 pipeline。`--training-evidence` 也幫不上忙。
@@ -1726,7 +1734,7 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
-| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查在寫入任何東西之前拒絕了這次執行；Python 印出以該訊息結尾的 traceback（與 M4 之前相同） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
 | `record_evaluation.py` | 已登錄、已存在、一致，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 

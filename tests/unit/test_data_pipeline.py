@@ -817,6 +817,60 @@ class TestGuaranteesThatNeedAWideUniverse:
             assert profile["phenotype_ids"] == sorted(profile["phenotype_ids"])
 
 
+class TestPhenotypeNormalForm:
+    """N2: every draw goes through the shared rule, and the rule changes nothing.
+
+    A draw without replacement from a profile of distinct ids is already in normal
+    form, so applying `normalise_phenotypes` must leave every id, the order and the
+    random stream as they were. Shown against the same run with the rule replaced
+    by a stand-in that returns each draw as drawn, which is the generator before
+    N2, rather than against a fixed digest that a legitimate change would move.
+    """
+
+    @staticmethod
+    def generate(kg, **kwargs):
+        eligible = build_eligible_disease_profiles(kg, 2)
+        allocation = allocate_diseases(eligible, 0.25, seed=42)
+        return generate_training_samples(
+            kg, allocation, num_train=40, num_val=12, min_phenotypes=2, **kwargs
+        )
+
+    def test_every_draw_goes_through_the_rule_and_comes_out_as_drawn(self, wide_kg, monkeypatch):
+        from src.kg import sample_generator
+        from src.kg.phenotype_normalisation import NormalisedPhenotypes, normalise_phenotypes
+
+        applied = []
+
+        def rule(identities):
+            applied.append(normalise_phenotypes(identities))
+            return applied[-1]
+
+        def as_drawn(identities):
+            return NormalisedPhenotypes(tuple(identities), tuple(range(len(identities))), 0)
+
+        monkeypatch.setattr(sample_generator, "normalise_phenotypes", rule)
+        train, val, manifest = self.generate(wide_kg)
+        monkeypatch.setattr(sample_generator, "normalise_phenotypes", as_drawn)
+        before = self.generate(wide_kg)
+
+        assert len(applied) == len(train) + len(val), "one call per sample"
+        assert sum(result.repeats_removed for result in applied) == 0
+        assert (train, val, manifest) == before
+        assert all(type(s["phenotype_ids"]) is list for s in train + val)
+
+    def test_generated_splits_pass_the_shared_reader(self, wide_kg, tmp_dir):
+        from src.kg.storage.file_storage import read_samples
+
+        train, val, _ = self.generate(
+            wide_kg, output_dir=tmp_dir, graph_digests=_stub_graph_digests(tmp_dir),
+            graph_export=_stub_graph_export(),
+        )
+
+        for split, written in (("train", train), ("val", val)):
+            read = read_samples(tmp_dir, split, training_fields=True).samples
+            assert [s.phenotype_ids for s in read] == [s["phenotype_ids"] for s in written]
+
+
 class TestRandomStreams:
     """The derivation contract, tested where it lives rather than through effects."""
 
