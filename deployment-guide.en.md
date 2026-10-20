@@ -1444,6 +1444,104 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
   version's graph and dataset record digests are compared with those this workspace's manifest
   records, without loading tensors; only `train` is read. The report's `schema_version` is 6.
 
+### Since M5-1: registration from the report store, disagreeing runs, history, determinism
+
+These apply to `measure_scorer.py --record` and `record_evaluation.py --report` alike, since
+both go through the one registration function. The exit codes above are unchanged.
+
+**A report is registered only from the registry's report store.** `--report` must name
+`<registry>/versions/<label>/reports/<run id>/report.json`: the path the measurement printed as
+`Report:`. Before anything is written, the registration checks four things:
+
+- it finds the registry and the version from that path, and reads the version;
+- the report must name that version exactly (label, role, manifest digest, sources, graph,
+  mapping and counts);
+- its run directory must carry the first 12 hex digits of the checkpoint it measured;
+- the checkpoint and ledger checks above still apply.
+
+A copy anywhere else is refused before it is read: "… is not a report the registry's report
+store holds … Register the store's original instead". You can still read and share a copy, but
+you cannot register it. A link to a stored report counts as the stored original. A `report.json`
+in the store that is a link to a file elsewhere does not count. A registry moved as a whole
+still works, because no absolute path is stored as an identity. A generated split's report,
+written to `--output`, is never in a store, so this is now why it is refused.
+
+**Runs that disagree block their key ("runs disagree — investigate").** The store's reports
+under one key (same checkpoint, cohort version and measurement settings) are compared with the
+same comparison the ledger uses. If two of them differ in results, no report under that key is
+registered. This applies to a run with `--record` or without it, to a later
+`record_evaluation.py`, and to registering again a report that was already registered. The
+message names what differs and which runs. A record registered before the disagreement appeared
+stays in the ledger. Under `--record` the run exits 3 and keeps its report, but prints no
+register-later command, since none would be accepted while the runs disagree. To move forward:
+
+- compare the reports' environment facts (each `report.json`'s `manifest.environment`);
+- re-run with `--deterministic`, which is a different key.
+
+An investigation note records who looked, when and what they found. Notes go to
+`<registry>/versions/<label>/reports/notes.jsonl`, kept with the key's reports and never in the
+ledger, and they do not lift the block. Adding a note from the Test tab comes with M5's user
+interface. The block rests on plain files: deleting a disagreeing report lifts it. The tools
+never delete anything.
+
+**"Cannot be checked" is refused too, and never read as uncontested.** The whole version cannot
+be checked when the store holds:
+
+- a report that cannot be read or parsed;
+- a run directory or `report.json` that is a link out of the store;
+- a report whose key cannot be told.
+
+A report from an earlier revision, whose manifest this one does not read, blocks only the key
+it names. The refusal names each file. Move the file out of `reports/`, or repair it, and
+register again.
+
+**The usage history** is `<registry>/versions/<label>/reports/usage.jsonl`, one JSON object
+per line, appended and never rewritten. It records:
+
+- every measurement of the version (`test_run`: when, run id, checkpoint and report digests,
+  Mode C's metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
+  was asked);
+- every registration that wrote a ledger (`registered`: outcome and sequence);
+- every model loaded from a list ordered by the version's score (`model_load`; written by the
+  Load control that comes with M5's Model Management page).
+
+It holds aggregates only, no case id. The measurement appends its entry right after the report
+is published. If that append fails, the run stops with exit 1 ("measured, but the run did not
+finish"), says the report was written and that the run is not in the history, and does not
+register. If a registration's own entry cannot be appended, the registration stands and says so
+on a `NOTE:` line.
+
+**New `measure_scorer.py` options.** They are there for M5's job runner, and you can use them
+by hand too. `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2
+with `--split`); the other two apply to both:
+
+```bash
+python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+    --cohort <label> --registry /srv/shepherd/cohorts [--record] \
+    [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
+    [--outcome FILE]
+```
+
+- `--deterministic` turns on several settings before CUDA starts: PyTorch's deterministic
+  algorithms (never warn-only), deterministic cuDNN with its benchmark off, and
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` when that variable is unset. It never falls back to
+  non-deterministic execution or to another device. An operation with no deterministic
+  implementation refuses the run with nothing written, and so does a `CUBLAS_WORKSPACE_CONFIG`
+  that PyTorch does not document as deterministic. The manifest records the settings, so a
+  deterministic run is a different key. PyTorch promises reproducibility only on the same
+  platform, device and versions; deterministic mode guards against known non-deterministic
+  operations and does not certify a number.
+- `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before anything is
+  measured or written when the checkpoint read, or the version's `cohort.json`, has another
+  SHA-256: the file changed after it was chosen.
+- `--outcome FILE` writes a small JSON file. The file's directory must exist; the run refuses
+  before reading anything otherwise. The file is written once the report is published
+  (`"complete": false`) and again at the end (`"complete": true`). It gives the report's path,
+  run id and digest, the checkpoint and version digests, whether the run was deterministic, and
+  under `registration` whether the report was registered and why. A run refused before its
+  report writes no outcome file. The file says what the run did. The report store and the ledger
+  remain the record, and "kept" and "registered" are read from them.
+
 ---
 
 ## 4.10 The dashboard on Gradio 6.30.0 (since M5, 2026-10-20)

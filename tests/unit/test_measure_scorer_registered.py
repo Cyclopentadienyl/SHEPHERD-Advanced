@@ -554,3 +554,321 @@ def test_no_patient_level_data_reaches_the_ledger(cli, cohort):
     for forbidden in ("phenotype_ids", "patient_id", "sample_id", "exclusions",
                       "unmappable_terms"):
         assert forbidden not in text, forbidden
+
+
+# ---------------------------------------------------------------------------
+# M5-1: expected digests, the outcome file, the usage history, --deterministic
+# ---------------------------------------------------------------------------
+def _usage(cohort):
+    from src.evaluation.report_store import read_usage_history
+
+    entries, problems = read_usage_history(cohort.version)
+    assert problems == []
+    return entries
+
+
+def test_the_expected_digests_let_the_chosen_run_through(cli, cohort):
+    assert cli.main(_argv(cohort, "--expect-checkpoint-sha256", cohort.checkpoint_sha256,
+                          "--expect-version-sha256", cohort.version.identity.sha256)) == 0
+    assert len(_reports(cohort)) == 1
+
+
+@pytest.mark.parametrize("which", ["version", "checkpoint"])
+def test_a_read_that_is_not_the_chosen_one_is_refused_before_anything_is_measured(
+    cli, cohort, monkeypatch, which
+):
+    """The version's `cohort.json` is compared right after it is read, before
+    the workspace is; the checkpoint right after its read, before R3. Nothing
+    is built or written, and the message names both digests."""
+    import src.kg.artifacts as artifacts
+    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.utils.fingerprint as fingerprint
+
+    other = "f" * 64
+    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+                        lambda *a, **k: pytest.fail("a model was built after a refusal"))
+    if which == "version":
+        monkeypatch.setattr(artifacts, "read_split_manifest",
+                            lambda *a, **k: pytest.fail("the workspace was read"))
+        flag, read = "--expect-version-sha256", cohort.version.identity.sha256
+    else:
+        monkeypatch.setattr(fingerprint, "verify_training_record",
+                            lambda *a, **k: pytest.fail("R3 ran after the refusal"))
+        flag, read = "--expect-checkpoint-sha256", cohort.checkpoint_sha256
+
+    with pytest.raises(cli.ExpectedDigestMismatch) as refused:
+        cli.main(_argv(cohort, flag, other, "--record"))
+
+    message = str(refused.value)
+    assert f"holds bytes {read[:12]}..., not the {other[:12]}..." in message
+    assert "Nothing was written" in message
+    assert _nothing_written(cohort) and _usage(cohort) == []
+
+
+def _outcome(path):
+    return json.loads(Path(path).read_text())
+
+
+def test_the_outcome_file_says_what_the_run_did_and_report_state_agrees(
+    cli, cohort, tmp_path
+):
+    from src.evaluation.registration import report_state
+
+    out = tmp_path / "jobs" / "outcome.json"
+    out.parent.mkdir()
+
+    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
+
+    path, _ = _report(cohort)
+    outcome = _outcome(out)
+    assert outcome["complete"] is True and outcome["schema_version"] == 1
+    assert outcome["report"] == str(path) and outcome["run_id"] == path.parent.name
+    assert outcome["report_sha256"] == _sha(path)
+    assert outcome["checkpoint"] == str(cohort.checkpoint.resolve())
+    assert outcome["checkpoint_sha256"] == cohort.checkpoint_sha256
+    assert outcome["cohort"] == {"label": cohort.version.manifest["label"],
+                                 "role": cohort.version.manifest["role"],
+                                 "manifest_sha256": cohort.version.identity.sha256}
+    assert outcome["deterministic"] is False
+    assert outcome["registration"] == {
+        "requested": False, "registered": False, "outcome": "not_requested", "sequence": None,
+        "ledger": None,
+        "why": "--record was not given; the report is kept for a later registration"}
+    state = report_state(outcome["report"], checkpoint=outcome["checkpoint"],
+                         expected_sha256=outcome["report_sha256"])
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+
+
+def test_the_outcome_file_records_a_registration_and_a_refused_one(cli, cohort, tmp_path):
+    from src.evaluation.registration import report_state
+
+    out = tmp_path / "outcome.json"
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
+    registration = _outcome(out)["registration"]
+    assert registration == {
+        "requested": True, "registered": True, "outcome": "registered", "sequence": 1,
+        "ledger": str(cohort.checkpoint.parent.resolve() / LEDGER),
+        "why": "Registered as record 1"}
+
+    ledger = cohort.checkpoint.parent / LEDGER
+    ledger.write_text(json.dumps({"schema_version": 2, "records": []}))
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+    outcome = _outcome(out)
+    assert outcome["complete"] is True
+    assert outcome["registration"]["registered"] is False
+    assert outcome["registration"]["outcome"] == "refused"
+    assert "evaluations.v2.json" in outcome["registration"]["why"]
+    state = report_state(outcome["report"], checkpoint=outcome["checkpoint"],
+                         expected_sha256=outcome["report_sha256"])
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+
+
+def test_no_outcome_file_is_written_when_the_run_is_refused_before_its_report(
+    cli, cohort, tmp_path
+):
+    out = tmp_path / "outcome.json"
+    _without_source_format(cohort)
+
+    with pytest.raises(ValueError):
+        cli.main(_argv(cohort, "--outcome", str(out)))
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("where", ["missing_directory", "a_directory"])
+def test_an_outcome_file_that_cannot_be_written_is_refused_before_anything_is_read(
+    cli, cohort, tmp_path, monkeypatch, where
+):
+    import src.evaluation.cohort_registry as cohort_registry
+
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: pytest.fail("something was read"))
+    out = tmp_path / "absent" / "outcome.json" if where == "missing_directory" else tmp_path
+
+    with pytest.raises(ValueError, match="--outcome .*Nothing was read or written"):
+        cli.main(_argv(cohort, "--outcome", str(out)))
+    assert _nothing_written(cohort)
+
+
+def test_a_run_that_stops_after_publishing_leaves_an_incomplete_outcome(
+    cli, cohort, tmp_path, monkeypatch
+):
+    """The outcome is written once the report is published: a run that fails
+    after that (here its console) leaves `complete` false naming the report,
+    and says nothing it did not do."""
+    out = tmp_path / "outcome.json"
+    monkeypatch.setattr(cli, "_print_registered_summary",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(5, "I/O error")))
+
+    with pytest.raises(cli.FailedAfterPublishing):
+        cli.main(_argv(cohort, "--record", "--outcome", str(out)))
+
+    outcome = _outcome(out)
+    path, _ = _report(cohort)
+    assert outcome["complete"] is False and outcome["report"] == str(path)
+    assert outcome["registration"]["registered"] is None
+    assert "had not been attempted" in outcome["registration"]["why"]
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_each_run_and_each_registration_is_in_the_versions_usage_history(cli, cohort):
+    """D4: the measurement appends the run (its result, aggregates only) right
+    after its report is published, and the registration function the
+    registration, so command-line runs count."""
+    assert cli.main(_argv(cohort)) == 0
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    first, second = _reports(cohort)
+    entries = _usage(cohort)
+    assert [e["kind"] for e in entries] == ["test_run", "test_run", "registered"]
+    runs = {e["run_id"]: e for e in entries if e["kind"] == "test_run"}
+    for path in (first, second):
+        entry, report = runs[path.parent.name], json.loads(path.read_text())
+        assert entry["report_sha256"] == _sha(path)
+        assert entry["checkpoint_sha256"] == cohort.checkpoint_sha256
+        assert entry["metrics"] == report["authoritative_metrics"]
+        assert entry["n_ranked"] == report["n_ranked"]
+        assert (entry["deterministic"], entry["device"]) == (False, "cpu")
+    assert sorted(e["record_requested"] for e in runs.values()) == [False, True]
+    assert entries[2]["outcome"] in ("registered", "already_registered", "corroborated")
+    text = (cohort.version.directory / "reports" / "usage.jsonl").read_text()
+    assert "case-" not in text and "phenotype_ids" not in text
+
+
+def test_a_usage_history_that_cannot_be_appended_stops_the_run_after_its_report(
+    cli, cohort, monkeypatch
+):
+    """The report is kept; the run says it is not in the usage history, and it
+    does not go on to register."""
+    import src.evaluation.report_store as report_store
+
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "usage.jsonl")
+
+    monkeypatch.setattr(report_store, "record_test_run", fail)
+
+    with pytest.raises(cli.FailedAfterPublishing) as failed:
+        cli.main(_argv(cohort, "--record"))
+
+    assert "usage history could not be appended, so this run is not in it" in str(failed.value)
+    assert "The report was written" in str(failed.value)
+    assert len(_reports(cohort)) == 1
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
+    cli, cohort, capsys
+):
+    """D5 through --record: a second run under a key whose stored reports
+    disagree exits 3, keeps its report, and offers no register-later command,
+    since none would be accepted while they disagree."""
+    import secrets
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+    (first,) = _reports(cohort)
+    edited = json.loads(first.read_text())
+    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    stamp, checkpoint, _ = first.parent.name.split("-")
+    other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
+    other.mkdir()
+    (other / "report.json").write_text(json.dumps(edited))
+    capsys.readouterr()
+
+    assert cli.main(_argv(cohort, "--record")) == 3
+
+    err = capsys.readouterr().err
+    assert "runs disagree — investigate" in err and "hits@1" in err
+    assert "where the investigation can read it" in err
+    assert "Register it later with" not in err
+    assert len(_reports(cohort)) == 3
+
+
+def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
+    cli, cohort, monkeypatch
+):
+    """--deterministic: deterministic algorithms on (not warn-only) and
+    CUBLAS_WORKSPACE_CONFIG set while the run measures; the manifest records it,
+    which makes it another key than a run without it; after the run, the
+    process's settings are as they were."""
+    import os
+
+    import src.evaluation.measurement as measurement
+    from src.evaluation.measurement import run_mode_c as real_run_mode_c
+
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    seen = []
+
+    def observing(**kwargs):
+        seen.append((torch.are_deterministic_algorithms_enabled(),
+                     torch.is_deterministic_algorithms_warn_only_enabled(),
+                     torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark,
+                     os.environ.get("CUBLAS_WORKSPACE_CONFIG")))
+        return real_run_mode_c(**kwargs)
+
+    monkeypatch.setattr(measurement, "run_mode_c", observing)
+    before = (torch.are_deterministic_algorithms_enabled(), torch.backends.cudnn.deterministic,
+              torch.backends.cudnn.benchmark)
+
+    assert cli.main(_argv(cohort, "--deterministic", "--record")) == 0
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    assert seen[0] == (True, False, True, False, ":4096:8")
+    assert seen[1][0] is before[0] and seen[1][4] is None
+    assert (torch.are_deterministic_algorithms_enabled(), torch.backends.cudnn.deterministic,
+            torch.backends.cudnn.benchmark) == before
+    assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ
+    manifests = [json.loads(p.read_text())["manifest"] for p in _reports(cohort)]
+    assert sorted(m["deterministic_algorithms"] for m in manifests) == [False, True]
+    records = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert len(records) == 2, "a deterministic run is another key"
+
+
+def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
+    cli, cohort, monkeypatch
+):
+    """No fallback: torch's refusal becomes one refusal saying the run did not
+    complete as requested, nothing written, and the settings are put back.
+    Without --deterministic the same error is not reworded."""
+    import src.evaluation.measurement as measurement
+
+    error = RuntimeError("scatter_reduce_cuda does not have a deterministic implementation, "
+                         "but you set 'torch.use_deterministic_algorithms(True)'.")
+
+    def refuse(**kwargs):
+        raise error
+
+    monkeypatch.setattr(measurement, "run_mode_c", refuse)
+
+    with pytest.raises(cli.DeterministicExecutionUnsupported) as refused:
+        cli.main(_argv(cohort, "--deterministic", "--record"))
+
+    message = str(refused.value)
+    assert "no deterministic implementation" in message and "does not fall back" in message
+    assert "scatter_reduce_cuda" in message and message.endswith("Nothing was written.")
+    assert _nothing_written(cohort) and _usage(cohort) == []
+    assert torch.are_deterministic_algorithms_enabled() is False
+    with pytest.raises(RuntimeError) as raw:
+        cli.main(_argv(cohort))
+    assert raw.value is error
+
+
+@pytest.mark.parametrize("state", ["bad_cublas_config", "warn_only_inherited"])
+def test_a_process_state_deterministic_execution_cannot_trust_is_refused(
+    cli, cohort, monkeypatch, state
+):
+    import src.evaluation.cohort_registry as cohort_registry
+
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: pytest.fail("something was read"))
+    if state == "bad_cublas_config":
+        monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":0:0")
+        argv, fragment = _argv(cohort, "--deterministic"), "not document as deterministic"
+    else:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        argv, fragment = _argv(cohort), "warn-only mode"
+    try:
+        with pytest.raises(cli.DeterministicExecutionUnsupported, match=fragment) as refused:
+            cli.main(argv)
+    finally:
+        torch.use_deterministic_algorithms(False)
+    assert "Nothing was read or written" in str(refused.value)
+    assert _nothing_written(cohort)

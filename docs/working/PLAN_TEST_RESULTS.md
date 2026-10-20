@@ -546,6 +546,23 @@ so the aim is to make that use visible and comparable, not to forbid it.
   **Recommendation:** off by default there, unless the institution decides otherwise (§4.9
   question 1).
 
+**As implemented in M5-1 (2026-10-20), backend only:** `order_by_test_score`
+(`src/evaluation/ordering.py`) is one pure function over ledger records of one cohort version
+(its manifest digest) and one scoring-semantics digest. It is offered only for a role the caller
+passes from `SHEPHERD_ORDERING_ROLES`, and never for `institutional_acceptance`, even when listed.
+The fixed rule (`chosen_record`) takes the lowest registration sequence among records with
+`regime.deterministic_algorithms` true, else the lowest overall. A record whose sequence or flag
+cannot be read is not picked around. A pick whose key is contested, or whose state cannot be
+checked (`StoreScan.state`, D5), is listed as not ordered, and the next record is never promoted.
+Mean rank is lower-better and ties share a position. One digest with records in two ledgers is
+not ordered. A row whose regime is not the most common one is marked. The usage history is
+`<version>/reports/usage.jsonl` (`src/evaluation/report_store.py`), append-only. The measurement
+appends each run after its report is published, `register_report` each registration that wrote a
+ledger, and `record_model_load` serves M5-2's Load from an ordered list. Automatic selection is
+kept away from the ledger by the import-linter contract `selection-ignores-test-results` (direct
+imports of the reload route and `checkpoint_paths`) and a behavioural test. Model Management and
+the Load control are M5-2's.
+
 ### D5 — The checkbox, reports and records
 
 The owner's semantics, followed as stated:
@@ -662,6 +679,33 @@ else is refused, naming the fields that differ. A corroborating report does not 
 record: the record keeps its first report's R10 and environment, and when the later report's
 differ, the registration says so in one sentence naming the report that keeps them. The
 disagreement block, contested states and investigation notes are phase 2.
+
+**As implemented in M5-1 (2026-10-20):**
+- **Registration from the store only.** `register_report` (both entry points) finds the version
+  from the report's resolved path, `<registry>/versions/<label>/reports/<run id>/report.json`,
+  and resolves it (`locate_store_report`). It then requires the report's cohort block to equal
+  `cohort_version_block` of that version, and the run directory to be named for the measured
+  checkpoint. A copy elsewhere, or a path off that structure, is refused before it is read,
+  saying to register the store's original. A registry moved as a whole still registers. The
+  digest, checkpoint and ledger checks are unchanged.
+- **The block.** `scan_report_store` builds every stored report with `build_record`, groups the
+  records by `record_key` and compares them with `differing_fields`, the comparison
+  `append_record` now uses too. A contested key refuses every registration under it
+  (`RunsDisagree`), the same report again included. A key that cannot be checked is refused too
+  (`DisagreementNotChecked`): an unreadable report, a link out of the store, or a report whose
+  key cannot be told affects every key; a report `build_record` refuses affects only the key its
+  manifest names. Under `--record` the refusal exits 3 and offers no register-later command.
+- **Notes** (`add_investigation_note`) go to `<version>/reports/notes.jsonl`: the key, who (as
+  typed, unverified under M1), when and what. They are accepted only for a key that a stored
+  report holds, and nothing reads them to decide anything.
+- **The switch.** `measure_scorer --deterministic` sets deterministic algorithms (never
+  warn-only), cuDNN deterministic, benchmark off and `CUBLAS_WORKSPACE_CONFIG` before CUDA
+  starts, refuses rather than falls back, and restores the process's settings. The job runner's
+  hooks are `--expect-checkpoint-sha256`, `--expect-version-sha256`, `--outcome FILE` and
+  `registration.report_state` (kept and registered, read from disk).
+- **Not wired yet:** the contested state on the read-only route and the Diagnosis block, which
+  need the registry setting (M5-2, through `StoreScan.status`). The scan is not atomic with a
+  run publishing into the version (one writer).
 
 ### D6 — How a test cohort is imported, identified and versioned
 

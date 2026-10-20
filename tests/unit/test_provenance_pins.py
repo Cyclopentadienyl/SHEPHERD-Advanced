@@ -123,8 +123,18 @@ ALLOWED = {
             "not compare-and-swap"),
     ("src/evaluation/sidecar.py", "read_ledger", "read_once"): (1, _READER),
     ("src/evaluation/sidecar.py", "read_ledger", "json.loads"): (1, _READER),
-    ("src/evaluation/registration.py", "_read_report", "read_once"): (1, _READER),
-    ("src/evaluation/registration.py", "_read_report", "json.loads"): (1, _READER),
+    # The one reader of a kept report (moved from registration.py in M5-1): the
+    # registration, the report store's D5 scan and report_state read through it.
+    ("src/evaluation/report_store.py", "read_report", "read_once"): (1, _READER),
+    ("src/evaluation/report_store.py", "read_report", "json.loads"): (1, _READER),
+    ("src/evaluation/report_store.py", "_read_entries", "read_once"):
+        (1, _NOT_INPUT.format(what="a report store's usage history or investigation notes, "
+                                   "append-only, read for display (M5-1, D4/D5); no record "
+                                   "or comparison is taken from them")),
+    ("src/evaluation/report_store.py", "_read_entries", "json.loads"):
+        (1, _NOT_INPUT.format(what="one line of a report store's usage history or "
+                                   "investigation notes, parsed from the bytes of its one "
+                                   "read_once")),
     # --- The cohort registry (contract M4) ------------------------------------
     ("src/evaluation/cohort_registry.py", "prepare_import", "read_once"):
         (1, "M4: the cohort source file, parsed by parse_source and kept verbatim from the "

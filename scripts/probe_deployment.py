@@ -2831,18 +2831,24 @@ def phase_m2_demo(
         damaged = m4_dir / "damaged" / "report.json"
         damaged.parent.mkdir(parents=True)
         damaged.write_bytes(data[: len(data) // 2])
+        # Since M5-1 a report is registered only from the registry's report
+        # store (D5, 2026-10-19): a copy outside it is refused for where it is,
+        # before it is read, saying to register the store's original.
         refuses(lambda: record_evaluation.main(["--report", str(damaged),
                                                 "--checkpoint", str(measured)]),
-                SystemExit, ("is not a measurement report", "Nothing was written"))
+                SystemExit, ("is not a report the registry's report store holds",
+                             "Nothing was written"))
         assert_untouched(before, measured.parent, "a refused registration", include_dirs=True)
-        return "already registered and a damaged copy refused; the ledger unchanged", {
-            "same_report_again": "already_registered", "damaged_copy": "refused",
-            "damaged_copy_bytes": len(data) // 2, "ledger_unchanged": True,
-        }
+        return "already registered and a damaged copy outside the store refused; the ledger " \
+               "unchanged", {
+                   "same_report_again": "already_registered", "damaged_copy": "refused",
+                   "damaged_copy_refused_as": "not in the registry's report store",
+                   "damaged_copy_bytes": len(data) // 2, "ledger_unchanged": True,
+               }
 
     report.run("T3", "m2",
-               "M4: the same report again is already registered, a damaged copy refused, the "
-               "ledger unchanged", _registered_again)
+               "M4: the same report again is already registered, a damaged copy outside the "
+               "report store refused, the ledger unchanged", _registered_again)
 
     def _other_graph_refused() -> Tuple[str, Dict[str, Any]]:
         from src.evaluation.cohort_registry import CohortBindingMismatch

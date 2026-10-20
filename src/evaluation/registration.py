@@ -7,18 +7,38 @@ by hand (`scripts/record_evaluation.py --report`), and **both go through
 `register_report`**. Two implementations of "turn a report into a ledger record"
 could disagree about what a report says; one cannot.
 
+**Only a report the registry's report store holds** (D5, amended 2026-10-19).
+The report's version is found through the registry's own structure,
+``<registry>/versions/<label>/reports/<run id>/report.json``, and resolved
+(`src.evaluation.report_store.locate_store_report`); a report anywhere else is
+refused, saying to register the store's original, and nothing guesses where a
+copy came from. Its place is not taken as proof: the report must name that
+version exactly (`cohort_version_block`, the block the measurement writes from
+the same version), its run directory must be named for the checkpoint it
+measured, and the checkpoint checks below still hold. A registry moved as a
+whole still works: nothing compares an absolute path.
+
+**While runs under the report's key disagree, nothing under the key is
+registered** (D5), checked or unchecked, the same report again included: the
+store's reports are compared with the ledger's own comparison
+(`StoreScan.status`), and a key whose state cannot be checked is refused too,
+never read as uncontested. The reports stay in the store for the investigation;
+a note kept there records what was found and does not lift the block.
+
 **Each file is parsed and identified from one read** (BACKLOG item 18). The report
 is read once, and the record is built from those bytes and names them by their
-digest; the ledger is read once, and the write's stale-write guard compares the
-file with the digest of what was parsed. A report replaced while it was being
-registered therefore cannot be recorded as one file's numbers under the other's
-digest, and another writer's append between this read and this write is refused
-rather than erased.
+digest; the store's other reports are read once each for the comparison, never
+this one again; the ledger is read once, and the write's stale-write guard
+compares the file with the digest of what was parsed. A report replaced while it
+was being registered therefore cannot be recorded as one file's numbers under
+the other's digest, and another writer's append between this read and this
+write is refused rather than erased.
 
 **Still single-writer.** The guard compares the file by path just before the
 replacement, and the window between that comparison and the replacement stays
 open (`write_ledger`). This is not compare-and-swap and makes no claim of safety
-for concurrent writers.
+for concurrent writers; nor is the store's comparison atomic with a run
+publishing a new report into the version at that moment.
 
 **One place for the ledger, whichever way a report arrives:** beside the
 checkpoint file's resolved path, the rule the read-only view reads by. The
@@ -34,23 +54,45 @@ here, as for any registration, and refused unless those are its bytes and it
 measured that checkpoint, so a file replaced between the publication and this
 read is never registered in the run's name (the reviewer's P2 of 2026-10-17).
 
+**A registration is in the version's usage history** (D4): a ledger written is
+appended there by this function, so a registration from the command line counts
+as one from the Test tab. If that append fails after the ledger was written, the
+result says so (`usage_history_problem`) rather than claiming either.
+
 **Every expected failure is one refusal** (`RegistrationRefused`) whose message
 names the file and says nothing was written: a missing or damaged report, a file
-that is not a report, a generated split's report, a ledger this revision does not
-read, a contradiction, a stale write, a checkpoint file or directory that does
-not hold the weights the report measured, and, for an automatic registration, a
-report file that is no longer the one the run published (`ReportNotAsPublished`).
-The entry points print it and exit; neither shows a traceback for these.
+that is not a report or not in a report store, a generated split's report, a
+report that does not name the version it is kept under, runs that disagree
+(`RunsDisagree`) or a store that cannot be checked
+(`DisagreementNotChecked`), a ledger this revision does not read, a
+contradiction, a stale write, a checkpoint file or directory that does not hold
+the weights the report measured, and, for an automatic registration, a report
+file that is no longer the one the run published (`ReportNotAsPublished`). The
+entry points print it and exit; neither shows a traceback for these.
+
+**Kept? Registered?** `report_state` answers both for one report from disk, the
+way the publication contract defines them, for the job runner and the Test tab
+(M5's acceptance: never inferred from a job's exit alone).
 
 Module: src/evaluation/registration.py
 """
 from __future__ import annotations
 
-import json
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
+from src.evaluation.report_store import (
+    NotInReportStore,
+    _NotTheExpectedBytes,
+    locate_store_report,
+    read_report,
+    record_registration,
+    scan_report_store,
+    store_report_parts,
+)
 from src.evaluation.sidecar import (
     CORROBORATION_KEEPS_FIRST,
     LEDGER_FILENAME,
@@ -63,6 +105,17 @@ from src.evaluation.sidecar import (
     write_ledger,
 )
 from src.utils.fingerprint import ReadIdentity
+
+#: Whether a report was kept, as the publication contract defines it: its
+#: ``report.json`` is in the report store, holding the bytes the run published
+#: when that digest is known (`report_state`).
+KEPT_STATES: Tuple[str, ...] = ("kept", "not_kept", "cannot_be_checked")
+
+#: Whether a report is registered: a record in the ledger beside its checkpoint
+#: names it, as its source or a corroborating report (`report_state`).
+REGISTERED_STATES: Tuple[str, ...] = ("registered", "not_registered", "cannot_be_checked")
+
+_SAYS_NOTHING_WRITTEN = re.compile(r"\s*Nothing was written\.?\s*$")
 
 
 class RegistrationRefused(ValueError):
@@ -77,13 +130,23 @@ class ReportNotAsPublished(RegistrationRefused):
     offered for a later registration."""
 
 
-class _NotTheExpectedBytes(Exception):
-    """`_read_report` read bytes whose digest is not the one expected; raised
-    before they are decoded."""
+class RunsDisagree(RegistrationRefused):
+    """Reports in the store under this report's key disagree (D5), so nothing
+    under the key is registered while they do; `status` is the key's state.
+    Registering the report later is refused the same way until that changes."""
 
-    def __init__(self, sha256: str) -> None:
-        super().__init__(sha256)
-        self.sha256 = sha256
+    def __init__(self, message: str, status: Any) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class DisagreementNotChecked(RegistrationRefused):
+    """Whether reports in the store under this report's key disagree cannot be
+    checked (D5: never read as uncontested); `status` says why."""
+
+    def __init__(self, message: str, status: Any) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class MeasuredRun(NamedTuple):
@@ -107,12 +170,35 @@ class RegistrationResult(NamedTuple):
     its own values (each record's labels are true of its own report), so a
     surface that reported plain agreement would hide that this report found,
     for instance, training evidence the first run did not (`corroboration_note`).
+
+    ``usage_history_problem`` is `None` unless the ledger was written and the
+    entry in the version's usage history could not be appended; it then says
+    why, and the registration stands.
     """
 
     outcome: str
     record: Dict[str, Any]
     ledger_path: Path
     excluded_differences: Tuple[str, ...] = ()
+    usage_history_problem: Optional[str] = None
+
+
+class ReportState(NamedTuple):
+    """Whether one report was kept and whether it is registered, each one of
+    `KEPT_STATES` and `REGISTERED_STATES` with the reason in words.
+
+    ``report_sha256`` is the digest of the bytes found (or the one expected,
+    when the report could not be read); ``sequence`` the ledger record's when
+    registered; ``ledger_path`` the ledger that was (or would be) read.
+    """
+
+    kept: str
+    why_kept: str
+    registered: str
+    why_registered: str
+    report_sha256: Optional[str]
+    sequence: Optional[int]
+    ledger_path: Path
 
 
 def corroboration_note(result: RegistrationResult, report_path: Path) -> Optional[str]:
@@ -133,36 +219,6 @@ def corroboration_note(result: RegistrationResult, report_path: Path) -> Optiona
     )
 
 
-def _read_report(path: Path, expected_sha256: Optional[str] = None) -> Tuple[Any, str]:
-    """A report parsed from one read, and the digest of exactly those bytes.
-
-    With ``expected_sha256``, the digest of that read is compared **before the
-    bytes are decoded or parsed**, and other bytes raise `_NotTheExpectedBytes`:
-    a file that is not the expected report is never interpreted, whether it is
-    another valid report or damaged JSON.
-
-    Decoded as UTF-8, as the measurement writes it; the bytes are released before
-    the text is parsed. Not UTF-8 or not JSON is a ``ValueError``; whether what
-    parsed is a report is `build_record`'s to decide.
-    """
-    from src.utils.fingerprint import read_once
-
-    read = read_once(path)
-    digest = read.sha256
-    if expected_sha256 is not None and digest != expected_sha256:
-        del read
-        raise _NotTheExpectedBytes(digest)
-    try:
-        text = read.data.decode("utf-8")
-        del read
-        parsed = json.loads(text)
-    except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are both ValueErrors
-        raise ValueError(
-            f"it does not parse as UTF-8 JSON ({type(exc).__name__}: {exc})"
-        ) from exc
-    return parsed, digest
-
-
 def _ledger_beside(checkpoint: Path) -> Path:
     """The ledger of the checkpoint at this path: ``evaluations.json`` in the
     directory of its resolved path (M4 decision 15), the rule the read-only view
@@ -180,6 +236,13 @@ def register_report(
 ) -> RegistrationResult:
     """Register one measurement report in the ledger beside the checkpoint it
     measured.
+
+    **The report must be one the registry's report store holds**
+    (``<registry>/versions/<label>/reports/<run id>/report.json``,
+    `locate_store_report`), naming that version exactly and measured on the
+    checkpoint its run directory is named for; and **no report in the store
+    under its key may disagree with another** (D5), nor may that be uncheckable
+    (`RunsDisagree`, `DisagreementNotChecked`).
 
     **The ledger is always beside the checkpoint file's resolved path**
     (``Path(file).resolve().parent / "evaluations.json"``, M4 decision 15): the
@@ -214,8 +277,10 @@ def register_report(
     caller passes one.
 
     Returns the outcome — ``registered``, ``already_registered`` (nothing written)
-    or ``corroborated`` — the record as the ledger now holds it, and, for a
-    corroboration, the fields not compared on which this report differs. Every
+    or ``corroborated`` — the record as the ledger now holds it, for a
+    corroboration the fields not compared on which this report differs, and,
+    when the ledger was written and the version's usage history could not be
+    appended, why (`RegistrationResult.usage_history_problem`). Every
     expected failure raises ``RegistrationRefused``; a call naming none, or more
     than one, of ``checkpoint``, ``checkpoint_dir`` and ``measured`` is a
     caller's error (``TypeError``).
@@ -236,12 +301,15 @@ def register_report(
     elif measured is not None:
         ledger_path = _ledger_beside(measured.checkpoint.path)
 
-    def refused(problem: str, kind: type = RegistrationRefused) -> RegistrationRefused:
-        problem = problem.rstrip()
+    def refused(problem: str, kind: type = RegistrationRefused,
+                **fields: Any) -> RegistrationRefused:
+        # A refusal from a reader that already says nothing was written (the
+        # registry's own) says it once, naming the ledger.
+        problem = _SAYS_NOTHING_WRITTEN.sub("", problem.rstrip())
         if not problem.endswith("."):
             problem += "."
         where = f" to {ledger_path}" if ledger_path is not None else ""
-        return kind(f"{problem} Nothing was written{where}.")
+        return kind(f"{problem} Nothing was written{where}.", **fields)
 
     def not_a_directory(directory: Path) -> RegistrationRefused:
         return refused(
@@ -262,9 +330,27 @@ def register_report(
     lost = ReportNotAsPublished if measured is not None else RegistrationRefused
     lost_tail = (" The run's own report may no longer exist; re-measure to register "
                  "this measurement." if measured is not None else "")
+    gone = (f"{report_path} does not exist: the run's own report is gone; re-measure to "
+            "register this measurement." if measured is not None
+            else f"{report_path} does not exist.")
+    if not os.path.lexists(report_path):
+        raise refused(gone, lost)
+
+    # **Only from the report store** (D5, 2026-10-19): the version is found
+    # through the registry's structure and resolved, or the report is refused.
     try:
-        report, source_digest = _read_report(
-            report_path, measured.report_sha256 if measured is not None else None
+        stored = locate_store_report(report_path)
+    except NotInReportStore as exc:
+        raise refused(str(exc)) from None
+    except ValueError as exc:  # RegistryRefused, CohortVersionRefused
+        raise refused(
+            f"{report_path} is in a report store whose registry or version cannot be read: "
+            f"{exc}"
+        ) from exc
+
+    try:
+        report, source_digest = read_report(
+            stored.path, measured.report_sha256 if measured is not None else None
         )
     except _NotTheExpectedBytes as exc:
         # Compared on the bytes just read, before they are decoded: whatever the
@@ -277,9 +363,6 @@ def register_report(
             lost,
         ) from None
     except FileNotFoundError as exc:
-        gone = (f"{report_path} does not exist: the run's own report is gone; re-measure to "
-                "register this measurement." if measured is not None
-                else f"{report_path} does not exist.")
         raise refused(gone, lost) from exc
     except OSError as exc:
         raise refused(
@@ -292,9 +375,65 @@ def register_report(
         record = build_record(report, source_digest)
     except ValueError as exc:
         raise refused(f"{report_path}: {exc}") from exc
-    # Released before the ledger is read: the record holds what is kept of it.
+
+    # **The report names the version it is kept under, exactly**: the block the
+    # measurement writes from a version (`cohort_version_block`), compared with
+    # that block of the version the store holds it under. A report moved into
+    # another version's store, or whose block was edited, is refused here.
+    from src.evaluation.cohort_registry import RUN_ID_PATTERN, cohort_version_block
+
+    try:
+        expected_block = cohort_version_block(stored.version)
+    except ValueError as exc:
+        raise refused(f"{report_path} cannot be checked against its version: {exc}") from exc
+    block = report["manifest"]["cohort_version"]
+    if block != expected_block:
+        fields = sorted(f for f in set(block) | set(expected_block)
+                        if block.get(f) != expected_block.get(f))
+        raise refused(
+            f"{report_path} is kept under cohort version {stored.label!r} "
+            f"({expected_block['manifest_sha256'][:12]}...), but it records another version, "
+            f"differing in: {', '.join(fields)}. A report is registered only under the "
+            "version it measured."
+        )
+    # Released before anything else is read: the record holds what is kept of it.
     del report
     digest = record["checkpoint_digest"]
+    # **Its run directory is named for the checkpoint it measured**
+    # (`create_report_dir`): a report moved into another run's directory is not
+    # where the measurement kept it.
+    named_for = RUN_ID_PATTERN.fullmatch(stored.run_id).group(1)
+    if named_for != digest[:12]:
+        raise refused(
+            f"{report_path} measured checkpoint {digest[:12]}..., but its run directory "
+            f"{stored.run_id} is named for {named_for}...: it is not where the "
+            "measurement kept that run's report."
+        )
+
+    # **D5: no registration under a key whose runs disagree**, checked or
+    # unchecked, and none where that cannot be checked. This report stands for
+    # its own run directory; every other report the store keeps is read once.
+    key = record_key(record)
+    status = scan_report_store(stored.version, known=(stored.run_id, record)).status(key)
+    if status.state == "contested":
+        raise refused(
+            f"runs disagree — investigate. Under this report's key (checkpoint "
+            f"{digest[:12]}... on cohort version {stored.label} "
+            f"({record['cohort_digest'][:12]}...), measurement semantics "
+            f"{record['measurement_semantics_digest'][:12]}...) the report store holds "
+            f"reports that disagree on: {', '.join(status.differing)} (runs "
+            f"{', '.join(status.disagreeing_runs)}). While they do, no report under this key "
+            "is registered, checked or unchecked: registering one would be choosing between "
+            "results. Every report stays in the store; compare their environment facts "
+            "first. A deterministic re-run is another key",
+            RunsDisagree, status=status,
+        )
+    if status.state == "cannot_be_checked":
+        raise refused(
+            f"whether runs under this report's key disagree cannot be checked, so it is not "
+            f"registered: {'; '.join(status.problems)}",
+            DisagreementNotChecked, status=status,
+        )
 
     # **The ledger has to be beside the weights it describes.** Without this it
     # can be written into any directory, including one holding no checkpoint at
@@ -357,7 +496,6 @@ def register_report(
     except ValueError as exc:
         raise refused(f"{report_path} is not registered: {exc}") from exc
 
-    key = record_key(record)
     held = next(r for r in updated["records"] if record_key(r) == key)
     differences: Tuple[str, ...] = ()
     if outcome == "corroborated":
@@ -370,8 +508,111 @@ def register_report(
         write_ledger(ledger_path, updated, expected_digest=digest_at_read)
     except (OSError, ValueError) as exc:
         raise refused(f"{report_path} is not registered: {exc}") from exc
-    return RegistrationResult(outcome, held, ledger_path, differences)
+
+    # **In the version's usage history** (D4), after the ledger was written: a
+    # failure here does not undo the registration, so it is reported with it.
+    problem: Optional[str] = None
+    try:
+        record_registration(
+            stored.version, run_id=stored.run_id, report_sha256=source_digest,
+            checkpoint_sha256=digest, outcome=outcome,
+            sequence=held["registration"]["sequence"],
+        )
+    except (OSError, ValueError) as exc:
+        problem = (f"the registration was written to {ledger_path}, but the cohort version's "
+                   f"usage history could not be appended ({type(exc).__name__}: {exc})")
+    return RegistrationResult(outcome, held, ledger_path, differences, problem)
 
 
-__all__ = ["MeasuredRun", "RegistrationRefused", "RegistrationResult",
-           "ReportNotAsPublished", "corroboration_note", "register_report"]
+def report_state(
+    report_path: Path,
+    *,
+    checkpoint: Path,
+    expected_sha256: Optional[str] = None,
+) -> ReportState:
+    """Whether one report was kept, and whether it is registered, read from
+    disk as the publication contract defines them -- never from a job's exit.
+
+    - **Kept** (`KEPT_STATES`): the path is a report in a report store
+      (`store_report_parts`, its shape; the version is not resolved, since a
+      kept report stays kept when its version cannot be read), and its
+      ``report.json``, the run's commit point, is there: holding the bytes
+      ``expected_sha256`` names when that is given (the digest the run
+      published, from its outcome file), or parsing as JSON otherwise. No file
+      is ``not_kept``; other bytes than the run published are ``not_kept`` (the
+      run's report was replaced); a file that cannot be read is
+      ``cannot_be_checked``.
+    - **Registered** (`REGISTERED_STATES`): the ledger beside ``checkpoint``'s
+      resolved path -- the file the run was given, where `register_report`
+      files it -- holds a record naming this report's digest, as its source or
+      among its corroborating reports. The digest is the one read, or
+      ``expected_sha256`` when the report could not be read, so a registered
+      report that was later removed still reads as registered. No ledger, or no
+      such record, is ``not_registered``; a ledger that cannot be read, or no
+      digest to look for, is ``cannot_be_checked``.
+
+    Reads the report once (`read_report`) and the ledger once (`read_ledger`);
+    writes nothing. A link retargeted between the run and this call moves the
+    ledger looked in, as it would move a later registration.
+    """
+    ledger_path = _ledger_beside(checkpoint)
+    report_path = Path(report_path)
+    digest: Optional[str] = None
+    try:
+        store_report_parts(report_path)
+    except NotInReportStore:
+        kept, why_kept = "not_kept", (f"{report_path} is not in a registry's report store, so it "
+                                      "is not a kept report")
+        digest = expected_sha256
+    else:
+        try:
+            _, digest = read_report(report_path, expected_sha256)
+        except _NotTheExpectedBytes as exc:
+            kept, why_kept = "not_kept", (
+                f"{report_path} holds bytes {exc.sha256[:12]}..., not the "
+                f"{expected_sha256[:12]}... the run published: the run's report was replaced "
+                "or changed")
+            digest = expected_sha256
+        except FileNotFoundError:
+            kept, why_kept = "not_kept", f"there is no {report_path}"
+            digest = expected_sha256
+        except OSError as exc:
+            kept, why_kept = "cannot_be_checked", (
+                f"{report_path} could not be read ({type(exc).__name__}: {exc})")
+            digest = expected_sha256
+        except ValueError as exc:
+            kept, why_kept = "not_kept", f"{report_path} is not a report: {exc}"
+            digest = expected_sha256
+        else:
+            kept, why_kept = "kept", f"{report_path} is in the report store"
+
+    if digest is None:
+        return ReportState(kept, why_kept, "cannot_be_checked",
+                           "no report digest to look for: the report could not be read and "
+                           "no published digest was given", None, None, ledger_path)
+    try:
+        ledger, _ = read_ledger(ledger_path)
+    except (OSError, ValueError) as exc:
+        return ReportState(kept, why_kept, "cannot_be_checked", str(exc), digest, None,
+                           ledger_path)
+    for record in ledger["records"]:
+        if not isinstance(record, dict):
+            continue
+        corroborating = record.get("corroborating_reports")
+        if (record.get("source_artifact_digest") == digest
+                or (isinstance(corroborating, list) and digest in corroborating)):
+            registration = record.get("registration")
+            sequence = registration.get("sequence") if isinstance(registration, dict) else None
+            return ReportState(kept, why_kept, "registered",
+                               f"record {sequence} in {ledger_path} names this report",
+                               digest, sequence if type(sequence) is int else None,
+                               ledger_path)
+    return ReportState(kept, why_kept, "not_registered",
+                       f"{ledger_path} holds no record naming this report"
+                       if ledger_path.exists() else f"there is no {ledger_path}",
+                       digest, None, ledger_path)
+
+
+__all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun", "REGISTERED_STATES",
+           "RegistrationRefused", "RegistrationResult", "ReportNotAsPublished", "ReportState",
+           "RunsDisagree", "corroboration_note", "register_report", "report_state"]

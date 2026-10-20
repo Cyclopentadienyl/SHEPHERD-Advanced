@@ -25,6 +25,13 @@ cannot both claim one. A version directory without ``cohort.json`` is an
 interrupted import: the resolver refuses it and the importer refuses its label,
 naming the directory for the operator to remove. Nothing here deletes anything.
 
+**The report store** is the version's ``reports/`` directory, the one part of a
+version that grows: a run directory per measurement (`create_report_dir`,
+named by `RUN_ID_PATTERN`), and beside them two append-only files, the usage
+history and the investigation notes (`src/evaluation/report_store.py`, M5's D4
+and D5). Every reader takes a run directory by its name, so neither file is
+read as a run.
+
 **Patient-level data never enters the repository tree** (D7). The registry is a
 path the operator gives on the command line, or to the service as
 ``SHEPHERD_REGISTRY`` (M5-1, `src.config.server_settings`, one rule for both); it
@@ -59,6 +66,7 @@ Module: src/evaluation/cohort_registry.py
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -99,6 +107,18 @@ VERSION_SAMPLES = "samples.json"
 SOURCES_DIR = "sources"
 VERSIONS_DIR = "versions"
 REPORTS_DIR = "reports"
+
+#: A run's two files in the report store, in the order the measurement publishes
+#: them: the per-case ranks, then the report that names them by digest (the
+#: run's commit point; a run directory without it is an interrupted write).
+RANKS_FILE = "ranks.json"
+REPORT_FILE = "report.json"
+
+#: The name `create_report_dir` gives a run directory: ``<UTC time>-<checkpoint
+#: digest, 12 hex>-<8 random hex>``. Every reader of the report store takes a
+#: run directory by this name and nothing else, so a file kept beside the run
+#: directories (the usage history, the investigation notes) is never read as one.
+RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-([0-9a-f]{12})-[0-9a-f]{8}")
 
 #: What a case that lost some, but not all, of its terms in mapping becomes:
 #: ranked on the terms that mapped, or excluded. Recorded per version (OWNER Q1).
@@ -1296,35 +1316,114 @@ def verify_cohort_binding(
         )
 
 
+def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
+    """The registered version as a report records it: exactly the fields
+    `src.evaluation.sidecar.COHORT_VERSION_FIELDS` names, aggregates only.
+
+    `manifest_sha256` is the digest of the `cohort.json` bytes this read parsed,
+    the ledger's cohort identity (M4 decision 11). No case id, exclusion entry or
+    unmappable term goes in: those stay in the version, in the registry on the
+    operator's machine (D7), and the ledger refuses a block naming them.
+
+    **One derivation for both sides of the comparison.** The measurement writes
+    this block into its report right after it resolves the version, and a
+    registration compares a report's block with this block of the version the
+    report store holds it under (`src/evaluation/registration.py`), so a report
+    is registered only under the version it measured, with that version's counts.
+
+    Raises:
+        CohortVersionRefused: the manifest does not state its source format,
+            which `resolve_version`'s shape checks do not cover.
+    """
+    manifest = version.manifest
+    source_format = manifest["source"].get("format")
+    if not isinstance(source_format, str) or not source_format:
+        raise CohortVersionRefused(
+            f"{version.identity.path} records no source format, so a report of it could "
+            "not say what its source was. Nothing was written."
+        )
+    return {
+        "label": manifest["label"],
+        "role": manifest["role"],
+        "manifest_sha256": version.identity.sha256,
+        "source_sha256": manifest["source"]["sha256"],
+        "source_format": source_format,
+        "samples_sha256": manifest["samples"]["sha256"],
+        "graph": dict(manifest["graph"]),
+        "dataset_record_sha256": manifest["dataset_record"]["sha256"],
+        # Copies, so the report cannot alias the version read.
+        "mapping": copy.deepcopy(manifest["mapping"]),
+        "counts": copy.deepcopy(manifest["counts"]),
+    }
+
+
+def is_run_id(name: Any) -> bool:
+    """Whether `name` is a run directory's name as `create_report_dir` makes it."""
+    return isinstance(name, str) and RUN_ID_PATTERN.fullmatch(name) is not None
+
+
+def report_store_directory(
+    version: CohortVersionRead, *, create: bool = False, done: str = "Nothing was written."
+) -> Optional[Path]:
+    """The version's report store, ``reports/``, resolved and checked, or `None`
+    when it does not exist and `create` is false.
+
+    **Resolved before it is read or written** (`_registry_directory`): the
+    version directory must not resolve inside the repository, and ``reports/``
+    must resolve inside the version directory. `resolve_version` checked the
+    version directory against its registry, so whatever is read from or written
+    into the store is inside the registry and never in the repository, whatever
+    links are below it. `done` says what was written before a refusal.
+
+    The one way to the store: `create_report_dir` publishes a run into it, and
+    `src/evaluation/report_store.py` reads the runs and appends the usage
+    history and investigation notes beside them.
+    """
+    # The resolved version directory is what reports/ must stay inside; one in
+    # the repository is refused here, naming it rather than its reports/.
+    directory = _registry_directory(version.directory, within=None, done=done)
+    reports = _registry_directory(directory / REPORTS_DIR, within=directory, done=done)
+    if create:
+        reports.mkdir(parents=True, exist_ok=True)
+    elif not reports.is_dir():
+        return None
+    return reports
+
+
+def report_run_directory(reports: Path, run_id: str) -> Path:
+    """One run directory of a report store (`report_store_directory`'s result),
+    resolved and refused when a link takes it outside ``reports/`` or into the
+    repository. Raises `ValueError` for a name that is not a run id."""
+    if not is_run_id(run_id):
+        raise ValueError(f"{run_id!r} is not a run id (<UTC time>-<12 hex>-<8 hex>)")
+    return _registry_directory(reports / run_id, within=reports,
+                               done="Nothing is read from there.")
+
+
 def create_report_dir(
     version: CohortVersionRead, checkpoint_sha256: str, now: datetime
 ) -> Tuple[str, Path]:
     """A new directory for one run's report under the version (§2.1).
 
-    The run id is ``<UTC time>-<checkpoint digest, 12>-<8 random hex>``: sortable
-    by time, readable as which weights, and unique without a lock. ``reports/``
-    is created when absent; the run directory is created with
-    ``exist_ok=False``, so two runs never share one.
+    The run id is ``<UTC time>-<checkpoint digest, 12>-<8 random hex>``
+    (`RUN_ID_PATTERN`): sortable by time, readable as which weights, and unique
+    without a lock. ``reports/`` is created when absent; the run directory is
+    created with ``exist_ok=False``, so two runs never share one.
 
     **Every directory is resolved before it is written into**
-    (`_registry_directory`): the version directory must not resolve inside the
-    repository, ``reports/`` must resolve inside the version directory, and the
-    run directory inside ``reports/``. `resolve_version` checked the version
-    directory against its registry, so the report lands inside the registry
-    and never in the repository, whatever links are below it. The resolved run
-    directory is returned, and the caller writes through it.
+    (`report_store_directory`, `_registry_directory`): the version directory
+    must not resolve inside the repository, ``reports/`` must resolve inside the
+    version directory, and the run directory inside ``reports/``.
+    `resolve_version` checked the version directory against its registry, so
+    the report lands inside the registry and never in the repository, whatever
+    links are below it. The resolved run directory is returned, and the caller
+    writes through it.
     """
     if not (isinstance(checkpoint_sha256, str) and _SHA256.fullmatch(checkpoint_sha256)):
         raise ValueError(f"{checkpoint_sha256!r} is not a SHA-256 hexdigest")
     run_id = (f"{_utc(now, '%Y%m%dT%H%M%SZ')}-{checkpoint_sha256[:12]}-"
               f"{secrets.token_hex(4)}")
-    # The resolved version directory is what reports/ must stay inside; one in
-    # the repository is refused here, naming it rather than its reports/.
-    directory = _registry_directory(version.directory, within=None,
-                                    done="Nothing was written.")
-    reports = _registry_directory(directory / REPORTS_DIR, within=directory,
-                                  done="Nothing was written.")
-    reports.mkdir(parents=True, exist_ok=True)
+    reports = report_store_directory(version, create=True)
     run_dir = reports / run_id
     run_dir.mkdir(exist_ok=False)
     run_dir = _registry_directory(
@@ -1346,9 +1445,12 @@ __all__ = [
     "MalformedSource",
     "MappedCohort",
     "PARTIAL_PHENOTYPE_POLICIES",
-    "REPO_ROOT",
+    "RANKS_FILE",
     "REPORTS_DIR",
+    "REPORT_FILE",
+    "REPO_ROOT",
     "REQUIRED_VERSION_FIELDS",
+    "RUN_ID_PATTERN",
     "RegistryRefused",
     "SOURCES_DIR",
     "SOURCE_FORMAT",
@@ -1362,9 +1464,11 @@ __all__ = [
     "WHAT_THIS_IS",
     "WorkspaceGraph",
     "build_version_manifest",
+    "cohort_version_block",
     "commit_import",
     "create_report_dir",
     "encode_json",
+    "is_run_id",
     "list_report_runs",
     "list_versions",
     "map_cases",
@@ -1372,6 +1476,8 @@ __all__ = [
     "prepare_import",
     "preview_id",
     "read_workspace_graph",
+    "report_run_directory",
+    "report_store_directory",
     "resolve_version",
     "validate_label",
     "validate_partial_policy",

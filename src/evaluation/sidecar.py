@@ -732,11 +732,7 @@ def append_record(
             )
         if digest == existing.get("source_artifact_digest") or digest in corroborating:
             return "already_registered", ledger
-        missing = object()
-        differing = [
-            field for field in RECORD_COMPARED_FIELDS
-            if existing.get(field, missing) != record[field]
-        ]
+        differing = differing_fields(existing, record)
         if not differing:
             updated = {**existing, "corroborating_reports": corroborating + [digest]}
             return "corroborated", {
@@ -754,18 +750,72 @@ def append_record(
     return "registered", {**ledger, "records": records + [registered]}
 
 
+def differing_fields(existing: Dict[str, Any], record: Dict[str, Any]) -> List[str]:
+    """The fields of ``RECORD_COMPARED_FIELDS`` on which two records under one key
+    disagree, in that list's order; empty when one corroborates the other.
+
+    **The ledger's own comparison, and the only one** (D5's duplicate rule):
+    `append_record` uses it against the record a ledger holds, and the report
+    store uses it between the reports it keeps under one key
+    (`src/evaluation/report_store.py`), so "runs disagree" means in the store
+    exactly what a contradiction means in the ledger. A field one record lacks
+    and the other has differs; a field both lack does not.
+    """
+    missing = object()
+    return [
+        field for field in RECORD_COMPARED_FIELDS
+        if existing.get(field, missing) != record.get(field, missing)
+    ]
+
+
+def difference_names(
+    existing: Dict[str, Any], record: Dict[str, Any], differing: List[str]
+) -> List[str]:
+    """How a disagreement is named for a person: the differing fields, or, when
+    only the metrics differ, the metric names that do."""
+    if differing != ["metrics"]:
+        return list(differing)
+    old = existing.get("metrics")
+    old = old if isinstance(old, dict) else {}
+    new = record.get("metrics")
+    new = new if isinstance(new, dict) else {}
+    return sorted(name for name in set(old) | set(new) if old.get(name) != new.get(name))
+
+
+def report_key(report: Any) -> Optional[Tuple[Any, ...]]:
+    """The key a report's record would be filed under, read from its manifest
+    without `build_record`'s checks, or `None` when the manifest does not give
+    all four parts.
+
+    **For telling which key a report belongs to, never for filing it.** A report
+    the store keeps that `build_record` refuses (written by an earlier revision,
+    say) cannot be compared, but its key can often still be read, so the report
+    store marks only that key "cannot be checked" rather than every key of the
+    version (D5). For a report `build_record` accepts, this is the record's
+    `record_key`, which a test pins.
+    """
+    manifest = report.get("manifest") if isinstance(report, dict) else None
+    if not isinstance(manifest, dict):
+        return None
+    digests = manifest.get("artifact_digests")
+    cohort_version = manifest.get("cohort_version")
+    checkpoint = digests.get("checkpoint") if isinstance(digests, dict) else None
+    cohort = cohort_version.get("manifest_sha256") if isinstance(cohort_version, dict) else None
+    role = manifest.get("split")
+    if not (_is_digest(checkpoint) and _is_digest(cohort) and isinstance(role, str)):
+        return None
+    try:
+        semantics = measurement_semantics_digest(manifest)
+    except (TypeError, ValueError):  # a value JSON cannot hold, from a hand edit
+        return None
+    return (checkpoint, role, cohort, semantics)
+
+
 def _contradiction(
     existing: Dict[str, Any], record: Dict[str, Any], differing: List[str]
 ) -> str:
     """The refusal of a second, different result under one key."""
-    names = differing
-    if differing == ["metrics"]:
-        old = existing.get("metrics")
-        old = old if isinstance(old, dict) else {}
-        new = record["metrics"]
-        names = sorted(
-            name for name in set(old) | set(new) if old.get(name) != new.get(name)
-        )
+    names = difference_names(existing, record, differing)
     return (
         f"this ledger already holds a record for checkpoint "
         f"{record['checkpoint_digest'][:12]}... on cohort version "
@@ -949,6 +999,8 @@ __all__ = [
     "append_record",
     "build_record",
     "checkpoint_matches",
+    "difference_names",
+    "differing_fields",
     "empty_ledger",
     "environment_class",
     "find_checkpoint",
@@ -957,6 +1009,7 @@ __all__ = [
     "read_ledger",
     "record_key",
     "records_for",
+    "report_key",
     "scoring_semantics_digest",
     "write_ledger",
 ]

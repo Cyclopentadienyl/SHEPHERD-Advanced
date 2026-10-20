@@ -50,6 +50,7 @@ from src.utils.fingerprint import ReadIdentity  # noqa: E402
 from src.evaluation.sidecar import REGISTERED_RELATIONS  # noqa: E402
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.phenotype_kg import build_two_phenotype_kg  # noqa: E402
+from tests.fixtures.report_store import IMPORTED_AT, store_report  # noqa: E402
 from tests.unit.test_evaluation_sidecar import (  # noqa: E402
     cohort_version,
     environment_block,
@@ -109,13 +110,14 @@ def _r10_with_paths(tmp_path):
     return block
 
 
-def _register(report, checkpoint_dir, reports_dir, *, name="report.json", beside=True,
-              indent=2):
+def _register(report, checkpoint_dir, registry, *, beside=True, indent=2,
+              imported_at=IMPORTED_AT):
     """Register `report` beside `checkpoint_dir` through the one registration
-    function, from a report file outside it."""
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / name
-    path.write_text(json.dumps(report, indent=indent, sort_keys=True))
+    function, from the registry's report store, the only place a report is
+    registered from since M5-1: kept in a new run directory of its version under
+    `registry` (`tests/fixtures/report_store.py`), its cohort block naming that
+    version's digest."""
+    path = store_report(registry, report, indent=indent, imported_at=imported_at)
     if beside:
         return register_report(path, checkpoint_dir=checkpoint_dir, registered_at=WHEN)
     # As `--record` registers: the run's read of the checkpoint and the digest
@@ -126,6 +128,13 @@ def _register(report, checkpoint_dir, reports_dir, *, name="report.json", beside
         hashlib.sha256(path.read_bytes()).hexdigest(),
     )
     return register_report(path, measured=measured, registered_at=WHEN)
+
+
+def _version_digest(registry: Path, label: str = "mygene2-2026-10") -> str:
+    """The manifest digest of a version the store fixture wrote."""
+    from src.evaluation.cohort_registry import resolve_version
+
+    return resolve_version(registry, label).identity.sha256
 
 
 def _edit_ledger(path: Path, edit) -> None:
@@ -280,7 +289,7 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path):
         "samples_sha256": "5" * 64, "source_sha256": "b" * 64,
         "version_manifest_sha256": record["cohort_digest"],
     }
-    assert record["cohort_digest"] == "a" * 64
+    assert record["cohort_digest"] == _version_digest(tmp_path / "reports")
     assert view["counts"] == {
         "source_cases": 100, "ranked_eligible": 80,
         "excluded": {"ground_truth_absent": 12, "phenotype_unmappable": 8}, "n_excluded": 20,
@@ -307,7 +316,8 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path):
     assert view["measurement_semantics_digest"] == record["measurement_semantics_digest"]
     assert view["registration"] == {"sequence": 1, "registered_at": WHEN}
     assert view["n_corroborating"] == 0
-    assert view["source_artifact_digest"] == _sha(tmp_path / "reports" / "report.json")
+    (kept,) = (tmp_path / "reports").glob("versions/*/reports/*/report.json")
+    assert view["source_artifact_digest"] == _sha(kept) == record["source_artifact_digest"]
 
 
 def test_no_path_case_id_or_rank_reaches_the_response(app, served, tmp_path):
@@ -335,10 +345,10 @@ def test_no_path_case_id_or_rank_reaches_the_response(app, served, tmp_path):
 def test_records_are_sorted_by_registration_sequence(app, served, tmp_path):
     _, _, checkpoint = served
     digest = _sha(checkpoint)
-    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports", name="a.json")
+    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports")
     _register(_report_for(digest, cohort_version=cohort_version(
         label="mygene2-2026-11", manifest_sha256="9" * 64)),
-        checkpoint.parent, tmp_path / "reports", name="b.json")
+        checkpoint.parent, tmp_path / "reports")
     _edit_ledger(checkpoint.parent / "evaluations.json",
                  lambda ledger: ledger["records"].reverse())
 
@@ -356,16 +366,20 @@ def test_two_imports_of_one_label_are_shown_as_two_versions(app, served, tmp_pat
     cohort measured twice (identical label, role, samples and source)."""
     _, _, checkpoint = served
     digest = _sha(checkpoint)
-    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports", name="a.json")
-    _register(_report_for(digest, cohort_version=cohort_version(manifest_sha256="9" * 64)),
-              checkpoint.parent, tmp_path / "reports", name="b.json")
+    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports")
+    # The recreated registry's import: the same label, imported at another time.
+    _register(_report_for(digest), checkpoint.parent, tmp_path / "recreated",
+              imported_at="2026-10-17T12:00:00Z")
 
     first, second = _get(app)["records"]
 
     assert ({**first["cohort"], "version_manifest_sha256": None}
             == {**second["cohort"], "version_manifest_sha256": None})
-    assert first["cohort"]["version_manifest_sha256"] == "a" * 64
-    assert second["cohort"]["version_manifest_sha256"] == "9" * 64
+    assert first["cohort"]["version_manifest_sha256"] == _version_digest(tmp_path / "reports")
+    assert second["cohort"]["version_manifest_sha256"] == _version_digest(
+        tmp_path / "recreated")
+    assert (first["cohort"]["version_manifest_sha256"]
+            != second["cohort"]["version_manifest_sha256"])
 
 
 def test_a_corroborating_report_is_counted(app, served, tmp_path):
@@ -373,14 +387,17 @@ def test_a_corroborating_report_is_counted(app, served, tmp_path):
     one corroborating report."""
     _, _, checkpoint = served
     report = _report_for(_sha(checkpoint))
-    _register(report, checkpoint.parent, tmp_path / "reports", name="a.json")
-    again = _register(report, checkpoint.parent, tmp_path / "reports", name="b.json", indent=4)
+    first = _register(report, checkpoint.parent, tmp_path / "reports")
+    again = _register(report, checkpoint.parent, tmp_path / "reports", indent=4)
     assert again.outcome == "corroborated"
 
     (view,) = _get(app)["records"]
 
     assert view["n_corroborating"] == 1
-    assert view["source_artifact_digest"] == _sha(tmp_path / "reports" / "a.json")
+    kept = {_sha(path) for path in (tmp_path / "reports").glob("versions/*/reports/*/report.json")}
+    assert view["source_artifact_digest"] == first.record["source_artifact_digest"]
+    assert kept == {first.record["source_artifact_digest"],
+                    *again.record["corroborating_reports"]}
 
 
 def test_records_for_other_weights_only_are_no_records(app, served, tmp_path):
@@ -581,10 +598,10 @@ def test_the_unedited_record_is_shown_where_the_edits_are_not(app, served, tmp_p
 def test_a_malformed_record_does_not_hide_a_good_one(app, served, tmp_path):
     _, _, checkpoint = served
     digest = _sha(checkpoint)
-    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports", name="a.json")
+    _register(_report_for(digest), checkpoint.parent, tmp_path / "reports")
     _register(_report_for(digest, cohort_version=cohort_version(
         label="mygene2-2026-11", manifest_sha256="9" * 64)),
-        checkpoint.parent, tmp_path / "reports", name="b.json")
+        checkpoint.parent, tmp_path / "reports")
     _edit_ledger(checkpoint.parent / "evaluations.json",
                  lambda ledger: MALFORMED["no cohort"](ledger["records"][0]))
 

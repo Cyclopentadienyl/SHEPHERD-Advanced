@@ -1805,6 +1805,89 @@ checkpoint 檔核對報告。
   dataset record digest 會與這個 workspace 的 manifest 所記錄的比對，不載入 tensor；只讀
   `train`。報告的 `schema_version` 為 6。
 
+### 自 M5-1 起：只從報告存放處登錄、結果不一致的執行、使用紀錄、確定性執行
+
+以下同時適用於 `measure_scorer.py --record` 與 `record_evaluation.py --report`，因為兩者走同一個
+登錄函式。上面的結束碼不變。
+
+**只有 registry 報告存放處中的報告才能登錄。** `--report` 必須指向
+`<registry>/versions/<label>/reports/<run id>/report.json`，也就是量測印出的 `Report:` 路徑。
+寫入任何東西之前，登錄會檢查四件事：
+
+- 從這個路徑找出 registry 與版本，並讀取該版本；
+- 報告必須完全指名這個版本（label、role、manifest digest、來源、圖、mapping 與計數）；
+- 它的執行目錄名稱必須含有它量測的 checkpoint 的前 12 個十六進位字元；
+- 上述 checkpoint 與 ledger 的檢查照舊適用。
+
+放在其他任何地方的副本，在讀取之前就會被拒絕：「… is not a report the registry's report store
+holds … Register the store's original instead」。副本仍可閱讀與分享，但不能登錄。指向存放處中
+報告的連結，視為存放處中的原件；存放處中那個本身是連結、指向別處檔案的 `report.json` 則不算。
+整個搬移的 registry 仍可使用，因為沒有任何絕對路徑被存成身分。產生的 split 的報告寫在
+`--output`，從不在存放處中，所以現在它是因為這個原因被拒絕。
+
+**結果不一致的執行會封鎖其鍵（"runs disagree — investigate"）。** 存放處中同一個鍵（同一個
+checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用的同一種比對互相比較。只要其中兩份
+結果不同，這個鍵下的任何報告都不會被登錄。這適用於加或不加 `--record` 的執行、之後的
+`record_evaluation.py`，以及再次登錄一份已登錄的報告。訊息會指出哪些不同、是哪些執行。在不一致
+出現之前已登錄的紀錄仍留在 ledger 中。在 `--record` 之下，執行以結束碼 3 結束並保留報告，但不會
+印出之後登錄用的指令，因為只要這些執行仍不一致，任何登錄都不會被接受。往下走的方式：
+
+- 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；
+- 以 `--deterministic` 重跑，這是不同的鍵。
+
+調查備註記錄誰看過、何時看過、發現了什麼。備註存在
+`<registry>/versions/<label>/reports/notes.jsonl`，與該鍵的報告放在一起，絕不寫進 ledger，也不會
+解除封鎖。從 Test 分頁新增備註，隨 M5 的使用者介面一起提供。封鎖建立在一般檔案上：刪除不一致的
+報告就會解除它。這些工具從不刪除任何東西。
+
+**「無法檢查」同樣會被拒絕，絕不視為沒有爭議。** 存放處中有下列任一情形時，整個版本都無法檢查：
+
+- 一份無法讀取或解析的報告；
+- 一個是連結、指向存放處之外的執行目錄或 `report.json`；
+- 一份無法判斷其鍵的報告。
+
+較早版本寫出、本版本不讀取其 manifest 的報告，只會封鎖它所指名的那個鍵。拒絕訊息會指出每個檔案。
+把檔案移出 `reports/` 或加以修復，再登錄一次。
+
+**使用紀錄**是 `<registry>/versions/<label>/reports/usage.jsonl`，每行一個 JSON 物件，只追加、
+從不改寫。它記錄：
+
+- 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、Mode C 的指標、
+  `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
+- 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
+- 每一次從依該版本分數排序的清單載入的模型（`model_load`；由隨 M5 的 Model Management 頁面提供的
+  Load 控制項寫入）。
+
+它只保存彙總資料，不含任何 case id。量測會在報告發佈後立即追加它的條目。若追加失敗，執行會以
+結束碼 1 停止（"measured, but the run did not finish"），說明報告已寫出、這次執行不在紀錄中，
+並且不會登錄。若登錄自己的條目無法追加，登錄仍然成立，並以一行 `NOTE:` 說明。
+
+**`measure_scorer.py` 的新選項。** 它們是為 M5 的工作執行器準備的，也可以手動使用。
+`--expect-version-sha256` 與 `--outcome` 只適用於 `--cohort` 的執行（與 `--split` 一起給出時
+結束碼為 2）；另外兩個兩者皆適用：
+
+```bash
+python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+    --cohort <label> --registry /srv/shepherd/cohorts [--record] \
+    [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
+    [--outcome FILE]
+```
+
+- `--deterministic` 會在 CUDA 啟動之前開啟幾項設定：PyTorch 的 deterministic algorithms（絕不是
+  warn-only）、確定性的 cuDNN 並關閉其 benchmark，以及在該變數未設定時設定
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8`。它絕不退回非確定性執行或改用其他裝置。沒有確定性實作的運算會
+  讓這次執行被拒絕、不寫入任何東西；PyTorch 未記載為確定性的 `CUBLAS_WORKSPACE_CONFIG` 也是。
+  manifest 會記錄這些設定，所以確定性執行是不同的鍵。PyTorch 只在相同平台、裝置與版本上承諾可重現；
+  確定性模式防範已知的非確定性運算，並不為某個數字背書。
+- `--expect-checkpoint-sha256` 與 `--expect-version-sha256`：當讀到的 checkpoint，或版本的
+  `cohort.json`，具有其他 SHA-256 時（檔案在被選定之後改變了），在量測或寫入任何東西之前就拒絕這次
+  執行。
+- `--outcome FILE` 寫出一個小 JSON 檔。檔案所在目錄必須存在，否則在讀取任何東西之前就會被拒絕。
+  它在報告發佈後寫一次（`"complete": false`），結束時再寫一次（`"complete": true`）。內容包括報告的
+  路徑、run id 與 digest、checkpoint 與版本的 digest、是否為確定性執行，以及在 `registration` 之下
+  報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
+  紀錄仍是報告存放處與 ledger，「已保留」與「已登錄」從它們讀取。
+
 ---
 
 ## 4.10 Gradio 6.30.0 上的儀表板（自 M5 起，2026-10-20）

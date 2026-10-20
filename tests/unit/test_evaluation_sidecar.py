@@ -860,6 +860,64 @@ def test_another_report_agreeing_on_every_compared_field_corroborates(overrides)
     assert ledger == before, "the input ledger is not changed"
 
 
+def test_differing_fields_is_the_compared_list_in_order():
+    """M5-1: the one comparison, factored out of `append_record` and shared
+    with the report store's D5 scan. Only compared fields count; a field one
+    side lacks differs; R10 and the environment never do."""
+    from src.evaluation.sidecar import difference_names, differing_fields
+
+    first = build_record(registered_report(), REPORT_A)
+    other = build_record(registered_report(
+        n_ranked=79, metrics={"untruncated_mrr": 0.9, "mean_rank": 3.0, "hits@1": 0.25,
+                              "hits@10": 0.75},
+        r10=r10_block(training_state="overlap"), environment=environment_block("999.0")),
+        REPORT_B)
+
+    assert differing_fields(first, first) == []
+    assert differing_fields(first, other) == ["metrics", "n_ranked"]
+    assert difference_names(first, other, ["metrics"]) == ["untruncated_mrr"]
+    assert difference_names(first, other, ["metrics", "n_ranked"]) == ["metrics", "n_ranked"]
+    lacking = {k: v for k, v in first.items() if k != "dataset_record"}
+    assert differing_fields(first, lacking) == ["dataset_record"]
+
+
+def test_the_ledger_and_the_report_store_share_one_comparison(monkeypatch, tmp_path):
+    """Replacing `differing_fields` changes what the ledger refuses and what the
+    store calls contested alike: neither keeps a comparison of its own."""
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.report_store import scan_report_store
+    from tests.fixtures.report_store import store_report, version_of
+
+    path = store_report(tmp_path / "registry", registered_report())
+    # The same result again, from other report bytes (another workspace path).
+    store_report(tmp_path / "registry", registered_report(data_dir="/elsewhere"))
+    monkeypatch.setattr(sidecar, "differing_fields", lambda a, b: ["n_ranked"])
+
+    with pytest.raises(ValueError, match="disagrees on: n_ranked"):
+        append_record(_registered(), build_record(registered_report(), REPORT_B),
+                      registered_at=WHEN)
+    scan = scan_report_store(version_of(path))
+    (key,) = scan.reports
+    assert scan.state(key) == "contested"
+
+
+def test_report_key_is_the_records_key_and_none_without_its_parts():
+    """For a report `build_record` accepts, the lenient key is its record's key;
+    for one it refuses, the key is still read where the manifest names it, and
+    `None` where it does not."""
+    from src.evaluation.sidecar import report_key
+
+    report = registered_report()
+    assert report_key(report) == record_key(build_record(report, REPORT_A))
+    old = registered_report()
+    old["manifest"]["python_seed"] = 0
+    assert report_key(old) is not None
+    for broken in ({}, [], {"manifest": []},
+                   {"manifest": {**registered_manifest(), "cohort_version": None}},
+                   {"manifest": {**registered_manifest(), "artifact_digests": {}}}):
+        assert report_key(broken) is None, broken
+
+
 def test_one_key_with_two_results_is_refused_naming_the_metrics():
     """Identical semantics, different numbers: one of the two runs is wrong about
     what it measured. That is a finding, not a merge conflict."""
