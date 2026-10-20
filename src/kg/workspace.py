@@ -14,7 +14,9 @@ way nothing detects until much later:
      be decided from it happens **before the first byte is written**;
   2. `kg.json`, then the three tensors, are written;
   3. their digests are taken **by the writer**, from the files it just wrote;
-  4. the cohorts are generated and the manifest records all six together.
+  4. the cohorts are generated and the manifest records all six together;
+  5. `workspace_build.json` says when and from which code revision: it
+     describes the manifest and is not bound by it (`write_workspace_build`).
 
 Steps 3 and 4 are why this cannot be assembled by a caller from the outside: a
 generator that hashed the artifacts itself would be digesting whatever files
@@ -36,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
 
@@ -354,10 +357,53 @@ def write_workspace(
         len(train_samples), manifest["realised"]["train_diseases"],
         len(val_samples), manifest["realised"]["val_diseases"], manifest["disjoint"],
     )
+    write_workspace_build(workspace)
     return WorkspaceWrite(
         graph_digests, allocation, train_samples, val_samples, manifest,
         provenance_digest
     )
+
+
+#: The repository whose code revision a build record names: this file's.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def write_workspace_build(workspace: Path, *, now: Optional[datetime] = None) -> str:
+    """Write `workspace_build.json` beside the workspace's manifest, and return
+    the SHA-256 of the bytes written (M5, the owner, 2026-10-19).
+
+    It records when the workspace was built (`built_at`, UTC, ISO 8601; `now`,
+    the current time when omitted) and the code revision that built it
+    (`code_revision`, the collector training records as a checkpoint's
+    producer, dirty state included). **Descriptive, not bound by the
+    manifest:** the manifest is already written and does not change, so two
+    byte-identical builds keep one dataset fingerprint. The record names that
+    manifest by the digest of one read of it, taken right after it was written:
+    a reference, so the reader never shows this build time beside another
+    manifest (`read_workspace_build`). Published whole (staged, then renamed),
+    replacing a previous build's record.
+
+    Called by `write_workspace` as its last write, once the manifest exists; a
+    graph-only write has no manifest and writes no build record.
+    """
+    from src.kg.artifacts import (
+        WORKSPACE_BUILD_FILENAME,
+        encode_workspace_build,
+        read_split_manifest,
+    )
+    from src.utils.file_modes import publish_bytes
+    from src.utils.run_environment import code_revision
+
+    workspace = Path(workspace)
+    built_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    payload = encode_workspace_build(
+        built_at=built_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        code_revision=code_revision(_REPO_ROOT),
+        split_manifest_sha256=read_split_manifest(workspace).identity.sha256,
+    )
+    digest = publish_bytes(workspace / WORKSPACE_BUILD_FILENAME, payload)
+    logger.info("Build record saved to %s", workspace / WORKSPACE_BUILD_FILENAME)
+    return digest
 
 
 __all__ = [
@@ -366,4 +412,5 @@ __all__ = [
     "WorkspaceWrite",
     "require_budget_coverage",
     "write_workspace",
+    "write_workspace_build",
 ]

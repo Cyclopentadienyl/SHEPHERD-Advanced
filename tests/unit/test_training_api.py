@@ -284,6 +284,38 @@ class TestTrainingManagerCheckpoints:
         assert "model-01-0.5000.pt" in filenames
         # size_mb should be very small for dummy files
         assert all(c["size_mb"] >= 0 for c in checkpoints)
+        # Unloadable: listed with why, no digest, no metadata (M5-1), never dropped.
+        for entry in checkpoints:
+            assert entry["metadata_problem"] and entry["sha256"] is None
+            assert entry["validation"] is None and "epoch" not in entry
+
+    def test_each_entry_carries_its_reads_digest_and_record(self, manager, tmp_dirs):
+        """One read per file (`read_run_checkpoints`): the digest, the Trainer's
+        validation figure and the dataset fingerprint come from the bytes the
+        metadata came from (BACKLOG 19.3)."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        ckpt_dir = Path(tmp_dirs["checkpoint_dir"])
+        digest = write_checkpoint(
+            {"checkpoint_kind": "training_state", "epoch": 3,
+             "logs": {"val_mrr": 0.4, "val_loss": 0.2},
+             "training_input_digests": {"split_manifest": "5" * 64}},
+            ckpt_dir / "last.pt")
+
+        (entry,) = manager.get_checkpoints(tmp_dirs["data_dir"])
+        assert entry["sha256"] == digest
+        assert entry["validation"] == {"metric": "val_mrr", "value": 0.4}
+        assert entry["dataset_fingerprint"] == "5" * 64
+        assert entry["metadata_problem"] is None
+        assert (entry["epoch"], entry["checkpoint_kind"]) == (3, "training_state")
+        assert entry["metrics"] == {"val_mrr": 0.4, "val_loss": 0.2}
+
+    def test_the_manager_no_longer_loads_a_file_itself(self):
+        """The one read is `read_checkpoint`'s, inside the listing."""
+        import inspect
+
+        source = inspect.getsource(TrainingManager.get_checkpoints)
+        assert "torch.load" not in source and "read_run_checkpoints" in source
 
 
 class TestTrainingManagerResources:
@@ -359,6 +391,25 @@ class TestTrainingAPIEndpoints:
         resp = self.client.get("/api/v1/training/checkpoints")
         assert resp.status_code == 200
         assert resp.json() == []
+
+    def test_the_route_passes_the_reads_digest_on(self, manager, tmp_dirs):
+        """The response model keeps the fields the listing adds (M5-1)."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        digest = write_checkpoint(
+            {"epoch": 2, "logs": {"val_hits@1": 0.1},
+             "training_input_digests": {"split_manifest": "6" * 64}},
+            Path(tmp_dirs["checkpoint_dir"]) / "last.pt")
+        (Path(tmp_dirs["checkpoint_dir"]) / "broken.pt").write_bytes(b"x")
+        manager._config = {"data_dir": tmp_dirs["data_dir"]}
+
+        listed = {c["filename"]: c for c in self.client.get(
+            "/api/v1/training/checkpoints").json()}
+        assert listed["last.pt"]["sha256"] == digest
+        assert listed["last.pt"]["validation"] == {"metric": "val_hits@1", "value": 0.1}
+        assert listed["last.pt"]["dataset_fingerprint"] == "6" * 64
+        assert listed["last.pt"]["metadata_problem"] is None
+        assert listed["broken.pt"]["sha256"] is None and listed["broken.pt"]["metadata_problem"]
 
     def test_start_training(self, sample_config):
         mock_proc = MagicMock()

@@ -289,3 +289,100 @@ def test_the_listing_is_by_run_then_newest_file(tmp_path):
     assert [(r.name, p.name) for r, p in list_run_checkpoints(tmp_path)] == [
         (new.name, "last.pt"), (new.name, "model-1.pt"), (old.name, "last.pt")]
     assert [p.name for _, p in list_run_checkpoints(tmp_path, "gat")] == ["last.pt"]
+
+
+# ---------------------------------------------------------------------------
+# The listing, read (M5-1, BACKLOG 19.3)
+# ---------------------------------------------------------------------------
+class _Pickled:
+    """A pickled class, which torch's weights-only loader refuses."""
+
+
+def _write_checkpoint(path, payload):
+    from src.utils.checkpoint_io import write_checkpoint
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return write_checkpoint(payload, path)
+
+
+def test_the_read_listing_keeps_the_order_and_each_reads_digest(tmp_path):
+    from src.utils.checkpoint_paths import list_run_checkpoints, read_run_checkpoints
+    from src.utils.fingerprint import file_sha256
+
+    old = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    new = tmp_path / "runs" / "hgt" / "20261002-000000_b_222222" / "checkpoints"
+    digest = _write_checkpoint(new / "last.pt", {
+        "checkpoint_kind": "training_state", "epoch": 4,
+        "logs": {"val_loss": 0.3, "val_mrr": 0.25},
+        "training_input_digests": {"split_manifest": "1" * 64, "kg": "2" * 64}})
+    _write_checkpoint(old / "last.pt", {"checkpoint_kind": "weights", "epoch": 1})
+    os.utime(old / "last.pt", (100, 100))
+    os.utime(new / "last.pt", (200, 200))
+
+    entries = read_run_checkpoints(tmp_path)
+    assert [(e.run_dir, e.path) for e in entries] == list_run_checkpoints(tmp_path)
+    first, second = entries
+    assert first.path == new / "last.pt"
+    assert first.sha256 == digest == file_sha256(new / "last.pt")
+    assert (first.checkpoint_kind, first.epoch) == ("training_state", 4)
+    assert first.logs == {"val_loss": 0.3, "val_mrr": 0.25}
+    assert first.validation == ("val_mrr", 0.25)
+    assert first.dataset_fingerprint == "1" * 64 and first.problem is None
+    # A weights file records no logs and no validation: none, never zero.
+    assert second.logs == {} and second.validation is None
+    assert second.dataset_fingerprint is None and second.problem is None
+
+
+def test_a_file_the_read_refuses_is_listed_with_its_reason(tmp_path):
+    import torch
+
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    run.mkdir(parents=True)
+    (run / "garbage.pt").write_bytes(b"not a checkpoint")
+    torch.save({"model": _Pickled()}, run / "pickled.pt")
+    torch.save([1, 2, 3], run / "list.pt")
+
+    entries = {e.path.name: e for e in read_run_checkpoints(tmp_path)}
+    assert set(entries) == {"garbage.pt", "pickled.pt", "list.pt"}
+    for name in ("garbage.pt", "pickled.pt"):
+        entry = entries[name]
+        assert entry.sha256 is None and entry.logs is None and entry.validation is None
+        assert entry.problem and "\n" not in entry.problem and len(entry.problem) <= 330
+    assert "UnpicklingError" in entries["pickled.pt"].problem
+    # Loads, but is not a record: its digest is kept, its metadata is not there.
+    assert entries["list.pt"].sha256 is not None and entries["list.pt"].logs is None
+    assert "not a checkpoint record" in entries["list.pt"].problem
+
+
+def test_the_read_is_weights_only_through_read_checkpoint(tmp_path, monkeypatch):
+    import src.utils.checkpoint_io as checkpoint_io
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    run = tmp_path / "runs" / "sage" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1})
+    _write_checkpoint(run / "b.pt", {"epoch": 2})
+    seen = []
+    original = checkpoint_io.read_checkpoint
+
+    def spy(path, **kwargs):
+        seen.append((path.name, kwargs))
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", spy)
+    read_run_checkpoints(tmp_path, "sage")
+    assert sorted(seen) == [("a.pt", {"map_location": "cpu", "weights_only": True}),
+                            ("b.pt", {"map_location": "cpu", "weights_only": True})]
+
+
+def test_importing_the_listing_does_not_import_torch():
+    """`checkpoint_paths` promises no torch at import, so the API's lighter
+    callers can import it; the read imports torch only when it runs."""
+    import subprocess
+    import sys
+
+    code = ("import sys; import src.utils.checkpoint_paths; "
+            "sys.exit(1 if 'torch' in sys.modules else 0)")
+    done = subprocess.run([sys.executable, "-c", code], cwd=str(Path(__file__).parents[2]))
+    assert done.returncode == 0

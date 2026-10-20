@@ -26,12 +26,13 @@ interrupted import: the resolver refuses it and the importer refuses its label,
 naming the directory for the operator to remove. Nothing here deletes anything.
 
 **Patient-level data never enters the repository tree** (D7). The registry is a
-path the operator gives on the command line; it must be absolute, must already
-exist, and is refused when it resolves inside the repository. Nothing creates a
-registry root, and no request ever names one. Each directory below the root is
-resolved again right before content is written into it, or a version is read
-from it, and refused when a link takes it outside the registry or into the
-repository.
+path the operator gives on the command line, or to the service as
+``SHEPHERD_REGISTRY`` (M5-1, `src.config.server_settings`, one rule for both); it
+must be absolute, must already exist, and is refused when it resolves inside the
+repository. Nothing creates a registry root, and no request ever names one. Each
+directory below the root is resolved again right before content is written into
+it, or a version is read from it, and refused when a link takes it outside the
+registry or into the repository.
 
 **One mapping rule.** A phenotype maps when ``hpo:<term>`` is a phenotype node
 and a disease when ``mondo:<term>`` is a disease node -- serving's lookup -- and
@@ -68,6 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+from src.config.server_settings import DirectoryRefused, check_registry_root
 from src.evaluation.cohort import GENERATED_SPLITS, validate_split_name
 from src.kg.artifacts import GRAPH_ARTIFACTS
 from src.kg.phenotype_normalisation import PHENOTYPE_NORMALISATION_VERSION, normalise_phenotypes
@@ -268,31 +270,15 @@ def validate_registry(path: Any) -> Path:
     repository. Those checks run just before each write, not atomically with
     it: a link swapped in the moment between is not caught. The registry is the
     operator's, on the machine, and one writer at a time (D7).
+
+    **One rule for `--registry` and the service's `SHEPHERD_REGISTRY`**
+    (`src.config.server_settings.check_registry_root`, M5-1): it lives below
+    this layer because the service's settings are read there too.
     """
-    if not isinstance(path, (str, os.PathLike)):
-        raise RegistryRefused(f"the registry must be a path, got {path!r}")
-    given = Path(path)
-    if not given.is_absolute():
-        raise RegistryRefused(
-            f"the registry {str(given)!r} is not an absolute path. It holds patient-level "
-            "data, so where it is must not depend on the working directory; give its "
-            "absolute path."
-        )
-    resolved = given.resolve()
-    repo = REPO_ROOT.resolve()
-    if resolved == repo or repo in resolved.parents:
-        raise RegistryRefused(
-            f"the registry {given} resolves to {resolved}, inside the repository "
-            f"({repo}). Patient-level data is never kept in the repository tree (D7); "
-            "give a directory outside it."
-        )
-    if not resolved.is_dir():
-        raise RegistryRefused(
-            f"the registry {given} does not exist or is not a directory. The operator "
-            "creates the registry directory; nothing creates one, so a mistyped path "
-            "cannot become a new registry."
-        )
-    return resolved
+    try:
+        return check_registry_root(path)
+    except DirectoryRefused as exc:
+        raise RegistryRefused(str(exc)) from None
 
 
 def _registry_directory(path: Path, *, within: Optional[Path], done: str) -> Path:
@@ -1146,6 +1132,96 @@ def resolve_version(registry: Any, label: str) -> CohortVersionRead:
     return CohortVersionRead(manifest, identity, directory, directory / VERSION_SAMPLES)
 
 
+# ---------------------------------------------------------------------------
+# Listing the registry (M5-1)
+# ---------------------------------------------------------------------------
+class ListedVersion(NamedTuple):
+    """One entry of the registry's ``versions/``: its name on disk, the version
+    as `resolve_version` reads it, or why it cannot be read (an interrupted
+    import, a manifest this revision does not read, a link that leaves the
+    registry)."""
+
+    label: str
+    version: Optional[CohortVersionRead]
+    problem: Optional[str]
+
+
+class ListedRun(NamedTuple):
+    """One entry of a version's ``reports/``: its run id, its directory resolved
+    inside ``reports/``, or why it is not a run directory. What the run kept and
+    whether its report is registered is the registration's to say, not this."""
+
+    run_id: str
+    directory: Optional[Path]
+    problem: Optional[str]
+
+
+#: A run id as `create_report_dir` makes it: UTC time, checkpoint digest (12),
+#: random part (8).
+_RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}-[0-9a-f]{8}")
+
+
+def list_versions(registry: Any) -> List[ListedVersion]:
+    """Every entry under the registry's ``versions/``, by name, each read by
+    `resolve_version` (the one reader) and kept as a value when it refuses, so
+    an interrupted import is listed with its reason rather than hidden.
+
+    Reads each ``cohort.json`` once, and nothing else; never a samples file.
+
+    Raises:
+        RegistryRefused: the registry root is refused (`validate_registry`), or
+            ``versions/`` resolves outside it or into the repository.
+    """
+    root = validate_registry(registry)
+    versions = _registry_directory(root / VERSIONS_DIR, within=root,
+                                   done="No version was read.")
+    if not versions.is_dir():
+        return []
+    listed: List[ListedVersion] = []
+    for entry in sorted(versions.iterdir(), key=lambda p: p.name):
+        try:
+            listed.append(ListedVersion(entry.name, resolve_version(root, entry.name), None))
+        except (RegistryRefused, CohortVersionRefused) as exc:
+            listed.append(ListedVersion(entry.name, None, str(exc)))
+    return listed
+
+
+def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
+    """The run directories in a version's ``reports/``, newest run id first.
+
+    ``reports/`` is resolved inside the version directory, and each run
+    directory inside ``reports/``, as `create_report_dir` checks them before it
+    writes: one a link takes elsewhere, or an entry that is not a directory
+    named as a run id, is listed with its reason. Reads no file.
+
+    Raises:
+        RegistryRefused: ``reports/`` resolves outside the version directory, or
+            the version directory into the repository.
+    """
+    directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
+    reports = _registry_directory(directory / REPORTS_DIR, within=directory,
+                                  done="Nothing was read.")
+    if not reports.is_dir():
+        return []
+    runs: List[ListedRun] = []
+    for entry in sorted(reports.iterdir(), key=lambda p: p.name, reverse=True):
+        if not _RUN_ID.fullmatch(entry.name):
+            runs.append(ListedRun(entry.name, None, (
+                f"{entry.name!r} in {reports} is not named as a run id, so it is not a "
+                "run directory")))
+            continue
+        try:
+            resolved = _registry_directory(entry, within=reports, done="Nothing was read.")
+        except RegistryRefused as exc:
+            runs.append(ListedRun(entry.name, None, str(exc)))
+            continue
+        if not resolved.is_dir():
+            runs.append(ListedRun(entry.name, None, f"{entry} is not a directory"))
+            continue
+        runs.append(ListedRun(entry.name, resolved, None))
+    return runs
+
+
 def verify_cohort_binding(
     version_manifest: Mapping[str, Any],
     bound: Mapping[str, str],
@@ -1237,6 +1313,8 @@ __all__ = [
     "DEFAULT_PARTIAL_PHENOTYPES",
     "EXCLUSION_CATEGORIES",
     "ImportPlan",
+    "ListedRun",
+    "ListedVersion",
     "MalformedSource",
     "MappedCohort",
     "PARTIAL_PHENOTYPE_POLICIES",
@@ -1259,6 +1337,8 @@ __all__ = [
     "commit_import",
     "create_report_dir",
     "encode_json",
+    "list_report_runs",
+    "list_versions",
     "map_cases",
     "parse_source",
     "prepare_import",

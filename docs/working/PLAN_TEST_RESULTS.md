@@ -739,7 +739,12 @@ two about the data (questions 3 and 4).
   atomic with the write (one writer, the operator's machine). A refusal of a malformed source
   names where a value is wrong, never a phenotype or a diagnosis. No request can name the
   registry, and no configuration key is read for it yet; phase 2's controls need the server
-  configuration this rule names.
+  configuration this rule names. *As implemented in M5-1 (2026-10-20):* the service reads the
+  registry from `SHEPHERD_REGISTRY` and the intake directory from `SHEPHERD_INTAKE_DIR`
+  (`src/config/server_settings.py`), at each use and never from a request. Both are checked by
+  the registry's one rule (`check_registry_root`, which `validate_registry` applies to
+  `--registry` too: absolute, existing, outside the repository). Unset or refused, their
+  features are off and say why; no default path is assumed.
 - **Every run on the acceptance cohort is in its usage history** (D4): when it ran, on which
   checkpoint, and its result. Condition 6 is the institution's rule. The history makes its
   observance visible; it does not pretend to enforce it.
@@ -850,7 +855,9 @@ gates phase 2; question 4 is answered:
      - a cohort version whose declared purpose is exploration, comparison and model selection
        offers ordering; the purpose is its role, never inferred from the source's name;
      - `institutional_acceptance` does not, until the institution's formal evaluation rules
-       exist;
+       exist; *as implemented (M5-1, 2026-10-20):* the roles that offer ordering are
+       `SHEPHERD_ORDERING_ROLES` (none by default), and `institutional_acceptance` is ignored
+       even when listed (`role_offers_ordering`, the one predicate D4 asks);
      - only records of one cohort version with comparable scoring semantics are ordered
        together, and a contested record (D5) is left out;
      - "Load this model" from that list is offered, gated by D8 and recorded in the usage
@@ -1285,14 +1292,21 @@ the GB10").
    - **it lists by a workspace and architecture** chosen among those the server lists, and the
      server resolves the directory. The two Training Console handlers stop setting
      `checkpoint_dir` from request values. *The handlers no longer set it since M3a-2; the
-     choice among server-listed workspaces is still to do;*
+     choice among server-listed workspaces is still to do;* *M5-1 (2026-10-20): the server
+     lists the workspaces under `SHEPHERD_WORKSPACES_ROOT` and resolves one only by finding its
+     name in that list (`src/api/services/server_lists.py`); moving the console onto it is
+     M5-2's;*
    - **training start's explicit `checkpoint_dir`**, honoured verbatim at the time, is restricted
      to directories the server resolves in this same change, since it shares the write path
      (contract M5). *Superseded by M3a-2:* every run writes into its own run directory, and what
      phase 2 adds is the network-side restriction (contract M5);
    - **its load becomes `weights_only=True`** (SPEC_4 A1). A checkpoint whose format that
      refuses is listed without metadata. *Done in M3a* (decision 10); the read keeps no digest
-     yet (BACKLOG 19.3).
+     yet (BACKLOG 19.3). *M5-1 (2026-10-20):* `read_run_checkpoints` reads each listed file once
+     through `read_checkpoint` and keeps the SHA-256 of those bytes, the Trainer's validation
+     figure, the dataset fingerprint it records and a load problem as a value;
+     `TrainingManager.get_checkpoints`, and so the route and the resume dropdown, use it.
+     `list_run_checkpoints` stays the read-free form for the reload's file check.
 6. **The UI.** The Test tab, with progress and cancellation, and Model Management. It also
    carries D8: the refusal in each state-changing handler, and the direct-call acceptance
    test.
@@ -1310,7 +1324,9 @@ neither is a prerequisite here.
 The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 above; this plan, the
 contract and BACKLOG stay the record, and no new planning document is added.
 
-- **Deployment:** mode M1 (§4.9 question 3; D8 above).
+- **Deployment:** mode M1 (§4.9 question 3; D8 above). *Its setting (M5-1, 2026-10-20):*
+  `SHEPHERD_DEPLOYMENT_MODE`, read at each use; only the exact value `M1` enables operator
+  controls, and unset or anything else is read-only.
 - **The default bind is `127.0.0.1`** (the reviewer's decisions, relayed by the owner, 2026-10-19; SPEC_4 B1, §3.1). Another address
   stays possible by explicit configuration, under SPEC_4's rules, and never lifts D8's checks on
   operator controls; a deployment that relied on the old `0.0.0.0` default gets migration notes.
@@ -1392,7 +1408,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
       writes a `workspace_build.json` beside the manifest (`built_at` in UTC and the code
       revision), descriptive and not bound by the manifest, so two byte-identical builds keep
       one fingerprint; a workspace built before it shows "build time not recorded" with its
-      sources' declared releases, never a file modification time;
+      sources' declared releases, never a file modification time; *as implemented (M5-1,
+      2026-10-20):* `write_workspace` writes it after the manifest, with schema version 1 and
+      `split_manifest_sha256`, the digest of the manifest it describes, so a record left
+      beside another manifest reads "not recorded" (`read_workspace_build`); the server's
+      workspace list shows it with the full fingerprint, the dataset record's origin and
+      binding state, the declared releases, the sample counts and whether it is trainable;
     - **a read-only Datasets page** over the server's workspace list;
     - **the charts**: axis-aware wheel zoom (over the X axis only X, over the Y axis only Y,
       inside the plot both, centred on the cursor), drag to pan, one-click and double-click

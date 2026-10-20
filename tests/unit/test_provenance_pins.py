@@ -80,6 +80,10 @@ ALLOWED = {
     # 19.15; the old status readers are gone).
     ("src/kg/artifacts.py", "verify_dataset_record", "json.loads"): (1, _READER),
     ("src/kg/artifacts.py", "verify_dataset_record", "read_once"): (1, _READER),
+    # M5-1: the build record beside the manifest, descriptive and never an input;
+    # read once and parsed from those bytes like the readers above.
+    ("src/kg/artifacts.py", "read_workspace_build", "json.loads"): (1, _READER),
+    ("src/kg/artifacts.py", "read_workspace_build", "read_once"): (1, _READER),
     # Contract M3b: the writers' digests are of the bytes they write (BACKLOG
     # 19.16, 19.17); every writer that binds a digest writes through this.
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
@@ -132,8 +136,6 @@ ALLOWED = {
             "must hash to its name before an import relies on it; records nothing"),
     ("src/evaluation/cohort_registry.py", "resolve_version", "read_once"): (1, _READER),
     ("src/evaluation/cohort_registry.py", "resolve_version", "json.loads"): (1, _READER),
-    ("src/api/services/training_manager.py", "TrainingManager.get_checkpoints", "torch.load"):
-        (1, "M2.1 decision 4, BACKLOG 19.3: the training console's checkpoint list"),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),

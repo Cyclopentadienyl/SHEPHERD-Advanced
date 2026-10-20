@@ -343,7 +343,7 @@ async def readiness_check() -> Dict[str, Any]:
 # =============================================================================
 # Import and Register Routes
 # =============================================================================
-from src.api.routes import diagnose, search, disease, training, system, pipeline, evaluations
+from src.api.routes import diagnose, search, disease, training, system, pipeline, evaluations, lists
 
 app.include_router(diagnose.router, prefix="/api/v1", tags=["Diagnosis"])
 app.include_router(pipeline.router, prefix="/api/v1", tags=["Pipeline"])
@@ -354,6 +354,8 @@ app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])
 app.include_router(system.router, prefix="/api/v1", tags=["System"])
+# The server's lists (M5-1): workspaces, cohort versions, a workspace's checkpoints.
+app.include_router(lists.router, prefix="/api/v1", tags=["Lists"])
 
 
 # =============================================================================

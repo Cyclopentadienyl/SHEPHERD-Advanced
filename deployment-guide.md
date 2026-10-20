@@ -1551,7 +1551,8 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 
 registry 是**由你建立**的目錄，每個指令都以**位於 repository 之外的絕對路徑**傳入。相對路徑、
 不存在的路徑，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。不會有任何東西
-替你建立它，也沒有任何請求、環境變數或設定鍵指定它。
+替你建立它，也沒有任何請求指定它。各指令以 `--registry` 接收它；服務則從 `SHEPHERD_REGISTRY`
+讀取（§4.11），以同一個規則檢查。
 
 registry 之下的目錄也會檢查。每一個目錄（`sources/`、`versions/`、版本目錄、其 `reports/` 與每個
 run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解析一次；若某個連結把它帶進 repository，
@@ -1868,6 +1869,111 @@ CSV 與 Markdown 匯出照常下載，`HEAD` 與 `Range` 請求也一樣。
 已測試的後端：Linux x86_64（開發環境）與 Linux ARM64（homelab，由 reviewer 檢查）。
 **Windows 後端尚未以 Gradio 6.30.0 測試**，在有 Windows 後端可測之前一律標為未測試；Windows
 瀏覽器則包含在瀏覽器檢查中。
+
+---
+
+## 4.11 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20）
+
+M5 的控制項只作用於伺服器列出的項目，從不作用於請求指定的路徑（D7、D8）。伺服器列出什麼，以及
+操作者控制項所依賴的部署模式，都來自**服務的環境變數**。請在啟動服務的地方設定它們（執行
+`launch_shepherd.sh` 的 shell，或 systemd unit 中的 `Environment=` 行），然後重啟服務。每個
+設定都在使用時讀取。沒有任何請求、表單或儲存的 UI 檔案能設定它們。缺少或被拒絕的設定會關閉
+需要它的功能，並說明原因。**沒有任何東西會退回預設目錄**，repository 的 `data/workspaces/`
+也一樣。
+
+| 變數 | 值 | 未設定或被拒絕時 |
+|---|---|---|
+| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：操作者控制項關閉 |
+| `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace | 不列出任何 workspace |
+| `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外 | 不列出任何 cohort 版本 |
+| `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；只要有一個項目不合格，整個設定就被拒絕 |
+| `SHEPHERD_ORDERING_ROLES` | 選填：提供依測試分數排序（D4）的 cohort 角色，以逗號分隔 | 無；`institutional_acceptance` 即使列出也會被忽略（§4.9 問題 1） |
+
+```bash
+export SHEPHERD_DEPLOYMENT_MODE=M1
+export SHEPHERD_WORKSPACES_ROOT=/home/you/SHEPHERD-Advanced/data/workspaces
+export SHEPHERD_REGISTRY=/srv/shepherd/cohorts
+export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
+```
+
+- **`M1`** 是 SPEC_4 的單一 workspace 部署：在本機上，或經由 SSH forwarding 存取，由 owner 或
+  指定的技術人員操作（§4.9 問題 3）。它是操作者控制項檢查的條件之一，而不是授權。其餘條件由
+  D8 在處理每個請求時檢查。不要在 reverse proxy 後面、或在其他人也能登入的機器上設定它。
+- **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
+  由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
+- **registry 與 intake 目錄存放病人層級的資料。** 兩者都遵循 registry 的規則（§4.9）：相對
+  路徑、不存在的目錄，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。命令列的
+  `--registry` 與 `SHEPHERD_REGISTRY` 由同一個函式檢查。請把兩者建在只有執行服務與指令的帳號
+  讀得到的地方，例如 `mkdir -m 700`。
+- **證據目錄**：空的項目（重複或結尾的分隔符）會被略過，絕不會被當成工作目錄讀取。重複的項目
+  只保留一次。
+
+### 伺服器列出什麼
+
+每個項目都以名稱與 digest 識別，從不以路徑識別：請求指定的是 workspace、run 與檔名，或 label，
+伺服器會在自己的清單中重新找到這個名稱。
+
+- **Workspace**（`GET /api/v1/workspaces`）：根目錄下的每個子目錄，依名稱列出。以 `.` 開頭的
+  名稱會被略過。指向根目錄之外的 symlink 子目錄會列出，但不提供使用。每個 workspace 顯示：
+  - 它的**資料集指紋**：其 `split_manifest.json` 完整的 SHA-256。manifest 綁定了圖檔案、兩個
+    樣本檔與資料集紀錄，因此兩次不同的資料集建置一定不同。顯示時可以縮短為前 12 個十六進位
+    數字；比較時一律使用完整的 64 個；
+  - 它的資料集紀錄的綁定狀態與來源，兩者分開呈現（§4.4）；
+  - 它的**建置時間**，來自 `workspace_build.json`（見下文），或附原因的「未記錄」；
+  - 它的各來源宣告的版本，取自資料集紀錄（合成 workspace 沒有）；
+  - 它的 train 與 val 樣本數；
+  - 它是否**可訓練**，以及不可訓練的原因：沒有 `split_manifest.json`、資料集紀錄未通過驗證，
+    或 manifest 綁定的某個檔案不存在。清單不計算任何圖檔案的雜湊。訓練執行時會以實際讀取的
+    位元組檢查每個檔案，仍可能拒絕。
+- **某個 workspace 的 checkpoint**（`GET /api/v1/workspaces/{name}/checkpoints`，可加
+  `?architecture=gat`）：run 版面中的 checkpoint，最新的 run 在前。每個檔案只讀取一次，且只
+  載入權重，並顯示：
+  - 所讀位元組的 SHA-256；
+  - Trainer 的驗證數字：trainer 的 top-20 選擇指標，絕不是測試結果；檔案沒有記錄時為無；
+  - checkpoint 記錄的資料集指紋，以及它是否就是這個 workspace 目前的指紋；
+  - 無法讀取的檔案會附上原因。沒有任何檔案被略去。
+
+  列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3）。它與
+  `GET /api/v1/training/checkpoints` 一樣，將在 M5 的下一步與其他操作者控制項一起由 D8 的檢查
+  把關；在那之前尚未把關。
+- **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints` 與 Training Console 的
+  resume 清單）以同樣的方式讀取每個檔案。每個項目新增 `sha256`、`validation`、
+  `dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
+  digest，而且載入錯誤時一聲不響地略過。
+- **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
+  的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
+  資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
+  registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出。一次 run 的報告是否
+  保留、是否已登錄，來自登錄流程本身對報告庫與 ledger 的讀取（M5 的評估步驟）。在接上之前，
+  每個 run 都會說明它的狀態未被讀取。
+
+### 建置時間：`workspace_build.json`
+
+自 M5-1 起，每次經由 workspace writer 的建置（`scripts/build_knowledge_graph.py
+--generate-samples`、`scripts/setup_demo.py`、probe）都會在 `split_manifest.json` 旁、於其後
+寫入 `workspace_build.json`：
+
+```json
+{
+  "built_at": "2026-10-20T08:15:00Z",
+  "code_revision": {"state": "recorded", "revision": "84371dd...", "dirty": false, "modified_tracked": 0, "untracked": 0},
+  "schema_version": 1,
+  "split_manifest_sha256": "...",
+  "what_this_is": "when this workspace was built and from which code revision; descriptive, not bound by split_manifest.json"
+}
+```
+
+- `built_at` 為 UTC。`code_revision` 與訓練存為 checkpoint producer 的紀錄相同：commit，以及
+  checkout 是否有未提交的變更，不含任何路徑。
+- **描述性的，不受 manifest 綁定。** manifest 不會提到它，因此兩次位元組完全相同的建置保有
+  同一個資料集指紋，不論建置時間為何。
+- **它指明自己描述的是哪一份 manifest。** 放在另一份 manifest 旁的紀錄會顯示「未記錄」，絕不
+  顯示另一次建置的時間。這發生在寫完 manifest 後中斷的重建之後，或是由早於 M5-1、不寫這個檔案
+  的版本所做的重建之後。
+- **M5-1 之前建置的 workspace 沒有這個檔案。** 它的建置時間顯示為「建置時間未記錄」，並附上
+  各來源宣告的版本；絕不使用檔案修改時間。不需要為此重建。只建圖的建置（沒有
+  `--generate-samples`）不寫這個檔案。
 
 ---
 

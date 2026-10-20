@@ -233,6 +233,13 @@ class CheckpointInfo(BaseModel):
     run_dir: Optional[str] = None
     architecture: Optional[str] = None
     checkpoint_kind: Optional[str] = None
+    # From the same one read as the metadata (M5-1, BACKLOG 19.3): the SHA-256
+    # of the bytes read, the Trainer's validation figure, the dataset
+    # fingerprint the checkpoint records, and why a file could not be read.
+    sha256: Optional[str] = None
+    validation: Optional[Dict[str, Any]] = None
+    dataset_fingerprint: Optional[str] = None
+    metadata_problem: Optional[str] = None
 
 
 # =============================================================================

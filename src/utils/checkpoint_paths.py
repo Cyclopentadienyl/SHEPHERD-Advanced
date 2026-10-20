@@ -36,7 +36,7 @@ import re
 import secrets
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
 
@@ -329,6 +329,94 @@ def list_run_checkpoints(
     return entries
 
 
+class ListedCheckpoint(NamedTuple):
+    """One checkpoint of the listing, as one read of its file found it.
+
+    `sha256` is the digest of the bytes that read returned: the model
+    fingerprint, which a ledger record and a served identity name. The rest is
+    the file's own record, parsed from those same bytes: its kind, its epoch,
+    its `logs` (`{}` when it records none), the Trainer's validation figure
+    (`ranking_score_detail` of those logs: the trainer's top-20 selection
+    metric, never a test result) and the dataset fingerprint it was trained on
+    (`training_input_digests["split_manifest"]`, the SHA-256 of that
+    workspace's `split_manifest.json`).
+
+    **A file the read refuses is listed, never dropped:** `problem` says why
+    (a format `weights_only=True` refuses, a file gone since it was listed),
+    and the digest and record are `None`. A file that loads as something other
+    than a checkpoint record keeps its digest and says so in `problem`.
+    """
+
+    run_dir: Path
+    path: Path
+    sha256: Optional[str] = None
+    checkpoint_kind: Optional[str] = None
+    epoch: Any = None
+    logs: Optional[Dict[str, Any]] = None
+    validation: Optional[Tuple[str, float]] = None
+    dataset_fingerprint: Optional[str] = None
+    problem: Optional[str] = None
+
+
+#: How much of a refusal's text a listing keeps: its first line, bounded, so a
+#: multi-paragraph loader message stays one readable reason.
+_PROBLEM_LIMIT = 300
+
+
+def _first_line(exc: BaseException) -> str:
+    text = next((line.strip() for line in str(exc).splitlines() if line.strip()), "")
+    if len(text) > _PROBLEM_LIMIT:
+        text = text[:_PROBLEM_LIMIT - 3] + "..."
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def read_run_checkpoints(
+    data_dir: PathLike, conv_type: Optional[str] = None
+) -> List[ListedCheckpoint]:
+    """The listing (`list_run_checkpoints`, same order), each file read once.
+
+    Each file is loaded through `read_checkpoint` with `weights_only=True`
+    (tensors and plain data only, contract decision 10) on the CPU, and what
+    the entry shows and its digest come from that one read (BACKLOG 19.3), so
+    a file rewritten while it is listed is never shown with another file's
+    digest. Reading opens every checkpoint, which SPEC_4 classes as checkpoint
+    inspection (C3): a caller that offers this list over the network is gated
+    as D8 says. `list_run_checkpoints` stays the read-free form, for a caller
+    that only needs to know which files exist.
+
+    torch is imported only here, when a file is read, so this module stays
+    importable without it.
+    """
+    from src.utils.checkpoint_io import read_checkpoint
+
+    entries: List[ListedCheckpoint] = []
+    for run, path in list_run_checkpoints(data_dir, conv_type):
+        try:
+            read = read_checkpoint(path, map_location="cpu", weights_only=True)
+        except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
+            entries.append(ListedCheckpoint(run, path, problem=_first_line(exc)))
+            continue
+        meta = read.checkpoint
+        if not isinstance(meta, dict):
+            entries.append(ListedCheckpoint(
+                run, path, sha256=read.identity.sha256,
+                problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
+                         "carries no metadata")))
+            continue
+        logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
+        digests = meta.get("training_input_digests")
+        fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
+        entries.append(ListedCheckpoint(
+            run, path, sha256=read.identity.sha256,
+            checkpoint_kind=meta.get("checkpoint_kind"),
+            epoch=meta.get("epoch"),
+            logs=logs,
+            validation=ranking_score_detail(logs),
+            dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+        ))
+    return entries
+
+
 def select_run_checkpoint(
     data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None
 ) -> Tuple[Optional[Path], str]:
@@ -366,6 +454,7 @@ __all__ = [
     "RUNS_DIRNAME",
     "RUN_CHECKPOINTS_DIRNAME",
     "RUN_LOGS_DIRNAME",
+    "ListedCheckpoint",
     "RunDirectoryTaken",
     "allocate_run_dir",
     "check_run_dir_free",
@@ -373,6 +462,7 @@ __all__ = [
     "list_run_checkpoints",
     "list_runs",
     "propose_run_dir",
+    "read_run_checkpoints",
     "refuse_retired_locations",
     "run_architecture",
     "run_checkpoint_dir",

@@ -618,17 +618,23 @@ class TrainingManager:
         """
         List a workspace's run checkpoints with metadata (contract M3a-2).
 
-        Every run's, or one architecture's, through the shared listing
-        (`checkpoint_paths.list_run_checkpoints`): runs most recently trained
-        first, newest file first within a run. The workspace defaults to the
-        last training request's. What each file is comes from its own record;
-        a listed file is not thereby verified, and a file outside the run
-        layout is reached by its path.
+        Every run's, or one architecture's, through the shared listing, each
+        file read once (`checkpoint_paths.read_run_checkpoints`, M5-1): runs
+        most recently trained first, newest file first within a run. The
+        workspace defaults to the last training request's. What each file is
+        comes from its own record; a listed file is not thereby verified, and a
+        file outside the run layout is reached by its path.
+
+        Each entry carries the SHA-256 of the bytes read (`sha256`), the
+        Trainer's validation figure (`validation`: metric and value, or None),
+        the dataset fingerprint it records (`dataset_fingerprint`) and, for a
+        file the read refused, why (`metadata_problem`), beside the keys the
+        console and the route already read.
 
         Returns:
             List of checkpoint info dicts.
         """
-        from src.utils.checkpoint_paths import list_run_checkpoints, run_architecture
+        from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
 
         if data_dir is None:
             if not self._config:
@@ -637,30 +643,31 @@ class TrainingManager:
         workspace = self.workspace_path(data_dir)
 
         checkpoints = []
-        for run, ckpt_path in list_run_checkpoints(workspace, conv_type):
-            stat = ckpt_path.stat()
+        for entry in read_run_checkpoints(workspace, conv_type):
+            try:
+                stat = entry.path.stat()
+            except OSError:
+                continue  # removed since it was listed: there is nothing to show
             info: Dict[str, Any] = {
-                "filename": ckpt_path.name,
-                "filepath": str(ckpt_path),
+                "filename": entry.path.name,
+                "filepath": str(entry.path),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "run": run.name,
-                "run_dir": str(run),
-                "architecture": run_architecture(run),
+                "run": entry.run_dir.name,
+                "run_dir": str(entry.run_dir),
+                "architecture": run_architecture(entry.run_dir),
+                "sha256": entry.sha256,
+                "validation": ({"metric": entry.validation[0], "value": entry.validation[1]}
+                               if entry.validation else None),
+                "dataset_fingerprint": entry.dataset_fingerprint,
+                "metadata_problem": entry.problem,
             }
-
-            # The file's own record. This loads the whole file; tensors and
-            # plain data only (contract decision 10).
-            try:
-                import torch
-
-                meta = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-                if isinstance(meta, dict):
-                    info["epoch"] = meta.get("epoch")
-                    info["metrics"] = meta.get("logs", {})
-                    info["checkpoint_kind"] = meta.get("checkpoint_kind")
-            except Exception:
-                pass
+            # The file's own record, from the same read as the digest; a file
+            # the read refused has none.
+            if entry.logs is not None:
+                info["epoch"] = entry.epoch
+                info["metrics"] = entry.logs
+                info["checkpoint_kind"] = entry.checkpoint_kind
 
             checkpoints.append(info)
 
