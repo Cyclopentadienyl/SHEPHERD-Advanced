@@ -1362,7 +1362,7 @@ keeps the states and holds no prose.
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
+| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone); or, when runs under the report's key disagree, says "runs disagree — investigate" and keeps the report, with no register-later command (none would be accepted while they disagree) |
 | `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
@@ -1375,12 +1375,13 @@ run keeps the digest of the report bytes it wrote and the identity of its checkp
 registration reads the report back and compares the digest of that read before anything in it is
 decoded, then the checkpoint it names. If the file was replaced, changed, damaged, removed or
 cannot be read in between -- even when it now holds another valid report, of another checkpoint or
-of another cohort version -- nothing is registered, the run exits 3, and it says the report at that
-path is not the one it published (or is gone), so the run's own report may not exist any more:
-measure again to register this measurement. The command for a later registration is printed only
-when the report read back is the one published and something else refused it, such as the
-ledger. A later registration with `record_evaluation.py` checks the checkpoint file it is
-given against the report, as before.
+of another cohort version, or is now a link to a file outside the report store -- nothing is
+registered, the run exits 3, and it says the report at that path is not the one it published (or
+is gone), so the run's own report may not exist any more: measure again to register this
+measurement. The command for a later registration is printed only when the report read back is
+the one published and something else refused it, such as the ledger, and never while runs under
+its key disagree. A later registration with `record_evaluation.py` checks the checkpoint file it
+is given against the report, as before.
 
 ### What the Diagnosis tab shows
 
@@ -1473,7 +1474,12 @@ registered. This applies to a run with `--record` or without it, to a later
 `record_evaluation.py`, and to registering again a report that was already registered. The
 message names what differs and which runs. A record registered before the disagreement appeared
 stays in the ledger. Under `--record` the run exits 3 and keeps its report, but prints no
-register-later command, since none would be accepted while the runs disagree. To move forward:
+register-later command, since none would be accepted while the runs disagree. Without `--record`
+the run checks the store the same way after publishing: it exits 0, as a run that registers
+nothing does, prints "Not registered (no --record), and runs disagree — investigate" with what
+differs instead of the command, and its `--outcome` file's `registration.why` says the same.
+When whether the runs disagree cannot be checked (below), the run without `--record` prints the
+command and says a registration is refused until that can be checked. To move forward:
 
 - compare the reports' environment facts (each `report.json`'s `manifest.environment`);
 - re-run with `--deterministic`, which is a different key.
@@ -1506,10 +1512,16 @@ per line, appended and never rewritten. It records:
   Load control that comes with M5's Model Management page).
 
 It holds aggregates only, no case id. The measurement appends its entry right after the report
-is published. If that append fails, the run stops with exit 1 ("measured, but the run did not
-finish"), says the report was written and that the run is not in the history, and does not
-register. If a registration's own entry cannot be appended, the registration stands and says so
-on a `NOTE:` line.
+is published, before it writes its `--outcome` file. If that append fails, the run stops with
+exit 1 ("measured, but the run did not finish"), says the report was written and that the run is
+not in the history, and does not register; its outcome file is still written, with
+`"complete": false`. If the outcome file cannot be written, the run stops the same way and says
+it is in the history. If a registration's own entry cannot be appended, the registration stands
+and says so on a `NOTE:` line. Every entry starts a line of its own: an append that was cut short
+(a crash, a power loss) leaves a broken last line, which the next entry closes rather than
+continues, and which a reader names as a line that is not an entry. An append whose write fails
+is taken back, so it leaves no part of its entry; if even that fails, the error says the end of
+the file may hold part of it.
 
 **New `measure_scorer.py` options.** They are there for M5's job runner, and you can use them
 by hand too. `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2
@@ -1534,8 +1546,10 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
 - `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before anything is
   measured or written when the checkpoint read, or the version's `cohort.json`, has another
   SHA-256: the file changed after it was chosen.
-- `--outcome FILE` writes a small JSON file. The file's directory must exist; the run refuses
-  before reading anything otherwise. The file is written once the report is published
+- `--outcome FILE` writes a small JSON file. FILE must be new and its directory must exist; the
+  run refuses before reading anything otherwise, so a file an earlier run left at that path is
+  never read as this run's outcome, and a file named by mistake is never overwritten. Name a new
+  file for each run (a job's own directory, say). The file is written once the report is published
   (`"complete": false`) and again at the end (`"complete": true`). It gives the report's path,
   run id and digest, the checkpoint and version digests, whether the run was deterministic, and
   under `registration` whether the report was registered and why. A run refused before its

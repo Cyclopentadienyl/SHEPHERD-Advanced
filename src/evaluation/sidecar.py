@@ -804,9 +804,10 @@ def report_key(report: Any) -> Optional[Tuple[Any, ...]]:
     role = manifest.get("split")
     if not (_is_digest(checkpoint) and _is_digest(cohort) and isinstance(role, str)):
         return None
+    # From a hand edit: a value JSON cannot hold, or one nested too deeply.
     try:
         semantics = measurement_semantics_digest(manifest)
-    except (TypeError, ValueError):  # a value JSON cannot hold, from a hand edit
+    except (TypeError, ValueError, RecursionError):
         return None
     return (checkpoint, role, cohort, semantics)
 

@@ -6,6 +6,7 @@ reports `MeasurementManifest` builds:
 
 - **offered by role only**: for a role the deployment lists, never for
   ``institutional_acceptance`` even when listed, and with no rows otherwise;
+  records on the version naming another role than the caller's stop it;
 - **comparable numbers only**: one cohort version, one scoring semantics; the
   others are labelled "not tested on this cohort version" or "tested under
   different scoring semantics", never interleaved;
@@ -15,7 +16,8 @@ reports `MeasurementManifest` builds:
 - **contested means not ordered**, the next record never promoted, and a state
   that cannot be checked is not ordered either;
 - direction (mean rank lower is better), ties sharing a position, two ledgers
-  for one digest, the regime mark;
+  for one digest (and one ledger named twice with other records refused), the
+  regime mark;
 - **automatic selection never reads test results**: a ledger beside the
   checkpoints that favours another file does not change what
   `select_auto_run_checkpoint` or `select_run_checkpoint` choose (the
@@ -100,6 +102,23 @@ def test_institutional_acceptance_is_never_ordered_even_when_listed():
                       roles=("institutional_acceptance", ROLE))
     assert not ordering.offered and ordering.rows == ()
     assert "never offered" in ordering.why
+
+
+@pytest.mark.parametrize("records_role", ["institutional_acceptance", "another_listed_role"])
+def test_the_records_own_role_decides_not_only_the_callers(records_role):
+    """The reviewer's P3 (2026-10-20): a caller passing a listed role (stale UI
+    state, say) for a version whose records carry another role orders nothing,
+    so ``institutional_acceptance`` is never ordered on a caller's word."""
+    acceptance = {**_record(A), "cohort_role": records_role}
+
+    ordering = _order([_c(A, acceptance), _c(B, _record(B))],
+                      roles=(ROLE, "another_listed_role"))
+
+    assert not ordering.offered and ordering.rows == ()
+    assert repr(records_role) in ordering.why and "records' own" in ordering.why
+    # Records of another version say nothing about this one's role.
+    other_version = {**_record(C, cohort="9" * 64), "cohort_role": "institutional_acceptance"}
+    assert _order([_c(B, _record(B)), _c(C, other_version)]).offered
 
 
 def test_an_unknown_metric_is_a_callers_error():
@@ -212,6 +231,17 @@ def test_one_file_listed_twice_from_one_ledger_is_one_checkpoint():
     record = _record(A)
     (row,) = _order([_c(A, record), _c(A, record)]).rows
     assert row.state == "ordered"
+
+
+def test_one_ledger_named_twice_with_other_records_is_a_callers_error_not_a_merge():
+    """The reviewer's P3 (2026-10-20): two ledgers for one digest under one
+    name -- the same weights in two run directories, ledgers not named -- are
+    refused, never one written over the other; and a candidate names its
+    ledger, so none are one ledger by default."""
+    with pytest.raises(ValueError, match="different records"):
+        _order([_c(A, _record(A, mrr=0.9)), _c(A, _record(A, mrr=0.1))])
+    with pytest.raises(TypeError):
+        Candidate(A, (_record(A),))
 
 
 def test_a_row_whose_regime_differs_from_the_rest_is_marked():

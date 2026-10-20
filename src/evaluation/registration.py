@@ -125,9 +125,11 @@ class RegistrationRefused(ValueError):
 class ReportNotAsPublished(RegistrationRefused):
     """An automatic registration could not read back the bytes the run
     published: the report file holds other bytes (replaced or changed after
-    its publication, damaged included), is gone, or cannot be read. Nothing was
-    written, and the report the run published may no longer exist, so it is not
-    offered for a later registration."""
+    its publication, damaged included), is gone, cannot be read, or no longer
+    resolves into the report store it was published into (replaced by a link
+    to a file elsewhere, say). Nothing was written, and the report the run
+    published may no longer exist, so it is not offered for a later
+    registration."""
 
 
 class RunsDisagree(RegistrationRefused):
@@ -341,6 +343,17 @@ def register_report(
     try:
         stored = locate_store_report(report_path)
     except NotInReportStore as exc:
+        if measured is not None:
+            # The run published its report into the store at this very path, so
+            # a path that no longer resolves there (now a link to a file
+            # elsewhere, say) was replaced after the publication: not the run's
+            # report, and not one to offer for a later registration either.
+            raise refused(
+                f"{report_path} is no longer a report the store holds: {exc.why}. This run "
+                "published its report there, so the file was replaced or moved after it was "
+                "written." + lost_tail,
+                lost,
+            ) from None
         raise refused(str(exc)) from None
     except ValueError as exc:  # RegistryRefused, CohortVersionRefused
         raise refused(
@@ -375,6 +388,8 @@ def register_report(
         record = build_record(report, source_digest)
     except ValueError as exc:
         raise refused(f"{report_path}: {exc}") from exc
+    except RecursionError:  # nested deeper than a report is, from a hand edit
+        raise refused(f"{report_path} nests too deeply to be read as a report.") from None
 
     # **The report names the version it is kept under, exactly**: the block the
     # measurement writes from a version (`cohort_version_block`), compared with
@@ -414,26 +429,9 @@ def register_report(
     # unchecked, and none where that cannot be checked. This report stands for
     # its own run directory; every other report the store keeps is read once.
     key = record_key(record)
-    status = scan_report_store(stored.version, known=(stored.run_id, record)).status(key)
-    if status.state == "contested":
-        raise refused(
-            f"runs disagree — investigate. Under this report's key (checkpoint "
-            f"{digest[:12]}... on cohort version {stored.label} "
-            f"({record['cohort_digest'][:12]}...), measurement semantics "
-            f"{record['measurement_semantics_digest'][:12]}...) the report store holds "
-            f"reports that disagree on: {', '.join(status.differing)} (runs "
-            f"{', '.join(status.disagreeing_runs)}). While they do, no report under this key "
-            "is registered, checked or unchecked: registering one would be choosing between "
-            "results. Every report stays in the store; compare their environment facts "
-            "first. A deterministic re-run is another key",
-            RunsDisagree, status=status,
-        )
-    if status.state == "cannot_be_checked":
-        raise refused(
-            f"whether runs under this report's key disagree cannot be checked, so it is not "
-            f"registered: {'; '.join(status.problems)}",
-            DisagreementNotChecked, status=status,
-        )
+    block = key_refusal(stored.version, key, known=(stored.run_id, record))
+    if block is not None:
+        raise refused(str(block), type(block), status=block.status)
 
     # **The ledger has to be beside the weights it describes.** Without this it
     # can be written into any directory, including one holding no checkpoint at
@@ -522,6 +520,48 @@ def register_report(
         problem = (f"the registration was written to {ledger_path}, but the cohort version's "
                    f"usage history could not be appended ({type(exc).__name__}: {exc})")
     return RegistrationResult(outcome, held, ledger_path, differences, problem)
+
+
+def key_refusal(
+    version: Any,
+    key: Tuple[Any, ...],
+    *,
+    known: Optional[Tuple[str, Dict[str, Any]]] = None,
+) -> Optional[RegistrationRefused]:
+    """D5's block on a key of a version's report store, as the refusal a
+    registration under it gets -- `RunsDisagree` while runs under it disagree,
+    `DisagreementNotChecked` while that cannot be checked -- or `None` when
+    nothing blocks it.
+
+    **Returned, not raised**, so the caller says it in its own place:
+    `register_report` raises it (adding that nothing was written), and a
+    measurement without ``--record`` says why it offers no register-later
+    command rather than printing one that would be refused. ``known`` is a
+    report the caller already read (`scan_report_store`). ``key`` is
+    `record_key`'s tuple.
+    """
+    status = scan_report_store(version, known=known).status(key)
+    if status.state == "uncontested":
+        return None
+    checkpoint, _role, cohort, semantics = key
+    if status.state == "contested":
+        return RunsDisagree(
+            f"runs disagree — investigate. Under this report's key (checkpoint "
+            f"{checkpoint[:12]}... on cohort version {version.manifest.get('label')} "
+            f"({cohort[:12]}...), measurement semantics {semantics[:12]}...) the report "
+            f"store holds reports that disagree on: {', '.join(status.differing)} (runs "
+            f"{', '.join(status.disagreeing_runs)}). While they do, no report under this key "
+            "is registered, checked or unchecked: registering one would be choosing between "
+            "results. Every report stays in the store; compare their environment facts "
+            "first. A deterministic re-run is another key.",
+            status,
+        )
+    problems = "; ".join(status.problems).rstrip()
+    return DisagreementNotChecked(
+        f"whether runs under this report's key disagree cannot be checked, so no report "
+        f"under the key is registered: {problems}{'' if problems.endswith('.') else '.'}",
+        status,
+    )
 
 
 def report_state(
@@ -615,4 +655,5 @@ def report_state(
 
 __all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun", "REGISTERED_STATES",
            "RegistrationRefused", "RegistrationResult", "ReportNotAsPublished", "ReportState",
-           "RunsDisagree", "corroboration_note", "register_report", "report_state"]
+           "RunsDisagree", "corroboration_note", "key_refusal", "register_report",
+           "report_state"]

@@ -18,7 +18,10 @@ kept in a store by `tests/fixtures/report_store.py`:
 - **investigation notes** are appended with their key, only for a key the store
   holds, and change no state;
 - **the usage history** is append-only, one JSON line per entry, aggregates
-  only, refuses a link in place of the file, and names a damaged line;
+  only, refuses a link in place of the file, and names a damaged line; an
+  entry after an interrupted append starts its own line, and a failed write is
+  taken back (or says it could not be);
+- a report too deeply nested to build leaves its key "cannot be checked";
 - the registry's helpers it rests on: run ids, the store directory's checks.
 
 The registration's use of all this is in `tests/unit/test_registration.py`.
@@ -176,6 +179,35 @@ def test_a_report_that_parses_but_cannot_be_compared_affects_only_its_own_key(tm
     assert scan.state(_key(other_key)) == "uncontested"
 
 
+def test_a_report_nested_too_deeply_to_copy_cannot_be_checked_and_does_not_crash(tmp_path):
+    """The reviewer's P3 (2026-10-20): a hand-edited report that parses but
+    nests deeper than `build_record` can copy is a report that cannot be
+    compared -- its key cannot be checked -- not a crash of every scan."""
+    first = _stored(tmp_path)
+    stored = _stored(tmp_path)
+    deep = json.loads(stored.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(600):
+        node["x"] = {}
+        node = node["x"]
+    stored.write_text(json.dumps(deep))
+
+    status = scan_report_store(version_of(first)).status(_key(first))
+
+    assert status.state == "cannot_be_checked"
+    assert any(str(stored) in p and "nests too deeply" in p for p in status.problems)
+
+
+def test_a_manifest_too_deep_to_read_a_key_from_gives_no_key(monkeypatch):
+    import src.evaluation.sidecar as sidecar
+
+    def too_deep(manifest):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(sidecar, "measurement_semantics_digest", too_deep)
+    assert sidecar.report_key(registered_report()) is None
+
+
 def test_an_interrupted_run_and_entries_that_are_not_runs_are_passed_over(tmp_path):
     first = _stored(tmp_path)
     reports = first.parents[1]
@@ -306,12 +338,97 @@ def test_the_usage_history_is_never_truncated_and_names_a_damaged_line(tmp_path)
                         checkpoint_sha256="c" * 64, outcome="registered", sequence=1, at=WHEN)
     entries, problems = read_usage_history(version)
 
-    assert path.read_text().startswith('{"kind": "test_run"}\nnot json\n')
-    assert [e["kind"] for e in entries] == ["test_run"]
-    assert any("line 2 is not a JSON object" in p for p in problems)
-    assert any("line 3 is not a JSON object" in p for p in problems)
-    # The unfinished last line and the entry appended after it share a line.
-    assert len(problems) == 3
+    assert path.read_text().startswith(
+        '{"kind": "test_run"}\nnot json\n[1]\n{"kind": "model_lo\n{')
+    # The unfinished line an interrupted append left is closed, not continued:
+    # the entry appended after it is on a line of its own and is read.
+    assert [e["kind"] for e in entries] == ["test_run", "registered"]
+    assert [p.split(" line ")[1] for p in problems] == [
+        "2 is not a JSON object", "3 is not a JSON object", "4 is not a JSON object"]
+
+
+def test_an_entry_after_an_interrupted_append_starts_its_own_line(tmp_path):
+    """The reviewer's P3 (2026-10-20): a torn append (a crash, a full disk)
+    leaves the file without its last newline; the next entry is not lost to it,
+    and the torn line is named."""
+    first = _stored(tmp_path)
+    version = version_of(first)
+    record_test_run(version, run_id=first.parent.name, report_sha256="e" * 64,
+                    checkpoint_sha256="c" * 64, metrics={"hits@1": 0.25}, n_ranked=80,
+                    deterministic=False, device="cpu", record_requested=False, at=WHEN)
+    path = first.parents[1] / "usage.jsonl"
+    with open(path, "ab") as handle:
+        handle.write(b'{"kind":"test_run","at":"2026')
+
+    load = record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
+                             scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+    entries, problems = read_usage_history(version)
+
+    assert [e["kind"] for e in entries] == ["test_run", "model_load"]
+    assert entries[1] == load
+    assert len(problems) == 1 and "line 2 is not a JSON object" in problems[0]
+    assert path.read_bytes().endswith(b'"at":"2026\n' + json.dumps(
+        load, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+
+
+def _failing_write_to(path, monkeypatch, *, after: int):
+    """Make `os.write` to `path` write `after` bytes and then fail, as a full
+    disk does; every other descriptor is written as usual."""
+    import os
+
+    real_write = os.write
+    inode = path.stat().st_ino
+
+    def write(fd, data):
+        if os.fstat(fd).st_ino != inode:
+            return real_write(fd, data)
+        if after:
+            real_write(fd, bytes(data[:after]))
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "write", write)
+
+
+def test_a_failed_append_is_taken_back_leaving_no_part_of_its_entry(tmp_path, monkeypatch):
+    first = _stored(tmp_path)
+    version = version_of(first)
+    record_registration(version, run_id=first.parent.name, report_sha256="e" * 64,
+                        checkpoint_sha256="c" * 64, outcome="registered", sequence=1, at=WHEN)
+    path = first.parents[1] / "usage.jsonl"
+    before = path.read_bytes()
+    _failing_write_to(path, monkeypatch, after=10)
+
+    with pytest.raises(OSError, match="No space left on device") as failed:
+        record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
+                          scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+    monkeypatch.undo()
+
+    assert path.read_bytes() == before
+    assert "cut back" not in str(failed.value)
+    assert read_usage_history(version) == ([json.loads(before)], [])
+
+
+def test_a_failed_append_that_cannot_be_taken_back_says_so(tmp_path, monkeypatch):
+    import os
+
+    first = _stored(tmp_path)
+    version = version_of(first)
+    record_registration(version, run_id=first.parent.name, report_sha256="e" * 64,
+                        checkpoint_sha256="c" * 64, outcome="registered", sequence=1, at=WHEN)
+    path = first.parents[1] / "usage.jsonl"
+    size = path.stat().st_size
+    _failing_write_to(path, monkeypatch, after=10)
+    monkeypatch.setattr(os, "ftruncate",
+                        lambda fd, length: (_ for _ in ()).throw(OSError(5, "I/O error")))
+
+    with pytest.raises(OSError) as failed:
+        record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
+                          scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+
+    message = str(failed.value)
+    assert "No space left on device" in message
+    assert f"could not be cut back to the {size} bytes it had" in message
+    assert "may hold part of this entry" in message
 
 
 def test_an_appended_file_that_is_a_link_is_refused(tmp_path):

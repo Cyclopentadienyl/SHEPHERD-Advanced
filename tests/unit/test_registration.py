@@ -1216,6 +1216,50 @@ def test_a_run_never_gets_back_a_lost_report_as_kept(tmp_path, checkpoints, lost
     assert not (checkpoints / "evaluations.json").exists()
 
 
+def test_a_runs_own_report_replaced_by_a_link_out_of_the_store_is_lost(tmp_path, checkpoints):
+    """The reviewer's P3 (2026-10-20): the run published its report into the
+    store at this path, so a path that now resolves elsewhere -- here a link to
+    a byte-identical copy outside any store -- was replaced: refused as not the
+    run's report (`ReportNotAsPublished`), never as an outside copy whose
+    store original could still be registered. Nothing is written."""
+    published = _report(tmp_path)
+    measured = _measured(published, checkpoints)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(published.read_bytes())
+    published.unlink()
+    published.symlink_to(outside)
+
+    with pytest.raises(ReportNotAsPublished) as refused:
+        register_report(published, measured=measured, registered_at=WHEN)
+
+    message = str(refused.value)
+    assert f"{published} is no longer a report the store holds" in message
+    assert "replaced or moved after it was written" in message and "re-measure" in message
+    assert "Register the store's original" not in message
+    assert not (checkpoints / "evaluations.json").exists()
+    # By hand, the same path is an outside copy, refused as such.
+    with pytest.raises(RegistrationRefused) as by_hand:
+        register_report(published, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+    assert not isinstance(by_hand.value, ReportNotAsPublished)
+    assert "Register the store's original instead" in str(by_hand.value)
+
+
+def test_a_report_nested_too_deeply_to_build_is_refused_not_raised(tmp_path, checkpoints):
+    """A hand-edited report that parses but nests deeper than `build_record`
+    can copy is one refusal, not a `RecursionError` traceback."""
+    report = _report(tmp_path)
+    deep = json.loads(report.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(600):
+        node["x"] = {}
+        node = node["x"]
+    report.write_text(json.dumps(deep))
+
+    with pytest.raises(RegistrationRefused, match="nests too deeply to be read as a report"):
+        register_report(report, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
 def test_a_later_registration_still_names_a_missing_report_plainly(tmp_path, checkpoints):
     """A registration by hand has no run behind it: a missing report is the
     ordinary refusal, not a run's lost report."""

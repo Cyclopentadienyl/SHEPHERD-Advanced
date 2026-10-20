@@ -49,8 +49,9 @@ run from the command line counts as one started from the Test tab.
 anything is measured when the checkpoint or the version's `cohort.json` read now
 is not the one chosen; `--outcome FILE` writes a small JSON once the report is
 published and again at the end (`_write_outcome`): the report's path, run id and
-digest, and whether it was registered and why. The file says what the run did;
-the report store and the ledger stay the record, and
+digest, and whether it was registered and why. FILE must not exist yet, so a
+file an earlier run left is never read as this one's. The file says what the
+run did; the report store and the ledger stay the record, and
 `src/evaluation/registration.report_state` reads kept and registered from them.
 
 **`--deterministic`** turns on PyTorch's deterministic algorithms (never
@@ -876,8 +877,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="Refuse before measuring unless the cohort version's "
                              "cohort.json read has this SHA-256. --cohort only")
     parser.add_argument("--outcome", type=Path, default=None, metavar="FILE",
-                        help="Write the run's outcome as JSON to FILE (its directory must "
-                             "exist): the report's path, run id and digest, and whether it "
+                        help="Write the run's outcome as JSON to FILE (a new file: it must "
+                             "not exist, and its directory must): the report's path, run id "
+                             "and digest, and whether it "
                              "was registered and why. Written once the report is published "
                              "and again at the end; nothing is written to it when the run is "
                              "refused before its report. --cohort only")
@@ -1066,11 +1068,14 @@ def register_later_command(report_path: Path, checkpoint: Path) -> str:
 def _registration_outcome(requested: bool, **fields: Any) -> Dict[str, Any]:
     """The ``registration`` block of the `--outcome` file. Before an attempt it
     says so (``registered`` is `None`: not yet established); without
-    `--record` it says the report was not registered because none was asked."""
+    `--record` it says the report was not registered because none was asked,
+    and ``why`` may say what a later registration would meet
+    (`_offer_later_registration`)."""
     if not requested:
         return {"requested": False, "registered": False, "outcome": "not_requested",
                 "sequence": None, "ledger": None,
-                "why": "--record was not given; the report is kept for a later registration"}
+                "why": fields.get("why", "--record was not given; the report is kept for a "
+                                         "later registration")}
     block = {"requested": True, "registered": None, "outcome": None, "sequence": None,
              "ledger": None, "why": "registration had not been attempted when this was written"}
     block.update(fields)
@@ -1096,10 +1101,11 @@ def _register(
     still the one published, it is kept and the command that registers it later
     is printed -- unless runs under its key disagree (`RunsDisagree`, D5), when
     no later registration under that key would be accepted either; when the
-    file no longer holds it -- replaced, changed, damaged, removed or unreadable
-    (`ReportNotAsPublished`) -- the run's own report may be gone, and the
-    operator is told to re-measure. A registration that stands although the
-    version's usage history could not be appended says so on stderr.
+    file no longer holds it -- replaced, changed, damaged, removed, unreadable
+    or no longer in the store (`ReportNotAsPublished`) -- the run's own report
+    may be gone, and the operator is told to re-measure. A registration that
+    stands although the version's usage history could not be appended says so
+    on stderr.
     """
     from src.evaluation.registration import (
         MeasuredRun,
@@ -1164,9 +1170,57 @@ def _register(
         ledger=str(registered.ledger_path), why=why)
 
 
+def _offer_later_registration(
+    inputs: MeasurementInputs, result: ModeResult, report_path: Path
+) -> Dict[str, Any]:
+    """Without `--record`: say the report was not registered and how to
+    register it later -- unless D5 would refuse that now. Returns what the
+    `--outcome` file says about the registration.
+
+    The store is checked under this report's key (`key_refusal`, the check
+    `register_report` makes), so the message stays true: **while runs under
+    the key disagree no register-later command is printed**, as under
+    `--record`, since none would be accepted; while that cannot be checked,
+    the command is printed saying it is refused until it can be. The key is
+    read from the report this run published (`report_key`, which is the
+    record's key for a report `build_record` accepts).
+    """
+    from src.evaluation.registration import RunsDisagree, key_refusal
+    from src.evaluation.sidecar import report_key
+
+    command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
+    key = report_key(result.to_dict())
+    block = key_refusal(inputs.version, key) if key is not None else None
+    if isinstance(block, RunsDisagree):
+        print(f"\nNot registered (no --record), and {block}\n"
+              f"The report is kept at {report_path}, where the investigation can read it "
+              "beside the others. No register-later command is offered: none would be "
+              "accepted while the runs disagree.\n")
+        return _registration_outcome(False, why=(
+            f"--record was not given, and {block} The report is kept for the "
+            "investigation; no registration under its key is accepted while the runs "
+            "disagree"))
+    if block is not None:
+        print(f"\nNot registered (no --record), and {block}\n"
+              "A later registration is refused until that can be checked; then register it "
+              f"with:\n  {command}\n")
+        return _registration_outcome(False, why=(
+            f"--record was not given; the report is kept for a later registration, which is "
+            f"refused until this can be checked: {block}"))
+    print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
+    return _registration_outcome(False)
+
+
 def _check_outcome_target(path: Optional[Path]) -> None:
     """Refuse an `--outcome` file that cannot be written, before anything is
-    read: its directory must exist (none is created), and it must not be one."""
+    read: its directory must exist (none is created), and it must not be one.
+
+    **Nor may it exist** (a link, even a dangling one, included). A run refused
+    before its report writes no outcome file, so a file already there -- an
+    earlier run's, with ``"complete": true`` -- would be read as this run's
+    outcome; and a path named by mistake would replace a file that is not an
+    outcome at all. The run's own second write still replaces its first.
+    """
     if path is None:
         return
     if path.is_dir():
@@ -1175,6 +1229,13 @@ def _check_outcome_target(path: Optional[Path]) -> None:
     if not path.parent.is_dir():
         raise ValueError(f"--outcome {path}: its directory {path.parent} does not exist, and "
                          "none is created. Nothing was read or written.")
+    if os.path.lexists(path):
+        raise ValueError(
+            f"--outcome {path} already exists. The run writes a new file there and never "
+            "replaces one, so a file an earlier run left is not read as this run's outcome "
+            "and a file named by mistake is not overwritten. Name a new file, or move that "
+            "one away. Nothing was read or written."
+        )
 
 
 def _write_outcome(
@@ -1399,15 +1460,33 @@ def _run(args: argparse.Namespace) -> int:
     # re-raised saying the report was written (`FailedAfterPublishing`).
     try:
         if inputs.version is not None:
-            # What this run did, so far (`--outcome`), and the run in its
-            # version's usage history (D4), before anything else can fail.
+            # The run in its version's usage history (D4), the record, and what
+            # this run did so far (`--outcome`), the job runner's view, before
+            # anything else can fail. **Each is tried whatever the other did**:
+            # a failed outcome write must not keep a published run out of the
+            # history, nor a failed history append leave a published run with
+            # no outcome file. The first failure is then raised, saying both.
             deterministic = bool(result.manifest.deterministic_algorithms)
+            history_failure: Optional[ValueError] = None
+            try:
+                _record_run(inputs, result, run_id, report_sha256, args.record)
+            except ValueError as exc:
+                history_failure = exc
             if args.outcome is not None:
-                _write_outcome(args.outcome, complete=False, inputs=inputs, run_id=run_id,
-                               report_path=report_path, report_sha256=report_sha256,
-                               deterministic=deterministic,
-                               registration=_registration_outcome(args.record))
-            _record_run(inputs, result, run_id, report_sha256, args.record)
+                try:
+                    _write_outcome(args.outcome, complete=False, inputs=inputs, run_id=run_id,
+                                   report_path=report_path, report_sha256=report_sha256,
+                                   deterministic=deterministic,
+                                   registration=_registration_outcome(args.record))
+                except (ValueError, OSError) as exc:
+                    raise ValueError(
+                        f"the --outcome file {args.outcome} could not be written "
+                        f"({type(exc).__name__}: {exc}); "
+                        + (f"and {history_failure}" if history_failure is not None
+                           else "this run is in its version's usage history")
+                    ) from exc
+            if history_failure is not None:
+                raise history_failure
         print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
         for name, value in result.authoritative_metrics.items():
             print(f"  {name:38s} {value:.6f}")
@@ -1438,10 +1517,8 @@ def _run(args: argparse.Namespace) -> int:
                 _flush_stdout()
                 status, registration = _register(report_path, report_sha256, inputs)
             else:
-                measured = Path(inputs.checkpoint.identity.path)
-                print("\nNot registered (no --record). Register it with:\n"
-                      f"  {register_later_command(report_path, measured)}\n")
-                status, registration = 0, _registration_outcome(False)
+                status, registration = 0, _offer_later_registration(inputs, result,
+                                                                     report_path)
             if args.outcome is not None:
                 _write_outcome(args.outcome, complete=True, inputs=inputs, run_id=run_id,
                                report_path=report_path, report_sha256=report_sha256,

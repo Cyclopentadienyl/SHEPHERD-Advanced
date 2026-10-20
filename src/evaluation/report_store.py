@@ -44,10 +44,11 @@ not prevent it (D4).
 
 **What it rests on: plain files and one writer at a time** (D2, D7). Deleting a
 disagreeing report lifts the block, and the files can be edited; the tools
-refuse, they do not make the refusal tamper-proof. Appends are single
-``write`` calls on a file opened for appending, and nothing locks the store: a
-scan and a registration that follows it are not atomic with a run publishing a
-new report into the same version at that moment.
+refuse, they do not make the refusal tamper-proof. Each append writes one line
+at the end of a file opened for appending, after closing a line an interrupted
+append left open, and a write that fails is taken back (`_append_entry`);
+nothing locks the store: a scan and a registration that follows it are not
+atomic with a run publishing a new report into the same version at that moment.
 
 Module: src/evaluation/report_store.py
 """
@@ -79,7 +80,13 @@ CONTEST_STATES: Tuple[str, ...] = ("uncontested", "contested", "cannot_be_checke
 class NotInReportStore(ValueError):
     """The path is not a report the registry's report store holds, so it is not
     registered (D5): a copy, wherever it is, cannot show whether another run
-    under its key disagrees."""
+    under its key disagrees. ``why`` is the reason alone, without the advice to
+    register the store's original: for a run's own report, which it published
+    into the store, that advice would not be true."""
+
+    def __init__(self, message: str, why: str = "") -> None:
+        super().__init__(message)
+        self.why = why
 
 
 class _NotTheExpectedBytes(Exception):
@@ -175,9 +182,8 @@ def store_report_parts(report_path: Any) -> Tuple[Path, str, str, Path]:
     try:
         resolved = given.resolve()
     except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before Python 3.13
-        raise NotInReportStore(
-            _not_in_store(given, f"it cannot be resolved ({type(exc).__name__}: {exc})")
-        ) from None
+        why = f"it cannot be resolved ({type(exc).__name__}: {exc})"
+        raise NotInReportStore(_not_in_store(given, why), why) from None
     run_dir = resolved.parent
     reports = run_dir.parent
     version_dir = reports.parent
@@ -195,7 +201,7 @@ def store_report_parts(report_path: Any) -> Tuple[Path, str, str, Path]:
         return versions.parent, version_dir.name, run_dir.name, resolved
     if str(resolved) != os.path.abspath(given):
         why += f" (it resolves to {resolved})"
-    raise NotInReportStore(_not_in_store(given, why))
+    raise NotInReportStore(_not_in_store(given, why), why)
 
 
 def locate_store_report(report_path: Any) -> StoreReport:
@@ -220,11 +226,9 @@ def locate_store_report(report_path: Any) -> StoreReport:
     root, label, run_id, resolved = store_report_parts(report_path)
     version = resolve_version(root, label)
     if resolved.parent.parent.parent != version.directory:
-        raise NotInReportStore(_not_in_store(
-            Path(report_path),
-            f"the version {label!r} resolves to {version.directory}, not the directory it "
-            "sits in",
-        ))
+        why = (f"the version {label!r} resolves to {version.directory}, not the directory it "
+               "sits in")
+        raise NotInReportStore(_not_in_store(Path(report_path), why), why)
     return StoreReport(version.directory.parent.parent, label, run_id, resolved, version)
 
 
@@ -373,9 +377,13 @@ def scan_report_store(
             continue
         try:
             record = build_record(report, digest)
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
+            # A report nested deeper than `build_record` can copy (a hand edit)
+            # is one that cannot be compared, like any other it refuses.
             key = report_key(report)
-            problem = f"{path} cannot be compared: {exc}"
+            problem = (f"{path} cannot be compared: "
+                       + ("it nests too deeply to be read" if isinstance(exc, RecursionError)
+                          else str(exc)))
             if key is None:
                 unplaced.append(problem)
             else:
@@ -391,15 +399,22 @@ def scan_report_store(
 # The append-only files: usage history and investigation notes
 # ---------------------------------------------------------------------------
 def _append_entry(version: "CohortVersionRead", filename: str, entry: Dict[str, Any]) -> None:
-    """One JSON object as one line at the end of a store file, written with a
-    single ``write`` and flushed to disk.
+    """One JSON object as one line at the end of a store file, written and
+    flushed to disk.
 
     The store directory is resolved and checked first (`report_store_directory`,
     created when absent), and the file must be a plain file there: a link is
     refused (``O_NOFOLLOW`` where the platform has it, and a check by name
     everywhere), so an entry never lands outside the registry. Opened for
-    appending, never truncated; nothing locks it, so it is one writer at a time,
-    as the ledger is.
+    appending; nothing locks it, so it is one writer at a time, as the ledger is.
+
+    **An entry always starts a line of its own.** A file whose last byte is not
+    a newline ends in an append that was interrupted (a crash, a power loss), and
+    the entry is written after a newline that closes it, so the reader names that
+    line and still reads this one. **A write that fails is taken back**: the file
+    is cut back to the size it had before, so a failed append leaves no part of
+    its entry; if even that fails, the error says the end of the file may hold
+    part of it. The file is never cut below the size it had when opened.
     """
     from src.evaluation.cohort_registry import RegistryRefused, report_store_directory
 
@@ -413,18 +428,38 @@ def _append_entry(version: "CohortVersionRead", filename: str, entry: Dict[str, 
             "through a link could land outside the registry. Replace it with the file it "
             "names. Nothing was written."
         )
-    flags = (os.O_WRONLY | os.O_APPEND | os.O_CREAT
+    # Read and write: the last byte is read to see whether the file ends a line.
+    # With O_APPEND every write still goes to the end, wherever the offset is.
+    flags = (os.O_RDWR | os.O_APPEND | os.O_CREAT
              | getattr(os, "O_BINARY", 0)      # Windows: no newline translation
              | getattr(os, "O_NOINHERIT", 0)   # Windows: not inherited by children
              | getattr(os, "O_CLOEXEC", 0)
              | getattr(os, "O_NOFOLLOW", 0))   # POSIX: refuse a link swapped in since
     fd = os.open(path, flags, 0o666)
     try:
-        view = memoryview(line)
-        while view:
-            written = os.write(fd, view)
-            view = view[written:]
-        os.fsync(fd)
+        size = os.fstat(fd).st_size
+        if size:
+            os.lseek(fd, size - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b"\n":
+                line = b"\n" + line
+        try:
+            view = memoryview(line)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+        except OSError as exc:
+            try:
+                os.ftruncate(fd, size)  # Windows too (`_chsize_s`)
+            except OSError as undo:
+                raise OSError(
+                    exc.errno,
+                    f"{exc.strerror or exc}; and {path} could not be cut back to the "
+                    f"{size} bytes it had ({type(undo).__name__}: {undo}), so its end may "
+                    "hold part of this entry, which a reader names as a line that is not "
+                    "an entry",
+                ) from exc
+            raise
     finally:
         os.close(fd)
 

@@ -11,7 +11,8 @@ comparable and visible, not to forbid it:
   listed by the deployment in ``SHEPHERD_ORDERING_ROLES`` and passed in here
   (`ordering_offered`); ``institutional_acceptance`` never, even when listed,
   until the institution's formal evaluation rules exist. The role is the
-  version's, never inferred from the source's name.
+  version's, never inferred from the source's name, and a record on the version
+  naming another role stops the ordering rather than trusting the caller's.
 - **Only comparable numbers together:** one metric over the records of one
   cohort version (its manifest digest) and one scoring semantics (D4's seven
   fields, `scoring_semantics_digest`). A checkpoint with no record on the
@@ -92,12 +93,14 @@ ROW_LABELS: Dict[str, str] = {
 class Candidate(NamedTuple):
     """One checkpoint of the list: its digest, every record its ledger holds for
     it (`records_for`), and which ledger that is (an opaque name, for example
-    its resolved path). Two candidates with one digest and two ledgers are never
-    merged: each ledger's sequence orders its own records only."""
+    its resolved path; required, so two ledgers are never one by default). Two
+    candidates with one digest and two ledgers are never merged: each ledger's
+    sequence orders its own records only. One digest and one ledger named twice
+    is one checkpoint listed twice, and must carry the same records."""
 
     checkpoint_sha256: str
     records: Tuple[Mapping[str, Any], ...]
-    ledger: Optional[str] = None
+    ledger: str
 
 
 class Row(NamedTuple):
@@ -199,7 +202,10 @@ def order_by_test_score(
     under one scoring semantics, by D4's rules (see the module docstring).
 
     ``role`` is the version's role and ``ordering_roles`` the roles the
-    deployment lists (``SHEPHERD_ORDERING_ROLES``, read by the caller);
+    deployment lists (``SHEPHERD_ORDERING_ROLES``, read by the caller). **The
+    records' own role decides too:** when any record on ``cohort_digest`` names
+    another role than ``role`` (a caller's stale role, say), nothing is ordered,
+    so ``institutional_acceptance`` is never ordered on a caller's word;
     ``contested_state`` gives a record key's state in the version's report store
     (`StoreScan.state`: ``uncontested``, ``contested`` or
     ``cannot_be_checked``; anything else is taken as cannot be checked).
@@ -210,8 +216,9 @@ def order_by_test_score(
     When ordering is not offered for the role, no row is returned.
 
     Raises:
-        ValueError: ``metric`` is not one of `ORDERABLE_METRICS` (a caller's
-            error, not a property of the records).
+        ValueError: ``metric`` is not one of `ORDERABLE_METRICS`, or two
+            candidates name one digest and one ledger with different records
+            (a caller's error, not a property of the records).
     """
     from src.evaluation.sidecar import record_key
 
@@ -222,12 +229,34 @@ def order_by_test_score(
     if not offered:
         return Ordering(False, why, cohort_digest, scoring_semantics_digest, metric, ())
 
-    # One entry per checkpoint digest, keeping each distinct ledger apart.
-    by_digest: Dict[str, Dict[Optional[str], Tuple[Mapping[str, Any], ...]]] = {}
+    # One entry per checkpoint digest, keeping each distinct ledger apart; one
+    # ledger named twice for a digest is the same file listed twice, never a
+    # second set of records written over the first.
+    by_digest: Dict[str, Dict[Any, Tuple[Mapping[str, Any], ...]]] = {}
     for candidate in candidates:
         records = tuple(r for r in candidate.records if isinstance(r, Mapping)
                         and r.get("checkpoint_digest") == candidate.checkpoint_sha256)
-        by_digest.setdefault(candidate.checkpoint_sha256, {})[candidate.ledger] = records
+        ledgers = by_digest.setdefault(candidate.checkpoint_sha256, {})
+        if candidate.ledger in ledgers and ledgers[candidate.ledger] != records:
+            raise ValueError(
+                f"two candidates name checkpoint {candidate.checkpoint_sha256[:12]}... and "
+                f"ledger {candidate.ledger!r} with different records; name each ledger by "
+                "its own path, so records of two ledgers are never taken for one's"
+            )
+        ledgers[candidate.ledger] = records
+
+    # **The records' role, not only the caller's**: a version has one role, and
+    # a record on it naming another means the role passed is not the version's.
+    roles = {r.get("cohort_role") for ledgers in by_digest.values()
+             for records in ledgers.values() for r in records
+             if r.get("cohort_digest") == cohort_digest}
+    if roles - {role}:
+        named = ", ".join(sorted(repr(r) for r in roles - {role}))
+        return Ordering(False, (
+            f"ordering by test score is not offered: records on cohort version "
+            f"{cohort_digest[:12]}... name role {named}, not the role {role!r} it was asked "
+            "for; a version has one role, and ordering follows the records' own"),
+            cohort_digest, scoring_semantics_digest, metric, ())
 
     unordered: List[Row] = []
     ordered: List[Tuple[float, str, Mapping[str, Any], Tuple[Mapping[str, Any], ...]]] = []

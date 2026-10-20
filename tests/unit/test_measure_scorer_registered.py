@@ -652,6 +652,7 @@ def test_the_outcome_file_records_a_registration_and_a_refused_one(cli, cohort, 
 
     ledger = cohort.checkpoint.parent / LEDGER
     ledger.write_text(json.dumps({"schema_version": 2, "records": []}))
+    out = tmp_path / "outcome-2.json"  # a new file for each run
     assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
     outcome = _outcome(out)
     assert outcome["complete"] is True
@@ -674,19 +675,50 @@ def test_no_outcome_file_is_written_when_the_run_is_refused_before_its_report(
     assert not out.exists()
 
 
-@pytest.mark.parametrize("where", ["missing_directory", "a_directory"])
+@pytest.mark.parametrize("where", ["missing_directory", "a_directory", "an_earlier_runs_file",
+                                   "a_dangling_link"])
 def test_an_outcome_file_that_cannot_be_written_is_refused_before_anything_is_read(
     cli, cohort, tmp_path, monkeypatch, where
 ):
+    """Its directory must exist and it must not: an existing file -- an
+    earlier run's outcome, or a file named by mistake -- is neither read as
+    this run's nor replaced (the reviewers' P3, 2026-10-20)."""
     import src.evaluation.cohort_registry as cohort_registry
 
     monkeypatch.setattr(cohort_registry, "resolve_version",
                         lambda *a, **k: pytest.fail("something was read"))
-    out = tmp_path / "absent" / "outcome.json" if where == "missing_directory" else tmp_path
+    out = {"missing_directory": tmp_path / "absent" / "outcome.json",
+           "a_directory": tmp_path}.get(where, tmp_path / "outcome.json")
+    earlier = json.dumps({"complete": True, "registration": {"registered": True}})
+    if where == "an_earlier_runs_file":
+        out.write_text(earlier)
+    elif where == "a_dangling_link":
+        out.symlink_to(tmp_path / "nowhere.json")
 
-    with pytest.raises(ValueError, match="--outcome .*Nothing was read or written"):
-        cli.main(_argv(cohort, "--outcome", str(out)))
+    with pytest.raises(ValueError, match="--outcome .*Nothing was read or written") as refused:
+        cli.main(_argv(cohort, "--outcome", str(out), "--record"))
     assert _nothing_written(cohort)
+    if where == "an_earlier_runs_file":
+        assert "already exists" in str(refused.value)
+        assert out.read_text() == earlier
+    elif where == "a_dangling_link":
+        assert out.is_symlink() and not (tmp_path / "nowhere.json").exists()
+
+
+def test_a_run_refused_before_its_report_never_leaves_an_earlier_outcome_as_its_own(
+    cli, cohort, tmp_path
+):
+    """The reviewers' scenario: an outcome path reused by a run that is then
+    refused (here by an expected digest) is refused first, so no file there
+    reads as this run's "complete" outcome."""
+    out = tmp_path / "outcome.json"
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
+    first = out.read_bytes()
+
+    with pytest.raises(ValueError, match="already exists"):
+        cli.main(_argv(cohort, "--record", "--outcome", str(out),
+                       "--expect-checkpoint-sha256", "f" * 64))
+    assert out.read_bytes() == first and len(_reports(cohort)) == 1
 
 
 def test_a_run_that_stops_after_publishing_leaves_an_incomplete_outcome(
@@ -745,14 +777,62 @@ def test_a_usage_history_that_cannot_be_appended_stops_the_run_after_its_report(
         raise PermissionError(13, "Permission denied", "usage.jsonl")
 
     monkeypatch.setattr(report_store, "record_test_run", fail)
+    out = cohort.checkpoint.parent.parent / "outcome.json"
 
     with pytest.raises(cli.FailedAfterPublishing) as failed:
-        cli.main(_argv(cohort, "--record"))
+        cli.main(_argv(cohort, "--record", "--outcome", str(out)))
 
     assert "usage history could not be appended, so this run is not in it" in str(failed.value)
     assert "The report was written" in str(failed.value)
     assert len(_reports(cohort)) == 1
     assert not (cohort.checkpoint.parent / LEDGER).exists()
+    # The outcome file is written all the same: the run published, then stopped.
+    outcome = _outcome(out)
+    assert outcome["complete"] is False and outcome["registration"]["registered"] is None
+
+
+def test_a_failed_outcome_write_does_not_keep_a_published_run_out_of_the_history(
+    cli, cohort, tmp_path, monkeypatch
+):
+    """The reviewers' P3 (2026-10-20): the usage history is the record and the
+    outcome file the job runner's view, so the history is appended first and
+    whatever the outcome write does; the failure then stops the run after
+    publishing, saying the run is in the history."""
+    def fail(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(cli, "_write_outcome", fail)
+
+    with pytest.raises(cli.FailedAfterPublishing) as failed:
+        cli.main(_argv(cohort, "--record", "--outcome", str(tmp_path / "outcome.json")))
+
+    message = str(failed.value)
+    assert "--outcome file" in message and "No space left on device" in message
+    assert "this run is in its version's usage history" in message
+    assert "The report was written" in message
+    (path,) = _reports(cohort)
+    assert [(e["kind"], e["run_id"]) for e in _usage(cohort)] == [
+        ("test_run", path.parent.name)]
+    assert not (cohort.checkpoint.parent / LEDGER).exists(), "it stops before registering"
+
+
+def test_when_both_the_history_and_the_outcome_fail_the_message_says_both(
+    cli, cohort, tmp_path, monkeypatch
+):
+    import src.evaluation.report_store as report_store
+
+    monkeypatch.setattr(report_store, "record_test_run",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(5, "I/O error")))
+    monkeypatch.setattr(cli, "_write_outcome",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+
+    with pytest.raises(cli.FailedAfterPublishing) as failed:
+        cli.main(_argv(cohort, "--outcome", str(tmp_path / "outcome.json")))
+
+    message = str(failed.value)
+    assert "--outcome file" in message and "No space left" in message
+    assert "usage history could not be appended, so this run is not in it" in message
+    assert "this run is in its version's usage history" not in message
 
 
 def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
@@ -780,6 +860,120 @@ def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
     assert "where the investigation can read it" in err
     assert "Register it later with" not in err
     assert len(_reports(cohort)) == 3
+
+
+def _disagreeing_report(cohort):
+    """A second report under the key of the store's one report, its hits@1
+    another number: the store now holds runs that disagree."""
+    import secrets
+
+    (first,) = _reports(cohort)
+    edited = json.loads(first.read_text())
+    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    stamp, checkpoint, _ = first.parent.name.split("-")
+    other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
+    other.mkdir()
+    (other / "report.json").write_text(json.dumps(edited))
+    return other / "report.json"
+
+
+def test_without_record_a_disagreeing_run_offers_no_register_later_command(
+    cli, cohort, capsys, tmp_path
+):
+    """The reviewer's P3 (2026-10-20): without --record the run checks the
+    store as a registration would, so it never prints a command D5 would
+    refuse: it says the runs disagree, and its outcome says so too."""
+    assert cli.main(_argv(cohort)) == 0
+    _disagreeing_report(cohort)
+    capsys.readouterr()
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
+
+    printed = capsys.readouterr().out
+    assert "Not registered (no --record), and runs disagree — investigate" in printed
+    assert "hits@1" in printed and "No register-later command is offered" in printed
+    assert "Register it with" not in printed and "record_evaluation.py" not in printed
+    registration = _outcome(out)["registration"]
+    assert (registration["registered"], registration["outcome"]) == (False, "not_requested")
+    assert "runs disagree — investigate" in registration["why"]
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_without_record_a_key_that_cannot_be_checked_says_registering_waits_for_it(
+    cli, cohort, capsys, tmp_path
+):
+    from tests.fixtures.report_store import store_bytes
+
+    damaged = store_bytes(cohort.registry, b"{broken", version=cohort.version)
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
+
+    printed = capsys.readouterr().out
+    assert "cannot be checked" in printed and str(damaged) in printed
+    assert "A later registration is refused until that can be checked" in printed
+    assert "record_evaluation.py --report" in printed
+    assert "cannot be checked" in _outcome(out)["registration"]["why"]
+
+
+def test_a_runs_report_replaced_by_a_link_out_of_the_store_is_not_offered_later(
+    cli, cohort, monkeypatch, capsys, tmp_path
+):
+    """The reviewer's P3 (2026-10-20): the run's `report.json` replaced, after
+    its publication, by a link to a copy outside any store is not the run's
+    report, so --record refuses it as such and offers no later registration;
+    `report_state` agrees it is not kept."""
+    from src.evaluation.registration import report_state
+
+    real = cli._print_registered_summary
+    outside = tmp_path / "outside.json"
+
+    def summary_then_replace(inputs, result, run_id, report_path):
+        real(inputs, result, run_id, report_path)
+        outside.write_bytes(Path(report_path).read_bytes())
+        Path(report_path).unlink()
+        Path(report_path).symlink_to(outside)
+
+    monkeypatch.setattr(cli, "_print_registered_summary", summary_then_replace)
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+
+    err = capsys.readouterr().err
+    assert "is no longer a report the store holds" in err and "re-measure" in err
+    assert "nothing at that path is offered for a later registration" in err
+    assert "Register it later with" not in err and "kept at" not in err
+    outcome = _outcome(out)
+    state = report_state(outcome["report"], checkpoint=outcome["checkpoint"],
+                         expected_sha256=outcome["report_sha256"])
+    assert state.kept == "not_kept"
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_a_report_in_the_store_too_deep_to_compare_is_a_refusal_not_a_traceback(
+    cli, cohort, capsys, tmp_path
+):
+    """The reviewer's P3 (2026-10-20): a hand-edited report in the store that
+    nests too deeply to be built leaves its key "cannot be checked"; --record
+    exits 3 saying so, and the outcome file is complete."""
+    assert cli.main(_argv(cohort)) == 0
+    deep_path = _disagreeing_report(cohort)
+    deep = json.loads(deep_path.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(600):
+        node["x"] = {}
+        node = node["x"]
+    deep_path.write_text(json.dumps(deep))
+    capsys.readouterr()
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+
+    err = capsys.readouterr().err
+    assert "cannot be checked" in err and "nests too deeply" in err and str(deep_path) in err
+    outcome = _outcome(out)
+    assert outcome["complete"] is True and outcome["registration"]["registered"] is False
 
 
 def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
@@ -851,10 +1045,13 @@ def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
     assert raw.value is error
 
 
-@pytest.mark.parametrize("state", ["bad_cublas_config", "warn_only_inherited"])
+@pytest.mark.parametrize("state", ["bad_cublas_config", "cuda_initialised",
+                                   "warn_only_inherited"])
 def test_a_process_state_deterministic_execution_cannot_trust_is_refused(
     cli, cohort, monkeypatch, state
 ):
+    import os
+
     import src.evaluation.cohort_registry as cohort_registry
 
     monkeypatch.setattr(cohort_registry, "resolve_version",
@@ -862,6 +1059,12 @@ def test_a_process_state_deterministic_execution_cannot_trust_is_refused(
     if state == "bad_cublas_config":
         monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":0:0")
         argv, fragment = _argv(cohort, "--deterministic"), "not document as deterministic"
+    elif state == "cuda_initialised":
+        # CUDA started in this process before the variable could be set: cuBLAS
+        # may already run without it (a CPU-only host never gets here alone).
+        monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+        monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
+        argv, fragment = _argv(cohort, "--deterministic"), "CUDA was initialised in this process"
     else:
         torch.use_deterministic_algorithms(True, warn_only=True)
         argv, fragment = _argv(cohort), "warn-only mode"
@@ -872,3 +1075,4 @@ def test_a_process_state_deterministic_execution_cannot_trust_is_refused(
         torch.use_deterministic_algorithms(False)
     assert "Nothing was read or written" in str(refused.value)
     assert _nothing_written(cohort)
+    assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ or state == "bad_cublas_config"

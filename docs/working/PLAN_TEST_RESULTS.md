@@ -555,9 +555,11 @@ The fixed rule (`chosen_record`) takes the lowest registration sequence among re
 cannot be read is not picked around. A pick whose key is contested, or whose state cannot be
 checked (`StoreScan.state`, D5), is listed as not ordered, and the next record is never promoted.
 Mean rank is lower-better and ties share a position. One digest with records in two ledgers is
-not ordered. A row whose regime is not the most common one is marked. The usage history is
-`<version>/reports/usage.jsonl` (`src/evaluation/report_store.py`), append-only. The measurement
-appends each run after its report is published, `register_report` each registration that wrote a
+not ordered. A row whose regime is not the most common one is marked. A record on the version
+naming another role than the caller's stops the ordering, and each candidate names its ledger
+(review, 2026-10-20). The usage history is `<version>/reports/usage.jsonl`
+(`src/evaluation/report_store.py`), append-only. The measurement appends each run after its
+report is published, before its outcome file, `register_report` each registration that wrote a
 ledger, and `record_model_load` serves M5-2's Load from an ordered list. Automatic selection is
 kept away from the ledger by the import-linter contract `selection-ignores-test-results` (direct
 imports of the reload route and `checkpoint_paths`) and a behavioural test. Model Management and
@@ -694,14 +696,18 @@ disagreement block, contested states and investigation notes are phase 2.
   (`RunsDisagree`), the same report again included. A key that cannot be checked is refused too
   (`DisagreementNotChecked`): an unreadable report, a link out of the store, or a report whose
   key cannot be told affects every key; a report `build_record` refuses affects only the key its
-  manifest names. Under `--record` the refusal exits 3 and offers no register-later command.
+  manifest names. Under `--record` the refusal exits 3 and offers no register-later command;
+  without it, the run checks the same way after publishing (`key_refusal`) and prints "runs
+  disagree — investigate" instead of the command (review, 2026-10-20). A run's own report that
+  no longer resolves into the store is refused as not the one it published.
 - **Notes** (`add_investigation_note`) go to `<version>/reports/notes.jsonl`: the key, who (as
   typed, unverified under M1), when and what. They are accepted only for a key that a stored
   report holds, and nothing reads them to decide anything.
 - **The switch.** `measure_scorer --deterministic` sets deterministic algorithms (never
   warn-only), cuDNN deterministic, benchmark off and `CUBLAS_WORKSPACE_CONFIG` before CUDA
   starts, refuses rather than falls back, and restores the process's settings. The job runner's
-  hooks are `--expect-checkpoint-sha256`, `--expect-version-sha256`, `--outcome FILE` and
+  hooks are `--expect-checkpoint-sha256`, `--expect-version-sha256`, `--outcome FILE` (a new
+  file: an existing one is refused, so no earlier run's outcome reads as this one's) and
   `registration.report_state` (kept and registered, read from disk).
 - **Not wired yet:** the contested state on the read-only route and the Diagnosis block, which
   need the registry setting (M5-2, through `StoreScan.status`). The scan is not atomic with a
