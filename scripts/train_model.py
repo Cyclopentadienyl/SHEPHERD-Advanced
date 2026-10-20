@@ -21,6 +21,10 @@ Usage:
     Every run writes into a new directory of its own,
     {data_dir}/runs/{conv_type}/{date}_{run_name}_{run_id}/ (contract M3a-2).
 
+    One managed GPU job at a time (M5): `main` takes the deployment's GPU lock
+    (src/utils/gpu_lock.py) before anything is read; a busy lock is refused,
+    naming its holder, with exit 1 and nothing written.
+
 Dependencies:
     - argparse: CLI argument parsing
     - yaml: Configuration file loading
@@ -113,6 +117,7 @@ from src.kg.data_loader import (
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
 from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
+from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
 
 if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord, ManifestRead
@@ -1233,6 +1238,20 @@ def _allocator_record() -> Dict[str, Optional[str]]:
 def main():
     """Main entry point"""
     args = parse_args()
+    # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
+    # before anything is read and held until this returns; the kernel releases
+    # it however the process ends (src/utils/gpu_lock.py).
+    try:
+        gpu_lock = take_gpu_lock("training", "train_model.py", log=logger)
+    except (OSError, GpuLockMisconfigured) as exc:  # GpuLockBusy is an OSError
+        logger.error(f"train_model: refused: {exc} Nothing was written.")
+        return 1
+    with gpu_lock:
+        return _train_main(args)
+
+
+def _train_main(args: argparse.Namespace) -> int:
+    """`main`'s run, under the GPU lock."""
     record = _allocator_record()
     logger.info(
         "CUDA allocator: %s (%s)",

@@ -18,8 +18,9 @@ Purpose:
     while giving CUDA a fresh start under the newly chosen allocator.
 
 Safety:
-    A restart is REFUSED while training is in progress — the UI also greys the
-    button out, but this server-side guard is the real safety net.
+    A restart is REFUSED while a GPU job (training or a test run) is in
+    progress — the UI also greys the button out, but this server-side guard is
+    the real safety net.
 
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
@@ -28,7 +29,7 @@ Allocator re-resolution:
     allocator actually takes effect; an explicit user override is preserved.
 
 Dependencies:
-    - src.api.services.training_manager: training status (the restart lock)
+    - src.api.services.training_manager: the job runner's GPU slot (the restart lock)
     - src.config.runtime_presets: allocator preset resolution (gradio-free)
 
 Called by:
@@ -58,12 +59,10 @@ logger = logging.getLogger(__name__)
 # defined beside the rule that reads it (`src.config.runtime_presets`) and
 # re-exported here for the callers that already import it from this module.
 
-# Statuses during which a restart must be blocked (a subprocess is alive).
-_BUSY_STATUSES = ("running", "stopping")
-
-
 def is_training_active(default_on_error: bool = False) -> bool:
-    """True if a training run is in progress (restart must be blocked).
+    """True while any GPU job, training or a test run, is running or stopping
+    (restart must be blocked: a re-exec would orphan its subprocess). The name
+    predates test runs (M5); the job runner's one GPU slot is what it reads.
 
     ``default_on_error`` is what to return when the status can't be read:
     callers that gate a destructive restart pass ``True`` (fail closed — treat
@@ -71,7 +70,7 @@ def is_training_active(default_on_error: bool = False) -> bool:
     ``False`` (fail open — a transient read error must not break the page).
     """
     try:
-        return training_manager.get_status().get("status") in _BUSY_STATUSES
+        return training_manager.active_job() is not None
     except Exception:
         logger.debug("is_training_active: status check failed", exc_info=True)
         return default_on_error
@@ -123,7 +122,7 @@ def restart_backend(
 ) -> Dict[str, object]:
     """Restart the backend (uvicorn) process after a short delay.
 
-    Refuses if training is in progress. The delay lets the triggering HTTP
+    Refuses while a GPU job (training or a test run) is in progress. The delay lets the triggering HTTP
     response flush to the browser before the process image is replaced; the page
     then reconnects once the fresh backend is up.
 
@@ -132,19 +131,20 @@ def restart_backend(
     """
     # Fail closed for this destructive action: an unreadable status blocks it.
     if is_training_active(default_on_error=True):
-        return {"success": False, "error": "Training in progress — restart is locked."}
+        return {"success": False,
+                "error": "A GPU job (training or a test run) is in progress — restart is locked."}
 
     executable = sys.executable
     argv = build_restart_argv(executable, sys.argv)
 
     def _worker() -> None:
         time.sleep(delay)
-        # Re-check after the delay: training may have started (via the REST API
+        # Re-check after the delay: a job may have started (via the REST API
         # or another tab) during the window. Aborting here prevents orphaning a
-        # live training subprocess. Fail closed if the status can't be read.
+        # live job subprocess. Fail closed if the status can't be read.
         if is_training_active(default_on_error=True):
             logger.warning(
-                "Backend restart aborted: training became active during the "
+                "Backend restart aborted: a GPU job became active during the "
                 "restart delay."
             )
             return

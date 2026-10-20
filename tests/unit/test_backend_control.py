@@ -19,27 +19,44 @@ from src.config.runtime_presets import ALLOCATOR_PRESETS, DEFAULT_ALLOCATOR
 
 
 # --------------------------------------------------------------------------- lock
-def test_is_training_active_true_when_running(monkeypatch):
-    monkeypatch.setattr(bc.training_manager, "get_status", lambda: {"status": "running"})
+@pytest.mark.parametrize("job_type", ["training", "test"])
+@pytest.mark.parametrize("status", ["running", "stopping"])
+def test_is_training_active_true_while_any_job_holds_the_gpu_slot(monkeypatch, job_type, status):
+    """The restart lock reads the job runner's one GPU slot (M5): a test run
+    is orphaned by a re-exec as surely as training is."""
+    job = {"job_type": job_type, "status": status}
+    monkeypatch.setattr(bc.training_manager, "active_job", lambda: job)
     assert bc.is_training_active() is True
 
 
-def test_is_training_active_true_when_stopping(monkeypatch):
-    monkeypatch.setattr(bc.training_manager, "get_status", lambda: {"status": "stopping"})
+def test_is_training_active_false_when_no_job_holds_the_slot(monkeypatch):
+    monkeypatch.setattr(bc.training_manager, "active_job", lambda: None)
+    assert bc.is_training_active() is False
+
+
+def test_is_training_active_follows_a_real_test_job(monkeypatch, tmp_path):
+    """Through the real runner: a running test run locks the restart, and its
+    end unlocks it."""
+    from src.api.services.training_manager import TrainingManager
+    from tests.fixtures.job_processes import FakeProcess
+
+    manager = TrainingManager()
+    monkeypatch.setattr(bc, "training_manager", manager)
+    process = FakeProcess()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("subprocess.Popen", lambda *a, **k: process)
+        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
     assert bc.is_training_active() is True
-
-
-def test_is_training_active_false_when_idle(monkeypatch):
-    for s in ("idle", "completed", "failed"):
-        monkeypatch.setattr(bc.training_manager, "get_status", lambda s=s: {"status": s})
-        assert bc.is_training_active() is False, s
+    process.finish(0)
+    manager._last["training"].done.wait(5)
+    assert bc.is_training_active() is False
 
 
 def test_is_training_active_swallows_errors(monkeypatch):
     def boom():
         raise RuntimeError("status backend down")
 
-    monkeypatch.setattr(bc.training_manager, "get_status", boom)
+    monkeypatch.setattr(bc.training_manager, "active_job", boom)
     assert bc.is_training_active() is False  # UI default: fail open
 
 
@@ -47,7 +64,7 @@ def test_is_training_active_fail_closed_on_error(monkeypatch):
     def boom():
         raise RuntimeError("status backend down")
 
-    monkeypatch.setattr(bc.training_manager, "get_status", boom)
+    monkeypatch.setattr(bc.training_manager, "active_job", boom)
     # Destructive-restart path passes default_on_error=True -> treat as busy.
     assert bc.is_training_active(default_on_error=True) is True
     assert bc.is_training_active(default_on_error=False) is False
@@ -162,7 +179,7 @@ def test_restart_backend_refused_while_training(monkeypatch):
     calls = []
     res = bc.restart_backend(_scheduler=lambda fn: calls.append(fn))
     assert res["success"] is False
-    assert "Training in progress" in res["error"]
+    assert "A GPU job (training or a test run) is in progress" in res["error"]
     assert calls == []  # nothing scheduled
 
 

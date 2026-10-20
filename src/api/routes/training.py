@@ -218,6 +218,12 @@ class TrainingStatusResponse(BaseModel):
     # How the run stands once its process is not running, from its last
     # snapshot's record (contract M3a); None when it saved none.
     outcome: Optional[Dict[str, Any]] = None
+    # The job runner's own record of the latest training job (M5).
+    job_id: Optional[str] = None
+    end_time: Optional[str] = None
+    exit_code: Optional[int] = None
+    # The one GPU slot: the job holding it, of either type, and the GPU lock.
+    gpu: Optional[Dict[str, Any]] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -278,11 +284,14 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
 
 
 @router.post("/training/stop", response_model=Dict[str, Any])
-async def stop_training() -> Dict[str, Any]:
+def stop_training() -> Dict[str, Any]:
     """
-    Stop the currently running training.
+    Stop the currently running training; a test run is never stopped by it.
 
-    Sends SIGINT for graceful shutdown, falls back to SIGTERM if needed.
+    Sends SIGINT for graceful shutdown, falls back to SIGTERM, then SIGKILL.
+    **A plain `def`**: the stop waits for the process to end (tens of seconds
+    at worst), so FastAPI runs it in its threadpool instead of on the event
+    loop, which the rest of the API and the mounted dashboard share.
     """
     result = training_manager.stop_training()
 

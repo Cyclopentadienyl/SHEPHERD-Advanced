@@ -29,6 +29,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("pydantic")
 
 from src.api.services.training_manager import TrainingManager
+from tests.fixtures.job_processes import FakeProcess
 
 
 # ==============================================================================
@@ -119,11 +120,7 @@ class TestTrainingManagerStartStop:
 
     def test_start_training_success(self, manager, sample_config):
         """Start training with mocked subprocess."""
-        mock_proc = MagicMock()
-        mock_proc.pid = 12345
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=12345)
 
         with patch("subprocess.Popen", return_value=mock_proc):
             result = manager.start_training(sample_config)
@@ -136,9 +133,7 @@ class TestTrainingManagerStartStop:
         """The directory is named here and claimed by the training process
         after its refusals (contract M3a-2), so a refused run leaves nothing."""
         manager = TrainingManager()
-        mock_proc = MagicMock(pid=1)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=1)
         config = {"data_dir": str(tmp_path / "ws"), "conv_type": "hgt", "run_name": "Pilot A"}
 
         with patch("subprocess.Popen", return_value=mock_proc) as popen:
@@ -175,11 +170,7 @@ class TestTrainingManagerStartStop:
 
     def test_start_training_already_running(self, manager, sample_config):
         """Cannot start training when already running."""
-        mock_proc = MagicMock()
-        mock_proc.pid = 12345
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=12345)
 
         with patch("subprocess.Popen", return_value=mock_proc):
             manager.start_training(sample_config)
@@ -194,11 +185,13 @@ class TestTrainingManagerStartStop:
         assert result["success"] is False
         assert "No training" in result["error"]
 
-    def test_a_stop_is_reported_as_stopped_with_the_latest_snapshot(self, manager):
-        """Contract M3a: an operator's stop is not a completed stage."""
-        process = MagicMock(pid=7)
-        process.wait.return_value = 0
-        manager._process, manager._status = process, "running"
+    def test_a_stop_is_reported_as_stopped_with_the_latest_snapshot(self, tmp_path):
+        """Contract M3a: an operator's stop is not a completed stage, even
+        when the process exits 0 on it."""
+        manager = TrainingManager()
+        process = FakeProcess(pid=7, on_sigint=0)
+        with patch("subprocess.Popen", return_value=process):
+            manager.start_training({"data_dir": str(tmp_path / "ws")})
 
         result = manager.stop_training()
 
@@ -218,9 +211,7 @@ class TestTrainingManagerStartStop:
 
     def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
         manager = TrainingManager()
-        mock_proc = MagicMock(pid=3)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=3)
         preview = {"ok": True, "architecture": "hgt"}
         with patch.object(manager, "preview_continuation", return_value=preview), \
                 patch("subprocess.Popen", return_value=mock_proc):
@@ -429,11 +420,7 @@ class TestTrainingAPIEndpoints:
         assert [c["filename"] for c in response.json()] == ["last.pt"]
 
     def test_start_training(self, sample_config):
-        mock_proc = MagicMock()
-        mock_proc.pid = 99999
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=99999)
 
         with patch("subprocess.Popen", return_value=mock_proc):
             resp = self.client.post("/api/v1/training/start", json=sample_config)
@@ -459,9 +446,7 @@ class TestTrainingAPIEndpoints:
         """Defaults are the training script's own; a continued run inherits
         what the caller did not set (contract M3a-3)."""
         import yaml
-        mock_proc = MagicMock(pid=4)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=4)
         with patch("subprocess.Popen", return_value=mock_proc):
             resp = self.client.post("/api/v1/training/start",
                                     json={"num_epochs": 3, "device": "cpu"})
@@ -469,9 +454,7 @@ class TestTrainingAPIEndpoints:
         assert set(written) == {"num_epochs", "device", "run_dir"}
 
     def test_an_empty_retired_location_is_the_old_default(self, sample_config):
-        mock_proc = MagicMock(pid=2)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=2)
         with patch("subprocess.Popen", return_value=mock_proc):
             resp = self.client.post("/api/v1/training/start",
                                     json={**sample_config, "checkpoint_dir": ""})
@@ -577,11 +560,10 @@ def real_client(monkeypatch):
     monkeypatch.setattr("src.api.routes.training.training_manager", manager)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-    process = MagicMock(pid=11)
-    process.poll.return_value = None
-    process.stdout.readline.return_value = ""
+    process = FakeProcess(pid=11)
     with patch("subprocess.Popen", return_value=process) as popen:
         yield TestClient(app), popen
+    process.finish(0)
 
 
 class TestContinuationRulesOnResolvedSettings:

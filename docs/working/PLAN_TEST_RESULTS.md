@@ -1158,6 +1158,17 @@ This is one pipeline extended, not a second one.
     reported, and no record is written.
   - **There is no automatic CPU fallback.** `device` is a semantic field, so a CPU run is a
     different measurement, not a degraded one.
+  - *As implemented (M5-1, 2026-10-20):* `src/api/services/training_manager.py`, reshaped in
+    place, with job types `training` and `test`. Running and stopping both hold the one slot
+    for either type (a start during a stop was accepted before, with a regression test now);
+    `stop(job_type)` refuses across types; each monitor holds its own process; each job keeps
+    its own output tail; a test run ends `completed`, `failed` or `cancelled` (training keeps
+    `stopped`). The test command line is built from `TestRunInputs` (server lists and
+    settings), with expected digests and `SHEPHERD_DEVICE` as the device, no batch size. Once a
+    test run ends, its report is the run directory that appeared for its checkpoint; kept and
+    registered come from the report-state reader passed to the runner (registration's helper),
+    never from the exit status. The restart lock reads any job; the stop route is a plain `def`.
+    Routes for test runs, and the Test tab, are not in this step.
 - **UI:**
   - **Test tab** (new):
     - cohorts: import with preview, source sets and mapped versions, usage history;
@@ -1342,6 +1353,16 @@ contract and BACKLOG stay the record, and no new planning document is added.
   is cooperative, so a GPU process that does not take it is not stopped; the resident
   inference service may still hold memory. No cross-process inference scheduling, multi-GPU
   allocation or automatic model unloading is added.
+  *As implemented (M5-1, 2026-10-20):* `src/utils/gpu_lock.py`. The lock file is
+  `SHEPHERD_GPU_LOCK_FILE`, or `.shepherd-gpu.lock` under `SHEPHERD_WORKSPACES_ROOT`; with
+  neither set the lock is not configured and a CLI says so in its log and runs; a setting that
+  is set but unusable refuses. `train_model.py` and `measure_scorer.py` take it right after
+  argument parsing, before the device or any input is read, and refuse naming the holder from
+  its descriptive `<lock file>.json` (exit 1, "Nothing was written."); the runner checks it
+  before a start and its child takes it itself. The descriptor is close-on-exec; tests cover a
+  normal exit, SIGTERM, SIGKILL, a program the holder starts (does not keep it), a child
+  forked without exec (keeps it until it exits; the message says the recorded holder exited)
+  and two workspaces sharing one lock. Windows uses `msvcrt.locking`, untested.
 - **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
   boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
   forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount

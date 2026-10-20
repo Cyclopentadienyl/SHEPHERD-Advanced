@@ -53,6 +53,11 @@ writing it, with a message naming it); 2 the command line was rejected; 3
 measured and kept, but not registered. `main` itself raises its refusals, typed,
 for the tests and the deployment probe that call it.
 
+**One managed GPU job at a time** (M5): `main` takes the deployment's GPU lock
+(`src/utils/gpu_lock.py`) before the device is resolved or anything is read and
+holds it until it returns; a busy lock is a refusal naming its holder (exit 1,
+nothing written). With no lock configured the log says so and the run goes on.
+
 Module: scripts/measure_scorer.py
 """
 from __future__ import annotations
@@ -76,6 +81,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.evaluation.caveats import COHORT_ARGUMENT_HELP, SPLIT_ARGUMENT_HELP
 from src.evaluation.cohort import GENERATED_SPLITS, CohortProvenance, resolve_cohort
+from src.utils.gpu_lock import take_gpu_lock
 
 if TYPE_CHECKING:
     from src.evaluation.cohort_registry import CohortVersionRead
@@ -1055,7 +1061,18 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
+    # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
+    # before the device is resolved or anything is read, and held until this
+    # returns; the kernel releases it however the process ends. A busy lock is
+    # `GpuLockBusy`, an OSError, so the program entry refuses with exit 1 and
+    # "Nothing was written."
+    with take_gpu_lock("test" if args.cohort is not None else "split measurement",
+                       "measure_scorer.py", log=logger):
+        return _measure(args)
 
+
+def _measure(args: argparse.Namespace) -> int:
+    """`main`'s run, under the GPU lock."""
     device, cuda_executed = _resolve_device(args.device)
     logger.info("Device: %s (%s)", device, platform.platform())
     if not cuda_executed:

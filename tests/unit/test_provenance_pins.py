@@ -171,6 +171,9 @@ ALLOWED = {
      "json.load"): (1, _NOT_INPUT.format(what="a training run's metrics, for display")),
     ("src/config/runtime_presets.py", "load_runtime_settings", "json.load"):
         (1, _NOT_INPUT.format(what="a user's persisted runtime UI settings")),
+    ("src/utils/gpu_lock.py", "read_holder", "json.loads"):
+        (1, _NOT_INPUT.format(what="the GPU lock holder's own description, for the "
+                                   "\"held by\" message (M5); the lock is the flock")),
     ("src/retrieval/backends/base.py", "VectorIndexBase.load", "json.load"):
         (1, _NOT_INPUT.format(what="a retrieval index's id map (build_index.py is outside "
                                     "the pin)")),

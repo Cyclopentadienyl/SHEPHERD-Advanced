@@ -1,63 +1,112 @@
 """
-SHEPHERD-Advanced Training Manager Service
-============================================
-Manages training subprocess lifecycle, metrics reading, and system resource monitoring.
+SHEPHERD-Advanced Training Manager Service — the job runner
+===========================================================
+Runs the GPU jobs as subprocesses, one at a time, and reads what they leave;
+also reads training metrics and reports system resources.
 
 Module: src/api/services/training_manager.py
 Absolute Path: /home/user/SHEPHERD-Advanced/src/api/services/training_manager.py
 
 Purpose:
     Provide an API-layer service that:
-    - Launches scripts/train_model.py as a subprocess with config via temp YAML
-    - Tracks subprocess PID, status (idle/running/completed/failed/stopping)
-    - Reads metrics from MetricsLogger's JSON log files
-    - Sends SIGTERM to stop training gracefully
+    - Runs each job type's own script as a subprocess (M5): **training**,
+      scripts/train_model.py with its config in a temp YAML, and **test runs**,
+      scripts/measure_scorer.py on one registered cohort version
+    - Holds **one GPU slot**: a job that is running or stopping keeps it,
+      whatever its type, and the deployment's GPU lock
+      (src/utils/gpu_lock.py) is checked before a start, so a job a CLI
+      started elsewhere is refused early, naming its holder
+    - Tracks each job's own process, status, exit code and output tail; the
+      latest job of each type keeps its state after it ends
+    - Stops a job by type: SIGINT (CTRL_BREAK_EVENT on Windows), then SIGTERM,
+      then SIGKILL; a training stop never reaches a test run, nor the reverse
+    - Reads training metrics from MetricsLogger's JSON log files, and, once a
+      test run has ended, which report it left in the report store
     - Lists checkpoint files with metadata
     - Reports GPU/RAM resource stats via nvidia-smi subprocess
 
 Architecture Note:
     This module lives in src.api.services, NOT in src.training.
     The webui layer imports this service (webui -> api is allowed).
-    Training is invoked via subprocess to respect import-linter rules
-    and avoid blocking the API event loop.
+    Training and measurement are invoked via subprocess to respect
+    import-linter rules and avoid blocking the API event loop. The runner is
+    `training_manager` reshaped in place (PLAN_TEST_RESULTS §4.0, §6): its
+    training entry points (`start_training`, `stop_training`, `get_status`)
+    keep their names and shapes, so the routes and the Training Console call
+    it as before.
+
+    **Each job's child takes the GPU lock itself** (the CLIs do, at the start
+    of their `main`), so the lock follows the real worker and is released by
+    the kernel however that process ends; the runner only checks it before
+    starting, to refuse early.
+
+    **Nothing here gates access.** Every caller that starts or stops a job
+    applies D8 first (WP2 wires the routes and handlers).
 
 Dependencies:
-    - subprocess: Launch training process
+    - subprocess: Launch job processes
     - signal: Send stop signals
     - json: Read metrics logs
     - yaml: Write config files
     - pathlib: File path handling
-    - shutil: Disk usage (optional)
     - psutil (optional): RAM monitoring
 
 Called by:
     - src/api/routes/training.py (API endpoints)
+    - src/api/services/backend_control.py (the restart lock: any job active)
     - src/webui/components/training_console.py (direct call via AppState)
 
-Version: 1.0.0
+Version: 2.0.0
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
+import secrets
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
-import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 import yaml
+
+from src.utils.gpu_lock import lock_state
 
 logger = logging.getLogger(__name__)
 
 # Project root (two levels up from src/api/services/)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+#: The statuses that hold the one GPU slot, for every job type: a job being
+#: stopped still runs until its process has ended.
+BUSY_STATUSES = ("running", "stopping")
+
+#: Lines of a job's own output (stdout and stderr, merged) kept in memory, per
+#: job; the latest job of each type keeps its tail after it ends.
+LOG_TAIL_LINES = 1000
+_MAX_LINE_CHARS = 4000
+
+#: A stop's escalation: after SIGINT (CTRL_BREAK_EVENT on Windows), after
+#: SIGTERM, after SIGKILL.
+STOP_GRACE_SECONDS = 30.0
+TERMINATE_GRACE_SECONDS = 10.0
+KILL_GRACE_SECONDS = 10.0
+#: How long the monitor waits for a job's output after its process has ended: a
+#: process the job forked may keep the pipe open.
+OUTPUT_GRACE_SECONDS = 5.0
+#: How long a stop waits, once the process has ended, for its monitor to record
+#: how (and to read what a test run left) before answering.
+RESULT_WAIT_SECONDS = 60.0
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass
@@ -77,24 +126,244 @@ class TrainingStatus:
     error_message: Optional[str] = None
 
 
+# =============================================================================
+# Job types
+# =============================================================================
+@dataclass(frozen=True)
+class JobType:
+    """What differs between the runner's job types.
+
+    Statuses, for both: idle (none started yet), running, stopping, then
+    completed (exit 0), failed, or `stopped_status` after an operator's stop.
+    """
+
+    name: str
+    #: How a message names a job of this type, as a sentence's subject.
+    noun: str
+    #: The refusal of a stop when no job of this type is running.
+    none_running: str
+    #: Its script, relative to the project root: each job type names its own.
+    script: str
+    #: The status an operator's stop ends in: training's "stopped" (contract
+    #: M3a; the run can be continued from its last snapshot) and a test run's
+    #: "cancelled", distinct from failed and completed.
+    stopped_status: str
+
+
+JOB_TYPES: Dict[str, JobType] = {
+    "training": JobType("training", "Training", "No training is running",
+                        "scripts/train_model.py", "stopped"),
+    "test": JobType("test", "A test run", "No test run is running",
+                    "scripts/measure_scorer.py", "cancelled"),
+}
+
+#: What measure_scorer's exit statuses say, as its module docstring defines
+#: them. Descriptive: whether a report was kept and registered is read from
+#: the disk, never from these.
+_TEST_EXIT_MEANING = {
+    0: "measured (with --record: registered, or already held)",
+    1: "refused before anything was written, or measured but the report was not written, "
+       "or the run failed after writing it; its output says which",
+    2: "the command line was rejected",
+    3: "measured and kept, but not registered",
+}
+
+
+#: Reads, for one report file, whether it was kept and whether it is
+#: registered, from the disk: `reader(report_path, checkpoint_path)` returns
+#: `{"kept": bool | None, "registered": bool | None, "reason": str}`, None
+#: meaning "cannot be checked". **WP4 integration point:** the one public
+#: helper in src/evaluation/registration.py is passed to the runner here.
+ReportStateReader = Callable[[Path, Path], Mapping[str, Any]]
+
+
+def _no_report_state_reader(report: Path, checkpoint: Path) -> Dict[str, Any]:
+    return {"kept": None, "registered": None,
+            "reason": "this build has no report-state reader, so whether the report was "
+                      "kept and registered is not checked here"}
+
+
+@dataclass(frozen=True)
+class TestRunInputs:
+    """A test run's inputs, every one taken from the server's lists and
+    settings, never from a request (D8: server-side lists only).
+
+    The caller resolves a request's names through those lists (WP1): the
+    registry from its setting, the version by label with its `cohort.json`
+    digest, the workspace by name under the workspace root, the checkpoint by
+    name and digest from that workspace's listing, the evidence directories
+    from their setting. `record` and `deterministic` are the operator's two
+    choices. Nothing else is chosen: the batch size is the CLI's default and
+    the device the deployment's (D5).
+    """
+
+    __test__ = False  # a dataclass, not a pytest test class, whatever its name says
+
+    registry: Path
+    version_label: str
+    version_sha256: str
+    workspace: Path
+    checkpoint: Path
+    checkpoint_sha256: str
+    evidence_dirs: Tuple[Path, ...] = ()
+    record: bool = False
+    deterministic: bool = False
+
+    def reports_dir(self) -> Path:
+        """The version's report store directory, after the inputs' shape is
+        checked. The run checks the files themselves when it reads them.
+
+        Raises:
+            ValueError: a digest that is not a full SHA-256, a path that is not
+                absolute, or a registry or label the registry's rules refuse.
+        """
+        from src.evaluation import cohort_registry
+
+        for name, digest in (("checkpoint", self.checkpoint_sha256),
+                             ("cohort version", self.version_sha256)):
+            if not (isinstance(digest, str) and _SHA256.fullmatch(digest)):
+                raise ValueError(f"The {name} digest {digest!r} is not a full SHA-256 "
+                                 "hexdigest.")
+        paths = [("workspace", self.workspace), ("checkpoint", self.checkpoint),
+                 *(("evidence directory", d) for d in self.evidence_dirs)]
+        for name, path in paths:
+            if not Path(path).is_absolute():
+                raise ValueError(f"The {name} {path} is not an absolute path, as the "
+                                 "server's lists give it.")
+        root = cohort_registry.validate_registry(self.registry)
+        label = cohort_registry.validate_label(self.version_label)
+        return root / cohort_registry.VERSIONS_DIR / label / cohort_registry.REPORTS_DIR
+
+    def summary(self) -> Dict[str, Any]:
+        """The inputs as a status shows them."""
+        return {
+            "registry": str(self.registry),
+            "version_label": self.version_label,
+            "version_sha256": self.version_sha256,
+            "workspace": str(self.workspace),
+            "checkpoint": str(self.checkpoint),
+            "checkpoint_sha256": self.checkpoint_sha256,
+            "evidence_dirs": [str(d) for d in self.evidence_dirs],
+            "record": bool(self.record),
+            "deterministic": bool(self.deterministic),
+        }
+
+
+def deployment_device() -> Optional[str]:
+    """The device a test run is given: the deployment's (D5), `SHEPHERD_DEVICE`
+    as the served pipeline reads it (`requested_serving_device`). None leaves
+    the CLI's own `auto`, which requires CUDA.
+
+    Raises:
+        ValueError: a value `measure_scorer.py --device` does not take
+            (`cuda:1`, say), so the deployment's device cannot be passed on.
+    """
+    from src.api.main import requested_serving_device
+
+    value = requested_serving_device(None)
+    if value is None or value == "auto":
+        return None
+    if value in ("cuda", "cpu"):
+        return value
+    raise ValueError(
+        f"SHEPHERD_DEVICE is {value!r}, and a test run takes auto, cuda or cpu "
+        "(scripts/measure_scorer.py --device), so it cannot be given the deployment's device.")
+
+
+def build_test_argv(inputs: TestRunInputs, device: Optional[str]) -> List[str]:
+    """measure_scorer's command line for a test run, from `inputs` only.
+
+    The expected digests make the run refuse before measuring when the
+    checkpoint or the version it reads is not the one chosen. `--batch-size`
+    is not passed: the CLI's default stays its one definition.
+    """
+    argv = [
+        sys.executable, str(PROJECT_ROOT / JOB_TYPES["test"].script),
+        "--checkpoint", str(inputs.checkpoint),
+        "--data-dir", str(inputs.workspace),
+        "--cohort", inputs.version_label,
+        "--registry", str(inputs.registry),
+        "--expect-checkpoint-sha256", inputs.checkpoint_sha256,
+        "--expect-version-sha256", inputs.version_sha256,
+    ]
+    for directory in inputs.evidence_dirs:
+        argv += ["--training-evidence", str(directory)]
+    if device is not None:
+        argv += ["--device", device]
+    if inputs.record:
+        argv.append("--record")
+    if inputs.deterministic:
+        argv.append("--deterministic")
+    return argv
+
+
+@dataclass(eq=False)
+class _Job:
+    """One job: its own process, which only its own monitor and stop touch."""
+
+    kind: JobType
+    job_id: str
+    started: datetime
+    process: Optional[subprocess.Popen] = None
+    status: str = "running"
+    stop_requested: bool = False
+    #: The last signal a stop had to send: SIGINT, SIGTERM or SIGKILL.
+    stop_signal: Optional[str] = None
+    exit_code: Optional[int] = None
+    ended: Optional[datetime] = None
+    error_message: Optional[str] = None
+    #: What the job was given, as its status shows it.
+    inputs: Dict[str, Any] = field(default_factory=dict)
+    #: What it left (a test run's report, read from the disk once it ended).
+    outcome: Optional[Dict[str, Any]] = None
+    log: Deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
+    log_lock: threading.Lock = field(default_factory=threading.Lock)
+    #: Files the job owns and removes when it ends (training's temp YAML).
+    cleanup: List[Path] = field(default_factory=list)
+    #: The report store listed before launch (test runs).
+    reports_dir: Optional[Path] = None
+    reports_before: Set[str] = field(default_factory=set)
+    done: threading.Event = field(default_factory=threading.Event)
+
+    def tail(self, n: Optional[int] = None) -> List[str]:
+        with self.log_lock:
+            lines = list(self.log)
+        return lines if n is None else lines[-n:]
+
+
+def _report_names(reports: Path) -> Set[str]:
+    """The run directories in a version's report store; none before the first
+    report (`create_report_dir` makes `reports/`)."""
+    try:
+        return set(os.listdir(reports))
+    except FileNotFoundError:
+        return set()
+
+
+def _signal_name(returncode: int) -> str:
+    try:
+        return signal.Signals(-returncode).name
+    except ValueError:
+        return f"signal {-returncode}"
+
+
 class TrainingManager:
     """
-    Manages training subprocess lifecycle and metrics retrieval.
+    The one job runner: training and test runs, one GPU job at a time.
 
     Thread-safe singleton designed to be shared across API routes
     and Gradio event handlers in the same FastAPI process.
     """
 
-    def __init__(self):
-        self._process: Optional[subprocess.Popen] = None
-        self._status: str = "idle"
-        self._user_stopped: bool = False
-        self._config: Optional[Dict[str, Any]] = None
-        self._start_time: Optional[datetime] = None
-        self._error_message: Optional[str] = None
+    def __init__(self, report_state: Optional[ReportStateReader] = None):
         self._lock = threading.Lock()
-        self._monitor_thread: Optional[threading.Thread] = None
-        self._temp_config_path: Optional[Path] = None
+        #: The job holding the one GPU slot, until its monitor has finished.
+        self._active: Optional[_Job] = None
+        #: The latest job of each type, kept after it ends.
+        self._last: Dict[str, _Job] = {}
+        self._report_state: ReportStateReader = report_state or _no_report_state_reader
+        #: The last training request (as started, with its run directory).
+        self._config: Optional[Dict[str, Any]] = None
 
         #: The directory of the run started last (contract M3a-2). Named here
         #: and claimed by the training process once its inputs pass, so a
@@ -117,6 +386,106 @@ class TrainingManager:
         return path if path.is_absolute() else PROJECT_ROOT / path
 
     # =========================================================================
+    # The GPU slot
+    # =========================================================================
+
+    def _status_locked(self, job_type: str) -> str:
+        job = self._last.get(job_type)
+        return job.status if job is not None else "idle"
+
+    def _slot_refusal_locked(self, wanted: JobType) -> Optional[str]:
+        """Why `wanted` cannot start now, or None. Called under the lock.
+
+        **Busy means running or stopping, for any type**, so a start while a
+        stop is still waiting for its process is refused, and the process that
+        stop is ending can never be replaced under it. Then the deployment's
+        GPU lock: a job started elsewhere (a CLI over SSH) is refused here,
+        naming its holder, and a lock setting that cannot be used refuses
+        every start rather than running unlocked.
+        """
+        active = self._active
+        if active is not None and active.status in BUSY_STATUSES:
+            doing = "is already running" if active.status == "running" else "is still stopping"
+            return (f"{active.kind.noun} {doing} (job {active.job_id}); one GPU job runs at "
+                    f"a time, so {wanted.noun.lower()} cannot start until it has ended. "
+                    "Nothing was started.")
+        lock = lock_state()
+        if lock["problem"]:
+            return f"The GPU lock cannot be used: {lock['problem']} Nothing was started."
+        if lock["held_by"]:
+            return (f"The GPU is in use: the GPU lock {lock['path']} is held by "
+                    f"{lock['held_by']}. One managed GPU job runs at a time. "
+                    "Nothing was started.")
+        return None
+
+    def _spawn_locked(self, kind: JobType, argv: List[str], *,
+                      inputs: Dict[str, Any], cleanup: Sequence[Path] = (),
+                      reports_dir: Optional[Path] = None,
+                      reports_before: Optional[Set[str]] = None) -> Tuple[Optional[_Job], str]:
+        """Launch `argv` as a job of `kind` and start its monitor. Called under
+        the lock, after `_slot_refusal_locked` found the slot free.
+
+        The child inherits the backend's environment (no `env=`): the CUDA
+        allocator (tests/unit/test_train_allocator.py) and the GPU lock's
+        settings, so it takes the lock the runner checked.
+        """
+        job_id = f"{kind.name}-{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3)}"
+        logger.info("Starting %s job %s: %s", kind.name, job_id, " ".join(argv))
+        try:
+            process = subprocess.Popen(
+                argv,
+                cwd=str(PROJECT_ROOT),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                # Output that is not valid in the locale's encoding must not stop
+                # the reader: a reader that stops lets the pipe fill and blocks
+                # the job.
+                errors="replace",
+                # On Windows use CREATE_NEW_PROCESS_GROUP for graceful stop
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    if sys.platform == "win32"
+                    else 0
+                ),
+            )
+        except (OSError, ValueError) as e:
+            error = f"The {kind.name} process could not be started: {e}"
+            self._last[kind.name] = _Job(kind, job_id, datetime.now(), status="failed",
+                                         error_message=error, inputs=inputs,
+                                         ended=datetime.now())
+            for path in cleanup:
+                path.unlink(missing_ok=True)
+            logger.error(error)
+            return None, error
+
+        job = _Job(kind, job_id, datetime.now(), process=process, inputs=inputs,
+                   cleanup=list(cleanup), reports_dir=reports_dir,
+                   reports_before=set(reports_before or ()))
+        self._last[kind.name] = job
+        self._active = job
+        threading.Thread(target=self._monitor, args=(job,), daemon=True,
+                         name=f"{kind.name}-monitor").start()
+        return job, ""
+
+    def active_job(self) -> Optional[Dict[str, Any]]:
+        """The job holding the GPU slot (running or stopping), or None."""
+        with self._lock:
+            job = self._active
+            if job is None:
+                return None
+            return {"job_type": job.kind.name, "job_id": job.job_id, "status": job.status,
+                    "pid": job.process.pid if job.process else None,
+                    "start_time": job.started.isoformat()}
+
+    def gpu_state(self) -> Dict[str, Any]:
+        """The GPU slot as both job types' statuses show it: the job holding it,
+        if any, and the deployment's GPU lock at this instant."""
+        active = self.active_job()
+        return {"busy": active is not None, "job": active, "lock": lock_state()}
+
+    # =========================================================================
     # Training Control
     # =========================================================================
 
@@ -135,10 +504,8 @@ class TrainingManager:
                 rules); a violation is refused with `invalid_settings`.
 
         Returns:
-            Status dict with success/error info.
-
-        Raises:
-            RuntimeError: If training is already running.
+            Status dict with success/error info. Refused while any GPU job is
+            running or stopping, or while the GPU lock is held elsewhere.
         """
         # A run continued from a parent is decided by the parent's record
         # (contract M3a-3): refused here as the training process would refuse
@@ -152,21 +519,22 @@ class TrainingManager:
                 extend_epochs=config.get("extend_epochs"),
                 requested={k: v for k, v in config.items() if k != "resume_from"})
             if not preview["ok"]:
-                return {"success": False, "error": preview["reason"], "status": self._status}
+                return {"success": False, "error": preview["reason"],
+                        "status": self.get_job_status_word("training")}
             errors = effective_rules(preview["learning_settings"]) if effective_rules else []
             if errors:
-                return {"success": False, "invalid_settings": True, "status": self._status,
+                return {"success": False, "invalid_settings": True,
+                        "status": self.get_job_status_word("training"),
                         "error": "The settings this run would use, its parent's with this "
                                  "request's: " + " ".join(errors)}
             architecture = preview.get("architecture") or architecture
 
+        kind = JOB_TYPES["training"]
         with self._lock:
-            if self._status == "running":
-                return {
-                    "success": False,
-                    "error": "Training is already running",
-                    "status": self._status,
-                }
+            refusal = self._slot_refusal_locked(kind)
+            if refusal:
+                return {"success": False, "error": refusal,
+                        "status": self._status_locked("training")}
 
             # **The run's own directory** (contract M3a-2): named here, so the
             # status and the console know where its logs and checkpoints will be,
@@ -185,184 +553,384 @@ class TrainingManager:
                         self.workspace_path(config.get("data_dir", "")),
                         architecture, config.get("run_name"))
             except (ValueError, OSError) as e:
-                return {"success": False, "error": str(e), "status": self._status}
+                return {"success": False, "error": str(e),
+                        "status": self._status_locked("training")}
 
             config = {**config, "run_dir": str(run_dir)}
             self._config = config
-            self._error_message = None
-            self._user_stopped = False
             self.run_dir = run_dir
 
             # Write config to temp YAML
             temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
-            self._temp_config_path = Path(temp_path)
+            config_path = Path(temp_path)
             try:
                 with os.fdopen(temp_fd, "w") as f:
                     yaml.dump(config, f, default_flow_style=False)
             except Exception:
-                os.close(temp_fd)
+                config_path.unlink(missing_ok=True)
                 raise
 
-            # Launch subprocess
-            train_script = PROJECT_ROOT / "scripts" / "train_model.py"
-            cmd = [sys.executable, str(train_script), "--config", str(self._temp_config_path)]
+            cmd = [sys.executable, str(PROJECT_ROOT / kind.script), "--config", str(config_path)]
+            job, error = self._spawn_locked(kind, cmd, inputs={"config_path": str(config_path)},
+                                            cleanup=[config_path])
+            if job is None:
+                return {"success": False, "error": error, "status": "failed"}
 
-            logger.info(f"Starting training: {' '.join(cmd)}")
-
-            try:
-                self._process = subprocess.Popen(
-                    cmd,
-                    cwd=str(PROJECT_ROOT),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    # On Windows use CREATE_NEW_PROCESS_GROUP for graceful stop
-                    creationflags=(
-                        subprocess.CREATE_NEW_PROCESS_GROUP
-                        if sys.platform == "win32"
-                        else 0
-                    ),
-                )
-            except Exception as e:
-                self._status = "failed"
-                self._error_message = str(e)
-                logger.error(f"Failed to start training: {e}")
-                return {"success": False, "error": str(e), "status": "failed"}
-
-            self._status = "running"
-            self._start_time = datetime.now()
-
-            # Start background monitor thread
-            self._monitor_thread = threading.Thread(
-                target=self._monitor_process,
-                daemon=True,
-                name="training-monitor",
-            )
-            self._monitor_thread.start()
-
-            logger.info(f"Training started (PID: {self._process.pid}), run directory {run_dir}")
+            logger.info(f"Training started (PID: {job.process.pid}), run directory {run_dir}")
             return {
                 "success": True,
-                "pid": self._process.pid,
+                "job_id": job.job_id,
+                "pid": job.process.pid,
                 "status": "running",
-                "config_path": str(self._temp_config_path),
+                "config_path": str(config_path),
                 "run_dir": str(run_dir),
             }
 
     def stop_training(self) -> Dict[str, Any]:
         """
-        Stop the running training subprocess gracefully.
+        Stop the running training subprocess gracefully; a test run is never
+        stopped by it.
 
         Returns:
             Status dict with result info.
         """
-        with self._lock:
-            if self._status != "running" or self._process is None:
-                return {
-                    "success": False,
-                    "error": "No training is running",
-                    "status": self._status,
-                }
-
-            self._status = "stopping"
-            self._user_stopped = True
-            pid = self._process.pid
-
-        logger.info(f"Stopping training (PID: {pid})...")
-
-        try:
-            if sys.platform == "win32":
-                # On Windows, send CTRL_BREAK_EVENT to the process group
-                self._process.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                self._process.send_signal(signal.SIGINT)
-
-            # Wait up to 30 seconds for graceful shutdown
-            try:
-                self._process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                logger.warning("Training did not stop gracefully, terminating...")
-                self._process.terminate()
-                try:
-                    self._process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-
-        except OSError as e:
-            logger.error(f"Error stopping training: {e}")
-            with self._lock:
-                self._status = "failed"
-                self._error_message = f"Stop error: {e}"
-            return {"success": False, "error": str(e), "status": "failed"}
-
-        with self._lock:
-            self._status = "stopped"
-        logger.info("Training stopped")
+        result = self.stop("training")
+        if not result.get("success"):
+            return result
         # **Stopped, not completed** (contract M3a): the stage did not finish.
         # What can be continued is the run's last saved snapshot, if any;
         # progress after it is lost.
-        return {"success": True, "status": "stopped", "outcome": self.latest_snapshot()}
+        return {"success": True, "status": result["status"], "outcome": self.latest_snapshot()}
 
-    def _monitor_process(self) -> None:
-        """Background thread that monitors the training subprocess."""
-        if self._process is None:
-            return
+    # =========================================================================
+    # Test runs
+    # =========================================================================
 
-        # Read stdout in background (prevents pipe buffer from filling up)
-        # Keep a rolling buffer of recent lines for error reporting
-        recent_lines: list[str] = []
-        max_recent = 50
+    def start_test(self, inputs: TestRunInputs) -> Dict[str, Any]:
+        """Start a test run: scripts/measure_scorer.py on one registered cohort
+        version (M5), the real CLI, so it stays the single producer.
+
+        `inputs` come from the server's lists and settings; the caller gates
+        the call with D8 first (WP2). The run checks the model and the cohort
+        itself when it starts, against the digests chosen, never trusting a
+        preview. The version's report store is listed before launch, so the
+        report this run creates can be told apart when it ends.
+        """
+        kind = JOB_TYPES["test"]
         try:
-            while True:
-                line = self._process.stdout.readline()
-                if not line and self._process.poll() is not None:
-                    break
-                if line:
-                    stripped = line.rstrip()
-                    logger.debug(f"[train] {stripped}")
-                    recent_lines.append(stripped)
-                    if len(recent_lines) > max_recent:
-                        recent_lines.pop(0)
-        except Exception:
+            reports_dir = inputs.reports_dir()
+            device = deployment_device()
+        except ValueError as exc:
+            return {"success": False, "error": f"{exc} Nothing was started.",
+                    "status": self.get_job_status_word("test")}
+
+        with self._lock:
+            refusal = self._slot_refusal_locked(kind)
+            if refusal:
+                return {"success": False, "error": refusal, "status": self._status_locked("test")}
+            try:
+                before = _report_names(reports_dir)
+            except OSError as exc:
+                return {"success": False, "status": self._status_locked("test"),
+                        "error": f"The report store {reports_dir} cannot be listed ({exc}), so "
+                                 "this run's report could not be told from others when it "
+                                 "ends. Nothing was started."}
+            job, error = self._spawn_locked(
+                kind, build_test_argv(inputs, device),
+                inputs={**inputs.summary(), "device": device or "auto"},
+                reports_dir=reports_dir, reports_before=before)
+            if job is None:
+                return {"success": False, "error": error, "status": "failed"}
+            return {"success": True, "job_id": job.job_id, "pid": job.process.pid,
+                    "status": "running"}
+
+    def cancel_test(self) -> Dict[str, Any]:
+        """Cancel the running test run; training is never stopped by it.
+
+        Returns, once the process has ended, the run's status (`cancelled`, or
+        `completed` when the run had already finished cleanly) and what it left
+        (`outcome`, read from the disk).
+        """
+        result = self.stop("test")
+        if not result.get("success"):
+            return result
+        with self._lock:
+            job = self._last.get("test")
+            outcome = job.outcome if job is not None else None
+        return {"success": True, "status": result["status"], "outcome": outcome}
+
+    # =========================================================================
+    # Stop, by job type
+    # =========================================================================
+
+    def stop(self, job_type: str) -> Dict[str, Any]:
+        """Stop the running job of `job_type`: SIGINT (CTRL_BREAK_EVENT on
+        Windows), up to `STOP_GRACE_SECONDS`; then SIGTERM, up to
+        `TERMINATE_GRACE_SECONDS`; then SIGKILL. Blocks until the process has
+        ended and its monitor has recorded how (routes call it from a thread).
+
+        **Refused across types**: a training stop never stops a test run, nor
+        the reverse.
+        """
+        kind = JOB_TYPES[job_type]
+        with self._lock:
+            job = self._active
+            if job is None or job.kind.name != job_type:
+                other = (f": the GPU job running is {job.kind.noun.lower()}, which this stop "
+                         "does not reach" if job is not None else "")
+                return {"success": False, "error": kind.none_running + other,
+                        "status": self._status_locked(job_type)}
+            if job.status != "running":
+                return {"success": False, "error": f"{kind.noun} is already stopping.",
+                        "status": job.status}
+            job.status = "stopping"
+            job.stop_requested = True
+            process = job.process
+
+        logger.info("Stopping %s job %s (PID: %s)...", job_type, job.job_id, process.pid)
+        try:
+            self._end_process(job, process)
+        except OSError as e:
+            logger.error(f"Error stopping {job_type}: {e}")
+            with self._lock:
+                job.error_message = f"Stop error: {e}"
+            # The process may still run: it keeps the slot, as "stopping", until
+            # its monitor sees it end.
+            return {"success": False, "error": str(e), "status": job.status}
+
+        if process.poll() is None:
+            return {"success": False, "status": "stopping",
+                    "error": f"{kind.noun} did not end after SIGKILL; it keeps the GPU slot "
+                             "until it does."}
+        # Ended: its monitor records how, and reads what a test run left.
+        job.done.wait(timeout=RESULT_WAIT_SECONDS)
+        with self._lock:
+            status = job.status
+        logger.info("%s job %s ended: %s", job_type, job.job_id, status)
+        return {"success": True, "status": status}
+
+    @staticmethod
+    def _end_process(job: _Job, process: subprocess.Popen) -> None:
+        if sys.platform == "win32":
+            # On Windows, send CTRL_BREAK_EVENT to the process group
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+            job.stop_signal = "CTRL_BREAK_EVENT"
+        else:
+            process.send_signal(signal.SIGINT)
+            job.stop_signal = "SIGINT"
+        try:
+            process.wait(timeout=STOP_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            logger.warning("%s job %s did not stop gracefully, terminating...",
+                           job.kind.name, job.job_id)
+        process.terminate()
+        job.stop_signal = "SIGTERM"
+        try:
+            process.wait(timeout=TERMINATE_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        process.kill()
+        job.stop_signal = "SIGKILL"
+        try:
+            process.wait(timeout=KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            logger.error("%s job %s did not end after SIGKILL", job.kind.name, job.job_id)
+
+    # =========================================================================
+    # The monitor
+    # =========================================================================
+
+    @staticmethod
+    def _drain(job: _Job) -> None:
+        """Read the job's output until it closes, keeping its tail (prevents the
+        pipe buffer from filling up)."""
+        stream = job.process.stdout
+        try:
+            for line in iter(stream.readline, ""):
+                text = line.rstrip("\r\n")[:_MAX_LINE_CHARS]
+                logger.debug("[%s] %s", job.kind.name, text)
+                with job.log_lock:
+                    job.log.append(text)
+        except (OSError, ValueError):
             pass
 
-        returncode = self._process.poll()
-        with self._lock:
-            if self._status == "stopping" or self._user_stopped:
-                # Operator-initiated stop: stopped, whatever the exit code.
-                self._status = "stopped"
-            elif returncode == 0:
-                self._status = "completed"
-            else:
-                self._status = "failed"
-                # Filter out Intel MKL/Fortran noise from error output
-                filtered = [
-                    line for line in recent_lines[-20:]
-                    if "forrtl:" not in line
-                    and "KERNELBASE" not in line
-                    and "KERNEL32" not in line
-                    and "ntdll.dll" not in line
-                    and "Unknown               Unknown  Unknown" not in line
-                ]
-                tail = "\n".join(filtered) if filtered else ""
-                self._error_message = (
-                    f"Process exited with code {returncode}"
-                    + (f"\n\n--- Last output ---\n{tail}" if tail else "")
-                )
+    def _monitor(self, job: _Job) -> None:
+        """Wait for the job's own process (never another job's), read what it
+        left, and record how it ended; the GPU slot is free only then."""
+        returncode: Optional[int] = None
+        outcome: Optional[Dict[str, Any]] = None
+        try:
+            reader = threading.Thread(target=self._drain, args=(job,), daemon=True,
+                                      name=f"{job.kind.name}-output")
+            reader.start()
+            returncode = job.process.wait()
+            reader.join(timeout=OUTPUT_GRACE_SECONDS)
+            if job.kind.name == "test":
+                outcome = self._test_outcome(job, returncode)
+        except Exception as exc:  # noqa: BLE001 - the slot must be freed whatever happened
+            logger.exception("Monitoring %s job %s failed", job.kind.name, job.job_id)
+            outcome = {"report_dir": None, "report": None, "kept": None, "registered": None,
+                       "summary": f"What this run left cannot be checked ({exc})."} \
+                if job.kind.name == "test" else None
+        finally:
+            with self._lock:
+                job.exit_code = returncode
+                job.ended = datetime.now()
+                job.outcome = outcome
+                job.status = self._final_status(job, returncode)
+                if job.status == "failed" and job.error_message is None:
+                    job.error_message = self._failure_text(job, returncode)
+                if self._active is job:
+                    self._active = None
+            for path in job.cleanup:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            job.done.set()
+            logger.info(f"{job.kind.name.capitalize()} process ended (code={returncode}, "
+                        f"status={job.status})")
 
-        # Clean up temp config
-        if self._temp_config_path and self._temp_config_path.exists():
-            try:
-                self._temp_config_path.unlink()
-            except OSError:
-                pass
+    @staticmethod
+    def _final_status(job: _Job, returncode: Optional[int]) -> str:
+        if job.stop_requested:
+            # An operator's stop: training is "stopped" whatever the exit code
+            # (contract M3a; its snapshot says how the stage stood). A test run
+            # that had already finished cleanly when the cancel arrived is
+            # completed: its report says so, and calling it cancelled would not
+            # be true.
+            if not (job.kind.name == "test" and returncode == 0):
+                return job.kind.stopped_status
+        return "completed" if returncode == 0 else "failed"
 
-        logger.info(f"Training process ended (code={returncode}, status={self._status})")
+    @staticmethod
+    def _failure_text(job: _Job, returncode: Optional[int]) -> str:
+        # Filter out Intel MKL/Fortran noise from error output
+        filtered = [
+            line for line in job.tail(20)
+            if "forrtl:" not in line
+            and "KERNELBASE" not in line
+            and "KERNEL32" not in line
+            and "ntdll.dll" not in line
+            and "Unknown               Unknown  Unknown" not in line
+        ]
+        tail = "\n".join(filtered) if filtered else ""
+        how = (f"Process ended by {_signal_name(returncode)}"
+               if isinstance(returncode, int) and returncode < 0
+               else f"Process exited with code {returncode}")
+        return how + (f"\n\n--- Last output ---\n{tail}" if tail else "")
+
+    def _test_outcome(self, job: _Job, returncode: int) -> Dict[str, Any]:
+        """What a test run left, read from the disk once its process ended,
+        whatever its exit status: the publication contract decides, never the
+        exit code alone.
+
+        **Which report is this run's**: the run directory that appeared in the
+        version's report store during the run with this checkpoint's digest in
+        its name (the run id, `create_report_dir`). None means nothing was
+        kept; two or more (another writer in the same version, against D7's
+        single-writer rule) means it cannot be told, and nothing is claimed.
+        Whether that report was kept and registered comes from the report-state
+        reader (WP4's helper), never from the exit status.
+        """
+        reports = job.reports_dir
+        sha12 = job.inputs["checkpoint_sha256"][:12]
+        base: Dict[str, Any] = {"report_dir": None, "report": None, "kept": None,
+                                "registered": None}
+        try:
+            after = _report_names(reports)
+        except OSError as exc:
+            return {**base, "summary": f"The report store {reports} cannot be listed ({exc}), "
+                                       "so whether this run kept a report cannot be checked."}
+        new = sorted(name for name in after - job.reports_before if f"-{sha12}-" in name)
+        if not new:
+            return {**base, "kept": False, "registered": False,
+                    "summary": f"No report directory was created under {reports}: nothing "
+                               "was kept, so nothing was registered."}
+        if len(new) > 1:
+            return {**base, "summary": f"{len(new)} report directories for this checkpoint "
+                                       f"appeared during the run ({', '.join(new)}); which one "
+                                       "is this run's cannot be told, so neither is claimed."}
+        run_dir = reports / new[0]
+        report = run_dir / "report.json"
+        state = dict(self._report_state(report, Path(job.inputs["checkpoint"])))
+        kept, registered = state.get("kept"), state.get("registered")
+        reason = state.get("reason")
+        if kept is True:
+            said = (f"A report was kept at {run_dir}"
+                    + ("; it is registered." if registered is True
+                       else "; it is not registered." if registered is False
+                       else "; whether it is registered cannot be checked."))
+        elif kept is False:
+            said = (f"No report was kept: {run_dir} holds no report.json (an interrupted "
+                    "write, which nothing registers).")
+        else:
+            said = f"Whether a report was kept in {run_dir} cannot be checked."
+        if reason:
+            said += f" ({reason})"
+        if job.stop_signal in ("SIGTERM", "SIGKILL"):
+            said += (f" The run was ended by {job.stop_signal}, so staged files (*.tmp) may be "
+                     f"left in {run_dir}.")
+        return {"report_dir": str(run_dir), "report": str(report), "kept": kept,
+                "registered": registered, "summary": said}
 
     # =========================================================================
     # Status & Metrics
     # =========================================================================
+
+    def get_job_status_word(self, job_type: str) -> str:
+        """The status of the latest job of `job_type` ("idle" before any)."""
+        with self._lock:
+            return self._status_locked(job_type)
+
+    @staticmethod
+    def _job_fields(job: Optional[_Job]) -> Dict[str, Any]:
+        if job is None:
+            return {"status": "idle", "job_id": None, "pid": None, "start_time": None,
+                    "end_time": None, "elapsed_seconds": None, "exit_code": None,
+                    "error_message": None}
+        elapsed = None
+        if job.status in BUSY_STATUSES:
+            elapsed = (datetime.now() - job.started).total_seconds()
+        return {
+            "status": job.status,
+            "job_id": job.job_id,
+            "pid": job.process.pid if job.process else None,
+            "start_time": job.started.isoformat(),
+            "end_time": job.ended.isoformat() if job.ended else None,
+            "elapsed_seconds": elapsed,
+            "exit_code": job.exit_code,
+            "error_message": job.error_message,
+        }
+
+    def get_test_status(self) -> Dict[str, Any]:
+        """The latest test run: its status, what it was given, its exit status
+        and what that status means, and what it left (`outcome`: the report,
+        kept, registered, read from the disk once it ended)."""
+        with self._lock:
+            job = self._last.get("test")
+            result = self._job_fields(job)
+            result["inputs"] = dict(job.inputs) if job is not None else None
+            result["outcome"] = dict(job.outcome) if job is not None and job.outcome else None
+            code = job.exit_code if job is not None else None
+        result["exit_meaning"] = (
+            None if code is None
+            else f"ended by {_signal_name(code)}" if code < 0
+            else _TEST_EXIT_MEANING.get(code, "an exit status measure_scorer does not define"))
+        result["gpu"] = self.gpu_state()
+        return result
+
+    def get_log(self, job_type: str) -> Dict[str, Any]:
+        """The latest `job_type` job's own output tail (up to `LOG_TAIL_LINES`
+        lines, stdout and stderr merged)."""
+        JOB_TYPES[job_type]
+        with self._lock:
+            job = self._last.get(job_type)
+        if job is None:
+            return {"job_type": job_type, "job_id": None, "lines": []}
+        return {"job_type": job_type, "job_id": job.job_id, "lines": job.tail()}
 
     def _read_progress_file(self) -> Optional[Dict[str, Any]]:
         """Read the lightweight progress.json file."""
@@ -378,21 +946,13 @@ class TrainingManager:
             return None
 
     def get_status(self) -> Dict[str, Any]:
-        """Get current training status snapshot."""
+        """Get current training status snapshot, with the GPU slot (`gpu`):
+        a test run holding it shows there, never as training."""
         with self._lock:
-            elapsed = None
-            if self._start_time and self._status == "running":
-                elapsed = (datetime.now() - self._start_time).total_seconds()
-
-            result = {
-                "status": self._status,
-                "pid": self._process.pid if self._process else None,
-                "start_time": self._start_time.isoformat() if self._start_time else None,
-                "elapsed_seconds": elapsed,
-                "error_message": self._error_message,
-                "config": self._config,
-                "run_dir": str(self.run_dir) if self.run_dir is not None else None,
-            }
+            result = self._job_fields(self._last.get("training"))
+            result["config"] = self._config
+            result["run_dir"] = str(self.run_dir) if self.run_dir is not None else None
+        result["gpu"] = self.gpu_state()
 
         # How the run stands, from its last snapshot's own record, once the
         # process is not running: finished, paused, stopped early, or where it

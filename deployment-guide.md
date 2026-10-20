@@ -1870,6 +1870,81 @@ CSV 與 Markdown 匯出照常下載，`HEAD` 與 `Range` 請求也一樣。
 **Windows 後端尚未以 Gradio 6.30.0 測試**，在有 Windows 後端可測之前一律標為未測試；Windows
 瀏覽器則包含在瀏覽器檢查中。
 
+## 4.11 一次只跑一個 GPU 工作：GPU 鎖與 job runner（自 M5 起，2026-10-20）
+
+受管理的訓練與評估工作彼此互斥：WebUI 與 API 啟動的工作，以及從 shell 執行的
+`scripts/train_model.py` 與 `scripts/measure_scorer.py`。拿不到 GPU 的工作會被拒絕，並指出是誰
+占用；不會排隊等候。
+
+### GPU 鎖
+
+每個部署一個鎖檔，不論使用哪個 workspace：
+
+| 設定 | 鎖檔 |
+|---|---|
+| `SHEPHERD_GPU_LOCK_FILE=/絕對路徑` | 該檔案；所在目錄必須已存在（不會自動建立） |
+| 否則 `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock` |
+| 兩者皆未設定 | **未設定鎖**：CLI 不取鎖照常執行，並在日誌中說明；服務只保留自己「一次一個工作」的規則 |
+
+設定了卻無法使用的值（相對路徑、不存在的目錄）會拒絕所有工作，而不是在沒有鎖的情況下執行。
+
+`train_model.py` 與 `measure_scorer.py` 在讀完命令列後立刻取鎖——在解析裝置或讀取任何輸入
+之前——並持有到結束。鎖被占用時，它們會再嘗試約一秒（讓剛要結束的工作不會擋下下一個），
+然後以結束碼 1 拒絕，且不寫出任何東西：
+
+```
+measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.lock is held by a training job (train_model.py, pid 41234 on gb10, since 2026-10-20T09:12:03+00:00, as it described itself). One managed GPU job runs at a time: wait for it to end, or stop it where it was started. Nothing was written.
+```
+
+`train_model.py` 會在 `train_model: refused:` 之後記錄同樣的句子。WebUI 與 API 在啟動工作前會
+先檢查鎖，並以同樣的占用者拒絕這次啟動（"Nothing was started."）；工作自己的行程隨後再自行
+取鎖。
+
+**請在服務與執行 CLI 的 shell 中設定同一個變數**（例如載入 systemd unit 使用的同一個環境
+檔）。看不到這個變數的 CLI 會在沒有鎖的情況下執行，並記錄
+`GPU lock not configured (...), so this run does not exclude other managed GPU jobs.`
+
+持有者在持有鎖期間會把自己的描述寫在 `<鎖檔>.json`（工作類型、命令、pid、主機、開始時間），
+供上面的訊息使用。這個檔案只是描述：鎖是鎖檔上的 `flock`。被強制結束的工作留下的描述檔無害，
+下一個持有者會取代它。**工作執行中絕不要刪除鎖檔**：新建的檔案會成為第二把鎖。
+
+這把鎖保證什麼、不保證什麼：
+
+- **不論持有者如何結束都會釋放**——正常結束、錯誤、SIGTERM、SIGKILL——由核心釋放，因此
+  當機後沒有殘留的鎖需要清理。
+- **它是合作式的。** 不取鎖的 GPU 程式不會被它擋住。推論服務不取這把鎖，可能占用 GPU 記憶體；
+  拿不到記憶體的測試執行會以執行失敗回報，不登錄任何東西。
+- **繼承的檔案描述子。** 工作啟動的程式不會保有這把鎖（描述子設為 close-on-exec）。工作以 fork
+  產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 DataLoader worker——會保有鎖直到它
+  自己結束，即使工作本身已經結束；這時拒絕訊息會說明所記錄的持有者已經結束。
+- **鎖檔請放在本機檔案系統上。**
+- **Windows** 使用 `msvcrt.locking` 鎖住檔案的第一個位元組；Windows 後端尚未測試。
+
+### job runner
+
+Training Console 與訓練 API 背後的服務現在執行兩種工作，各自使用自己的腳本：訓練
+（`train_model.py`）與測試執行（在已登錄的 cohort 版本上執行 `measure_scorer.py`，與操作者
+執行的是同一個 CLI）。一次一個工作：
+
+- **正在執行或仍在停止中的工作占用 GPU**，不論類型。停止仍在等待其行程結束時的訓練啟動，現在
+  會被拒絕（以前會被接受，可能在正被停止的行程旁再啟動第二個行程）。
+- **停止只作用於自己的工作類型**：訓練的停止永遠不會停止測試執行，反之亦然。它先送 SIGINT，
+  30 秒後送 SIGTERM，再過 10 秒送 SIGKILL，並在行程結束後才回應；
+  `POST /api/v1/training/stop` 等待期間不再卡住 API 的其他部分與儀表板。
+- **工作如何結束：** 訓練為 `completed`、`failed` 或 `stopped`（與以前相同）；測試執行為
+  `completed`、`failed` 或 `cancelled`。因訊號而失敗時會說明是哪個訊號（例如記憶體不足被系統
+  結束時為 `Process ended by SIGKILL`）。
+- **測試執行結束後，它的報告從磁碟讀取**：即該版本 report store 中為其 checkpoint 新出現的執行
+  目錄；報告是否保留、是否登錄都從那裡讀取，絕不從結束碼推斷。取消後，狀態會說明留下了什麼。
+- **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
+  （提示文字現在是 "A GPU job (training or a test run) is in progress"）。
+- `GET /api/v1/training/status` 新增 `job_id`、`end_time`、`exit_code` 與 `gpu`：占用 GPU 的
+  工作（任一類型），以及鎖的狀態（`configured`、`path`、`source`、`held_by`、`problem`）。占用
+  GPU 的測試執行會顯示在這裡，絕不會顯示成訓練。
+
+從 WebUI 啟動測試執行，以及它們的 API routes，會在 M5 稍後隨 Test 分頁一起提供。兩個 CLI 的
+結束碼都沒有改變：鎖被占用屬於「寫出任何東西之前的拒絕」。
+
 ---
 
 ## 4.11 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20）

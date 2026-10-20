@@ -48,10 +48,10 @@ def _badge_row(*badges: str) -> str:
     return "<div class='shep-badge-row'>" + "".join(badges) + "</div>"
 
 
-# Red warning shown beside the Restart button while training is in progress.
+# Red warning shown beside the Restart button while a GPU job is in progress.
 _RESTART_LOCKED_HTML = (
-    "<span class='shep-restart-locked'>⛔ Training in progress — "
-    "restart is locked.</span>"
+    "<span class='shep-restart-locked'>⛔ A GPU job (training or a test run) is in "
+    "progress — restart is locked.</span>"
 )
 
 # Browser-side poller chained after the restart click. Re-exec'ing the backend

@@ -1518,6 +1518,90 @@ Tested backends: Linux x86_64 (the development environment) and Linux ARM64 (the
 checked by the reviewer). **A Windows backend has not been tested with Gradio 6.30.0** and stays
 marked untested until one is available; Windows browsers are part of the browser checks.
 
+## 4.11 One GPU job at a time: the GPU lock and the job runner (since M5, 2026-10-20)
+
+Managed training and evaluation jobs exclude each other: the jobs the WebUI and the API start,
+and `scripts/train_model.py` and `scripts/measure_scorer.py` run from a shell. A job that cannot
+have the GPU is refused, naming who has it; nothing is queued.
+
+### The GPU lock
+
+One lock file per deployment, whatever the workspace:
+
+| Settings | Lock file |
+|---|---|
+| `SHEPHERD_GPU_LOCK_FILE=/absolute/path` | that file; its directory must exist (nothing creates it) |
+| otherwise `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock` |
+| neither | **not configured**: the CLIs run without the lock and say so in their log; the service keeps only its own one-job rule |
+
+A setting that is set but unusable (a relative path, a directory that does not exist) refuses
+every job rather than running it unlocked.
+
+`train_model.py` and `measure_scorer.py` take the lock right after reading their command line,
+before the device or any input is read, and hold it until they end. When it is busy they keep
+trying for about a second (so a job that is just ending does not refuse the next one), then
+refuse with exit 1 and write nothing:
+
+```
+measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.lock is held by a training job (train_model.py, pid 41234 on gb10, since 2026-10-20T09:12:03+00:00, as it described itself). One managed GPU job runs at a time: wait for it to end, or stop it where it was started. Nothing was written.
+```
+
+`train_model.py` logs the same sentence after `train_model: refused:`. The WebUI and the API
+check the lock before starting a job and refuse the start with the same holder
+("Nothing was started."); the job's own process then takes the lock itself.
+
+**Set the variable for the service and in the shell where you run the CLIs** (for example, load
+the same environment file the systemd unit uses). A CLI that does not see it runs without the
+lock and logs `GPU lock not configured (...), so this run does not exclude other managed GPU
+jobs.`
+
+The holder describes itself in `<lock file>.json` (job type, command, pid, host, start time)
+while it holds the lock, for the message above. That file is descriptive only: the lock is the
+`flock` on the lock file. One left behind by a killed job is harmless, and the next holder
+replaces it. **Never delete the lock file while a job runs**: a new file would be a second lock.
+
+What the lock does and does not guarantee:
+
+- **It is released however the holder ends** — a normal exit, an error, SIGTERM, SIGKILL — by the
+  kernel, so there is no stale lock to clean up after a crash.
+- **It is cooperative.** A GPU program that does not take it is not stopped by it. The inference
+  service does not take it and may hold GPU memory; a test run that cannot get memory fails as a
+  run, is reported, and registers nothing.
+- **Inherited descriptors.** A program a job starts does not keep the lock (the descriptor is
+  close-on-exec). A process the job forks without starting a new program — DataLoader workers
+  under the `fork` start method, for example — keeps it until it exits, even after the job has
+  ended; the refusal then says the recorded holder has exited.
+- **Keep the lock file on a local filesystem.**
+- **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
+
+### The job runner
+
+The service behind the Training Console and the training API now runs two kinds of job, each its
+own script: training (`train_model.py`) and test runs (`measure_scorer.py` on a registered
+cohort version, the same CLI an operator runs). One job at a time:
+
+- **A job that is running or still stopping holds the GPU**, whatever its type. A training start
+  while a stop is still waiting for its process is now refused (it used to be accepted, and could
+  start a second process beside the one being stopped).
+- **A stop reaches only its own job type**: a training stop never stops a test run, nor the
+  reverse. It sends SIGINT, then SIGTERM after 30 s, then SIGKILL after 10 s more, and answers
+  once the process has ended; `POST /api/v1/training/stop` no longer holds up the rest of the API
+  and the dashboard while it waits.
+- **How a job ended:** training `completed`, `failed` or `stopped` (as before); a test run
+  `completed`, `failed` or `cancelled`. A failure caused by a signal says which (`Process ended by
+  SIGKILL`, for the out-of-memory killer).
+- **A test run's report is read from the disk once it ends**: the run directory that appeared in
+  the version's report store for its checkpoint; whether it was kept and registered is read
+  there, never inferred from the exit status. After a cancel the status says what was left.
+- **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
+  (its note now says "A GPU job (training or a test run) is in progress").
+- `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding
+  the GPU, of either type, and the lock (`configured`, `path`, `source`, `held_by`, `problem`).
+  A test run holding the GPU shows there, never as training.
+
+Starting test runs from the WebUI, and their API routes, come with the Test tab later in M5. The
+exit codes of both CLIs are unchanged: a busy lock is a refusal before anything was written.
+
 ---
 
 ## 4.11 Server settings and the server's lists (since M5-1, 2026-10-20)
