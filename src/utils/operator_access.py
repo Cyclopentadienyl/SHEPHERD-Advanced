@@ -25,8 +25,19 @@ these hold, checked in this order; the first that fails is the one reported:
    browser that reached this server under another name -- DNS rebinding --
    sends that name;
 6. its ``Origin`` header, when present (at most one), is ``http://<Host>`` or
-   ``https://<Host>``: a request another website's page makes carries that
-   page's origin. A request with no Origin (a command-line client) passes.
+   ``https://<Host>``: a browser puts the sending page's origin there on a
+   POST and on any script's cross-origin request. A request with no Origin (a
+   command-line client, a page loaded from the address bar) passes;
+7. its ``Sec-Fetch-Site`` header, when present (at most one), is
+   ``same-origin`` or ``none`` (a request the user started outside any web
+   page: the address bar, a bookmark, a link opened from another program). A
+   browser sends **no** Origin on a GET that another site's page makes with an
+   image, a script, a stylesheet or a link, so condition 6 cannot see one;
+   current browsers (Chrome and Edge 76, Firefox 90, Safari 16.4 and later)
+   say where it came from here: ``cross-site``, or ``same-site`` for another
+   port or subdomain of the same host. Command-line clients send none and
+   pass. An older browser that sends neither header is not caught on such a
+   GET.
 
 **Never** ``scope["client"]``: uvicorn rewrites it from ``X-Forwarded-For``
 when it trusts proxy headers, which is its default for a peer on 127.0.0.1.
@@ -88,6 +99,7 @@ CONDITIONS: Tuple[str, ...] = (
     "forwarding_header",
     "host_not_loopback",
     "origin_mismatch",
+    "cross_site",
 )
 
 #: What every operator control is called in the reasons below.
@@ -113,6 +125,17 @@ _ORIGIN_MISMATCH = (
     "header does not match its Host), as a request made by another website would be. Use the "
     "operator controls from the dashboard itself."
 )
+_CROSS_SITE = (
+    "This request was made by a page that is not this dashboard: the browser reports it as sent "
+    "from another site or another address of this machine (its Sec-Fetch-Site header is not "
+    "same-origin), as an image, script or link on another website's page would send it. Use the "
+    "operator controls from the dashboard itself, or open the address directly."
+)
+
+#: The ``Sec-Fetch-Site`` values condition 7 allows: the dashboard's own page,
+#: and a request the user started outside any web page (the address bar, a
+#: bookmark, a link opened from another program).
+_OWN_SITE = ("same-origin", "none")
 
 
 class OperatorAccess(NamedTuple):
@@ -140,7 +163,8 @@ class OperatorAccess(NamedTuple):
 
 ENABLED = OperatorAccess(True, "enabled", (
     f"The {_CONTROLS} are enabled for this request: deployment mode M1, a loopback arrival "
-    "with no forwarding header, a loopback Host and no foreign Origin."))
+    "with no forwarding header, a loopback Host, no foreign Origin and not sent from another "
+    "site."))
 
 
 def _refused(condition: str, reason: str) -> OperatorAccess:
@@ -191,7 +215,7 @@ def check_operator_access(
 
 
 def _check_request(scope: Any) -> OperatorAccess:
-    """Conditions 2 to 6, for a deployment in mode M1."""
+    """Conditions 2 to 7, for a deployment in mode M1."""
     if not isinstance(scope, Mapping) or scope.get("type") not in ("http", "websocket"):
         return _refused("unreadable_request", _UNREADABLE)
     server = scope.get("server")
@@ -225,6 +249,10 @@ def _check_request(scope: Any) -> OperatorAccess:
         allowed = {f"http://{host.lower()}", f"https://{host.lower()}"}
         if len(origins) != 1 or origins[0].strip().lower() not in allowed:
             return _refused("origin_mismatch", _ORIGIN_MISMATCH)
+
+    sites = _values(headers, "sec-fetch-site")
+    if sites and (len(sites) != 1 or sites[0].strip().lower() not in _OWN_SITE):
+        return _refused("cross_site", _CROSS_SITE)
     return ENABLED
 
 

@@ -22,7 +22,7 @@ Components:
 
 Usage:
     # Run with uvicorn, on this machine only (SPEC_4 B1; another address is
-    # the launcher's to guard, deployment guide §4.12)
+    # the launcher's to guard, deployment guide §4.13)
     uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 
     # Or use the CLI

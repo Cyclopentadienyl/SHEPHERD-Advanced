@@ -238,15 +238,17 @@ def create_gradio_app() -> gr.Blocks:
     return app
 
 
-#: The largest file Gradio's upload route accepts, per file (M5-1). The
-#: dashboard has no upload control: its files go the other way (exports), and
-#: import sources come from the server's intake directory, never a browser (D7).
-#: Gradio still registers the route, and CORS does not stop a cross-origin
-#: multipart POST from reaching it (a "simple" request needs no preflight), so
-#: without a limit any page the operator's browser opens could write files of
-#: any size into GRADIO_TEMP_DIR. 1 MB is far above anything the dashboard
-#: sends and bounds what such a request can write; a larger file is refused
-#: with 413 while it streams.
+#: The largest file Gradio's upload route accepts, per file (M5-1): a second
+#: line of defence only. The dashboard has no upload control: its files go the
+#: other way (exports), and import sources come from the server's intake
+#: directory, never a browser (D7). Gradio still registers the route, and CORS
+#: does not stop a cross-origin multipart POST from reaching it (a "simple"
+#: request needs no preflight), so the service refuses the route in front of
+#: the mount before its body is read (`RefuseUnusedGradioRoutes`). This limit
+#: bounds each file only, never how many a request carries (Gradio takes up to
+#: 1000) or how many requests come, so it is not what stops such writes; it
+#: holds should the route be reached, say on a mount without that guard. A
+#: larger file is refused with 413 while it streams.
 MAX_UPLOAD_SIZE = "1mb"
 
 

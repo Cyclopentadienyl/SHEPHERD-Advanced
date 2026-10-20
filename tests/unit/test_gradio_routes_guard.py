@@ -2,8 +2,9 @@
 The guard in front of the Gradio mount, on its own.
 ===================================================
 `RefuseUnusedGradioRoutes` (src/api/middleware/gradio_routes.py) refuses
-``<mount>/gradio_api/process_recording`` and ``file=`` / ``file/`` targets that
-start with a URL scheme, and passes everything else through untouched. These
+``<mount>/gradio_api/process_recording``, ``upload`` and ``upload_progress``,
+and ``file=`` / ``file/`` targets that start with a URL scheme, and passes
+everything else through untouched. These
 tests pin the matching (on the decoded path Starlette routes on), the refusal
 (403, a plain reason, ``connection: close``) and that a refusal never reads
 the request body. The guard on the real service, with Gradio behind it, is
@@ -53,6 +54,18 @@ def test_process_recording_is_refused(path):
 
 
 @pytest.mark.parametrize("path", [
+    "/ui/gradio_api/upload",
+    "/ui/gradio_api/upload/",
+    "/ui/gradio_api/upload_progress",
+])
+def test_the_upload_routes_are_refused(path):
+    """The dashboard has no upload control, and another site's page can post
+    to the upload route with no preflight (M5-1)."""
+    for method in ("POST", "GET", "OPTIONS"):
+        assert GUARD.refusal(_scope(path, method=method)) == "upload"
+
+
+@pytest.mark.parametrize("path", [
     # Local exports, as gr.File / gr.DownloadButton link them (Linux and Windows).
     "/ui/gradio_api/file=/tmp/gradio/abc/training_metrics_x.csv",
     "/ui/gradio_api/file=C:\\Users\\a\\AppData\\Local\\Temp\\gradio\\x.csv",
@@ -60,7 +73,7 @@ def test_process_recording_is_refused(path):
     "/ui/gradio_api/file//tmp/gradio/abc/x.csv",
     "/ui/gradio_api/file=/tmp/http://not-a-scheme-at-the-start.csv",
     # The rest of Gradio's API, and everything outside the mount.
-    "/ui/gradio_api/upload",
+    "/ui/gradio_api/uploads",
     "/ui/gradio_api/queue/join",
     "/ui/gradio_api/info",
     "/ui/config",
@@ -68,6 +81,7 @@ def test_process_recording_is_refused(path):
     "/api/v1/training/status",
     "/api/file=http://example.com",
     "/other/gradio_api/process_recording",
+    "/other/gradio_api/upload",
     "/health",
 ])
 def test_everything_else_passes(path):
@@ -102,6 +116,7 @@ def _run(app, scope):
 @pytest.mark.parametrize("path,which", [
     ("/ui/gradio_api/process_recording", "process_recording"),
     ("/ui/gradio_api/file=http://example.com/evil.png", "file-url"),
+    ("/ui/gradio_api/upload", "upload"),
 ])
 def test_a_refusal_is_a_plain_403_that_never_reads_the_body(path, which):
     async def inner(scope, receive, send):
@@ -128,8 +143,8 @@ def test_other_requests_reach_the_app_with_their_own_receive():
         return {"type": "http.request", "body": b"", "more_body": False}
 
     guard = RefuseUnusedGradioRoutes(inner, "/ui")
-    asyncio.run(guard(_scope("/ui/gradio_api/upload", method="POST"), receive, None))
-    assert seen == [("/ui/gradio_api/upload", receive)]
+    asyncio.run(guard(_scope("/ui/gradio_api/queue/join", method="POST"), receive, None))
+    assert seen == [("/ui/gradio_api/queue/join", receive)]
 
 
 def test_websocket_and_lifespan_scopes_pass_through():

@@ -1346,17 +1346,48 @@ def test_report_state_without_a_checkpoint_reads_the_ledger_the_report_names(
 ):
     """A list of a version's kept reports knows no checkpoint file: the
     ledger read is the one beside the checkpoint path the report records, from
-    the same read."""
+    the same read. Found there, the report is registered; not found, that is
+    all that can be said: never "not registered"."""
     from src.evaluation.registration import report_state
 
     report = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    ledger = checkpoints.resolve() / "evaluations.json"
     state = report_state(report)
-    assert (state.kept, state.registered) == ("kept", "not_registered")
-    assert state.ledger_path == checkpoints.resolve() / "evaluations.json"
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+    assert state.why_registered.startswith(
+        f"not registered beside the checkpoint this run read (there is no {ledger});")
+    assert "another copy of the same weights" in state.why_registered
+    assert state.ledger_path == ledger
 
     _register(report, checkpoints, beside=True)
     state = report_state(report)
     assert (state.kept, state.registered, state.sequence) == ("kept", "registered", 1)
+
+
+def test_a_report_registered_beside_a_copy_is_never_listed_as_not_registered(
+    tmp_path, checkpoints
+):
+    """`record_evaluation --checkpoint` files the record beside whichever file
+    with the measured bytes it is given, a served copy say. Given that copy,
+    the report reads as registered; the list, which knows only the checkpoint
+    the run read, cannot rule that out and says so (review of M5-1 WP2)."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / "best.pt").write_bytes(WEIGHTS)
+    _register(report, release, beside=True)
+
+    served = report_state(report, checkpoint=release / "best.pt")
+    assert (served.registered, served.sequence) == ("registered", 1)
+    measured = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert measured.registered == "not_registered", "scoped by the checkpoint given"
+
+    listed = report_state(report)
+    assert listed.registered == "cannot_be_checked"
+    assert str(checkpoints.resolve() / "evaluations.json") in listed.why_registered
+    assert "cannot be checked here" in listed.why_registered
 
 
 def test_report_state_without_a_checkpoint_never_guesses_a_ledger(tmp_path, checkpoints):

@@ -11,7 +11,7 @@
 # Environment=SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1; without it the
 # launcher refuses to start. That flag is risk acceptance, not a control: the
 # service has no authentication, and the operator controls stay refused for
-# any request that does not arrive on loopback (D8). Deployment guide §4.12.
+# any request that does not arrive on loopback (D8). Deployment guide §4.13.
 [Unit]
 Description=SHEPHERD-Advanced API Service
 After=network.target
@@ -23,7 +23,7 @@ Environment=PYTHONUNBUFFERED=1
 # The operator controls (reload, configuration save, restart, training, the
 # checkpoint lists) are enabled only by the exact value M1, set by the operator
 # who runs this machine as SPEC_4's deployment mode M1; unset, the service is
-# read-only for them. Deployment guide §4.11 and §4.12.
+# read-only for them. Deployment guide §4.12 and §4.13.
 #Environment=SHEPHERD_DEPLOYMENT_MODE=M1
 # Started through the launcher, the same path launch_shepherd.sh takes, so the
 # service gets what a manual start gets: the allocator preset saved in Runtime

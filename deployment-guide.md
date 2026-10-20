@@ -1552,7 +1552,7 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
 registry 是**由你建立**的目錄，每個指令都以**位於 repository 之外的絕對路徑**傳入。相對路徑、
 不存在的路徑，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。不會有任何東西
 替你建立它，也沒有任何請求指定它。各指令以 `--registry` 接收它；服務則從 `SHEPHERD_REGISTRY`
-讀取（§4.11），以同一個規則檢查。
+讀取（§4.12），以同一個規則檢查。
 
 registry 之下的目錄也會檢查。每一個目錄（`sources/`、`versions/`、版本目錄、其 `reports/` 與每個
 run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解析一次；若某個連結把它帶進 repository，
@@ -1926,7 +1926,7 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
 | `ssr_mode=False` | 伺服器端渲染會啟動一個 Node.js 行程 |
 | `analytics_enabled=False` | 設在儀表板本身，自 2026-10-12 起：不送使用分析，也不檢查版本 |
 
-**CORS** 自 M5-1 起與 D8 一起收緊（§4.12）：**預設不允許任何跨來源的瀏覽器存取；管理操作仍由
+**CORS** 自 M5-1 起與 D8 一起收緊（§4.13）：**預設不允許任何跨來源的瀏覽器存取；管理操作仍由
 後端的 D8 檢查。** 上層 app 保留它的 `CORSMiddleware`，但允許清單現在是空的（`src/api/main.py`）；
 自 Gradio 6.25 起，上層 app 恰好使用這個類別時，掛載的 app 不再加上自己的 CORS 標頭，因此 `/ui`
 也遵循同一政策。在 M5-1 之前，設定是 `allow_origins=["*"]` 與 `allow_credentials=True`，在
@@ -1936,8 +1936,8 @@ Starlette 1.9 下會回送每個請求的 `Origin` 並附上 `Access-Control-All
 
 ### route guard
 
-Gradio 6.30 在每個掛載的 app 上加入兩個無法從上游關閉的 routes。服務會在 Gradio 看到請求之前
-拒絕兩者（`src/api/middleware/gradio_routes.py`）：
+Gradio 6.30 在每個掛載的 app 上加入兩個無法從上游關閉的 routes，並保留一個儀表板用不到的上傳
+route。服務會在 Gradio 看到請求之前拒絕它們（`src/api/middleware/gradio_routes.py`）：
 
 - **`/ui/gradio_api/file=<URL>`**（以及舊的 `file/<URL>`）。自 Gradio 6.20 起（issue #13593，
   PR #13596），伺服器會自己抓取 `http(s)://` 目標——不經過 `HTTPS_PROXY`——再以儀表板自己的位址
@@ -1946,6 +1946,9 @@ Gradio 6.30 在每個掛載的 app 上加入兩個無法從上游關閉的 route
 - **`/ui/gradio_api/process_recording`**：把上傳的螢幕錄影轉成暫存檔，並可能執行 ffmpeg。因此
   Gradio 設定面板中的螢幕錄影功能會顯示 "Failed to process recording. Saving original
   version."，並在瀏覽器中存下未處理的錄影。
+- **`/ui/gradio_api/upload`** 及其進度串流 `upload_progress`（自 M5-1 起）。儀表板沒有上傳
+  控制項，而其他網站的頁面不需預檢就能把檔案 POST 到這裡：Gradio 每個請求最多會把 1000 個檔案
+  寫進它的暫存目錄，而且從不刪除。
 
 拒絕的回應是 `403`，附一行原因與 `connection: close`。請求本體不會被讀取，請求日誌會像其他
 回應一樣記下這次拒絕。本機下載不受影響：Training Console 的 metrics CSV，以及 Diagnosis 分頁的
@@ -2054,7 +2057,7 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
 
 ---
 
-## 4.11 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20）
+## 4.12 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20）
 
 M5 的控制項只作用於伺服器列出的項目，從不作用於請求指定的路徑（D7、D8）。伺服器列出什麼，以及
 操作者控制項所依賴的部署模式，都來自**服務的環境變數**。請在啟動服務的地方設定它們（執行
@@ -2065,7 +2068,7 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 
 | 變數 | 值 | 未設定或被拒絕時 |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.12） |
+| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.13） |
 | `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace | 不列出任何 workspace |
 | `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外 | 不列出任何 cohort 版本 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
@@ -2082,7 +2085,7 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 - **`M1`** 是 SPEC_4 的單一 workspace 部署：在本機上，或經由 SSH forwarding 存取，由 owner 或
   指定的技術人員操作（§4.9 問題 3）。它是操作者控制項檢查的條件之一，而不是授權。其餘條件由
   D8 在處理每個請求時檢查。不要在 reverse proxy 後面、或在其他人也能登入的機器上設定它。
-- **部署模式由 D8 套用**（§4.12）：每個操作者控制項在處理請求的當下都會讀取它；未設定或任何
+- **部署模式由 D8 套用**（§4.13）：每個操作者控制項在處理請求的當下都會讀取它；未設定或任何
   其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀清單不受影響。
 - **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
   由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
@@ -2126,21 +2129,24 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   每個項目都以清單中的名稱指稱 workspace：對 `current -> builds/2026-10-20` 而言，它寫的是
   `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
   操作者控制項所在之處提供它：它以 `GET /api/v1/workspaces/{name}/checkpoints` 提供（例如
-  `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.12），被拒絕的請求不會開啟任何檔案。
+  `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.13），被拒絕的請求不會開啟任何檔案。
 - **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints` 與 Training Console 的
   resume 清單）以同樣的方式讀取每個檔案。每個項目新增 `sha256`、`validation`、
   `dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
   大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
-  一樣檢查它（§4.12），路由與 Training Console 的 run 清單都一樣。
+  一樣檢查它（§4.13），路由與 Training Console 的 run 清單都一樣。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
   registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
   報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
   來自登錄流程本身對報告庫的讀取，以及對報告所記錄、它量測的 checkpoint 旁邊那份 ledger 的讀取。
-  以相對路徑記錄 checkpoint 的報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 為
-  `cannot_be_checked`，並說明原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。
+  那份 ledger 載有這份報告時，`registered` 為 `registered`，否則為 `cannot_be_checked`，絕不是
+  `not_registered`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
+  任何位元組相同的檔案）不會被查找，原因會指出查過的是哪一份 ledger。以相對路徑記錄 checkpoint 的
+  報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 同樣為 `cannot_be_checked`，並說明
+  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。
 
 ### 建置時間：`workspace_build.json`
 
@@ -2173,7 +2179,7 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
 ---
 
-## 4.12 操作者控制項、綁定位址與 CORS（自 M5-1 起，2026-10-20）
+## 4.13 操作者控制項、綁定位址與 CORS（自 M5-1 起，2026-10-20）
 
 M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人員在本機上操作服務，或從其他地方
 經由 SSH forwarding 操作（§4.9 問題 3）。三件事一起改變，部署可能需要對每一件採取行動：
@@ -2184,7 +2190,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 
 ### 操作者要設定什麼
 
-在啟動服務的地方設定 `SHEPHERD_DEPLOYMENT_MODE=M1`（§4.11；systemd unit 中是被註解掉的那行
+在啟動服務的地方設定 `SHEPHERD_DEPLOYMENT_MODE=M1`（§4.12；systemd unit 中是被註解掉的那行
 `Environment=`），然後重啟服務。未設定或任何其他值時，每個操作者控制項都被拒絕，部署對它們而言是
 唯讀的。診斷、查詢、狀態頁面與唯讀清單照常運作。
 
@@ -2211,8 +2217,13 @@ workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
    `True-Client-IP`）：M1 沒有 reverse proxy；
 4. 請求的目標是 `localhost`、`127.0.0.1` 或 `[::1]`，任何埠號皆可（它的 `Host` 標頭），以防範
    DNS rebinding；
-5. 若帶有 `Origin`，它就是儀表板自己的位址（`http://` 或 `https://`，相同的主機與埠號），因此
-   其他網站的頁面無法從你的瀏覽器觸發控制項。
+5. 若帶有 `Origin`，它就是儀表板自己的位址（`http://` 或 `https://`，相同的主機與埠號）。
+   瀏覽器在每個 `POST`，以及每個由腳本發出的跨來源請求中，都會送出頁面的來源；
+6. 若帶有 `Sec-Fetch-Site`，它的值是 `same-origin`（儀表板自己的頁面）或 `none`（你在任何網頁
+   之外發起的請求：網址列、書籤、從其他程式打開的連結）。其他網站的頁面以圖片、腳本或連結發出的 `GET`，瀏覽器**不會**附上 `Origin`，而目前的
+   瀏覽器（Chrome 與 Edge 76、Firefox 90、Safari 16.4 及更新版本）會在這個標頭說明請求從哪裡來：
+   `cross-site`，或對同一主機的其他埠號是 `same-site`。因此其他網站的頁面無法從目前的瀏覽器觸發
+   控制項，兩份 checkpoint 清單也包括在內。
 
 無法讀取抵達資訊的請求一律拒絕。檢查在後端：反灰的按鈕只是顯示，直接呼叫 API，或透過 Gradio 的
 HTTP API（`/ui/gradio_api/...`，像 `gradio_client` 那樣）直接呼叫儀表板事件，都會遇到同一個檢查。
@@ -2237,7 +2248,8 @@ Refused: This request did not arrive on a loopback address of this machine. The 
 **不宣稱的事。** loopback 不是授權：任何能到達這台機器 loopback 的人，包括經由他自己的 SSH
 forward，都會通過。因此 M1 指的是一個經過驗證、由 owner 或指定技術人員操作的單一 workspace 部署。
 同一台主機上、不加任何轉送標頭的 reverse proxy 由本指南排除，而不是被偵測：不要在 M1 服務前面
-放置這樣的 proxy。
+放置這樣的 proxy。在這類 `GET` 上既不送 `Origin` 也不送 `Sec-Fetch-Site` 的舊瀏覽器，條件 6
+攔不住：請用目前的瀏覽器操作儀表板。
 
 ### 從其他機器操作：SSH forwarding
 
@@ -2262,15 +2274,25 @@ launcher（`launch_shepherd.sh`、`shep_launch.py`）、systemd unit 與 `python
 [SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
 ```
 
-**綁定任何其他位址都會被拒絕，什麼都不會啟動**（launcher 以 2 結束），除非設定了
-`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`，因為服務沒有任何認證。這個旗標是**風險承擔，
+**綁定任何其他位址都會被拒絕，什麼都不會啟動**（launcher 在安裝任何東西之前就以 2 結束），除非
+設定了 `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`，因為服務沒有任何認證。這個旗標是**風險承擔，
 而不是控制**：它不認證任何人，也從不解除 D8，因此在網路綁定下，操作者控制項對每個不是從 loopback
 抵達的請求仍然拒絕，而診斷與唯讀頁面對任何能到達該位址的人開放。launcher 會印出一行說明這點的
 `WARNING:`。launcher 一律以 `--no-proxy-headers` 啟動 uvicorn，並放在其命令列的最後，因此 uvicorn
 回報的用戶端位址就是連線本身的位址。
 
-不涵蓋：手動啟動的 uvicorn（`uvicorn src.api.main:app --host 0.0.0.0`），應用程式看不到它的綁定。
-請使用 launcher。
+launcher 以 uvicorn 自己的方式判讀 uvicorn 會在哪裡監聽：交給它的 socket（`--fd`，systemd 的
+socket unit 會這樣傳入）優先於 unix socket（`--uds`），再優先於最後一個 `--host`；每一項都取自
+命令列，沒有時取自 `UVICORN_FD` / `UVICORN_UDS`。繼承來的 socket 的位址不會被讀取，因此算作網路
+綁定，需要這個旗標。unix socket 只有本機到得了，不需要旗標；經由它的操作者控制項一律被拒絕（D8
+在那裡看不到 loopback 位址）。這兩種情況下，launcher 都印出 socket 而不是 URL，也不開啟瀏覽器。
+
+launcher 與 `python -m src.api.main` 會把它們綁定的主機以 `SHEPHERD_BIND_HOST` 傳給應用程式，
+應用程式啟動時在提供服務之前對它套用同一個規則（被拒絕時啟動中止，uvicorn 結束）。它們每次都會
+設定它；這不是由你設定的。
+
+不涵蓋：手動啟動的 uvicorn（`uvicorn src.api.main:app --host 0.0.0.0`），應用程式看不到它的綁定，
+它也不會把任何主機傳給啟動程序。請使用 launcher。
 
 **依賴 `0.0.0.0` 的部署如何遷移。** 在 M5-1 之前，launcher 與 unit 綁定所有介面。這次更新之後：
 
@@ -2292,9 +2314,10 @@ launcher（`launch_shepherd.sh`、`shep_launch.py`）、systemd unit 與 `python
 （preflight）都回應 400。同源的使用（儀表板本身、`curl`、腳本、`gradio_client`）不受影響。
 
 CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵達伺服器：這正是操作者控制項由 D8 而不是
-由 CORS 檢查的原因。基於同樣的理由，Gradio 的上傳路由每個檔案最多接受 1 MB：儀表板沒有上傳控制項
-（匯入來源來自 `SHEPHERD_INTAKE_DIR`），這個上限限制了其他網站的頁面能寫進 Gradio 暫存目錄的內容。
-更大的檔案會以 413 拒絕。
+由 CORS 檢查的原因。基於同樣的理由，Gradio 的上傳路由在儀表板前面就被拒絕，請求本體不會被讀取
+（§4.10 的 route guard）：儀表板沒有上傳控制項（匯入來源來自 `SHEPHERD_INTAKE_DIR`），否則其他網站
+的頁面每個請求最多能把 1000 個檔案寫進 Gradio 的暫存目錄。Gradio 每個檔案 1 MB 的上限保留作為
+第二道防線；它限制的是每個檔案，而不是檔案的數量。
 
 ---
 

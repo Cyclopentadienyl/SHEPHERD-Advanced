@@ -10,11 +10,11 @@ through Starlette's TestClient and checks what a browser and a script see:
   history off and analytics off;
 - the run-history, monitoring and MCP routes are absent or refused, with
   ``GRADIO_RUN_HISTORY`` and ``GRADIO_MCP_SERVER`` set to turn them on;
-- the route guard: ``process_recording`` is refused without its body being
-  read (no temporary file), every URL form of ``file=`` is refused without
-  any fetch, each refusal is in the request log, and a real export (the
-  Training Console's Export Metrics CSV, through Gradio's own API) still
-  downloads with GET, HEAD and Range.
+- the route guard: ``process_recording`` and ``upload`` are refused without
+  their body being read (no temporary file), every URL form of ``file=`` is
+  refused without any fetch, each refusal is in the request log, and a real
+  export (the Training Console's Export Metrics CSV, through Gradio's own API)
+  still downloads with GET, HEAD and Range.
 
 **In a fresh interpreter.** `src.api.main` mounts the dashboard at import, and
 `src.webui` imports the API package back (its components use the API's
@@ -168,6 +168,21 @@ with TestClient(counted) as client:
         result["errors"]["process_recording"] = repr(exc)
 
     try:
+        before = [files(d) for d in tmp_dirs]
+        r = client.post("/ui/gradio_api/upload",
+                        files=[("files", (f"f{i}.html", b"<script>1</script>" * 1000,
+                                          "text/html")) for i in range(30)],
+                        headers={"Origin": "https://evil.example"})
+        result["upload"] = {
+            "status": r.status_code, "body": r.text,
+            "connection": r.headers.get("connection"),
+            "receive_calls": receive_calls[-1][0],
+            "new_files": [sorted(set(files(d)) - set(b)) for d, b in zip(tmp_dirs, before)],
+        }
+    except Exception as exc:
+        result["errors"]["upload"] = repr(exc)
+
+    try:
         info = client.get("/ui/gradio_api/info").json()
         api_name = [n for n in info["named_endpoints"] if n.startswith("/_handle_export")][0][1:]
         event_id = client.post(f"/ui/gradio_api/call/{api_name}",
@@ -274,11 +289,27 @@ def test_process_recording_is_refused_before_its_body_is_read(served):
     assert seen["new_files"] == [[], []], "a temporary file was written"
 
 
+def test_an_upload_is_refused_before_its_body_is_read(served):
+    """Another site's page can post files to Gradio's upload route with no
+    preflight; the dashboard takes none, so nothing is written (M5-1)."""
+    from src.api.middleware.gradio_routes import REFUSALS
+
+    assert not served["errors"].get("upload"), served["errors"]
+    seen = served["upload"]
+    assert seen["status"] == 403
+    assert seen["body"] == REFUSALS["upload"]
+    assert seen["connection"] == "close"
+    assert seen["receive_calls"] == 0
+    assert seen["new_files"] == [[], []], "a temporary file was written"
+
+
 def test_each_refusal_is_in_the_request_log(served):
     logged = served["log_lines"]
     assert any(line.startswith("GET /ui/gradio_api/file=") and " - 403 - " in line
                for line in logged), logged[-20:]
     assert any(line.startswith("POST /ui/gradio_api/process_recording - 403 - ")
+               for line in logged), logged[-20:]
+    assert any(line.startswith("POST /ui/gradio_api/upload - 403 - ")
                for line in logged), logged[-20:]
 
 

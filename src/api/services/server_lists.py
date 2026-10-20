@@ -556,7 +556,11 @@ def stored_report_state(run_directory: Path) -> Dict[str, Any]:
     whether it is registered, as the registration's one helper reads them
     (`src.evaluation.registration.report_state`): kept from the store,
     registered from the ledger beside the checkpoint the report records it
-    measured, since a list knows no checkpoint file. JSON-ready: ``kept`` and
+    measured, since a list knows no checkpoint file. So ``registered`` is
+    ``registered`` when that ledger names the report, and otherwise
+    ``cannot_be_checked``, never ``not_registered``: a registration filed
+    beside another copy of the same weights is not looked for, and the reason
+    says which ledger was. JSON-ready: ``kept`` and
     ``registered`` (one of the registration's states each), their reasons,
     the report's digest and the ledger record's sequence. No field is a server
     path (a reason may name one, for the operator)."""

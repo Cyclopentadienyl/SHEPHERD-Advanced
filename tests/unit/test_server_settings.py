@@ -366,6 +366,34 @@ def test_the_default_bind_is_loopback():
     assert ss.DEFAULT_BIND_HOST == "127.0.0.1" and ss.bind_is_loopback(ss.DEFAULT_BIND_HOST)
 
 
+def test_an_inherited_socket_counts_as_a_network_bind():
+    """Its address is not read, so it takes the same acceptance as a network
+    bind, with the same flag (uvicorn --fd; systemd socket activation)."""
+    refused = ss.inherited_socket_bind(3, {})
+    assert not refused.allowed
+    assert refused.message.startswith(
+        "refusing to serve on the inherited socket (file descriptor 3):")
+    assert "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1" in refused.message
+    assert "Nothing was started." in refused.message
+    for value in ("", "0", "true", " 1"):
+        assert not ss.inherited_socket_bind(3, {
+            ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND: value}).allowed
+    accepted = ss.inherited_socket_bind(3, {ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND: "1"})
+    assert accepted.allowed and "risk acceptance, not a control" in accepted.message
+
+
+def test_startup_checks_the_host_passed_in_and_nothing_else():
+    """SPEC_4 §3.1's third enforcement point: the host the launcher or
+    `main()` passed in, through the same rule; none passed in, no check."""
+    assert ss.startup_bind({}) is None
+    assert ss.startup_bind({ss.ENV_BIND_HOST: "127.0.0.1"}).allowed
+    for host in ("0.0.0.0", "", "192.0.2.10"):
+        decision = ss.startup_bind({ss.ENV_BIND_HOST: host})
+        assert not decision.allowed and decision.message.startswith("refusing to bind")
+        assert ss.startup_bind({ss.ENV_BIND_HOST: host,
+                                ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND: "1"}).allowed
+
+
 def test_the_deployment_mode_is_documented_as_applied():
     """WP1 said the mode was not applied yet; D8 applies it since M5-1."""
     text = Path(ss.__file__).read_text(encoding="utf-8")
@@ -387,12 +415,34 @@ def uvicorn_runs(monkeypatch):
 
 
 def test_the_api_entry_point_binds_loopback_without_proxy_headers(uvicorn_runs):
+    import os
+
     from src.api import main
 
     main.main()
     ((app, kwargs),) = uvicorn_runs
     assert app == "src.api.main:app"
     assert kwargs["host"] == "127.0.0.1" and kwargs["proxy_headers"] is False
+    # Passed to application startup, which checks it again (SPEC_4 §3.1).
+    assert os.environ[ss.ENV_BIND_HOST] == "127.0.0.1"
+
+
+def test_application_startup_refuses_a_network_bind_passed_in_without_acceptance(
+        monkeypatch):
+    """The lifespan applies `startup_bind` before anything else: a refused
+    host ends startup, so uvicorn exits without serving; an accepted one
+    starts with the warning logged."""
+    from fastapi.testclient import TestClient
+
+    from src.api import main
+
+    monkeypatch.setenv(ss.ENV_BIND_HOST, "0.0.0.0")
+    with pytest.raises(RuntimeError, match="Startup refused: SHEPHERD_BIND_HOST"):
+        with TestClient(main.app):
+            pass
+    monkeypatch.setenv(ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, "1")
+    with TestClient(main.app) as client:
+        assert client.get("/health").status_code == 200
 
 
 def test_the_api_entry_point_refuses_a_network_bind_without_acceptance(uvicorn_runs,

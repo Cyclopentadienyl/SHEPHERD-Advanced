@@ -46,11 +46,16 @@ the deployment is read-only, whatever arrives on loopback.
 
 **The network bind** (SPEC_4 §3.1, B1): the service binds `127.0.0.1` by
 default, and a bind to any other address is refused unless
-`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` (`network_bind`, applied by the
-launcher and by `src.api.main:main()`). The flag records **risk acceptance, not
-a control**: it authenticates nobody, and it never lifts D8's checks, so an
-operator control stays refused for every request that does not arrive on
-loopback.
+`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` (`network_bind`). The flag
+records **risk acceptance, not a control**: it authenticates nobody, and it
+never lifts D8's checks, so an operator control stays refused for every request
+that does not arrive on loopback. §3.1's three enforcement points apply that one
+rule: the launcher and `src.api.main:main()` before they start anything, and
+application startup (`startup_bind`) on the host those two pass in as
+`SHEPHERD_BIND_HOST`, which they set to the address they bind every time (it is
+theirs, not an operator's setting). A server handed a listening socket (uvicorn
+``--fd``) has an address nothing here reads, so it counts as a network bind
+(`inherited_socket_bind`).
 
 Platform: nothing here is POSIX-only; `os.pathsep` is `;` on Windows.
 
@@ -75,6 +80,10 @@ ENV_INTAKE_DIR = "SHEPHERD_INTAKE_DIR"
 ENV_TRAINING_EVIDENCE_DIRS = "SHEPHERD_TRAINING_EVIDENCE_DIRS"
 ENV_ORDERING_ROLES = "SHEPHERD_ORDERING_ROLES"
 ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND = "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND"
+#: The bind address the launcher and `src.api.main:main()` pass to application
+#: startup (`startup_bind`). They set it to the host they bind, every time, and
+#: remove it when they bind no host; an operator does not set it.
+ENV_BIND_HOST = "SHEPHERD_BIND_HOST"
 
 #: The address the service binds unless another is configured (SPEC_4 B1).
 DEFAULT_BIND_HOST = "127.0.0.1"
@@ -100,6 +109,7 @@ __all__ = [
     "DEFAULT_BIND_HOST",
     "DirectoryRefused",
     "ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND",
+    "ENV_BIND_HOST",
     "ENV_DEPLOYMENT_MODE",
     "ENV_INTAKE_DIR",
     "ENV_ORDERING_ROLES",
@@ -115,11 +125,13 @@ __all__ = [
     "check_registry_root",
     "cohort_registry",
     "deployment_mode",
+    "inherited_socket_bind",
     "intake_directory",
     "is_loopback_ip",
     "network_bind",
     "ordering_roles",
     "role_offers_ordering",
+    "startup_bind",
     "training_evidence_dirs",
     "workspaces_root",
 ]
@@ -448,7 +460,7 @@ def network_bind(host: Any, environ: Optional[Mapping[str, str]] = None) -> Bind
     if bind_is_loopback(host):
         return BindDecision(shown, True, None)
     where = "all interfaces" if shown.strip() in ("", "0.0.0.0", "::", "[::]") else shown
-    if _raw(environ, ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND) == ACCEPTS_NETWORK_BIND:
+    if _accepts_network_bind(environ):
         return BindDecision(shown, True, (
             f"binding {where}, which is not loopback: the service is reachable from the "
             f"network with no authentication, accepted by "
@@ -462,3 +474,46 @@ def network_bind(host: Any, environ: Optional[Mapping[str, str]] = None) -> Bind
         "forwarding to localhost, or, to accept that risk, set "
         f"{ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND}={ACCEPTS_NETWORK_BIND} (risk acceptance, "
         "not a control; operator controls stay refused off loopback). Nothing was started."))
+
+
+def _accepts_network_bind(environ: Optional[Mapping[str, str]]) -> bool:
+    """Whether the risk of a network bind is accepted: the flag is exactly ``1``."""
+    return _raw(environ, ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND) == ACCEPTS_NETWORK_BIND
+
+
+def inherited_socket_bind(fd: Any, environ: Optional[Mapping[str, str]] = None) -> BindDecision:
+    """§3.1's bind guard for a server handed a listening socket (uvicorn
+    ``--fd``, as systemd socket activation passes one). Its address is not
+    read here, and a socket unit's ``ListenStream=8264`` listens on every
+    interface, so it counts as a network bind: refused unless
+    `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND` is exactly ``1``, and
+    then allowed with `network_bind`'s warning."""
+    shown = f"the inherited socket (file descriptor {fd})"
+    if _accepts_network_bind(environ):
+        return BindDecision(shown, True, (
+            f"serving on {shown}, whose address is not read here, so it counts as a network "
+            "bind: the service may be reachable from the network with no authentication, "
+            f"accepted by {ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND}={ACCEPTS_NETWORK_BIND}. That "
+            "is risk acceptance, not a control: it authenticates nobody. Operator controls stay "
+            "refused for every request that does not arrive on loopback (D8)."))
+    return BindDecision(shown, False, (
+        f"refusing to serve on {shown}: its address is not read here, so it counts as a "
+        "network bind, which would make the service reachable from the network with no "
+        f"authentication. Bind {DEFAULT_BIND_HOST} (the default, with --host) and reach it on "
+        "the machine or through SSH forwarding to localhost, or, to accept that risk, set "
+        f"{ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND}={ACCEPTS_NETWORK_BIND} (risk acceptance, "
+        "not a control; operator controls stay refused off loopback). Nothing was started."))
+
+
+def startup_bind(environ: Optional[Mapping[str, str]] = None) -> Optional[BindDecision]:
+    """§3.1's third enforcement point: `network_bind` for the host the
+    launcher or `src.api.main:main()` passed to application startup
+    (`ENV_BIND_HOST`; an empty value is the empty ``--host=``, which binds
+    every interface), or `None` when none was passed. Both set it to the host
+    they bind after applying the same rule, so startup refuses only a host
+    passed in without that check. A uvicorn started by hand passes none and
+    is not checked (SPEC_4 §3.1: not covered, and not claimed)."""
+    host = _environment(environ).get(ENV_BIND_HOST)
+    if host is None:
+        return None
+    return network_bind(host, environ)

@@ -3,8 +3,9 @@ D8's one check, its FastAPI dependency and its Gradio helper (M5-1).
 ====================================================================
 `PLAN_TEST_RESULTS.md` D8 and §6 ("M5's boundaries"): an operator control is
 allowed only under deployment mode M1, for a request that arrived on a loopback
-socket, carries no forwarding header, is addressed to a loopback host and, when
-it carries an Origin, comes from that same address. The check reads the
+socket, carries no forwarding header, is addressed to a loopback host, when
+it carries an Origin comes from that same address, and is not reported by the
+browser as sent from another site (``Sec-Fetch-Site``). The check reads the
 triggering request's own scope (never ``scope["client"]``), fails closed, and
 its refusals name the condition without repeating a header's value.
 
@@ -178,9 +179,39 @@ def test_an_origin_other_than_this_address_is_refused(origins):
     assert "another website" in decision.reason and CANARY not in decision.reason
 
 
+#: The headers a browser sends with an image another site's page loads: no
+#: Origin on a GET in no-cors mode, so only Sec-Fetch-Site says where it came from.
+CROSS_SITE_IMAGE = [("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "no-cors"),
+                    ("sec-fetch-dest", "image")]
+
+
+@pytest.mark.parametrize("sites", [
+    ["cross-site"], ["same-site"], ["CROSS-SITE"], [CANARY], [""],
+    ["same-origin", "same-origin"], ["same-origin", "cross-site"],
+], ids=["cross-site", "same-site", "uppercase", "unknown-value", "empty", "repeated",
+        "repeated-mixed"])
+def test_a_request_another_site_sent_is_refused_though_it_carries_no_origin(sites):
+    """A GET another site's page makes with an image, a script or a link
+    carries no Origin; the browser says where it came from in Sec-Fetch-Site,
+    and only ``same-origin`` and ``none`` (the address bar) pass."""
+    scope = http_scope(headers=[("sec-fetch-site", s) for s in sites]
+                       + [("sec-fetch-mode", "no-cors"), ("sec-fetch-dest", "image")])
+    decision = check(scope)
+    assert (decision.allowed, decision.condition) == (False, "cross_site")
+    assert "another website" in decision.reason and CANARY not in decision.reason
+
+
+@pytest.mark.parametrize("site", ["same-origin", "none", "Same-Origin"])
+def test_a_request_from_the_dashboard_or_the_address_bar_is_allowed(site):
+    with_origin = http_scope(headers=[("origin", "http://127.0.0.1:8264"),
+                                      ("sec-fetch-site", site)])
+    without = http_scope(headers=[("sec-fetch-site", site)])
+    assert check(with_origin).allowed and check(without).allowed
+
+
 def test_the_conditions_are_checked_in_order():
-    """Mode first, then readable, loopback, forwarding, Host, Origin: the first
-    that fails is the one reported."""
+    """Mode first, then readable, loopback, forwarding, Host, Origin,
+    Sec-Fetch-Site: the first that fails is the one reported."""
     everything_wrong = http_scope(("192.0.2.10", 8264), host="evil.example",
                                   headers=[("x-forwarded-for", "1.2.3.4"),
                                            ("origin", "https://evil.example")])
@@ -191,8 +222,11 @@ def test_the_conditions_are_checked_in_order():
     everything_wrong["headers"] = [h for h in everything_wrong["headers"]
                                    if h[0] != b"x-forwarded-for"]
     assert check(everything_wrong).condition == "host_not_loopback"
-    everything_wrong["headers"] = [(b"host", b"127.0.0.1:8264"), (b"origin", b"https://x")]
+    everything_wrong["headers"] = [(b"host", b"127.0.0.1:8264"), (b"origin", b"https://x"),
+                                   (b"sec-fetch-site", b"cross-site")]
     assert check(everything_wrong).condition == "origin_mismatch"
+    everything_wrong["headers"][1] = (b"origin", b"http://127.0.0.1:8264")
+    assert check(everything_wrong).condition == "cross_site"
 
 
 def test_every_refusal_says_nothing_was_done_and_names_a_condition():
@@ -332,6 +366,61 @@ def test_the_reload_route_is_refused_before_the_reload_runs(monkeypatch):
                                   headers={"Origin": f"https://{CANARY}.example"})
     assert response.status_code == 403
     assert "another website" in response.json()["error"] and CANARY not in response.text
+
+
+def test_the_reload_route_runs_the_reload_on_the_event_loop(monkeypatch):
+    """The route calls `run_reload` on the event loop, never in a thread, as
+    the dashboard's Reload does (`test_the_reload_handler_runs_the_reload_on_
+    the_event_loop`): two reloads, or a reload and a diagnosis, then never run
+    side by side, whichever entrance each came through (BACKLOG 28)."""
+    import asyncio
+
+    from src.api.routes import pipeline
+
+    assert inspect.iscoroutinefunction(pipeline.reload_pipeline)
+    assert not inspect.iscoroutinefunction(pipeline.run_reload)
+    where = []
+
+    def reload_spy(request):
+        try:
+            asyncio.get_running_loop()
+            where.append("event loop")
+        except RuntimeError:
+            where.append("worker thread")
+        return pipeline._refused("spy", {})
+
+    monkeypatch.setattr(pipeline, "run_reload", reload_spy)
+    operator_mode(monkeypatch)
+    _app_client().post("/api/v1/pipeline/reload", json={"data_dir": "x"})
+    assert where == ["event loop"]
+
+
+@pytest.mark.parametrize("url, service", [
+    ("/api/v1/training/checkpoints", "get_checkpoints"),
+    ("/api/v1/workspaces/demo/checkpoints", "list_checkpoints"),
+])
+def test_another_sites_image_cannot_make_either_checkpoint_list_open_a_file(
+        monkeypatch, url, service):
+    """An ``<img>`` on another site's page sends a GET with no Origin; its
+    Sec-Fetch-Site refuses it before a checkpoint is opened (C3), while the
+    same address typed in the browser's address bar is served."""
+    from src.api.services import server_lists
+    from src.api.services.training_manager import training_manager
+
+    reached = []
+    monkeypatch.setattr(training_manager, "get_checkpoints",
+                        lambda *a, **k: reached.append("get_checkpoints") or [])
+    monkeypatch.setattr(server_lists, "list_checkpoints",
+                        lambda *a, **k: reached.append("list_checkpoints")
+                        or server_lists.Listing(()))
+    operator_mode(monkeypatch)
+    image = dict(CROSS_SITE_IMAGE)
+    refused = _app_client().get(url, headers=image)
+    assert refused.status_code == 403 and reached == []
+    assert "another website" in refused.json()["error"]
+    typed = _app_client().get(url, headers={"Sec-Fetch-Site": "none",
+                                            "Sec-Fetch-Mode": "navigate"})
+    assert typed.status_code == 200 and reached == [service]
 
 
 def test_the_status_route_answers_for_the_request_that_asks(monkeypatch):
@@ -527,7 +616,8 @@ def _dashboard_calls():
     ("M1", "http://192.0.2.10", {}),
     ("M1", OPERATOR_BASE_URL, {"X-Forwarded-For": "203.0.113.9"}),
     ("M1", OPERATOR_BASE_URL, {"Origin": "https://evil.example"}),
-], ids=["mode-unset", "lan", "forwarded", "foreign-origin"])
+    ("M1", OPERATOR_BASE_URL, {"Sec-Fetch-Site": "cross-site"}),
+], ids=["mode-unset", "lan", "forwarded", "foreign-origin", "cross-site"])
 def test_a_direct_call_to_a_gated_event_meets_the_same_refusal(
         dashboard_app, spies, monkeypatch, tmp_path, mode, base_url, headers):
     """Every gated event, called through Gradio's HTTP API: refused, its
@@ -568,7 +658,7 @@ def test_a_direct_call_from_an_operator_on_loopback_reaches_each_service(
 # --------------------------------------------------------------------------- CORS and uploads
 @pytest.mark.parametrize("base_url", [OPERATOR_BASE_URL, "http://192.0.2.10:8264"],
                          ids=["loopback-host", "lan-host"])
-def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url):
+def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url, monkeypatch):
     """No Access-Control-Allow-Origin for another origin, on /api, on the
     dashboard's config and on `file=`, whatever Host; preflights refused. The
     request itself still reaches the server, which is why D8, not CORS, guards
@@ -584,18 +674,26 @@ def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url):
         assert preflight.status_code == 400
         assert "access-control-allow-origin" not in preflight.headers
     with _dashboard_client(dashboard_app, base_url) as client:
-        uploaded = client.post("/ui/gradio_api/upload",
-                               files={"files": ("note.txt", b"just text", "text/plain")})
-        assert uploaded.status_code == 200, uploaded.text
-        (path,) = uploaded.json()
-        for url in ("/ui/config", f"/ui/gradio_api/file={path}"):
+        # A real file= download: the Training Console's metrics export.
+        from src.api.services.training_manager import training_manager
+
+        monkeypatch.setattr(training_manager, "get_metrics_history",
+                            lambda: {"train": [{"epoch": 0, "total": 1.5}], "validation": []})
+        dashboard = _Dashboard(client, dashboard_app)
+        export = next(getattr(d.fn, "__wrapped__", d.fn) for d in dashboard.blocks.fns.values()
+                      if (d.api_name or "").startswith("_handle_export"))
+        (output,) = dashboard.call(export, [])
+        url = output.get("value", output)["url"]
+        path = url[url.index("/ui/gradio_api/file="):]
+        for url in ("/ui/config", path):
             response = client.get(url, headers=foreign)
             assert response.status_code == 200, url
             assert "access-control-allow-origin" not in response.headers, url
             assert "access-control-allow-credentials" not in response.headers, url
-        for url in ("/ui/gradio_api/queue/join", "/ui/gradio_api/upload"):
+        # The upload route is refused in front of CORS (403), preflight or not.
+        for url, refused in (("/ui/gradio_api/queue/join", 400), ("/ui/gradio_api/upload", 403)):
             preflight = client.options(url, headers=preflight_headers)
-            assert preflight.status_code == 400, url
+            assert preflight.status_code == refused, url
             assert "access-control-allow-origin" not in preflight.headers, url
         same = client.get("/ui/config", headers={"Origin": base_url})
         assert same.status_code == 200
@@ -614,17 +712,21 @@ def test_the_parent_cors_middleware_is_the_class_gradio_defers_to():
     assert cors.kwargs == {"allow_origins": []}
 
 
-def test_an_upload_larger_than_the_limit_is_refused(dashboard_app):
-    """The dashboard has no upload control; the limit bounds what a
-    cross-origin multipart POST can write into GRADIO_TEMP_DIR."""
+@pytest.mark.parametrize("headers", [{"Origin": "https://evil.example"}, {}],
+                         ids=["cross-origin", "same-origin"])
+def test_the_upload_route_is_refused_whoever_posts(dashboard_app, headers):
+    """The dashboard has no upload control, and another site's page can post
+    a multipart body with no preflight, up to 1000 files a request: the route
+    and its progress stream are refused in front of the mount, whatever the
+    origin (`test_dashboard_mount.py` checks nothing is written). The per-file
+    limit stays as a second line of defence."""
+    from src.api.middleware.gradio_routes import REFUSALS
     from src.webui.app import MAX_UPLOAD_SIZE, mount_options
 
     assert mount_options()["max_file_size"] == MAX_UPLOAD_SIZE == "1mb"
-    with _dashboard_client(dashboard_app) as client:
-        small = client.post("/ui/gradio_api/upload",
-                            files={"files": ("ok.txt", b"x" * 1024, "text/plain")})
-        large = client.post("/ui/gradio_api/upload",
-                            files={"files": ("big.bin", b"x" * (1024 * 1024 + 1),
-                                             "application/octet-stream")})
-    assert small.status_code == 200
-    assert large.status_code == 413 and "maximum allowed size" in large.text
+    files = [("files", (f"f{i}.txt", b"x" * 1024, "text/plain")) for i in range(20)]
+    with _dashboard_client(dashboard_app, headers=headers) as client:
+        uploaded = client.post("/ui/gradio_api/upload", files=files)
+        progress = client.get("/ui/gradio_api/upload_progress", params={"upload_id": "x"})
+    assert uploaded.status_code == 403 and uploaded.text == REFUSALS["upload"]
+    assert progress.status_code == 403

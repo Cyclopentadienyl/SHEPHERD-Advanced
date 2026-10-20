@@ -1148,7 +1148,7 @@ The registry is a directory **you create**, given to every command as an **absol
 the repository**. A relative path, a path that does not exist, and a path that resolves inside
 the repository (through a symlink too) are refused. Nothing creates it for you, and no request
 names it. The commands take it as `--registry`; the service reads it from `SHEPHERD_REGISTRY`
-(§4.11), checked by the same rule.
+(§4.12), checked by the same rule.
 
 The directories below it are checked too. Each one (`sources/`, `versions/`, a version's
 directory, its `reports/` and each run directory) is resolved again just before anything is
@@ -1586,7 +1586,7 @@ The dashboard is mounted with these settings, whatever the `GRADIO_*` environmen
 | `ssr_mode=False` | Server-side rendering starts a Node.js process |
 | `analytics_enabled=False` | On the dashboard itself, since 2026-10-12: no usage analytics and no version check |
 
-**CORS** is tightened since M5-1, together with D8 (§4.12): **by default no cross-origin
+**CORS** is tightened since M5-1, together with D8 (§4.13): **by default no cross-origin
 browser access is granted; administrative operations are still checked by D8 in the backend.**
 The parent app keeps its `CORSMiddleware`, now with an empty allow list (`src/api/main.py`), and
 since Gradio 6.25 a mounted app adds no CORS headers of its own when the parent app has exactly
@@ -1598,8 +1598,9 @@ responses of `/api/*` and `/ui/gradio_api/*`. It no longer can.
 
 ### The route guard
 
-Gradio 6.30 adds two routes to every mounted app that cannot be switched off upstream. The
-service refuses both before Gradio sees the request (`src/api/middleware/gradio_routes.py`):
+Gradio 6.30 adds two routes to every mounted app that cannot be switched off upstream, and keeps
+an upload route the dashboard does not use. The service refuses them before Gradio sees the
+request (`src/api/middleware/gradio_routes.py`):
 
 - **`/ui/gradio_api/file=<URL>`** (and the older `file/<URL>`). Since Gradio 6.20 (issue
   #13593, PR #13596) the server fetches an `http(s)://` target itself, ignoring `HTTPS_PROXY`,
@@ -1610,6 +1611,10 @@ service refuses both before Gradio sees the request (`src/api/middleware/gradio_
   temporary files and may run ffmpeg. The screen recorder in Gradio's Settings panel therefore
   says "Failed to process recording. Saving original version." and saves the unprocessed
   recording in the browser.
+- **`/ui/gradio_api/upload`** and its progress stream `upload_progress` (since M5-1). The
+  dashboard has no upload control, and another site's page can post files there with no
+  preflight: Gradio writes up to 1000 files a request into its temporary directory and never
+  removes them.
 
 A refusal is `403` with a one-line reason and `connection: close`. The request body is not
 read, and the request log shows the refusal like any other response. Local downloads are not
@@ -1733,7 +1738,7 @@ exit codes of both CLIs are unchanged: a busy lock is a refusal before anything 
 
 ---
 
-## 4.11 Server settings and the server's lists (since M5-1, 2026-10-20)
+## 4.12 Server settings and the server's lists (since M5-1, 2026-10-20)
 
 M5's controls act on what the server lists, never on a path a request names (D7, D8). What the
 server lists, and the deployment mode its operator controls depend on, come from **environment
@@ -1745,7 +1750,7 @@ repository's `data/workspaces/` included.
 
 | Variable | Value | Unset or refused |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.12) |
+| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.13) |
 | `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces | no workspace is listed |
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository | no cohort version is listed |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
@@ -1763,7 +1768,7 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   forwarding, operated by the owner or a designated technician (§4.9 question 3). It is one of the
   conditions an operator control checks, not an authorisation. D8 checks each request it handles
   for the others. Do not set it behind a reverse proxy or on a machine other people can log in to.
-- **The deployment mode is applied by D8** (§4.12), on every operator control at the moment it
+- **The deployment mode is applied by D8** (§4.13), on every operator control at the moment it
   handles a request: unset or any other value, each one is refused and the deployment is
   read-only for them. Diagnosis, the status pages and the read-only lists work either way.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
@@ -1814,14 +1819,14 @@ and a file, or a label, and the server finds that name in its own list again.
   `current`. Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3),
   and D8 offers that only where the operator controls are: it is served as
   `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=gat`, say, for one architecture)
-  behind D8's check (§4.12), and a refused request opens nothing.
+  behind D8's check (§4.13), and a refused request opens nothing.
 - **The existing checkpoint list** (`GET /api/v1/training/checkpoints` and the Training
   Console's resume list) reads each file the same way. Each entry gains `sha256`, `validation`,
   `dataset_fingerprint` and `metadata_problem`, all from the one read. Before, it loaded each
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
   left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
-  controls (§4.12), the route and the Training Console's run list alike.
+  controls (§4.13), the route and the Training Console's run list alike.
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
@@ -1830,9 +1835,13 @@ and a file, or a label, and the server finds that name in its own list again.
   listed by run id, and each run says whether its report is kept and whether it is registered
   (`kept`, `registered`, each with its reason, the report's digest and the record's sequence),
   from the registration's own reading of the store and of the ledger beside the checkpoint the
-  report records it measured. A report that names its checkpoint by a relative path, or that
-  cannot be read, has no ledger to look in: `registered` is then `cannot_be_checked`, saying
-  why. A checkpoint moved since the run is looked for where the run read it.
+  report records it measured. `registered` is `registered` when that ledger names the report,
+  and otherwise `cannot_be_checked`, never `not_registered`: a registration filed beside
+  another copy of the same weights (`record_evaluation --checkpoint` takes any file with the
+  measured bytes) is not looked for, and the reason names the ledger that was. A report that
+  names its checkpoint by a relative path, or that cannot be read, has no ledger to look in:
+  `registered` is then `cannot_be_checked` too, saying why. A checkpoint moved since the run is
+  looked for where the run read it.
 
 ### The build time: `workspace_build.json`
 
@@ -1866,7 +1875,7 @@ Since M5-1, every build through the workspace writer (`scripts/build_knowledge_g
 
 ---
 
-## 4.12 Operator controls, the bind and CORS (since M5-1, 2026-10-20)
+## 4.13 Operator controls, the bind and CORS (since M5-1, 2026-10-20)
 
 M5 runs under SPEC_4's deployment mode **M1**: the owner or a designated technician operates the
 service on the machine, or from elsewhere through SSH forwarding (§4.9 question 3). Three things
@@ -1878,7 +1887,7 @@ changed together, and a deployment may need to act on each:
 
 ### What an operator sets
 
-Set `SHEPHERD_DEPLOYMENT_MODE=M1` where the service starts (§4.11; in the systemd unit, the
+Set `SHEPHERD_DEPLOYMENT_MODE=M1` where the service starts (§4.12; in the systemd unit, the
 commented `Environment=` line) and restart it. Unset or any other value, every operator control
 is refused and the deployment is read-only for them. Diagnosis, the lookups, the status pages and
 the read-only lists keep working.
@@ -1910,7 +1919,15 @@ when all of these hold:
 4. it was addressed to `localhost`, `127.0.0.1` or `[::1]`, with any port (its `Host` header),
    which guards against DNS rebinding;
 5. if it carries an `Origin`, that is the dashboard's own address (`http://` or `https://`, the
-   same host and port), so a page on another website cannot trigger a control from your browser.
+   same host and port). A browser sends the page's origin with every `POST` and with every
+   cross-origin request a script makes;
+6. if it carries `Sec-Fetch-Site`, that says `same-origin` (the dashboard's own page) or `none`
+   (a request you started outside any web page: the address bar, a bookmark, a link opened from
+   another program). A browser sends **no** `Origin` on a `GET` that
+   another site's page makes with an image, a script or a link, and current browsers (Chrome and
+   Edge 76, Firefox 90, Safari 16.4 and later) say here where it came from: `cross-site`, or
+   `same-site` for another port of the same host. So a page on another website cannot trigger a
+   control from a current browser, the two checkpoint lists included.
 
 A request whose arrival cannot be read is refused. The checks are in the backend: a greyed-out
 button is only a display, and a direct call, to the API or to a dashboard event through Gradio's
@@ -1940,7 +1957,8 @@ not, turned every later diagnosis from the demo answer into "configured but not 
 an SSH forward of their own too, passes. M1 therefore means one verified workspace deployment
 operated by its owner or a designated technician. A reverse proxy on the same host that adds no
 forwarding header is excluded by this guide, not detected: do not put one in front of an M1
-service.
+service. An old browser that sends neither `Origin` nor `Sec-Fetch-Site` on such a `GET` is not
+caught by condition 6: operate the dashboard from a current browser.
 
 ### Operating from another machine: SSH forwarding
 
@@ -1965,17 +1983,29 @@ src.api.main` bind `127.0.0.1` unless told otherwise, and the launcher prints wh
 [SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
 ```
 
-**A bind to any other address is refused and nothing is started** (the launcher exits 2) unless
-`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` is set, because the service has no
-authentication. That flag is **risk acceptance, not a control**: it authenticates nobody, and it
-never lifts D8, so on a network bind the operator controls stay refused for every request that
-does not arrive on loopback, while diagnosis and the read-only pages are open to whoever reaches
-the address. The launcher prints a `WARNING:` line that says so. The launcher always starts
-uvicorn with `--no-proxy-headers`, last on its command line, so the client address uvicorn
-reports is the connection's.
+**A bind to any other address is refused and nothing is started** (the launcher exits 2, before
+it installs anything) unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` is set, because the
+service has no authentication. That flag is **risk acceptance, not a control**: it authenticates
+nobody, and it never lifts D8, so on a network bind the operator controls stay refused for every
+request that does not arrive on loopback, while diagnosis and the read-only pages are open to
+whoever reaches the address. The launcher prints a `WARNING:` line that says so. The launcher
+always starts uvicorn with `--no-proxy-headers`, last on its command line, so the client address
+uvicorn reports is the connection's.
+
+The launcher reads what uvicorn will listen on as uvicorn does: a socket it is handed (`--fd`,
+as a systemd socket unit passes one) before a unix socket (`--uds`) before the last `--host`,
+each from the command line or else from `UVICORN_FD` / `UVICORN_UDS`. An inherited socket's
+address is not read, so it counts as a network bind and needs the flag. A unix socket reaches
+this machine only and needs none; the operator controls are refused through it (D8 sees no
+loopback address there). For either, the launcher prints the socket instead of a URL and opens
+no browser.
+
+The launcher and `python -m src.api.main` pass the host they bind to the application as
+`SHEPHERD_BIND_HOST`, and application startup applies the same rule to it before serving (a
+refused one ends startup, and uvicorn exits). They set it every time; it is not yours to set.
 
 Not covered: a uvicorn started by hand (`uvicorn src.api.main:app --host 0.0.0.0`), which the
-application cannot see. Use the launcher.
+application cannot see and which passes no host to startup. Use the launcher.
 
 **Migrating a deployment that relied on `0.0.0.0`.** Until M5-1 the launcher and the unit bound
 every interface. After this update:
@@ -2001,9 +2031,11 @@ preflight is answered 400. Same-origin use (the dashboard itself, `curl`, script
 
 CORS only decides what a page may read. A cross-origin request that needs no preflight still
 reaches the server: that is why the operator controls are checked by D8, not by CORS. For the
-same reason Gradio's upload route takes at most 1 MB per file: the dashboard has no upload
-control (import sources come from `SHEPHERD_INTAKE_DIR`), and the limit bounds what another
-site's page could write into Gradio's temporary directory. A larger file is refused with 413.
+same reason Gradio's upload route is refused in front of the dashboard, before the request body
+is read (§4.10, the route guard): the dashboard has no upload control (import sources come from
+`SHEPHERD_INTAKE_DIR`), and another site's page could otherwise write up to 1000 files a request
+into Gradio's temporary directory. Gradio's limit of 1 MB per file stays as a second line of
+defence; it bounds each file, not their number.
 
 ---
 

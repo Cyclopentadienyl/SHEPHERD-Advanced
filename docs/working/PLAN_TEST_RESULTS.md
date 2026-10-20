@@ -901,7 +901,12 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   - exactly one `Host`, naming `localhost`, `127.0.0.1` or `[::1]` with any port (the DNS
     rebinding guard, added to D8's three checks);
   - an `Origin`, when present, equal to `http://<Host>` or `https://<Host>` (the cross-site
-    request guard, added likewise).
+    request guard, added likewise);
+  - a `Sec-Fetch-Site`, when present, equal to `same-origin` or `none` (added after review,
+    2026-10-20): a GET another site's page makes with an image, a script or a link carries no
+    Origin, so the Origin check alone let such a page make the server open every checkpoint of
+    a workspace through the two gated lists. Current browsers (Chrome and Edge 76, Firefox 90,
+    Safari 16.4) send the header; an older one that sends neither is not caught on such a GET.
   A refusal names the condition in words an operator can act on, ends "Nothing was done." and
   never repeats a header's value. Gated: the API's reload, configuration save, training start
   and stop, and both checkpoint lists (`GET /training/checkpoints`, and
@@ -1435,9 +1440,11 @@ contract and BACKLOG stay the record, and no new planning document is added.
   No account system or institutional SSO is added. *As implemented (M5-1, 2026-10-20):* the
   launcher, `src.api.main:main()` and the systemd unit bind `127.0.0.1`; a bind to any other
   address is refused, nothing started, unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`
-  (`server_settings.network_bind`), whose warning says it is risk acceptance, not a control; the
-  launcher prints the address it binds and starts uvicorn with `--no-proxy-headers`; migration
-  notes in the deployment guide (§4.12).
+  (`server_settings.network_bind`), whose warning says it is risk acceptance, not a control,
+  at SPEC_4 §3.1's three enforcement points (the launcher, before it installs anything, reading
+  `--fd`, `--uds` and `--host` as uvicorn does; `main()`; and application startup, on the host
+  those two pass in as `SHEPHERD_BIND_HOST`); the launcher prints what it binds and starts
+  uvicorn with `--no-proxy-headers`; migration notes in the deployment guide (§4.13).
 - **One GPU lock for managed training and evaluation jobs** (the reviewer's decisions, relayed by the owner, 2026-10-19). Jobs the
   WebUI or the API start and the formal training and evaluation CLIs (`train_model.py`,
   `measure_scorer.py`) take the same lock, one per deployment whatever the workspace; a busy
@@ -1475,8 +1482,10 @@ contract and BACKLOG stay the record, and no new planning document is added.
   `fastapi.middleware.cors.CORSMiddleware` itself (Gradio defers only to that class, never a
   subclass) with `allow_origins=[]`: no `Access-Control-Allow-Origin` for another origin on
   `/api`, `/ui/config` or `file=`, on a LAN Host too, and every cross-origin preflight is 400;
-  same-origin works. Gradio's upload route takes at most 1 MB per file (`max_file_size`), since
-  a cross-origin multipart POST still reaches it (deployment guide §4.10, §4.12). Platforms are
+  same-origin works. Gradio's upload route, which the dashboard does not use and which a
+  cross-origin multipart POST still reaches (up to 1000 files a request), is refused in front of
+  the mount before its body is read; its 1 MB per-file limit (`max_file_size`) stays as a second
+  line of defence (deployment guide §4.10, §4.13). Platforms are
   accepted on the backends actually run: Linux x86_64 (the development environment) and Linux
   ARM64 (the homelab, checked by the reviewer); Windows browsers are in the browser checks, and
   a Windows backend is marked untested until one exists.

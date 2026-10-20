@@ -910,6 +910,31 @@ class TestRoutes:
         assert set(listed["state"]) == {"kept", "why_kept", "registered", "why_registered",
                                         "report_sha256", "sequence"}
 
+    def test_a_kept_report_not_found_in_its_ledger_is_never_listed_as_not_registered(
+            self, tmp_path):
+        """The list knows only the checkpoint the run read; a registration
+        filed beside another copy of the same weights is not looked for, so
+        no record beside the read one is "cannot be checked", saying which
+        ledger was read (review of M5-1 WP2)."""
+        import hashlib
+
+        from src.api.services.server_lists import stored_report_state
+        from tests.fixtures.report_store import store_report
+        from tests.unit.test_evaluation_sidecar import registered_report
+
+        weights = tmp_path / "runs" / "r1" / "checkpoints" / "best.pt"
+        weights.parent.mkdir(parents=True)
+        weights.write_bytes(b"the weights")
+        report = registered_report(checkpoint_path=str(weights))
+        report["manifest"]["artifact_digests"]["checkpoint"] = hashlib.sha256(
+            b"the weights").hexdigest()
+        stored = store_report(tmp_path / "registry", report)
+
+        state = stored_report_state(stored.parent)
+        assert (state["kept"], state["registered"]) == ("kept", "cannot_be_checked")
+        assert "not registered beside the checkpoint this run read" in state["why_registered"]
+        assert str(weights.parent.resolve() / "evaluations.json") in state["why_registered"]
+
     def test_the_cohort_list_stays_open(self, client, registered, tmp_path, monkeypatch):
         """Read-only: no D8 dependency, even for a request D8 refuses."""
         cohort = _registry_copy(registered, tmp_path)

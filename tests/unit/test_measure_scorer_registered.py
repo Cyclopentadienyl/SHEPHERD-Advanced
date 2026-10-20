@@ -17,7 +17,8 @@ importer), built once per module and copied per test:
   for the same inputs; R10's states for each kind of training record;
 - the report store's commit order; `--record` registers through
   `register_report` into the ledger beside the checkpoint read, without hashing
-  the directory again; a refused registration keeps the report and exits 3.
+  the directory again; a refused registration exits 3 and keeps the report
+  unless it is no longer the one the run published.
 
 The end-to-end acceptance list, through the real CLIs, is
 `tests/integration/test_m4_flow.py`.

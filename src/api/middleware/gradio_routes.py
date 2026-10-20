@@ -1,8 +1,8 @@
 """
-Refuse two Gradio routes the dashboard does not use, before Gradio sees them.
-============================================================================
+Refuse Gradio routes the dashboard does not use, before Gradio sees them.
+=========================================================================
 Gradio 6.30 registers these on every mounted dashboard, and upstream offers no
-switch to turn either off (no ``gr.Blocks``, ``mount_gradio_app`` or
+switch to turn any of them off (no ``gr.Blocks``, ``mount_gradio_app`` or
 ``GRADIO_*`` option; ``allowed_paths`` / ``blocked_paths`` apply only to local
 files):
 
@@ -18,8 +18,17 @@ files):
 * ``POST <mount>/gradio_api/process_recording`` (Gradio 5.31): reads a
   multipart video into temporary files, copies it into ``GRADIO_TEMP_DIR`` and
   may run ffmpeg. Nothing in the dashboard records the screen.
+* ``POST <mount>/gradio_api/upload`` and ``GET <mount>/gradio_api/upload_progress``
+  (M5-1): the upload route writes every file of a multipart body into
+  ``GRADIO_TEMP_DIR``, up to 1000 files a request, and nothing deletes them.
+  The dashboard has no upload control (its files go the other way, as exports,
+  and import sources come from the server's intake directory, never a
+  browser: D7), and CORS does not stop another site's page from sending such
+  a POST, which needs no preflight. ``max_file_size`` (`src/webui/app.py`)
+  bounds each file only, never the count or the requests, so the route itself
+  is refused.
 
-This middleware answers both with 403, a one-line reason and
+This middleware answers each with 403, a one-line reason and
 ``connection: close``, and never calls ``receive()``: the request body is not
 read and nothing is written. Every other request passes through untouched,
 local ``file=`` downloads (GET, HEAD and Range) included.
@@ -55,6 +64,14 @@ _PROTOCOL_OR_UNC = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+\-.]*://|//|\\\\|\\/|/\\)
 REFUSALS = {
     "file-url": "Refused: this server does not fetch external URLs through file=.",
     "process_recording": "Refused: screen-recording processing is disabled on this server.",
+    "upload": "Refused: the dashboard takes no file uploads; nothing was written.",
+}
+
+#: The routes refused whole, after the API prefix, by the refusal each gets.
+_REFUSED_ROUTES = {
+    "process_recording": "process_recording",
+    "upload": "upload",
+    "upload_progress": "upload",
 }
 
 
@@ -71,7 +88,8 @@ def _route_path(scope: Scope) -> str:
 
 
 class RefuseUnusedGradioRoutes:
-    """403 for ``file=<URL>`` and ``process_recording`` under one Gradio mount."""
+    """403 for ``file=<URL>``, ``process_recording``, ``upload`` and
+    ``upload_progress`` under one Gradio mount."""
 
     def __init__(self, app: ASGIApp, mount_path: str = "/ui") -> None:
         self.app = app
@@ -83,8 +101,9 @@ class RefuseUnusedGradioRoutes:
         if not path.startswith(self.api_prefix):
             return None
         rest = path[len(self.api_prefix):]
-        if rest.rstrip("/") == "process_recording":
-            return "process_recording"
+        whole = _REFUSED_ROUTES.get(rest.rstrip("/"))
+        if whole is not None:
+            return whole
         for form in ("file=", "file/"):
             if rest.startswith(form) and _PROTOCOL_OR_UNC.match(rest[len(form):]):
                 return "file-url"

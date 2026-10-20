@@ -134,7 +134,15 @@ async def lifespan(app: FastAPI):
     Application lifespan manager
 
     Handles startup and shutdown events.
+
+    **The bind guard's third enforcement point** (SPEC_4 §3.1), first: the
+    host the launcher or `main()` passed in (`SHEPHERD_BIND_HOST`) goes
+    through the same rule they applied (`server_settings.startup_bind`), and
+    a refused one ends startup by raising, so uvicorn exits without serving.
+    None passed in (a uvicorn started by hand) is not checked, as §3.1 says.
     """
+    _check_startup_bind()
+
     # Startup
     logger.info("Starting SHEPHERD-Advanced API...")
     app_state.start_time = datetime.now()
@@ -190,6 +198,23 @@ async def lifespan(app: FastAPI):
     app_state.is_ready = False
 
 
+def _check_startup_bind() -> None:
+    """Raise `RuntimeError` when the host passed in to startup is a bind
+    `network_bind` refuses; log the warning of an accepted network bind."""
+    from src.config.server_settings import ENV_BIND_HOST, startup_bind
+
+    decision = startup_bind()
+    if decision is None:
+        return
+    if not decision.allowed:
+        message = (f"Startup refused: {ENV_BIND_HOST}, the address the launcher or "
+                   f"src.api.main:main() passed in, is {decision.host!r}; {decision.message}")
+        logger.error(message)
+        raise RuntimeError(message)
+    if decision.message:
+        logger.warning(decision.message)
+
+
 # =============================================================================
 # FastAPI Application
 # =============================================================================
@@ -223,10 +248,12 @@ app.add_middleware(RecordServerAddress)
 #: Where the Gradio dashboard is mounted (below).
 DASHBOARD_PATH = "/ui"
 
-# Two routes Gradio registers on the dashboard with no switch to turn them off
-# (`file=<URL>`, fetched server-side, and `process_recording`) are refused here,
-# before the body is read. Added after RecordServerAddress and before the
-# request logging below, so it runs inside the logging and each refusal is logged.
+# The routes Gradio registers on the dashboard with no switch to turn them off
+# and the dashboard does not use (`file=<URL>`, fetched server-side,
+# `process_recording`, and `upload` with its progress stream, which another
+# site's page can post to) are refused here, before the body is read. Added
+# after RecordServerAddress and before the request logging below, so it runs
+# inside the logging and each refusal is logged.
 app.add_middleware(RefuseUnusedGradioRoutes, mount_path=DASHBOARD_PATH)
 
 
@@ -698,19 +725,21 @@ def main(host: Optional[str] = None, port: int = 8000):
 
     **The bind guard** (SPEC_4 §3.1): a bind other than loopback is refused
     (`network_bind`) unless ``SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1``,
-    which accepts the risk and is no control. Proxy headers are not trusted:
-    the client address uvicorn reports is the socket's, though D8 never reads
-    it anyway.
+    which accepts the risk and is no control. The host goes to application
+    startup as ``SHEPHERD_BIND_HOST``, which checks it again (`lifespan`).
+    Proxy headers are not trusted: the client address uvicorn reports is the
+    socket's, though D8 never reads it anyway.
     """
     import uvicorn
 
-    from src.config.server_settings import DEFAULT_BIND_HOST, network_bind
+    from src.config.server_settings import DEFAULT_BIND_HOST, ENV_BIND_HOST, network_bind
 
     decision = network_bind(DEFAULT_BIND_HOST if host is None else host)
     if not decision.allowed:
         raise SystemExit(f"src.api.main: {decision.message}")
     if decision.message:
         logger.warning(decision.message)
+    os.environ[ENV_BIND_HOST] = decision.host
     uvicorn.run(
         "src.api.main:app",
         host=decision.host,

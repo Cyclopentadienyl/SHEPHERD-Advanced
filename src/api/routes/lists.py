@@ -13,7 +13,11 @@ request.
   only (never a case identifier, D7) and their report stores' runs, each with
   whether its report is kept and registered as the registration reads them
   from the store and the ledger (`server_lists.stored_report_state`).
-  Read-only and open.
+  Read-only and open. ``registered`` is read from the ledger beside the
+  checkpoint the report records: ``registered`` when that ledger names it,
+  ``cannot_be_checked`` otherwise, never ``not_registered``, since a
+  registration filed beside another copy of the same weights is not looked
+  for (the reason names the ledger that was).
 - `GET /workspaces/{name}/checkpoints`: a listed workspace's checkpoints. It
   opens every checkpoint of the workspace (SPEC_4 C3), which D8 offers only
   where the operator controls are, so it takes D8's one dependency
@@ -46,7 +50,11 @@ def get_workspaces() -> Dict[str, Any]:
 @router.get("/cohorts")
 def get_cohort_versions() -> Dict[str, Any]:
     """The cohort versions in the server's registry, by label and digest, with
-    each kept run's kept and registered state read from the disk."""
+    each kept run's kept and registered state read from the disk. Without a
+    checkpoint file, ``registered`` is either ``registered`` (the ledger beside
+    the checkpoint the report records names it) or ``cannot_be_checked``; a
+    list never says ``not_registered``, because a registration beside another
+    copy of the same weights is not looked for."""
     return server_lists.list_cohort_versions(
         report_state=server_lists.stored_report_state).as_dict("versions")
 

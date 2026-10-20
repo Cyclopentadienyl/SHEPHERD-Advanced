@@ -39,8 +39,9 @@ ranks, patient-level, so kept in the registry outside the repository) and then
 commit point. Each file is staged and renamed into place (`publish_bytes`), and
 the run directory is new for every run, so no report is ever overwritten.
 `--record` registers it right away through the one registration function the
-later `scripts/record_evaluation.py --report` uses; a refused registration keeps
-the report and exits 3. Each run is appended to the version's usage history
+later `scripts/record_evaluation.py --report` uses; a refused registration exits
+3, and the report is kept unless it is no longer the one the run published (see
+the exit status below). Each run is appended to the version's usage history
 right after its report is published (`src/evaluation/report_store.py`), so a
 run from the command line counts as one started from the Test tab.
 
@@ -851,9 +852,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--record", action="store_true",
                         help="Register the kept report in evaluations.json beside the "
                              "checkpoint, as scripts/record_evaluation.py --report "
-                             "would. A refused registration keeps the report and exits "
-                             "3. --cohort only: a generated split's report is not "
-                             "registered")
+                             "would. A refused registration exits 3; the report is kept "
+                             "unless it is no longer the one the run published. --cohort "
+                             "only: a generated split's report is not registered")
     parser.add_argument("--output", type=Path, default=None,
                         help="Where a generated split's measurement JSON is written; the "
                              "per-sample ranks go beside it, as <output stem>_ranks.json. "

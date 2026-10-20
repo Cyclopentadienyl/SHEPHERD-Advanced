@@ -7,6 +7,7 @@ import pytest
 
 from src.config.server_settings import (
     ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND,
+    ENV_BIND_HOST,
     ENV_DEPLOYMENT_MODE,
 )
 from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
@@ -36,6 +37,13 @@ def _no_deployment_access_settings(monkeypatch):
     D8's check on every loopback request, and a test meant to see a refusal
     would see the control run. A test that needs mode M1, or the network-bind
     acceptance, sets it with `monkeypatch` (tests/fixtures/operator_access.py).
+    The host the launcher passes to startup is cleared too: a suite run from a
+    shell that holds one would have every application startup check it. It is
+    set before it is removed so that the teardown removes it again whatever
+    the test did: `src.api.main:main()` sets it in the process environment,
+    which a plain ``delenv`` of an unset variable would not undo.
     """
     monkeypatch.delenv(ENV_DEPLOYMENT_MODE, raising=False)
     monkeypatch.delenv(ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, raising=False)
+    monkeypatch.setenv(ENV_BIND_HOST, "")
+    monkeypatch.delenv(ENV_BIND_HOST)

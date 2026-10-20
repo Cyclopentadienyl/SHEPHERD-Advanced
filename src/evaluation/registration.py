@@ -615,10 +615,17 @@ def report_state(
     - **Without** ``checkpoint`` (the server's list of a version's kept
       reports, which knows no checkpoint file; M5-1), the ledger is the one
       beside the checkpoint the report's manifest records, taken from the same
-      read when that path is absolute (`_recorded_checkpoint`). A report that
-      cannot be read, or records no absolute path, has no ledger to read:
-      ``cannot_be_checked``, saying why. A checkpoint moved since the run is
-      looked for where the run read it, and the reason names that ledger.
+      read when that path is absolute (`_recorded_checkpoint`). A record there
+      naming the report is ``registered``. **None there is**
+      ``cannot_be_checked``, **never** ``not_registered``: `register_report`
+      files a record in the ledger beside whichever copy of the weights it is
+      given (`record_evaluation --checkpoint` takes any file with the same
+      bytes), and only the copy the run read is known here, so a registration
+      beside another copy cannot be ruled out. The reason names the ledger
+      looked in and says so. A report that cannot be read, or records no
+      absolute path, has no ledger to read: ``cannot_be_checked``, saying why.
+      A checkpoint moved since the run is looked for where the run read it,
+      and the reason names that ledger.
 
     Reads the report once (`read_report`) and the ledger once (`read_ledger`);
     writes nothing. A link retargeted between the run and this call moves the
@@ -688,10 +695,15 @@ def report_state(
                                f"record {sequence} in {ledger_path} names this report",
                                digest, sequence if type(sequence) is int else None,
                                ledger_path)
-    return ReportState(kept, why_kept, "not_registered",
-                       f"{ledger_path} holds no record naming this report"
-                       if ledger_path.exists() else f"there is no {ledger_path}",
-                       digest, None, ledger_path)
+    looked = (f"{ledger_path} holds no record naming this report" if ledger_path.exists()
+              else f"there is no {ledger_path}")
+    if checkpoint is None:
+        return ReportState(kept, why_kept, "cannot_be_checked", (
+            f"not registered beside the checkpoint this run read ({looked}); a ledger beside "
+            "another copy of the same weights, where a registration naming that copy is filed, "
+            "is not looked for without the checkpoint, so whether this report is registered "
+            "cannot be checked here"), digest, None, ledger_path)
+    return ReportState(kept, why_kept, "not_registered", looked, digest, None, ledger_path)
 
 
 __all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun", "REGISTERED_STATES",

@@ -105,6 +105,7 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
 
     def _execve(program, argv, environ):
         record["exec"].append(list(argv))
+        record["exec_env"] = dict(environ)
         raise _ExecReachedError
 
     monkeypatch.setattr(launcher, "run", lambda cmd, check=False: (
@@ -125,6 +126,7 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
         record["status"] = launcher.main()
     except _ExecReachedError:
         record["status"] = None
+    record["environ"] = dict(launcher.os.environ)
     started = record["exec"] or record["run"]
     record["server"] = started[-1] if started else None
     if record["server"] is not None:
@@ -177,6 +179,79 @@ def test_risk_acceptance_starts_a_network_bind_and_says_it_is_no_control(monkeyp
     out = capsys.readouterr().out
     assert "WARNING: binding all interfaces" in out and "not a control" in out
     assert "Listening on          : 0.0.0.0:8000 (all interfaces)" in out
+
+
+def test_the_bind_guard_refuses_before_anything_is_installed(monkeypatch, capsys):
+    """A refused bind starts nothing, a pip install of an accelerator
+    included: the guard runs right after the arguments are read."""
+    done = _run_launcher(monkeypatch, ["--no-browser", "--xformers", "--", "--host", "0.0.0.0"])
+    assert done["status"] == 2 and done["server"] is None
+    assert done["installs"] == []
+    assert "ERROR: refusing to bind all interfaces" in capsys.readouterr().out
+
+
+def test_the_host_bound_is_passed_to_application_startup(monkeypatch):
+    """SPEC_4 §3.1's third enforcement point reads SHEPHERD_BIND_HOST, which
+    the launcher sets to the host uvicorn binds, over any value inherited."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env={"SHEPHERD_BIND_HOST": "0.0.0.0"})
+    assert done["exec_env"]["SHEPHERD_BIND_HOST"] == "127.0.0.1"
+    done = _run_launcher(
+        monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host=0.0.0.0"],
+        env={"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"})
+    assert done["exec_env"]["SHEPHERD_BIND_HOST"] == "0.0.0.0"
+
+
+@pytest.mark.parametrize("app_args, env", [
+    (["--fd", "3"], {}), (["--fd=3"], {}), ([], {"UVICORN_FD": "3"}),
+    (["--uds", "/run/shepherd.sock", "--fd", "3"], {}),
+], ids=["fd", "fd-equals", "fd-from-environment", "fd-beside-uds"])
+def test_a_socket_handed_to_uvicorn_counts_as_a_network_bind(monkeypatch, capsys, app_args,
+                                                             env):
+    """uvicorn listens on an inherited socket (--fd, or UVICORN_FD) before
+    --host, and a socket unit's ListenStream binds every interface: its
+    address is not read here, so it needs the risk acceptance, and the
+    launcher never calls it loopback."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--", *app_args],
+                         env=env)
+    assert done["status"] == 2 and done["server"] is None
+    out = capsys.readouterr().out
+    assert "ERROR: refusing to serve on the inherited socket (file descriptor 3)" in out
+    assert "loopback: this machine only" not in out
+
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--", *app_args],
+                         env={**env, "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"})
+    assert done["exec"]
+    out = capsys.readouterr().out
+    assert "WARNING: serving on the inherited socket (file descriptor 3)" in out
+    assert ("Listening on          : the inherited socket (file descriptor 3), whose address "
+            "is not read here") in out
+    assert "http://127.0.0.1:8000/ui" not in out and "no URL is shown" in out
+    assert "SHEPHERD_BIND_HOST" not in done["exec_env"]
+
+
+@pytest.mark.parametrize("app_args, env", [
+    (["--uds", "/run/shepherd.sock"], {}), (["--uds=/run/shepherd.sock"], {}),
+    ([], {"UVICORN_UDS": "/run/shepherd.sock"}),
+], ids=["uds", "uds-equals", "uds-from-environment"])
+def test_a_unix_socket_is_shown_as_its_path_not_as_a_url(monkeypatch, capsys, app_args, env):
+    """A unix socket is reachable on this machine only (no acceptance needed),
+    has no URL to show or open, and passes no host to startup."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--", *app_args],
+                         env={**env, "SHEPHERD_BIND_HOST": "0.0.0.0"})
+    assert done["status"] == 0 and done["run"]
+    assert done["browsers"] == 0
+    out = capsys.readouterr().out
+    assert "Listening on          : unix socket /run/shepherd.sock (this machine only" in out
+    assert "http://" not in out and "No browser is opened" in out
+    assert "SHEPHERD_BIND_HOST" not in done["environ"]
+
+
+def test_an_empty_socket_variable_is_unset_as_uvicorn_reads_it(monkeypatch, capsys):
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env={"UVICORN_FD": "", "UVICORN_UDS": ""})
+    assert done["exec"]
+    assert "Listening on          : 127.0.0.1:8000 (loopback" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("value", ["0", "true", "yes", " 1"])
