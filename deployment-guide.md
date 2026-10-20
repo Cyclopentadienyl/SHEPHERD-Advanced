@@ -1806,6 +1806,65 @@ checkpoint 檔核對報告。
 
 ---
 
+## 4.10 Gradio 6.30.0 上的儀表板（自 M5 起，2026-10-20）
+
+`/ui` 的儀表板現在執行於 **Gradio 6.30.0**（原為 5.29.1）。`pyproject.toml` 精確鎖定此版本，
+`uv.lock` 只改了它強制帶來的部分：gradio-client 2.7.2、starlette 1.9.0 與 huggingface-hub
+1.16.1，新增 brotli 1.2.0 與 hf-gradio 0.4.1，不再需要 aiofiles 與 ffmpy。其他套件的版本都沒有
+改變。
+
+**拉取這個版本後請執行 `uv sync --inexact`**（或重新執行 `deploy.sh` / `deploy.cmd`，兩者做的
+是同一件事；`--inexact` 會保留 deploy 腳本在 lock 之外安裝的 PyG 擴充，見 `requirements.txt`）。
+沒有退回 Gradio 5 的路徑：若仍裝著 5.29.1，服務會啟動、REST API 可用，但日誌會出現
+`Failed to mount Gradio dashboard: mount_gradio_app() got an unexpected keyword argument 'theme'`，
+而且沒有 `/ui`。
+
+### 關閉了什麼，以及原因
+
+儀表板以下列設定掛載，不論 `GRADIO_*` 環境變數怎麼設（`src/webui/app.py` 的 `mount_options`）：
+
+| 設定 | 原因 |
+|---|---|
+| `run_history=False` | 否則 Gradio 6 會在瀏覽器中記錄每次呼叫的輸入與輸出，並提供存到 Hugging Face bucket 的選項。診斷的輸入是病人的表型。run history 頁面回 404 |
+| `enable_monitoring=False` | 未設定時，`/ui/monitoring/summary` 會提供佇列的事件分析資料。現在回 403 |
+| `mcp_server=False` | 否則會把儀表板的每個事件公開為 MCP 工具。相關 routes 不存在 |
+| `ssr_mode=False` | 伺服器端渲染會啟動一個 Node.js 行程 |
+| `analytics_enabled=False` | 設在儀表板本身，自 2026-10-12 起：不送使用分析，也不檢查版本 |
+
+這一步不改 CORS；CORS 會與 D8 一起收緊。
+
+### route guard
+
+Gradio 6.30 在每個掛載的 app 上加入兩個無法從上游關閉的 routes。服務會在 Gradio 看到請求之前
+拒絕兩者（`src/api/middleware/gradio_routes.py`）：
+
+- **`/ui/gradio_api/file=<URL>`**（以及舊的 `file/<URL>`）。自 Gradio 6.20 起（issue #13593，
+  PR #13596），伺服器會自己抓取 `http(s)://` 目標——不經過 `HTTPS_PROXY`——再以儀表板自己的位址
+  回傳；對某些 URL，它會把遠端的 HTML 頁面以 inline 方式提供，就像儀表板自己的頁面一樣。任何
+  URL scheme 的寫法都會被拒絕：大寫或大小寫混用、percent-encoded、`//host`。
+- **`/ui/gradio_api/process_recording`**：把上傳的螢幕錄影轉成暫存檔，並可能執行 ffmpeg。因此
+  Gradio 設定面板中的螢幕錄影功能會顯示 "Failed to process recording. Saving original
+  version."，並在瀏覽器中存下未處理的錄影。
+
+拒絕的回應是 `403`，附一行原因與 `connection: close`。請求本體不會被讀取，請求日誌會像其他
+回應一樣記下這次拒絕。本機下載不受影響：Training Console 的 metrics CSV，以及 Diagnosis 分頁的
+CSV 與 Markdown 匯出照常下載，`HEAD` 與 `Range` 請求也一樣。
+
+### 儀表板的其他變更
+
+- **Training Console 的圖表**外觀與以前相同（y 軸從 0 開始，每條數列維持自己的顏色）。Epoch
+  Window 現在只篩選資料列，x 軸隨之調整。
+- **Runtime Settings** 在打開分頁時會重新整理重啟鎖定狀態：Gradio 6 不會在尚未打開過的分頁中
+  執行 timer。不論如何，訓練進行中時後端都會拒絕重啟。
+
+### 平台
+
+已測試的後端：Linux x86_64（開發環境）與 Linux ARM64（homelab，由 reviewer 檢查）。
+**Windows 後端尚未以 Gradio 6.30.0 測試**，在有 Windows 後端可測之前一律標為未測試；Windows
+瀏覽器則包含在瀏覽器檢查中。
+
+---
+
 ## 總結：部署檢查清單 ✅
 
 ### Windows x86 + Blackwell
@@ -1818,6 +1877,7 @@ checkpoint 檔核對報告。
 - [ ] ✅ Voyager 可用 (CPU vector search)
 - [ ] ✅ 所有單元測試通過
 - [ ] ✅ 模型可訓練（檢查VRAM使用）
+- [ ] ⚠️ 儀表板使用 Gradio 6.30.0（拉取後執行 `uv sync --inexact`）：Windows 後端尚未測試（§4.10）
 
 ### ARM + Blackwell (DGX Spark)
 
@@ -1829,6 +1889,7 @@ checkpoint 檔核對報告。
 - [ ] ✅ Vector Index: cuVS (GPU) 或 Voyager (CPU fallback)
 - [ ] ✅ 統一記憶體正確識別
 - [ ] ✅ 模型可訓練（檢查128GB優勢）
+- [ ] ✅ 儀表板使用 Gradio 6.30.0（拉取後執行 `uv sync --inexact`；`/ui` 可載入，§4.10）
 
 ---
 

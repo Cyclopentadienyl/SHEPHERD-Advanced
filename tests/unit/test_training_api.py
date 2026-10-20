@@ -574,6 +574,30 @@ class TestContinuationRulesOnResolvedSettings:
         popen.assert_not_called()
 
 
+def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch):
+    """The route's own 422 (settings the service refuses): Starlette 1.x, which
+    Gradio 6.30 brings, renamed 422 after RFC 9110 and warns on the old
+    HTTP_422_UNPROCESSABLE_ENTITY. Same status code, without the warning."""
+    import warnings
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes import training as training_routes
+
+    monkeypatch.setattr(training_routes.training_manager, "start_training",
+                        lambda config, **kwargs: {"success": False, "invalid_settings": True,
+                                                  "error": "refused by the service"})
+    app = FastAPI()
+    app.include_router(training_routes.router, prefix="/api/v1")
+    client = TestClient(app)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        resp = client.post("/api/v1/training/start", json={})
+    assert resp.status_code == 422 and "refused by the service" in resp.text
+    assert not [w for w in caught if "HTTP_422" in str(w.message)], [str(w.message) for w in caught]
+
+
 def torch_load(path):
     import torch
 

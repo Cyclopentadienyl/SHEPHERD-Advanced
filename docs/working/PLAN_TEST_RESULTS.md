@@ -1325,6 +1325,18 @@ contract and BACKLOG stay the record, and no new planning document is added.
   is cooperative, so a GPU process that does not take it is not stopped; the resident
   inference service may still hold memory. No cross-process inference scheduling, multi-GPU
   allocation or automatic model unloading is added.
+- **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
+  boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
+  forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount
+  switches off run history, monitoring, MCP and server-side rendering, and a guard in front of
+  the mount refuses the two routes Gradio gives no switch for, `file=<URL>` (fetched
+  server-side since 6.20) and `process_recording` (deployment guide §4.10; BACKLOG item 34).
+  CORS is tightened in the D8 batch: by default no cross-origin browser access is granted;
+  administrative operations are still checked by D8 in the backend; the parent app keeps its
+  `CORSMiddleware`, with an empty allow list, so the mounted Gradio follows it. Platforms are
+  accepted on the backends actually run: Linux x86_64 (the development environment) and Linux
+  ARM64 (the homelab, checked by the reviewer); Windows browsers are in the browser checks, and
+  a Windows backend is marked untested until one exists.
 - **Several frontends stay possible** (the reviewer's advice on the owner's question, relayed by
   the owner, 2026-10-19). M5 is built for mode M1 and opens nothing on the LAN, but keeps the
   architecture able to serve several frontends through the shared API from one inference

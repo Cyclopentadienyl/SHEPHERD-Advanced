@@ -61,6 +61,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.api.middleware.gradio_routes import RefuseUnusedGradioRoutes
 from src.api.middleware.server_address import RecordServerAddress
 
 # Configure logging
@@ -214,6 +215,15 @@ app.add_middleware(
 # requests on, recorded from each request (`src/utils/server_address.py`).
 app.add_middleware(RecordServerAddress)
 
+#: Where the Gradio dashboard is mounted (below).
+DASHBOARD_PATH = "/ui"
+
+# Two routes Gradio registers on the dashboard with no switch to turn them off
+# (`file=<URL>`, fetched server-side, and `process_recording`) are refused here,
+# before the body is read. Added after RecordServerAddress and before the
+# request logging below, so it runs inside the logging and each refusal is logged.
+app.add_middleware(RefuseUnusedGradioRoutes, mount_path=DASHBOARD_PATH)
+
 
 # =============================================================================
 # Request/Response Logging Middleware
@@ -359,13 +369,13 @@ if _static_dir.is_dir():
 # =============================================================================
 # Mount Gradio Dashboard
 # =============================================================================
+# `mount_dashboard` passes the theme, CSS and switches to the mount, where
+# Gradio 6 reads them (src/webui/app.py).
 try:
-    import gradio as gr
-    from src.webui.app import create_gradio_app
+    from src.webui.app import mount_dashboard
 
-    gradio_app = create_gradio_app()
-    gr.mount_gradio_app(app, gradio_app, path="/ui")
-    logger.info("Gradio dashboard mounted at /ui")
+    mount_dashboard(app, DASHBOARD_PATH)
+    logger.info(f"Gradio dashboard mounted at {DASHBOARD_PATH}")
 except ImportError as e:
     logger.warning(f"Gradio not available, dashboard disabled: {e}")
 except Exception as e:

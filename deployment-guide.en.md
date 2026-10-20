@@ -1445,6 +1445,71 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 
 ---
 
+## 4.10 The dashboard on Gradio 6.30.0 (since M5, 2026-10-20)
+
+The dashboard at `/ui` runs on **Gradio 6.30.0** (it was 5.29.1). `pyproject.toml` pins it
+exactly, and `uv.lock` changed only in what that forces: gradio-client 2.7.2, starlette 1.9.0
+and huggingface-hub 1.16.1, with brotli 1.2.0 and hf-gradio 0.4.1 added and aiofiles and ffmpy
+no longer needed. No other package changed version.
+
+**Run `uv sync --inexact` after pulling** (or rerun `deploy.sh` / `deploy.cmd`, which do the
+same; `--inexact` keeps the PyG extensions the deploy scripts install outside the lock, see
+`requirements.txt`). There is no fallback to Gradio 5: with 5.29.1 still installed the service
+starts and the REST API works, but the log says
+`Failed to mount Gradio dashboard: mount_gradio_app() got an unexpected keyword argument 'theme'`
+and there is no `/ui`.
+
+### What is switched off, and why
+
+The dashboard is mounted with these settings, whatever the `GRADIO_*` environment variables say
+(`src/webui/app.py`, `mount_options`):
+
+| Setting | Why |
+|---|---|
+| `run_history=False` | Gradio 6 otherwise records each call's inputs and outputs in the browser and offers to save them to a Hugging Face bucket. Diagnosis inputs are a patient's phenotypes. The run-history page answers 404 |
+| `enable_monitoring=False` | Left unset, `/ui/monitoring/summary` serves the queue's event analytics. It answers 403 |
+| `mcp_server=False` | It would publish every dashboard event as an MCP tool. Its routes are absent |
+| `ssr_mode=False` | Server-side rendering starts a Node.js process |
+| `analytics_enabled=False` | On the dashboard itself, since 2026-10-12: no usage analytics and no version check |
+
+CORS is not changed by this step; it is tightened together with D8.
+
+### The route guard
+
+Gradio 6.30 adds two routes to every mounted app that cannot be switched off upstream. The
+service refuses both before Gradio sees the request (`src/api/middleware/gradio_routes.py`):
+
+- **`/ui/gradio_api/file=<URL>`** (and the older `file/<URL>`). Since Gradio 6.20 (issue
+  #13593, PR #13596) the server fetches an `http(s)://` target itself, ignoring `HTTPS_PROXY`,
+  and streams it back on the dashboard's own address; for some URLs it serves a remote HTML page
+  inline, as if it were the dashboard's own page. Every spelling of a URL scheme is refused:
+  upper or mixed case, percent-encoded, `//host`.
+- **`/ui/gradio_api/process_recording`**, which turns an uploaded screen recording into
+  temporary files and may run ffmpeg. The screen recorder in Gradio's Settings panel therefore
+  says "Failed to process recording. Saving original version." and saves the unprocessed
+  recording in the browser.
+
+A refusal is `403` with a one-line reason and `connection: close`. The request body is not
+read, and the request log shows the refusal like any other response. Local downloads are not
+affected: the Training Console's metrics CSV and the Diagnosis tab's CSV and Markdown exports
+download as before, `HEAD` and `Range` requests included.
+
+### What else changed in the dashboard
+
+- **Training Console charts** look as before (the y axis starts at 0, each series keeps its
+  colour). The Epoch Window now only filters rows; the x axis follows them.
+- **Runtime Settings** refreshes the restart lock when its tab is opened: Gradio 6 does not run
+  a timer in a tab that has not been opened yet. The backend refuses a restart during training
+  either way.
+
+### Platforms
+
+Tested backends: Linux x86_64 (the development environment) and Linux ARM64 (the homelab,
+checked by the reviewer). **A Windows backend has not been tested with Gradio 6.30.0** and stays
+marked untested until one is available; Windows browsers are part of the browser checks.
+
+---
+
 ## Summary: deployment checklist ✅
 
 ### Windows x86 + Blackwell
@@ -1457,6 +1522,7 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 - [ ] ✅ Voyager available (CPU vector search)
 - [ ] ✅ All unit tests pass
 - [ ] ✅ Model trains (watch VRAM)
+- [ ] ⚠️ Dashboard on Gradio 6.30.0 (`uv sync --inexact` after pulling): a Windows backend is not tested yet (§4.10)
 
 ### ARM + Blackwell (DGX Spark)
 
@@ -1468,6 +1534,7 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 - [ ] ✅ Vector index: cuVS (GPU) or Voyager (CPU fallback)
 - [ ] ✅ Unified memory correctly identified
 - [ ] ✅ Model trains (check the 128GB advantage)
+- [ ] ✅ Dashboard on Gradio 6.30.0 (`uv sync --inexact` after pulling; `/ui` loads, §4.10)
 
 ---
 

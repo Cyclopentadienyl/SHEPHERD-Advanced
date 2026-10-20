@@ -260,7 +260,9 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
 
     if not result.get("success"):
         raise HTTPException(
-            status_code=(status.HTTP_422_UNPROCESSABLE_ENTITY if result.get("invalid_settings")
+            # 422 under its RFC 9110 name: Starlette 1.x warns on the old
+            # HTTP_422_UNPROCESSABLE_ENTITY. Same status code.
+            status_code=(status.HTTP_422_UNPROCESSABLE_CONTENT if result.get("invalid_settings")
                          else status.HTTP_409_CONFLICT),
             detail=result.get("error", "Failed to start training"),
         )

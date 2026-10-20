@@ -94,8 +94,16 @@ async () => {
 """
 
 
-def create_runtime_settings_tab() -> None:
-    """Build the Runtime Settings tab (call inside a gr.Tab/gr.Blocks context)."""
+def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
+    """Build the Runtime Settings tab (call inside a gr.Tab/gr.Blocks context).
+
+    ``tab`` is the gr.Tab this is built in. Selecting it refreshes the restart
+    lock: Gradio 6 does not tick a gr.Timer in a tab that has not been opened
+    yet (gradio#11984, #11993), so without this the first opening would show
+    the lock as it was when the dashboard was built, until the timer's first
+    tick. The backend refuses a restart during training either way
+    (``restart_backend``); this keeps the button and the note honest.
+    """
     settings = load_runtime_settings()
     current_alloc = settings.get("allocator_preset", DEFAULT_ALLOCATOR)
     if current_alloc not in ALLOCATOR_PRESETS:
@@ -143,10 +151,13 @@ def create_runtime_settings_tab() -> None:
         elem_id="runtime_status",
     )
     # Restart feedback + training lock (kept next to the button it belongs to).
+    # padding=True: the Gradio 5 default, which this layout was made with
+    # (Gradio 6 defaults to no padding).
     restart_lock_note = gr.HTML(
         _RESTART_LOCKED_HTML if _locked_now else "",
         visible=_locked_now,
         elem_id="runtime_restart_lock",
+        padding=True,
     )
     restart_status = gr.Markdown("", elem_id="runtime_restart_status")
     gr.Markdown(
@@ -166,7 +177,8 @@ def create_runtime_settings_tab() -> None:
             value=current_alloc,
             elem_id="allocator_preset",
         )
-        gr.HTML(_badge_row(_badge("Memory", "mem"), _badge("Restart required", "restart")))
+        gr.HTML(_badge_row(_badge("Memory", "mem"), _badge("Restart required", "restart")),
+                padding=True)
         gr.Markdown(
             "GPU memory allocation strategy — governs fragmentation and peak usage. "
             "The backend also runs CUDA in-process (for diagnosis/inference), so a "
@@ -202,7 +214,8 @@ def create_runtime_settings_tab() -> None:
                 _badge("Precision ⚠", "prec"),
                 _badge("Experimental", "exp"),
                 _badge("Next run", "nextrun"),
-            )
+            ),
+            padding=True,
         )
         gr.Markdown(
             "Attempts to compile supported model regions to reduce overhead; dynamic "
@@ -240,6 +253,8 @@ def create_runtime_settings_tab() -> None:
     restart_lock_timer.tick(
         fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note]
     )
+    if tab is not None:
+        tab.select(fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note])
     # After the click handler runs, kick off a browser-side poller that reloads
     # the page once the fresh backend is up (a new process means a new Gradio
     # session; without a reload the old page's pollers hang). The poller no-ops

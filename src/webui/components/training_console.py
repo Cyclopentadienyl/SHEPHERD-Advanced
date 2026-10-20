@@ -29,13 +29,14 @@ Version: 1.0.0
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
 import os
 import random
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import gradio as gr
 import pandas as pd
@@ -727,21 +728,18 @@ def _poll_status(epoch_window: str = "All"):
     hits_df = _build_hits_df(val_data)
     lr_df = _build_metric_df(train_data, "learning_rate", "Learning Rate")
 
-    # Apply epoch windowing
+    # Apply epoch windowing: rows only. The x axis follows the rows it is
+    # given; an x_lim sent with the data would rebuild the chart on every tick
+    # in Gradio 6.30 and draw the previous poll's rows.
     window = _parse_epoch_window(epoch_window)
     loss_df = _trim_df_to_window(loss_df, window)
     mrr_df = _trim_df_to_window(mrr_df, window)
     hits_df = _trim_df_to_window(hits_df, window)
     lr_df = _trim_df_to_window(lr_df, window)
 
-    windowed = window is not None
-
     return (
         status_text,
-        _wrap_plot_update(loss_df, windowed),
-        _wrap_plot_update(mrr_df, windowed),
-        _wrap_plot_update(hits_df, windowed),
-        _wrap_plot_update(lr_df, windowed),
+        loss_df, mrr_df, hits_df, lr_df,
         resource_text,
         banner_update, dismiss_update,
         start_update, stop_update, resume_update,
@@ -917,26 +915,86 @@ def _trim_df_to_window(df: pd.DataFrame, window: Optional[int]) -> pd.DataFrame:
     return df[df["epoch"] > cutoff].reset_index(drop=True)
 
 
-def _wrap_plot_update(df: pd.DataFrame, windowed: bool):
-    """Wrap a DataFrame for LinePlot output, setting explicit x_lim when windowed.
+# ---------------------------------------------------------------------------
+# Native plots on Gradio 6.30
+#
+# A LinePlot fixes the series it can draw (its colour domain) only when it
+# rebuilds its chart, and since Gradio 5.33 (PR #11306) a new value alone does
+# not rebuild it: a plot that starts empty never draws a series that appears
+# later. A change of `colors_in_legend` does rebuild it, from the value already
+# shown. So every event that sends plot data is followed (`.then`) by
+# `_legend_step`, which sends `colors_in_legend` = the series now present, only
+# when that set differs from what this browser session last received
+# (gr.State), and [] when there are no rows. No placeholder rows are sent; the
+# empty value is a typed empty DataFrame. Fixed colours (`color_map`) keep each
+# series' colour across rebuilds.
+# ---------------------------------------------------------------------------
 
-    When epoch windowing is active, Gradio may not automatically reset the
-    X-axis range to fit the filtered data.  Passing ``x_lim`` explicitly
-    forces the chart axis to match the visible epoch range.
+#: The four metric plots, in output order: the column naming each series, and
+#: each series' colour.
+_PLOT_SERIES: Tuple[Tuple[str, Dict[str, str]], ...] = (
+    ("split", {"train": "#4c78a8", "val": "#f58518"}),          # Loss Curves
+    ("metric", {"MRR": "#4c78a8"}),                              # Mean Reciprocal Rank
+    ("metric", {"Hits@1": "#4c78a8", "Hits@10": "#f58518"}),     # Hits@K
+    ("metric", {"Learning Rate": "#4c78a8"}),                    # Learning Rate
+)
 
-    When switching back to "All", ``x_lim=None`` clears any previously
-    locked range so the chart auto-scales again.
+#: The legends a new browser session starts with: every plot starts empty.
+_NO_SERIES: List[List[str]] = [[] for _ in _PLOT_SERIES]
+
+
+def _series_present(value: Any, column: str) -> Optional[List[str]]:
+    """The series a plot output draws, sorted ([] for no rows), or None when
+    the output leaves the plot as it is (``gr.update()`` without a value)."""
+    if isinstance(value, dict):
+        value = value.get("value")
+    if not isinstance(value, pd.DataFrame):
+        return None
+    if value.empty:
+        return []
+    return sorted(str(name) for name in value[column].dropna().unique())
+
+
+def _series_sent(plot_values: Sequence[Any]):
+    """What a data step sent to the four plots, for the State `_legend_step`
+    reads: per plot, the series drawn (None for a plot left as it was), or
+    ``gr.update()`` when the step left all four as they were, so a no-op poll
+    does not hide the series an earlier step sent before its legend step ran."""
+    sent = [_series_present(value, column)
+            for value, (column, _colors) in zip(plot_values, _PLOT_SERIES, strict=True)]
+    if all(series is None for series in sent):
+        return gr.update()
+    return sent
+
+
+def _legend_step(sent: Optional[Sequence[Optional[List[str]]]],
+                 seen: Optional[Sequence[List[str]]]):
+    """The step after each data step: per plot, ``gr.update(colors_in_legend=
+    series)`` when the series last sent differ from the legend this browser
+    session last received, else ``gr.update()``; and the legends now received.
+
+    Returns:
+        (loss_update, mrr_update, hits_update, lr_update, seen)
     """
-    if df.empty:
-        return df
-    if not windowed:
-        # Explicitly clear x_lim so axis auto-scales to full data range
-        return gr.update(value=df, x_lim=None)
-    min_e = float(df["epoch"].min())
-    max_e = float(df["epoch"].max())
-    # Small padding so endpoints aren't clipped at the axis boundary
-    padding = max(0.5, (max_e - min_e) * 0.02)
-    return gr.update(value=df, x_lim=[min_e - padding, max_e + padding])
+    seen = [list(series) for series in (seen or _NO_SERIES)]
+    updates = []
+    for index, series in enumerate(sent or [None] * len(_PLOT_SERIES)):
+        if series is None or series == seen[index]:
+            updates.append(gr.update())
+        else:
+            updates.append(gr.update(colors_in_legend=list(series)))
+            seen[index] = list(series)
+    return (*updates, seen)
+
+
+def _with_series_sent(handler: Callable[..., Tuple[Any, ...]]) -> Callable[..., Tuple[Any, ...]]:
+    """Wrap an event handler whose outputs 1-4 are the four plots so that it
+    also returns `_series_sent` of them, as one more output."""
+    @functools.wraps(handler)
+    def wrapped(*args):
+        outputs = handler(*args)
+        return (*outputs, _series_sent(outputs[1:5]))
+    return wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -954,8 +1012,9 @@ _current_banner_key: Optional[str] = None  # latest key, read by the dismiss han
 
 
 # Empty DataFrames with correct column structure for Gradio LinePlot.
-# Gradio 5.20+ renders value=None as a broken icon, so we always
-# return a DataFrame — empty when there is no data.
+# Gradio renders value=None as an icon placeholder without a title, so the
+# plots always get a DataFrame — typed and empty when there is no data (the
+# initial value too; see "Native plots on Gradio 6.30" above).
 _EMPTY_LOSS_DF = pd.DataFrame({"epoch": pd.Series(dtype="float"),
                                "loss": pd.Series(dtype="float"),
                                "split": pd.Series(dtype="str")})
@@ -1541,6 +1600,7 @@ def create_training_tab() -> None:
                 value="",
                 visible=False,
                 elem_id="error_banner",
+                padding=True,  # Gradio 5's default; Gradio 6 defaults to none
             )
             error_dismiss_btn = gr.Button(
                 "✕ Dismiss",
@@ -1565,16 +1625,19 @@ def create_training_tab() -> None:
                     scale=1,
                 )
 
+            # No width= (Gradio 6 has none; the row sizes the plots). y_lim
+            # starts the y axis at 0, as Gradio 5 did by default.
             with gr.Row():
                 loss_plot = gr.LinePlot(
                     value=_EMPTY_LOSS_DF,
                     x="epoch",
                     y="loss",
                     color="split",
+                    color_map=_PLOT_SERIES[0][1],
                     title="Loss Curves",
                     x_title="Epoch",
                     y_title="Loss",
-                    width=450,
+                    y_lim=[0, None],
                     height=280,
                     elem_id="loss_plot",
                 )
@@ -1583,10 +1646,11 @@ def create_training_tab() -> None:
                     x="epoch",
                     y="value",
                     color="metric",
+                    color_map=_PLOT_SERIES[1][1],
                     title="Mean Reciprocal Rank",
                     x_title="Epoch",
                     y_title="MRR",
-                    width=450,
+                    y_lim=[0, None],
                     height=280,
                     elem_id="mrr_plot",
                 )
@@ -1597,10 +1661,11 @@ def create_training_tab() -> None:
                     x="epoch",
                     y="value",
                     color="metric",
+                    color_map=_PLOT_SERIES[2][1],
                     title="Hits@K",
                     x_title="Epoch",
                     y_title="Hits",
-                    width=450,
+                    y_lim=[0, None],
                     height=280,
                     elem_id="hits_plot",
                 )
@@ -1609,10 +1674,11 @@ def create_training_tab() -> None:
                     x="epoch",
                     y="value",
                     color="metric",
+                    color_map=_PLOT_SERIES[3][1],
                     title="Learning Rate",
                     x_title="Epoch",
                     y_title="LR",
-                    width=450,
+                    y_lim=[0, None],
                     height=280,
                     elem_id="lr_plot",
                 )
@@ -1629,6 +1695,7 @@ def create_training_tab() -> None:
             resource_display = gr.HTML(
                 value='<div style="font-size:13px;color:#6b7280">Loading resource info...</div>',
                 elem_id="resource_display",
+                padding=True,  # Gradio 5's default; Gradio 6 defaults to none
             )
 
     # =========================================================================
@@ -1654,17 +1721,22 @@ def create_training_tab() -> None:
     # Event Handlers
     # =========================================================================
     # Shared output list: status + 4 plots + 3 buttons
-    btn_outputs = [
-        status_display,
-        loss_plot, mrr_plot, hits_plot, lr_plot,
-        start_btn, stop_btn, resume_btn,
-    ]
+    plots = [loss_plot, mrr_plot, hits_plot, lr_plot]
+    btn_outputs = [status_display, *plots, start_btn, stop_btn, resume_btn]
+
+    # The plots' legends (see "Native plots on Gradio 6.30"): what the last
+    # data step sent, and what this browser session's plots were last told.
+    # Hidden progress: after each poll tick, the plots must not flash.
+    plot_series_sent = gr.State(None)
+    plot_series_seen = gr.State(_NO_SERIES)
+    legend_step = {"fn": _legend_step, "inputs": [plot_series_sent, plot_series_seen],
+                   "outputs": plots + [plot_series_seen], "show_progress": "hidden"}
 
     start_btn.click(
-        fn=_on_start,
+        fn=_with_series_sent(_on_start),
         inputs=all_params + [randomize_seed],
-        outputs=btn_outputs + [seed],
-    )
+        outputs=btn_outputs + [seed, plot_series_sent],
+    ).then(**legend_step)
     # Lock/grey the seed field while "Randomize seed" is on (Start draws + echoes
     # the actual seed used).
     randomize_seed.change(
@@ -1691,11 +1763,11 @@ def create_training_tab() -> None:
         outputs=[continue_preview, extend_epochs],
     )
     resume_btn.click(
-        fn=_on_resume,
+        fn=_with_series_sent(_on_resume),
         inputs=[data_dir, run_name, device, continue_source, checkpoint_dropdown,
                 manual_checkpoint, extend_epochs],
-        outputs=btn_outputs + [continue_preview, extend_epochs],
-    )
+        outputs=btn_outputs + [continue_preview, extend_epochs, plot_series_sent],
+    ).then(**legend_step)
     continue_source.change(
         fn=_toggle_continue_source,
         inputs=[continue_source],
@@ -1785,9 +1857,11 @@ def create_training_tab() -> None:
     # =========================================================================
     # Polling Timer (1.5 second interval)
     # =========================================================================
+    # The Training Console is the tab open at page load, so this timer ticks
+    # from the start (Gradio 6 does not tick a timer in a tab not yet opened).
     timer = gr.Timer(value=1.5)
     timer.tick(
-        fn=_poll_status,
+        fn=_with_series_sent(_poll_status),
         inputs=[epoch_window],
         outputs=[
             status_display,
@@ -1801,8 +1875,9 @@ def create_training_tab() -> None:
             start_btn,
             stop_btn,
             resume_btn,
+            plot_series_sent,
         ],
-    )
+    ).then(**legend_step)
 
 
 __all__ = ["create_training_tab"]
