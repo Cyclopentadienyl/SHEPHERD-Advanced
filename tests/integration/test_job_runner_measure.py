@@ -24,6 +24,8 @@ pytest.importorskip("torch")
 pytest.importorskip("fastapi")
 
 from src.api.services.training_manager import TestRunInputs, TrainingManager  # noqa: E402
+from src.evaluation.cohort_registry import is_run_id, resolve_version  # noqa: E402
+from src.evaluation.report_store import read_usage_history  # noqa: E402
 from src.utils.gpu_lock import (  # noqa: E402
     LOCK_FILE_ENV,
     LOCK_FILE_NAME,
@@ -88,9 +90,13 @@ def test_a_real_test_run_keeps_its_report_and_the_runner_finds_it(cohort, monkey
     assert status["status"] == "completed" and status["exit_code"] == 0, log
     assert "GPU lock" in log and "held" in log, "the child took the lock itself"
 
-    created = sorted({p.name for p in reports.iterdir()} - before)
+    created = sorted(n for n in {p.name for p in reports.iterdir()} - before if is_run_id(n))
     assert len(created) == 1
     run_dir = reports / created[0]
+    entries, problems = read_usage_history(resolve_version(cohort.registry, LABEL))
+    assert not problems
+    assert [e["kind"] for e in entries if e.get("run_id") == created[0]] == ["test_run"], \
+        "a run started by the runner counts in the usage history like one from the CLI"
     assert status["outcome"]["report_dir"] == str(run_dir)
     assert asked == [(run_dir / "report.json", cohort.checkpoint)]
     assert status["outcome"]["kept"] is True and (run_dir / "report.json").is_file()

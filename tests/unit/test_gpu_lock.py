@@ -459,7 +459,7 @@ def test_measure_scorer_holds_the_lock_for_its_run_and_releases_it(root, monkeyp
         seen["record"] = json.loads(holder_path(root / LOCK_FILE_NAME).read_text())
         raise RuntimeError("the run failed")
 
-    monkeypatch.setattr(ms, "_measure", run)
+    monkeypatch.setattr(ms, "_run", run)
     with pytest.raises(RuntimeError):
         ms.main(_measure_argv(root))
     assert seen["held_by"] and seen["record"]["job_type"] == "test"
