@@ -10,8 +10,10 @@ reload.
 `serving_workspace` names the listed workspace the status's
 ``current_data_dir`` is (Datasets' "serving reads this workspace" marker, the
 Load confirmation's "serving workspace"), by comparing resolved directories:
-the listed name is found through the server's list (`resolve_workspace`), never
-derived from the status's path.
+the listed name is found through the server's list (`resolve_workspaces`, one
+listing of the root for every name), never derived from the status's path.
+`served_key` is what is served as one comparable value (the whole served
+identity and the data directory), so a change of any part is seen.
 
 Module: src/webui/components/served_status.py
 """
@@ -57,11 +59,16 @@ def served_checkpoint_sha(status: Optional[Mapping[str, Any]]) -> Optional[str]:
 
 
 def serving_workspace(status: Optional[Mapping[str, Any]], workspaces: Sequence[Any], *,
-                      environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+                      environ: Optional[Mapping[str, str]] = None,
+                      directories: Optional[Mapping[str, Path]] = None) -> Optional[str]:
     """The name of the listed workspace the status's ``current_data_dir`` is,
     or None (none served, a graph served without a workspace, or one the
-    server does not list)."""
-    from src.api.services.server_lists import ServerListRefused, resolve_workspace
+    server does not list).
+
+    The names resolve through the server's list (`resolve_workspaces`: one
+    listing of the root for every name, so many workspaces cost one listing);
+    `directories` is that answer when the caller already has it."""
+    from src.api.services.server_lists import ServerListRefused, resolve_workspaces
 
     data_dir = _part(status, "current_data_dir")
     if not isinstance(data_dir, str) or not data_dir:
@@ -70,14 +77,31 @@ def serving_workspace(status: Optional[Mapping[str, Any]], workspaces: Sequence[
         target = Path(data_dir).resolve()
     except (OSError, RuntimeError):
         return None
+    if directories is None:
+        try:
+            directories = resolve_workspaces(environ=environ)
+        except ServerListRefused:
+            return None
     for item in workspaces:
         name = item.get("name") if isinstance(item, Mapping) else getattr(item, "name", None)
-        try:
-            if resolve_workspace(name, environ=environ) == target:
-                return name
-        except ServerListRefused:
-            continue
+        if name in directories and directories[name] == target:
+            return name
     return None
 
 
-__all__ = ["STATUS_NOT_READ", "read_status", "served_checkpoint_sha", "serving_workspace"]
+def served_key(status: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """What is served, as one comparable value: the whole served identity
+    (checkpoint, graph, shortest-path table, dataset record, scoring mode and
+    settings) and the served data directory; None when nothing can be read.
+    Two reads with the same key serve the same thing."""
+    import json
+
+    if not isinstance(status, Mapping):
+        return None
+    return json.dumps({"identity": status.get("served_identity"),
+                       "data_dir": status.get("current_data_dir")},
+                      sort_keys=True, default=str)
+
+
+__all__ = ["STATUS_NOT_READ", "read_status", "served_checkpoint_sha", "served_key",
+           "serving_workspace"]

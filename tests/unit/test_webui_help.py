@@ -92,6 +92,26 @@ def test_the_browser_side_reads_texts_as_text_and_goes_to_the_mount():
         assert behaviour in h.HELP_HEAD, behaviour
 
 
+def test_a_click_on_a_fields_title_still_reaches_the_field():
+    """The ⓘ is a <button> inside the field's <label>: without ``for``, it would
+    become the label's control and a click on "Epochs" would open the help
+    instead of focusing the input. The label names its input by id."""
+    assert "function keepLabel(target, key)" in h.HELP_HEAD
+    assert "label.htmlFor = input.id" in h.HELP_HEAD
+    assert "input.id = 'shep-in-' + key" in h.HELP_HEAD
+    # kept on every pass, for a field Gradio renders again
+    assert "{ keepLabel(target, key); continue; }" in h.HELP_HEAD
+
+
+def test_the_bubble_is_in_the_dashboards_font_and_never_taller_than_the_window():
+    bubble = h.HELP_CSS[h.HELP_CSS.index(".shep-bubble {"):]
+    bubble = bubble[:bubble.index("}")]
+    assert "font-family: 'IBM Plex Sans'" in bubble        # it lives outside .gradio-container
+    assert "max-height: calc(100vh - 16px)" in bubble
+    assert "overflow-y: auto" in h.HELP_CSS[h.HELP_CSS.index(".shep-bubble-bd {"):]
+    assert "roomBelow >= roomAbove" in h.HELP_HEAD and "bubble.style.maxHeight" in h.HELP_HEAD
+
+
 # --------------------------------------------------------------------------- the built dashboard
 @pytest.fixture(scope="module")
 def built():
@@ -107,14 +127,21 @@ def built():
 
 
 def test_every_registered_help_target_exists_in_the_built_app(built):
+    """Structural, so a page that adds or removes a field (UI-B, UI-C, UI-D)
+    changes no test here: every page module the app builds that declares
+    ``FIELD_HELP`` has all of it registered, and every registered target is a
+    component of the built app whose label is the help's title."""
+    import sys
+
+    from src.webui.app import PAGES
+
     demo, registry, _texts = built
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
-    from src.webui.components import diagnosis_panel, runtime_settings, training_console
-
-    # Every page registers its fields (Training 35, Diagnosis 6, Settings 2).
-    expected = {**training_console.FIELD_HELP, **diagnosis_panel.FIELD_HELP,
-                **runtime_settings.FIELD_HELP}
-    assert set(registry.targets()) == set(expected) and len(expected) == 43
+    modules = {sys.modules[builder.__module__] for builder in PAGES.values()}
+    declared = [m.FIELD_HELP for m in modules if isinstance(getattr(m, "FIELD_HELP", None), dict)]
+    assert declared, "no page declares field help"
+    for field_help in declared:
+        assert set(field_help) <= set(registry.targets())
     for entry in registry.entries():
         if entry.target is None:
             continue
@@ -172,6 +199,18 @@ def test_hgt_shows_the_amp_refusal_and_any_other_architecture_clears_it():
         cleared = tc._on_conv_type_change(other)
         assert cleared["info"] == "" and cleared["interactive"] is True
         assert "value" not in cleared
+
+
+def test_the_architecture_change_updates_the_amp_radio_once():
+    """One listener: two would send two requests per change, both writing
+    the AMP radio."""
+    from src.webui.components import training_console as tc
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        tc.create_training_tab(standalone_context(demo))
+    listeners = [fn for fn in demo.fns.values() if fn.fn is tc._on_conv_type_change]
+    assert len(listeners) == 1
 
 
 def test_the_amp_radio_has_its_ordinary_help_behind_the_i():

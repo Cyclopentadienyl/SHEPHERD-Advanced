@@ -139,6 +139,21 @@ def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():
         assert ("/srv/secret/x" in chip.detail) is operator
 
 
+def test_the_lock_path_goes_only_to_a_request_d8_allows(monkeypatch):
+    """`read_chips` tells the GPU chip whether the request that asked may see a
+    server path: D8's own answer for that request, nothing else."""
+    from tests.fixtures.operator_access import operator_request
+
+    seen = []
+    monkeypatch.setattr(c, "read_gpu_chip", lambda manager, *, operator: (
+        seen.append(operator) or c.Chip("none", c.GPU_NONE, c.GPU_SCOPE)))
+    c.read_chips(operator_request(monkeypatch))
+    c.read_chips(gradio_request(server=("192.0.2.10", 8264)))
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    c.read_chips(gradio_request())
+    assert seen == [True, False, False]
+
+
 def test_a_runner_that_raises_reads_not_read_with_no_exception_text():
     class Broken:
         def active_job(self):

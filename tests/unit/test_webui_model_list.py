@@ -11,13 +11,27 @@ The shared model list and the one Load (M5-2, UI-A).
   latest 4 runs then "Show older runs"; the research preset every run; an
   unreadable checkpoint greyed; each row's recorded tests a state read from
   the ledger beside the checkpoint and, for contested, the report store;
+- **the presets and the page's view**: the research preset is a table with
+  "In use (Diagnosis)" on its own row, not pinned; a page's view lists one
+  architecture, draws its groups in its order (the rest after them), fills one
+  extra column, and puts a note beside Load; the list redraws when the view
+  changes;
 - **the Load**: D8 on the "Load" request, the item found in the server's list
-  again, one confirmation (from → to, the changed rows marked, what it
-  replaces); then D8 again on "Reload with …", the status read again and a
-  model in use that changed since said, never reloaded over; WP2's reload with
-  the workspace and the checkpoint the server resolves (never a client path);
-  the served fingerprint checked against the one shown; a usage history entry
-  only when the list was ordered by a cohort version's score;
+  again and its bytes hashed again (a list read earlier is caught), one
+  confirmation (from → to, the changed rows marked, what it replaces); then D8
+  again on "Reload with …", **both columns read again**: a change of what is
+  served (any part of the served identity or the served workspace, the From
+  column rebuilt from the plan's own listing) or of what would be loaded (the
+  file's bytes, the workspace's graph or SP table) is said with the new values
+  and nothing is reloaded; WP2's reload with the workspace and the checkpoint
+  the server resolves (never a client path); the served fingerprint checked
+  against the one shown; "served model changed" set when any part of what is
+  served changed; a usage history entry only when the list was ordered by a
+  cohort version's score, and not when that version changed since;
+- **the wiring**: Load and Reload refresh the chips, Reload sets the "served
+  model changed" trigger and the phase and re-reads the list, Keep closes the
+  confirmation; the 180 s count runs in the list's own confirmation, so both
+  presets can sit in one page;
 - **escaped**: a workspace name with markup in the confirmation.
 
 Module: tests/unit/test_webui_model_list.py
@@ -293,15 +307,151 @@ def test_confirm_needs_d8_again_and_a_refusal_reloads_nothing(root, serving, mon
     assert step.changed is False
 
 
+def _changed_rows(html):
+    rows = [row for row in html.split("<tr") if 'class="shep-changed"' in row]
+    return [row.split('<th scope="row">')[1].split("<")[0] for row in rows]
+
+
 def test_a_model_in_use_that_changed_since_is_said_never_reloaded_over(root, serving, monkeypatch):
     plan = _plan(root, monkeypatch)
     serving["value"] = _status(root, served="model-08.pt")
     calls = []
     step = ml.finish_load(plan, operator_request(monkeypatch),
                           reload=lambda request: calls.append(request))
-    assert calls == [] and step.plan is not None
-    assert "The model in use changed since this was shown" in step.confirm_html
+    assert calls == [] and step.plan is not None and step.changed is False
+    assert ml.FROM_CHANGED in step.confirm_html and ml.NOTHING_RELOADED in step.confirm_html
     assert step.plan["from"]["sha256"] == root["shas"]["model-08.pt"]
+    # The From column is read as the confirmation reads it, from the plan's
+    # own listing: the served workspace is named, the model and what it was
+    # trained on are known, and an unchanged row is not marked.
+    assert step.plan["from"]["model"] == "GAT · run 2026-10-18 09:12 · epoch 8"
+    assert "not a listed workspace" not in step.confirm_html
+    assert "not in this workspace's list" not in step.confirm_html
+    assert _changed_rows(step.confirm_html) == ["Model", "Model fingerprint"]
+    # Confirmed again as shown, it reloads.
+    sent = []
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    again = ml.finish_load(step.plan, operator_request(monkeypatch), reload=lambda request: (
+        sent.append(request) or PipelineReloadResponse(success=True, message="ok",
+                                                       status=PipelineStatusResponse(**_status(
+                                                           root, served="model-12.pt")))))
+    assert len(sent) == 1 and "Reloaded." in again.confirm_html
+
+
+@pytest.mark.parametrize("change", ["workspace", "sp_table", "eta"])
+def test_any_part_of_what_is_served_that_changed_is_said(root, serving, monkeypatch, change,
+                                                       tmp_path):
+    """The same checkpoint, served by another session with another workspace,
+    shortest-path table or eta: the Load says so rather than reloading over it."""
+    plan = _plan(root, monkeypatch)
+    status = _status(root)
+    if change == "workspace":
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        status["current_data_dir"] = str(other)
+    elif change == "sp_table":
+        status["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b1",
+                                                       "max_hops": 4}
+    else:
+        status["served_identity"]["settings"]["eta"] = 0.5
+    serving["value"] = status
+    calls = []
+    step = ml.finish_load(plan, operator_request(monkeypatch),
+                          reload=lambda request: calls.append(request))
+    assert calls == [] and step.plan is not None and ml.FROM_CHANGED in step.confirm_html
+
+
+def test_a_reload_of_the_same_checkpoint_with_another_workspace_is_a_change(
+        root, serving, monkeypatch, tmp_path):
+    """"served model changed" follows the whole served identity: the same
+    checkpoint served from another directory is a change for the card."""
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    serving["value"] = _status(root, served="model-05.pt", data_dir=other)
+    listing = _listing(root, monkeypatch)
+    plan, _html = ml.request_load(listing, f"gat/{RUNS[1][1]}/model-05.pt", None,
+                                  operator_request(monkeypatch))
+    step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
+        PipelineReloadResponse(success=True, message="ok", status=PipelineStatusResponse(
+            **_status(root, served="model-05.pt")))))
+    assert "Reloaded." in step.confirm_html and step.served == root["shas"]["model-05.pt"]
+    assert step.changed is True
+    unchanged = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
+        PipelineReloadResponse(success=False, message="refused", status=PipelineStatusResponse(
+            **_status(root, served="model-05.pt", data_dir=other)))))
+    assert unchanged.changed is False
+
+
+def _rewrite(root, name, epoch):
+    """Write other bytes into a listed checkpoint, as a training run that
+    overwrites ``last.pt`` each epoch does."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    path = root["workspace"] / "runs" / "gat" / RUNS[0][1] / "checkpoints" / name
+    return write_checkpoint({"checkpoint_kind": "weights", "epoch": epoch,
+                             "logs": {"val_mrr": 0.5},
+                             "training_input_digests": {"split_manifest": root["fingerprint"]}},
+                            path), path
+
+
+def test_bytes_that_changed_after_the_confirmation_are_shown_never_loaded(
+        root, serving, monkeypatch):
+    """The trainer rewrites the file between "Load" and "Reload with …": the
+    confirmation is shown again with what the file holds now; nothing is
+    reloaded until that is confirmed."""
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    plan = _plan(root, monkeypatch)
+    new_sha, path = _rewrite(root, "model-12.pt", 13)
+    calls = []
+    step = ml.finish_load(plan, operator_request(monkeypatch),
+                          reload=lambda request: calls.append(request))
+    assert calls == [] and step.plan is not None and step.changed is False
+    assert ml.TO_CHANGED in step.confirm_html
+    assert step.plan["to"]["sha256"] == new_sha and step.plan["to"]["model"].endswith("epoch 13")
+    assert f"Reload the pipeline with <code>{new_sha[:12]}</code>" in step.confirm_html
+    sent = []
+    again = ml.finish_load(step.plan, operator_request(monkeypatch), reload=lambda request: (
+        sent.append(request) or PipelineReloadResponse(
+            success=True, message="ok", status=PipelineStatusResponse(**{
+                **_status(root), "served_identity": {
+                    **_status(root)["served_identity"],
+                    "checkpoint": {"state": "verified", "sha256": new_sha}}}))))
+    assert [Path(r.checkpoint_path) for r in sent] == [path]
+    assert "Reloaded." in again.confirm_html and again.served == new_sha
+
+
+def test_a_workspace_whose_table_appeared_after_the_confirmation_is_shown_again(
+        root, serving, monkeypatch):
+    plan = _plan(root, monkeypatch)
+    (root["workspace"] / "shortest_paths.pt").write_bytes(b"a table")
+    calls = []
+    step = ml.finish_load(plan, operator_request(monkeypatch),
+                          reload=lambda request: calls.append(request))
+    assert calls == [] and ml.TO_CHANGED in step.confirm_html
+    assert step.plan["to"]["sp"] is True and step.plan["to"]["mode"] == "gnn_plus_shortest_path"
+
+
+def test_a_list_read_earlier_is_caught_when_load_is_asked(root, serving, monkeypatch):
+    listing = _listing(root, monkeypatch)
+    new_sha, _path = _rewrite(root, "model-12.pt", 14)
+    plan, html = ml.request_load(listing, f"gat/{RUNS[0][1]}/model-12.pt", None,
+                                 operator_request(monkeypatch))
+    assert plan["to"]["sha256"] == new_sha and plan["to"]["model"].endswith("epoch 14")
+    assert "The file changed since the list was read" in html and new_sha[:12] in html
+
+
+def test_load_finds_the_item_in_the_servers_list_again(root, serving, monkeypatch):
+    """A listed item whose file is gone since the list was read is refused,
+    and nothing is opened from the listing's word for it."""
+    listing = _listing(root, monkeypatch)
+    (root["workspace"] / "runs" / "gat" / RUNS[0][1] / "checkpoints" / "model-12.pt").unlink()
+    plan, html = ml.request_load(listing, f"gat/{RUNS[0][1]}/model-12.pt", None,
+                                 operator_request(monkeypatch))
+    assert plan is None and "Refused: " in html and "is listed in the workspace" in html
 
 
 def test_the_reload_gets_what_the_server_resolves_and_the_served_fingerprint_is_checked(
@@ -391,6 +541,14 @@ def test_the_usage_history_is_written_only_for_a_list_ordered_by_a_versions_scor
                        success=False, message="refused", status=PipelineStatusResponse(
                            **_status(root))))
     assert written[-1]["loaded"] is False and written[-1]["why"] == "refused"
+    # The cohort version changed since the list was ordered: no entry is
+    # written against it, and the page says why.
+    count = len(written)
+    stale = {**ordering, "version_sha256": "d" * 64}
+    step = ml.finish_load(_plan(root, monkeypatch, stale), operator_request(monkeypatch),
+                          reload=reload)
+    assert len(written) == count
+    assert "the cohort version changed since the list was ordered" in step.confirm_html
 
 
 def test_a_markup_workspace_name_is_escaped_in_the_confirmation(root, serving, monkeypatch):
@@ -400,6 +558,164 @@ def test_a_markup_workspace_name_is_escaped_in_the_confirmation(root, serving, m
     plan["to"]["workspace"] = "<b>x</b>"
     html = ml.confirmation_html(plan)
     assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html
+
+
+# --------------------------------------------------------------------------- presets and views
+def test_the_research_preset_is_a_table_with_in_use_on_its_own_row(root, serving, monkeypatch):
+    listing = _listing(root, monkeypatch)
+    research = ml.list_html(listing, None, ml.PRESETS["research"])
+    assert '<table class="shep-tbl shep-mtbl"' in research and "In use now" not in research
+    for column in ("Model", "Fingerprints: model · dataset trained on",
+                   "Validation MRR (Trainer, top-20)", "Recorded tests"):
+        assert f">{column}</th>" in research, column
+    served_row = next(row for row in research.split("<tr") if "run_3fa9c1" in row)
+    assert "In use (Diagnosis)" in served_row and "0.3500" in served_row
+    assert research.count("In use (Diagnosis)") == 1
+    assert "metadata not readable · cannot be loaded" in research
+    assert research.count(" data-key=") == 7
+
+
+def test_a_pages_view_orders_filters_and_adds_a_column(root, serving, monkeypatch):
+    listing = _listing(root, monkeypatch)
+    keys = [ml.item_key(i) for i in listing["items"]]
+    first, second = f"gat/{RUNS[3][1]}/model-03.pt", f"gat/{RUNS[0][1]}/model-12.pt"
+    view = {"architecture": "gat",
+            "groups": [{"title": "Ordered by Mode C MRR (untruncated) on v1 · highest first",
+                        "keys": [first, second, "gat/nope/x.pt"]},
+                       {"title": "Contested on this version · not ordered", "keys": []}],
+            "rest_title": "Not tested on this cohort version · newest first",
+            "column": "Mode C MRR, v1 · regime",
+            "cells": {first: '0.2310<div class="shep-sub">CUDA · deterministic</div>'},
+            "note": "The usage history records <ordered by …>."}
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    ordered = html.index("Ordered by Mode C MRR")
+    assert ordered < html.index("run_aaaaaa") < html.index("run_8c2e7a") < html.index(
+        "Contested on this version") < html.index("Not tested on this cohort version")
+    assert "run_e4c2a9" not in html                       # the SAGE run is filtered out
+    assert ">Mode C MRR, v1 · regime</th>" in html and "CUDA · deterministic" in html
+    assert ml.count_line(listing, ml.PRESETS["research"], False, view) == (
+        "in the groups below · 6 checkpoints in 5 runs · GAT only, of 7 listed")
+    assert ml.note_html(view) == ('<span class="shep-note">The usage history records '
+                                  '&lt;ordered by …&gt;.</span>')
+    # the clinical rows draw a page's cell as one more line of the row
+    rows = ml.list_html(listing, None, ml.PRESETS["clinical"],
+                        view={"cells": {second: "<b>regime</b>"}})
+    assert '<span class="shep-row-sub"><b>regime</b></span></button>' in rows
+    assert len(keys) == 7
+
+
+def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypatch):
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("research", head=lambda: gr.Button("Full records"),
+                                       foot=lambda: gr.Button("Compare"))
+    (redraw,) = [fn for fn in demo.fns.values() if (handle.view._id, "change") in fn.targets]
+    assert redraw.outputs == [handle.selected, handle.rows, handle.count, handle.facts,
+                              handle.load_button, handle.note]
+    listing = _listing(root, monkeypatch)
+    sage = f"sage/{RUNS[2][1]}/broken.pt"
+    key, rows, count, facts, load, note = redraw.fn(listing, sage, False, {"architecture": "gat"})
+    assert key is None and "run_e4c2a9" not in rows and load["interactive"] is False
+    gat = f"gat/{RUNS[0][1]}/model-12.pt"
+    key, *_rest = redraw.fn(listing, gat, False, {"architecture": "gat"})
+    assert key == gat
+    assert handle.head_extra.value == "Full records" and handle.foot_extra.value == "Compare"
+    assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view]
+
+
+# --------------------------------------------------------------------------- the wiring
+def _component(preset="clinical", both=False):
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list(preset)
+        other = ctx.create_model_list("research") if both else None
+    return demo, ctx, handle, other
+
+
+def _named(demo, name, handle=None):
+    found = [fn for fn in demo.fns.values() if fn.name == name
+             and (handle is None or set(map(id, fn.outputs)) & {id(handle.reason),
+                                                                 id(handle.phase)})]
+    assert len(found) == 1, (name, len(found))
+    return found[0]
+
+
+def _after(demo, fn):
+    nxt = [d for d in demo.fns.values() if d.trigger_after == fn._id]
+    assert len(nxt) == 1, fn.name
+    return nxt[0]
+
+
+def test_load_and_reload_refresh_the_chips_and_reload_sets_the_trigger(root, serving, monkeypatch):
+    from src.webui.components.chips import read_chips
+
+    demo, ctx, handle, _ = _component()
+    request = _named(demo, "_request")
+    assert handle.phase in request.outputs and handle.plan in request.outputs
+    chips = _after(demo, request)
+    assert chips.fn is read_chips and chips.outputs == [ctx.chips]
+    loading = _named(demo, "_loading")
+    assert loading.outputs == [handle.phase] and loading.queue is False
+    assert '"shep-models-clinical-confirm"' in loading.js
+    confirm = _after(demo, loading)
+    assert confirm.name == "_confirm"
+    assert ctx.served_model_changed in confirm.outputs and handle.phase in confirm.outputs
+    chips = _after(demo, confirm)
+    assert chips.fn is read_chips
+    assert _after(demo, chips).fn is handle.refresh["fn"]
+
+
+def test_confirm_returns_the_phase_and_the_served_model_changed_token(root, serving, monkeypatch):
+    import asyncio
+
+    from src.api.routes import pipeline as pipeline_routes
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    demo, ctx, handle, _ = _component()
+    confirm = _named(demo, "_confirm")
+    phase_at = confirm.outputs.index(handle.phase)
+    token_at = confirm.outputs.index(ctx.served_model_changed)
+    plan = _plan(root, monkeypatch)
+    monkeypatch.setattr(pipeline_routes, "run_reload", lambda request: PipelineReloadResponse(
+        success=True, message="ok", status=PipelineStatusResponse(
+            **_status(root, served="model-12.pt"))))
+    out = asyncio.run(confirm.fn(plan, operator_request(monkeypatch)))
+    assert out[0] is None and out[phase_at] == "idle"
+    assert out[token_at].startswith(root["shas"]["model-12.pt"] + "@")
+    # shown again (what is served changed): still confirming, no token
+    serving["value"] = _status(root)
+    shown = _plan(root, monkeypatch)
+    serving["value"] = _status(root, served="model-08.pt")
+    out = asyncio.run(confirm.fn(shown, operator_request(monkeypatch)))
+    assert out[phase_at] == "confirming" and out[token_at] == gr.update()
+    # an unexpected error never leaves the page "loading"
+    monkeypatch.setattr(ml, "finish_load", lambda *a, **k: (_ for _ in ()).throw(KeyError("x")))
+    out = asyncio.run(confirm.fn(plan, operator_request(monkeypatch)))
+    assert out[phase_at] == "idle" and "The Load stopped with an error." in out[2]
+
+
+def test_keep_closes_the_confirmation(root, serving, monkeypatch):
+    demo, _ctx, handle, _ = _component()
+    keep = _named(demo, "_keep")
+    out = dict(zip(map(id, keep.outputs), keep.fn(), strict=True))
+    assert out[id(handle.plan)] is None and out[id(handle.confirm)]["visible"] is False
+    assert out[id(handle.phase)] == "idle"
+
+
+def test_both_presets_sit_in_one_page_each_counting_in_its_own_confirmation():
+    demo, _ctx, clinical, research = _component(both=True)
+    assert (clinical.elem_id, research.elem_id) == ("shep-models-clinical", "shep-models-research")
+    ids = [getattr(b, "elem_id", None) for b in demo.blocks.values() if getattr(b, "elem_id", None)]
+    assert len(ids) == len(set(ids))
+    scripts = sorted(fn.js for fn in demo.fns.values() if fn.name == "_loading")
+    assert len(scripts) == 2
+    assert '"shep-models-clinical-confirm"' in scripts[0] + scripts[1]
+    assert all(script.count("shep-models-") == 1 for script in scripts)
+    assert "document.querySelector('.shep-model-confirm')" not in "".join(scripts)
 
 
 # --------------------------------------------------------------------------- through Gradio
@@ -423,7 +739,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     def call(base_url):
         with TestClient(app, base_url=base_url) as client:
             started = client.post(f"/ui/gradio_api/call/{refresh.api_name}",
-                                  json={"data": [None, False]})
+                                  json={"data": [None, False, None]})
             assert started.status_code == 200, started.text
             stream = client.get(f"/ui/gradio_api/call/{refresh.api_name}/"
                                 f"{started.json()['event_id']}")

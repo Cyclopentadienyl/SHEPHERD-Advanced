@@ -32,11 +32,14 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   the field mounts (a ``MutationObserver``: lazily mounted tabs and accordions
   included), with ``aria-expanded`` and ``aria-describedby`` naming the help
   text; the field's own input is labelled by its title alone and described by
-  the help text;
+  the help text, and the ``<label>`` names its input by id, so a click on the
+  title still focuses the field (a button inside a label would otherwise
+  become its control);
 - shows one shared bubble on hover, keyboard focus and click, by document-level
   delegation, so a ⓘ inside an HTML value that is replaced later keeps working;
   closes on Esc and on a click outside; stays open while the pointer is in the
-  bubble; a click pins it open;
+  bubble; a click pins it open; it is placed below or above its ⓘ, on the side
+  with room, and never taller than the window (a long text scrolls inside);
 - fills the bubble with ``textContent`` only: no help text is ever parsed as
   HTML in the browser.
 
@@ -240,8 +243,14 @@ _HELP_JS = r"""
     var r = anchor.getBoundingClientRect();
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
     bubble.style.maxWidth = Math.max(220, Math.min(360, vw - 24)) + 'px';
+    bubble.style.maxHeight = '';
     var bw = bubble.offsetWidth, bh = bubble.offsetHeight;
-    var below = r.bottom + 10 + bh <= vh || r.top - 10 - bh < 0;
+    // Below when it fits, else above when it fits, else on the side with more
+    // room, its height capped to that room (its text then scrolls inside).
+    var roomBelow = vh - r.bottom - 18, roomAbove = r.top - 18;
+    var below = bh <= roomBelow || (bh > roomAbove && roomBelow >= roomAbove);
+    var room = below ? roomBelow : roomAbove;
+    if (bh > room) { bubble.style.maxHeight = Math.max(96, room) + 'px'; bh = bubble.offsetHeight; }
     var top = below ? r.bottom + 10 : r.top - 10 - bh;
     var left = Math.min(Math.max(8, r.left + r.width / 2 - 24), vw - bw - 8);
     bubble.style.top = Math.max(8, top) + 'px';
@@ -323,13 +332,23 @@ _HELP_JS = r"""
     return el.querySelector('[data-testid="block-info"]') ||
       el.querySelector('label .label-text') || el.querySelector('label > span');
   }
+  // The ⓘ sits inside the field's <label>; a <button> there would become the
+  // label's control (a click on the field's title would open the help, not
+  // focus the field), so the label names its own field by id.
+  function keepLabel(target, key) {
+    var input = target.querySelector('textarea, input:not([type=radio]):not([type=hidden])');
+    var label = input && input.closest ? input.closest('label') : null;
+    if (!label || !target.contains(label)) { return; }
+    if (!input.id) { input.id = 'shep-in-' + key; }
+    if (label.htmlFor !== input.id) { label.htmlFor = input.id; }
+  }
   function enhance() {
     var texts = document.querySelectorAll('.shep-help-texts [data-help-target]');
     for (var i = 0; i < texts.length; i++) {
       var t = texts[i], target = document.getElementById(t.getAttribute('data-help-target'));
       if (!target) { continue; }
       var key = t.getAttribute('data-help-key');
-      if (target.querySelector(SEL + '[data-help="' + key + '"]')) { continue; }
+      if (target.querySelector(SEL + '[data-help="' + key + '"]')) { keepLabel(target, key); continue; }
       var title = titleIn(target);
       if (!title) { continue; }
       var btn = document.createElement('button');
@@ -348,6 +367,7 @@ _HELP_JS = r"""
         if (!input.hasAttribute('aria-label')) { input.setAttribute('aria-labelledby', title.id); }
         input.setAttribute('aria-describedby', t.id);
       }
+      keepLabel(target, key);
     }
   }
   var pending = false;
@@ -401,12 +421,15 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
 .shep-i-field { position: relative; top: -1px; }
 .shep-help-texts { display: none !important; }
 .shep-bubble {
-  position: fixed; z-index: 1000; width: max-content; max-width: 360px;
+  position: fixed; z-index: 1000; width: max-content; max-width: 360px; box-sizing: border-box;
+  max-height: calc(100vh - 16px); display: flex; flex-direction: column;
   background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px;
   box-shadow: 0 10px 28px rgba(20, 24, 40, .16), 0 2px 6px rgba(20, 24, 40, .08);
   padding: 12px 14px 10px; font-size: 15px; line-height: 1.45; color: var(--shep-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
   text-align: left; white-space: normal; font-weight: 400;
 }
+.shep-bubble * { font-family: inherit; }
 .shep-bubble[hidden] { display: none; }
 .shep-bubble::before {
   content: ""; position: absolute; width: 12px; height: 12px; background: #fff;
@@ -419,7 +442,8 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
   margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: var(--shep-muted);
   display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 18px; cursor: pointer;
 }
-.shep-bubble-bd { white-space: pre-line; overflow-wrap: anywhere; }
+.shep-bubble-bd { white-space: pre-line; overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+.shep-bubble-hd, .shep-bubble-ft { flex: none; }
 .shep-bubble-ft { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-muted); }
 .shep-kbd {
   display: inline-block; font-size: 14px; padding: 0 6px; border: 1px solid var(--shep-border-2);

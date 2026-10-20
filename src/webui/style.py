@@ -7,11 +7,18 @@ two selection cues each; a third style for in-page segmented controls
 (``.shep-seg``); the layout rule (wide: one screen, regions scroll inside;
 narrow: everything flows, nothing scrolls inside).
 
-The CSS is given to ``gr.mount_gradio_app`` with the theme (`src/webui/app.py`,
-`mount_options`): Gradio 6 drops CSS given to ``gr.Blocks``. Gradio's own
-markup is reached only through the ``elem_id``\\ s and classes the shell sets,
-the tab roles (``[role="tab"]``, ``aria-selected``) and the wrapper classes
-Gradio documents for styling (``.tab-wrapper``, ``.tab-container``, ``.block``).
+This style sheet goes into the page's head as a ``<style>`` element, with the
+shared ⓘ's and each page's own ``PAGE_CSS`` (`src/webui/app.py`,
+`dashboard_head`): Gradio 6 drops CSS given to ``gr.Blocks`` and rewrites the
+mount's ``css=`` inside ``@media``. What is here is the shell and the pieces
+every page shares (panels, tags, tables, the model list); a rule for one page
+lives in that page's module. Gradio's own markup is reached only through the
+``elem_id``\\ s and classes the shell sets, the tab roles (``[role="tab"]``,
+``aria-selected``) and the wrapper classes Gradio documents for styling
+(``.tab-wrapper``, ``.tab-container``, ``.block``).
+
+The page is always light (the shell's head script keeps Gradio's dark mode
+off): the tokens below have no dark values.
 
 Module: src/webui/style.py
 """
@@ -37,7 +44,9 @@ SHELL_CSS = """
 }
 
 /* ---------------------------------------------------------------- page frame */
+:root { color-scheme: light; }
 body, gradio-app, .gradio-container { background: var(--shep-bg) !important; }
+body { color: var(--shep-text); }
 .gradio-container { font-size: 15px; color: var(--shep-text); }
 /* The header runs edge to edge; each page pads itself. */
 .gradio-container > .main { padding: 0 !important; }
@@ -154,7 +163,9 @@ body, gradio-app, .gradio-container { background: var(--shep-bg) !important; }
 /* ---------------------------------------------------------------- in-page segmented control (third style) */
 .shep-seg .wrap { display: inline-flex !important; gap: 2px !important; padding: 3px; border: 1px solid var(--shep-grey-200); border-radius: 8px; background: var(--shep-grey-50); }
 .shep-seg .wrap label { border: 1px solid transparent !important; border-radius: 6px !important; background: none !important; box-shadow: none !important; padding: 5px 12px !important; font-size: 15px; font-weight: 500; }
-.shep-seg .wrap label.selected { background: #fff !important; border-color: var(--shep-grey-200) !important; box-shadow: 0 1px 2px rgba(20,24,40,.12) !important; font-weight: 600; }
+.shep-seg .wrap label { color: var(--shep-text-2) !important; }
+.shep-seg .wrap label.selected { background: #fff !important; border-color: var(--shep-grey-200) !important; box-shadow: 0 1px 2px rgba(20,24,40,.12) !important; font-weight: 600; color: var(--shep-text) !important; }
+.shep-seg .wrap label span { color: inherit !important; }
 .shep-seg .wrap label input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 
 /* ---------------------------------------------------------------- shared pieces */
@@ -216,8 +227,6 @@ body, gradio-app, .gradio-container { background: var(--shep-bg) !important; }
 
 /* HTML the dashboard renders itself (`shell.plain_html`): no Gradio padding. */
 .shep-html > .html-container { padding: 0 !important; }
-#shep-ds-notes { padding: 0 16px 14px; }
-#shep-ds-notes .shep-note { margin: 6px 0 0; }
 
 /* tables */
 .shep-tbl-wrap { border: 1px solid var(--shep-border); border-radius: 8px; overflow: auto; margin: 12px 16px; }
@@ -230,11 +239,8 @@ body, gradio-app, .gradio-container { background: var(--shep-bg) !important; }
 .shep-tbl tbody tr.shep-on td { background: var(--shep-accent-50); }
 .shep-tbl tbody tr.shep-on td:first-child { box-shadow: inset 4px 0 0 var(--shep-accent); }
 .shep-tbl tbody tr[data-key]:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: -2px; }
-.shep-ds-narrow { display: none; }
-@media (max-width: 1799px) {
-  .shep-dstbl .shep-ds-wide { display: none; }
-  .shep-dstbl .shep-ds-narrow { display: block; }
-}
+.shep-tbl tr.shep-grp th { position: static; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 10px; border-bottom: 1px solid var(--shep-border); }
+.shep-tbl tbody tr.shep-row-dis td { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
 
 /* the shared model list */
 .shep-list { display: flex; flex-direction: column; border: 1px solid var(--shep-border); border-radius: 8px; overflow: hidden; }
@@ -250,6 +256,9 @@ button.shep-row {
 .shep-row-main { font-weight: 600; }
 .shep-row-sub { font-size: 14px; color: var(--shep-text-2); }
 .shep-row-more { align-items: center; color: var(--shep-accent-text); font-weight: 500; }
+.shep-mtbl-wrap { margin: 0; }
+.shep-mtbl td { overflow-wrap: anywhere; }
+.shep-mtbl-wrap + .shep-row-more { border: 1px solid var(--shep-border); border-top: 0; border-radius: 0 0 8px 8px; }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 16px; }
 .shep-facts { display: flex; flex-direction: column; gap: 8px; }
 .shep-facts-sec { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
@@ -300,9 +309,6 @@ button.shep-row {
   .shep-page { min-height: 0; height: 100%; align-items: stretch !important; flex-wrap: nowrap !important; }
   .shep-page > .shep-panel { min-height: 0; max-height: 100%; display: flex; flex-direction: column; }
   .shep-page > .shep-panel > .block { flex: none; }
-  #shep-ds-table { flex: 0 1 auto !important; min-height: 120px; overflow: auto !important; }
-  #shep-ds-table .shep-tbl-wrap { overflow: visible; }
-  #shep-ds-details { flex: 1 1 auto !important; min-height: 0; overflow: auto !important; }
   footer, #runtime_footer { flex: none; }
 }
 /* Narrow: the regions stack, the page scrolls, nothing scrolls inside. */

@@ -20,8 +20,8 @@ Dependencies:
     - gradio==6.30.0 (pinned in pyproject.toml). From Gradio 6 a mounted app
       takes its theme, CSS, head and JS from gr.mount_gradio_app(), not from
       gr.Blocks(); `mount_dashboard` is the one place that passes them
-      (`mount_options`: the theme, the CSS and the one head script of the
-      shared ⓘ and the shell).
+      (`mount_options`: the theme, the CSS, and the head: every style sheet and
+      the scripts of the shared ⓘ and the shell).
 
 Called by:
     - src.api.main (`mount_dashboard`, at /ui)
@@ -36,6 +36,7 @@ import gradio as gr
 
 from src.utils.version_checker import DEGRADED, NOTICE, format_runtime_line, probe_runtime
 from src.webui import shell
+from src.webui.components import datasets_page
 from src.webui.components.datasets_page import create_datasets_page
 from src.webui.components.diagnosis_panel import create_diagnosis_tab
 from src.webui.components.help import HELP_CSS, HELP_HEAD, HelpRegistry
@@ -185,20 +186,32 @@ DASHBOARD_CSS = """
     }
 """
 
-#: The page's head (M5-2), given to the mount (`mount_options`):
-#:
-#: - **the shell's and the shared ⓘ's style sheet, as a ``<style>`` element**.
-#:   Gradio 6.30 rewrites the mount's ``css=``: inside an ``@media`` rule it
-#:   keeps only a copy of each selector prefixed with ``.gradio-container …
-#:   .contain``, so a media query there cannot reach the page frame above
-#:   ``.contain`` (the one-screen layout needs ``body`` and Gradio's
-#:   containers), and it drops ``@supports`` and ``@container`` rules. A style
-#:   element in the head is applied as written;
-#: - **the one head script**: the shared ⓘ (and Copy) and the shell (title,
-#:   header row). It runs once per page load, before any component exists, so
-#:   both work by document-level delegation.
-DASHBOARD_HEAD = ("<style>" + HELP_CSS + SHELL_CSS + "</style>"
-                  + HELP_HEAD + shell.SHELL_HEAD)
+#: Each page's own style sheet (the page contract, `src/webui/shell.py`): a page
+#: module's ``PAGE_CSS``, listed here beside its builder in `PAGES`.
+PAGE_CSS = (
+    datasets_page.PAGE_CSS,
+)
+
+
+def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
+    """The page's head (M5-2), given to the mount (`mount_options`):
+
+    - **one ``<style>`` element: the shared ⓘ's, the shell's and every page's
+      style sheet** (`PAGE_CSS`). Gradio 6.30 rewrites the mount's ``css=``:
+      inside an ``@media`` rule it keeps only a copy of each selector prefixed
+      with ``.gradio-container … .contain``, so a media query there cannot
+      reach the page frame above ``.contain`` (the one-screen layout needs
+      ``body`` and Gradio's containers), and it drops ``@supports`` and
+      ``@container`` rules. A style element in the head is applied as written;
+    - **the head scripts**: the shared ⓘ (and Copy) and the shell (always
+      light, title, header row). They run once per page load, before any
+      component exists, so both work by document-level delegation.
+    """
+    return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
+            + HELP_HEAD + shell.SHELL_HEAD)
+
+
+DASHBOARD_HEAD = dashboard_head()
 
 #: Text sizes of the theme: nothing under 14 px, body 15 px (the approved look).
 TEXT_SIZE = gr.themes.Size(name="shepherd", xxs="14px", xs="14px", sm="14px", md="15px",
@@ -214,8 +227,9 @@ def _dashboard_theme() -> gr.themes.Base:
     )
 
 
-#: Each page's builder, by the shell's page ids (the page contract). Test and
-#: Models are added by UI-D; until then the shell shows their temporary body.
+#: Each page's builder, by the shell's page ids (the page contract; a page's
+#: style sheet goes in `PAGE_CSS`). Test and Models are added by UI-D; until
+#: then the shell shows their temporary body.
 PAGES = {
     shell.CLINICAL: create_diagnosis_tab,
     shell.DATASETS: create_datasets_page,
@@ -295,6 +309,10 @@ def mount_options() -> dict[str, Any]:
     - ``mcp_server``: would publish every event handler as an MCP tool.
     - ``ssr_mode``: server-side rendering starts a Node.js server process.
     - ``max_file_size``: `MAX_UPLOAD_SIZE` (below).
+    - ``footer_links``: none. Gradio's footer offers its API page, "Built with
+      Gradio" and its own "Settings" (a theme switch with a dark mode the
+      dashboard's colours do not have, and screen recording), beside the
+      dashboard's ⚙ Settings; it also takes height from the one-screen layout.
 
     Two routes Gradio registers with no switch at all are refused in front of
     the mount: ``src/api/middleware/gradio_routes.py``.
@@ -308,6 +326,7 @@ def mount_options() -> dict[str, Any]:
         "mcp_server": False,
         "ssr_mode": False,
         "max_file_size": MAX_UPLOAD_SIZE,
+        "footer_links": [],
     }
 
 
@@ -318,5 +337,5 @@ def mount_dashboard(app: FastAPI, path: str = "/ui") -> gr.Blocks:
     return blocks
 
 
-__all__ = ["DASHBOARD_CSS", "DASHBOARD_HEAD", "MAX_UPLOAD_SIZE", "PAGES", "create_gradio_app",
-           "mount_dashboard", "mount_options"]
+__all__ = ["DASHBOARD_CSS", "DASHBOARD_HEAD", "MAX_UPLOAD_SIZE", "PAGES", "PAGE_CSS",
+           "create_gradio_app", "dashboard_head", "mount_dashboard", "mount_options"]

@@ -21,11 +21,14 @@ Apply model:
 Operator controls (D8, M5-1):
     Restart Backend and Apply Settings each check their own Gradio request
     first (`src/webui/operator_access.py`) and are refused, changing nothing,
-    unless D8 allows it. The greyed-out Restart button is a display, never the
-    control.
+    unless D8 allows it. For a request D8 refuses, both buttons are greyed out
+    with D8's reason as visible text when the page is opened and on its timer
+    (M5-2, the general D8 rule); like the restart lock, the greyed-out buttons
+    are a display, never the control.
 """
 from __future__ import annotations
 
+import html
 import os
 from typing import Any
 
@@ -150,6 +153,23 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     return "  ".join(parts)
 
 
+def _refresh_restart_lock(request: gr.Request):
+    """Apply and Restart as this request may use them: both greyed out with
+    D8's reason for a refused request; Restart also while training runs (the
+    lock note). A display: each button's handler checks its own request."""
+    locked = is_training_active()
+    access = operator_access(request)
+    reason = ("" if access.allowed else
+              '<div class="shep-reason shep-reason-grey">Apply Settings and Restart Backend are '
+              f'operator controls, off for this request: {html.escape(access.reason)}</div>')
+    return (
+        gr.update(interactive=access.allowed),
+        gr.update(interactive=access.allowed and not locked),
+        gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
+        gr.update(visible=not access.allowed, value=reason),
+    )
+
+
 #: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
 #: The badges (impact, scope) and the Details stay visible on the page.
 FIELD_HELP = {
@@ -238,6 +258,8 @@ def create_runtime_settings_tab(ctx: Any) -> None:
         padding=True,
     )
     restart_status = gr.Markdown("", elem_id="runtime_restart_status")
+    # Read-only: why both buttons are greyed out (D8's reason for this request).
+    access_note = gr.HTML("", visible=False, elem_id="runtime_access_reason")
     gr.Markdown(
         "**Restart Backend** relaunches the backend (REST API + this UI) so a "
         "newly applied **Memory Allocator** takes effect. Locked while training is "
@@ -300,18 +322,10 @@ def create_runtime_settings_tab(ctx: Any) -> None:
                 "compare MRR / Hits@K against an eager run before trusting any result."
             )
 
-    def _refresh_restart_lock():
-        locked = is_training_active()
-        return (
-            gr.update(interactive=not locked),
-            gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
-        )
-
-    restart_lock_timer.tick(
-        fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note]
-    )
+    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note]
+    restart_lock_timer.tick(fn=_refresh_restart_lock, outputs=lock_outputs)
     if tab is not None:
-        tab.select(fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note])
+        tab.select(fn=_refresh_restart_lock, outputs=lock_outputs)
     # After the click handler runs, kick off a browser-side poller that reloads
     # the page once the fresh backend is up (a new process means a new Gradio
     # session; without a reload the old page's pollers hang). The poller no-ops

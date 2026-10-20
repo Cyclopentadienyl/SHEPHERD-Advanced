@@ -289,6 +289,32 @@ class TestResolveWorkspace:
         assert "x" * 100 not in str(refused.value)
 
 
+class TestResolveWorkspaces:
+    """Every name at once, from one listing of the root (M5-2): what
+    `resolve_workspace` answers for each, and nothing it refuses."""
+
+    def test_each_listed_name_resolves_as_resolve_workspace_says(self, tmp_path, monkeypatch):
+        root = tmp_path / "root"
+        for name in ("demo", "other", ".hidden"):
+            (root / name).mkdir(parents=True)
+        (root / "alias").symlink_to(root / "other", target_is_directory=True)
+        (tmp_path / "away").mkdir()
+        (root / "out").symlink_to(tmp_path / "away", target_is_directory=True)
+        listed = []
+        real = sl._workspace_entries
+        monkeypatch.setattr(sl, "_workspace_entries",
+                            lambda r: listed.append(r) or real(r))
+        resolved = sl.resolve_workspaces(environ=_roots(root))
+        assert len(listed) == 1                      # one listing, not one per name
+        assert resolved == {name: sl.resolve_workspace(name, environ=_roots(root))
+                            for name in ("alias", "demo", "other")}
+        assert "out" not in resolved and ".hidden" not in resolved
+
+    def test_no_root_refuses(self):
+        with pytest.raises(sl.ServerListRefused, match="SHEPHERD_WORKSPACES_ROOT is not set"):
+            sl.resolve_workspaces(environ={})
+
+
 # ---------------------------------------------------------------------------
 # Checkpoints
 # ---------------------------------------------------------------------------

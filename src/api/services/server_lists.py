@@ -70,6 +70,7 @@ __all__ = [
     "list_workspaces",
     "resolve_checkpoint",
     "resolve_workspace",
+    "resolve_workspaces",
     "stored_report_state",
 ]
 
@@ -384,6 +385,28 @@ def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None)
         ServerListRefused: no workspace root, or `name` is not a listed workspace.
     """
     return _find_workspace(name, environ)[1]
+
+
+def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Path]:
+    """Every listed workspace's resolved directory, by its listed name, from one
+    listing of the root (M5-2): what `resolve_workspace` answers for each name,
+    for a caller that needs many names at once (one listing, not one per name).
+    A name that cannot be resolved, or resolves outside the root, is left out,
+    as `resolve_workspace` refuses it.
+
+    Raises:
+        ServerListRefused: no workspace root, or the root cannot be listed.
+    """
+    root = _workspace_root(environ)
+    resolved: Dict[str, Path] = {}
+    for entry in _workspace_entries(root):
+        try:
+            path = entry.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if _inside(path, root):
+            resolved[entry.name] = path
+    return resolved
 
 
 # ---------------------------------------------------------------------------

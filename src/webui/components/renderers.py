@@ -241,9 +241,7 @@ def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = Tr
         marks.append(chip("record not verified", "grey"))
     if not _get(item, "trainable", False):
         why = str(_get(item, "not_trainable") or "not trainable")
-        short = (short_reason(why) if is_digest(_get(item, "dataset_fingerprint"))
-                 else "no readable split manifest")
-        marks.append(chip(f"not trainable: {short}", "grey", title=why))
+        marks.append(chip(f"not trainable: {not_trainable_short(item)}", "grey", title=why))
     if marks:
         parts.append('<span class="shep-ds-marks">' + "".join(marks) + "</span>")
     sep = " " if compact else '<span class="shep-sep" aria-hidden="true"> · </span>'
@@ -255,6 +253,46 @@ def short_reason(text: Any, limit: int = 80) -> str:
     ``title`` or a details panel."""
     flat = " ".join(str(text or "").split())
     return flat if len(flat) <= limit else flat[:limit - 1] + "…"
+
+
+#: Why a workspace without a readable manifest is not trainable, in short words:
+#: by whether its ``split_manifest.json`` is absent (an item's ``manifest``,
+#: which the page reading the list adds) or present but not readable.
+NO_SPLIT_MANIFEST = "no split manifest"
+NO_READABLE_SPLIT_MANIFEST = "no readable split manifest"
+
+
+def not_trainable_short(item: Any, limit: int = 80) -> str:
+    """"not trainable: <this>" in short words: "no split manifest" when the
+    file is absent, "no readable split manifest" when it is there but not
+    read (or when the page did not check which), and the list's own reason,
+    shortened, for a workspace whose manifest was not reached at all
+    (``manifest`` "not_checked": a name that resolves outside the root) or
+    whose manifest was read."""
+    state = _get(item, "manifest")
+    if not is_digest(_get(item, "dataset_fingerprint")) and state != "not_checked":
+        return NO_SPLIT_MANIFEST if state == "absent" else NO_READABLE_SPLIT_MANIFEST
+    return short_reason(_get(item, "not_trainable") or "not trainable", limit)
+
+
+def workspace_choices(workspaces: Sequence[Any]) -> list:
+    """The options of a workspace select, one way on every page (Diagnosis'
+    drawer, Models, Test, Training's run bar): ``(label, name)`` with the label
+    "name · dataset fingerprint <12 hex> · synthetic" (more digits when two
+    listed fingerprints share 12), or "name · no (readable) split manifest" (a
+    name that does not resolve inside the root: its own reason, shortened)."""
+    digits = distinguishing_digits(_get(w, "dataset_fingerprint") for w in workspaces)
+    choices = []
+    for w in workspaces:
+        name = str(_get(w, "name"))
+        if not is_digest(_get(w, "dataset_fingerprint")):
+            label = f"{name} · {not_trainable_short(w, 48)}"
+        else:
+            label = f"{name} · dataset fingerprint {short_hex(_get(w, 'dataset_fingerprint'), digits)}"
+            if origin_of(w) == "synthetic":
+                label += " · synthetic"
+        choices.append((label, name))
+    return choices
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +343,18 @@ def run_started(run: Any) -> Optional[str]:
         return None
     y, mo, d, h, mi, _s = match.groups()
     return f"{y}-{mo}-{d} {h}:{mi}"
+
+
+def run_suffix(run: Any) -> Optional[str]:
+    """"run_3fa9c1" from a run directory named "20261017-091500_run_3fa9c1"
+    (what follows its start time); None when it is not named by its start time
+    (`run_label` then names it whole)."""
+    text = str(run or "")
+    match = _RUN_TIME.match(text)
+    if not match:
+        return None
+    rest = text[match.end():].lstrip("_-")
+    return rest or None
 
 
 def model_name_line(item: Any) -> str:
@@ -375,6 +425,80 @@ def model_row_html(item: Any, workspaces: Sequence[Any], *,
     return (f'<button type="button" class="{" ".join(classes)}" data-key="{e(key)}" '
             f'aria-pressed="{"true" if selected else "false"}">{head}'
             f'<span class="shep-row-sub">{" · ".join(sub)}</span>{tests}</button>')
+
+
+def recorded_tests_cell(recorded: Optional[RecordedTests]) -> str:
+    """The recorded tests' state for a table cell (`recorded_tests_text`
+    without its label): never a number of a result."""
+    return recorded_tests_text(recorded).replace("Recorded tests: ", "", 1)
+
+
+def validation_cell(validation: Any) -> str:
+    """A checkpoint's own validation figure for the "Validation MRR (Trainer,
+    top-20)" column, escaped: its value, named when it is another figure."""
+    if not isinstance(validation, Mapping) or not isinstance(validation.get("value"), (int, float)):
+        return '<span class="shep-muted">—</span>'
+    metric, value = str(validation.get("metric")), float(validation["value"])
+    if metric == "val_mrr":
+        return f"{value:.4f}"
+    label = _VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
+    return f'{value:.4f}<div class="shep-sub">{e(label)}</div>'
+
+
+#: The research table's fixed columns (Models): an extra column a page fills
+#: goes before the recorded tests.
+MODEL_TABLE_COLUMNS = ("Model", "Fingerprints: model · dataset trained on",
+                       "Validation MRR (Trainer, top-20)", "Recorded tests")
+
+
+def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
+                         recorded: Optional[RecordedTests] = None, in_use: bool = False,
+                         selected: bool = False, digits: int = SHORT_HEX, key: str = "",
+                         in_use_label: str = "In use", extra: Optional[str] = None) -> str:
+    """One checkpoint as a row of the research table (Models): the name line
+    and run, "model <12 hex>" over "dataset <listed workspace> · <12 hex>" (or
+    "· matches no listed workspace"), the synthetic chip, the Trainer's
+    validation figure, an optional cell the page fills (`extra`, HTML it built
+    with these renderers) and the recorded tests' state. An unreadable
+    checkpoint is greyed: "metadata not readable · cannot be loaded"."""
+    problem = _get(item, "problem")
+    unreadable = problem is not None or not is_digest(_get(item, "sha256"))
+    classes = [c for c, on in (("shep-on", selected), ("shep-row-dis", unreadable)) if on]
+    tag = f' {chip(in_use_label, "accent")}' if in_use else ""
+    suffix = run_suffix(_get(item, "run"))
+    epoch = _get(item, "epoch")
+    epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
+    model = (f'<div class="shep-w600">{e(run_label(_get(item, "architecture"), _get(item, "run")))}'
+             f'</div><div class="shep-sub">epoch {e(epoch_text)}'
+             f'{" · " + e(suffix) if suffix else ""}</div>{tag}')
+    attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0" '
+             f'aria-selected="{"true" if selected else "false"}"'
+             + (' aria-disabled="true"' if unreadable else ""))
+    extra_cell = "" if extra is None else f"<td>{extra}</td>"
+    if unreadable:
+        why = problem or "its digest was not read"
+        return (f'<tr {attrs}><td>{model}</td><td colspan="2"><span class="shep-sub">'
+                f'{e(_get(item, "filename"))} · <span title="{e(why)}">metadata not readable · '
+                f'cannot be loaded</span></span></td>{extra_cell}<td>—</td></tr>')
+    fingerprint = _get(item, "dataset_fingerprint")
+    names = trained_on(fingerprint, workspaces)
+    if not is_digest(fingerprint):
+        dataset = 'dataset <span class="shep-muted">not recorded</span>'
+    elif names:
+        dataset = (f'dataset {", ".join(f"<b>{e(n)}</b>" for n in names)} · '
+                   f'<code class="shep-fpv" title="{e(fingerprint)}">{e(fingerprint[:digits])}</code>')
+    else:
+        dataset = (f'dataset <code class="shep-fpv" title="{e(fingerprint)}">'
+                   f'{e(fingerprint[:digits])}</code> · '
+                   '<span class="shep-amber-t">matches no listed workspace</span>')
+    if is_synthetic_training(fingerprint, workspaces):
+        dataset += " " + chip("synthetic", "amber")
+    sha = _get(item, "sha256")
+    fingerprints = (f'<div>model <code class="shep-fpv" title="{e(sha)}">{e(sha[:digits])}</code>'
+                    f'</div><div class="shep-sub">{dataset}</div>')
+    return (f'<tr {attrs}><td>{model}</td><td>{fingerprints}</td>'
+            f'<td class="shep-num">{validation_cell(_get(item, "validation"))}</td>{extra_cell}'
+            f'<td>{e(recorded_tests_cell(recorded))}</td></tr>')
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +658,11 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
 
 __all__ = [
     "IDENTITY_BANNERS",
+    "MODEL_TABLE_COLUMNS",
     "ModelFacts",
     "NOT_A_MEDICAL_DEVICE",
+    "NO_READABLE_SPLIT_MANIFEST",
+    "NO_SPLIT_MANIFEST",
     "RENDERER_HELP",
     "RecordedTests",
     "SHORT_HEX",
@@ -551,15 +678,21 @@ __all__ = [
     "model_facts_html",
     "model_name_line",
     "model_row_html",
+    "model_table_row_html",
+    "not_trainable_short",
     "origin_of",
     "record_verified",
+    "recorded_tests_cell",
     "recorded_tests_text",
     "run_label",
     "run_started",
+    "run_suffix",
     "short_hex",
     "short_reason",
     "sources_text",
     "trained_on",
     "trained_on_html",
+    "validation_cell",
     "validation_text",
+    "workspace_choices",
 ]

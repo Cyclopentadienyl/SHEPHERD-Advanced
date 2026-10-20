@@ -2333,7 +2333,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | Training Console，與以前相同。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Evaluate › **Test**、**Models** | 目前顯示「being built in M5」 |
-| 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同 |
+| 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
   Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。
@@ -2344,6 +2344,11 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 - 視窗至少 1400 × 760 CSS 像素時，頁面本身不捲動；某個區域的內容超出空間時，在它自己的面板
   內捲動。視窗較窄或直向時，各區域上下堆疊，由頁面捲動。佈景主題
   最小的文字為 14 px。
+- 無論系統或瀏覽器要求深色模式，儀表板一律以它的淺色配色顯示（它的配色沒有深色版本，而
+  Gradio 的深色模式會讓頁面上的文字無法閱讀）；網址會加上 `?__theme=light`。Gradio 自己的頁尾
+  （它的 API 頁面、「Built with Gradio」與它自己的「Settings」）不再顯示。
+- 每次顯示某個研究頁面時都會重新讀取它：選取它時，以及在它是目前顯示的頁面時回到 Research
+  時。這時其他研究頁面不會被讀取。
 
 ### 頁首的兩個 chip
 
@@ -2380,9 +2385,10 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 
 以前印在 Diagnosis、Training Console 與 Runtime Settings 各欄位下方的說明，現在放在欄位名稱
 後面的 ⓘ 裡。把滑鼠指向它、用 Tab 移到它，或點擊它：說明會出現在一個泡泡中，滑鼠可以移進泡泡
-閱讀。點擊會讓它保持打開；按 Esc 或點擊其他地方會關閉它。必須一直可見的內容仍然直接印出：拒絕
-的原因、工作的狀態、合成資料的標記、未經驗證的來源，以及 Training Console 對 HGT 的 AMP 拒絕
-（「Disabled: HGT requires full float32 …」）。
+閱讀。點擊會讓它保持打開；按 Esc 或點擊其他地方會關閉它。點擊欄位名稱仍會把游標放進欄位。
+泡泡會在 ⓘ 的下方或上方有空間的一側打開，而且永遠不會比視窗高：較長的文字在泡泡內捲動。必須
+一直可見的內容仍然直接印出：拒絕的原因、工作的狀態、合成資料的標記、未經驗證的來源，以及
+Training Console 對 HGT 的 AMP 拒絕（「Disabled: HGT requires full float32 …」）。
 
 ### Research › Prepare › Datasets
 
@@ -2396,15 +2402,27 @@ workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以
 - **serving reads this workspace**：pipeline 正從它提供服務；
 - **same dataset as served**：另一個完整指紋相同的 workspace；
 - **in your Training run bar**：這個瀏覽器分頁為 Training 選擇的 workspace；
-- **not trainable: <原因>**：有列出，但訓練會拒絕它，並附上原因。
+- **not trainable: <原因>**：有列出，但訓練會拒絕它，並附上原因：workspace 沒有
+  `split_manifest.json` 時為 `no split manifest`，有但無法讀取時為 `no readable split
+  manifest`，否則為清單本身給出的原因（例如一個連結到根目錄之外目錄的 workspace：「… resolves
+  outside the workspaces root」）。
 
-選取一列會顯示它的細節：完整指紋與 Copy、manifest 綁定的內容（短 digest）、種子與切分數量、
-來源與建置紀錄，以及 workspace 相對於伺服器 workspace 根目錄的路徑。不會顯示任何伺服器的絕對
-路徑。
+較長的名稱或來源清單會在儲存格內換行，因此「In use」欄一直保持在視野內。選取一列會顯示它的細節：
+完整指紋與 Copy、manifest 綁定的內容（短 digest）、種子與切分數量、來源與建置紀錄、workspace
+相對於伺服器 workspace 根目錄的路徑，以及它與其他列出的 workspace 的比較：「Same dataset as …」
+（完整指紋相同）或「Same graph build as … (kg, tensors and record identical), another cut: the
+allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的絕對路徑：根目錄之下的路徑以相對於
+根目錄的方式顯示，其他路徑寫作「a path outside the workspaces root」，被拒絕的
+`SHEPHERD_WORKSPACES_ROOT` 會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
+選取時讀取。
 
 **Use for training ›** 會打開 Research › Training，並把該 workspace 填入這個瀏覽器分頁的 Data
 Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。
-不可訓練的 workspace 無法使用。
+不可訓練的 workspace 無法使用。位於 repository 內的 workspace 以相對於 repository 的方式顯示；
+位於 repository 之外的會是伺服器的絕對路徑，只提供給 D8 允許的瀏覽器（也就是能按 Start 的瀏覽
+器）：唯讀的瀏覽器會看到一則說明。在 Training 的 run bar 建好之前，選擇就存在 Data Directory
+裡：手動編輯它或按 Reset Default，會移除「in your Training run bar」標記，再次選擇該 workspace
+會重新填入欄位。
 
 這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
 唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集

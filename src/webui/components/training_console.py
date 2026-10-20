@@ -650,13 +650,40 @@ def _workspace_field(name: Any) -> Optional[str]:
         return str(path)
 
 
-def _from_datasets(name: Any) -> Tuple[Any, Any]:
+#: Said when the Data Directory would show a server path a request may not see.
+_PATH_NOT_SHOWN = ("{name} is selected for Training in this browser tab. Its server path is "
+                   "shown to operator requests only (it is outside the project), and Start is "
+                   "an operator control.")
+
+
+def _from_datasets(name: Any, request: gr.Request = None) -> Tuple[Any, Any, Any]:
     """Datasets › Use for training ›: this session's Data Directory and the
-    Data Paths section opened to show it; nothing changes on the server."""
+    Data Paths section opened to show it; nothing changes on the server.
+
+    A workspace inside the project is shown relative to it, to every request.
+    One outside it would be shown as an absolute server path, which only a
+    request D8 allows is given (such a request is the one that can Start): a
+    refused request gets a note instead, and the field is left as it is.
+    (Temporary: UI-C's run bar shows the workspace by name.)"""
     value = _workspace_field(name)
     if value is None:
-        return gr.update(), gr.update()
-    return gr.update(value=value), gr.Accordion(open=True)
+        return gr.update(), gr.update(), gr.update()
+    if not value.startswith(DISPLAY_PREFIX) and not operator_access(request).allowed:
+        return gr.update(), gr.Accordion(open=True), _PATH_NOT_SHOWN.format(name=name)
+    return gr.update(value=value), gr.Accordion(open=True), ""
+
+
+def _keep_or_clear_workspace(data_dir_value: Any, name: Any) -> Any:
+    """The Data Directory changed: this session's Training workspace stays only
+    while the field still shows it; edited to anything else (by hand, or Reset),
+    the workspace is cleared, so Datasets stops marking it "in your Training
+    run bar" and choosing it again fills the field again."""
+    if not name:
+        return gr.update()
+    shown = _workspace_field(name)
+    if shown is not None and (data_dir_value or "").strip() == shown:
+        return gr.update()
+    return None
 
 
 def _strip_display_prefix(path: str) -> str:
@@ -1964,7 +1991,7 @@ def create_training_tab(ctx: Any) -> None:
         fn=_on_check_continue,
         inputs=continue_inputs,
         outputs=[continue_preview, extend_epochs],
-    )
+    ).then(**ctx.chip_refresh)
     resume_btn.click(
         fn=_with_series_sent(_on_resume),
         inputs=[data_dir, run_name, device, continue_source, checkpoint_dropdown,
@@ -1991,7 +2018,7 @@ def create_training_tab(ctx: Any) -> None:
         fn=_refresh_checkpoints,
         inputs=[data_dir, conv_type],
         outputs=[checkpoint_dropdown],
-    )
+    ).then(**ctx.chip_refresh)
     # Auto-relink the resume list to the selected training architecture: changing
     # conv_type repopulates the dropdown with that architecture's checkpoints, so
     # a stale cross-architecture selection can't linger. (data_dir is free text —
@@ -2006,13 +2033,20 @@ def create_training_tab(ctx: Any) -> None:
         fn=_save_training_config,
         inputs=[data_dir],
         outputs=[path_msg],
-    )
+    ).then(**ctx.chip_refresh)
     # Datasets › Use for training › sets ctx.training_workspace; until the run
-    # bar (UI-C) reads it directly, it fills this session's Data Directory.
+    # bar (UI-C) reads it directly, it fills this session's Data Directory, and
+    # a Data Directory changed to anything else clears it.
     ctx.training_workspace.change(
         fn=_from_datasets,
         inputs=[ctx.training_workspace],
-        outputs=[data_dir, data_paths],
+        outputs=[data_dir, data_paths, path_msg],
+        show_progress="hidden",
+    )
+    data_dir.change(
+        fn=_keep_or_clear_workspace,
+        inputs=[data_dir, ctx.training_workspace],
+        outputs=[ctx.training_workspace],
         show_progress="hidden",
     )
     reset_path_btn.click(
@@ -2050,12 +2084,6 @@ def create_training_tab(ctx: Any) -> None:
     # The refusal is state, so it stays visible text in `info=`; the field's
     # ordinary help is behind its ⓘ (FIELD_HELP), and "" clears the refusal
     # (Gradio 6.30 keeps an info sent as None).
-    conv_type.change(
-        fn=_on_conv_type_change,
-        inputs=[conv_type],
-        outputs=[amp_mode],
-    )
-
     conv_type.change(
         fn=_on_conv_type_change,
         inputs=[conv_type],

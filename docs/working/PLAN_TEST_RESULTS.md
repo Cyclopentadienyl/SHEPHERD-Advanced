@@ -1532,23 +1532,33 @@ contract and BACKLOG stay the record, and no new planning document is added.
       that browser, never a header value; the GPU job from the job runner and the lock's holder
       record, never "free") and Settings. The shell's docstring is the page contract the other
       pages build on (one builder per page, one context: the shared ⓘ, the timers outside the
-      tabs, the chips, the shared model list, the served-model-changed trigger). Test and Models
-      hold a one-line body until they are built (deployment guide §4.14);
+      tabs and the page shown for their listeners to skip work, the chips, the shared model
+      list, the served-model-changed trigger, each page's own style sheet registered beside its
+      builder). A research page is read again only when it is the page shown (returning to
+      Research refreshes that one page, never the other three, since Models' list opens every
+      checkpoint). The page is always drawn light (Gradio's dark mode left its text unreadable on
+      the dashboard's colours) and Gradio's own footer is off. Test and Models hold a one-line
+      body until they are built (deployment guide §4.14);
     - **the Diagnosis tab's "Model in use" card**, directly above Run Diagnosis, so the model
       is known before a diagnosis, with "Change model…": a drawer on the one shared model list
       and the one gated Load that Models also uses (one component, two views, no second
       implementation); it replaces the Model Configuration accordion and the header's
       "Serving now" strip, so the identity is shown once; *the shared component as implemented
       (M5-2, 2026-10-20):* `src/webui/components/model_list.py`, with a clinical preset (the
-      latest four runs) and a research preset (every run). Listing opens checkpoints, so it is
+      latest four runs, "In use" pinned) and a research preset (Models' table, every run); a
+      page shapes its view (one architecture, groups such as "Ordered by …", one extra column,
+      a note beside Load) without drawing rows itself. Listing opens checkpoints, so it is
       checked by D8 like the Load; the Load is D8 on its own request, the item found again in
-      the server's list, one confirmation from → to with the changed rows marked, D8 again on
-      the confirm, the status read again (a model in use that changed since is said, never
-      reloaded over), the API's one reload (`run_reload`) with what the server resolves, the
-      served fingerprint checked against the one shown, and a usage history entry only for a
-      list ordered by a cohort version's score; the page stops waiting after 180 s and offers
-      "Read again". Placing it (the card's drawer, Models) is the Diagnosis and Models pages'
-      part;
+      the server's list and its bytes hashed again, one confirmation from → to with the changed
+      rows marked, D8 again on the confirm, **both columns read again** (what is served, as the
+      whole served identity and data directory, and what would be loaded: the file's bytes, the
+      workspace's graph and SP table; a change in either is said with the new values and
+      nothing is reloaded until that is confirmed), the API's one reload (`run_reload`) with
+      what the server resolves, the served fingerprint checked against the one shown, the
+      served-model-changed trigger set when any part of what is served changed, and a usage
+      history entry only for a list ordered by a cohort version's score; the page stops waiting
+      after 180 s, counting in that list's own confirmation, and offers "Read again". Placing it
+      (the card's drawer, Models) is the Diagnosis and Models pages' part;
     - **Run Diagnosis greyed out and not clickable while no model is loaded**, with a bubble on
       hover saying no model is loaded; the API's demo answer for API clients is unchanged;
     - **the dataset identity**: the workspace name, its build time and one fingerprint, the
@@ -1572,11 +1582,16 @@ contract and BACKLOG stay the record, and no new planning document is added.
       binding state, the declared releases, the sample counts and whether it is trainable;
     - **a read-only Datasets page** over the server's workspace list; *as implemented (M5-2,
       2026-10-20):* `src/webui/components/datasets_page.py`, on the server's list
-      (`list_workspaces`), with the markers "serving reads this workspace", "same dataset as
-      served" (the full fingerprint), "in your Training run bar" and "not trainable: <why>";
-      the details show the path relative to the workspace root, never an absolute path; "Use
-      for training ›" sets this browser session's workspace for Training and opens it, changing
-      nothing on the server. Nothing on it opens a checkpoint, so it is not gated;
+      (`list_workspaces`, read through the dashboard's one workspace reader,
+      `src/webui/components/workspaces.py`, which the model list's select uses too), with the
+      markers "serving reads this workspace", "same dataset as served" (the full fingerprint),
+      "in your Training run bar" and "not trainable: <why>" ("no split manifest" when the file
+      is absent, "no readable split manifest" when it cannot be read); the details show the path
+      relative to the workspace root and how the workspace compares with the others ("Same
+      graph build as …, another cut: …"), and no reason shows an absolute path to any request (a
+      link's target outside the root, a refused root setting); the manifests are read once per
+      refresh; "Use for training ›" sets this browser session's workspace for Training and opens
+      it, changing nothing on the server. Nothing on it opens a checkpoint, so it is not gated;
     - **the charts**: axis-aware wheel zoom (over the X axis only X, over the Y axis only Y,
       inside the plot both, centred on the cursor), drag to pan, one-click and double-click
       reset, keyboard equivalents, and the view kept across the periodic refresh. Neither
@@ -1612,7 +1627,9 @@ contract and BACKLOG stay the record, and no new planning document is added.
     only texts that must stay visible. The texts are escaped once in Python and shown with
     `textContent`; the bubble opens on hover, focus and click, stays open while the pointer is
     in it, pins on click and closes on Esc or a click outside; the field's input is labelled by
-    its title and described by the help.
+    its title and described by the help, and a click on the title still focuses the field; the
+    bubble is drawn in the dashboard's font, on the side of its ⓘ with room, and never taller
+    than the window.
 - **The served identity is shown together, never merged.** The identity serving now and each
   result's own identity are kept apart. One shared block shows a readable summary by default;
   expanded, it shows either one in full, with its digests to copy. Beside a result, one of

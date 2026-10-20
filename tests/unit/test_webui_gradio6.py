@@ -207,13 +207,34 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     # Runtime Settings is the page under ⚙ Settings (M5-2).
     tab = next(b for b in app.blocks.values()
                if isinstance(b, gr.Tab) and b.elem_id == "shep-tab-settings")
-    on_select = [fn for fn in app.fns.values() if (tab._id, "select") in fn.targets]
-    assert len(on_select) == 1 and on_select[0].name == "_refresh_restart_lock"
-    assert [o.elem_id for o in on_select[0].outputs] == ["runtime_restart", "runtime_restart_lock"]
+    on_select = [fn for fn in app.fns.values() if (tab._id, "select") in fn.targets
+                 and fn.name == "_refresh_restart_lock"]
+    assert len(on_select) == 1
+    assert [o.elem_id for o in on_select[0].outputs] == [
+        "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason"]
+
+    from tests.fixtures.operator_access import operator_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    button, note = on_select[0].fn()
-    assert button["interactive"] is False and note["visible"] is True
+    apply, button, note, reason = on_select[0].fn(operator_request(monkeypatch))
+    assert apply["interactive"] is True and button["interactive"] is False
+    assert note["visible"] is True and reason["visible"] is False
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
-    button, note = on_select[0].fn()
+    apply, button, note, reason = on_select[0].fn(operator_request(monkeypatch))
     assert button["interactive"] is True and note["visible"] is False
+
+
+def test_read_only_settings_grey_out_apply_and_restart_with_the_reason(monkeypatch):
+    """The general D8 rule: a control a read-only request cannot use is
+    greyed out with the reason as visible text (each handler still checks its
+    own request)."""
+    import src.webui.components.runtime_settings as rs
+    from tests.fixtures.operator_access import gradio_request
+
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    apply, button, note, reason = rs._refresh_restart_lock(gradio_request())
+    assert apply["interactive"] is False and button["interactive"] is False
+    assert reason["visible"] is True and "operator controls, off for this request: " in (
+        reason["value"]) and "SHEPHERD_DEPLOYMENT_MODE is not set" in reason["value"]
+    assert reason["value"].startswith('<div class="shep-reason shep-reason-grey">')

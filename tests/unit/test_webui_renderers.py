@@ -198,3 +198,65 @@ def test_model_facts_escape_names(name):
     item = {**checkpoint(), "run": name, "workspace": name}
     html = r.model_facts_html(r.facts_from_checkpoint(item, [workspace(name)]))
     assert "<script>" not in html
+
+
+# --------------------------------------------------------------------------- shared by several pages
+def test_the_workspace_options_are_one_label_for_every_page():
+    """Diagnosis' drawer, Models, Test and Training's run bar label a listed
+    workspace the same way: name, the fingerprint's distinguishing digits,
+    synthetic; or why it has none."""
+    twin = FP_A[:12] + "f" * 52
+    choices = r.workspace_choices([
+        workspace("demo"), workspace("twin", fingerprint=twin, origin="files"),
+        {**workspace("scratch", fingerprint=None, trainable=False), "manifest": "absent"},
+        workspace("broken", fingerprint=None, trainable=False)])
+    assert choices == [
+        (f"demo · dataset fingerprint {FP_A[:16]} · synthetic", "demo"),
+        (f"twin · dataset fingerprint {twin[:16]}", "twin"),
+        ("scratch · no split manifest", "scratch"),
+        ("broken · no readable split manifest", "broken")]
+
+
+def test_not_trainable_tells_an_absent_manifest_from_an_unreadable_one():
+    assert r.not_trainable_short({"dataset_fingerprint": None, "manifest": "absent"}) == (
+        "no split manifest")
+    assert r.not_trainable_short({"dataset_fingerprint": None, "manifest": "unreadable"}) == (
+        "no readable split manifest")
+    assert r.not_trainable_short({"dataset_fingerprint": None, "manifest": "not_checked",
+                                  "not_trainable": "x resolves outside the workspaces root"}) == (
+        "x resolves outside the workspaces root")
+    assert r.not_trainable_short({"dataset_fingerprint": FP_A,
+                                  "not_trainable": "files are missing (kg.json)"}) == (
+        "files are missing (kg.json)")
+    html = r.dataset_identity_html({**workspace("s", fingerprint=None, trainable=False),
+                                    "manifest": "absent"})
+    assert "not trainable: no split manifest" in html
+
+
+def test_the_research_table_row_has_its_columns_and_escapes():
+    row = r.model_table_row_html(checkpoint(run="20261017-091500_<b>x"), [workspace()],
+                                 recorded=r.RecordedTests("records", 3, 1), in_use=True,
+                                 key="gat/r/f.pt", in_use_label="In use (Diagnosis)",
+                                 extra="<span>regime</span>")
+    assert row.startswith('<tr class="" data-key="gat/r/f.pt" tabindex="0" aria-selected="false"')
+    cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
+    assert len(cells) == 5
+    assert "GAT · run 2026-10-17 09:15" in cells[0] and "epoch 5 · &lt;b&gt;x" in cells[0]
+    assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
+    assert f'model <code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>' in cells[1]
+    assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
+    assert cells[2] == "0.3180" and cells[3] == "<span>regime</span>"
+    assert cells[4] == "3 · 1 contested"
+    unmatched = r.model_table_row_html(checkpoint(fingerprint=FP_B), [workspace()])
+    assert "matches no listed workspace" in unmatched and unmatched.count("<td") == 4
+    broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])
+    assert 'aria-disabled="true"' in broken and "metadata not readable · cannot be loaded" in broken
+
+
+def test_the_run_suffix_and_a_validation_figure_by_its_name():
+    assert r.run_suffix("20261017-091500_run_3fa9c1") == "run_3fa9c1"
+    assert r.run_suffix("my-run") is None
+    assert r.validation_cell({"metric": "val_mrr", "value": 0.24101}) == "0.2410"
+    assert "Validation Hits@10 (Trainer)" in r.validation_cell({"metric": "val_hits@10",
+                                                                 "value": 0.5})
+    assert "—" in r.validation_cell(None)

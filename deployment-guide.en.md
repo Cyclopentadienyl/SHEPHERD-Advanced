@@ -2051,7 +2051,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The Training Console, as before. It is the research page shown first |
 | **Research (pre-clinical)** › Evaluate › **Test**, **Models** | "being built in M5" for now |
-| **⚙ Settings**, at the right of the header | Runtime Settings, as before |
+| **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
   underlined and bold; Settings, when selected, has a light fill and an underline. Prepare and
@@ -2064,6 +2064,12 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 - In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
   for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
   the page scrolls. The theme's smallest text is 14 px.
+- The dashboard is always drawn in its light colours, whatever dark mode the system or the
+  browser asks for (its colours have no dark version, and Gradio's dark mode left its text
+  unreadable on the page); the address gains `?__theme=light`. Gradio's own footer (its API
+  page, "Built with Gradio" and its own "Settings") is not shown.
+- A research page is read again each time it is shown: when you select it, and when you return
+  to Research while it is the page shown. The other research pages are not read then.
 
 ### The two chips in the header
 
@@ -2102,9 +2108,11 @@ read-only, the full reason D8 gives. It never repeats a header's value.
 The explanations that were printed under each field of Diagnosis, the Training Console and
 Runtime Settings are now behind a ⓘ after the field's name. Point at it, reach it with Tab, or
 click it: the help appears in a bubble you can move the pointer into. A click keeps it open; Esc
-or a click elsewhere closes it. What must stay visible is still printed: a refusal's reason, a
-job's state, the synthetic marker, an unverified source, and the Training Console's AMP refusal
-for HGT ("Disabled: HGT requires full float32 …").
+or a click elsewhere closes it. A click on the field's name still puts the cursor in the field.
+The bubble opens below or above the ⓘ, wherever there is room, and is never taller than the
+window: a long text scrolls inside it. What must stay visible is still printed: a refusal's
+reason, a job's state, the synthetic marker, an unverified source, and the Training Console's
+AMP refusal for HGT ("Disabled: HGT requires full float32 …").
 
 ### Research › Prepare › Datasets
 
@@ -2119,15 +2127,29 @@ train and validation sample counts. The markers:
 - **serving reads this workspace**: the pipeline is serving from it;
 - **same dataset as served**: another workspace with the same full fingerprint;
 - **in your Training run bar**: this browser tab's choice for Training;
-- **not trainable: <why>**: listed, but training would refuse it, with the reason.
+- **not trainable: <why>**: listed, but training would refuse it, with the reason: `no split
+  manifest` when the workspace has no `split_manifest.json`, `no readable split manifest` when
+  it has one that cannot be read, or the list's own reason (for example a workspace that is a
+  link to a directory outside the root: "… resolves outside the workspaces root").
 
-Selecting a row shows its details: the full fingerprint with Copy, what the manifest binds
-(short digests), the seeds and split counts, the sources and the build record, and the
-workspace's path relative to the server's workspace root. No absolute server path is shown.
+A long name or source list wraps in its cell, so the "In use" column stays in view. Selecting a
+row shows its details: the full fingerprint with Copy, what the manifest binds (short digests),
+the seeds and split counts, the sources and the build record, the workspace's path relative to
+the server's workspace root, and how it compares with the other listed workspaces: "Same dataset
+as …" (the same full fingerprint) or "Same graph build as … (kg, tensors and record identical),
+another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
+a path under the root is shown relative to it, any other one reads "a path outside the
+workspaces root", and a refused `SHEPHERD_WORKSPACES_ROOT` is said without its path. The page
+reads the manifests when it is opened, not on each selection.
 
 **Use for training ›** opens Research › Training with that workspace in this browser tab's Data
 Directory (Data Paths is opened to show it). Nothing changes on the server; Start is still the
-control D8 checks. A workspace that is not trainable cannot be used.
+control D8 checks. A workspace that is not trainable cannot be used. A workspace inside the
+repository is shown relative to it; one outside it would be an absolute server path, which only a
+browser D8 allows is given (the one that can Start): a read-only browser sees a note instead.
+Until the Training run bar is built, the Data Directory is where the choice lives: editing it by
+hand, or Reset Default, removes the "in your Training run bar" marker, and choosing the
+workspace again fills the field again.
 
 Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
 checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
