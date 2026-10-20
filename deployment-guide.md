@@ -1841,7 +1841,7 @@ checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用�
 
 調查備註記錄誰看過、何時看過、發現了什麼。備註存在
 `<registry>/versions/<label>/reports/notes.jsonl`，與該鍵的報告放在一起，絕不寫進 ledger，也不會
-解除封鎖。從 Test 分頁新增備註，隨 M5 的使用者介面一起提供。封鎖建立在一般檔案上：刪除不一致的
+解除封鎖。Research › Test 可從儀表板新增備註，這是操作者控制項（§4.14）。封鎖建立在一般檔案上：刪除不一致的
 報告就會解除它。這些工具從不刪除任何東西。
 
 **「無法檢查」同樣會被拒絕，絕不視為沒有爭議。** 存放處中有下列任一情形時，整個版本都無法檢查：
@@ -2052,7 +2052,8 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   工作（任一類型），以及鎖的狀態（`configured`、`path`、`source`、`held_by`、`problem`）。占用
   GPU 的測試執行會顯示在這裡，絕不會顯示成訓練。
 
-從 WebUI 啟動測試執行，以及它們的 API routes，會在 M5 稍後隨 Test 分頁一起提供。兩個 CLI 的
+自 M5-2 起，Research › Test 透過這個 job runner 從儀表板啟動與取消測試執行（§4.14）；沒有任何 API
+route 會啟動測試執行。兩個 CLI 的
 結束碼都沒有改變：鎖被占用屬於「寫出任何東西之前的拒絕」。
 
 ---
@@ -2202,8 +2203,9 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 | 儀表板 | Diagnosis：Reload Pipeline 與 Save Config。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training（Training Console）：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
 
 兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
-（C3），因此它們與控制項一樣受檢查。M5 的 UI 步驟將新增的 Test 分頁與 Model Management，也將使用
-同一個檢查。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
+（C3），因此它們與控制項一樣受檢查。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
+Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查；Model
+Management 也將使用它。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
 workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
 
 ### 什麼時候允許一個請求
@@ -2332,7 +2334,8 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Diagnosis (clinical)** | Diagnosis 分頁，與以前相同。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | Training Console，與以前相同。它是 Research 下最先顯示的頁面 |
-| **Research (pre-clinical)** › Evaluate › **Test**、**Models** | 目前顯示「being built in M5」 |
+| **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
+| **Research (pre-clinical)** › Evaluate › **Models** | 目前顯示「being built in M5」 |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
@@ -2427,6 +2430,58 @@ Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不�
 這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
 唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
 仍在伺服器上以 CLI 建置（`scripts/build_knowledge_graph.py`、`scripts/preprocess_data.py`）。
+
+### Research › Evaluate › Test
+
+§4.9 流程的頁面：匯入 cohort 版本、在其上量測模型、保留報告並登錄它。共有三個面板：
+
+- **Cohort。** workspace（伺服器的清單，與 Datasets 相同以資料集指紋顯示）與 cohort 版本
+  （registry 的清單，`SHEPHERD_REGISTRY`），附上它的 role、各項數量、版本 digest，以及它是否
+  對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
+  執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
+  模型、是否保留了報告、是否已登錄；當同一個 key 下的報告不一致時顯示「runs disagree —
+  investigate」（D5）。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列。
+- **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
+  列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
+  每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
+  workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
+  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
+  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
+  **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
+  會在量測之前拒絕。Start 會說明它為何不可用（缺少某個選擇、另一個圖譜，或「Disabled: GPU
+  job: … One managed GPU job at a time (training or evaluation).」）。工作卡片顯示狀態
+  （Running、Completed、紅色的 Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、
+  已經過的時間、執行收到的輸入，以及其輸出的最後 12 行；狀態旁的 **🔒 Cancel** 只停止測試執行，
+  從不停止訓練工作。執行結束後，卡片顯示 job runner 從磁碟讀到的結果：是否保留了報告、是否已
+  登錄，並附上 job runner 的說明（執行沒有寫出 outcome 檔案時為「No report was published …」；
+  取消後說明留下了什麼）。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取。
+- **Result。** 選取的報告，以帳本將會保存的紀錄形式顯示：對已排名案例的 Mode C 指標、含每一類
+  排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
+  以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
+  **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份已保留的報告：伺服器在版本的
+  store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
+  位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑），然後登錄。執行之後
+  被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
+  `scripts/record_evaluation.py` 仍然可用。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
+  封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
+  note），與該 key 的報告保存在一起。筆記從不解除封鎖。
+
+**🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
+（`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
+之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（並說明它是否在
+Models 中提供依測試分數排序：`SHEPHERD_ORDERING_ROLES`，`institutional_acceptance` 永遠不提供）
+以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
+不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，
+以及版本綁定的內容；**案例 id 不會傳送到瀏覽器**（機器上的命令列預覽會列出它們，提交後的版本
+會記錄它們）。**🔒 Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
+預覽之後表單有變更，或之後來源或圖譜有變更，都會被拒絕。一次只執行一個預覽或提交；提交之後
+抽屜會關閉，並選取新的版本。
+
+**唯讀的瀏覽器**可以看到各版本、它們的報告與狀態、工作與結果：每個控制項都不可用，並寫明
+「Operator controls only: <原因>」，checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
+請求（§4.13）。不會顯示伺服器的絕對路徑：registry、workspace 根目錄、intake 目錄、證據目錄或
+repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），其他路徑寫作「a server path」。
 
 ---
 

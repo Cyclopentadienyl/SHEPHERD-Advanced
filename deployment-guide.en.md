@@ -1486,8 +1486,8 @@ command and says a registration is refused until that can be checked. To move fo
 
 An investigation note records who looked, when and what they found. Notes go to
 `<registry>/versions/<label>/reports/notes.jsonl`, kept with the key's reports and never in the
-ledger, and they do not lift the block. Adding a note from the Test tab comes with M5's user
-interface. The block rests on plain files: deleting a disagreeing report lifts it. The tools
+ledger, and they do not lift the block. Research › Test adds one from the dashboard, as an
+operator control (§4.14). The block rests on plain files: deleting a disagreeing report lifts it. The tools
 never delete anything.
 
 **"Cannot be checked" is refused too, and never read as uncontested.** The whole version cannot
@@ -1733,8 +1733,8 @@ cohort version, the same CLI an operator runs). One job at a time:
   the GPU, of either type, and the lock (`configured`, `path`, `source`, `held_by`, `problem`).
   A test run holding the GPU shows there, never as training.
 
-Starting test runs from the WebUI, and their API routes, come with the Test tab later in M5. The
-exit codes of both CLIs are unchanged: a busy lock is a refusal before anything was written.
+Since M5-2, Research › Test starts and cancels test runs from the dashboard through this runner
+(§4.14); no API route starts one. The exit codes of both CLIs are unchanged: a busy lock is a refusal before anything was written.
 
 ---
 
@@ -1900,8 +1900,9 @@ the read-only lists keep working.
 | Dashboard | Diagnosis: Reload Pipeline and Save Config. ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training (the Training Console): Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
 
 The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
-checkpoint inspection (C3), so they are checked like the controls. The Test tab and Model
-Management that M5's UI step adds are to use the same check. Everything else stays open:
+checkpoint inspection (C3), so they are checked like the controls. Research › Test (§4.14)
+uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
+Register this report, Add note and its model list; Model Management is to use it too. Everything else stays open:
 diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
 status and metrics, the workspace and cohort lists, the recorded results and the system pages.
 
@@ -2050,7 +2051,8 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Diagnosis (clinical)** | The Diagnosis tab, as before. It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The Training Console, as before. It is the research page shown first |
-| **Research (pre-clinical)** › Evaluate › **Test**, **Models** | "being built in M5" for now |
+| **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
+| **Research (pre-clinical)** › Evaluate › **Models** | "being built in M5" for now |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
@@ -2155,6 +2157,72 @@ Nothing on this page is an operator control: it reads the workspaces' small JSON
 checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
 the page says so. Datasets are still built on the server with the CLI
 (`scripts/build_knowledge_graph.py`, `scripts/preprocess_data.py`).
+
+### Research › Evaluate › Test
+
+The page for the flow of §4.9: import a cohort version, measure a model on it, keep its report
+and register it. Three panels:
+
+- **Cohort.** The workspace (the server's list, shown by its dataset fingerprint as on Datasets)
+  and the cohort version (the registry's list, `SHEPHERD_REGISTRY`), with its role, its counts,
+  its version digest and whether it was mapped against this workspace's graph ("bound to this
+  graph", or "mapped against another graph", which a run would refuse). Below them, every run
+  directory of the version's report store, newest first: when it ran, on which model, whether a
+  report was kept, whether it is registered, and "runs disagree — investigate" when reports
+  under its key disagree (D5). A run that kept no report says so; a test running now is the top
+  row.
+- **Run.** The model: the workspace's checkpoints from the server's list, by run, epoch, file
+  and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
+  read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
+  list again). Then the R10 evidence the run will look in (the measured workspace, and
+  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
+  the batch size and device the server fixes (the measurement's default; `SHEPHERD_DEVICE`).
+  **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
+  workspace, version and checkpoint the server finds again in its lists, and **the full model
+  fingerprint and version digest the page showed as the expected ones**: the run refuses before
+  measuring when the file or the version it reads holds other bytes. Start says why it is off
+  (a choice missing, another graph, or "Disabled: GPU job: … One managed GPU job at a time
+  (training or evaluation)."). The job card shows the state (Running, Completed, Failed in red,
+  Cancelled in grey: never green for a failed or cancelled run), the elapsed time, what the run
+  was given and the last 12 lines of its output; **🔒 Cancel**, beside the state, stops the test
+  run only, never a training job. Once the run has ended, the card shows what the runner read
+  from disk: whether a report was kept and whether it is registered, with the runner's sentence
+  ("No report was published …" when the run wrote no outcome file; after a cancel, what was
+  left). While the page is shown it reads the job every 5 seconds; the report of a run that has
+  just ended is selected.
+- **Result.** The selected report as the record the ledger would hold: the Mode C metrics over
+  the cases ranked, coverage with each exclusion, the relations, R10 in words (*unverifiable* is
+  never a 0), the environment, the dataset origin, and whether it is registered (for an
+  operator, checked in the ledger beside the listed checkpoint holding the weights it
+  measured). **🔒 Register this report** registers a kept report through the one registration
+  function (§4.9): the server finds the report in the version's store, checks that its bytes
+  are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
+  holding the weights, by full digest, never the path the report records) and registers it. A
+  checkpoint moved since the run is not found that way; the page says so, and
+  `scripts/record_evaluation.py` on the machine remains. While runs under the report's key
+  disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
+  what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
+
+**🔒 Import a new version…** opens a drawer over Run and Result: the file in the intake directory
+(`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
+is a link leaving the directory is listed and not offered; nothing is uploaded from the
+browser), the version label, the role (with whether it offers ordering by test score in Models:
+`SHEPHERD_ORDERING_ROLES`, and `institutional_acceptance` never does) and the lost-terms
+policy. **🔒 Preview** runs the importer in the service, on the CPU (it reads the workspace's
+graph), and writes nothing. The preview shows the counts, the exclusion reasons and their
+counts, the unmappable terms with how many cases list each, and what the version binds; **case
+ids are not sent to the browser** (the command-line preview on the machine lists them, and the
+committed version records them). **🔒 Commit as version …** prepares again from the same inputs
+and commits under the preview id shown: a form changed since the preview, or a source or graph
+changed since, is refused. One preview or commit runs at a time; after a commit the drawer
+closes and the new version is chosen.
+
+A **read-only browser** sees the versions, their reports and states, the job and the results:
+every control is disabled with "Operator controls only: <reason>", and the checkpoint list is not
+shown. Every control checks its own request in the backend (§4.13). No absolute server path is
+shown: a path under the registry, the workspaces root, the intake directory, an evidence
+directory or the repository is written under its name (`<registry>/versions/…`), any other as
+"a server path".
 
 ---
 

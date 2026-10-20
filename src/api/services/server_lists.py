@@ -48,6 +48,17 @@ registered is read by the registration's one helper, passed in as
 `report_state` (`stored_report_state` is that helper for a run directory);
 nothing here infers either from which files exist.
 
+**Import sources** (M5-2, the Test page; D7): the ``*.json`` files the operator
+placed directly in ``SHEPHERD_INTAKE_DIR`` (`list_intake_files`), by file name;
+a request names one and `resolve_intake_file` finds it in that listing again,
+refusing any other name and a link that leaves the directory. Nothing is read
+from a file to list it (its size and modification time come from the
+directory); the importer reads it once when the operator previews or commits.
+**One cohort version by its label** (`resolve_cohort_version`,
+`cohort_version_item`) and **one run's report** (`resolve_report`) are found the
+same way: through the registry's one reader and the version's listed run
+directories, never by joining a request's text onto a path.
+
 Module: src/api/services/server_lists.py
 """
 from __future__ import annotations
@@ -61,18 +72,27 @@ from src.config import server_settings
 __all__ = [
     "CheckpointItem",
     "CohortVersionItem",
+    "IntakeFileItem",
     "Listing",
     "ReportItem",
     "ServerListRefused",
     "WorkspaceItem",
+    "cohort_version_item",
     "list_checkpoints",
     "list_cohort_versions",
+    "list_intake_files",
     "list_workspaces",
     "resolve_checkpoint",
+    "resolve_cohort_version",
+    "resolve_intake_file",
+    "resolve_report",
     "resolve_workspace",
     "resolve_workspaces",
     "stored_report_state",
 ]
+
+#: The files an intake listing offers: shepherd-cases/1 sources are JSON.
+_INTAKE_SUFFIX = ".json"
 
 #: The sample files a generated workspace's manifest binds beside the graph.
 _SAMPLE_FILES: Tuple[str, ...] = ("train_samples.json", "val_samples.json")
@@ -194,6 +214,21 @@ class CohortVersionItem:
     problem: Optional[str]
     reports: Tuple[ReportItem, ...] = ()
     reports_problem: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class IntakeFileItem:
+    """One import source in the intake directory: its file name (what a request
+    names, and what the version manifest records as the source's name), its
+    size and its modification time (UTC, ISO 8601; descriptive only, nothing
+    compares it). One that is not offered says why (`problem`: a link that
+    leaves the directory, an entry that is not a file or cannot be checked),
+    with its size and time `None`."""
+
+    name: str
+    size_bytes: Optional[int]
+    modified_at: Optional[str]
+    problem: Optional[str]
 
 
 def _echo(value: Any) -> str:
@@ -620,3 +655,181 @@ def list_cohort_versions(
     except RegistryRefused as exc:
         return Listing((), str(exc))
     return Listing(tuple(_version_item(entry, report_state, environ) for entry in listed))
+
+
+def _registry_root(environ: Optional[Mapping[str, str]]) -> Path:
+    setting = server_settings.cohort_registry(environ)
+    if not setting.available:
+        raise ServerListRefused(setting.problem)
+    return setting.value
+
+
+def resolve_cohort_version(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> Any:
+    """The cohort version the registry holds as `label`, read by the registry's
+    one reader (`resolve_version`: one read of its ``cohort.json``, checked,
+    its directory resolved inside the registry). The label is checked by the
+    registry's label rule first, so a request's text never becomes a path.
+
+    Raises:
+        ServerListRefused: no registry configured or it is refused, a label the
+            rule refuses, or a version that cannot be read (an interrupted
+            import, a manifest this revision does not read).
+    """
+    from src.evaluation.cohort_registry import (
+        CohortVersionRefused,
+        RegistryRefused,
+        resolve_version,
+        validate_label,
+    )
+
+    root = _registry_root(environ)
+    try:
+        return resolve_version(root, validate_label(label))
+    except (RegistryRefused, CohortVersionRefused) as exc:
+        raise ServerListRefused(str(exc)) from None
+    except OSError as exc:
+        raise ServerListRefused(
+            f"the cohort version {_echo(label)} cannot be read "
+            f"({type(exc).__name__}: {exc.strerror or exc})") from None
+
+
+def cohort_version_item(
+    label: Any, *, environ: Optional[Mapping[str, str]] = None,
+    report_state: Optional[ReportStateReader] = None,
+) -> CohortVersionItem:
+    """One cohort version as `list_cohort_versions` lists it, with its report
+    store's runs and, given `report_state`, what each kept and whether its
+    report is registered: for a page that shows one version's reports without
+    reading every other version's.
+
+    Raises:
+        ServerListRefused: as `resolve_cohort_version`.
+    """
+    from src.evaluation.cohort_registry import ListedVersion
+
+    version = resolve_cohort_version(label, environ=environ)
+    return _version_item(ListedVersion(version.manifest.get("label"), version, None),
+                         report_state, environ)
+
+
+def resolve_report(label: Any, run_id: Any, *,
+                   environ: Optional[Mapping[str, str]] = None) -> Path:
+    """The ``report.json`` path of the run the version's report store lists as
+    `run_id`, found among its listed run directories (`list_report_runs`: each
+    resolved inside ``reports/``), never by joining a request's text onto a
+    path. Reads no file: whether a report is there, and what it says, is the
+    reader's to find (the registration reads it once).
+
+    Raises:
+        ServerListRefused: the version is not readable, its report store cannot
+            be listed, or no run of that name is listed (or it is listed with
+            a problem).
+    """
+    from src.evaluation.cohort_registry import REPORT_FILE, RegistryRefused, list_report_runs
+
+    version = resolve_cohort_version(label, environ=environ)
+    try:
+        runs = list_report_runs(version)
+    except RegistryRefused as exc:
+        raise ServerListRefused(str(exc)) from None
+    for run in runs:
+        if run.run_id == run_id:
+            if run.problem is not None or run.directory is None:
+                raise ServerListRefused(run.problem or f"{run.run_id} is not a run directory")
+            return run.directory / REPORT_FILE
+    raise ServerListRefused(
+        f"no run {_echo(run_id)} is listed in the report store of the cohort version "
+        f"{version.manifest.get('label')!r}")
+
+
+# ---------------------------------------------------------------------------
+# Import sources: the intake directory (D7)
+# ---------------------------------------------------------------------------
+def _intake_directory(environ: Optional[Mapping[str, str]]) -> Path:
+    setting = server_settings.intake_directory(environ)
+    if not setting.available:
+        raise ServerListRefused(setting.problem)
+    return setting.value
+
+
+def _intake_entries(directory: Path) -> List[Path]:
+    """The intake directory's ``*.json`` entries, by name; hidden ones (an
+    editor's or a copy tool's, named with a leading dot) are left out."""
+    try:
+        entries = [p for p in directory.iterdir()
+                   if not p.name.startswith(".") and p.name.lower().endswith(_INTAKE_SUFFIX)]
+    except OSError as exc:
+        raise ServerListRefused(
+            f"the intake directory {directory} cannot be listed "
+            f"({type(exc).__name__}: {exc.strerror or exc})") from None
+    return sorted(entries, key=lambda p: p.name)
+
+
+def _intake_item(directory: Path, entry: Path) -> IntakeFileItem:
+    """One entry, checked: it must resolve inside the intake directory (a link
+    that leaves it is not offered) and be a regular file there. Its size and
+    modification time come from that check's `stat`; nothing is read."""
+    from datetime import UTC, datetime
+
+    name = entry.name
+    try:
+        resolved = entry.resolve()
+    except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
+        return IntakeFileItem(name, None, None,
+                              f"{name} cannot be resolved ({type(exc).__name__}), so it is "
+                              "not offered")
+    if not _inside(resolved, directory):
+        return IntakeFileItem(name, None, None,
+                              f"{name} resolves to {resolved}, outside the intake directory "
+                              f"{directory}, so it is not offered")
+    try:
+        if not resolved.is_file():
+            return IntakeFileItem(name, None, None, f"{name} is not a file, so it is not offered")
+        info = resolved.stat()
+    except OSError as exc:
+        return IntakeFileItem(name, None, None,
+                              f"{name} cannot be checked ({type(exc).__name__}: "
+                              f"{exc.strerror or exc}), so it is not offered")
+    modified = datetime.fromtimestamp(info.st_mtime, tz=UTC)
+    return IntakeFileItem(name, info.st_size, modified.strftime("%Y-%m-%dT%H:%M:%SZ"), None)
+
+
+def list_intake_files(*, environ: Optional[Mapping[str, str]] = None) -> Listing:
+    """The import sources the operator placed in `SHEPHERD_INTAKE_DIR`: its
+    ``*.json`` files, by name, each with its size and modification time, or why
+    it is not offered (`IntakeFileItem`). Reads no file's content.
+
+    No intake directory configured, or one that cannot be listed: no item, and
+    why.
+    """
+    try:
+        directory = _intake_directory(environ)
+        entries = _intake_entries(directory)
+    except ServerListRefused as exc:
+        return Listing((), str(exc))
+    return Listing(tuple(_intake_item(directory, entry) for entry in entries))
+
+
+def resolve_intake_file(name: Any, *, environ: Optional[Mapping[str, str]] = None) -> Path:
+    """The path of the import source the server lists as `name`, found in the
+    intake directory's listing again and checked again (inside the directory,
+    a regular file); any other name, a path, or a link that leaves the
+    directory is refused. Returns the listed entry (``<intake>/<name>``), so the
+    version manifest records the name the operator chose. Reads nothing; the
+    check is not atomic with the importer's read (one writer: the operator's
+    machine).
+
+    Raises:
+        ServerListRefused: no intake directory, or `name` is not an offered
+            source.
+    """
+    directory = _intake_directory(environ)
+    for entry in _intake_entries(directory):
+        if entry.name == name:
+            item = _intake_item(directory, entry)
+            if item.problem is not None:
+                raise ServerListRefused(item.problem)
+            return entry
+    raise ServerListRefused(
+        f"{_echo(name)} is not an import source the server lists in the intake directory "
+        f"{directory}")

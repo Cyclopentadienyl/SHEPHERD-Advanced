@@ -714,6 +714,18 @@ disagreement block, contested states and investigation notes are phase 2.
   need the registry setting (M5-2, through `StoreScan.status`). The scan is not atomic with a
   run publishing into the version (one writer).
 
+**As implemented in M5-2 (2026-10-20), the Test page** (`src/webui/components/test_page.py`):
+each run directory of a version's store is listed with kept and registered from
+`stored_report_state` and its key's state from `scan_report_store`; a contested key reads "runs
+disagree — investigate" with the fields that differ, its reports' Register is off, and the
+investigation notes kept with the key (who, when, what) are listed and added, gated, lifting
+nothing. Register calls `register_report` (store only) with the checkpoint the server lists
+holding the weights the report measured, found by full digest in the workspace's checkpoint list
+(never the report's recorded path), after the report's bytes are compared with the digest shown;
+the one function checks the store, the version, the block and the checkpoint's bytes again. For
+the selected report, an operator's page asks `report_state` again with that listed file, so "not
+registered" is said for the ledger a registration from the page would write.
+
 ### D6 — How a test cohort is imported, identified and versioned
 
 **Two levels:**
@@ -780,7 +792,14 @@ two about the data (questions 3 and 4).
   the exclusion reasons and their counts; the per-case exclusion detail stays in a controlled
   record on the machine, for troubleshooting. **No browser upload in M5:** that is this
   round's scope, not a judgement that an upload is unsafe; it would later feed the same
-  importer once a controlled staging area and its cleanup exist (BACKLOG item 25).
+  importer once a controlled staging area and its cleanup exist (BACKLOG item 25). *As
+  implemented in M5-2 (2026-10-20):* the Test page lists the intake directory's `*.json` files
+  by name (`server_lists.list_intake_files`; nothing read to list them) and resolves the chosen
+  name in that listing again (`resolve_intake_file`), refusing any other name, a path or a link
+  that leaves the directory; the preview and the commit run `prepare_import` and
+  `commit_import` in the service (on the CPU; the graph is read), one at a time, and the page
+  keeps the manifest's aggregates only, so no case id reaches the browser; Commit prepares again
+  and commits under the preview id shown. There is no upload component.
 - **They are stored outside the repository tree**, at a path set by server configuration and
   never by a request (SPEC_4: a client-supplied path is not trusted). *As implemented in M4:*
   phase 1 is CLI only, so the registry is the operator's `--registry DIR` on the machine: an
@@ -921,7 +940,13 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   answers for the request that asks (for M5-2's chip). A reload D8 refuses no longer marks a
   real pipeline as requested. Tests call every gated route and every gated event through
   Gradio's HTTP API, refused and allowed. The import, test start and cancel, registration and
-  load controls M5-2 adds are to take the same dependency or helper.
+  load controls M5-2 adds are to take the same dependency or helper. *M5-2 (2026-10-20), the
+  Test page:* listing the intake directory, Preview, Commit, Start, Cancel, Register, Add note
+  and the checkpoint list each call the Gradio helper on their own request first and then the
+  shared service in process (the job runner, the importer, the registration, the report store);
+  a read-only request is shown every control disabled with the reason and no checkpoint list,
+  and the lists a start uses are the session's state, never values a client posts. No API route
+  was added.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
 machine where the controls are enabled. *Answered 2026-10-19:* deployment mode M1, operated by
@@ -1506,7 +1531,18 @@ contract and BACKLOG stay the record, and no new planning document is added.
   - **one job runner**, reshaped from `training_manager`, for training and tests alike; a test
     runs the real `measure_scorer`, never a second evaluator;
   - **the Test tab** on M4's flow: the import preview and commit, the version choice, start,
-    progress, cancel, the report and registration;
+    progress, cancel, the report and registration; *as implemented (M5-2, 2026-10-20):* Research
+    › Test (`src/webui/components/test_page.py`; deployment guide §4.14): the workspace and the
+    cohort version from the server's lists, with whether the version was mapped against the
+    workspace's graph; the model from the workspace's checkpoint list (operator only, read once
+    per workspace); Start through the job runner with the inputs the server resolves again and
+    the digests shown as the expected ones, the batch size and device fixed by the server and
+    only the deterministic switch and "Register the result" chosen; the job's state (never green
+    when failed or cancelled), elapsed time and output tail, read every 5 s while the page is
+    shown; Cancel for test runs only; the outcome as the runner reads it from disk; the report as
+    its record (Mode C apart from the Trainer's validation, *unverifiable* never a number);
+    Register, the D5 block and notes (D5 above); the import (D7 above). No absolute server path
+    is shown;
   - **Model Management** on the shared model list, keeping Trainer validation figures and each
     cohort's Mode C results apart;
   - **D4 and D5 as planned:** ordering, disagreement and contested states, usage history, the
