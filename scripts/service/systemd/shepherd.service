@@ -35,6 +35,10 @@ Environment=PYTHONUNBUFFERED=1
 # start and restart.
 ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --host 127.0.0.1 --port 8264
 Restart=on-failure
+# The launcher exits 2 when it refuses its own configuration (a network bind
+# without SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1): restarting cannot fix
+# that, so the unit stops and journalctl shows the reason.
+RestartPreventExitStatus=2
 RestartSec=5
 
 [Install]

@@ -2300,8 +2300,9 @@ launcher 與 `python -m src.api.main` 會把它們綁定的主機以 `SHEPHERD_B
   （見上文）：這就是 M1 的方式；
 - 如果區域網路必須繼續使用診斷，請設定 `--host 0.0.0.0`（在 unit 的 `ExecStart` 中，或放在
   launcher 命令列的 `--` 之後），**並且**在同一個環境中設定
-  `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`。沒有這個旗標時 launcher 會拒絕啟動，在
-  systemd 下 unit 會不斷重啟又失敗（`journalctl --user -u shepherd` 會顯示原因）。這時操作者
+  `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`。沒有這個旗標時 launcher 會拒絕啟動（結束狀態
+  2），在 systemd 下 unit 會停止而不重啟（`RestartPreventExitStatus=2`；`journalctl --user -u
+  shepherd` 會顯示原因）。這時操作者
   控制項只能在本機上或經由 SSH forward 使用；
 - 透過 HTTP 重新載入 pipeline 的腳本需要服務處於 M1 模式，並且必須呼叫
   `http://127.0.0.1:<port>`。`scripts/measure_served_pipeline.py` 因此在它自己啟動的服務中設定

@@ -338,7 +338,8 @@ def bind_plan(uvicorn_args: List[str], environ: Mapping[str, str]) -> BindPlan:
     reach = ("loopback: this machine only" if bind_is_loopback(host)
              else "all interfaces" if host.strip() in ("", "0.0.0.0", "::")
              else "this address")
-    return BindPlan(network_bind(host, environ), f"{host}:{port} ({reach})", host)
+    shown = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return BindPlan(network_bind(host, environ), f"{shown}:{port} ({reach})", host)
 
 
 def display_base_url(uvicorn_args: List[str]) -> str:

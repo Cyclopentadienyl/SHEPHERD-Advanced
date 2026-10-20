@@ -171,6 +171,25 @@ def test_a_network_bind_without_risk_acceptance_starts_nothing(monkeypatch, caps
     assert "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1" in out
 
 
+def test_the_unit_does_not_restart_a_refused_bind(monkeypatch, capsys):
+    """The launcher refuses its own configuration with exit status 2, which a
+    restart cannot fix, so the unit must not restart on it."""
+    assert _directive("Restart") == "on-failure"
+    assert _directive("RestartPreventExitStatus").split() == ["2"]
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       "--host", "0.0.0.0"])
+    assert done["status"] == 2 and done["server"] is None
+
+
+def test_an_ipv6_bind_is_shown_with_brackets(monkeypatch, capsys):
+    """`::1:8000` cannot be read as an address and a port; `[::1]:8000` can."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       "--host", "::1"])
+    assert done["exec"] and done["app_args"][-2:] == ["--host", "::1"]
+    assert "Listening on          : [::1]:8000 (loopback: this machine only)" in \
+        capsys.readouterr().out
+
+
 def test_risk_acceptance_starts_a_network_bind_and_says_it_is_no_control(monkeypatch, capsys):
     done = _run_launcher(
         monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host", "0.0.0.0"],

@@ -2014,8 +2014,9 @@ every interface. After this update:
   forward (above): that is the M1 way;
 - if the LAN must keep reaching diagnosis, set `--host 0.0.0.0` (in the unit's `ExecStart`, or
   after `--` on the launcher's command line) **and** `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`
-  in the same environment. Without the flag the launcher refuses to start, and under systemd the
-  unit keeps restarting and failing (`journalctl --user -u shepherd` shows the reason). The
+  in the same environment. Without the flag the launcher refuses to start (exit status 2), and under
+  systemd the unit stops without restarting (`RestartPreventExitStatus=2`;
+  `journalctl --user -u shepherd` shows the reason). The
   operator controls then work only on the machine itself or through an SSH forward;
 - a script that reloads the pipeline over HTTP needs the service in mode M1 and must call
   `http://127.0.0.1:<port>`. `scripts/measure_served_pipeline.py` starts its own service with
