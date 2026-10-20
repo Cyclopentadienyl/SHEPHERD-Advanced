@@ -8,9 +8,10 @@ can be observed signal by signal.
 
 `LOCK_HOLDER` is a real program for the GPU lock's tests: it takes the lock
 through the same function the CLIs use (`take_gpu_lock`), says so on stdout,
-and then does what its first argument asks (sleep, fork a child that keeps the
-descriptor, or start a program that must not), so a test can kill it, let it
-exit, or watch what its children keep.
+and then does what its first argument asks (sleep, fork a child that shares
+the descriptor and exit with or without releasing, or start a program that
+must not keep it), so a test can kill it, let it exit, or watch what its
+children keep.
 
 Module: tests/fixtures/job_processes.py
 """
@@ -75,10 +76,11 @@ class FakeProcess:
 
 #: A program that holds the GPU lock as the CLIs do. argv[1] is what it does
 #: once it holds it: "sleep" (until killed), "exit" (return at once), "fork"
-#: (fork a child that keeps the inherited descriptor and sleeps, then exit),
-#: "spawn" (start a sleeping program with close_fds=False, print its pid, then
-#: exit). It prints "HELD" once the lock is held, and a child's pid as
-#: "CHILD <pid>".
+#: (fork a child that shares the descriptor and sleeps, then exit without
+#: releasing, `os._exit`), "fork-release" (the same child, then leave the
+#: `with` block normally, which releases, and exit), "spawn" (start a sleeping
+#: program with close_fds=False, print its pid, then exit). It prints "HELD"
+#: once the lock is held, and a child's pid as "CHILD <pid>".
 LOCK_HOLDER = r'''
 import os, subprocess, sys, time
 sys.path.insert(0, sys.argv[2])
@@ -89,13 +91,14 @@ with take_gpu_lock("training", "lock_holder.py"):
     print("HELD", flush=True)
     if action == "sleep":
         time.sleep(600)
-    elif action == "fork":
+    elif action in ("fork", "fork-release"):
         pid = os.fork()
         if pid == 0:
             time.sleep(600)
             os._exit(0)
         print(f"CHILD {pid}", flush=True)
-        os._exit(0)
+        if action == "fork":
+            os._exit(0)
     elif action == "spawn":
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"],
                                  close_fds=False)

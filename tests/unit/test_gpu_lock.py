@@ -2,9 +2,11 @@
 The GPU lock (M5): one per deployment, held for a job's whole working life.
 ==========================================================================
 Where it is, who holds it, that a busy lock is refused naming its holder, and
-that the kernel releases it however the holder ends: a normal exit, SIGTERM,
-SIGKILL. A program the holder starts does not keep it (close-on-exec); a
-process forked without exec does, until it exits too, and the message says so.
+that it is released however the holder ends: a normal exit, SIGTERM, SIGKILL.
+A program the holder starts does not keep it (close-on-exec). A process forked
+without exec shares it: a holder that ends normally releases it for that child
+too, and one that exits without releasing leaves it with the child until the
+child exits, the message then never naming the dead holder as the holder.
 The CLIs take it at the start of `main`, before anything is read, and refuse
 with "Nothing was written."
 
@@ -93,6 +95,49 @@ def test_a_setting_that_cannot_name_a_lock_is_refused_never_defaulted(
     with pytest.raises(GpuLockMisconfigured, match=says):
         lock_location()
     assert lock_state()["problem"] and not lock_state()["configured"]
+
+
+def _unsearchable(monkeypatch, below: Path) -> None:
+    """`Path.is_dir` as Python 3.12 answers for a path under a directory this
+    account may not search: it raises (EACCES) instead of answering. Simulated,
+    since the tests may run as root, which the real check does not stop."""
+    import errno
+
+    real = Path.is_dir
+
+    def is_dir(self, *args, **kwargs):
+        if str(self).startswith(str(below)):
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+
+
+@pytest.mark.parametrize("setting", [LOCK_FILE_ENV, WORKSPACES_ROOT_ENV])
+def test_a_location_that_cannot_be_checked_is_refused_with_its_reason(
+        monkeypatch, tmp_path, setting):
+    """Status, start and the CLIs refuse with the reason; nothing raises
+    `PermissionError` out of a status poll."""
+    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    locked = tmp_path / "locked"
+    monkeypatch.setenv(setting, str(locked / "sub" / ("gpu.lock" if setting == LOCK_FILE_ENV
+                                                       else "")))
+    _unsearchable(monkeypatch, locked)
+    with pytest.raises(GpuLockMisconfigured, match=r"cannot be checked \(.*Permission denied"):
+        lock_location()
+    state = lock_state()
+    assert state["configured"] is False and "cannot be checked" in state["problem"]
+    with pytest.raises(GpuLockMisconfigured, match="cannot be checked"):
+        take_gpu_lock("test", "measure_scorer.py")
+
+
+def test_a_lock_state_never_raises_an_os_error_from_the_location(monkeypatch):
+    def unreadable(environ=None):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(gpu_lock, "lock_location", unreadable)
+    assert "cannot be checked" in lock_state()["problem"]
 
 
 def test_a_directory_is_not_a_lock_file(monkeypatch, tmp_path):
@@ -196,6 +241,56 @@ def test_the_lock_is_the_flock_never_the_description(root):
         assert json.loads(holder_path(path).read_text())["job_type"] == "test"
 
 
+def _dead_pid() -> int:
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    process.wait(10)
+    return process.pid
+
+
+def _dead_description(path: Path) -> None:
+    holder_path(path).write_text(json.dumps({
+        "job_type": "training", "command": "hold.py", "pid": _dead_pid(),
+        "host": gpu_lock.socket.gethostname(), "started_at": "2026-10-20T09:00:00+00:00"}))
+
+
+@POSIX
+def test_a_new_holder_removes_a_killed_holders_description_even_if_it_cannot_write_its_own(
+        root, monkeypatch):
+    """A refusal never names the killed holder, or claims an inheritance, while
+    a new holder that could not describe itself holds the lock."""
+    path = root / LOCK_FILE_NAME
+    _dead_description(path)
+
+    def unwritable(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(gpu_lock, "publish_bytes", unwritable)
+    with GpuLock(path, job_type="test", command="measure_scorer.py").acquire():
+        assert not holder_path(path).exists()
+        with pytest.raises(GpuLockBusy) as refused:
+            GpuLock(path, job_type="test", command="y").acquire(grace=0.1)
+    message = str(refused.value)
+    assert "a process that has not described itself" in message
+    assert "could not write its description" in message
+    assert "hold.py" not in message and "training job" not in message
+
+
+@POSIX
+def test_a_description_whose_process_has_exited_never_names_the_holder(root):
+    """A killed holder's description the new holder could not remove (an
+    account that may not write the directory): the words say the recorded
+    holder exited and the lock is held by another process, of either kind."""
+    path = root / LOCK_FILE_NAME
+    with GpuLock(path, job_type="test", command="measure_scorer.py").acquire():
+        _dead_description(path)
+        held_by = probe(path)
+    assert held_by.startswith("a process other than the one its description names. "
+                              "The description names a training job (hold.py, pid ")
+    assert held_by.endswith(", which has exited; the lock is held by a process that "
+                            "inherited its descriptor, or by a new holder that has not "
+                            "described itself (yet, or because it could not)")
+
+
 def test_probe_creates_nothing(root):
     assert probe(root / LOCK_FILE_NAME) is None
     assert list(root.iterdir()) == []
@@ -263,9 +358,11 @@ def test_a_program_the_holder_starts_does_not_keep_the_lock(root, tmp_path):
 
 
 @POSIX
-def test_a_child_forked_without_exec_keeps_the_lock_until_it_exits(root, tmp_path):
+def test_a_child_forked_without_exec_keeps_the_lock_when_the_holder_does_not_release(
+        root, tmp_path):
     """The stated limit: a forked child shares the open file, and so the lock,
-    after the holder has gone; the message says the recorded holder exited."""
+    after a holder that exited without releasing (`os._exit`; SIGKILL alike);
+    the message says the recorded holder exited, never that it holds."""
     path = root / LOCK_FILE_NAME
     holder = start_lock_holder("fork", {}, tmp_path)
     child = int(holder.stdout.readline().split()[1])
@@ -274,12 +371,29 @@ def test_a_child_forked_without_exec_keeps_the_lock_until_it_exits(root, tmp_pat
         time.sleep(0.2)
         held_by = probe(path)
         assert held_by is not None, "the forked child inherited the lock"
+        assert held_by.startswith("a process other than the one its description names")
         assert f"pid {holder.pid}" in held_by and "inherited its descriptor" in held_by
         with pytest.raises(GpuLockBusy, match="inherited its descriptor"):
             GpuLock(path, job_type="test", command="y").acquire(grace=0.2)
     finally:
         os.kill(child, signal.SIGKILL)
     assert _wait_free(path), "released once the last descriptor closes"
+
+
+@POSIX
+def test_a_holder_that_ends_normally_releases_the_lock_for_its_forked_child(root, tmp_path):
+    """`release` unlocks the open file the child shares, so a child still
+    running after a normal end does not keep the lock."""
+    path = root / LOCK_FILE_NAME
+    holder = start_lock_holder("fork-release", {}, tmp_path)
+    child = int(holder.stdout.readline().split()[1])
+    try:
+        assert holder.wait(10) == 0
+        os.kill(child, 0)  # the forked child still runs ...
+        assert probe(path) is None, "... and does not hold the lock"
+        assert not holder_path(path).exists()
+    finally:
+        os.kill(child, signal.SIGKILL)
 
 
 @POSIX
@@ -294,6 +408,24 @@ def test_two_workspaces_share_one_lock(root, tmp_path):
     finally:
         holder.kill()
         holder.wait(10)
+
+
+# --------------------------------------------------------------------------- the suite
+def test_a_test_never_sees_the_deployments_lock_settings():
+    """What tests/conftest.py guarantees; the next test sets them in the
+    environment as an operator's shell that loaded the service's would."""
+    assert LOCK_FILE_ENV not in os.environ and WORKSPACES_ROOT_ENV not in os.environ
+
+
+def test_the_lock_settings_of_the_shell_never_reach_the_suite(tmp_path):
+    env = {**os.environ, LOCK_FILE_ENV: str(tmp_path / "gpu.lock"),
+           WORKSPACES_ROOT_ENV: str(tmp_path)}
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=",
+         f"{__file__}::test_a_test_never_sees_the_deployments_lock_settings"],
+        cwd=REPO, env=env, capture_output=True, text=True, timeout=300)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert list(tmp_path.iterdir()) == [], "no lock file in the shell's root"
 
 
 # --------------------------------------------------------------------------- the CLIs

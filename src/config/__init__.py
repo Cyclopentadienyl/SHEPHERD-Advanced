@@ -24,6 +24,8 @@ Contents:
       schema_loader.py     : RESERVED homes for committed-config validation
                              (configs/deployment.yaml + configs/schemas/*.json).
                              Empty by design until deployment validation is built.
+    - serving_device.py    : the deployment's device setting (SHEPHERD_DEVICE), read
+                             by serving and by the job runner's test runs.
 
 Module: src/config/__init__.py
 """

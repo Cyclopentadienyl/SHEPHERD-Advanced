@@ -19,16 +19,17 @@ replaced by a default.
 **What the lock is.** An exclusive, non-blocking `fcntl.flock` on the lock file
 on POSIX; `msvcrt.locking` on the file's first byte on Windows (untested there,
 like the rest of the backend; nothing here imports a POSIX-only module on
-Windows). The holder keeps it for its whole working life: the kernel releases
-it when the last descriptor of that open file closes, so a normal exit, an
-exception, SIGTERM or SIGKILL all release it, and nothing has to be cleaned up
-for the next job to start.
+Windows). The holder keeps it for its whole working life and gives it back
+when it ends normally or by an exception (`release`); when it cannot (SIGTERM,
+SIGKILL, `os._exit`), the kernel releases it once the last descriptor of that
+open file closes. Nothing has to be cleaned up for the next job to start.
 
 **The holder's description** (`<lock file>.json`: job type, command, pid, host,
 start time) is written after the lock is taken and removed before it is
 released, for the "held by" message. It is descriptive only: the lock is the
-flock, never the file's content, and a description left behind by a killed
-holder is replaced by the next one.
+flock, never the file's content. A description left behind by a killed holder
+is removed by the next one as soon as it holds the lock, before it describes
+itself; a description whose process has exited is never named as the holder.
 
 **The limits, stated rather than hidden:**
 - **Cooperative.** A GPU process that does not take the lock is not stopped by
@@ -37,8 +38,10 @@ holder is replaced by the next one.
 - **Inherited descriptors.** The descriptor is close-on-exec, so a program the
   holder starts (`subprocess`, any `exec`) does not keep the lock. A process
   forked without exec (DataLoader workers under the `fork` start method, say)
-  shares the open file and keeps the lock until it exits too, even after the
-  holder has gone; the message then says the recorded holder has exited.
+  shares the open file: a holder that ends normally releases the lock for it
+  too, but a holder that is killed or exits without releasing (`os._exit`)
+  leaves the lock with that child until it exits; the message then says the
+  recorded holder has exited.
 - **Local machine.** The lock file belongs on a local filesystem; the liveness
   hint in the message is only given for a holder on this host.
 
@@ -119,12 +122,26 @@ class LockLocation(NamedTuple):
 # ---------------------------------------------------------------------------
 # Where the lock is
 # ---------------------------------------------------------------------------
+def _is_dir(path: Path, setting: str, value: str) -> bool:
+    """`path.is_dir()`, or a refusal when that cannot be told: on Python 3.12 it
+    raises for a path under a directory this account may not search (EACCES)
+    instead of answering."""
+    try:
+        return path.is_dir()
+    except OSError as exc:
+        raise GpuLockMisconfigured(
+            f"{setting}={value!r}: {path} cannot be checked ({exc}), so the GPU lock "
+            "cannot be kept there. Every process that takes it must be able to reach "
+            "its directory.") from exc
+
+
 def lock_location(environ: Mapping[str, str] | None = None) -> LockLocation:
     """The lock file the settings name, read from the environment at each call.
 
     Raises:
-        GpuLockMisconfigured: a setting is set but is not an absolute path, or
-            names a directory that does not exist.
+        GpuLockMisconfigured: a setting is set but is not an absolute path,
+            names a directory that does not exist, or names a path this account
+            cannot check.
     """
     # Integration note (M5-1): `SHEPHERD_WORKSPACES_ROOT` is WP1's setting; once
     # its settings module exists, these two reads go through it (one reader).
@@ -136,11 +153,11 @@ def lock_location(environ: Mapping[str, str] | None = None) -> LockLocation:
             raise GpuLockMisconfigured(
                 f"{LOCK_FILE_ENV}={explicit!r} is not an absolute path. Every process that "
                 "takes the GPU lock must name the same file, whatever its working directory.")
-        if not path.parent.is_dir():
+        if not _is_dir(path.parent, LOCK_FILE_ENV, explicit):
             raise GpuLockMisconfigured(
                 f"{LOCK_FILE_ENV}={explicit!r}: the directory {path.parent} does not exist. "
                 "Nothing creates it; create it, or point the setting elsewhere.")
-        if path.is_dir():
+        if _is_dir(path, LOCK_FILE_ENV, explicit):
             raise GpuLockMisconfigured(
                 f"{LOCK_FILE_ENV}={explicit!r} is a directory; name a file inside it.")
         return LockLocation(path, LOCK_FILE_ENV)
@@ -151,7 +168,7 @@ def lock_location(environ: Mapping[str, str] | None = None) -> LockLocation:
             raise GpuLockMisconfigured(
                 f"{WORKSPACES_ROOT_ENV}={root!r} is not an absolute path, so the GPU lock "
                 "under it would depend on each process's working directory.")
-        if not root_path.is_dir():
+        if not _is_dir(root_path, WORKSPACES_ROOT_ENV, root):
             raise GpuLockMisconfigured(
                 f"{WORKSPACES_ROOT_ENV}={root!r} does not exist or is not a directory, so "
                 "the GPU lock cannot be kept under it.")
@@ -199,10 +216,18 @@ def _holder_alive(holder: Mapping[str, Any]) -> bool | None:
 
 
 def describe_holder(holder: Mapping[str, Any] | None) -> str:
-    """Who holds the lock, in words, from its description when there is one."""
+    """Who holds the lock, in words, from its description when there is one.
+
+    **A description whose process has exited never names the holder.** It was
+    left by a holder that ended without removing it (one that was killed, say);
+    the lock is then held by a process that inherited that holder's descriptor,
+    or by a new holder that has not removed the description yet (it does as
+    soon as it holds the lock) or could not (an account that may not write the
+    directory). Which one cannot be told from here, so the words say both."""
     if holder is None:
-        return ("a process that has not described itself (a holder that is just starting, "
-                "or a process that inherited the lock's descriptor from one that has ended)")
+        return ("a process that has not described itself (a holder that is just starting or "
+                "could not write its description, or a process that inherited the lock's "
+                "descriptor from one that has ended)")
     job = holder.get("job_type") or "unnamed"
     parts = [str(holder.get("command") or "unknown command")]
     if holder.get("pid") is not None:
@@ -213,8 +238,10 @@ def describe_holder(holder: Mapping[str, Any] | None) -> str:
     article = "an" if str(job)[:1].lower() in "aeiou" else "a"
     text = f"{article} {job} job ({', '.join(parts)}, as it described itself)"
     if _holder_alive(holder) is False:
-        text += ("; that process has exited, so the lock is held by a process that "
-                 "inherited its descriptor")
+        return ("a process other than the one its description names. The description "
+                f"names {text}, which has exited; the lock is held by a process that "
+                "inherited its descriptor, or by a new holder that has not described "
+                "itself (yet, or because it could not)")
     return text
 
 
@@ -312,6 +339,16 @@ class GpuLock(AbstractContextManager):
             raise OSError(f"the GPU lock {self.path} cannot be taken ({exc}).") from exc
 
     def _describe(self) -> None:
+        """Describe this holder in `<lock file>.json`. Any description already
+        there is a previous holder's (this process holds the lock now), left by
+        one that ended without removing it (a killed one): it is removed first,
+        so it is never read as this holder's, even when this one cannot write
+        its own."""
+        try:
+            holder_path(self.path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("GPU lock %s: a previous holder's description %s could not be "
+                           "removed (%s).", self.path, holder_path(self.path), exc)
         record = {
             "job_type": self.job_type,
             "command": self.command,
@@ -330,7 +367,9 @@ class GpuLock(AbstractContextManager):
 
     def release(self) -> None:
         """Give the lock back: the description first (only this process's own),
-        then the lock. Safe to call twice.
+        then the lock. Safe to call twice. The unlock is on the open file, which
+        a child forked without exec shares, so after it that child does not keep
+        the lock either.
 
         **Only in the process that took it.** A process forked from the holder
         shares its open file, and an unlock there would release the holder's
@@ -416,6 +455,8 @@ def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
         location = lock_location(environ)
     except GpuLockMisconfigured as exc:
         return {**state, "problem": str(exc)}
+    except OSError as exc:  # a check `lock_location` does not wrap: still a refusal
+        return {**state, "problem": f"the GPU lock's location cannot be checked ({exc})"}
     state.update(source=location.source)
     if location.path is None:
         return state

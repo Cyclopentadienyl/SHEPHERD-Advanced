@@ -321,7 +321,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # candidate in the run layout. The same resolution `build_pipeline` applies
     # (the request, then SHEPHERD_DEVICE, then `auto`), and the request is still
     # passed on as given, so the served identity records what was asked for.
-    from src.api.main import requested_serving_device
+    from src.config.serving_device import requested_serving_device
     from src.inference.pipeline import PipelineBuildError, resolve_serving_device
 
     try:

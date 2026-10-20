@@ -1167,7 +1167,9 @@ This is one pipeline extended, not a second one.
     settings), with expected digests and `SHEPHERD_DEVICE` as the device, no batch size. Once a
     test run ends, its report is the run directory that appeared for its checkpoint; kept and
     registered come from the report-state reader passed to the runner (registration's helper),
-    never from the exit status. The restart lock reads any job; the stop route is a plain `def`.
+    never from the exit status. A stop that arrives after the process ended on its own is
+    refused and changes nothing; a test run is `cancelled` only when the stop ended it. The
+    restart lock reads any job; the stop route is a plain `def`.
     Routes for test runs, and the Test tab, are not in this step.
 - **UI:**
   - **Test tab** (new):
@@ -1361,8 +1363,10 @@ contract and BACKLOG stay the record, and no new planning document is added.
   its descriptive `<lock file>.json` (exit 1, "Nothing was written."); the runner checks it
   before a start and its child takes it itself. The descriptor is close-on-exec; tests cover a
   normal exit, SIGTERM, SIGKILL, a program the holder starts (does not keep it), a child
-  forked without exec (keeps it until it exits; the message says the recorded holder exited)
-  and two workspaces sharing one lock. Windows uses `msvcrt.locking`, untested.
+  forked without exec (a holder that ends normally releases it for the child too; one that is
+  killed or exits without releasing leaves it with the child until it exits, and the message
+  says the recorded holder exited) and two workspaces sharing one lock. Windows uses
+  `msvcrt.locking`, untested.
 - **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
   boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
   forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount

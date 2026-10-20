@@ -1534,8 +1534,9 @@ One lock file per deployment, whatever the workspace:
 | otherwise `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock` |
 | neither | **not configured**: the CLIs run without the lock and say so in their log; the service keeps only its own one-job rule |
 
-A setting that is set but unusable (a relative path, a directory that does not exist) refuses
-every job rather than running it unlocked.
+A setting that is set but unusable (a relative path, a directory that does not exist, a path
+under a directory the service account may not search) refuses every job rather than running it
+unlocked, and the status shows why (`gpu.lock.problem`).
 
 `train_model.py` and `measure_scorer.py` take the lock right after reading their command line,
 before the device or any input is read, and hold it until they end. When it is busy they keep
@@ -1557,20 +1558,24 @@ jobs.`
 
 The holder describes itself in `<lock file>.json` (job type, command, pid, host, start time)
 while it holds the lock, for the message above. That file is descriptive only: the lock is the
-`flock` on the lock file. One left behind by a killed job is harmless, and the next holder
-replaces it. **Never delete the lock file while a job runs**: a new file would be a second lock.
+`flock` on the lock file. One left behind by a killed job is harmless: the next holder removes
+it as soon as it holds the lock, and a description whose process has exited is never named as the
+holder (the refusal says instead that the lock is held by a process that inherited its descriptor,
+or by a new holder that has not described itself). **Never delete the lock file while a job
+runs**: a new file would be a second lock.
 
 What the lock does and does not guarantee:
 
-- **It is released however the holder ends** — a normal exit, an error, SIGTERM, SIGKILL — by the
-  kernel, so there is no stale lock to clean up after a crash.
+- **It is released however the holder ends**: a normal exit or an error releases it, and after
+  SIGTERM or SIGKILL the kernel does, so there is no stale lock to clean up after a crash.
 - **It is cooperative.** A GPU program that does not take it is not stopped by it. The inference
   service does not take it and may hold GPU memory; a test run that cannot get memory fails as a
   run, is reported, and registers nothing.
 - **Inherited descriptors.** A program a job starts does not keep the lock (the descriptor is
   close-on-exec). A process the job forks without starting a new program — DataLoader workers
-  under the `fork` start method, for example — keeps it until it exits, even after the job has
-  ended; the refusal then says the recorded holder has exited.
+  under the `fork` start method, for example — shares it: a job that ends normally releases it
+  for that process too, but when the job is killed (or exits without releasing), that process
+  keeps the lock until it exits; the refusal then says the recorded holder has exited.
 - **Keep the lock file on a local filesystem.**
 - **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
 
@@ -1586,13 +1591,19 @@ cohort version, the same CLI an operator runs). One job at a time:
 - **A stop reaches only its own job type**: a training stop never stops a test run, nor the
   reverse. It sends SIGINT, then SIGTERM after 30 s, then SIGKILL after 10 s more, and answers
   once the process has ended; `POST /api/v1/training/stop` no longer holds up the rest of the API
-  and the dashboard while it waits.
+  and the dashboard while it waits. **A stop that arrives after the process has ended on its own**
+  (while its result is still being read) is refused (`409`, "had already ended on its own ...;
+  nothing was stopped") and changes nothing: a failure stays `failed`, with its message.
 - **How a job ended:** training `completed`, `failed` or `stopped` (as before); a test run
-  `completed`, `failed` or `cancelled`. A failure caused by a signal says which (`Process ended by
-  SIGKILL`, for the out-of-memory killer).
+  `completed`, `failed` or `cancelled`, `cancelled` only when the cancel is what ended it (a run
+  that ended on its own as the cancel arrived keeps that ending). A failure caused by a signal
+  says which (`Process ended by SIGKILL`, for the out-of-memory killer).
 - **A test run's report is read from the disk once it ends**: the run directory that appeared in
   the version's report store for its checkpoint; whether it was kept and registered is read
-  there, never inferred from the exit status. After a cancel the status says what was left.
+  there, never inferred from the exit status. After a cancel the status says what was left; after
+  SIGTERM or SIGKILL it also names where staged files (`*.tmp`) may be left: the run directory
+  and, for a run that was registering its report, the checkpoint's directory, where its ledger
+  is.
 - **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
   (its note now says "A GPU job (training or a test run) is in progress").
 - `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding

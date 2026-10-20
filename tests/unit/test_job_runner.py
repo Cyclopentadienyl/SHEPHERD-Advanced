@@ -101,6 +101,18 @@ def ended(manager: TrainingManager, job_type: str) -> None:
     assert manager._last[job_type].done.wait(5), f"the {job_type} job did not end"
 
 
+class Reader:
+    """A report-state reader that records what it was asked."""
+
+    def __init__(self, kept, registered, reason=""):
+        self.answer = {"kept": kept, "registered": registered, "reason": reason}
+        self.asked = []
+
+    def __call__(self, report, checkpoint):
+        self.asked.append((report, checkpoint))
+        return self.answer
+
+
 # --------------------------------------------------------------------------- one slot
 def test_a_start_while_a_stop_is_still_waiting_is_refused(tmp_path, popen, monkeypatch, inputs):
     """The race the map reproduced: a start accepted during `stopping` launched
@@ -236,12 +248,162 @@ def test_a_cancelled_test_run_is_neither_failed_nor_completed(popen, inputs):
     assert status["exit_meaning"] == "ended by SIGINT"
 
 
-def test_a_cancel_after_the_run_finished_cleanly_is_not_called_cancelled(popen, inputs):
-    test = FakeProcess(pid=5, on_sigint=0)
-    popen(test)
+class HeldOutput:
+    """A job's output that stays open until released: its monitor waits for it
+    after the process has ended (`OUTPUT_GRACE_SECONDS`), as for a job whose
+    forked worker keeps the pipe."""
+
+    def __init__(self) -> None:
+        self.released = threading.Event()
+
+    def readline(self) -> str:
+        self.released.wait(10)
+        return ""
+
+
+class HeldReader(Reader):
+    """A report-state reader that takes its time (WP4's reads the ledger and
+    hashes files), until released."""
+
+    def __init__(self, kept, registered, reason=""):
+        super().__init__(kept, registered, reason)
+        self.reading = threading.Event()
+        self.released = threading.Event()
+
+    def __call__(self, report, checkpoint):
+        self.reading.set()
+        self.released.wait(10)
+        return super().__call__(report, checkpoint)
+
+
+def test_a_cancel_after_the_run_ended_on_its_own_is_refused_and_keeps_its_ending(
+        popen, inputs):
+    """Exit 3 (not registered) on its own, its monitor still reading what it
+    left: the cancel sends nothing, calls nothing cancelled, and hides no
+    failure; the refusal says how the run ended and what it left."""
+    process = FakeProcess(pid=8)
+    popen(process)
+    reader = HeldReader(True, False, "refused: runs disagree")
+    manager = TrainingManager(report_state=reader)
+    manager.start_test(inputs)
+    (reports(inputs) / f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d").mkdir(parents=True)
+    process.finish(3)
+    assert reader.reading.wait(5)
+    assert manager.get_test_status()["status"] == "running", "the window: still reading"
+    threading.Timer(0.2, reader.released.set).start()
+
+    result = manager.cancel_test()
+    assert process.signals == [], "no signal for a process that had ended"
+    assert result["success"] is False and result["status"] == "failed"
+    assert result["error"].startswith("A test run (job test-")
+    assert result["error"].endswith("had already ended on its own (failed, exit code 3) before "
+                                    "this stop arrived; nothing was stopped.")
+    assert result["outcome"]["kept"] is True and result["outcome"]["registered"] is False
+    status = manager.get_test_status()
+    assert status["status"] == "failed" and status["error_message"].startswith(
+        "Process exited with code 3")
+
+
+def test_a_training_stop_after_the_process_ended_on_its_own_is_refused(tmp_path, popen):
+    """The same window for training: its failure is not turned into "stopped"
+    and its failure text is kept."""
+    process = FakeProcess(pid=9, output="")
+    process.stdout = HeldOutput()
+    popen(process)
+    manager = TrainingManager()
+    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    process.finish(1)
+    threading.Timer(0.2, process.stdout.released.set).start()
+
+    result = manager.stop_training()
+    assert process.signals == []
+    assert result["success"] is False and result["status"] == "failed"
+    assert result["error"].endswith("had already ended on its own (failed, exit code 1) before "
+                                    "this stop arrived; nothing was stopped.")
+    status = manager.get_status()
+    assert status["status"] == "failed"
+    assert status["error_message"].startswith("Process exited with code 1")
+
+
+@pytest.mark.parametrize("own_exit, status", [(0, "completed"), (1, "failed"), (3, "failed")])
+def test_a_cancel_that_lands_as_the_run_ends_on_its_own_keeps_that_ending(
+        popen, inputs, own_exit, status):
+    """The cancel's SIGINT reached a process that then exited with its own
+    status: measure_scorer dies by SIGINT when interrupted, so a status of 0
+    or more is the run's own ending, never "cancelled"."""
+    popen(FakeProcess(pid=5, on_sigint=own_exit))
     manager = TrainingManager()
     manager.start_test(inputs)
-    assert manager.cancel_test()["status"] == "completed"
+    result = manager.cancel_test()
+    assert result["status"] == status
+    error = manager.get_test_status()["error_message"]
+    assert (error is None) if own_exit == 0 else error.startswith(
+        f"Process exited with code {own_exit}")
+
+
+@pytest.mark.parametrize("signal_exit", [-signal.SIGINT, -signal.SIGTERM, -signal.SIGKILL])
+def test_a_cancel_that_ends_the_run_by_a_signal_is_cancelled(popen, inputs, signal_exit):
+    popen(FakeProcess(pid=5, on_sigint=signal_exit))
+    manager = TrainingManager()
+    manager.start_test(inputs)
+    assert manager.cancel_test()["status"] == "cancelled"
+    assert manager.get_test_status()["error_message"] is None
+
+
+def test_a_cancel_reports_the_run_it_cancelled_not_one_started_since(popen, inputs):
+    """A second session's start lands between the stop's end and the reply."""
+    first, second = FakeProcess(pid=1), FakeProcess(pid=2)
+    popen(first, second)
+
+    class Interleaved(TrainingManager):
+        def _stop(self, job_type):
+            result = super()._stop(job_type)
+            assert self.start_test(inputs)["success"]
+            return result
+
+    manager = Interleaved()
+    manager.start_test(inputs)
+    result = manager.cancel_test()
+    assert result["status"] == "cancelled"
+    assert result["outcome"] is not None and result["outcome"]["kept"] is False
+    assert manager.get_test_status()["status"] == "running", "the second run"
+    second.finish(0)
+
+
+def test_a_training_stop_reads_the_snapshot_of_the_run_it_stopped(tmp_path, popen):
+    from src.utils.checkpoint_paths import run_checkpoint_dir
+
+    first, second = FakeProcess(pid=1), FakeProcess(pid=2)
+    popen(first, second)
+    workspace = tmp_path / "ws"
+
+    class Interleaved(TrainingManager):
+        def _stop(self, job_type):
+            result = super()._stop(job_type)
+            assert self.start_training({"data_dir": str(workspace)})["success"]
+            return result
+
+    manager = Interleaved()
+    run_dir = Path(manager.start_training({"data_dir": str(workspace)})["run_dir"])
+    snapshot = run_checkpoint_dir(run_dir) / "last.pt"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_bytes(b"not a checkpoint")
+    result = manager.stop_training()
+    assert manager.run_dir != run_dir, "a second run was started meanwhile"
+    assert result["outcome"]["checkpoint"] == str(snapshot)
+    second.finish(0)
+
+
+def test_the_runner_does_not_import_the_composition_root():
+    """The deployment's device is read from src.config, not from src.api.main:
+    a service never builds the application to read a setting."""
+    import ast
+
+    tree = ast.parse(Path(tm.__file__).read_text())
+    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import)
+                 for alias in node.names}
+    assert "src.api.main" not in imported and "src.api" not in imported
 
 
 def test_the_stop_route_does_not_run_on_the_event_loop():
@@ -305,18 +467,6 @@ def test_inputs_of_the_wrong_shape_are_refused_before_launch(popen, inputs, chan
 
 
 # --------------------------------------------------------------------------- what a test run left
-class Reader:
-    """A report-state reader that records what it was asked."""
-
-    def __init__(self, kept, registered, reason=""):
-        self.answer = {"kept": kept, "registered": registered, "reason": reason}
-        self.asked = []
-
-    def __call__(self, report, checkpoint):
-        self.asked.append((report, checkpoint))
-        return self.answer
-
-
 def _run(manager, popen, inputs, *, code=0, make=(), existing=()):
     for name in existing:
         (reports(inputs) / name).mkdir(parents=True)
@@ -338,7 +488,11 @@ def test_the_report_this_run_created_is_read_from_the_disk(popen, inputs):
     run_dir = reports(inputs) / run_id
     assert reader.asked == [(run_dir / "report.json", inputs.checkpoint)]
     assert status["status"] == "failed" and status["exit_code"] == 3
-    assert status["exit_meaning"] == "measured and kept, but not registered"
+    # Exit 3 is also a report not as published, which may be gone: "kept" is
+    # the outcome's, read from the disk, never the exit status's.
+    assert status["exit_meaning"].startswith("measured, but not registered")
+    assert "kept: see the outcome" in status["exit_meaning"]
+    assert "measured and kept" not in status["exit_meaning"]
     outcome = status["outcome"]
     assert outcome["report_dir"] == str(run_dir) and outcome["kept"] is True
     assert outcome["registered"] is False
@@ -346,14 +500,17 @@ def test_the_report_this_run_created_is_read_from_the_disk(popen, inputs):
                                   "(refused: a contradiction)")
 
 
-def test_kept_and_registered_come_from_the_disk_not_the_exit_status(popen, inputs):
-    """Exit 0, but the run directory holds no report.json: not called kept."""
-    reader = Reader(False, False)
-    status = _run(TrainingManager(report_state=reader), popen, inputs, code=0,
-                  make=[f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"])
-    assert status["status"] == "completed"
-    assert status["outcome"]["kept"] is False and "an interrupted write" in \
-        status["outcome"]["summary"]
+@pytest.mark.parametrize("reason", ["", "its report.json does not hold the bytes published"])
+def test_kept_and_registered_come_from_the_disk_not_the_exit_status(popen, inputs, reason):
+    """Exit 0, but the reader says no report was kept: not called kept, and the
+    cause is the reader's, never one the runner supposes (a report.json that is
+    present but not as published is not "an interrupted write")."""
+    run_id = f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"
+    status = _run(TrainingManager(report_state=Reader(False, False, reason)), popen, inputs,
+                  code=0, make=[run_id])
+    assert status["status"] == "completed" and status["outcome"]["kept"] is False
+    said = f"No report was kept in {reports(inputs) / run_id}."
+    assert status["outcome"]["summary"] == (said + f" ({reason})" if reason else said)
 
 
 def test_no_new_report_directory_means_nothing_was_kept(popen, inputs):
@@ -391,7 +548,30 @@ def test_a_run_ended_by_sigkill_says_staged_files_may_be_left(popen, inputs, mon
     (reports(inputs) / f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d").mkdir(parents=True)
     result = manager.cancel_test()
     assert result["status"] == "cancelled"
-    assert "ended by SIGKILL, so staged files (*.tmp) may be left" in result["outcome"]["summary"]
+    run_dir = reports(inputs) / f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"
+    assert result["outcome"]["summary"].endswith(
+        f"The run was ended by SIGKILL, so staged files (*.tmp) may be left in {run_dir}.")
+    assert "ledger" not in result["outcome"]["summary"], "it was not registering"
+
+
+def test_a_registering_run_ended_by_sigterm_names_the_ledgers_directory_too(
+        popen, inputs, monkeypatch):
+    """`--record` stages the ledger beside the checkpoint, so that directory is
+    named as well as the run directory."""
+    from dataclasses import replace
+
+    for name in ("STOP_GRACE_SECONDS", "TERMINATE_GRACE_SECONDS"):
+        monkeypatch.setattr(tm, name, 0.1)
+    popen(FakeProcess(pid=7, ignore_sigint=True))
+    manager = TrainingManager(report_state=Reader(True, False))
+    manager.start_test(replace(inputs, record=True))
+    run_dir = reports(inputs) / f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"
+    run_dir.mkdir(parents=True)
+    summary = manager.cancel_test()["outcome"]["summary"]
+    assert summary.endswith(
+        f"The run was ended by SIGTERM, so staged files (*.tmp) may be left in {run_dir}, and, "
+        f"as it was registering the report, in {inputs.checkpoint.resolve().parent} beside the "
+        "checkpoint's ledger.")
 
 
 # --------------------------------------------------------------------------- per-job logs

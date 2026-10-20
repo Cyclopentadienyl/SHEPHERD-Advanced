@@ -78,6 +78,7 @@ from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence
 
 import yaml
 
+from src.config.serving_device import requested_serving_device
 from src.utils.gpu_lock import lock_state
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,9 @@ class JobType:
     """What differs between the runner's job types.
 
     Statuses, for both: idle (none started yet), running, stopping, then
-    completed (exit 0), failed, or `stopped_status` after an operator's stop.
+    completed (exit 0), failed, or `stopped_status` after an operator's stop
+    (for a test run, only when the stop is what ended it). A stop that arrives
+    after the process ended on its own is refused and changes nothing.
     """
 
     name: str
@@ -165,7 +168,8 @@ _TEST_EXIT_MEANING = {
     1: "refused before anything was written, or measured but the report was not written, "
        "or the run failed after writing it; its output says which",
     2: "the command line was rejected",
-    3: "measured and kept, but not registered",
+    3: "measured, but not registered (the registration was refused, or the report was not "
+       "as published); whether a report was kept: see the outcome",
 }
 
 
@@ -258,8 +262,6 @@ def deployment_device() -> Optional[str]:
         ValueError: a value `measure_scorer.py --device` does not take
             (`cuda:1`, say), so the deployment's device cannot be passed on.
     """
-    from src.api.main import requested_serving_device
-
     value = requested_serving_device(None)
     if value is None or value == "auto":
         return None
@@ -320,6 +322,9 @@ class _Job:
     log_lock: threading.Lock = field(default_factory=threading.Lock)
     #: Files the job owns and removes when it ends (training's temp YAML).
     cleanup: List[Path] = field(default_factory=list)
+    #: A training job's own run directory, where its snapshot is read after a
+    #: stop (never the run directory of a job started since).
+    run_dir: Optional[Path] = None
     #: The report store listed before launch (test runs).
     reports_dir: Optional[Path] = None
     reports_before: Set[str] = field(default_factory=set)
@@ -338,6 +343,17 @@ def _report_names(reports: Path) -> Set[str]:
         return set(os.listdir(reports))
     except FileNotFoundError:
         return set()
+
+
+def _ledger_dir(job: _Job) -> Path:
+    """Where a test run's registration writes: the checkpoint's ledger is in
+    the directory of the checkpoint's resolved path (M4 decision 15, the rule
+    src/evaluation/registration.py files by)."""
+    checkpoint = Path(job.inputs["checkpoint"])
+    try:
+        return checkpoint.resolve().parent
+    except (OSError, RuntimeError):
+        return checkpoint.parent
 
 
 def _signal_name(returncode: int) -> str:
@@ -420,6 +436,7 @@ class TrainingManager:
 
     def _spawn_locked(self, kind: JobType, argv: List[str], *,
                       inputs: Dict[str, Any], cleanup: Sequence[Path] = (),
+                      run_dir: Optional[Path] = None,
                       reports_dir: Optional[Path] = None,
                       reports_before: Optional[Set[str]] = None) -> Tuple[Optional[_Job], str]:
         """Launch `argv` as a job of `kind` and start its monitor. Called under
@@ -461,7 +478,7 @@ class TrainingManager:
             return None, error
 
         job = _Job(kind, job_id, datetime.now(), process=process, inputs=inputs,
-                   cleanup=list(cleanup), reports_dir=reports_dir,
+                   cleanup=list(cleanup), run_dir=run_dir, reports_dir=reports_dir,
                    reports_before=set(reports_before or ()))
         self._last[kind.name] = job
         self._active = job
@@ -572,7 +589,7 @@ class TrainingManager:
 
             cmd = [sys.executable, str(PROJECT_ROOT / kind.script), "--config", str(config_path)]
             job, error = self._spawn_locked(kind, cmd, inputs={"config_path": str(config_path)},
-                                            cleanup=[config_path])
+                                            cleanup=[config_path], run_dir=run_dir)
             if job is None:
                 return {"success": False, "error": error, "status": "failed"}
 
@@ -594,13 +611,15 @@ class TrainingManager:
         Returns:
             Status dict with result info.
         """
-        result = self.stop("training")
+        result, job = self._stop("training")
         if not result.get("success"):
             return result
         # **Stopped, not completed** (contract M3a): the stage did not finish.
         # What can be continued is the run's last saved snapshot, if any;
-        # progress after it is lost.
-        return {"success": True, "status": result["status"], "outcome": self.latest_snapshot()}
+        # progress after it is lost. Read from the stopped job's own run
+        # directory, whatever was started since the stop ended.
+        return {"success": True, "status": result["status"],
+                "outcome": self.latest_snapshot(job.run_dir)}
 
     # =========================================================================
     # Test runs
@@ -648,16 +667,17 @@ class TrainingManager:
         """Cancel the running test run; training is never stopped by it.
 
         Returns, once the process has ended, the run's status (`cancelled`, or
-        `completed` when the run had already finished cleanly) and what it left
-        (`outcome`, read from the disk).
+        how the run ended on its own when the cancel arrived as it was ending)
+        and what it left (`outcome`, read from the disk), both from the run this
+        cancel reached, whatever was started since. A run that had already
+        ended before the cancel is refused, with how it ended and its outcome.
         """
-        result = self.stop("test")
-        if not result.get("success"):
+        result, job = self._stop("test")
+        if job is None:
             return result
         with self._lock:
-            job = self._last.get("test")
-            outcome = job.outcome if job is not None else None
-        return {"success": True, "status": result["status"], "outcome": outcome}
+            outcome = dict(job.outcome) if job.outcome else None
+        return {**result, "outcome": outcome}
 
     # =========================================================================
     # Stop, by job type
@@ -670,8 +690,16 @@ class TrainingManager:
         ended and its monitor has recorded how (routes call it from a thread).
 
         **Refused across types**: a training stop never stops a test run, nor
-        the reverse.
+        the reverse. **Refused when the process has already ended on its own**
+        (its monitor is still reading what it left): the stop is not what ended
+        it, so the job keeps the status its own ending gives, and the refusal
+        says which, once its monitor has recorded it.
         """
+        return self._stop(job_type)[0]
+
+    def _stop(self, job_type: str) -> Tuple[Dict[str, Any], Optional[_Job]]:
+        """`stop`, with the job it reached (None when it reached none), so a
+        caller reads that job's result rather than whichever job is latest."""
         kind = JOB_TYPES[job_type]
         with self._lock:
             job = self._active
@@ -679,13 +707,18 @@ class TrainingManager:
                 other = (f": the GPU job running is {job.kind.noun.lower()}, which this stop "
                          "does not reach" if job is not None else "")
                 return {"success": False, "error": kind.none_running + other,
-                        "status": self._status_locked(job_type)}
+                        "status": self._status_locked(job_type)}, None
             if job.status != "running":
                 return {"success": False, "error": f"{kind.noun} is already stopping.",
-                        "status": job.status}
-            job.status = "stopping"
-            job.stop_requested = True
+                        "status": job.status}, None
             process = job.process
+            ended_on_its_own = process.poll() is not None
+            if not ended_on_its_own:
+                job.status = "stopping"
+                job.stop_requested = True
+
+        if ended_on_its_own:
+            return self._ended_before_stop(job, process), job
 
         logger.info("Stopping %s job %s (PID: %s)...", job_type, job.job_id, process.pid)
         try:
@@ -696,18 +729,33 @@ class TrainingManager:
                 job.error_message = f"Stop error: {e}"
             # The process may still run: it keeps the slot, as "stopping", until
             # its monitor sees it end.
-            return {"success": False, "error": str(e), "status": job.status}
+            return {"success": False, "error": str(e), "status": job.status}, job
 
         if process.poll() is None:
             return {"success": False, "status": "stopping",
                     "error": f"{kind.noun} did not end after SIGKILL; it keeps the GPU slot "
-                             "until it does."}
+                             "until it does."}, job
         # Ended: its monitor records how, and reads what a test run left.
         job.done.wait(timeout=RESULT_WAIT_SECONDS)
         with self._lock:
             status = job.status
         logger.info("%s job %s ended: %s", job_type, job.job_id, status)
-        return {"success": True, "status": status}
+        return {"success": True, "status": status}, job
+
+    def _ended_before_stop(self, job: _Job, process: subprocess.Popen) -> Dict[str, Any]:
+        """The refusal of a stop that reached a job whose process had already
+        ended on its own, once its monitor has recorded how (up to
+        `RESULT_WAIT_SECONDS`)."""
+        recorded = job.done.wait(timeout=RESULT_WAIT_SECONDS)
+        with self._lock:
+            status = job.status
+        said = (f"{job.kind.noun} (job {job.job_id}) had already ended on its own "
+                f"({status + ', ' if recorded else ''}exit code {process.returncode}) before "
+                "this stop arrived; nothing was stopped.")
+        if not recorded:
+            said += " What it left is still being read."
+        logger.info("Stop of %s job %s refused: %s", job.kind.name, job.job_id, said)
+        return {"success": False, "error": said, "status": status}
 
     @staticmethod
     def _end_process(job: _Job, process: subprocess.Popen) -> None:
@@ -798,12 +846,30 @@ class TrainingManager:
         if job.stop_requested:
             # An operator's stop: training is "stopped" whatever the exit code
             # (contract M3a; its snapshot says how the stage stood). A test run
-            # that had already finished cleanly when the cancel arrived is
-            # completed: its report says so, and calling it cancelled would not
-            # be true.
-            if not (job.kind.name == "test" and returncode == 0):
+            # is "cancelled" only when the stop can have ended it; one that
+            # ended on its own as the cancel arrived keeps that ending
+            # (completed, or failed with its failure text): calling it
+            # cancelled would not be true, and would hide a failure.
+            if job.kind.name != "test" or TrainingManager._ended_by_stop(returncode):
                 return job.kind.stopped_status
         return "completed" if returncode == 0 else "failed"
+
+    @staticmethod
+    def _ended_by_stop(returncode: Optional[int]) -> bool:
+        """Whether a test run's exit status can be a stop's doing.
+
+        On POSIX, only a signal's: measure_scorer catches no KeyboardInterrupt,
+        so the stop's SIGINT ends it by SIGINT, as SIGTERM and SIGKILL end it
+        by theirs, and a status of 0 or more is the run's own ending. Windows
+        has no signal statuses (CTRL_BREAK_EVENT and TerminateProcess end it
+        with a positive code), so there any status but 0 is taken as the
+        stop's. None (the process was not waited for) is taken as the stop's.
+        """
+        if returncode is None:
+            return True
+        if sys.platform == "win32":  # pragma: no cover - the backend is untested on Windows
+            return returncode != 0
+        return returncode < 0
 
     @staticmethod
     def _failure_text(job: _Job, returncode: Optional[int]) -> str:
@@ -864,15 +930,18 @@ class TrainingManager:
                        else "; it is not registered." if registered is False
                        else "; whether it is registered cannot be checked."))
         elif kept is False:
-            said = (f"No report was kept: {run_dir} holds no report.json (an interrupted "
-                    "write, which nothing registers).")
+            said = f"No report was kept in {run_dir}."
         else:
             said = f"Whether a report was kept in {run_dir} cannot be checked."
         if reason:
             said += f" ({reason})"
         if job.stop_signal in ("SIGTERM", "SIGKILL"):
             said += (f" The run was ended by {job.stop_signal}, so staged files (*.tmp) may be "
-                     f"left in {run_dir}.")
+                     f"left in {run_dir}")
+            if job.inputs.get("record"):
+                said += (f", and, as it was registering the report, in {_ledger_dir(job)} "
+                         "beside the checkpoint's ledger")
+            said += "."
         return {"report_dir": str(run_dir), "report": str(report), "kept": kept,
                 "registered": registered, "summary": said}
 
@@ -1039,9 +1108,10 @@ class TrainingManager:
         )
         return log_files[0] if log_files else None
 
-    def latest_snapshot(self) -> Optional[Dict[str, Any]]:
+    def latest_snapshot(self, run_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
         """The run's latest saved training state (`last.pt`) as its own record
-        describes it, or `None` when the run saved none.
+        describes it, or `None` when the run saved none. The run is `run_dir`
+        when given (a stopped job's own), else the run started last.
 
         Read whole with the safe loader, so only when asked (the stop
         confirmation, a status after the process ended) and cached by the
@@ -1049,9 +1119,10 @@ class TrainingManager:
         """
         from src.utils.checkpoint_paths import run_checkpoint_dir
 
-        if self.run_dir is None:
+        run_dir = run_dir if run_dir is not None else self.run_dir
+        if run_dir is None:
             return None
-        last = run_checkpoint_dir(self.run_dir) / "last.pt"
+        last = run_checkpoint_dir(run_dir) / "last.pt"
         try:
             stat = last.stat()
         except OSError:
